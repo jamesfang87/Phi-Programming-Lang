@@ -1,10 +1,13 @@
+import io
+import array
+
 fun main() {
     // Simple break example
     for i in [0, 10) {
         if i == 5 {
             break
         }
-        println(i)
+        io::println(i)
     }
 
     // Continue example: print even numbers only
@@ -12,17 +15,17 @@ fun main() {
         if i % 2 != 0 {
             continue
         }
-        println(i)
+        io::println(i)
     }
 
     // Or one could do this
     for i in [0, 10) by 2 {
-        println(i)
+        io::println(i)
     }
 
     // Enumerate example
     let fruits: array<str> = {"apple", "banana", "cherry"}
     for (idx, fruit) in enumerate(fruits) {
-        println(idx + ": " + fruit)
+        io::println(idx + ": " + fruit)
     }
 }

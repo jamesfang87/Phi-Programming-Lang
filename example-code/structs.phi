@@ -1,3 +1,6 @@
+import io 
+import array
+
 // Define a struct
 struct User {
     name: str
@@ -27,13 +30,13 @@ fun main() {
     }
 
     let avg: f64 = average_age(users)
-    print("Average age: " + avg)
+    io::println("Average age: " + avg)
 
     for user in users {
         if user.age < 21 {
-            print(user.name + " is underage.")
+            io::println(user.name + " is underage.")
         } else {
-            print(user.name + " is an adult.")
+            io::println(user.name + " is an adult.")
         }
     }
 }
