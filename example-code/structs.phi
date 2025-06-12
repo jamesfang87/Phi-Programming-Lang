@@ -3,8 +3,8 @@ import array
 
 // Define a struct
 struct User {
-    name: str
-    age: i32
+    let name: str
+    let age: i32
 }
 
 // Function to calculate average age
@@ -13,7 +13,7 @@ fun average_age(users: array<User>) -> f64 {
         return 0.0
     }
 
-    var total = 0
+    let total = 0
     for user in users {
         total += user.age
     }
