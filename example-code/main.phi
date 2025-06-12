@@ -1,0 +1,39 @@
+// Define a struct
+struct User {
+    name: str
+    age: i32
+}
+
+// Function to calculate average age
+fun average_age(users: array<User>) -> f64 {
+    if users.is_empty() {
+        return 0.0
+    }
+
+    var total = 0
+    for user in users {
+        total += user.age
+    }
+
+    return f64(total) / f64(users.length())
+}
+
+// Main entry point
+fun main() {
+    let users: array<User> = {
+        User("alice", 30),
+        User("bob", 25),
+        User("clare", 20)
+    }
+
+    let avg: f64 = average_age(users)
+    print("Average age: " + avg)
+
+    for user in users {
+        if user.age < 21 {
+            print(user.name + " is underage.")
+        } else {
+            print(user.name + " is an adult.")
+        }
+    }
+}
