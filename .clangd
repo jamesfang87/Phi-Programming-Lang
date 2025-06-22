@@ -1,0 +1,22 @@
+CompileFlags:
+  Add: [-std=c++20, -Wall, -Wextra, -Wpedantic]
+  Remove: [-W*]
+
+Index:
+  Background: Build
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes
+
+Hover:
+  ShowAKA: Yes
+
+Diagnostics:
+  ClangTidy:
+    Remove: [modernize-use-trailing-return-type]
+  Suppress: ['pp_file_not_found']
+
+Completion:
+  AllScopes: Yes
