@@ -7,7 +7,8 @@
 class Token {
 public:
     Token(int line, TokenType type);
-    Token(int line, TokenType type, std::any literal, std::string id);
+    Token(int line, TokenType type, std::any literal);
+    Token(int line, TokenType type, std::string id);
 
     std::string as_str();
 

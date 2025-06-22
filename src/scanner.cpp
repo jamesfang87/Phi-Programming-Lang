@@ -3,6 +3,7 @@
 #include <cctype>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 Scanner::Scanner(std::string src) {
@@ -90,9 +91,9 @@ Token Scanner::parse_number() {
     std::string num_str(cur_lexeme, cur_char);
     try {
         if (floating_point) {
-            return Token(line_num, tok_float_literal, std::stod(num_str), num_str);
+            return Token(line_num, tok_float_literal, std::stod(num_str));
         } else {
-            return Token(line_num, tok_int_literal, std::stoll(num_str), num_str);
+            return Token(line_num, tok_int_literal, std::stoll(num_str));
         }
     } catch (const std::exception&) {
         std::cout << "Error processing number: " + num_str + '\n';
@@ -125,7 +126,8 @@ Token Scanner::parse_string() {
         std::cout << "Did not find closing double quotes\n";
         return Token(line_num, tok_error);
     } else {
-        return Token(line_num, tok_str_literal, str, "");
+        advance_char(); // consume closing quote
+        return Token(line_num, tok_str_literal, str);
     }
 }
 
@@ -149,7 +151,29 @@ Token Scanner::parse_char() {
         std::cout << "Unterminated character literal\n";
         return Token(line_num, tok_error);
     }
-    return Token(line_num, tok_char_literal, c, "");
+    advance_char(); // consume closing quote
+    return Token(line_num, tok_char_literal, c);
+}
+
+Token Scanner::parse_identifier() {
+    while (isalnum(peek_char()) || peek_char() == '_') {
+        advance_char();
+    }
+    std::string id(cur_lexeme, cur_char);
+
+    static const std::unordered_map<std::string, TokenType> keywords = {
+        {"break", tok_break}, {"const", tok_const}, {"continue", tok_continue},
+        {"else", tok_else},   {"elif", tok_elif},   {"false", tok_false},
+        {"for", tok_for},     {"fun", tok_fun},     {"if", tok_if},
+        {"in", tok_in},       {"let", tok_let},     {"return", tok_return},
+        {"true", tok_true},   {"while", tok_while}, {"i8", tok_i8},
+        {"i16", tok_i16},     {"i32", tok_i32},     {"i64", tok_i64},
+        {"u8", tok_u8},       {"u16", tok_u16},     {"u32", tok_u32},
+        {"u64", tok_u64},     {"f32", tok_f32},     {"f64", tok_f64},
+        {"str", tok_str},     {"char", tok_char}};
+
+    auto it = keywords.find(id);
+    return (it != keywords.end()) ? Token(line_num, it->second) : Token(line_num, tok_identifier, id);
 }
 
 void Scanner::skip_comment() {
@@ -181,7 +205,8 @@ void Scanner::skip_comment() {
 }
 
 Token Scanner::scan_token() {
-    switch (advance_char()) {
+    char c = advance_char();
+    switch (c) {
         // One char tokens
         case '(': return Token(line_num, tok_open_paren);
         case ')': return Token(line_num, tok_close_paren);
@@ -204,9 +229,18 @@ Token Scanner::scan_token() {
         case '<': return Token(line_num, match_next('=') ? tok_less_equal : tok_less);
         case '>': return Token(line_num, match_next('=') ? tok_greater_equal : tok_greater);
 
-        case '"': parse_string();
-        case '\'': parse_char();
+        case '"': return parse_string();
+        case '\'': return parse_char();
 
-        default: std::cout << "Unknown token found\n"; return Token(line_num, tok_error);
+        // TODO: fix missing first char
+        default:
+            if (isalpha(c) || c == '_') {
+                return parse_identifier();
+            } else if (isdigit(c)) {
+                return parse_number();
+            } else {
+                std::cout << "Unknown token found: " << c << '\n';
+                return Token(line_num, tok_error);
+            }
     }
 }

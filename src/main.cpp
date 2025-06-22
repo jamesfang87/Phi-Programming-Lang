@@ -36,15 +36,13 @@ int main() {
         std::string source = read_file_to_string("program.phi");
         std::cout << "File content:\n" << source << "\n";
 
-        auto it = source.begin();
-        while (it <= source.end()) {
-            std::cout << *it << '\n';
-            it++;
-        }
-
         // Pass to scanner
-        // Scanner scanner(source);
-        // auto tokens = scanner.scan();
+        Scanner scanner(source);
+        auto tokens = scanner.scan();
+
+        for (auto t : tokens) {
+            std::cout << t.as_str() << '\n';
+        }
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

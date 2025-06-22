@@ -23,6 +23,7 @@ private:
     Token parse_number();
     Token parse_string();
     Token parse_char();
+    Token parse_identifier();
     void skip_comment();
     Token scan_token();
 };
