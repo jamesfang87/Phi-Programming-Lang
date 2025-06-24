@@ -1,0 +1,81 @@
+import std::io
+import std::array
+
+const MAX_N: i32 = 200001
+
+// Global arrays for permutation and index mapping
+let p: array<i32> = array(MAX_N)
+let index_of: array<i32> = array(MAX_N)
+
+fun solve() {
+    let n: i32 = io::read_i32()
+    let q: i32 = io::read_i32()
+    
+    // Read permutation and build index mapping
+    for i in [1, n] {
+        p[i] = io::read_i32()
+        index_of[p[i]] = i
+    }
+    
+    // Process each query
+    for j in [0, q) {
+        let l: i32 = io::read_i32()
+        let r: i32 = io::read_i32()
+        let k: i32 = io::read_i32()
+        
+        // Check if k is outside the segment
+        if index_of[k] < l || index_of[k] > r {
+            io::print("-1 ")
+            continue
+        }
+        
+        // Initialize counters
+        let s_pool = k - 1
+        let l_pool = n - k
+        let s_swapped: i32 = 0
+        let l_swapped: i32 = 0
+        let low = l
+        let high = r
+        
+        // Binary search through the segment
+        while low <= high {
+            let mid = (low + high) / 2
+            if mid == index_of[k] {
+                break
+            } else if mid < index_of[k] {
+                s_pool = s_pool - 1
+                if p[mid] > k {
+                    s_swapped = s_swapped + 1
+                }
+                low = mid + 1
+            } else {
+                l_pool = l_pool - 1
+                if p[mid] < k {
+                    l_swapped = l_swapped + 1
+                }
+                high = mid - 1
+            }
+        }
+        
+        // Output result based on pool counters
+        if s_pool < 0 || l_pool < 0 {
+            io::print("-1 ")
+        } else {
+            // Calculate max swaps
+            io::print("{} ", 2 * max(s_swapped, l_swapped))
+        }
+    }
+    
+    // Newline after each test case's queries
+    io::println("")
+}
+
+fun main() {
+    let t: i32 = io::read_i32()
+    
+    // Process all test cases
+    while t > 0 {
+        t--
+        solve()
+    }
+}

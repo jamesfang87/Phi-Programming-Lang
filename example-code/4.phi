@@ -1,0 +1,26 @@
+import std::io
+import std::array
+
+fun main() {
+    // Simple break example
+    for i in [0, 10) {
+        if i == 5 {
+            break
+        }
+        io::println(i)
+    }
+
+    // Continue example: print even numbers only
+    for i in [0, 10) {
+        if i % 2 != 0 {
+            continue
+        }
+        io::println(i)
+    }
+
+    // Or one could do this
+    for i in [0, 10).by(2) {
+        io::println(i)
+    }
+
+}
