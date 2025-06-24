@@ -1,0 +1,8 @@
+fun main() {
+    let x: i32 = 10 + 5
+    let s: str = "Hello\nWorld!"
+    let f: f32 = 1.2 // what
+    if (x > 12) {
+        return x
+    }
+}

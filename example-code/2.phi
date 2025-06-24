@@ -1,0 +1,92 @@
+import std::io
+import std::array
+
+fun solve() {
+    let n: i32 = io::read_i32()
+    let m: i32 = io::read_i32()
+    
+    let a = array<i32>(n)
+    for i in [0, n) {
+        a[i] = io::read_i32()
+    }
+    
+    let b = array<i32>(m)
+    for i in [0, m) {
+        b[i] = io::read_i32()
+    }
+    
+    // Prefix pairing array
+    let prefix_pairing = array<i32>(m+1)
+    for i in [0, m] {
+        prefix_pairing[i] = -1
+    }
+    prefix_pairing[0] = -2147483648  // INT32_MIN
+    
+    let idx_a: i32 = 0
+    for i in [0, m) {
+        while idx_a < n and a[idx_a] < b[i] {
+            idx_a++
+        }
+        
+        if idx_a >= n {
+            break
+        } else {
+            prefix_pairing[i+1] = idx_a
+            idx_a++
+        }
+    }
+    
+    // Suffix pairing array
+    let suffix_pairing = array<i32>(m+1)
+    for i in [0, m+1) {
+        suffix_pairing[i] = -1
+    }
+    suffix_pairing[m] = 2147483647  // INT32_MAX
+    
+    let j = n - 1
+    for i in [0, m).reverse() {  // From m-1 down to 0
+        while j >= 0 and a[j] < b[i] {
+            j--
+        }
+        
+        if j < 0 {
+            break
+        } else {
+            suffix_pairing[i] = j
+            j--
+        }
+    }
+    
+    if prefix_pairing[m] != -1 {
+        io::println(0)
+        return
+    }
+    
+    let possible = false
+    let ans = 2147483647  // INT32_MAX
+    
+    for i in [0, m) {
+        if prefix_pairing[i] == -1 or suffix_pairing[i+1] == -1 {
+            continue
+        }
+        
+        if prefix_pairing[i] >= suffix_pairing[i+1] {
+            continue
+        }
+        
+        possible = true
+        if b[i] < ans {
+            ans = b[i]
+        }
+    }
+    
+    io::println(possible ? ans : -1)
+}
+
+fun main() {
+    let t: i32 = io::read_i32()
+    while t > 0 {
+        t--
+        solve()
+    }
+}
