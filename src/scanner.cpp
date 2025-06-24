@@ -1,5 +1,6 @@
 #include "scanner.hpp"
 #include "token.hpp"
+#include "token_types.hpp"
 #include <cctype>
 #include <iostream>
 #include <string>
@@ -11,9 +12,10 @@ Scanner::Scanner(std::string src) {
     this->line_num = 1;
     this->cur_char = this->src.begin();
     this->cur_lexeme = this->src.begin();
+    this->cur_line = this->src.begin();
 }
 
-/*============= HELPER METHODS ============*/
+/*================== HELPER METHODS =================*/
 bool Scanner::reached_eof() const {
     return cur_char >= src.end();
 }
@@ -40,9 +42,16 @@ bool Scanner::match_next(char next) {
     cur_char++;
     return true;
 }
-/*=========================================*/
 
-/*============== ENTRY METHOD =============*/
+Token Scanner::make_token(TokenType type) {
+    return Token(line_num,
+                 cur_lexeme - cur_line + 1, // 1-indexed column
+                 type,
+                 std::string(cur_lexeme, cur_char));
+}
+/*===================================================*/
+
+/*=================== ENTRY METHOD ==================*/
 std::vector<Token> Scanner::scan() {
     std::vector<Token> ret;
 
@@ -51,9 +60,10 @@ std::vector<Token> Scanner::scan() {
         cur_lexeme = cur_char;
 
         // handle whitespace
-        if (isspace(peek_char())) {
+        if (std::isspace(peek_char())) {
             if (advance_char() == '\n') {
                 line_num++;
+                cur_line = cur_char;
             }
             continue;
         }
@@ -61,6 +71,7 @@ std::vector<Token> Scanner::scan() {
         // handle comments
         if (peek_char() == '/' && (peek_next() == '/' || peek_next() == '*')) {
             skip_comment();
+            continue;
         }
 
         // finally, scan the token
@@ -69,7 +80,7 @@ std::vector<Token> Scanner::scan() {
     return ret;
 }
 
-/*=========================================*/
+/*============== PARSING SPECIFIC TYPES =============*/
 Token Scanner::parse_number() {
     bool floating_point = false;
 
@@ -91,13 +102,13 @@ Token Scanner::parse_number() {
     std::string num_str(cur_lexeme, cur_char);
     try {
         if (floating_point) {
-            return Token(line_num, tok_float_literal, std::stod(num_str));
+            return make_token(tok_float_literal);
         } else {
-            return Token(line_num, tok_int_literal, std::stoll(num_str));
+            return make_token(tok_int_literal);
         }
     } catch (const std::exception&) {
         std::cout << "Error processing number: " + num_str + '\n';
-        return Token(line_num, tok_error);
+        return make_token(tok_error);
     }
 }
 
@@ -116,6 +127,7 @@ Token Scanner::parse_string() {
             case 't': str.push_back('\t'); break;
             case 'r': str.push_back('\r'); break;
             case '\'': str.push_back('\''); break;
+            case '\"': str.push_back('\"'); break;
             case '\\': str.push_back('\\'); break;
             default: break;
         }
@@ -124,10 +136,10 @@ Token Scanner::parse_string() {
     if (reached_eof()) {
         // reached eof without finding closing double quote
         std::cout << "Did not find closing double quotes\n";
-        return Token(line_num, tok_error);
+        return make_token(tok_error);
     } else {
         advance_char(); // consume closing quote
-        return Token(line_num, tok_str_literal, str);
+        return make_token(tok_str_literal);
     }
 }
 
@@ -142,6 +154,7 @@ Token Scanner::parse_char() {
             case 't': c = '\t'; break;
             case 'r': c = '\r'; break;
             case '\'': c = '\''; break;
+            case '\"': c = '\"'; break;
             case '\\': c = '\\'; break;
             default: break;
         }
@@ -149,31 +162,29 @@ Token Scanner::parse_char() {
 
     if (peek_char() != '\'') {
         std::cout << "Unterminated character literal\n";
-        return Token(line_num, tok_error);
+        return make_token(tok_error);
     }
     advance_char(); // consume closing quote
-    return Token(line_num, tok_char_literal, c);
+    return make_token(tok_char_literal);
 }
 
 Token Scanner::parse_identifier() {
-    while (isalnum(peek_char()) || peek_char() == '_') {
+    while (std::isalnum(peek_char()) || peek_char() == '_') {
         advance_char();
     }
     std::string id(cur_lexeme, cur_char);
 
     static const std::unordered_map<std::string, TokenType> keywords = {
-        {"break", tok_break}, {"const", tok_const}, {"continue", tok_continue},
-        {"else", tok_else},   {"elif", tok_elif},   {"false", tok_false},
-        {"for", tok_for},     {"fun", tok_fun},     {"if", tok_if},
-        {"in", tok_in},       {"let", tok_let},     {"return", tok_return},
-        {"true", tok_true},   {"while", tok_while}, {"i8", tok_i8},
-        {"i16", tok_i16},     {"i32", tok_i32},     {"i64", tok_i64},
-        {"u8", tok_u8},       {"u16", tok_u16},     {"u32", tok_u32},
-        {"u64", tok_u64},     {"f32", tok_f32},     {"f64", tok_f64},
-        {"str", tok_str},     {"char", tok_char}};
+        {"break", tok_break}, {"class", tok_class},   {"const", tok_const},   {"continue", tok_continue},
+        {"else", tok_else},   {"elif", tok_elif},     {"false", tok_false},   {"for", tok_for},
+        {"fun", tok_fun},     {"if", tok_if},         {"import", tok_import}, {"in", tok_in},
+        {"let", tok_let},     {"return", tok_return}, {"true", tok_true},     {"while", tok_while},
+        {"i8", tok_i8},       {"i16", tok_i16},       {"i32", tok_i32},       {"i64", tok_i64},
+        {"u8", tok_u8},       {"u16", tok_u16},       {"u32", tok_u32},       {"u64", tok_u64},
+        {"f32", tok_f32},     {"f64", tok_f64},       {"str", tok_str},       {"char", tok_char}};
 
     auto it = keywords.find(id);
-    return (it != keywords.end()) ? Token(line_num, it->second) : Token(line_num, tok_identifier, id);
+    return (it != keywords.end()) ? make_token(it->second) : make_token(tok_identifier);
 }
 
 void Scanner::skip_comment() {
@@ -197,50 +208,62 @@ void Scanner::skip_comment() {
             // increment line number if we see '\n'
             if (peek_char() == '\n') {
                 line_num++;
+                cur_line = cur_char;
             }
             advance_char();
         }
         std::cout << "Unclosed block comment\n";
     }
 }
+/*===================================================*/
 
 Token Scanner::scan_token() {
     char c = advance_char();
     switch (c) {
         // One char tokens
-        case '(': return Token(line_num, tok_open_paren);
-        case ')': return Token(line_num, tok_close_paren);
-        case '{': return Token(line_num, tok_open_brace);
-        case '}': return Token(line_num, tok_close_brace);
-        case '[': return Token(line_num, tok_open_bracket);
-        case ']': return Token(line_num, tok_close_bracket);
-        case '.': return Token(line_num, tok_member);
-        case ':': return Token(line_num, tok_colon);
+        case '(': return make_token(tok_open_paren);
+        case ')': return make_token(tok_close_paren);
+        case '{': return make_token(tok_open_brace);
+        case '}': return make_token(tok_close_brace);
+        case '[': return make_token(tok_open_bracket);
+        case ']': return make_token(tok_close_bracket);
+        case ',': return make_token(tok_comma);
+        case '.': return make_token(tok_member);
+        case ':': return make_token(match_next(':') ? tok_namespace_member : tok_colon);
 
         // Operators
-        case '+': return Token(line_num, match_next('+') ? tok_increment : tok_add);
+        case '+':
+            if (match_next('+')) return make_token(tok_increment);
+            if (match_next('=')) return make_token(tok_plus_equals);
+            return make_token(tok_add);
         case '-':
-            if (match_next('>')) return Token(line_num, tok_fun_return);
-            return Token(line_num, match_next('-') ? tok_decrement : tok_sub);
-        case '*': return Token(line_num, tok_mul);
-        case '/': return Token(line_num, tok_div);
-        case '!': return Token(line_num, match_next('=') ? tok_not_equal : tok_bang);
-        case '=': return Token(line_num, match_next('=') ? tok_equal : tok_assign);
-        case '<': return Token(line_num, match_next('=') ? tok_less_equal : tok_less);
-        case '>': return Token(line_num, match_next('=') ? tok_greater_equal : tok_greater);
+            if (match_next('>')) return make_token(tok_fun_return);
+            if (match_next('-')) return make_token(tok_decrement);
+            if (match_next('=')) return make_token(tok_sub_equals);
+            return make_token(tok_sub);
+        case '*': return make_token(match_next('=') ? tok_mul_equals : tok_mul);
+        case '/': return make_token(match_next('=') ? tok_div_equals : tok_div);
+        case '%': return make_token(match_next('=') ? tok_mod_equals : tok_mod);
+        case '!': return make_token(match_next('=') ? tok_not_equal : tok_bang);
+        case '=': return make_token(match_next('=') ? tok_equal : tok_assign);
+        case '<': return make_token(match_next('=') ? tok_less_equal : tok_less);
+        case '>': return make_token(match_next('=') ? tok_greater_equal : tok_greater);
+        // Handle single & as error or bitwise operator
+        case '&': return make_token(match_next('&') ? tok_and : tok_error);
+        // Handle single | as error or bitwise operator
+        case '|': return make_token(match_next('|') ? tok_or : tok_error);
 
         case '"': return parse_string();
         case '\'': return parse_char();
 
-        // TODO: fix missing first char
         default:
-            if (isalpha(c) || c == '_') {
+            if (isalpha(c) || c == '_')
                 return parse_identifier();
-            } else if (isdigit(c)) {
+            else if (isdigit(c))
                 return parse_number();
-            } else {
+            else {
                 std::cout << "Unknown token found: " << c << '\n';
-                return Token(line_num, tok_error);
+                return make_token(tok_error);
             }
     }
 }

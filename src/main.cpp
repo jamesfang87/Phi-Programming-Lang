@@ -1,46 +1,32 @@
 #include "scanner.hpp"
-#include "token.hpp"
+#include <cctype>
 #include <fstream>
 #include <iostream>
-#include <stdexcept>
 #include <string>
 
-std::string read_file_to_string(const std::string& file_path) {
-    // Open file in binary mode to preserve all characters
-    std::ifstream file(file_path, std::ios::binary);
-
+std::string read_file_to_string(const std::string& filename) {
+    std::ifstream file(filename);
     if (!file.is_open()) {
-        throw std::runtime_error("Failed to open file: " + file_path);
+        throw std::runtime_error("Could not open file: " + filename);
     }
-
-    // Find file size
-    file.seekg(0, std::ios::end);
-    size_t file_size = file.tellg();
-    file.seekg(0, std::ios::beg);
-
-    // Create string buffer and read content
-    std::string content;
-    content.resize(file_size);
-    file.read(&content[0], file_size);
-
-    // Check for read errors
-    if (!file) {
-        throw std::runtime_error("Error reading file: " + file_path);
-    }
-
-    return content;
+    return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        std::cerr << "Usage: " << argv[0] << " <filename>\n";
+        return 1;
+    }
+
     try {
-        std::string source = read_file_to_string("program.phi");
+        std::string filename = argv[1];
+        std::string source = read_file_to_string(filename);
         std::cout << "File content:\n" << source << "\n";
 
-        // Pass to scanner
         Scanner scanner(source);
         auto tokens = scanner.scan();
 
-        for (auto t : tokens) {
+        for (const auto& t : tokens) {
             std::cout << t.as_str() << '\n';
         }
 
