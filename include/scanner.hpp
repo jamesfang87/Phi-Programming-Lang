@@ -1,4 +1,5 @@
 #include "token.hpp"
+#include "token_types.hpp"
 #include <string>
 #include <vector>
 
@@ -12,13 +13,14 @@ private:
     std::string src;
 
     int line_num;
-    std::string::iterator cur_char, cur_lexeme;
+    std::string::iterator cur_char, cur_lexeme, cur_line;
 
     bool reached_eof() const;
     char peek_char() const;
     char peek_next() const;
     char advance_char();
     bool match_next(char next);
+    Token make_token(TokenType type);
 
     Token parse_number();
     Token parse_string();

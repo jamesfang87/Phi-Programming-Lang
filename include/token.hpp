@@ -1,21 +1,16 @@
 #include "token_types.hpp"
-#include <any>
 #include <string>
 
 #pragma once
 
 class Token {
 public:
-    Token(int line, TokenType type);
-    Token(int line, TokenType type, std::any literal);
-    Token(int line, TokenType type, std::string id);
+    Token(int line, int col, TokenType type, std::string lexeme);
 
-    std::string as_str();
+    std::string as_str() const;
 
 private:
-    int line;
+    int line, col;
     TokenType type;
-
-    std::any literal;
-    std::string identifier;
+    std::string lexeme;
 };
