@@ -1,0 +1,33 @@
+import std::io
+import std::array
+
+const bad: array<i32> = {1, 8, 49, 288, 1681, 9800, 57121, 131072, 131528, 132113,
+                     134033, 135816, 139392, 141537, 229375, 246751, 283329, 332928, 348110, 415863}
+
+fun solve() {
+    let n: i32 = io::read_i32()
+    
+    // Check if n is in bad_numbers
+    if bad.contains(n) {
+        io::println(-1)
+        return;
+    }
+
+    for i in [1, n] {
+        if bad.contains(i) {
+            io::println("{} {} ", i + 1, i)
+            i++
+        } else {
+            io::println("{} ", i)
+        }
+    }
+}
+
+fun main() {
+    let t: i32 = io::read_i32()
+    while t > 0 {
+        t--
+        solve()
+        io::println("")  // Newline after each test case
+    }
+}

@@ -1,0 +1,18 @@
+import std::io
+
+fun compute(x: i32, y: i32) -> i32 {
+    let result: i32 = (x + y) * (x - 2) / 3 + 5
+    return result
+}
+
+fun main() {
+    let a: i32 = 10
+    let b: i32 = 4
+    let c = compute(a, b * 2)
+
+    if c > 20 and c < 50 {
+        io::println("Result is between 20 and 50: " + c)
+    } else {
+        io::println("Result is outside that range: " + c)
+    }
+}
