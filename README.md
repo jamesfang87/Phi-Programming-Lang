@@ -15,11 +15,10 @@ Phi/
 │   ├── token.cpp
 │   └── scanner.cpp
 ├── example-code/    # Example Phi language files
-├── build/           # Build output directory (generated)
-├── CMakeLists.txt   # CMake build configuration
-├── Makefile         # Convenience Makefile wrapper
-├── .clangd          # Static analysis configuration
-└── compile_commands.json  # For IDE/static analysis tools
+├── build/
+├── CMakeLists.txt
+├── Makefile
+└── compile_commands.json
 ```
 
 ## Prerequisites
