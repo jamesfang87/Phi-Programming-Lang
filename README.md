@@ -30,7 +30,13 @@ Phi/
 
 ## Building
 
-### Using Make (Recommended)
+### Using the build script
+
+```bash
+./build.sh
+```
+
+### Using Make
 
 ```bash
 # Build the project
@@ -63,10 +69,4 @@ make -j4
 
 # Run
 ./phi
-```
-
-### Using the build script
-
-```bash
-./build.sh
 ```
