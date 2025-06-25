@@ -13,7 +13,7 @@
 
 Scanner::Scanner(std::string src, std::string path) {
     this->src = std::move(src);
-    this->path = path;
+    this->path = std::move(path);
     this->line_num = 1;
     this->cur_char = this->src.begin();
     this->cur_lexeme = this->src.begin();
@@ -32,7 +32,9 @@ char Scanner::peek_char() const {
 }
 
 char Scanner::peek_next() const {
-    if (reached_eof() || cur_char + 1 >= src.end()) return '\0';
+    if (reached_eof() || cur_char + 1 >= src.end()) {
+        return '\0';
+    }
     return *(cur_char + 1);
 }
 
@@ -51,10 +53,10 @@ bool Scanner::match_next(char next) {
 }
 
 Token Scanner::make_token(TokenType type) {
-    return Token(line_num,
-                 static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
-                 type,
-                 std::string(cur_lexeme, cur_char));
+    return {line_num,
+            static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
+            type,
+            std::string(cur_lexeme, cur_char)};
 }
 
 void Scanner::output_error(const std::string& message, const std::string& expected_message) {
@@ -132,12 +134,10 @@ Token Scanner::parse_number() {
     }
 
     // TODO: implement exponents
-    std::string num_str(cur_lexeme, cur_char);
     if (floating_point) {
         return make_token(tok_float_literal);
-    } else {
-        return make_token(tok_int_literal);
     }
+    return make_token(tok_int_literal);
 }
 
 Token Scanner::parse_string() {
@@ -166,10 +166,9 @@ Token Scanner::parse_string() {
         output_error("\033[31;1;4merror:\033[0m untermianted string literal",
                      "expected closing double quote to match this");
         return make_token(tok_error);
-    } else {
-        advance_char(); // consume closing quote
-        return make_token(tok_str_literal);
     }
+    advance_char(); // consume closing quote
+    return make_token(tok_str_literal);
 }
 
 Token Scanner::parse_char() {
@@ -202,7 +201,7 @@ Token Scanner::parse_identifier() {
     while (std::isalnum(peek_char()) || peek_char() == '_') {
         advance_char();
     }
-    std::string id(cur_lexeme, cur_char);
+    std::string identifier(cur_lexeme, cur_char);
 
     static const std::unordered_map<std::string, TokenType> keywords = {
         {"break", tok_break}, {"class", tok_class},   {"const", tok_const},   {"continue", tok_continue},
@@ -213,7 +212,7 @@ Token Scanner::parse_identifier() {
         {"u8", tok_u8},       {"u16", tok_u16},       {"u32", tok_u32},       {"u64", tok_u64},
         {"f32", tok_f32},     {"f64", tok_f64},       {"str", tok_str},       {"char", tok_char}};
 
-    auto it = keywords.find(id);
+    auto it = keywords.find(identifier);
     return (it != keywords.end()) ? make_token(it->second) : make_token(tok_identifier);
 }
 
@@ -288,11 +287,11 @@ Token Scanner::scan_token() {
         case '\'': return parse_char();
 
         default:
-            if (isalpha(c) || c == '_')
+            if (std::isalpha(c) || c == '_') {
                 return parse_identifier();
-            else if (isdigit(c))
+            } else if (std::isdigit(c)) {
                 return parse_number();
-            else {
+            } else {
                 std::println("Unknow token found: {}\n", c);
                 return make_token(tok_error);
             }
