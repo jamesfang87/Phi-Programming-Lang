@@ -2,17 +2,24 @@
 #include "token.hpp"
 #include "token_types.hpp"
 #include <cctype>
+#include <cstdio>
+#include <format>
 #include <iostream>
+#include <print>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
-Scanner::Scanner(std::string src) {
+Scanner::Scanner(std::string src, std::string path) {
     this->src = std::move(src);
+    this->path = path;
     this->line_num = 1;
     this->cur_char = this->src.begin();
     this->cur_lexeme = this->src.begin();
     this->cur_line = this->src.begin();
+    this->lexeme_line = this->src.begin();
+    this->successful = true;
 }
 
 /*================== HELPER METHODS =================*/
@@ -45,19 +52,45 @@ bool Scanner::match_next(char next) {
 
 Token Scanner::make_token(TokenType type) {
     return Token(line_num,
-                 cur_lexeme - cur_line + 1, // 1-indexed column
+                 static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
                  type,
                  std::string(cur_lexeme, cur_char));
 }
+
+void Scanner::output_error(const std::string& message, const std::string& expected_message) {
+    successful = false;
+
+    // compute column (1-based) where the error begins
+    int col = static_cast<int>(cur_lexeme - lexeme_line) + 1;
+
+    // convert line number to string to get its width
+    std::string line_no_str = std::to_string(line_num);
+    size_t gutter_width = line_no_str.size() + 2;
+
+    std::println(std::cerr, "{}", message);
+    std::println(std::cerr, "--> {}:{}:{}", path, line_num, col);
+
+    auto line_end = lexeme_line;
+    while (line_end < src.end() && *line_end != '\n') {
+        line_end++;
+    }
+    std::string_view line_sv(&*lexeme_line, static_cast<size_t>(line_end - lexeme_line));
+
+    std::println(std::cerr, "{}|", std::string(gutter_width, ' '));
+    std::println(std::cerr, " {} | {}", line_no_str, line_sv);
+    std::println(std::cerr, "{}|{}^ {}\n", std::string(gutter_width, ' '), std::string(col, ' '), expected_message);
+}
+
 /*===================================================*/
 
 /*=================== ENTRY METHOD ==================*/
-std::vector<Token> Scanner::scan() {
+std::pair<short, std::vector<Token>> Scanner::scan() {
     std::vector<Token> ret;
 
     while (!reached_eof()) {
         // make sure that these two it are pointing to the same place
         cur_lexeme = cur_char;
+        lexeme_line = cur_line;
 
         // handle whitespace
         if (std::isspace(peek_char())) {
@@ -77,7 +110,7 @@ std::vector<Token> Scanner::scan() {
         // finally, scan the token
         ret.push_back(scan_token());
     }
-    return ret;
+    return {successful, ret};
 }
 
 /*============== PARSING SPECIFIC TYPES =============*/
@@ -100,15 +133,10 @@ Token Scanner::parse_number() {
 
     // TODO: implement exponents
     std::string num_str(cur_lexeme, cur_char);
-    try {
-        if (floating_point) {
-            return make_token(tok_float_literal);
-        } else {
-            return make_token(tok_int_literal);
-        }
-    } catch (const std::exception&) {
-        std::cout << "Error processing number: " + num_str + '\n';
-        return make_token(tok_error);
+    if (floating_point) {
+        return make_token(tok_float_literal);
+    } else {
+        return make_token(tok_int_literal);
     }
 }
 
@@ -135,7 +163,8 @@ Token Scanner::parse_string() {
 
     if (reached_eof()) {
         // reached eof without finding closing double quote
-        std::cout << "Did not find closing double quotes\n";
+        output_error("\033[31;1;4merror:\033[0m untermianted string literal",
+                     "expected closing double quote to match this");
         return make_token(tok_error);
     } else {
         advance_char(); // consume closing quote
@@ -161,7 +190,8 @@ Token Scanner::parse_char() {
     }
 
     if (peek_char() != '\'') {
-        std::cout << "Unterminated character literal\n";
+        output_error("\033[31;1;4merror:\033[0m unterminated character literal",
+                     "expected closing single quote to match this");
         return make_token(tok_error);
     }
     advance_char(); // consume closing quote
@@ -212,7 +242,8 @@ void Scanner::skip_comment() {
             }
             advance_char();
         }
-        std::cout << "Unclosed block comment\n";
+
+        output_error("\033[31;1;4merror:\033[0m unclosed block comment", "expected closing `*/` to match this");
     }
 }
 /*===================================================*/
@@ -262,7 +293,7 @@ Token Scanner::scan_token() {
             else if (isdigit(c))
                 return parse_number();
             else {
-                std::cout << "Unknown token found: " << c << '\n';
+                std::println("Unknow token found: {}\n", c);
                 return make_token(tok_error);
             }
     }

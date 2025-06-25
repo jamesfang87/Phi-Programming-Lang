@@ -2,6 +2,7 @@
 #include <cctype>
 #include <fstream>
 #include <iostream>
+#include <print>
 #include <string>
 
 std::string read_file_to_string(const std::string& filename) {
@@ -21,17 +22,22 @@ int main(int argc, char* argv[]) {
     try {
         std::string filename = argv[1];
         std::string source = read_file_to_string(filename);
-        std::cout << "File content:\n" << source << "\n";
+        std::println("File content:\n{}", source);
 
-        Scanner scanner(source);
-        auto tokens = scanner.scan();
+        Scanner scanner(source, filename);
+        auto [success, tokens] = scanner.scan();
+
+        if (!success) {
+            std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
+            return 0;
+        }
 
         for (const auto& t : tokens) {
             std::cout << t.as_str() << '\n';
         }
 
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::println(std::cerr, "Error: {}", e.what());
         return 1;
     }
     return 0;

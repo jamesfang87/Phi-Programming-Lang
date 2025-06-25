@@ -6,15 +6,19 @@
 #pragma once
 class Scanner {
 public:
-    Scanner(std::string src);
-    std::vector<Token> scan();
+    Scanner(std::string src, std::string path);
+    std::pair<short, std::vector<Token>> scan();
 
 private:
+    std::string path;
     std::string src;
 
     int line_num;
-    std::string::iterator cur_char, cur_lexeme, cur_line;
+    std::string::iterator cur_char, cur_lexeme, cur_line, lexeme_line;
 
+    bool successful;
+
+    void output_error(const std::string& message, const std::string& expected_message);
     bool reached_eof() const;
     char peek_char() const;
     char peek_next() const;
@@ -22,10 +26,10 @@ private:
     bool match_next(char next);
     Token make_token(TokenType type);
 
+    Token scan_token();
     Token parse_number();
     Token parse_string();
     Token parse_char();
     Token parse_identifier();
     void skip_comment();
-    Token scan_token();
 };
