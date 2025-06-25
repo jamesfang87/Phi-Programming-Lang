@@ -6,7 +6,7 @@ A modern language compiler written in C++26.
 
 ```
 Phi/
-├── include/          # Header files (.hpp)
+├── include/         # Header files (.hpp)
 │   ├── token.hpp
 │   ├── token_types.hpp
 │   └── scanner.hpp
