@@ -1,19 +1,19 @@
 [
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=gnu++20 -arch arm64 -O3 -o CMakeFiles/phi.dir/src/main.cpp.o -c /Users/jamesfang/Phi/src/main.cpp",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/main.cpp.o -c /Users/jamesfang/Phi/src/main.cpp",
   "file": "/Users/jamesfang/Phi/src/main.cpp",
   "output": "CMakeFiles/phi.dir/src/main.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=gnu++20 -arch arm64 -O3 -o CMakeFiles/phi.dir/src/scanner.cpp.o -c /Users/jamesfang/Phi/src/scanner.cpp",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/scanner.cpp.o -c /Users/jamesfang/Phi/src/scanner.cpp",
   "file": "/Users/jamesfang/Phi/src/scanner.cpp",
   "output": "CMakeFiles/phi.dir/src/scanner.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=gnu++20 -arch arm64 -O3 -o CMakeFiles/phi.dir/src/token.cpp.o -c /Users/jamesfang/Phi/src/token.cpp",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/token.cpp.o -c /Users/jamesfang/Phi/src/token.cpp",
   "file": "/Users/jamesfang/Phi/src/token.cpp",
   "output": "CMakeFiles/phi.dir/src/token.cpp.o"
 }
