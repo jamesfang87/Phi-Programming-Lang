@@ -1,6 +1,6 @@
 # Phi Language Compiler
 
-A modern language compiler written in C++20.
+A modern language compiler written in C++26.
 
 ## Project Structure
 
@@ -25,7 +25,7 @@ Phi/
 ## Prerequisites
 
 - CMake (3.16 or higher)
-- C++20 compatible compiler (GCC 10+, Clang 10+, or MSVC 2019+)
+- C++26 compatible compiler
 - Make (for the convenience Makefile)
 
 ## Building
