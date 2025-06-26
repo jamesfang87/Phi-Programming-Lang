@@ -76,10 +76,10 @@ void Scanner::output_error(const std::string& message, const std::string& expect
     while (line_end < src.end() && *line_end != '\n') {
         line_end++;
     }
-    std::string_view line_sv(&*lexeme_line, static_cast<size_t>(line_end - lexeme_line));
+    std::string_view line(&*lexeme_line, static_cast<size_t>(line_end - lexeme_line));
 
     std::println(std::cerr, "{}|", std::string(gutter_width, ' '));
-    std::println(std::cerr, " {} | {}", line_no_str, line_sv);
+    std::println(std::cerr, " {} | {}", line_num, line);
     std::println(std::cerr, "{}|{}^ {}\n", std::string(gutter_width, ' '), std::string(col, ' '), expected_message);
 }
 
@@ -140,24 +140,59 @@ Token Scanner::parse_number() {
     return make_token(tok_int_literal);
 }
 
+char Scanner::parse_escape_sequence() {
+    if (reached_eof()) {
+        output_error("Unfinished escape sequence", "Expected a valid escape sequence character here");
+        return '\0';
+    }
+
+    char c = advance_char();
+    switch (c) {
+        case 'n': return '\n';
+        case 't': return '\t';
+        case 'r': return '\r';
+        case '\'': return '\'';
+        case '"': return '"';
+        case '\\': return '\\';
+        case '0': return '\0';
+        case 'x': return parse_hex_escape();
+        default:
+            output_error("Invalid escape sequence: \\" + std::string(1, c), "");
+            return c; // Return character as-is for error recovery
+    }
+}
+
+char Scanner::parse_hex_escape() {
+    char hex[3] = {0};
+    for (int i = 0; i < 2; i++) {
+        if (reached_eof() || !isxdigit(peek_char())) {
+            output_error("Incomplete hex escape", "");
+            successful = false;
+            return '\0';
+        }
+        hex[i] = advance_char();
+    }
+    return static_cast<char>(std::stoi(hex, nullptr, 16));
+}
+
 Token Scanner::parse_string() {
+    const int starting_line = line_num;
     std::string str;
 
     // parse until we see closing double quote
     while (!reached_eof() && peek_char() != '"') {
-        if (peek_char() != '\\') {
-            str.push_back(advance_char());
+        if (peek_char() == '\\') {
+            advance_char(); // consume the forward slash
+            str.push_back(parse_escape_sequence());
             continue;
         }
-
-        switch (advance_char()) {
-            case 'n': str.push_back('\n'); break;
-            case 't': str.push_back('\t'); break;
-            case 'r': str.push_back('\r'); break;
-            case '\'': str.push_back('\''); break;
-            case '\"': str.push_back('\"'); break;
-            case '\\': str.push_back('\\'); break;
-            default: break;
+        // increment line number if we see '\n'
+        if (peek_char() == '\n') {
+            line_num++;
+            cur_line = cur_char;
+            advance_char();
+        } else {
+            str.push_back(advance_char());
         }
     }
 
@@ -168,7 +203,7 @@ Token Scanner::parse_string() {
         return make_token(tok_error);
     }
     advance_char(); // consume closing quote
-    return make_token(tok_str_literal);
+    return {starting_line, static_cast<int>(cur_lexeme - lexeme_line) + 1, tok_str_literal, str};
 }
 
 Token Scanner::parse_char() {
@@ -177,15 +212,7 @@ Token Scanner::parse_char() {
         c = advance_char();
     } else {
         advance_char(); // consume the forward slash
-        switch (advance_char()) {
-            case 'n': c = '\n'; break;
-            case 't': c = '\t'; break;
-            case 'r': c = '\r'; break;
-            case '\'': c = '\''; break;
-            case '\"': c = '\"'; break;
-            case '\\': c = '\\'; break;
-            default: break;
-        }
+        c = parse_escape_sequence();
     }
 
     if (peek_char() != '\'') {
@@ -194,7 +221,7 @@ Token Scanner::parse_char() {
         return make_token(tok_error);
     }
     advance_char(); // consume closing quote
-    return make_token(tok_char_literal);
+    return {line_num, static_cast<int>(cur_lexeme - lexeme_line) + 1, tok_char_literal, std::string{c}};
 }
 
 Token Scanner::parse_identifier() {
