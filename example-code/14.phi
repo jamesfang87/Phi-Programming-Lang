@@ -1,0 +1,16 @@
+fun another() {
+
+}
+
+fun foo() -> i32 {
+
+}
+
+fun asdf() -> Point {
+
+}
+
+
+fun main() -> 123 {
+
+}

@@ -1,5 +1,4 @@
 #include "token.hpp"
-#include "token_types.hpp"
 #include <format>
 #include <string>
 
@@ -100,5 +99,9 @@ std::string token_type_to_string(TokenType type) {
 }
 
 std::string Token::as_str() const {
-    return std::format("[{}] \"{}\" at line {}, column {}", token_type_to_string(type), lexeme, line, col);
+    return std::format("[{}] \"{}\" at line {}, column {}",
+                       token_type_to_string(type),
+                       lexeme,
+                       line,
+                       col);
 }
