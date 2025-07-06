@@ -1,6 +1,5 @@
 #include "scanner.hpp"
 #include "token.hpp"
-#include "token_types.hpp"
 #include <cctype>
 #include <cstdio>
 #include <format>
@@ -25,15 +24,11 @@ Scanner::Scanner(std::string src, std::string path) {
 /*================== HELPER METHODS =================*/
 
 /// Returns true if reached eof, false otherwise
-bool Scanner::reached_eof() const {
-    return cur_char >= src.end();
-}
+bool Scanner::reached_eof() const { return cur_char >= src.end(); }
 
 /// Returns the value of the current char the scanner is pointing to
 /// If we have reached the eof, then returns '\0'
-char Scanner::peek_char() const {
-    return (reached_eof()) ? '\0' : *cur_char;
-}
+char Scanner::peek_char() const { return (reached_eof()) ? '\0' : *cur_char; }
 
 /// Returns the value of the next char.
 /// If this char is past eof, then returns '\0'
