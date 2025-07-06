@@ -1,17 +1,17 @@
 #include "token.hpp"
-#include "token_types.hpp"
 #include <string>
 #include <vector>
 
 #pragma once
+
 class Scanner {
 public:
     Scanner(std::string src, std::string path);
     std::pair<bool, std::vector<Token>> scan();
 
 private:
-    std::string path;
     std::string src;
+    std::string path;
 
     int line_num;
     std::string::iterator cur_char, cur_lexeme, cur_line, lexeme_line;
