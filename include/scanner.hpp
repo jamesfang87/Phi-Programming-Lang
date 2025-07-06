@@ -7,7 +7,7 @@
 class Scanner {
 public:
     Scanner(std::string src, std::string path);
-    std::pair<short, std::vector<Token>> scan();
+    std::pair<bool, std::vector<Token>> scan();
 
 private:
     std::string path;
@@ -18,7 +18,7 @@ private:
 
     bool successful;
 
-    void output_error(const std::string& message, const std::string& expected_message);
+    void report_error(const std::string& message, const std::string& expected_message);
     [[nodiscard]] bool reached_eof() const;
     [[nodiscard]] char peek_char() const;
     [[nodiscard]] char peek_next() const;
