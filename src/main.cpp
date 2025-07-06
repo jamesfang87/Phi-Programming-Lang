@@ -1,3 +1,4 @@
+#include "parser.hpp"
 #include "scanner.hpp"
 #include <cctype>
 #include <fstream>
@@ -34,6 +35,12 @@ int main(int argc, char* argv[]) {
 
         for (const auto& t : tokens) {
             std::cout << t.as_str() << '\n';
+        }
+
+        Parser parser(tokens);
+        auto stuff = parser.parse();
+        for (const auto& fun : stuff) {
+            fun->info_dump();
         }
 
     } catch (const std::exception& e) {
