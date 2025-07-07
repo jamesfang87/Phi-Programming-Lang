@@ -53,6 +53,7 @@ enum TokenType {
     tok_close_bracket,
     tok_fun_return,
     tok_comma,
+    tok_semicolon,
 
     // operators
     tok_add,  // +
