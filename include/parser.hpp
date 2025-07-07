@@ -36,12 +36,12 @@ public:
     std::unique_ptr<Block> parse_block();
 
     std::unique_ptr<Expr> parse_primary_expr();
-
+    std::unique_ptr<Expr> parse_postfix_expr();
+    
     std::unique_ptr<Stmt> parse_stmt();
     std::unique_ptr<ReturnStmt> parse_return_stmt();
 
-    void
-    throw_parsing_error(int line, int col, std::string_view error, std::string_view expected_message);
+    void throw_parsing_error(int line, int col, std::string_view error, std::string_view expected_message);
 
 private:
     std::vector<std::string> lines;

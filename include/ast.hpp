@@ -41,13 +41,13 @@ protected:
 
 class Block {
 public:
-    Block(std::vector<std::unique_ptr<Stmt>> statements)
-        : statements(std::move(statements)) {}
+    Block(std::vector<std::unique_ptr<Stmt>> stmts)
+        : stmts(std::move(stmts)) {}
 
     void info_dump(int level = 0) const;
 
 private:
-    std::vector<std::unique_ptr<Stmt>> statements;
+    std::vector<std::unique_ptr<Stmt>> stmts;
 };
 
 class FunctionDecl : public Decl {
@@ -86,14 +86,14 @@ private:
 
 class IntLiteral : public Expr {
 public:
-    IntLiteral(SrcLocation location, int64_t value)
+    IntLiteral(SrcLocation location, std::int64_t value)
         : Expr(location),
           value(value) {}
 
     void info_dump(int level = 0) const override;
 
 private:
-    int64_t value;
+    std::int64_t value;
 };
 
 class FloatLiteral : public Expr {
@@ -111,6 +111,18 @@ private:
 class DeclRefExpr : public Expr {
 public:
     DeclRefExpr(SrcLocation location, std::string identifier)
+        : Expr(location),
+          identifier(std::move(identifier)) {}
+
+    void info_dump(int level = 0) const override;
+
+private:
+    std::string identifier;
+};
+
+class FunCallExpr : public Expr {
+public:
+    FunCallExpr(SrcLocation location, std::string identifier)
         : Expr(location),
           identifier(std::move(identifier)) {}
 
