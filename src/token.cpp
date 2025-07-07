@@ -4,7 +4,7 @@
  *
  * This file contains the implementation of the Token class constructor,
  * the token_type_to_string utility function for converting TokenType values
- * to human-readable strings, and the Token::as_str() method for debugging output.
+ * to human-readable strings, and the Token::to_string() method for debugging output.
  */
 
 #include "token.hpp"
@@ -25,9 +25,6 @@ Token::Token(int line, int col, TokenType type, std::string lexeme) {
  * corresponding human-readable string names. This is primarily used for
  * debugging output and error messages. The returned strings are in uppercase
  * and match the token type names without the "tok_" prefix.
- *
- * Uses a lookup table for O(1) access instead of a switch statement for
- * better performance and maintainability.
  *
  * @param type The TokenType to convert
  * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")

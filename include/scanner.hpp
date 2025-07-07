@@ -37,8 +37,8 @@ public:
      * @param src The source code string to scan
      * @param path The file path of the source (used for error reporting)
      */
-    Scanner(std::string src, std::string path) 
-        : src(std::move(src)), path(std::move(path)), line_num(1), successful(true) {
+    Scanner(std::string src, std::string path)
+        : src(std::move(src)), path(std::move(path)) {
         cur_char = this->src.begin();
         cur_lexeme = this->src.begin();
         cur_line = this->src.begin();
@@ -74,13 +74,13 @@ private:
     std::string src;   ///< The source code being scanned
     std::string path;  ///< File path for error reporting
 
-    int line_num;      ///< Current line number (1-indexed)
+    int line_num = 1;      ///< Current line number (1-indexed)
     std::string::iterator cur_char;    ///< Current character position
     std::string::iterator cur_lexeme;  ///< Start of current lexeme
     std::string::iterator cur_line;    ///< Start of current line
     std::string::iterator lexeme_line; ///< Start of line containing current lexeme
 
-    bool successful;   ///< Whether scanning completed without errors
+    bool successful = true;   ///< Whether scanning completed without errors
 
     /**
      * @brief Reports a scanning error with formatted output
