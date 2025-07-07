@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
 
         std::println("Tokens:");
         for (const auto& t : tokens) {
-            std::cout << t.as_str() << '\n';
+            std::cout << t.to_string() << '\n';
         }
 
         std::println("\nParsing results: ");
