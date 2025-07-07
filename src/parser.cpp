@@ -6,6 +6,7 @@
 #include <memory>
 #include <print>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -25,26 +26,18 @@ Token Parser::advance_token() {
 
 void Parser::throw_parse_error(int line,
                                int col,
-                               std::string message,
-                               std::string expected_message) {
+                               std::string_view message,
+                               std::string_view expected_message) {
     successful = false; // set success flag to false
 
     // convert line number to string to get its width
     std::string line_num_str = std::to_string(line);
-    size_t gutter_width = line_num_str.size() + 2;
+    int gutter_width = line_num_str.size() + 2;
 
-    std::println(std::cerr, "{}", message);
-
-    /*
+    std::println(std::cerr, "\033[31;1;4merror:\033[0m {}", message);
     std::println(std::cerr, "--> {}:{}:{}", path, line, col);
 
-    auto line_end = lexeme_line;
-    while (line_end < src.end() && *line_end != '\n') {
-        line_end++;
-    }
-    */
-    std::string_view line_content; //(&*lexeme_line, static_cast<size_t>(line_end - lexeme_line));
-
+    std::string_view line_content = lines[line - 1];
     std::println(std::cerr, "{}|", std::string(gutter_width, ' '));
     std::println(std::cerr, " {} | {}", line, line_content);
     std::println(std::cerr,

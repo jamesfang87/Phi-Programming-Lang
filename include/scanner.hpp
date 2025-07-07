@@ -9,6 +9,9 @@ public:
     Scanner(std::string src, std::string path);
     std::pair<bool, std::vector<Token>> scan();
 
+    std::string get_src() { return src; }
+    std::string get_path() { return path; }
+
 private:
     std::string src;
     std::string path;
