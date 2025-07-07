@@ -33,11 +33,13 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
+        std::println("Tokens:");
         for (const auto& t : tokens) {
             std::cout << t.as_str() << '\n';
         }
 
-        Parser parser(tokens);
+        std::println("\nParsing results: ");
+        Parser parser(source, filename, tokens);
         auto stuff = parser.parse();
         for (const auto& fun : stuff) {
             fun->info_dump();

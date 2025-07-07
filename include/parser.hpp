@@ -2,14 +2,28 @@
 #include "token.hpp"
 #include <memory>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 class Parser {
 public:
-    Parser(std::vector<Token>& tokens)
-        : tokens(tokens),
+    Parser(std::string_view src, std::string_view path, std::vector<Token>& tokens)
+        : path(path),
+          tokens(tokens),
           token_it(tokens.begin()),
-          functions() {}
+          functions() {
+        auto it = src.begin();
+        while (it < src.end()) {
+            auto line_start = it;
+            while (it < src.end() && *it != '\n') {
+                it++;
+            }
+
+            lines.emplace_back(line_start, it++);
+        }
+    }
+
     Token advance_token();
     Token this_token();
 
@@ -17,11 +31,17 @@ public:
 
     std::unique_ptr<FunctionDecl> parse_function_decl();
 
-    void throw_parse_error(int line, int col, std::string error, std::string expected_message);
+    void
+    throw_parse_error(int line, int col, std::string_view error, std::string_view expected_message);
 
 private:
+    std::vector<std::string> lines;
+    std::string_view path;
+
     std::vector<Token>& tokens;
     std::vector<Token>::iterator token_it;
+
     bool successful = true;
+
     std::vector<std::unique_ptr<FunctionDecl>> functions;
 };

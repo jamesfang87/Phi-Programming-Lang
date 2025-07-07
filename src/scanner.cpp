@@ -2,7 +2,6 @@
 #include "token.hpp"
 #include <cctype>
 #include <cstdio>
-#include <format>
 #include <iostream>
 #include <print>
 #include <string>
@@ -78,7 +77,7 @@ void Scanner::report_error(const std::string& message, const std::string& expect
     std::string line_no_str = std::to_string(line_num);
     size_t gutter_width = line_no_str.size() + 2;
 
-    std::println(std::cerr, "{}", message);
+    std::println(std::cerr, "\033[31;1;4merror:\033[0m {}", message);
     std::println(std::cerr, "--> {}:{}:{}", path, line_num, col);
 
     auto line_end = lexeme_line;
@@ -214,8 +213,7 @@ Token Scanner::parse_string() {
 
     if (reached_eof()) {
         // reached eof without finding closing double quote
-        report_error("\033[31;1;4merror:\033[0m untermianted string literal",
-                     "expected closing double quote to match this");
+        report_error("untermianted string literal", "expected closing double quote to match this");
         return make_token(tok_error);
     }
     advance_char(); // consume closing quote
@@ -232,7 +230,7 @@ Token Scanner::parse_char() {
     }
 
     if (peek_char() != '\'') {
-        report_error("\033[31;1;4merror:\033[0m unterminated character literal",
+        report_error("unterminated character literal",
                      "expected closing single quote to match this");
         return make_token(tok_error);
     }
@@ -295,8 +293,7 @@ void Scanner::skip_comment() {
             advance_char();
         }
 
-        report_error("\033[31;1;4merror:\033[0m unclosed block comment",
-                     "expected closing `*/` to match this");
+        report_error("unclosed block comment", "expected closing `*/` to match this");
     }
 }
 /*===================================================*/
