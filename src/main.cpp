@@ -11,7 +11,7 @@ std::string read_file_to_string(const std::string& filename) {
     if (!file.is_open()) {
         throw std::runtime_error("Could not open file: " + filename);
     }
-    return std::string{(std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>()};
+    return std::string{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
 int main(int argc, char* argv[]) {
