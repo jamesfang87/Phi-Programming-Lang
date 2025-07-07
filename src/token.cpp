@@ -1,3 +1,12 @@
+/**
+ * @file token.cpp
+ * @brief Implementation of the Token class and utility functions
+ *
+ * This file contains the implementation of the Token class constructor,
+ * the token_type_to_string utility function for converting TokenType values
+ * to human-readable strings, and the Token::as_str() method for debugging output.
+ */
+
 #include "token.hpp"
 #include <format>
 #include <string>
@@ -9,6 +18,17 @@ Token::Token(int line, int col, TokenType type, std::string lexeme) {
     this->lexeme = std::move(lexeme);
 }
 
+/**
+ * @brief Converts a TokenType enumeration value to its string representation
+ *
+ * This function provides a mapping from TokenType enum values to their
+ * corresponding human-readable string names. This is primarily used for
+ * debugging output and error messages. The returned strings are in uppercase
+ * and match the token type names without the "tok_" prefix.
+ *
+ * @param type The TokenType to convert
+ * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")
+ */
 std::string token_type_to_string(TokenType type) {
     switch (type) {
         case tok_eof: return "EOF";
@@ -99,7 +119,18 @@ std::string token_type_to_string(TokenType type) {
     }
 }
 
-std::string Token::as_str() const {
+/**
+ * @brief Formats the token as a human-readable string for debugging
+ *
+ * Creates a formatted string representation of the token that includes
+ * the token type name, the lexeme (original text), and the source location.
+ * This method is primarily used for debugging output and compiler diagnostics.
+ *
+ * The format is: [TOKEN_TYPE] "lexeme" at line N, column M
+ *
+ * @return A formatted string representation of this token
+ */
+std::string Token::to_string() const {
     return std::format("[{}] \"{}\" at line {}, column {}",
                        token_type_to_string(type),
                        lexeme,

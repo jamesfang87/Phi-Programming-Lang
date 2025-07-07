@@ -1,6 +1,7 @@
 #include <cassert>
 #include <string>
 #include <string_view>
+#include <cstdint>
 
 #pragma once
 
@@ -11,7 +12,7 @@ struct SrcLocation {
 
 class Type {
 public:
-    enum class Primitive : char {
+    enum class Primitive : std::uint8_t {
         // Signed integer types
         i8,
         i16,
