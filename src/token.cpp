@@ -26,97 +26,126 @@ Token::Token(int line, int col, TokenType type, std::string lexeme) {
  * debugging output and error messages. The returned strings are in uppercase
  * and match the token type names without the "tok_" prefix.
  *
+ * Uses a lookup table for O(1) access instead of a switch statement for
+ * better performance and maintainability.
+ *
  * @param type The TokenType to convert
  * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")
  */
 std::string token_type_to_string(TokenType type) {
-    switch (type) {
-        case tok_eof: return "EOF";
+    // Static lookup table for fast token type to string conversion
+    static const std::string token_strings[] = {
+        // Special tokens
+        "EOF",                    // tok_eof
+        "ERROR",                  // tok_error
 
-        case tok_break: return "BREAK";
-        case tok_class: return "CLASS";
-        case tok_const: return "CONST";
-        case tok_continue: return "CONTINUE";
-        case tok_else: return "ELSE";
-        case tok_elif: return "ELIF";
-        case tok_false: return "FALSE";
-        case tok_for: return "FOR";
-        case tok_fun: return "FUN";
-        case tok_if: return "IF";
-        case tok_import: return "IMPORT";
-        case tok_in: return "IN";
-        case tok_let: return "LET";
-        case tok_return: return "RETURN";
-        case tok_true: return "TRUE";
-        case tok_while: return "WHILE";
+        // Keywords (control flow)
+        "BREAK",                  // tok_break
+        "CLASS",                  // tok_class
+        "CONST",                  // tok_const
+        "CONTINUE",               // tok_continue
+        "ELSE",                   // tok_else
+        "ELIF",                   // tok_elif
+        "FALSE",                  // tok_false
+        "FOR",                    // tok_for
+        "FUN",                    // tok_fun
+        "IF",                     // tok_if
+        "IMPORT",                 // tok_import
+        "IN",                     // tok_in
+        "LET",                    // tok_let
+        "RETURN",                 // tok_return
+        "TRUE",                   // tok_true
+        "WHILE",                  // tok_while
 
-        case tok_i8: return "I8";
-        case tok_i16: return "I16";
-        case tok_i32: return "I32";
-        case tok_i64: return "I64";
+        // Signed integer types
+        "I8",                     // tok_i8
+        "I16",                    // tok_i16
+        "I32",                    // tok_i32
+        "I64",                    // tok_i64
 
-        case tok_u8: return "U8";
-        case tok_u16: return "U16";
-        case tok_u32: return "U32";
-        case tok_u64: return "U64";
+        // Unsigned integer types
+        "U8",                     // tok_u8
+        "U16",                    // tok_u16
+        "U32",                    // tok_u32
+        "U64",                    // tok_u64
 
-        case tok_f32: return "F32";
-        case tok_f64: return "F64";
+        // Floating point types
+        "F32",                    // tok_f32
+        "F64",                    // tok_f64
 
-        case tok_str: return "STR";
-        case tok_char: return "CHAR";
+        // Text types
+        "STR",                    // tok_str
+        "CHAR",                   // tok_char
 
-        case tok_open_paren: return "OPEN_PAREN";
-        case tok_close_paren: return "CLOSE_PAREN";
-        case tok_open_brace: return "OPEN_BRACE";
-        case tok_close_brace: return "CLOSE_BRACE";
-        case tok_open_bracket: return "OPEN_BRACKET";
-        case tok_close_bracket: return "CLOSE_BRACKET";
-        case tok_fun_return: return "FUN_RETURN";
-        case tok_comma: return "COMMA";
-        case tok_semicolon: return "SEMICOLON";
+        // Syntax elements
+        "OPEN_PAREN",             // tok_open_paren
+        "CLOSE_PAREN",            // tok_close_paren
+        "OPEN_BRACE",             // tok_open_brace
+        "CLOSE_BRACE",            // tok_close_brace
+        "OPEN_BRACKET",           // tok_open_bracket
+        "CLOSE_BRACKET",          // tok_close_bracket
+        "FUN_RETURN",             // tok_fun_return
+        "COMMA",                  // tok_comma
+        "SEMICOLON",              // tok_semicolon
 
-        case tok_add: return "ADD";
-        case tok_sub: return "SUB";
-        case tok_mul: return "MUL";
-        case tok_div: return "DIV";
-        case tok_mod: return "MOD";
-        case tok_bang: return "BANG";
+        // Basic operators
+        "ADD",                    // tok_add
+        "SUB",                    // tok_sub
+        "MUL",                    // tok_mul
+        "DIV",                    // tok_div
+        "MOD",                    // tok_mod
+        "BANG",                   // tok_bang
 
-        case tok_plus_equals: return "PLUS_EQUALS";
-        case tok_sub_equals: return "SUB_EQUALS";
-        case tok_mul_equals: return "MUL_EQUALS";
-        case tok_div_equals: return "DIV_EQUALS";
-        case tok_mod_equals: return "MOD_EQUALS";
+        // Assignment operators
+        "PLUS_EQUALS",            // tok_plus_equals
+        "SUB_EQUALS",             // tok_sub_equals
+        "MUL_EQUALS",             // tok_mul_equals
+        "DIV_EQUALS",             // tok_div_equals
+        "MOD_EQUALS",             // tok_mod_equals
 
-        case tok_member: return "MEMBER";
-        case tok_namespace_member: return "NAMESPACE_MEMBER";
+        // Member access
+        "MEMBER",                 // tok_member
+        "NAMESPACE_MEMBER",       // tok_namespace_member
 
-        case tok_increment: return "INCREMENT";
-        case tok_decrement: return "DECREMENT";
+        // Increment/decrement
+        "INCREMENT",              // tok_increment
+        "DECREMENT",              // tok_decrement
 
-        case tok_equal: return "EQUAL";
-        case tok_not_equal: return "NOT_EQUAL";
+        // Comparison operators
+        "EQUAL",                  // tok_equal
+        "NOT_EQUAL",              // tok_not_equal
 
-        case tok_and: return "AND";
-        case tok_or: return "OR";
+        // Logical operators
+        "AND",                    // tok_and
+        "OR",                     // tok_or
 
-        case tok_less: return "LESS";
-        case tok_less_equal: return "LESS_EQUAL";
-        case tok_greater: return "GREATER";
-        case tok_greater_equal: return "GREATER_EQUAL";
+        // Relational operators
+        "LESS",                   // tok_less
+        "LESS_EQUAL",             // tok_less_equal
+        "GREATER",                // tok_greater
+        "GREATER_EQUAL",          // tok_greater_equal
 
-        case tok_assign: return "ASSIGN";
-        case tok_colon: return "COLON";
+        // Other operators
+        "ASSIGN",                 // tok_assign
+        "COLON",                  // tok_colon
 
-        case tok_int_literal: return "INT_LITERAL";
-        case tok_float_literal: return "FLOAT_LITERAL";
-        case tok_str_literal: return "STRING_LITERAL";
-        case tok_char_literal: return "CHAR_LITERAL";
-        case tok_identifier: return "IDENTIFIER";
+        // Literals
+        "INT_LITERAL",            // tok_int_literal
+        "FLOAT_LITERAL",          // tok_float_literal
+        "STRING_LITERAL",         // tok_str_literal
+        "CHAR_LITERAL",           // tok_char_literal
+        "IDENTIFIER"              // tok_identifier
+    };
 
-        default: return "UNKNOWN";
+    // Array size check to ensure all tokens are covered
+    static_assert(sizeof(token_strings) / sizeof(token_strings[0]) == tok_identifier + 1,
+                  "Token string array size must match the number of token types");
+
+    // Bounds check and return appropriate string
+    if (type <= tok_identifier) {
+        return token_strings[type];
     }
+    return "UNKNOWN";
 }
 
 /**
