@@ -1,6 +1,7 @@
 #include "ast.hpp"
 #include "token.hpp"
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -27,12 +28,20 @@ public:
     Token advance_token();
     Token this_token();
 
-    std::vector<std::unique_ptr<FunctionDecl>> parse();
+    std::pair<std::vector<std::unique_ptr<FunctionDecl>>, bool> parse();
 
     std::unique_ptr<FunctionDecl> parse_function_decl();
 
+    std::optional<Type> parse_type();
+    std::unique_ptr<Block> parse_block();
+
+    std::unique_ptr<Expr> parse_primary_expr();
+
+    std::unique_ptr<Stmt> parse_stmt();
+    std::unique_ptr<ReturnStmt> parse_return_stmt();
+
     void
-    throw_parse_error(int line, int col, std::string_view error, std::string_view expected_message);
+    throw_parsing_error(int line, int col, std::string_view error, std::string_view expected_message);
 
 private:
     std::vector<std::string> lines;

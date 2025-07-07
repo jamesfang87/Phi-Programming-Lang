@@ -54,6 +54,7 @@ std::string token_type_to_string(TokenType type) {
         case tok_close_bracket: return "CLOSE_BRACKET";
         case tok_fun_return: return "FUN_RETURN";
         case tok_comma: return "COMMA";
+        case tok_semicolon: return "SEMICOLON";
 
         case tok_add: return "ADD";
         case tok_sub: return "SUB";

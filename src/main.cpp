@@ -11,7 +11,7 @@ std::string read_file_to_string(const std::string& filename) {
     if (!file.is_open()) {
         throw std::runtime_error("Could not open file: " + filename);
     }
-    return std::string((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return std::string{(std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>()};
 }
 
 int main(int argc, char* argv[]) {
@@ -26,9 +26,9 @@ int main(int argc, char* argv[]) {
         std::println("File content:\n{}", source);
 
         Scanner scanner(source, filename);
-        auto [success, tokens] = scanner.scan();
+        auto [tokens, scan_success] = scanner.scan();
 
-        if (!success) {
+        if (!scan_success) {
             std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
             return 0;
         }
@@ -40,7 +40,12 @@ int main(int argc, char* argv[]) {
 
         std::println("\nParsing results: ");
         Parser parser(source, filename, tokens);
-        auto stuff = parser.parse();
+        auto [stuff, parse_success] = parser.parse();
+        if (!parse_success) {
+            std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
+            return 0;
+        }
+
         for (const auto& fun : stuff) {
             fun->info_dump();
         }

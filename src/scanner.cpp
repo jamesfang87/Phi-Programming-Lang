@@ -20,54 +20,10 @@ Scanner::Scanner(std::string src, std::string path) {
     this->successful = true;
 }
 
-/*================== HELPER METHODS =================*/
-
-/// Returns true if reached eof, false otherwise
-bool Scanner::reached_eof() const { return cur_char >= src.end(); }
-
-/// Returns the value of the current char the scanner is pointing to
-/// If we have reached the eof, then returns '\0'
-char Scanner::peek_char() const { return (reached_eof()) ? '\0' : *cur_char; }
-
-/// Returns the value of the next char.
-/// If this char is past eof, then returns '\0'
-char Scanner::peek_next() const {
-    if (reached_eof() || cur_char + 1 >= src.end()) {
-        return '\0';
-    }
-    return *(cur_char + 1);
-}
-
-/// Advances the char the scanner is pointing to by one
-/// \returns the value of the former char, '\0' if eof
-char Scanner::advance_char() {
-    if (reached_eof()) return '\0';
-    return *cur_char++;
-}
-
-/// Returns true if the next char matches parameter 'next', false otherwise.
-/// If the next character matches, then this advances the char the scanner points to
-bool Scanner::match_next(char next) {
-    if (reached_eof() || peek_char() != next) {
-        return false;
-    }
-
-    cur_char++;
-    return true;
-}
-
-/// Returns a new Token given the type of token
-Token Scanner::make_token(TokenType type) {
-    return {line_num,
-            static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
-            type,
-            std::string(cur_lexeme, cur_char)};
-}
-
 /// Reports an error found during scanning with an error message (param 1)
 /// and message on what was expected (param 2).
 /// This automatically sets the successful flag to false
-void Scanner::report_error(const std::string& message, const std::string& expected_message) {
+void Scanner::throw_scanning_error(const std::string& message, const std::string& expected_message) {
     successful = false;
 
     // compute column (1-based) where the error begins
@@ -95,13 +51,11 @@ void Scanner::report_error(const std::string& message, const std::string& expect
                  expected_message);
 }
 
-/*===================================================*/
-
 /*=================== ENTRY METHOD ==================*/
 
 /// Scans the provided source file.
 /// \returns bool whether an error was encountered during scanning and vector of tokens
-std::pair<bool, std::vector<Token>> Scanner::scan() {
+std::pair<std::vector<Token>, bool> Scanner::scan() {
     std::vector<Token> ret;
 
     while (!reached_eof()) {
@@ -127,7 +81,7 @@ std::pair<bool, std::vector<Token>> Scanner::scan() {
         // finally, scan the token
         ret.push_back(scan_token());
     }
-    return {successful, ret};
+    return {ret, successful};
 }
 
 /*============== PARSING SPECIFIC TYPES =============*/
@@ -157,7 +111,7 @@ Token Scanner::parse_number() {
 
 char Scanner::parse_escape_sequence() {
     if (reached_eof()) {
-        report_error("Unfinished escape sequence",
+        throw_scanning_error("Unfinished escape sequence",
                      "Expected a valid escape sequence character here");
         return '\0';
     }
@@ -173,7 +127,7 @@ char Scanner::parse_escape_sequence() {
         case '0': return '\0';
         case 'x': return parse_hex_escape();
         default:
-            report_error("Invalid escape sequence: \\" + std::string(1, c), "");
+            throw_scanning_error("Invalid escape sequence: \\" + std::string(1, c), "");
             return c; // Return character as-is for error recovery
     }
 }
@@ -182,7 +136,7 @@ char Scanner::parse_hex_escape() {
     char hex[3] = {0};
     for (int i = 0; i < 2; i++) {
         if (reached_eof() || !isxdigit(peek_char())) {
-            report_error("Incomplete hex escape", "");
+            throw_scanning_error("Incomplete hex escape", "");
             return '\0';
         }
         hex[i] = advance_char();
@@ -213,7 +167,7 @@ Token Scanner::parse_string() {
 
     if (reached_eof()) {
         // reached eof without finding closing double quote
-        report_error("untermianted string literal", "expected closing double quote to match this");
+        throw_scanning_error("untermianted string literal", "expected closing double quote to match this");
         return make_token(tok_error);
     }
     advance_char(); // consume closing quote
@@ -230,7 +184,7 @@ Token Scanner::parse_char() {
     }
 
     if (peek_char() != '\'') {
-        report_error("unterminated character literal",
+        throw_scanning_error("unterminated character literal",
                      "expected closing single quote to match this");
         return make_token(tok_error);
     }
@@ -293,7 +247,7 @@ void Scanner::skip_comment() {
             advance_char();
         }
 
-        report_error("unclosed block comment", "expected closing `*/` to match this");
+        throw_scanning_error("unclosed block comment", "expected closing `*/` to match this");
     }
 }
 /*===================================================*/
@@ -309,6 +263,7 @@ Token Scanner::scan_token() {
         case '[': return make_token(tok_open_bracket);
         case ']': return make_token(tok_close_bracket);
         case ',': return make_token(tok_comma);
+        case ';': return make_token(tok_semicolon);
         case '.': return make_token(tok_member);
         case ':': return make_token(match_next(':') ? tok_namespace_member : tok_colon);
 
