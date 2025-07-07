@@ -2,8 +2,11 @@
 #include "ast-util.hpp"
 #include "ast.hpp"
 #include "token.hpp"
+#include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -28,9 +31,9 @@ Token Parser::advance_token() {
 }
 
 void Parser::throw_parsing_error(int line,
-                               int col,
-                               std::string_view message,
-                               std::string_view expected_message) {
+                                 int col,
+                                 std::string_view message,
+                                 std::string_view expected_message) {
     successful = false; // set success flag to false
 
     // we have reached eof
@@ -75,9 +78,9 @@ std::optional<Type> Parser::parse_type() {
     auto it = primitive_map.find(id);
     if (it == primitive_map.end() && this_token().get_type() != tok_identifier) {
         throw_parsing_error(this_token().get_line(),
-                          this_token().get_col(),
-                          "Invalid token found",
-                          "Expected a valid type here");
+                            this_token().get_col(),
+                           std::format("Invalid token found: {}", this_token().get_lexeme()),
+                            "Expected a valid type here");
         return std::nullopt;
     }
 
@@ -115,16 +118,32 @@ std::unique_ptr<Expr> Parser::parse_primary_expr() {
         std::string name = this_token().get_lexeme();
         advance_token();
         return std::make_unique<DeclRefExpr>(SrcLocation{.path = path,
-                                                        .line = this_token().get_line(),
-                                                        .col = this_token().get_col()},
-                                            name);
+                                                         .line = this_token().get_line(),
+                                                         .col = this_token().get_col()},
+                                             name);
     }
 
     throw_parsing_error(this_token().get_line(),
-                       this_token().get_col(),
-                       "expected literal",
-                       "expected int, float, or variable here");
+                        this_token().get_col(),
+                        std::format("Unexpected token '{}'", this_token().get_lexeme()),
+                        "expected int, float, or variable here");
     return nullptr;
+}
+
+std::unique_ptr<Expr> Parser::parse_postfix_expr() {
+    std::unique_ptr<Expr> expr = parse_primary_expr();
+    if (expr == nullptr) {
+        // TODO: add error message
+        return nullptr;
+    }
+
+    // parse function call
+    if (this_token().get_type() == tok_open_paren) {
+    }
+
+    // class member access
+    if (this_token().get_type() == tok_member) {
+    }
 }
 
 std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
@@ -138,23 +157,26 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
     }
 
     // functions which have a non-void return type
-    auto expr = parse_primary_expr();
+    // TODO: change to parse any expr
+    std::unique_ptr<Expr> expr = parse_primary_expr();
     if (expr == nullptr) {
         throw_parsing_error(this_token().get_line(),
-                          this_token().get_col(),
-                          "Invalid expression found",
-                          "Expected an expression after `return`");
+                            this_token().get_col(),
+                            "Invalid expression found",
+                            "Expected an expression after `return`");
         return nullptr;
     }
 
     // check that the line ends with a semicolon
     if (this_token().get_type() != tok_semicolon) {
         throw_parsing_error(this_token().get_line(),
-                          this_token().get_col(),
-                          "Invalid token found",
-                          "Expected `;` after expression");
+                            this_token().get_col(),
+                            "Invalid token found",
+                            "Expected `;` after expression");
         return nullptr;
     }
+    advance_token();
+
     return std::make_unique<ReturnStmt>(SrcLocation{.path = path, .line = line, .col = col},
                                         std::move(expr));
 }
@@ -174,32 +196,33 @@ std::unique_ptr<Block> Parser::parse_block() {
         switch (type) {
             case tok_eof:
                 throw_parsing_error(lines.size(),
-                                  lines.back().size(),
-                                  "No closing '}' found",
-                                  "Expected `}` to close function body, instead reached EOF");
+                                    lines.back().size(),
+                                    "No closing '}' found",
+                                    "Expected `}` to close function body, instead reached EOF");
+                std::println("this happensd");
                 return nullptr;
             case tok_class:
                 throw_parsing_error(this_token().get_line(),
-                                  this_token().get_col(),
-                                  "Class declaration not allowed inside function body",
-                                  "Expected this to be a valid token");
+                                    this_token().get_col(),
+                                    "Class declaration not allowed inside function body",
+                                    "Expected this to be a valid token");
                 return nullptr;
             case tok_fun_return:
                 throw_parsing_error(this_token().get_line(),
-                                  this_token().get_col(),
-                                  "Function return not allowed inside function body",
-                                  "Expected this to be a valid token");
+                                    this_token().get_col(),
+                                    "Function return not allowed inside function body",
+                                    "Expected this to be a valid token");
                 return nullptr;
             case tok_fun:
                 throw_parsing_error(this_token().get_line(),
-                                  this_token().get_col(),
-                                  "Function declaration not allowed inside function body",
-                                  "Expected this to be a valid token");
+                                    this_token().get_col(),
+                                    "Function declaration not allowed inside function body",
+                                    "Expected this to be a valid token");
                 return nullptr;
             default:
-                advance_token();
+                stmts.push_back(parse_return_stmt());
         }
-        //parse_stmt();
+        // parse_stmt();
     }
 
     advance_token(); // eat `}`
@@ -213,9 +236,9 @@ std::unique_ptr<FunctionDecl> Parser::parse_function_decl() {
     // we expect the next token to be an identifier
     if (this_token().get_type() != tok_identifier) {
         throw_parsing_error(line,
-                          this_token().get_col(),
-                          "Invalid function name",
-                          "Expected identifier here");
+                            this_token().get_col(),
+                            "Invalid function name",
+                            "Expected identifier here");
         return nullptr;
     }
     std::string name = advance_token().get_lexeme();
@@ -224,9 +247,9 @@ std::unique_ptr<FunctionDecl> Parser::parse_function_decl() {
     int open_paren_col = this_token().get_col();
     if (advance_token().get_type() != tok_open_paren) {
         throw_parsing_error(line,
-                          open_paren_col,
-                          "Missing open parenthesis",
-                          "Expected missing parenthesis here");
+                            open_paren_col,
+                            "Missing open parenthesis",
+                            "Expected missing parenthesis here");
         return nullptr;
     }
 
@@ -235,9 +258,9 @@ std::unique_ptr<FunctionDecl> Parser::parse_function_decl() {
     int close_paren_col = this_token().get_col();
     if (advance_token().get_type() != tok_close_paren) {
         throw_parsing_error(line,
-                          close_paren_col,
-                          "Missing closing parenthesis",
-                          "Expected missing parenthesis here");
+                            close_paren_col,
+                            "Missing closing parenthesis",
+                            "Expected missing parenthesis here");
         return nullptr;
     }
 
@@ -255,22 +278,22 @@ std::unique_ptr<FunctionDecl> Parser::parse_function_decl() {
 
     if (this_token().get_type() != tok_open_brace) {
         throw_parsing_error(line,
-                          this_token().get_col(),
-                          "Missing open brace",
-                          "Expected missing brace here");
+                            this_token().get_col(),
+                            "Missing open brace",
+                            "Expected missing brace here");
         return nullptr;
     }
 
     // now we parse the function body
-    std::unique_ptr<Block> fun_body = parse_block();
-    if (fun_body == nullptr) {
+    std::unique_ptr<Block> body = parse_block();
+    if (body == nullptr) {
         return nullptr;
     }
 
     return std::make_unique<FunctionDecl>(SrcLocation{.path = path, .line = line, .col = col},
                                           std::move(name),
                                           return_type.value(),
-                                          std::move(fun_body));
+                                          std::move(body));
 }
 
 std::pair<std::vector<std::unique_ptr<FunctionDecl>>, bool> Parser::parse() {

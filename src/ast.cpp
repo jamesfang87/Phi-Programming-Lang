@@ -2,7 +2,12 @@
 #include <print>
 #include <string>
 
-void Block::info_dump(int level) const { std::println("{}Block", std::string(level * 2, ' ')); }
+void Block::info_dump(int level) const {
+    std::println("{}Block", std::string(level * 2, ' '));
+    for (auto& s : this->stmts) {
+        s->info_dump(level + 1);
+    }
+}
 
 void FunctionDecl::info_dump(int level) const {
     std::println("{}Function {} at {}:{}. Returns {}",
