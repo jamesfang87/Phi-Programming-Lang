@@ -7,10 +7,9 @@ fun foo() -> i32 {
 }
 
 fun asdf() -> Point {
-
+    fun
 }
 
 
-fun main() -> 123 {
+fun main() -> str {
 
-}
