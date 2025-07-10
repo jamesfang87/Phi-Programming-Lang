@@ -10,7 +10,9 @@
 class Parser {
 public:
     // Constructor
-    Parser(std::string_view src, std::string_view path, std::vector<Token>& tokens)
+    Parser(std::string_view src,
+           std::string_view path,
+           std::vector<Token>& tokens)
         : path(path),
           tokens(tokens),
           token_it(tokens.begin()),
@@ -67,8 +69,14 @@ private:
     std::unique_ptr<Expr> parse_primary_expr();
 
     // Utility functions
-    template <typename T, typename F>  // T is the type to return, F is the member function of Parser to use
-    std::unique_ptr<std::vector<std::unique_ptr<T>>> parse_list(TokenType opening, TokenType closing, F fun);
+    // T is the type to return, F is the member function
+    // of Parser to use
+    template <typename T, typename F>
+    std::unique_ptr<std::vector<std::unique_ptr<T>>>
+    parse_list(TokenType opening, TokenType closing, F fun);
     std::optional<Type> parse_type();
-    void throw_parsing_error(int line, int col, std::string_view error, std::string_view expected_message);
+    void throw_parsing_error(int line,
+                             int col,
+                             std::string_view error,
+                             std::string_view expected_message);
 };

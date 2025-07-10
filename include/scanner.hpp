@@ -17,8 +17,8 @@
 /**
  * @brief Lexical analyzer for the Phi programming language
  *
- * The Scanner class takes a string of source code and converts it into a sequence
- * of tokens. It handles all aspects of lexical analysis including:
+ * The Scanner class takes a string of source code and converts it into a
+ * sequence of tokens. It handles all aspects of lexical analysis including:
  * - Keyword recognition
  * - Operator tokenization
  * - String and character literal parsing with escape sequences
@@ -38,7 +38,8 @@ public:
      * @param path The file path of the source (used for error reporting)
      */
     Scanner(std::string src, std::string path)
-        : src(std::move(src)), path(std::move(path)) {
+        : src(std::move(src)),
+          path(std::move(path)) {
         cur_char = this->src.begin();
         cur_lexeme = this->src.begin();
         cur_line = this->src.begin();
@@ -48,13 +49,14 @@ public:
     /**
      * @brief Scans the source code and produces a sequence of tokens
      *
-     * This is the main entry point for lexical analysis. It processes the entire
-     * source string character by character, producing tokens and handling comments
-     * and whitespace appropriately.
+     * This is the main entry point for lexical analysis. It processes the
+     * entire source string character by character, producing tokens and
+     * handling comments and whitespace appropriately.
      *
      * @return A pair containing:
      *         - A vector of all tokens found in the source
-     *         - A boolean indicating whether scanning was successful (no errors)
+     *         - A boolean indicating whether scanning was successful (no
+     * errors)
      */
     std::pair<std::vector<Token>, bool> scan();
 
@@ -71,18 +73,18 @@ public:
     [[nodiscard]] std::string get_path() const { return path; }
 
 private:
-    std::string src;   ///< The source code being scanned
-    std::string path;  ///< File path for error reporting
+    std::string src;  ///< The source code being scanned
+    std::string path; ///< File path for error reporting
 
-    int line_num = 1;      ///< Current line number (1-indexed)
+    int line_num = 1;                  ///< Current line number (1-indexed)
     std::string::iterator cur_char;    ///< Current character position
     std::string::iterator cur_lexeme;  ///< Start of current lexeme
     std::string::iterator cur_line;    ///< Start of current line
-    std::string::iterator lexeme_line; ///< Start of line containing current lexeme
+    std::string::iterator lexeme_line; ///< Start current lexeme's line
 
     bool inside_str = false;
 
-    bool successful = true;   ///< Whether scanning completed without errors
+    bool successful = true; ///< Whether scanning completed without errors
 
     // MAIN SCANNING LOGIC
 
@@ -133,7 +135,9 @@ private:
      * @brief Peeks at the current character without advancing
      * @return The current character, or '\0' if at end of file
      */
-    [[nodiscard]] char peek_char() const { return (reached_eof()) ? '\0' : *cur_char; }
+    [[nodiscard]] char peek_char() const {
+        return (reached_eof()) ? '\0' : *cur_char;
+    }
 
     /**
      * @brief Peeks at the next character without advancing
@@ -158,7 +162,8 @@ private:
     /**
      * @brief Conditionally advances if the current character matches expected
      * @param next The character to match against
-     * @return true if the character matched and scanner advanced, false otherwise
+     * @return true if the character matched and scanner advanced, false
+     * otherwise
      */
     bool match_next(char next) {
         if (reached_eof() || peek_char() != next) {
@@ -193,7 +198,8 @@ private:
      */
     Token make_token(TokenType type) {
         return {line_num,
-                static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
+                static_cast<int>(cur_lexeme - lexeme_line) +
+                    1, // 1-indexed column
                 type,
                 std::string(cur_lexeme, cur_char)};
     }
@@ -216,13 +222,14 @@ private:
      * @brief Reports a scanning error with formatted output
      *
      * This method handles error reporting by printing a formatted error message
-     * that includes the source location, error description, and a visual indicator
-     * of where the error occurred in the source code.
+     * that includes the source location, error description, and a visual
+     * indicator of where the error occurred in the source code.
      *
      * @param message The main error message describing what went wrong
      * @param expected_message Additional context about what was expected
      */
-    void throw_scanning_error(std::string_view message, std::string_view expected_message);
+    void throw_scanning_error(std::string_view message,
+                              std::string_view expected_message);
 
     void resync_scanner();
 };

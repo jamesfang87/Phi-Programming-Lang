@@ -1,10 +1,12 @@
 /**
  * @file token.hpp
- * @brief Token definitions and Token class for the Phi programming language lexer
+ * @brief Token definitions and Token class for the Phi programming language
+ * lexer
  *
- * This file contains the TokenType enumeration that defines all possible token types
- * that can be recognized by the scanner, and the Token class that represents a single
- * token with its type, lexeme, and source location information.
+ * This file contains the TokenType enumeration that defines all possible token
+ * types that can be recognized by the scanner, and the Token class that
+ * represents a single token with its type, lexeme, and source location
+ * information.
  */
 
 #include <cstdint>
@@ -13,51 +15,52 @@
 #pragma once
 
 /**
- * @brief Enumeration of all possible token types in the Phi programming language
+ * @brief Enumeration of all possible token types in the Phi programming
+ * language
  *
- * This enum defines every type of token that the scanner can recognize, including
- * keywords, operators, literals, identifiers, and syntax elements. The tokens are
- * organized into logical groups for better maintainability.
+ * This enum defines every type of token that the scanner can recognize,
+ * including keywords, operators, literals, identifiers, and syntax elements.
+ * The tokens are organized into logical groups for better maintainability.
  */
-enum TokenType : std::uint8_t {
+enum TokenType : uint8_t {
     /// End of file token
     tok_eof,
     /// Error token for invalid characters or malformed tokens
     tok_error,
 
     // keywords
-    tok_break,     ///< 'break' keyword for loop control
-    tok_class,     ///< 'class' keyword for class declarations
-    tok_const,     ///< 'const' keyword for constant declarations
-    tok_continue,  ///< 'continue' keyword for loop control
-    tok_else,      ///< 'else' keyword for conditional statements
-    tok_elif,      ///< 'elif' keyword for conditional statements
-    tok_false,     ///< 'false' boolean literal keyword
-    tok_for,       ///< 'for' keyword for loop statements
-    tok_fun,       ///< 'fun' keyword for function declarations
-    tok_if,        ///< 'if' keyword for conditional statements
-    tok_import,    ///< 'import' keyword for module imports
-    tok_in,        ///< 'in' keyword for iteration and membership
-    tok_let,       ///< 'let' keyword for variable declarations
-    tok_return,    ///< 'return' keyword for function returns
-    tok_true,      ///< 'true' boolean literal keyword
-    tok_while,     ///< 'while' keyword for loop statements
+    tok_break,    ///< 'break' keyword for loop control
+    tok_class,    ///< 'class' keyword for class declarations
+    tok_const,    ///< 'const' keyword for constant declarations
+    tok_continue, ///< 'continue' keyword for loop control
+    tok_else,     ///< 'else' keyword for conditional statements
+    tok_elif,     ///< 'elif' keyword for conditional statements
+    tok_false,    ///< 'false' boolean literal keyword
+    tok_for,      ///< 'for' keyword for loop statements
+    tok_fun,      ///< 'fun' keyword for function declarations
+    tok_if,       ///< 'if' keyword for conditional statements
+    tok_import,   ///< 'import' keyword for module imports
+    tok_in,       ///< 'in' keyword for iteration and membership
+    tok_let,      ///< 'let' keyword for variable declarations
+    tok_return,   ///< 'return' keyword for function returns
+    tok_true,     ///< 'true' boolean literal keyword
+    tok_while,    ///< 'while' keyword for loop statements
 
     // signed int types
-    tok_i8,   ///< 8-bit signed integer type keyword
-    tok_i16,  ///< 16-bit signed integer type keyword
-    tok_i32,  ///< 32-bit signed integer type keyword
-    tok_i64,  ///< 64-bit signed integer type keyword
+    tok_i8,  ///< 8-bit signed integer type keyword
+    tok_i16, ///< 16-bit signed integer type keyword
+    tok_i32, ///< 32-bit signed integer type keyword
+    tok_i64, ///< 64-bit signed integer type keyword
 
     // unsigned int types
-    tok_u8,   ///< 8-bit unsigned integer type keyword
-    tok_u16,  ///< 16-bit unsigned integer type keyword
-    tok_u32,  ///< 32-bit unsigned integer type keyword
-    tok_u64,  ///< 64-bit unsigned integer type keyword
+    tok_u8,  ///< 8-bit unsigned integer type keyword
+    tok_u16, ///< 16-bit unsigned integer type keyword
+    tok_u32, ///< 32-bit unsigned integer type keyword
+    tok_u64, ///< 64-bit unsigned integer type keyword
 
     // floating point number types
-    tok_f32,  ///< 32-bit floating point type keyword
-    tok_f64,  ///< 64-bit floating point type keyword
+    tok_f32, ///< 32-bit floating point type keyword
+    tok_f64, ///< 64-bit floating point type keyword
 
     // text types
     tok_str,  ///< String type keyword
@@ -112,7 +115,8 @@ enum TokenType : std::uint8_t {
     tok_float_literal, ///< Floating point literal (e.g., 3.14, 2.5)
     tok_str_literal,   ///< String literal (e.g., "hello")
     tok_char_literal,  ///< Character literal (e.g., 'a', '\n')
-    tok_identifier,    ///< User-defined identifier (e.g., variable names, function names)
+    tok_identifier, ///< User-defined identifier (e.g., variable names, function
+                    ///< names)
 };
 
 /**
@@ -126,9 +130,9 @@ std::string token_type_to_string(TokenType type);
  * @brief Represents a single token in the Phi programming language
  *
  * A Token contains all the information needed to represent a lexical unit:
- * the token type, the original text (lexeme), and its position in the source code.
- * This class is immutable once constructed and provides accessor methods for
- * all token properties.
+ * the token type, the original text (lexeme), and its position in the source
+ * code. This class is immutable once constructed and provides accessor methods
+ * for all token properties.
  */
 class Token {
 public:
@@ -172,7 +176,7 @@ public:
     [[nodiscard]] std::string to_string() const;
 
 private:
-    int line, col;          ///< Source location (line and column numbers)
-    TokenType type;         ///< The type of this token
-    std::string lexeme;     ///< The original text content from source
+    int line, col;      ///< Source location (line and column numbers)
+    TokenType type;     ///< The type of this token
+    std::string lexeme; ///< The original text content from source
 };
