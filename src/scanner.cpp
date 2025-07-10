@@ -1,12 +1,12 @@
 /**
  * @file scanner.cpp
  * @brief Implementation of the Scanner class for lexical analysis
- * 
+ *
  * This file contains the complete implementation of the Scanner class, including
  * all token parsing methods, error handling, and helper functions. The scanner
  * processes Phi source code character by character, producing a stream of tokens
  * that can be consumed by the parser.
- * 
+ *
  * Key features implemented:
  * - Multi-character operator recognition (e.g., ==, +=, ->)
  * - String literal parsing with full escape sequence support
@@ -14,22 +14,27 @@
  * - Keyword vs identifier distinction
  * - Comment handling (line and block comments)
  * - Comprehensive error reporting with source location
- * 
+ *
  * Function Organization:
  * 1. Constructor and public interface
  * 2. Main scanning logic
  * 3. Token parsing methods
  * 4. Utility functions
  * 5. Error handling
+ *
+ *
+ * TODO:
+ * 1. pass in location to throw_scanning_error
  */
 
 #include "scanner.hpp"
 #include "token.hpp"
 #include <cctype>
-#include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <print>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -44,18 +49,18 @@
 
 /**
  * @brief Main scanning loop that processes the entire source code
- * 
+ *
  * This is the primary entry point for lexical analysis. It iterates through
  * the source code character by character, handling whitespace, comments, and
  * delegating token recognition to scan_token(). The method maintains proper
  * line and column tracking throughout the scanning process.
- * 
+ *
  * The scanning process:
  * 1. Skip whitespace (tracking newlines for line numbers)
  * 2. Skip comments (both line comments and block comments)
  * 3. Scan individual tokens using scan_token()
  * 4. Continue until end of file
- * 
+ *
  * @return A pair containing the vector of tokens and success status
  */
 std::pair<std::vector<Token>, bool> Scanner::scan() {
@@ -89,27 +94,27 @@ std::pair<std::vector<Token>, bool> Scanner::scan() {
 
 /**
  * @brief Scans a single token from the current position
- * 
+ *
  * This is the main token recognition method that analyzes the current character
  * and determines what type of token to create. It handles:
- * 
+ *
  * Single-character tokens:
  * - Parentheses, braces, brackets
  * - Basic operators (+, -, *, /, %, !)
  * - Punctuation (comma, semicolon, colon, dot)
- * 
+ *
  * Multi-character tokens:
  * - Compound operators (==, !=, <=, >=, ++, --, +=, -=, etc.)
  * - Function return arrow (->)
  * - Namespace member (::)
  * - Logical operators (&&, ||)
- * 
+ *
  * Complex tokens (delegated to specialized methods):
  * - String literals (parse_string)
  * - Character literals (parse_char)
  * - Numeric literals (parse_number)
  * - Identifiers and keywords (parse_identifier)
- * 
+ *
  * @return A token representing the scanned lexical element
  */
 Token Scanner::scan_token() {
@@ -170,13 +175,13 @@ Token Scanner::scan_token() {
 
 /**
  * @brief Parses numeric literals (integers and floating-point numbers)
- * 
+ *
  * This method handles the parsing of numeric literals, automatically detecting
  * whether the number is an integer or floating-point based on the presence of
  * a decimal point. The method supports:
  * - Integer literals: 42, 123, 0
  * - Floating-point literals: 3.14, 0.5, 123.456
- * 
+ *
  * @note Exponential notation (e.g., 1.23e4) is planned but not yet implemented
  * @return A token of type tok_int_literal or tok_float_literal
  */
@@ -206,18 +211,18 @@ Token Scanner::parse_number() {
 
 /**
  * @brief Parses identifiers and distinguishes them from keywords
- * 
+ *
  * This method parses sequences of alphanumeric characters and underscores
  * that start with a letter or underscore. It then checks the parsed identifier
  * against a comprehensive keyword table to determine if it should be tokenized
  * as a keyword or as a user-defined identifier.
- * 
+ *
  * The keyword table includes:
  * - Control flow keywords (if, else, for, while, etc.)
  * - Declaration keywords (let, fun, class, etc.)
  * - Type keywords (i32, str, bool, etc.)
  * - Literal keywords (true, false)
- * 
+ *
  * @return A token of the appropriate keyword type or tok_identifier
  */
 Token Scanner::parse_identifier() {
@@ -248,26 +253,27 @@ Token Scanner::parse_identifier() {
 
 /**
  * @brief Parses string literals with escape sequence support
- * 
+ *
  * This method parses a complete string literal enclosed in double quotes.
  * It handles escape sequences, multi-line strings, and proper error reporting
  * for unterminated strings. The method tracks line numbers correctly when
  * strings span multiple lines.
- * 
+ *
  * Features:
  * - Full escape sequence support via parse_escape_sequence()
  * - Multi-line string support
  * - Proper line number tracking
  * - Error reporting for unterminated strings
- * 
+ *
  * @return A token of type tok_str_literal containing the parsed string content
  */
 Token Scanner::parse_string() {
+    inside_str = true;
     const int starting_line = line_num;
     std::string str;
 
     // parse until we see closing double quote
-    while (!reached_eof() && peek_char() != '"') {
+    while (inside_str && !reached_eof() && peek_char() != '"') {
         if (peek_char() == '\\') {
             advance_char(); // consume the forward slash
             str.push_back(parse_escape_sequence());
@@ -285,29 +291,36 @@ Token Scanner::parse_string() {
 
     if (reached_eof()) {
         // reached eof without finding closing double quote
-        throw_scanning_error("untermianted string literal", "expected closing double quote to match this");
+        throw_scanning_error("untermianted string literal",
+                             "expected closing double quote to match this");
         return make_token(tok_error);
     }
-    advance_char(); // consume closing quote
+    advance_char();     // consume closing quote
+    inside_str = false; // we are no longer inside str
     return {starting_line, static_cast<int>(cur_lexeme - lexeme_line) + 1, tok_str_literal, str};
 }
 
 /**
  * @brief Parses character literals with escape sequence support
- * 
+ *
  * This method parses a complete character literal enclosed in single quotes.
  * It supports both regular characters and escape sequences. The character
  * literal must contain exactly one character (after escape sequence processing).
- * 
+ *
  * Examples:
  * - 'a' -> character 'a'
  * - '\n' -> newline character
  * - '\x41' -> character 'A'
- * 
+ *
  * @return A token of type tok_char_literal containing the character value
  * @throws Scanning error for unterminated character literals
  */
 Token Scanner::parse_char() {
+    // handle case that char literal is empty
+    if (peek_char() == '\'') {
+        throw_scanning_error("char literal cannot be empty", "expected expression here");
+    }
+
     char c;
     if (peek_char() != '\\') {
         c = advance_char();
@@ -317,10 +330,14 @@ Token Scanner::parse_char() {
     }
 
     if (peek_char() != '\'') {
-        throw_scanning_error("unterminated character literal",
-                     "expected closing single quote to match this");
+        std::string error_msg = "char must contain exactly 1 character";
+        if (peek_char() == '\0') {
+            error_msg = "unterminated character literal";
+        }
+        throw_scanning_error(error_msg, "expected closing single quote to match this");
         return make_token(tok_error);
     }
+
     advance_char(); // consume closing quote
     return {line_num,
             static_cast<int>(cur_lexeme - lexeme_line) + 1,
@@ -330,25 +347,25 @@ Token Scanner::parse_char() {
 
 /**
  * @brief Parses escape sequences within string and character literals
- * 
+ *
  * This method handles the parsing of escape sequences that begin with a backslash.
  * Supported escape sequences include:
  * - \' (single quote)
- * - \" (double quote) 
+ * - \" (double quote)
  * - \n (newline)
  * - \t (tab)
  * - \r (carriage return)
  * - \\\ (backslash)
  * - \0 (null character)
  * - \xNN (hexadecimal escape)
- * 
+ *
  * @return The actual character value represented by the escape sequence
  * @throws Scanning error for invalid escape sequences
  */
 char Scanner::parse_escape_sequence() {
     if (reached_eof()) {
         throw_scanning_error("Unfinished escape sequence",
-                     "Expected a valid escape sequence character here");
+                             "Expected a valid escape sequence character here");
         return '\0';
     }
 
@@ -370,14 +387,20 @@ char Scanner::parse_escape_sequence() {
 
 /**
  * @brief Parses hexadecimal escape sequences (\xNN format)
- * 
+ *
  * This method parses exactly two hexadecimal digits following \x and converts
  * them to the corresponding character value. For example, \x41 becomes 'A'.
- * 
+ *
  * @return The character value represented by the hex digits
  * @throws Scanning error if EOF is reached or invalid hex digits are found
  */
 char Scanner::parse_hex_escape() {
+    if (!isxdigit(peek_char()) || !isxdigit(peek_next())) {
+        throw_scanning_error("Incomplete hex escape sequence",
+                             "Expected exactly two hexadecimal digits");
+        return '\0';
+    }
+
     char hex[3] = {0};
     for (int i = 0; i < 2; i++) {
         if (reached_eof() || !isxdigit(peek_char())) {
@@ -395,16 +418,16 @@ char Scanner::parse_hex_escape() {
 
 /**
  * @brief Skips over comment text (both line and block comments)
- * 
+ *
  * This method handles both types of comments supported by Phi:
  * - Line comments: // (skip until end of line)
  * - Block comments: begin with slash-star, end with star-slash
- * 
+ *
  * The method properly handles:
  * - Line number tracking within multi-line block comments
  * - Nested comment detection (reports error for unclosed block comments)
  * - EOF handling within comments
- * 
+ *
  * @throws Scanning error for unclosed block comments
  */
 void Scanner::skip_comment() {
@@ -443,19 +466,19 @@ void Scanner::skip_comment() {
 
 /**
  * @brief Reports a scanning error with formatted output
- * 
+ *
  * This method handles error reporting by printing a formatted error message
  * that includes the source location, error description, and a visual indicator
  * of where the error occurred in the source code. It automatically sets the
  * successful flag to false to indicate that scanning encountered an error.
- * 
+ *
  * The error output includes:
  * - Colored error header
  * - File location (path:line:column)
  * - Source line with error highlighted
  * - Contextual help message
  */
-void Scanner::throw_scanning_error(const std::string& message, const std::string& expected_message) {
+void Scanner::throw_scanning_error(std::string_view message, std::string_view expected_message) {
     successful = false;
 
     // compute column (1-based) where the error begins
@@ -463,7 +486,7 @@ void Scanner::throw_scanning_error(const std::string& message, const std::string
 
     // convert line number to string to get its width
     std::string line_no_str = std::to_string(line_num);
-    size_t gutter_width = line_no_str.size() + 2;
+    int gutter_width = line_no_str.size() + 2;
 
     std::println(std::cerr, "\033[31;1;4merror:\033[0m {}", message);
     std::println(std::cerr, "--> {}:{}:{}", path, line_num, col);
@@ -472,7 +495,7 @@ void Scanner::throw_scanning_error(const std::string& message, const std::string
     while (line_end < src.end() && *line_end != '\n') {
         line_end++;
     }
-    std::string_view line(&*lexeme_line, static_cast<size_t>(line_end - lexeme_line));
+    std::string_view line(&*lexeme_line, static_cast<int>(line_end - lexeme_line));
 
     std::println(std::cerr, "{}|", std::string(gutter_width, ' '));
     std::println(std::cerr, " {} | {}", line_num, line);
@@ -481,4 +504,31 @@ void Scanner::throw_scanning_error(const std::string& message, const std::string
                  std::string(gutter_width, ' '),
                  std::string(col, ' '),
                  expected_message);
+
+    resync_scanner();
+}
+
+void Scanner::resync_scanner() {
+    // skip until next valid token start
+    while (!reached_eof()) {
+        // skip to the end of str if we are inside a str
+        if (inside_str) {
+            if (peek_char() == '"') {
+                advance_char();
+                inside_str = false;
+                return;
+            }
+            advance_char();
+            continue;
+        }
+
+        // valid token starters
+        if (strchr("(){}[];,.:", peek_char())) break;
+
+        // significant operators
+        if (strchr("+-*/%=!<>&|", peek_char())) break;
+        advance_char();
+    }
+
+    inside_str = false;
 }

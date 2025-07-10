@@ -1,0 +1,4 @@
+/* This comment never ends
+fn importantFunction() {
+    // Code that won't be seen
+}
