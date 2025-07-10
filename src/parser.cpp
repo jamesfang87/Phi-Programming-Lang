@@ -45,8 +45,9 @@ std::unique_ptr<FunctionDecl> Parser::parse_function_decl() {
     std::string name = advance_token().get_lexeme();
 
     // here we handle the parameter list
-    auto param_list =
-        parse_list<ParamDecl>(tok_open_paren, tok_close_paren, &Parser::parse_param_decl);
+    auto param_list = parse_list<ParamDecl>(tok_open_paren,
+                                            tok_close_paren,
+                                            &Parser::parse_param_decl);
     if (param_list == nullptr) {
         return nullptr;
     }
@@ -69,33 +70,36 @@ std::unique_ptr<FunctionDecl> Parser::parse_function_decl() {
         return nullptr;
     }
 
-    return std::make_unique<FunctionDecl>(SrcLocation{.path = path, .line = line, .col = col},
-                                          std::move(name),
-                                          return_type.value(),
-                                          std::move(param_list),
-                                          std::move(body));
+    return std::make_unique<FunctionDecl>(
+        SrcLocation{.path = path, .line = line, .col = col},
+        std::move(name),
+        return_type.value(),
+        std::move(param_list),
+        std::move(body));
 }
 
 // <identifier>: type
 std::unique_ptr<ParamDecl> Parser::parse_param_decl() {
     // we expect the first token to be an identifier
     if (peek_token().get_type() != tok_identifier) {
-        throw_parsing_error(peek_token().get_line(),
-                            peek_token().get_col(),
-                            "Parameter must be an identifier",
-                            std::format("Expected identifier here, instead found `{}`",
-                                        token_type_to_string(peek_token().get_type())));
+        throw_parsing_error(
+            peek_token().get_line(),
+            peek_token().get_col(),
+            "Parameter must be an identifier",
+            std::format("Expected identifier here, instead found `{}`",
+                        token_type_to_string(peek_token().get_type())));
         return nullptr;
     }
     std::string name = advance_token().get_lexeme();
 
     // next we expect the current token to be `:`
     if (peek_token().get_type() != tok_colon) {
-        throw_parsing_error(peek_token().get_line(),
-                            peek_token().get_col(),
-                            "`:` should follow identifier",
-                            std::format("Expected `:` here, instead found `{}`",
-                                        token_type_to_string(peek_token().get_type())));
+        throw_parsing_error(
+            peek_token().get_line(),
+            peek_token().get_col(),
+            "`:` should follow identifier",
+            std::format("Expected `:` here, instead found `{}`",
+                        token_type_to_string(peek_token().get_type())));
         return nullptr;
     }
     advance_token();
@@ -103,22 +107,26 @@ std::unique_ptr<ParamDecl> Parser::parse_param_decl() {
     // lastly, we expect a type
     auto type = parse_type();
     if (!type.has_value()) {
-        throw_parsing_error(peek_token().get_line(),
-                            peek_token().get_col(),
-                            "Invalid type, type must be specified for parameter declarations",
-                            std::format("Expected valid type here, instead found `{}`",
-                                        token_type_to_string(peek_token().get_type())));
+        throw_parsing_error(
+            peek_token().get_line(),
+            peek_token().get_col(),
+            "Invalid type, type must be specified for parameter declarations",
+            std::format("Expected valid type here, instead found `{}`",
+                        token_type_to_string(peek_token().get_type())));
         return nullptr;
     }
 
     return std::make_unique<ParamDecl>(
-        SrcLocation{.path = path, .line = peek_token().get_line(), .col = peek_token().get_col()},
+        SrcLocation{.path = path,
+                    .line = peek_token().get_line(),
+                    .col = peek_token().get_col()},
         name,
         type.value());
 }
 
 std::unique_ptr<Block> Parser::parse_block() {
-    // make sure that the block starts with an open brace, exit and emit error otherwise
+    // make sure that the block starts with an open brace, exit and emit error
+    // otherwise
     if (peek_token().get_type() != tok_open_brace) {
         throw_parsing_error(peek_token().get_line(),
                             peek_token().get_col(),
@@ -134,28 +142,32 @@ std::unique_ptr<Block> Parser::parse_block() {
         auto type = peek_token().get_type();
         switch (type) {
             case tok_eof:
-                throw_parsing_error(lines.size(),
-                                    lines.back().size(),
-                                    "No closing '}' found",
-                                    "Expected `}` to close function body, instead reached EOF");
+                throw_parsing_error(
+                    lines.size(),
+                    lines.back().size(),
+                    "No closing '}' found",
+                    "Expected `}` to close function body, instead reached EOF");
                 return nullptr;
             case tok_class:
-                throw_parsing_error(peek_token().get_line(),
-                                    peek_token().get_col(),
-                                    "Class declaration not allowed inside function body",
-                                    "Expected this to be a valid token");
+                throw_parsing_error(
+                    peek_token().get_line(),
+                    peek_token().get_col(),
+                    "Class declaration not allowed inside function body",
+                    "Expected this to be a valid token");
                 return nullptr;
             case tok_fun_return:
-                throw_parsing_error(peek_token().get_line(),
-                                    peek_token().get_col(),
-                                    "Function return not allowed inside function body",
-                                    "Expected this to be a valid token");
+                throw_parsing_error(
+                    peek_token().get_line(),
+                    peek_token().get_col(),
+                    "Function return not allowed inside function body",
+                    "Expected this to be a valid token");
                 return nullptr;
             case tok_fun:
-                throw_parsing_error(peek_token().get_line(),
-                                    peek_token().get_col(),
-                                    "Function declaration not allowed inside function body",
-                                    "Expected this to be a valid token");
+                throw_parsing_error(
+                    peek_token().get_line(),
+                    peek_token().get_col(),
+                    "Function declaration not allowed inside function body",
+                    "Expected this to be a valid token");
                 return nullptr;
             default:
                 stmts.push_back(parse_return_stmt());
@@ -176,15 +188,18 @@ std::unique_ptr<Expr> Parser::parse_postfix_expr() {
 
     // parse function call
     if (peek_token().get_type() == tok_open_paren) {
-        auto args = parse_list<Expr>(tok_open_paren, tok_close_paren, &Parser::parse_postfix_expr);
+        auto args = parse_list<Expr>(tok_open_paren,
+                                     tok_close_paren,
+                                     &Parser::parse_postfix_expr);
         if (args == nullptr) {
             return nullptr;
         }
-        return std::make_unique<FunCallExpr>(SrcLocation{.path = path,
-                                                         .line = peek_token().get_line(),
-                                                         .col = peek_token().get_col()},
-                                             std::move(expr),
-                                             std::move(*args));
+        return std::make_unique<FunCallExpr>(
+            SrcLocation{.path = path,
+                        .line = peek_token().get_line(),
+                        .col = peek_token().get_col()},
+            std::move(expr),
+            std::move(*args));
     }
 
     // class member access
@@ -199,29 +214,40 @@ std::unique_ptr<Expr> Parser::parse_primary_expr() {
     switch (t.get_type()) {
         case tok_int_literal:
             return std::make_unique<IntLiteral>(
-                SrcLocation{.path = path, .line = t.get_line(), .col = t.get_col()},
+                SrcLocation{.path = path,
+                            .line = t.get_line(),
+                            .col = t.get_col()},
                 std::stoll(t.get_lexeme()));
         case tok_float_literal:
             return std::make_unique<FloatLiteral>(
-                SrcLocation{.path = path, .line = t.get_line(), .col = t.get_col()},
+                SrcLocation{.path = path,
+                            .line = t.get_line(),
+                            .col = t.get_col()},
                 std::stod(t.get_lexeme()));
         case tok_str_literal:
             return std::make_unique<StrLiteral>(
-                SrcLocation{.path = path, .line = t.get_line(), .col = t.get_col()},
+                SrcLocation{.path = path,
+                            .line = t.get_line(),
+                            .col = t.get_col()},
                 t.get_lexeme());
         case tok_char_literal:
             return std::make_unique<CharLiteral>(
-                SrcLocation{.path = path, .line = t.get_line(), .col = t.get_col()},
+                SrcLocation{.path = path,
+                            .line = t.get_line(),
+                            .col = t.get_col()},
                 t.get_lexeme().front());
         case tok_identifier:
             return std::make_unique<DeclRefExpr>(
-                SrcLocation{.path = path, .line = t.get_line(), .col = t.get_col()},
+                SrcLocation{.path = path,
+                            .line = t.get_line(),
+                            .col = t.get_col()},
                 t.get_lexeme());
         default:
-            throw_parsing_error(t.get_line(),
-                                t.get_col(),
-                                std::format("Unexpected token '{}'", t.get_lexeme()),
-                                "expected int, float, or variable here");
+            throw_parsing_error(
+                t.get_line(),
+                t.get_col(),
+                std::format("Unexpected token '{}'", t.get_lexeme()),
+                "expected int, float, or variable here");
             return nullptr;
     }
 }
@@ -240,10 +266,12 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
     int line = peek_token().get_line(), col = peek_token().get_col();
     advance_token(); // eat 'return'
 
-    // case that there is no expression after 'return' (functions which return null)
+    // case that there is no expression after 'return'
+    // (functions which return null)
     if (peek_token().get_type() == tok_semicolon) {
-        return std::make_unique<ReturnStmt>(SrcLocation{.path = path, .line = line, .col = col},
-                                            nullptr);
+        return std::make_unique<ReturnStmt>(
+            SrcLocation{.path = path, .line = line, .col = col},
+            nullptr);
     }
 
     // functions which have a non-void return type
@@ -267,22 +295,25 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
     }
     advance_token();
 
-    return std::make_unique<ReturnStmt>(SrcLocation{.path = path, .line = line, .col = col},
-                                        std::move(expr));
+    return std::make_unique<ReturnStmt>(
+        SrcLocation{.path = path, .line = line, .col = col},
+        std::move(expr));
 }
-
-template <typename T,
-          typename F> // T is the type to return, F is the member function of Parser to use
+// T is the type to return, F is the member function of
+// Parser to use
+template <typename T, typename F>
 std::unique_ptr<std::vector<std::unique_ptr<T>>>
 Parser::parse_list(TokenType opening, TokenType closing, F fun) {
     // ensure the list is properly opened, emitting error if needed
     if (peek_token().get_type() != opening) {
-        throw_parsing_error(peek_token().get_line(),
-                            peek_token().get_col(),
-                            std::format("Missing `{}` to open list", token_type_to_string(opening)),
-                            std::format("Expected missing `{}` here, instead found `{}`",
-                                        token_type_to_string(opening),
-                                        token_type_to_string(peek_token().get_type())));
+        throw_parsing_error(
+            peek_token().get_line(),
+            peek_token().get_col(),
+            std::format("Missing `{}` to open list",
+                        token_type_to_string(opening)),
+            std::format("Expected missing `{}` here, instead found `{}`",
+                        token_type_to_string(opening),
+                        token_type_to_string(peek_token().get_type())));
         return nullptr;
     }
     advance_token();
@@ -304,18 +335,20 @@ Parser::parse_list(TokenType opening, TokenType closing, F fun) {
 
         // or continue, where we now expect a comma
         if (peek_token().get_type() != tok_comma) {
-            throw_parsing_error(peek_token().get_line(),
-                                peek_token().get_col(),
-                                "No comma found while parsing list",
-                                std::format("Expected `,` as delimiter, instead found {}",
-                                            token_type_to_string(peek_token().get_type())));
+            throw_parsing_error(
+                peek_token().get_line(),
+                peek_token().get_col(),
+                "No comma found while parsing list",
+                std::format("Expected `,` as delimiter, instead found {}",
+                            token_type_to_string(peek_token().get_type())));
             return nullptr;
         }
         advance_token(); // consume the `,`
     }
     advance_token(); //
 
-    return std::make_unique<std::vector<std::unique_ptr<T>>>(std::move(content));
+    return std::make_unique<std::vector<std::unique_ptr<T>>>(
+        std::move(content));
 }
 
 std::optional<Type> Parser::parse_type() {
@@ -336,11 +369,13 @@ std::optional<Type> Parser::parse_type() {
 
     std::string id = peek_token().get_lexeme();
     auto it = primitive_map.find(id);
-    if (it == primitive_map.end() && peek_token().get_type() != tok_identifier) {
-        throw_parsing_error(peek_token().get_line(),
-                            peek_token().get_col(),
-                            std::format("Invalid token found: {}", peek_token().get_lexeme()),
-                            "Expected a valid type here");
+    if (it == primitive_map.end() &&
+        peek_token().get_type() != tok_identifier) {
+        throw_parsing_error(
+            peek_token().get_line(),
+            peek_token().get_col(),
+            std::format("Invalid token found: {}", peek_token().get_lexeme()),
+            "Expected a valid type here");
         return std::nullopt;
     }
 

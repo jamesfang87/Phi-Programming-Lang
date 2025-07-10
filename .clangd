@@ -1,0 +1,24 @@
+CompileFlags:
+  Compiler: /opt/homebrew/bin/g++-14
+  Add: [-std=c++26, -Wall, -Wextra, -Wpedantic]
+  Remove: [-W*]
+
+Index:
+  Background: Build
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes
+
+Hover:
+  ShowAKA: Yes
+
+Diagnostics:
+  ClangTidy:
+    Add: [performance-*, modernize-*,]
+    Remove: [modernize-use-trailing-return-type]
+  Suppress: ['pp_file_not_found']
+
+Completion:
+  AllScopes: Yes
