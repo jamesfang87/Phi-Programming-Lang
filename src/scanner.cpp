@@ -2,10 +2,10 @@
  * @file scanner.cpp
  * @brief Implementation of the Scanner class for lexical analysis
  *
- * This file contains the complete implementation of the Scanner class, including
- * all token parsing methods, error handling, and helper functions. The scanner
- * processes Phi source code character by character, producing a stream of tokens
- * that can be consumed by the parser.
+ * This file contains the complete implementation of the Scanner class,
+ * including all token parsing methods, error handling, and helper functions.
+ * The scanner processes Phi source code character by character, producing a
+ * stream of tokens that can be consumed by the parser.
  *
  * Key features implemented:
  * - Multi-character operator recognition (e.g., ==, +=, ->)
@@ -130,7 +130,9 @@ Token Scanner::scan_token() {
         case ',': return make_token(tok_comma);
         case ';': return make_token(tok_semicolon);
         case '.': return make_token(tok_member);
-        case ':': return make_token(match_next(':') ? tok_namespace_member : tok_colon);
+        case ':':
+            return make_token(match_next(':') ? tok_namespace_member
+                                              : tok_colon);
 
         // Operators
         case '+':
@@ -147,8 +149,11 @@ Token Scanner::scan_token() {
         case '%': return make_token(match_next('=') ? tok_mod_equals : tok_mod);
         case '!': return make_token(match_next('=') ? tok_not_equal : tok_bang);
         case '=': return make_token(match_next('=') ? tok_equal : tok_assign);
-        case '<': return make_token(match_next('=') ? tok_less_equal : tok_less);
-        case '>': return make_token(match_next('=') ? tok_greater_equal : tok_greater);
+        case '<':
+            return make_token(match_next('=') ? tok_less_equal : tok_less);
+        case '>':
+            return make_token(match_next('=') ? tok_greater_equal
+                                              : tok_greater);
         // Handle single & as error or bitwise operator
         case '&': return make_token(match_next('&') ? tok_and : tok_error);
         // Handle single | as error or bitwise operator
@@ -248,7 +253,8 @@ Token Scanner::parse_identifier() {
         {"str", tok_str},       {"char", tok_char}};
 
     auto it = keywords.find(identifier);
-    return (it != keywords.end()) ? make_token(it->second) : make_token(tok_identifier);
+    return (it != keywords.end()) ? make_token(it->second)
+                                  : make_token(tok_identifier);
 }
 
 /**
@@ -297,7 +303,10 @@ Token Scanner::parse_string() {
     }
     advance_char();     // consume closing quote
     inside_str = false; // we are no longer inside str
-    return {starting_line, static_cast<int>(cur_lexeme - lexeme_line) + 1, tok_str_literal, str};
+    return {starting_line,
+            static_cast<int>(cur_lexeme - lexeme_line) + 1,
+            tok_str_literal,
+            str};
 }
 
 /**
@@ -305,7 +314,8 @@ Token Scanner::parse_string() {
  *
  * This method parses a complete character literal enclosed in single quotes.
  * It supports both regular characters and escape sequences. The character
- * literal must contain exactly one character (after escape sequence processing).
+ * literal must contain exactly one character (after escape sequence
+ * processing).
  *
  * Examples:
  * - 'a' -> character 'a'
@@ -318,7 +328,8 @@ Token Scanner::parse_string() {
 Token Scanner::parse_char() {
     // handle case that char literal is empty
     if (peek_char() == '\'') {
-        throw_scanning_error("char literal cannot be empty", "expected expression here");
+        throw_scanning_error("char literal cannot be empty",
+                             "expected expression here");
     }
 
     char c;
@@ -334,7 +345,8 @@ Token Scanner::parse_char() {
         if (peek_char() == '\0') {
             error_msg = "unterminated character literal";
         }
-        throw_scanning_error(error_msg, "expected closing single quote to match this");
+        throw_scanning_error(error_msg,
+                             "expected closing single quote to match this");
         return make_token(tok_error);
     }
 
@@ -348,8 +360,8 @@ Token Scanner::parse_char() {
 /**
  * @brief Parses escape sequences within string and character literals
  *
- * This method handles the parsing of escape sequences that begin with a backslash.
- * Supported escape sequences include:
+ * This method handles the parsing of escape sequences that begin with a
+ * backslash. Supported escape sequences include:
  * - \' (single quote)
  * - \" (double quote)
  * - \n (newline)
@@ -380,7 +392,9 @@ char Scanner::parse_escape_sequence() {
         case '0': return '\0';
         case 'x': return parse_hex_escape();
         default:
-            throw_scanning_error("Invalid escape sequence: \\" + std::string(1, c), "");
+            throw_scanning_error("Invalid escape sequence: \\" +
+                                     std::string(1, c),
+                                 "");
             return c; // Return character as-is for error recovery
     }
 }
@@ -439,13 +453,19 @@ void Scanner::skip_comment() {
             advance_char();
         }
     } else if (match_next('*')) {
-        // skip until we reach the next "*/"
-        while (!reached_eof()) {
-            if (peek_char() == '*' && peek_next() == '/') {
+        int depth = 1; // depth for nested comments
+        // skip until we reach a depth of 0
+        while (!reached_eof() && depth > 0) {
+            if (peek_char() == '/' && peek_next() == '*') {
+                // skip / and *
+                advance_char();
+                advance_char();
+                depth++;
+            } else if (peek_char() == '*' && peek_next() == '/') {
                 // skip * and /
                 advance_char();
                 advance_char();
-                return;
+                depth--;
             }
 
             // increment line number if we see '\n'
@@ -456,7 +476,10 @@ void Scanner::skip_comment() {
             advance_char();
         }
 
-        throw_scanning_error("unclosed block comment", "expected closing `*/` to match this");
+        if (depth > 0) {
+            throw_scanning_error("unclosed block comment",
+                                 "expected closing `*/` to match this");
+        }
     }
 }
 
@@ -478,7 +501,8 @@ void Scanner::skip_comment() {
  * - Source line with error highlighted
  * - Contextual help message
  */
-void Scanner::throw_scanning_error(std::string_view message, std::string_view expected_message) {
+void Scanner::throw_scanning_error(std::string_view message,
+                                   std::string_view expected_message) {
     successful = false;
 
     // compute column (1-based) where the error begins
@@ -495,7 +519,8 @@ void Scanner::throw_scanning_error(std::string_view message, std::string_view ex
     while (line_end < src.end() && *line_end != '\n') {
         line_end++;
     }
-    std::string_view line(&*lexeme_line, static_cast<int>(line_end - lexeme_line));
+    std::string_view line(&*lexeme_line,
+                          static_cast<int>(line_end - lexeme_line));
 
     std::println(std::cerr, "{}|", std::string(gutter_width, ' '));
     std::println(std::cerr, " {} | {}", line_num, line);
