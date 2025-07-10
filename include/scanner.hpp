@@ -80,82 +80,19 @@ private:
     std::string::iterator cur_line;    ///< Start of current line
     std::string::iterator lexeme_line; ///< Start of line containing current lexeme
 
+    bool inside_str = false;
+
     bool successful = true;   ///< Whether scanning completed without errors
 
-    /**
-     * @brief Reports a scanning error with formatted output
-     *
-     * This method handles error reporting by printing a formatted error message
-     * that includes the source location, error description, and a visual indicator
-     * of where the error occurred in the source code.
-     *
-     * @param message The main error message describing what went wrong
-     * @param expected_message Additional context about what was expected
-     */
-    void throw_scanning_error(const std::string& message, const std::string& expected_message);
-
-    /**
-     * @brief Checks if the scanner has reached the end of the source
-     * @return true if at end of file, false otherwise
-     */
-    [[nodiscard]] inline bool reached_eof() const { return cur_char >= src.end(); }
-
-    /**
-     * @brief Peeks at the current character without advancing
-     * @return The current character, or '\0' if at end of file
-     */
-    [[nodiscard]] inline char peek_char() const { return (reached_eof()) ? '\0' : *cur_char; }
-
-    /**
-     * @brief Peeks at the next character without advancing
-     * @return The next character, or '\0' if at or past end of file
-     */
-    [[nodiscard]] inline char peek_next() const {
-        if (reached_eof() || cur_char + 1 >= src.end()) {
-            return '\0';
-        }
-        return *(cur_char + 1);
-    }
-
-    /**
-     * @brief Advances to the next character and returns the current one
-     * @return The character that was advanced past, or '\0' if at EOF
-     */
-    inline char advance_char() {
-        if (reached_eof()) return '\0';
-        return *cur_char++;
-    }
-
-    /**
-     * @brief Conditionally advances if the current character matches expected
-     * @param next The character to match against
-     * @return true if the character matched and scanner advanced, false otherwise
-     */
-    inline bool match_next(char next) {
-        if (reached_eof() || peek_char() != next) {
-            return false;
-        }
-        cur_char++;
-        return true;
-    }
-
-    /**
-     * @brief Creates a token from the current lexeme
-     * @param type The type of token to create
-     * @return A new Token with the specified type and current lexeme
-     */
-    inline Token make_token(TokenType type) {
-        return {line_num,
-                static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
-                type,
-                std::string(cur_lexeme, cur_char)};
-    }
+    // MAIN SCANNING LOGIC
 
     /**
      * @brief Scans a single token from the current position
      * @return The next token in the source
      */
     Token scan_token();
+
+    // TOKEN PARSING METHODS
 
     /**
      * @brief Parses a numeric literal (integer or floating point)
@@ -176,6 +113,92 @@ private:
     Token parse_char();
 
     /**
+     * @brief Parses an identifier or keyword
+     * @return A token representing either an identifier or recognized keyword
+     */
+    Token parse_identifier();
+
+    // UTILITY FUNCTIONS
+
+    /**
+     * @brief Skips over comment text (both line and block comments)
+     *
+     * This method handles both single-line comments and multi-line
+     * block comments. It properly tracks line numbers when
+     * skipping over newlines within comments.
+     */
+    void skip_comment();
+
+    /**
+     * @brief Peeks at the current character without advancing
+     * @return The current character, or '\0' if at end of file
+     */
+    [[nodiscard]] char peek_char() const { return (reached_eof()) ? '\0' : *cur_char; }
+
+    /**
+     * @brief Peeks at the next character without advancing
+     * @return The next character, or '\0' if at or past end of file
+     */
+    [[nodiscard]] char peek_next() const {
+        if (reached_eof() || cur_char + 1 >= src.end()) {
+            return '\0';
+        }
+        return *(cur_char + 1);
+    }
+
+    /**
+     * @brief Advances to the next character and returns the current one
+     * @return The character that was advanced past, or '\0' if at EOF
+     */
+    char advance_char() {
+        if (reached_eof()) return '\0';
+        return *cur_char++;
+    }
+
+    /**
+     * @brief Conditionally advances if the current character matches expected
+     * @param next The character to match against
+     * @return true if the character matched and scanner advanced, false otherwise
+     */
+    bool match_next(char next) {
+        if (reached_eof() || peek_char() != next) {
+            return false;
+        }
+        cur_char++;
+        return true;
+    }
+
+    bool match_next_n(std::string_view next) {
+        auto temp = cur_char;
+        for (const char& c : next) {
+            if (reached_eof() || *temp != c) {
+                return false;
+            }
+            ++temp;
+        }
+        cur_char = temp;
+        return true;
+    }
+
+    /**
+     * @brief Checks if the scanner has reached the end of the source
+     * @return true if at end of file, false otherwise
+     */
+    [[nodiscard]] bool reached_eof() const { return cur_char >= src.end(); }
+
+    /**
+     * @brief Creates a token from the current lexeme
+     * @param type The type of token to create
+     * @return A new Token with the specified type and current lexeme
+     */
+    Token make_token(TokenType type) {
+        return {line_num,
+                static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
+                type,
+                std::string(cur_lexeme, cur_char)};
+    }
+
+    /**
      * @brief Parses an escape sequence within a string or character literal
      * @return The actual character value represented by the escape sequence
      */
@@ -187,18 +210,19 @@ private:
      */
     char parse_hex_escape();
 
-    /**
-     * @brief Parses an identifier or keyword
-     * @return A token representing either an identifier or recognized keyword
-     */
-    Token parse_identifier();
+    // ERROR HANDLING
 
     /**
-     * @brief Skips over comment text (both line and block comments)
+     * @brief Reports a scanning error with formatted output
      *
-     * This method handles both single-line comments and multi-line
-     * block comments. It properly tracks line numbers when
-     * skipping over newlines within comments.
+     * This method handles error reporting by printing a formatted error message
+     * that includes the source location, error description, and a visual indicator
+     * of where the error occurred in the source code.
+     *
+     * @param message The main error message describing what went wrong
+     * @param expected_message Additional context about what was expected
      */
-    void skip_comment();
+    void throw_scanning_error(std::string_view message, std::string_view expected_message);
+
+    void resync_scanner();
 };

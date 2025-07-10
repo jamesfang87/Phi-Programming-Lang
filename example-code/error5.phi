@@ -1,0 +1,4 @@
+fn main() {
+    let newline = '\n';
+    let bad = 'abc';
+}
