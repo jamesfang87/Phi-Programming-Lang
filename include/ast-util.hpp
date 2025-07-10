@@ -1,6 +1,6 @@
 #include <cassert>
-#include <string>
 #include <cstdint>
+#include <string>
 
 #pragma once
 
@@ -11,7 +11,7 @@ struct SrcLocation {
 
 class Type {
 public:
-    enum class Primitive : std::uint8_t {
+    enum class Primitive : uint8_t {
         // Signed integer types
         i8,
         i16,
@@ -58,7 +58,9 @@ public:
     }
 
     // Accessors
-    [[nodiscard]] Primitive primitive_type() const noexcept { return primitive_type_; }
+    [[nodiscard]] Primitive primitive_type() const noexcept {
+        return primitive_type_;
+    }
     [[nodiscard]] const std::string& custom_type_name() const {
         assert(primitive_type_ == Primitive::custom);
         return custom_type_name_;

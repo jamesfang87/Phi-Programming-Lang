@@ -64,11 +64,12 @@ private:
 
 class FunctionDecl : public Decl {
 public:
-    FunctionDecl(SrcLocation location,
-                 std::string identifier,
-                 Type return_type,
-                 std::unique_ptr<std::vector<std::unique_ptr<ParamDecl>>> params,
-                 std::unique_ptr<Block> block_ptr)
+    FunctionDecl(
+        SrcLocation location,
+        std::string identifier,
+        Type return_type,
+        std::unique_ptr<std::vector<std::unique_ptr<ParamDecl>>> params,
+        std::unique_ptr<Block> block_ptr)
         : Decl(std::move(location), std::move(identifier)),
           return_type(std::move(return_type)),
           params(std::move(params)),
