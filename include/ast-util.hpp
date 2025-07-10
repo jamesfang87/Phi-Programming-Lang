@@ -1,12 +1,11 @@
 #include <cassert>
 #include <string>
-#include <string_view>
 #include <cstdint>
 
 #pragma once
 
 struct SrcLocation {
-    std::string_view path;
+    std::string path;
     int line, col;
 };
 
