@@ -62,9 +62,7 @@ public:
     }
 
     // Accessors
-    [[nodiscard]] Primitive primitive_type() const noexcept {
-        return primitive_type_;
-    }
+    [[nodiscard]] Primitive primitive_type() const noexcept { return primitive_type_; }
 
     [[nodiscard]] const std::string& custom_type_name() const {
         assert(primitive_type_ == Primitive::custom);

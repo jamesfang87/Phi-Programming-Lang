@@ -10,9 +10,7 @@
 class Parser {
 public:
     // Constructor
-    Parser(std::string_view src,
-           std::string_view path,
-           std::vector<Token>& tokens)
+    Parser(std::string_view src, std::string_view path, std::vector<Token>& tokens)
         : path(path),
           tokens(tokens),
           token_it(tokens.begin()),

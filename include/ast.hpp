@@ -29,9 +29,7 @@ public:
 
     void info_dump(int level = 0) const;
 
-    [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& get_stmts() const {
-        return stmts;
-    }
+    [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& get_stmts() const { return stmts; }
 
 private:
     std::vector<std::unique_ptr<Stmt>> stmts;
@@ -71,12 +69,11 @@ private:
 
 class FunctionDecl : public Decl {
 public:
-    FunctionDecl(
-        SrcLocation location,
-        std::string identifier,
-        Type return_type,
-        std::unique_ptr<std::vector<std::unique_ptr<ParamDecl>>> params,
-        std::unique_ptr<Block> block_ptr)
+    FunctionDecl(SrcLocation location,
+                 std::string identifier,
+                 Type return_type,
+                 std::unique_ptr<std::vector<std::unique_ptr<ParamDecl>>> params,
+                 std::unique_ptr<Block> block_ptr)
         : Decl(std::move(location), std::move(identifier)),
           return_type(std::move(return_type)),
           params(std::move(params)),
@@ -85,8 +82,7 @@ public:
     void info_dump(int level = 0) const override;
 
     [[nodiscard]] const Type& get_return_type() const { return return_type; }
-    [[nodiscard]] const std::vector<std::unique_ptr<ParamDecl>>*
-    get_params() const {
+    [[nodiscard]] const std::vector<std::unique_ptr<ParamDecl>>* get_params() const {
         return params.get();
     }
     [[nodiscard]] const Block* get_block() const { return block.get(); }
@@ -199,9 +195,7 @@ public:
     void info_dump(int level = 0) const override;
 
     [[nodiscard]] const Expr* get_callee() const { return callee.get(); }
-    [[nodiscard]] const std::vector<std::unique_ptr<Expr>>& get_args() const {
-        return args;
-    }
+    [[nodiscard]] const std::vector<std::unique_ptr<Expr>>& get_args() const { return args; }
 
 private:
     std::unique_ptr<Expr> callee;
@@ -246,9 +240,7 @@ protected:
 class ResolvedParamDecl : public ResolvedDecl {
 public:
     ResolvedParamDecl(SrcLocation location, std::string identifier, Type type)
-        : ResolvedDecl(std::move(location),
-                       std::move(identifier),
-                       std::move(type)) {}
+        : ResolvedDecl(std::move(location), std::move(identifier), std::move(type)) {}
 
     void info_dump(size_t level = 0) const override;
 
@@ -262,8 +254,7 @@ public:
 
     void info_dump(size_t level = 0) const;
 
-    [[nodiscard]] const std::vector<std::unique_ptr<ResolvedStmt>>&
-    get_stmts() const {
+    [[nodiscard]] const std::vector<std::unique_ptr<ResolvedStmt>>& get_stmts() const {
         return stmts;
     }
 
@@ -278,23 +269,18 @@ public:
                     Type type,
                     std::vector<std::unique_ptr<ResolvedParamDecl>> params,
                     std::unique_ptr<ResolvedBlock> body)
-        : ResolvedDecl(std::move(location),
-                       std::move(identifier),
-                       std::move(type)),
+        : ResolvedDecl(std::move(location), std::move(identifier), std::move(type)),
           params(std::move(params)),
           body(std::move(body)) {}
 
     void info_dump(size_t level = 0) const override;
 
-    [[nodiscard]] const std::vector<std::unique_ptr<ResolvedParamDecl>>&
-    get_params() const {
+    [[nodiscard]] const std::vector<std::unique_ptr<ResolvedParamDecl>>& get_params() const {
         return params;
     }
     [[nodiscard]] const ResolvedBlock* get_body() const { return body.get(); }
 
-    void set_block(std::unique_ptr<ResolvedBlock> block) {
-        body = std::move(block);
-    }
+    void set_block(std::unique_ptr<ResolvedBlock> block) { body = std::move(block); }
 
 private:
     std::vector<std::unique_ptr<ResolvedParamDecl>> params;

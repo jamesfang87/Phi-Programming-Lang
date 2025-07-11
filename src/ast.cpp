@@ -97,27 +97,19 @@ void ResolvedFunDecl::info_dump(size_t level) const {
 }
 
 void ResolvedExpr::info_dump(size_t level) const {
-    std::println("{}ResolvedExpr (type: {})",
-                 std::string(level * 2, ' '),
-                 type.to_string());
+    std::println("{}ResolvedExpr (type: {})", std::string(level * 2, ' '), type.to_string());
 }
 
 void ResolvedIntLiteral::info_dump(size_t level) const {
-    std::println("{}ResolvedIntLiteral: {}",
-                 std::string(level * 2, ' '),
-                 value);
+    std::println("{}ResolvedIntLiteral: {}", std::string(level * 2, ' '), value);
 }
 
 void ResolvedFloatLiteral::info_dump(size_t level) const {
-    std::println("{}ResolvedFloatLiteral: {}",
-                 std::string(level * 2, ' '),
-                 value);
+    std::println("{}ResolvedFloatLiteral: {}", std::string(level * 2, ' '), value);
 }
 
 void ResolvedDeclRef::info_dump(size_t level) const {
-    std::println("{}ResolvedDeclRefExpr: {}",
-                 std::string(level * 2, ' '),
-                 identifier);
+    std::println("{}ResolvedDeclRefExpr: {}", std::string(level * 2, ' '), identifier);
 }
 
 void ResolvedFunctionCall::info_dump(size_t level) const {

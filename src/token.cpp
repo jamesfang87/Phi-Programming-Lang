@@ -136,9 +136,8 @@ std::string token_type_to_string(TokenType type) {
     };
 
     // Array size check to ensure all tokens are covered
-    static_assert(
-        sizeof(token_strings) / sizeof(token_strings[0]) == tok_identifier + 1,
-        "Token string array size must match the number of token types");
+    static_assert(sizeof(token_strings) / sizeof(token_strings[0]) == tok_identifier + 1,
+                  "Token string array size must match the number of token types");
 
     // Bounds check and return appropriate string
     if (type <= tok_identifier) {
