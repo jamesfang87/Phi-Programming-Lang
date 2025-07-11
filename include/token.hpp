@@ -115,8 +115,8 @@ enum TokenType : uint8_t {
     tok_float_literal, ///< Floating point literal (e.g., 3.14, 2.5)
     tok_str_literal,   ///< String literal (e.g., "hello")
     tok_char_literal,  ///< Character literal (e.g., 'a', '\n')
-    tok_identifier, ///< User-defined identifier (e.g., variable names, function
-                    ///< names)
+    tok_identifier,    ///< User-defined identifier (e.g., variable names, function
+                       ///< names)
 };
 
 /**

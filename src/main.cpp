@@ -12,8 +12,7 @@ std::string read_file_to_string(const std::string& filename) {
     if (!file.is_open()) {
         throw std::runtime_error("Could not open file: " + filename);
     }
-    return std::string{std::istreambuf_iterator<char>(file),
-                       std::istreambuf_iterator<char>()};
+    return std::string{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
 int main(int argc, char* argv[]) {
@@ -31,8 +30,7 @@ int main(int argc, char* argv[]) {
         auto [tokens, scan_success] = scanner.scan();
 
         if (!scan_success) {
-            std::println(
-                "\033[31;1;4merror:\033[0m exiting due to previous error(s)");
+            std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
             return 0;
         }
 
@@ -45,8 +43,7 @@ int main(int argc, char* argv[]) {
         Parser parser(source, filename, tokens);
         auto [ast, parse_success] = parser.parse();
         if (!parse_success) {
-            std::println(
-                "\033[31;1;4merror:\033[0m exiting due to previous error(s)");
+            std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
             return 0;
         }
 
@@ -58,8 +55,7 @@ int main(int argc, char* argv[]) {
         Sema analyzer(std::move(ast));
         auto resolved_ast = analyzer.resolve_ast();
         if (resolved_ast.empty()) {
-            std::println(
-                "\033[31;1;4merror:\033[0m exiting due to previous error(s)");
+            std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
             return 0;
         }
         for (const auto& fun : resolved_ast) {

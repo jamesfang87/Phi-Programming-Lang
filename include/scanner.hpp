@@ -135,9 +135,7 @@ private:
      * @brief Peeks at the current character without advancing
      * @return The current character, or '\0' if at end of file
      */
-    [[nodiscard]] char peek_char() const {
-        return (reached_eof()) ? '\0' : *cur_char;
-    }
+    [[nodiscard]] char peek_char() const { return (reached_eof()) ? '\0' : *cur_char; }
 
     /**
      * @brief Peeks at the next character without advancing
@@ -198,8 +196,7 @@ private:
      */
     Token make_token(TokenType type) {
         return {line_num,
-                static_cast<int>(cur_lexeme - lexeme_line) +
-                    1, // 1-indexed column
+                static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
                 type,
                 std::string(cur_lexeme, cur_char)};
     }
@@ -228,8 +225,7 @@ private:
      * @param message The main error message describing what went wrong
      * @param expected_message Additional context about what was expected
      */
-    void throw_scanning_error(std::string_view message,
-                              std::string_view expected_message);
+    void throw_scanning_error(std::string_view message, std::string_view expected_message);
 
     void resync_scanner();
 };
