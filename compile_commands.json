@@ -25,6 +25,12 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/sema.cpp.o -c /Users/jamesfang/Phi/src/sema.cpp",
+  "file": "/Users/jamesfang/Phi/src/sema.cpp",
+  "output": "CMakeFiles/phi.dir/src/sema.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
   "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/token.cpp.o -c /Users/jamesfang/Phi/src/token.cpp",
   "file": "/Users/jamesfang/Phi/src/token.cpp",
   "output": "CMakeFiles/phi.dir/src/token.cpp.o"
