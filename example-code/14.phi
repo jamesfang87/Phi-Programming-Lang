@@ -1,19 +1,15 @@
-fun foo1(a: i32, b: i32) -> i32 {
+fun foo1(a: i32, b: i32) -> i64 {
     return 12;
 }
 
-fun foo2(a: i32) -> f32 {
-    return bar(1.5, 'a', "char", 2, x, phi(a, 1.5, 2));
+fun bar(a: f32) -> f64 {
+    return 1.2;
 }
 
-fun foo3(ily: str) -> i32 {
-    return x;
+fun baz(a: f64) -> f64 {
+    return a;
 }
 
-fun phiona() -> f32 {
-    return bar();
-}
-
-fun jams() -> str {
-    return "what";
+fun qux(a: f64) -> f64 {
+    return baz(1.2);
 }
