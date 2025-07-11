@@ -256,21 +256,6 @@ Sema::resolve_function_call(const FunctionCall* call) {
         resolved_fun->get_type(),
         const_cast<ResolvedFunDecl*>(resolved_fun),
         std::move(resolved_args));
-    /*
-
-    // check param list length is the same
-    if (call->get_params().size() != call->get_fun()->get_params().size()) {
-        std::println("Parameter list length mismatch");
-        return nullptr;
-    }
-
-    // check param types are compatible
-
-    return std::make_unique<ResolvedFunctionCall>(call->get_location(),
-                                                  fun->get_type(),
-                                                  fun->get_id(),
-                                                  fun);
-                                                  */
 }
 
 std::unique_ptr<ResolvedExpr> Sema::resolve_expr(const Expr* expr) {
