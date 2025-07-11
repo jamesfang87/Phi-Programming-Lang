@@ -1,5 +1,6 @@
 #include "parser.hpp"
 #include "scanner.hpp"
+#include "sema.hpp"
 #include <cctype>
 #include <fstream>
 #include <iostream>
@@ -42,16 +43,29 @@ int main(int argc, char* argv[]) {
 
         std::println("\nParsing results: ");
         Parser parser(source, filename, tokens);
-        auto [stuff, parse_success] = parser.parse();
+        auto [ast, parse_success] = parser.parse();
         if (!parse_success) {
             std::println(
                 "\033[31;1;4merror:\033[0m exiting due to previous error(s)");
             return 0;
         }
 
-        for (const auto& fun : stuff) {
+        for (const auto& fun : ast) {
             fun->info_dump();
         }
+
+        std::println("Semantic Analysis:");
+        Sema analyzer(std::move(ast));
+        auto resolved_ast = analyzer.resolve_ast();
+        if (resolved_ast.empty()) {
+            std::println(
+                "\033[31;1;4merror:\033[0m exiting due to previous error(s)");
+            return 0;
+        }
+        for (const auto& fun : resolved_ast) {
+            fun->info_dump();
+        }
+        std::println("Semantic analysis completed successfully!");
 
     } catch (const std::exception& e) {
         std::println(std::cerr, "Error: {}", e.what());
