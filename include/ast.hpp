@@ -181,9 +181,7 @@ public:
 
     void info_dump(int level = 0) const override;
 
-    [[nodiscard]] const std::string& get_identifier() const {
-        return identifier;
-    }
+    [[nodiscard]] const std::string& get_id() const { return identifier; }
 
 private:
     std::string identifier;
@@ -311,6 +309,8 @@ public:
 
     void info_dump(size_t level = 0) const override;
 
+    [[nodiscard]] const Type get_type() const { return type; }
+
 private:
     Type type;
 };
@@ -346,10 +346,12 @@ public:
     ResolvedDeclRef(SrcLocation location,
                     Type type,
                     std::string identifier,
-                    const ResolvedDecl& decl)
+                    const ResolvedDecl* decl)
         : ResolvedExpr(std::move(location), std::move(type)),
-          decl(&decl),
+          decl(decl),
           identifier(std::move(identifier)) {}
+
+    [[nodiscard]] const ResolvedDecl* get_decl() const { return decl; }
 
     void info_dump(size_t level = 0) const override;
 
@@ -362,16 +364,16 @@ class ResolvedFunctionCall : public ResolvedExpr {
 public:
     ResolvedFunctionCall(SrcLocation location,
                          Type type,
-                         std::unique_ptr<ResolvedFunDecl> callee,
+                         ResolvedFunDecl* callee,
                          std::vector<std::unique_ptr<ResolvedExpr>> args)
         : ResolvedExpr(std::move(location), std::move(type)),
-          callee(std::move(callee)),
+          callee(callee),
           args(std::move(args)) {}
 
     void info_dump(size_t level = 0) const override;
 
 private:
-    std::unique_ptr<ResolvedFunDecl> callee;
+    ResolvedFunDecl* callee;
     std::vector<std::unique_ptr<ResolvedExpr>> args;
 };
 
