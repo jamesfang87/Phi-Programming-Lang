@@ -1,19 +1,15 @@
-"heyyyy
+fun foo2(a: i32) -> f32 {
+    return bar(1.5, 'a', "char", 2, x, phi(a, 1.5, 2));
+}
 
-heeyyyy"
+fun foo3(ily: str) -> i32 {
+    return x;
+}
 
-"wallahi\n
+fun phiona() -> f32 {
+    return bar();
+}
 
-we are finished"
-
-'\n'
-
-i32
-
-/*
-
-what
-
-*/
-
-i32
+fun jams() -> str {
+    return "what";
+}

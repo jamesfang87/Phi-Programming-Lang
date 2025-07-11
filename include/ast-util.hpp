@@ -71,6 +71,19 @@ public:
         return custom_type_name_;
     }
 
+    // Equality operators
+    bool operator==(const Type& other) const {
+        if (primitive_type_ != other.primitive_type_) {
+            return false;
+        }
+        if (primitive_type_ == Primitive::custom) {
+            return custom_type_name_ == other.custom_type_name_;
+        }
+        return true;
+    }
+
+    bool operator!=(const Type& other) const { return !(*this == other); }
+
 private:
     static std::string primitive_to_string(Primitive primitive) {
         switch (primitive) {
