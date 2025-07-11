@@ -194,7 +194,7 @@ std::unique_ptr<Expr> Parser::parse_postfix_expr() {
         if (args == nullptr) {
             return nullptr;
         }
-        return std::make_unique<FunCallExpr>(
+        return std::make_unique<FunctionCall>(
             SrcLocation{.path = path,
                         .line = peek_token().get_line(),
                         .col = peek_token().get_col()},
@@ -237,11 +237,10 @@ std::unique_ptr<Expr> Parser::parse_primary_expr() {
                             .col = t.get_col()},
                 t.get_lexeme().front());
         case tok_identifier:
-            return std::make_unique<DeclRefExpr>(
-                SrcLocation{.path = path,
-                            .line = t.get_line(),
-                            .col = t.get_col()},
-                t.get_lexeme());
+            return std::make_unique<DeclRef>(SrcLocation{.path = path,
+                                                         .line = t.get_line(),
+                                                         .col = t.get_col()},
+                                             t.get_lexeme());
         default:
             throw_parsing_error(
                 t.get_line(),

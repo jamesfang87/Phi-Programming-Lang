@@ -11,6 +11,10 @@ struct SrcLocation {
 
 class Type {
 public:
+    [[nodiscard]] bool is_primitive() const noexcept {
+        return primitive_type_ != Primitive::custom;
+    }
+
     enum class Primitive : uint8_t {
         // Signed integer types
         i8,
@@ -61,6 +65,7 @@ public:
     [[nodiscard]] Primitive primitive_type() const noexcept {
         return primitive_type_;
     }
+
     [[nodiscard]] const std::string& custom_type_name() const {
         assert(primitive_type_ == Primitive::custom);
         return custom_type_name_;
