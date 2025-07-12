@@ -21,14 +21,8 @@
 
 #include "Lexer/Lexer.hpp"
 #include "Lexer/token.hpp"
-#include <cctype>
-#include <cstring>
 #include <iostream>
 #include <print>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 // =============================================================================
 // PUBLIC INTERFACE IMPLEMENTATION
