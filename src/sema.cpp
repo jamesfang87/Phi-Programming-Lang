@@ -1,4 +1,5 @@
 #include "ast.hpp"
+#include <cassert>
 #include <memory>
 #include <optional>
 #include <print>
@@ -74,8 +75,6 @@ std::vector<std::unique_ptr<ResolvedDecl>> Sema::resolve_ast() {
 }
 
 std::unique_ptr<ResolvedBlock> Sema::resolve_block(const Block* block) {
-    // TODO: implement block resolution
-
     std::vector<std::unique_ptr<ResolvedStmt>> resolved_stmts;
     for (const auto& stmt : block->get_stmts()) {
         std::unique_ptr<ResolvedStmt> r_stmt = resolve_stmt(stmt.get());
@@ -204,6 +203,7 @@ std::unique_ptr<ResolvedDeclRef> Sema::resolve_decl_ref(const DeclRef* declref,
 
 std::unique_ptr<ResolvedFunctionCall> Sema::resolve_function_call(const FunctionCall* call) {
     auto declref = dynamic_cast<const DeclRef*>(call->get_callee());
+    assert(declref);
     std::unique_ptr<ResolvedDeclRef> resolved_decl_ref = resolve_decl_ref(declref, true);
 
     if (!resolved_decl_ref) {
@@ -213,7 +213,7 @@ std::unique_ptr<ResolvedFunctionCall> Sema::resolve_function_call(const Function
 
     // Get the resolved function declaration from the decl_ref
     auto resolved_fun = dynamic_cast<const ResolvedFunDecl*>(resolved_decl_ref->get_decl());
-
+    assert(resolved_fun);
     // check parma list length is the same
     const std::vector<std::unique_ptr<ResolvedParamDecl>>& params = resolved_fun->get_params();
     if (call->get_args().size() != params.size()) {
@@ -268,6 +268,16 @@ std::unique_ptr<ResolvedExpr> Sema::resolve_expr(const Expr* expr) {
 }
 
 std::unique_ptr<ResolvedReturnStmt> Sema::resolve_return_stmt(const ReturnStmt* stmt) {
+    // case that the function is void
+    if (!stmt->get_expr()) {
+        if (cur_fun->get_type() != Type(Type::Primitive::null)) {
+            std::println("error: function '{}' should return a value", cur_fun->get_id());
+            return nullptr;
+        }
+        return std::make_unique<ResolvedReturnStmt>(stmt->get_location(), nullptr);
+    }
+
+    // now handle the case that the function is not void
     std::unique_ptr<ResolvedExpr> expr = resolve_expr(stmt->get_expr());
     if (!expr) {
         return nullptr;
