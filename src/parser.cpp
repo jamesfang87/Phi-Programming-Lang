@@ -381,4 +381,28 @@ void Parser::throw_parsing_error(int line,
                  std::string(std::max(1, gutter_width), ' '),
                  std::string(std::max(1, col), ' '),
                  expected_message);
+
+    synchronize();
+}
+
+void Parser::synchronize() {
+    // Skip tokens until we find a synchronization point
+    while (peek_token().get_type() != tok_eof) {
+        switch (peek_token().get_type()) {
+            // Statement terminators
+            case tok_semicolon:
+                advance_token(); // Consume the semicolon
+                return;
+
+            // Block/scope boundaries
+            case tok_close_brace:
+                return; // Let caller handle closing brace
+
+            // End of file
+            case tok_eof: return;
+
+            // Skip all other tokens
+            default: advance_token(); break;
+        }
+    }
 }
