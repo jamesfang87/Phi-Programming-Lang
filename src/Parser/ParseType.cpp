@@ -1,5 +1,4 @@
 #include "Parser/Parser.hpp"
-#include <format>
 #include <unordered_map>
 
 std::optional<Type> Parser::parse_type() {

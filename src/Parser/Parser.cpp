@@ -1,15 +1,7 @@
 #include "Parser/Parser.hpp"
 #include "Lexer/Token.hpp"
-#include <algorithm>
-#include <cassert>
-#include <cstddef>
 #include <iostream>
-#include <memory>
 #include <print>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 std::pair<std::vector<std::unique_ptr<FunctionDecl>>, bool> Parser::parse() {
     while (peek_token().get_type() != TokenType::tok_eof) {
