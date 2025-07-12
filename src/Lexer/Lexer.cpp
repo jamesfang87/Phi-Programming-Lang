@@ -27,8 +27,8 @@
  * 1. pass in location to throw_scanning_error
  */
 
-#include "scanner.hpp"
-#include "token.hpp"
+#include "Lexer/Lexer.hpp"
+#include "Lexer/token.hpp"
 #include <cctype>
 #include <cstring>
 #include <iostream>
@@ -121,38 +121,47 @@ Token Scanner::scan_token() {
     char c = advance_char();
     switch (c) {
         // One char tokens
-        case '(': return make_token(tok_open_paren);
-        case ')': return make_token(tok_close_paren);
-        case '{': return make_token(tok_open_brace);
-        case '}': return make_token(tok_close_brace);
-        case '[': return make_token(tok_open_bracket);
-        case ']': return make_token(tok_close_bracket);
-        case ',': return make_token(tok_comma);
-        case ';': return make_token(tok_semicolon);
-        case '.': return make_token(tok_member);
-        case ':': return make_token(match_next(':') ? tok_namespace_member : tok_colon);
+        case '(': return make_token(TokenType::tok_open_paren);
+        case ')': return make_token(TokenType::tok_close_paren);
+        case '{': return make_token(TokenType::tok_open_brace);
+        case '}': return make_token(TokenType::tok_close_brace);
+        case '[': return make_token(TokenType::tok_open_bracket);
+        case ']': return make_token(TokenType::tok_close_bracket);
+        case ',': return make_token(TokenType::tok_comma);
+        case ';': return make_token(TokenType::tok_semicolon);
+        case '.': return make_token(TokenType::tok_member);
+        case ':':
+            return make_token(match_next(':') ? TokenType::tok_namespace_member
+                                              : TokenType::tok_colon);
 
         // Operators
         case '+':
-            if (match_next('+')) return make_token(tok_increment);
-            if (match_next('=')) return make_token(tok_plus_equals);
-            return make_token(tok_add);
+            if (match_next('+')) return make_token(TokenType::tok_increment);
+            if (match_next('=')) return make_token(TokenType::tok_plus_equals);
+            return make_token(TokenType::tok_add);
         case '-':
-            if (match_next('>')) return make_token(tok_fun_return);
-            if (match_next('-')) return make_token(tok_decrement);
-            if (match_next('=')) return make_token(tok_sub_equals);
-            return make_token(tok_sub);
-        case '*': return make_token(match_next('=') ? tok_mul_equals : tok_mul);
-        case '/': return make_token(match_next('=') ? tok_div_equals : tok_div);
-        case '%': return make_token(match_next('=') ? tok_mod_equals : tok_mod);
-        case '!': return make_token(match_next('=') ? tok_not_equal : tok_bang);
-        case '=': return make_token(match_next('=') ? tok_equal : tok_assign);
-        case '<': return make_token(match_next('=') ? tok_less_equal : tok_less);
-        case '>': return make_token(match_next('=') ? tok_greater_equal : tok_greater);
+            if (match_next('>')) return make_token(TokenType::tok_fun_return);
+            if (match_next('-')) return make_token(TokenType::tok_decrement);
+            if (match_next('=')) return make_token(TokenType::tok_sub_equals);
+            return make_token(TokenType::tok_sub);
+        case '*':
+            return make_token(match_next('=') ? TokenType::tok_mul_equals : TokenType::tok_mul);
+        case '/':
+            return make_token(match_next('=') ? TokenType::tok_div_equals : TokenType::tok_div);
+        case '%':
+            return make_token(match_next('=') ? TokenType::tok_mod_equals : TokenType::tok_mod);
+        case '!':
+            return make_token(match_next('=') ? TokenType::tok_not_equal : TokenType::tok_bang);
+        case '=': return make_token(match_next('=') ? TokenType::tok_equal : TokenType::tok_assign);
+        case '<':
+            return make_token(match_next('=') ? TokenType::tok_less_equal : TokenType::tok_less);
+        case '>':
+            return make_token(match_next('=') ? TokenType::tok_greater_equal
+                                              : TokenType::tok_greater);
         // Handle single & as error or bitwise operator
-        case '&': return make_token(match_next('&') ? tok_and : tok_error);
+        case '&': return make_token(match_next('&') ? TokenType::tok_and : TokenType::tok_error);
         // Handle single | as error or bitwise operator
-        case '|': return make_token(match_next('|') ? tok_or : tok_error);
+        case '|': return make_token(match_next('|') ? TokenType::tok_or : TokenType::tok_error);
 
         case '"': return parse_string();
         case '\'': return parse_char();
@@ -164,7 +173,7 @@ Token Scanner::scan_token() {
                 return parse_number();
             } else {
                 std::println("Unknow token found: {}\n", c);
-                return make_token(tok_error);
+                return make_token(TokenType::tok_error);
             }
     }
 }
@@ -204,9 +213,9 @@ Token Scanner::parse_number() {
 
     // TODO: implement exponents
     if (floating_point) {
-        return make_token(tok_float_literal);
+        return make_token(TokenType::tok_float_literal);
     }
-    return make_token(tok_int_literal);
+    return make_token(TokenType::tok_int_literal);
 }
 
 /**
@@ -232,23 +241,23 @@ Token Scanner::parse_identifier() {
     std::string identifier(cur_lexeme, cur_char);
 
     static const std::unordered_map<std::string, TokenType> keywords = {
-        {"break", tok_break},   {"class", tok_class},
-        {"const", tok_const},   {"continue", tok_continue},
-        {"else", tok_else},     {"elif", tok_elif},
-        {"false", tok_false},   {"for", tok_for},
-        {"fun", tok_fun},       {"if", tok_if},
-        {"import", tok_import}, {"in", tok_in},
-        {"let", tok_let},       {"return", tok_return},
-        {"true", tok_true},     {"while", tok_while},
-        {"i8", tok_i8},         {"i16", tok_i16},
-        {"i32", tok_i32},       {"i64", tok_i64},
-        {"u8", tok_u8},         {"u16", tok_u16},
-        {"u32", tok_u32},       {"u64", tok_u64},
-        {"f32", tok_f32},       {"f64", tok_f64},
-        {"str", tok_str},       {"char", tok_char}};
+        {"break", TokenType::tok_break},   {"class", TokenType::tok_class},
+        {"const", TokenType::tok_const},   {"continue", TokenType::tok_continue},
+        {"else", TokenType::tok_else},     {"elif", TokenType::tok_elif},
+        {"false", TokenType::tok_false},   {"for", TokenType::tok_for},
+        {"fun", TokenType::tok_fun},       {"if", TokenType::tok_if},
+        {"import", TokenType::tok_import}, {"in", TokenType::tok_in},
+        {"let", TokenType::tok_let},       {"return", TokenType::tok_return},
+        {"true", TokenType::tok_true},     {"while", TokenType::tok_while},
+        {"i8", TokenType::tok_i8},         {"i16", TokenType::tok_i16},
+        {"i32", TokenType::tok_i32},       {"i64", TokenType::tok_i64},
+        {"u8", TokenType::tok_u8},         {"u16", TokenType::tok_u16},
+        {"u32", TokenType::tok_u32},       {"u64", TokenType::tok_u64},
+        {"f32", TokenType::tok_f32},       {"f64", TokenType::tok_f64},
+        {"str", TokenType::tok_str},       {"char", TokenType::tok_char}};
 
     auto it = keywords.find(identifier);
-    return (it != keywords.end()) ? make_token(it->second) : make_token(tok_identifier);
+    return (it != keywords.end()) ? make_token(it->second) : make_token(TokenType::tok_identifier);
 }
 
 /**
@@ -293,11 +302,20 @@ Token Scanner::parse_string() {
         // reached eof without finding closing double quote
         throw_scanning_error("untermianted string literal",
                              "expected closing double quote to match this");
-        return make_token(tok_error);
+        return make_token(TokenType::tok_error);
     }
     advance_char();     // consume closing quote
     inside_str = false; // we are no longer inside str
-    return {starting_line, static_cast<int>(cur_lexeme - lexeme_line) + 1, tok_str_literal, str};
+
+    SrcLocation start = {.path = this->path,
+                         .line = starting_line,
+                         .col = static_cast<int>(cur_lexeme - lexeme_line) + 1};
+
+    SrcLocation end = {.path = this->path,
+                       .line = line_num,
+                       .col = static_cast<int>(cur_char - cur_line) + 1};
+
+    return {start, end, TokenType::tok_str_literal, str};
 }
 
 /**
@@ -336,14 +354,20 @@ Token Scanner::parse_char() {
             error_msg = "unterminated character literal";
         }
         throw_scanning_error(error_msg, "expected closing single quote to match this");
-        return make_token(tok_error);
+        return make_token(TokenType::tok_error);
     }
 
     advance_char(); // consume closing quote
-    return {line_num,
-            static_cast<int>(cur_lexeme - lexeme_line) + 1,
-            tok_char_literal,
-            std::string{c}};
+
+    SrcLocation start = {.path = this->path,
+                         .line = line_num,
+                         .col = static_cast<int>(cur_lexeme - lexeme_line) + 1};
+
+    SrcLocation end = {.path = this->path,
+                       .line = line_num,
+                       .col = static_cast<int>(cur_char - cur_line) + 1};
+
+    return {start, end, TokenType::tok_char_literal, std::string(1, c)};
 }
 
 /**

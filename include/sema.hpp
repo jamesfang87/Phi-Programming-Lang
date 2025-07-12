@@ -1,6 +1,10 @@
 // global scope are functions
 //
 
+#include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
+#include "AST/Stmt.hpp"
+#include "AST/Type.hpp"
 #include "ast.hpp"
 #include <memory>
 #include <optional>
@@ -27,7 +31,8 @@ private:
 
     std::unique_ptr<ResolvedReturnStmt> resolve_return_stmt(const ReturnStmt* stmt);
 
-    std::unique_ptr<ResolvedDeclRef> resolve_decl_ref(const DeclRef* declref, bool function_call);
+    std::unique_ptr<ResolvedDeclRef> resolve_decl_ref(const DeclRefExpr* declref,
+                                                      bool function_call);
     std::unique_ptr<ResolvedFunctionCall> resolve_function_call(const FunctionCall* call);
 
     std::unique_ptr<ResolvedStmt> resolve_stmt(const Stmt* stmt);

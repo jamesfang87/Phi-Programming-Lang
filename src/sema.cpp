@@ -178,7 +178,7 @@ bool Sema::insert_decl(ResolvedDecl* decl) {
     return true;
 }
 
-std::unique_ptr<ResolvedDeclRef> Sema::resolve_decl_ref(const DeclRef* declref,
+std::unique_ptr<ResolvedDeclRef> Sema::resolve_decl_ref(const DeclRefExpr* declref,
                                                         bool function_call) {
     auto [decl, depth] = lookup_decl(declref->get_id());
 
@@ -202,7 +202,7 @@ std::unique_ptr<ResolvedDeclRef> Sema::resolve_decl_ref(const DeclRef* declref,
 }
 
 std::unique_ptr<ResolvedFunctionCall> Sema::resolve_function_call(const FunctionCall* call) {
-    auto declref = dynamic_cast<const DeclRef*>(call->get_callee());
+    auto declref = dynamic_cast<const DeclRefExpr*>(call->get_callee());
     assert(declref);
     std::unique_ptr<ResolvedDeclRef> resolved_decl_ref = resolve_decl_ref(declref, true);
 
@@ -256,7 +256,7 @@ std::unique_ptr<ResolvedExpr> Sema::resolve_expr(const Expr* expr) {
                                                       float_lit->get_value());
     }
 
-    if (const auto* declref = dynamic_cast<const DeclRef*>(expr)) {
+    if (const auto* declref = dynamic_cast<const DeclRefExpr*>(expr)) {
         return resolve_decl_ref(declref, false);
     }
 
