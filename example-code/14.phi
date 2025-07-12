@@ -13,3 +13,7 @@ fun baz(a: f64) -> f64 {
 fun qux(a: f64) -> f64 {
     return baz(1.2);
 }
+
+fun aasdf() {
+    return;
+}
