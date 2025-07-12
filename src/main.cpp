@@ -1,5 +1,5 @@
+#include "Lexer/Lexer.hpp"
 #include "parser.hpp"
-#include "scanner.hpp"
 #include "sema.hpp"
 #include <cctype>
 #include <fstream>

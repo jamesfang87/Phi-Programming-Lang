@@ -9,6 +9,7 @@
  * information.
  */
 
+#include "SrcLocation.hpp"
 #include <cstdint>
 #include <string>
 
@@ -18,11 +19,13 @@
  * @brief Enumeration of all possible token types in the Phi programming
  * language
  *
- * This enum defines every type of token that the scanner can recognize,
+ * This enum class defines every type of token that the scanner can recognize,
  * including keywords, operators, literals, identifiers, and syntax elements.
  * The tokens are organized into logical groups for better maintainability.
+ * Using enum class avoids namespace pollution by requiring scope resolution.
  */
-enum TokenType : uint8_t {
+
+enum class TokenType : uint8_t {
     /// End of file token
     tok_eof,
     /// Error token for invalid characters or malformed tokens
@@ -124,7 +127,7 @@ enum TokenType : uint8_t {
  * @param type The TokenType to convert
  * @return A string representation of the token type
  */
-std::string token_type_to_string(TokenType type);
+std::string type_to_string(TokenType type);
 
 /**
  * @brief Represents a single token in the Phi programming language
@@ -138,30 +141,36 @@ class Token {
 public:
     /**
      * @brief Constructs a new Token
-     * @param line The line number where this token appears (1-indexed)
-     * @param col The column number where this token starts (1-indexed)
+     * @param start The starting source location where this token appears
+     * @param end The ending source location where this token appears
      * @param type The type of this token
      * @param lexeme The actual text content of this token from the source
      */
-    Token(int line, int col, TokenType type, std::string lexeme);
+    Token(SrcLocation start, SrcLocation end, TokenType type, std::string lexeme)
+        : start(std::move(start)),
+          end(std::move(end)),
+          type(type),
+          lexeme(std::move(lexeme)) {}
 
     /**
-     * @brief Gets the line number where this token appears
-     * @return The 1-indexed line number
+     * @brief Gets the starting source location where this token appears
+     * @return The SrcLocation object representing the token's starting position
      */
-    [[nodiscard]] int get_line() const { return line; }
+    [[nodiscard]] const SrcLocation& get_start() const { return start; }
 
     /**
-     * @brief Gets the column number where this token starts
-     * @return The 1-indexed column number
+     * @brief Gets the ending source location where this token appears
+     * @return The SrcLocation object representing the token's ending position
      */
-    [[nodiscard]] int get_col() const { return col; }
+    [[nodiscard]] const SrcLocation& get_end() const { return end; }
 
     /**
      * @brief Gets the type of this token
      * @return The TokenType enumeration value
      */
     [[nodiscard]] TokenType get_type() const { return type; }
+
+    [[nodiscard]] std::string get_name() const { return type_to_string(type); }
 
     /**
      * @brief Gets the lexeme (original text) of this token
@@ -176,7 +185,7 @@ public:
     [[nodiscard]] std::string to_string() const;
 
 private:
-    int line, col;      ///< Source location (line and column numbers)
-    TokenType type;     ///< The type of this token
-    std::string lexeme; ///< The original text content from source
+    SrcLocation start, end; ///< Source location (line and column numbers)
+    TokenType type;         ///< The type of this token
+    std::string lexeme;     ///< The original text content from source
 };
