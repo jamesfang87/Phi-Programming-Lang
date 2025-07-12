@@ -1,5 +1,5 @@
 #include "Lexer/Lexer.hpp"
-#include "parser.hpp"
+#include "Parser/Parser.hpp"
 #include "sema.hpp"
 #include <cctype>
 #include <fstream>
@@ -26,7 +26,7 @@ int main(int argc, char* argv[]) {
         std::string source = read_file_to_string(filename);
         std::println("File content:\n{}", source);
 
-        Scanner scanner(source, filename);
+        Lexer scanner(source, filename);
         auto [tokens, scan_success] = scanner.scan();
 
         if (!scan_success) {

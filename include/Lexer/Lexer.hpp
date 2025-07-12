@@ -2,7 +2,7 @@
  * @file scanner.hpp
  * @brief Lexical analyzer (scanner) for the Phi programming language
  *
- * This file contains the Scanner class which performs lexical analysis on Phi
+ * This file contains the Lexer class which performs lexical analysis on Phi
  * source code, converting a stream of characters into a sequence of tokens.
  * The scanner handles all lexical elements including keywords, operators,
  * literals, identifiers, comments, and whitespace.
@@ -17,7 +17,7 @@
 /**
  * @brief Lexical analyzer for the Phi programming language
  *
- * The Scanner class takes a string of source code and converts it into a
+ * The Lexer class takes a string of source code and converts it into a
  * sequence of tokens. It handles all aspects of lexical analysis including:
  * - Keyword recognition
  * - Operator tokenization
@@ -30,14 +30,14 @@
  * The scanner maintains source location information (line and column numbers)
  * for each token, which is essential for error reporting and debugging.
  */
-class Scanner {
+class Lexer {
 public:
     /**
-     * @brief Constructs a new Scanner for the given source code
+     * @brief Constructs a new Lexer for the given source code
      * @param src The source code string to scan
      * @param path The file path of the source (used for error reporting)
      */
-    Scanner(std::string src, std::string path)
+    Lexer(std::string src, std::string path)
         : src(std::move(src)),
           path(std::move(path)) {
         cur_char = this->src.begin();
@@ -232,7 +232,7 @@ private:
      * @param message The main error message describing what went wrong
      * @param expected_message Additional context about what was expected
      */
-    void throw_scanning_error(std::string_view message, std::string_view expected_message);
+    void throw_lexer_error(std::string_view message, std::string_view expected_message);
 
     void resync_scanner();
 };
