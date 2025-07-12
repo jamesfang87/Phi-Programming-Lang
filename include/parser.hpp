@@ -77,4 +77,6 @@ private:
                              int col,
                              std::string_view error,
                              std::string_view expected_message);
+
+    void synchronize();
 };
