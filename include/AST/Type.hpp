@@ -4,11 +4,6 @@
 
 #pragma once
 
-struct SrcLocation {
-    std::string path;
-    int line, col;
-};
-
 class Type {
 public:
     [[nodiscard]] bool is_primitive() const noexcept {

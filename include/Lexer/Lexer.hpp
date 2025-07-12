@@ -167,7 +167,7 @@ private:
         if (reached_eof() || peek_char() != next) {
             return false;
         }
-        cur_char++;
+        ++cur_char;
         return true;
     }
 
@@ -195,8 +195,15 @@ private:
      * @return A new Token with the specified type and current lexeme
      */
     Token make_token(TokenType type) {
-        return {line_num,
-                static_cast<int>(cur_lexeme - lexeme_line) + 1, // 1-indexed column
+        int start_col = static_cast<int>(cur_lexeme - lexeme_line) + 1;
+        int end_col = std::distance(cur_char, cur_line) + 1;
+
+        // TODO: correctly use start line
+        int start_line = line_num;
+        int end_line = line_num;
+
+        return {SrcLocation{.path = this->path, .line = start_line, .col = start_col},
+                SrcLocation{.path = this->path, .line = end_line, .col = end_col},
                 type,
                 std::string(cur_lexeme, cur_char)};
     }

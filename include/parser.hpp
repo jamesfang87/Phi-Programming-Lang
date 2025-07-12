@@ -1,11 +1,16 @@
-#include "ast.hpp"
-#include "token.hpp"
+#include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
+#include "AST/Stmt.hpp"
+#include "AST/Type.hpp"
+#include "Lexer/Token.hpp"
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#pragma once
 
 class Parser {
 public:
@@ -41,7 +46,7 @@ private:
     // Token management
     [[nodiscard]] Token peek_token() const {
         if (token_it >= tokens.end()) {
-            return {-1, -1, tok_eof, ""};
+            return {{"", -1, -1}, {"", -1, -1}, TokenType::tok_eof, ""};
         }
         return *token_it;
     }
