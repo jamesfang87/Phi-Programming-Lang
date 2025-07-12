@@ -244,6 +244,7 @@ std::unique_ptr<ReturnStmt> Parser::parse_return_stmt() {
     // case that there is no expression after 'return'
     // (functions which return null)
     if (peek_token().get_type() == tok_semicolon) {
+        advance_token(); // eat ';'
         return std::make_unique<ReturnStmt>(SrcLocation{.path = path, .line = line, .col = col},
                                             nullptr);
     }
