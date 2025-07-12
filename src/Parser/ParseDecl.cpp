@@ -1,6 +1,5 @@
 #include "AST/Decl.hpp"
 #include "Parser/Parser.hpp"
-#include <format>
 
 std::unique_ptr<FunctionDecl> Parser::parse_function_decl() {
     Token tok = advance_token();
