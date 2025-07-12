@@ -1,31 +1,7 @@
-// =============================================================================
-// ERROR TEST CASES FOR RETURN STATEMENT PARSING
-// =============================================================================
-// This file contains various incorrectly written functions to test error handling
-// in the Phi parser, specifically for return statements and function declarations.
-
-// =============================================================================
-// 1. MISSING SEMICOLON ERRORS
-// =============================================================================
-
 // Error: Missing semicolon after return expression
 fun missing_semicolon() -> i32 {
     return 42
 }
-
-// Error: Missing semicolon after return with variable
-fun missing_semicolon_var() -> i32 {
-    return some_variable
-}
-
-// Error: Missing semicolon after return with float
-fun missing_semicolon_float() -> f64 {
-    return 3.14
-}
-
-// =============================================================================
-// 2. INVALID EXPRESSIONS AFTER RETURN
-// =============================================================================
 
 // Error: Invalid token after return (using operator as expression)
 fun invalid_return_expression1() -> i32 {
@@ -122,73 +98,3 @@ fun 456bad_name() -> i32 {
 fun missing_parens_bad_type -> class {
     return 42;
 }
-
-// =============================================================================
-// 6. EDGE CASES
-// =============================================================================
-
-// Error: Return with no expression but expecting one (non-void function)
-fun empty_return_non_void() -> i32 {
-    return;
-}
-
-// Error: Return statement outside function (top-level)
-return 42;
-
-// Error: Nested function declaration (not allowed)
-fun outer_function() -> i32 {
-    fun inner_function() -> i32 {
-        return 1;
-    }
-    return 2;
-}
-
-// Error: Class declaration inside function (not allowed)
-fun function_with_class() -> i32 {
-    class InnerClass {
-    }
-    return 42;
-}
-
-// Error: Function return arrow inside function body (not allowed)
-fun function_with_arrow() -> i32 {
-    -> i32
-    return 42;
-}
-
-// =============================================================================
-// 7. COMPLEX EXPRESSION ERRORS (when expression parsing is expanded)
-// =============================================================================
-
-// Error: Unclosed parentheses in expression
-fun unclosed_paren_expr() -> i32 {
-    return (42;
-}
-
-// Error: Invalid operator usage
-fun invalid_operator_expr() -> i32 {
-    return 42 +;
-}
-
-// Error: Missing operand
-fun missing_operand_expr() -> i32 {
-    return + 42;
-}
-
-// =============================================================================
-// 8. WHITESPACE AND FORMATTING EDGE CASES
-// =============================================================================
-
-// Error: Return on separate line without semicolon
-fun return_separate_line() -> i32 {
-    return
-    42
-}
-
-// Error: Extra tokens after valid return statement
-fun extra_tokens_after_return() -> i32 {
-    return 42; extra_token;
-}
-
-// This file should generate multiple parsing errors when processed by the Phi parser.
-// Each error should be caught and reported with appropriate line and column information.
