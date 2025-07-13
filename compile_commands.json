@@ -19,15 +19,69 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Lexer/Comments.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Comments.cpp",
+  "file": "/Users/jamesfang/Phi/src/Lexer/Comments.cpp",
+  "output": "CMakeFiles/phi.dir/src/Lexer/Comments.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
   "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Lexer/Lexer.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Lexer.cpp",
   "file": "/Users/jamesfang/Phi/src/Lexer/Lexer.cpp",
   "output": "CMakeFiles/phi.dir/src/Lexer/Lexer.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Lexer/token.cpp.o -c /Users/jamesfang/Phi/src/Lexer/token.cpp",
-  "file": "/Users/jamesfang/Phi/src/Lexer/token.cpp",
-  "output": "CMakeFiles/phi.dir/src/Lexer/token.cpp.o"
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Lexer/Literals.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Literals.cpp",
+  "file": "/Users/jamesfang/Phi/src/Lexer/Literals.cpp",
+  "output": "CMakeFiles/phi.dir/src/Lexer/Literals.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Lexer/Token.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Token.cpp",
+  "file": "/Users/jamesfang/Phi/src/Lexer/Token.cpp",
+  "output": "CMakeFiles/phi.dir/src/Lexer/Token.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Lexer/TokenType.cpp.o -c /Users/jamesfang/Phi/src/Lexer/TokenType.cpp",
+  "file": "/Users/jamesfang/Phi/src/Lexer/TokenType.cpp",
+  "output": "CMakeFiles/phi.dir/src/Lexer/TokenType.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Parser/ParseBlock.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseBlock.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseBlock.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseBlock.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Parser/ParseDecl.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseDecl.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseDecl.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseDecl.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Parser/ParseExpr.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseExpr.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseExpr.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseExpr.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Parser/ParseStmt.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseStmt.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseStmt.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseStmt.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Parser/ParseType.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseType.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseType.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseType.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Parser/Parser.cpp.o -c /Users/jamesfang/Phi/src/Parser/Parser.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/Parser.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/Parser.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
@@ -40,12 +94,6 @@
   "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/main.cpp.o -c /Users/jamesfang/Phi/src/main.cpp",
   "file": "/Users/jamesfang/Phi/src/main.cpp",
   "output": "CMakeFiles/phi.dir/src/main.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/parser.cpp.o -c /Users/jamesfang/Phi/src/parser.cpp",
-  "file": "/Users/jamesfang/Phi/src/parser.cpp",
-  "output": "CMakeFiles/phi.dir/src/parser.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",

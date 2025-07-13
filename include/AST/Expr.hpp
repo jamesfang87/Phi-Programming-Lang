@@ -1,4 +1,5 @@
 #include "AST/Stmt.hpp"
+#include "Lexer/Token.hpp"
 #include "SrcLocation.hpp"
 #include <cstdint>
 #include <memory>
@@ -100,4 +101,41 @@ public:
 private:
     std::unique_ptr<Expr> callee;
     std::vector<std::unique_ptr<Expr>> args;
+};
+
+class BinaryOp : public Expr {
+public:
+    BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs, const Token& op)
+        : Expr(op.get_start()),
+          lhs(std::move(lhs)),
+          rhs(std::move(rhs)),
+          op(op.get_type()) {}
+
+    void info_dump(int level = 0) const override;
+
+    [[nodiscard]] const Expr* get_lhs() const { return lhs.get(); }
+    [[nodiscard]] const Expr* get_rhs() const { return rhs.get(); }
+    [[nodiscard]] TokenType get_op() const { return op; }
+
+private:
+    std::unique_ptr<Expr> lhs;
+    std::unique_ptr<Expr> rhs;
+    TokenType op;
+};
+
+class UnaryOp : public Expr {
+public:
+    UnaryOp(std::unique_ptr<Expr> operand, const Token& op)
+        : Expr(op.get_start()),
+          operand(std::move(operand)),
+          op(op.get_type()) {}
+
+    void info_dump(int level = 0) const override;
+
+    [[nodiscard]] const Expr* get_operand() const { return operand.get(); }
+    [[nodiscard]] TokenType get_op() const { return op; }
+
+private:
+    std::unique_ptr<Expr> operand;
+    TokenType op;
 };
