@@ -1,8 +1,3 @@
-/* ablahasdf 
-*/ /* /*
-
-*/
-
-"hi my name is james" "
-what
-"
+fun main() {
+    return (foo(foo(a + 2)) + 1) * 3;
+}

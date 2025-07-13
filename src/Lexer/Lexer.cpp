@@ -21,6 +21,7 @@
 
 #include "Lexer/Lexer.hpp"
 #include "Lexer/token.hpp"
+#include <cstring>
 #include <iostream>
 #include <print>
 
