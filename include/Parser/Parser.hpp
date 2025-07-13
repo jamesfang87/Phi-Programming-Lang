@@ -6,6 +6,7 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -69,8 +70,9 @@ private:
 
     // Expression parsing
     std::unique_ptr<Expr> parse_expr();
-    std::unique_ptr<Expr> parse_postfix_expr();
-    std::unique_ptr<Expr> parse_primary_expr();
+    std::unique_ptr<Expr> pratt(int min_bp);
+    std::unique_ptr<Expr> parse_postfix(std::unique_ptr<Expr> expr);
+    std::unique_ptr<FunctionCall> parse_fun_call(std::unique_ptr<Expr> callee);
 
     // Utility functions
     // T is the type to return, F is the member function
@@ -100,7 +102,8 @@ private:
             }
             content.push_back(std::move(res));
 
-            // now we can either exit by seeing the closing token
+            // std::println("current token after expr: {}", peek_token().get_name());
+            //  now we can either exit by seeing the closing token
             if (peek_token().get_type() == closing) {
                 break;
             }
@@ -116,7 +119,7 @@ private:
             }
             advance_token(); // consume the `,`
         }
-        advance_token(); //
+        advance_token(); // consume the closing token
 
         return std::make_unique<std::vector<std::unique_ptr<T>>>(std::move(content));
     }
