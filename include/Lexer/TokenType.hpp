@@ -25,7 +25,6 @@ enum class TokenType : uint8_t {
     tok_const,    ///< 'const' keyword for constant declarations
     tok_continue, ///< 'continue' keyword for loop control
     tok_else,     ///< 'else' keyword for conditional statements
-    tok_elif,     ///< 'elif' keyword for conditional statements
     tok_false,    ///< 'false' boolean literal keyword
     tok_for,      ///< 'for' keyword for loop statements
     tok_fun,      ///< 'fun' keyword for function declarations
@@ -101,6 +100,9 @@ enum class TokenType : uint8_t {
 
     tok_assign, ///< '=' assignment operator
     tok_colon,  ///< ':' colon for type annotations
+
+    tok_exclusive_range, ///< '..' exclusive range operator
+    tok_inclusive_range, ///< '..=' inclusive range operator
 
     tok_int_literal,   ///< Integer literal (e.g., 42, 123)
     tok_float_literal, ///< Floating point literal (e.g., 3.14, 2.5)

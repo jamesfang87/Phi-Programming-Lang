@@ -1,6 +1,8 @@
 #include "AST/Expr.hpp"
-#include "Lexer/TokenType.hpp"
+
 #include <print>
+
+#include "Lexer/TokenType.hpp"
 
 void IntLiteral::info_dump(int level) const {
     std::println("{}IntLiteral: {}", std::string(level * 2, ' '), value);
@@ -18,11 +20,19 @@ void CharLiteral::info_dump(int level) const {
     std::println("{}CharLiteral: {}", std::string(level * 2, ' '), value);
 }
 
+void RangeLiteral::info_dump(int level) const {
+    std::println("{}RangeLiteral:", std::string(level * 2, ' '));
+    std::println("{}  start:", std::string(level * 2, ' '));
+    start->info_dump(level + 2);
+    std::println("{}  end:", std::string(level * 2, ' '));
+    end->info_dump(level + 2);
+}
+
 void DeclRefExpr::info_dump(int level) const {
     std::println("{}DeclRefExpr: {}", std::string(level * 2, ' '), identifier);
 }
 
-void FunctionCall::info_dump(int level) const {
+void FunCallExpr::info_dump(int level) const {
     std::println("{}FunCallExpr", std::string(level * 2, ' '));
     std::println("{}  callee:", std::string(level * 2, ' '));
     callee->info_dump(level + 2);

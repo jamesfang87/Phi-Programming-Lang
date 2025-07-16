@@ -171,6 +171,17 @@ private:
         return true;
     }
 
+    std::string peek_next_n(int n) {
+        auto temp = cur_char;
+        for (int i = 0; i < n; ++i) {
+            if (reached_eof()) {
+                return "";
+            }
+            ++temp;
+        }
+        return std::string{cur_char, temp};
+    }
+
     bool match_next_n(std::string_view next) {
         auto temp = cur_char;
         for (const char& c : next) {

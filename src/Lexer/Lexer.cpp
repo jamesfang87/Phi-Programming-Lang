@@ -115,7 +115,11 @@ Token Lexer::scan_token() {
         case ']': return make_token(TokenType::tok_close_bracket);
         case ',': return make_token(TokenType::tok_comma);
         case ';': return make_token(TokenType::tok_semicolon);
-        case '.': return make_token(TokenType::tok_member);
+
+        case '.':
+            if (match_next('.')) return make_token(TokenType::tok_inclusive_range);
+            if (match_next_n(".=")) return make_token(TokenType::tok_exclusive_range);
+            return make_token(TokenType::tok_member);
         case ':':
             return make_token(match_next(':') ? TokenType::tok_namespace_member
                                               : TokenType::tok_colon);
@@ -158,7 +162,7 @@ Token Lexer::scan_token() {
             } else if (std::isdigit(c)) {
                 return parse_number();
             } else {
-                std::println("Unknow token found: {}\n", c);
+                std::println("Unknown token found: {}\n", c);
                 return make_token(TokenType::tok_error);
             }
     }
