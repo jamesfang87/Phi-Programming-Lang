@@ -15,22 +15,10 @@ public:
 
     virtual void info_dump(int level = 0) const = 0;
 
-    [[nodiscard]] const SrcLocation& get_location() const { return location; }
+    [[nodiscard]] SrcLocation& get_location() { return location; }
 
 protected:
     SrcLocation location;
-};
-
-class ReturnStmt : public Stmt {
-public:
-    ReturnStmt(SrcLocation, std::unique_ptr<Expr>);
-    ~ReturnStmt();
-
-    [[nodiscard]] const Expr* get_expr() const;
-    void info_dump(int level) const override;
-
-private:
-    std::unique_ptr<Expr> expr;
 };
 
 class Block {
@@ -40,8 +28,66 @@ public:
 
     void info_dump(int level = 0) const;
 
-    [[nodiscard]] const std::vector<std::unique_ptr<Stmt>>& get_stmts() const { return stmts; }
+    [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& get_stmts() { return stmts; }
 
 private:
     std::vector<std::unique_ptr<Stmt>> stmts;
+};
+
+class ReturnStmt : public Stmt {
+public:
+    ReturnStmt(SrcLocation, std::unique_ptr<Expr>);
+    ~ReturnStmt() override;
+
+    [[nodiscard]] Expr* get_expr();
+    void info_dump(int level) const override;
+
+private:
+    std::unique_ptr<Expr> expr;
+};
+
+class IfStmt : public Stmt {
+public:
+    IfStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>, std::unique_ptr<Block>);
+    ~IfStmt() override;
+
+    [[nodiscard]] Expr& get_condition();
+    [[nodiscard]] Block& get_true_body();
+    [[nodiscard]] Block& get_false_body();
+    void info_dump(int level) const override;
+
+private:
+    std::unique_ptr<Expr> condition;
+    std::unique_ptr<Block> true_body;
+    std::unique_ptr<Block> false_body;
+};
+
+class WhileStmt : public Stmt {
+public:
+    WhileStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>);
+    ~WhileStmt() override;
+
+    [[nodiscard]] Expr& get_condition();
+    [[nodiscard]] Block& get_body();
+    void info_dump(int level) const override;
+
+private:
+    std::unique_ptr<Expr> condition;
+    std::unique_ptr<Block> body;
+};
+
+class ForStmt : public Stmt {
+public:
+    ForStmt(SrcLocation, std::string loop_var, std::unique_ptr<Expr>, std::unique_ptr<Block>);
+    ~ForStmt() override;
+
+    [[nodiscard]] std::string& get_loop_var();
+    [[nodiscard]] Expr& get_range();
+    [[nodiscard]] Block& get_body();
+    void info_dump(int level) const override;
+
+private:
+    std::string loop_var;
+    std::unique_ptr<Expr> range;
+    std::unique_ptr<Block> body;
 };

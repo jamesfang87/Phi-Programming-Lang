@@ -1,26 +1,17 @@
-#include "AST/Expr.hpp"
-#include "Lexer/TokenType.hpp"
+#include "Diagnostics/Diagnostic.hpp"
 #include "Parser/Parser.hpp"
-#include <memory>
-#include <optional>
 #include <print>
-#include <string>
-#include <utility>
 
-std::unique_ptr<Expr> Parser::parse_expr() { return pratt(0); }
+std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::parse_expr() { return pratt(0); }
 
-std::optional<std::pair<int, int>> postfix_bp(TokenType op) {
-    switch (op) {
-        case TokenType::tok_open_paren: return {{110, -1}};   // Function call
-        case TokenType::tok_open_bracket: return {{110, -1}}; // Array index
-        default: return std::nullopt;
-    }
-}
-
+// Add to binding power functions
 std::optional<std::pair<int, int>> prefix_bp(TokenType op) {
     switch (op) {
         case TokenType::tok_sub:
-        case TokenType::tok_bang: return {{-1, 90}};
+        case TokenType::tok_bang:
+        case TokenType::tok_increment: // ++ prefix
+        case TokenType::tok_decrement: // -- prefix
+            return {{-1, 90}};
         default: return std::nullopt;
     }
 }
@@ -32,28 +23,62 @@ std::optional<std::pair<int, int>> infix_bp(TokenType op) {
         case TokenType::tok_mul:
         case TokenType::tok_div:
         case TokenType::tok_mod: return {{40, 41}};
+        // Range operators
+        case TokenType::tok_exclusive_range:
+        case TokenType::tok_inclusive_range: return {{20, 21}};
+        // Comparison operators
+        case TokenType::tok_less:
+        case TokenType::tok_less_equal:
+        case TokenType::tok_greater:
+        case TokenType::tok_greater_equal: return {{25, 26}};
+        // Equality operators
+        case TokenType::tok_equal:
+        case TokenType::tok_not_equal: return {{22, 23}};
         default: return std::nullopt;
     }
 }
 
-std::unique_ptr<Expr> Parser::pratt(int min_bp) {
+std::optional<std::pair<int, int>> postfix_bp(TokenType op) {
+    switch (op) {
+        case TokenType::tok_open_paren: return {{110, -1}};
+        case TokenType::tok_open_bracket: return {{110, -1}};
+        case TokenType::tok_member: return {{110, -1}};
+        case TokenType::tok_increment: // ++ postfix
+        case TokenType::tok_decrement: // -- postfix
+            return {{110, -1}};
+        default: return std::nullopt;
+    }
+}
+
+std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
     Token tok = advance_token();
-    std::println("{}", tok.get_name());
     std::unique_ptr<Expr> lhs;
+
     switch (tok.get_type()) {
         // Grouping
         case TokenType::tok_open_paren: {
-            lhs = pratt(0);
-            advance_token(); // for the last ')'
+            auto res = pratt(0);
+            if (!res) return std::unexpected(res.error());
+            lhs = std::move(res.value());
+
+            if (peek_token().get_type() != TokenType::tok_close_paren) {
+                // Error handling for missing ')'
+                successful = false; // set success flag to false
+                return std::unexpected(Diagnostic());
+            }
+            advance_token(); // consume ')'
             break;
         }
 
         // Prefix operators
         case TokenType::tok_sub:
-        case TokenType::tok_bang: {
+        case TokenType::tok_bang:
+        case TokenType::tok_increment:
+        case TokenType::tok_decrement: {
             auto [ignore, r_bp] = prefix_bp(tok.get_type()).value();
-            std::unique_ptr<Expr> rhs = pratt(r_bp);
-            lhs = std::make_unique<UnaryOp>(std::move(rhs), tok);
+            auto rhs = pratt(r_bp);
+            if (!rhs) return std::unexpected(rhs.error());
+            lhs = std::make_unique<UnaryOp>(std::move(rhs.value()), tok, true); // true = prefix
             break;
         }
 
@@ -70,49 +95,84 @@ std::unique_ptr<Expr> Parser::pratt(int min_bp) {
             break;
 
         default: {
-            std::println("bad token");
-            break;
+            // Error handling
+            successful = false; // set success flag to false
+            std::println("unexpected token");
+            return std::unexpected(Diagnostic());
         }
     }
 
     while (true) {
-        // now we expect an operator
         Token op = peek_token();
-        if (op.get_type() == TokenType::tok_eof) {
-            break;
-        }
+        if (op.get_type() == TokenType::tok_eof) break;
 
-        // check if there are postfix operators: (), [i], .foo(),
-        if (postfix_bp(op.get_type()).has_value()) {
+        // Handle postfix operators
+        if (postfix_bp(op.get_type())) {
             auto [l_bp, r_bp] = postfix_bp(op.get_type()).value();
-            if (l_bp < min_bp) {
-                break;
-            }
+            if (l_bp < min_bp) break;
 
-            lhs = parse_postfix(std::move(lhs));
+            // Handle different postfix types
+            switch (op.get_type()) {
+                // move this into parse postfix
+                case TokenType::tok_increment:
+                case TokenType::tok_decrement:
+                    advance_token();
+                    lhs = std::make_unique<UnaryOp>(std::move(lhs), op, false); // false = postfix
+                    break;
+
+                    // case TokenType::tok_member: lhs = parse_member_access(std::move(lhs)); break;
+
+                default:
+                    auto res = parse_postfix(std::move(lhs));
+                    if (!res) {
+                        std::println("error parsing postfix");
+                        successful = false; // set success flag to false
+                        return std::unexpected(res.error());
+                    }
+                    lhs = std::move(res.value());
+            }
             continue;
         }
 
-        // otherwise check if there is an infix operator
-        if (infix_bp(op.get_type()).has_value()) {
+        // Handle infix operators
+        if (infix_bp(op.get_type())) {
             auto [l_bp, r_bp] = infix_bp(op.get_type()).value();
-            if (l_bp < min_bp) {
-                break;
-            }
+            if (l_bp < min_bp) break;
 
             advance_token(); // consume the op
-            lhs = std::make_unique<BinaryOp>(std::move(lhs), pratt(r_bp), op);
+
+            // Special handling for range operators
+            if (op.get_type() == TokenType::tok_exclusive_range ||
+                op.get_type() == TokenType::tok_inclusive_range) {
+                std::println("this happens");
+
+                bool inclusive = (op.get_type() == TokenType::tok_inclusive_range);
+                auto end = pratt(r_bp);
+                if (!end) return std::unexpected(end.error());
+                lhs = std::make_unique<RangeLiteral>(op.get_start(),
+                                                     std::move(lhs),
+                                                     std::move(end.value()),
+                                                     inclusive);
+            } else {
+                // Regular binary operators
+                auto res = pratt(r_bp);
+                if (!res) {
+                    std::println("error parsing regular binary expression");
+                    successful = false;
+                    return std::unexpected(res.error());
+                }
+                lhs = std::make_unique<BinaryOp>(std::move(lhs), std::move(res.value()), op);
+            }
             continue;
         }
 
-        // nothing else, so break
-        break;
+        break; // No more operators to process
     }
 
     return lhs;
 }
 
-std::unique_ptr<Expr> Parser::parse_postfix(std::unique_ptr<Expr> expr) {
+std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::parse_postfix(std::unique_ptr<Expr> expr) {
     // parse function call
     if (peek_token().get_type() == TokenType::tok_open_paren) {
         return parse_fun_call(std::move(expr));
@@ -126,16 +186,33 @@ std::unique_ptr<Expr> Parser::parse_postfix(std::unique_ptr<Expr> expr) {
     return expr;
 }
 
-std::unique_ptr<FunctionCall> Parser::parse_fun_call(std::unique_ptr<Expr> callee) {
+std::expected<std::unique_ptr<FunCallExpr>, Diagnostic>
+Parser::parse_fun_call(std::unique_ptr<Expr> callee) {
     auto args = parse_list<Expr>(TokenType::tok_open_paren,
                                  TokenType::tok_close_paren,
                                  &Parser::parse_expr);
-    if (args == nullptr) {
-        return nullptr;
+    if (!args) {
+        std::println("error parsing function call");
+        successful = false;
+        return std::unexpected(args.error());
     }
-    return std::make_unique<FunctionCall>(SrcLocation{.path = path,
-                                                      .line = peek_token().get_start().line,
-                                                      .col = peek_token().get_start().col},
-                                          std::move(callee),
-                                          std::move(*args));
+
+    return std::make_unique<FunCallExpr>(SrcLocation{.path = path,
+                                                     .line = peek_token().get_start().line,
+                                                     .col = peek_token().get_start().col},
+                                         std::move(callee),
+                                         std::move(*args.value()));
 }
+/*
+// New helper function for member access
+std::unique_ptr<Expr> Parser::parse_member_access(std::unique_ptr<Expr> expr) {
+    advance_token(); // Consume '.' operator
+    if (peek_token().get_type() != TokenType::tok_identifier) {
+        // Error: expected identifier after '.'
+        return expr;
+    }
+
+    Token member = advance_token();
+    return std::make_unique<MemberExpr>(std::move(expr), member.get_lexeme(), member.get_start());
+}
+*/

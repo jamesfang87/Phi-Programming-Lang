@@ -1,13 +1,20 @@
 #include "Parser/Parser.hpp"
-#include "Lexer/Token.hpp"
+
 #include <iostream>
 #include <print>
 
-std::pair<std::vector<std::unique_ptr<FunctionDecl>>, bool> Parser::parse() {
+#include "Lexer/Token.hpp"
+
+std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
     while (peek_token().get_type() != TokenType::tok_eof) {
         switch (peek_token().get_type()) {
-            case TokenType::tok_fun: functions.push_back(parse_function_decl()); break;
-
+            case TokenType::tok_fun: {
+                auto res = parse_function_decl();
+                if (res.has_value()) {
+                    functions.push_back(std::move(res.value()));
+                }
+                break;
+            }
             case TokenType::tok_eof: return {std::move(functions), successful};
 
             default: advance_token();
