@@ -2,7 +2,9 @@
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
+#include "Diagnostics/Diagnostic.hpp"
 #include "Lexer/Token.hpp"
+#include <expected>
 #include <format>
 #include <memory>
 #include <optional>
@@ -34,7 +36,7 @@ public:
     }
 
     // Main parsing interface
-    std::pair<std::vector<std::unique_ptr<FunctionDecl>>, bool> parse();
+    std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> parse();
 
 private:
     // Member variables
@@ -43,7 +45,7 @@ private:
     std::vector<Token>& tokens;
     std::vector<Token>::iterator token_it;
     bool successful = true;
-    std::vector<std::unique_ptr<FunctionDecl>> functions;
+    std::vector<std::unique_ptr<FunDecl>> functions;
 
     // Token management
     [[nodiscard]] Token peek_token() const {
@@ -60,35 +62,42 @@ private:
     }
 
     // Parsing functions
-    std::unique_ptr<FunctionDecl> parse_function_decl();
-    std::unique_ptr<ParamDecl> parse_param_decl();
-    std::unique_ptr<Block> parse_block();
+    std::expected<std::unique_ptr<FunDecl>, Diagnostic> parse_function_decl();
+    std::expected<std::unique_ptr<ParamDecl>, Diagnostic> parse_param_decl();
+    std::expected<std::unique_ptr<Block>, Diagnostic> parse_block();
 
     // Parsing for statements
-    std::unique_ptr<Stmt> parse_stmt();
-    std::unique_ptr<ReturnStmt> parse_return_stmt();
+    std::expected<std::unique_ptr<Stmt>, Diagnostic> parse_stmt();
+    std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> parse_return_stmt();
+    std::expected<std::unique_ptr<IfStmt>, Diagnostic> parse_if_stmt();
+    std::expected<std::unique_ptr<WhileStmt>, Diagnostic> parse_while_stmt();
+    std::expected<std::unique_ptr<ForStmt>, Diagnostic> parse_for_stmt();
 
     // Expression parsing
-    std::unique_ptr<Expr> parse_expr();
-    std::unique_ptr<Expr> pratt(int min_bp);
-    std::unique_ptr<Expr> parse_postfix(std::unique_ptr<Expr> expr);
-    std::unique_ptr<FunctionCall> parse_fun_call(std::unique_ptr<Expr> callee);
+    std::expected<std::unique_ptr<Expr>, Diagnostic> parse_expr();
+    std::expected<std::unique_ptr<Expr>, Diagnostic> pratt(int min_bp);
+    std::expected<std::unique_ptr<Expr>, Diagnostic> parse_postfix(std::unique_ptr<Expr> expr);
+    std::expected<std::unique_ptr<FunCallExpr>, Diagnostic>
+    parse_fun_call(std::unique_ptr<Expr> callee);
 
     // Utility functions
     // T is the type to return, F is the member function
     // of Parser to use
     template <typename T, typename F>
-    std::unique_ptr<std::vector<std::unique_ptr<T>>>
+    std::expected<std::unique_ptr<std::vector<std::unique_ptr<T>>>, Diagnostic>
     parse_list(TokenType opening, TokenType closing, F fun) {
         // ensure the list is properly opened, emitting error if needed
         if (peek_token().get_type() != opening) {
-            throw_parsing_error(peek_token().get_start().line,
-                                peek_token().get_start().col,
-                                std::format("Missing `{}` to open list", type_to_string(opening)),
-                                std::format("Expected missing `{}` here, instead found `{}`",
-                                            type_to_string(opening),
-                                            peek_token().get_name()));
-            return nullptr;
+            // throw_parsing_error(peek_token().get_start().line,
+            //                     peek_token().get_start().col,
+            //                     std::format("Missing `{}` to open list",
+            //                     type_to_string(opening)), std::format("Expected missing `{}`
+            //                     here, instead found `{}`",
+            //                                 type_to_string(opening),
+            // peek_token().get_name()));
+            //
+            successful = false; // set success flag to false
+            return std::unexpected(Diagnostic());
         }
         advance_token();
 
@@ -97,12 +106,11 @@ private:
         while (peek_token().get_type() != closing) {
             // use the function to parse the element we're at
             auto res = (this->*fun)();
-            if (res == nullptr) {
-                return nullptr;
+            if (!res) {
+                return std::unexpected(res.error());
             }
-            content.push_back(std::move(res));
+            content.push_back(std::move(res.value()));
 
-            // std::println("current token after expr: {}", peek_token().get_name());
             //  now we can either exit by seeing the closing token
             if (peek_token().get_type() == closing) {
                 break;

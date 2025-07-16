@@ -21,6 +21,11 @@ Token Lexer::parse_number() {
         advance_char();
     }
 
+    // stop parsing if we see the range operator
+    if (peek_next_n(2) == ".." || peek_next_n(3) == "..=") {
+        return make_token(TokenType::tok_int_literal);
+    }
+
     // fractional part
     if (peek_char() == '.') {
         floating_point = true;
@@ -62,18 +67,18 @@ Token Lexer::parse_identifier() {
     static const std::unordered_map<std::string, TokenType> keywords = {
         {"break", TokenType::tok_break},   {"class", TokenType::tok_class},
         {"const", TokenType::tok_const},   {"continue", TokenType::tok_continue},
-        {"else", TokenType::tok_else},     {"elif", TokenType::tok_elif},
-        {"false", TokenType::tok_false},   {"for", TokenType::tok_for},
-        {"fun", TokenType::tok_fun},       {"if", TokenType::tok_if},
-        {"import", TokenType::tok_import}, {"in", TokenType::tok_in},
-        {"let", TokenType::tok_let},       {"return", TokenType::tok_return},
-        {"true", TokenType::tok_true},     {"while", TokenType::tok_while},
-        {"i8", TokenType::tok_i8},         {"i16", TokenType::tok_i16},
-        {"i32", TokenType::tok_i32},       {"i64", TokenType::tok_i64},
-        {"u8", TokenType::tok_u8},         {"u16", TokenType::tok_u16},
-        {"u32", TokenType::tok_u32},       {"u64", TokenType::tok_u64},
-        {"f32", TokenType::tok_f32},       {"f64", TokenType::tok_f64},
-        {"str", TokenType::tok_str},       {"char", TokenType::tok_char}};
+        {"else", TokenType::tok_else},     {"false", TokenType::tok_false},
+        {"for", TokenType::tok_for},       {"fun", TokenType::tok_fun},
+        {"if", TokenType::tok_if},         {"import", TokenType::tok_import},
+        {"in", TokenType::tok_in},         {"let", TokenType::tok_let},
+        {"return", TokenType::tok_return}, {"true", TokenType::tok_true},
+        {"while", TokenType::tok_while},   {"i8", TokenType::tok_i8},
+        {"i16", TokenType::tok_i16},       {"i32", TokenType::tok_i32},
+        {"i64", TokenType::tok_i64},       {"u8", TokenType::tok_u8},
+        {"u16", TokenType::tok_u16},       {"u32", TokenType::tok_u32},
+        {"u64", TokenType::tok_u64},       {"f32", TokenType::tok_f32},
+        {"f64", TokenType::tok_f64},       {"str", TokenType::tok_str},
+        {"char", TokenType::tok_char}};
 
     auto it = keywords.find(identifier);
     return (it != keywords.end()) ? make_token(it->second) : make_token(TokenType::tok_identifier);

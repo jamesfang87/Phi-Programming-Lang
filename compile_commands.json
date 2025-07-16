@@ -85,12 +85,6 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/ast.cpp.o -c /Users/jamesfang/Phi/src/ast.cpp",
-  "file": "/Users/jamesfang/Phi/src/ast.cpp",
-  "output": "CMakeFiles/phi.dir/src/ast.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
   "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/main.cpp.o -c /Users/jamesfang/Phi/src/main.cpp",
   "file": "/Users/jamesfang/Phi/src/main.cpp",
   "output": "CMakeFiles/phi.dir/src/main.cpp.o"

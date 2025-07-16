@@ -24,7 +24,6 @@ std::string type_to_string(TokenType type) {
         case TokenType::tok_const: return "CONST";
         case TokenType::tok_continue: return "CONTINUE";
         case TokenType::tok_else: return "ELSE";
-        case TokenType::tok_elif: return "ELIF";
         case TokenType::tok_false: return "FALSE";
         case TokenType::tok_for: return "FOR";
         case TokenType::tok_fun: return "FUN";
@@ -107,6 +106,9 @@ std::string type_to_string(TokenType type) {
         // Other operators
         case TokenType::tok_assign: return "ASSIGN";
         case TokenType::tok_colon: return "COLON";
+
+        case TokenType::tok_exclusive_range: return "EXCLUSIVE_RANGE";
+        case TokenType::tok_inclusive_range: return "INCLUSIVE_RANGE";
 
         // Literals
         case TokenType::tok_int_literal: return "INT_LITERAL";
