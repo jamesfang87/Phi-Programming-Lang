@@ -17,7 +17,7 @@ public:
     Sema(std::vector<std::unique_ptr<FunDecl>> ast)
         : ast(std::move(ast)) {}
 
-    bool resolve_ast();
+    std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> resolve_ast();
 
 private:
     std::vector<std::unique_ptr<FunDecl>> ast;

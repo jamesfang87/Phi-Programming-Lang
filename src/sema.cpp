@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-bool Sema::resolve_ast() {
+std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
     // first create the global scope
     active_scopes.emplace_back();
 
@@ -21,13 +21,13 @@ bool Sema::resolve_ast() {
         if (!success) {
             // throw error
             std::println("failed to resolve function");
-            return {};
+            return {false, {}};
         }
 
         if (!insert_decl(fun_decl.get())) {
             // throw error
             std::println("failed to insert function, probably redefinition");
-            return {};
+            return {false, {}};
         }
     }
 
@@ -43,7 +43,7 @@ bool Sema::resolve_ast() {
                 std::println("while resolving function {}", cur_fun->get_id());
                 std::println("failed to insert param {}, probably redefinition", param->get_id());
 
-                return false;
+                return {false, {}};
             }
         }
 
@@ -53,7 +53,7 @@ bool Sema::resolve_ast() {
             std::println("while resolving function {}", cur_fun->get_id());
             std::println("failed to resolve block");
 
-            return false;
+            return {false, {}};
         }
 
         active_scopes.pop_back(); // scope should be popped when moving to the
@@ -61,7 +61,7 @@ bool Sema::resolve_ast() {
     }
     active_scopes.pop_back();
 
-    return true;
+    return {true, std::move(ast)};
 }
 
 bool Sema::resolve_block(Block* block) {
