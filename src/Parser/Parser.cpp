@@ -65,7 +65,9 @@ void Parser::synchronize() {
 
             // Block/scope boundaries
             case TokenType::tok_close_brace:
-                return; // Let caller handle closing brace
+
+                advance_token(); // Consume the semicolon
+                return;          // Let caller handle closing brace
 
             // End of file
             case TokenType::tok_eof: return;
