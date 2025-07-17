@@ -1,3 +1,4 @@
+#include "AST/Expr.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
 #include "sema.hpp"
@@ -54,14 +55,14 @@ int main(int argc, char* argv[]) {
 
         std::println("Semantic Analysis:");
         Sema analyzer(std::move(ast));
-        auto resolved_ast = analyzer.resolve_ast();
-        if (!resolved_ast) {
+        auto [success, resolved_ast] = analyzer.resolve_ast();
+        if (!success) {
             std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
             return 0;
         }
 
         // why does this line not run?
-        for (const auto& fun : ast) {
+        for (const auto& fun : resolved_ast) {
             fun->info_dump();
         }
         std::println("Semantic analysis completed successfully!");

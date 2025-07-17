@@ -29,12 +29,20 @@ void RangeLiteral::info_dump(int level) const {
 }
 
 void DeclRefExpr::info_dump(int level) const {
-    std::println("{}DeclRefExpr: {}", std::string(level * 2, ' '), identifier);
+    if (decl == nullptr)
+        std::println("{}DeclRefExpr: {}", std::string(level * 2, ' '), identifier);
+    else {
+        std::print("{}DeclRefExpr: {} referencing ", std::string(level * 2, ' '), identifier);
+        decl->info_dump(0);
+    }
 }
 
 void FunCallExpr::info_dump(int level) const {
     std::println("{}FunCallExpr", std::string(level * 2, ' '));
     std::println("{}  callee:", std::string(level * 2, ' '));
+    if (func_decl != nullptr) {
+        func_decl->info_dump(0);
+    }
     callee->info_dump(level + 2);
     std::println("{}  args:", std::string(level * 2, ' '));
     for (const auto& arg : args) {
