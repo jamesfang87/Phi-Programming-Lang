@@ -1,10 +1,9 @@
+#include "ASTVisitor.hpp"
 #include "SrcLocation.hpp"
 #include <memory>
 #include <vector>
 
 #pragma once
-
-class Expr;
 
 class Stmt {
 public:
@@ -16,6 +15,7 @@ public:
     virtual void info_dump(int level = 0) const = 0;
 
     [[nodiscard]] SrcLocation& get_location() { return location; }
+    virtual bool accept(ASTVisitor& visitor) = 0;
 
 protected:
     SrcLocation location;
@@ -41,6 +41,7 @@ public:
 
     [[nodiscard]] Expr* get_expr();
     void info_dump(int level) const override;
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> expr;
@@ -55,6 +56,7 @@ public:
     [[nodiscard]] Block& get_true_body();
     [[nodiscard]] Block& get_false_body();
     void info_dump(int level) const override;
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> condition;
@@ -70,6 +72,7 @@ public:
     [[nodiscard]] Expr& get_condition();
     [[nodiscard]] Block& get_body();
     void info_dump(int level) const override;
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> condition;
@@ -85,6 +88,7 @@ public:
     [[nodiscard]] Expr& get_range();
     [[nodiscard]] Block& get_body();
     void info_dump(int level) const override;
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::string loop_var;

@@ -7,6 +7,84 @@
 #include <unordered_map>
 #include <vector>
 
+class Resolver : public ASTVisitor {
+public:
+    Resolver(Sema& sema)
+        : sema(sema) {}
+
+    // Expression visitors
+    bool visit(IntLiteral& expr) override {
+        expr.set_type(Type(Type::Primitive::i64));
+        return true;
+    }
+
+    bool visit(FloatLiteral& expr) override {
+        expr.set_type(Type(Type::Primitive::f64));
+        return true;
+    }
+
+    bool visit(StrLiteral& expr) override {
+        expr.set_type(Type(Type::Primitive::str));
+        return true;
+    }
+
+    bool visit(CharLiteral& expr) override {
+        expr.set_type(Type(Type::Primitive::character));
+        return true;
+    }
+
+    bool visit(DeclRefExpr& expr) override { return sema.resolve_decl_ref(&expr, false); }
+
+    bool visit(FunCallExpr& expr) override { return sema.resolve_function_call(&expr); }
+
+    bool visit(RangeLiteral& expr) override {
+        // TODO: Implement actual resolution
+        return true;
+    }
+
+    bool visit(BinaryOp& expr) override {
+        // TODO: Implement actual resolution
+        return true;
+    }
+
+    bool visit(UnaryOp& expr) override {
+        // TODO: Implement actual resolution
+        return true;
+    }
+
+    // Statement visitors
+    bool visit(Block& block) override {
+        for (auto& stmt : block.get_stmts()) {
+            if (!stmt->accept(*this)) return false;
+        }
+        return true;
+    }
+
+    bool visit(ReturnStmt& stmt) override { return sema.resolve_return_stmt(&stmt); }
+
+    bool visit(IfStmt& stmt) override {
+        // TODO: Implement actual resolution
+        return true;
+    }
+
+    bool visit(WhileStmt& stmt) override {
+        // TODO: Implement actual resolution
+        return true;
+    }
+
+    bool visit(ForStmt& stmt) override {
+        // TODO: Implement actual resolution
+        return true;
+    }
+
+    bool visit(Expr& stmt) override {
+        return stmt.accept(*this); // Handle expression-as-statement
+    }
+
+private:
+    Sema& sema;
+};
+
 std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
     // first create the global scope
     active_scopes.emplace_back();
@@ -42,7 +120,6 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
                 // throw error
                 std::println("while resolving function {}", cur_fun->get_id());
                 std::println("failed to insert param {}, probably redefinition", param->get_id());
-
                 return {false, {}};
             }
         }
@@ -52,7 +129,6 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
         if (!success) {
             std::println("while resolving function {}", cur_fun->get_id());
             std::println("failed to resolve block");
-
             return {false, {}};
         }
 
@@ -68,7 +144,6 @@ bool Sema::resolve_block(Block* block) {
     for (const auto& stmt : block->get_stmts()) {
         bool success = resolve_stmt(stmt.get());
         if (!success) {
-            // throw error
             std::println("failed to resolve statement");
             return false;
         }
@@ -107,18 +182,13 @@ bool Sema::resolve_fun_decl(FunDecl* fun) {
     // first resolve the return type in the funciton decl
     std::optional<Type> resolved_return_type = resolve_type(fun->get_return_type());
     if (!resolved_return_type) {
-        // throw error
         std::println("invalid type for return");
         return false;
     }
 
     // enforce rules for main
     if (fun->get_id() == "main") {
-        if (!fun->get_return_type().is_primitive()) {
-            std::println("main cannot return a custom type");
-            return false;
-        }
-        if (fun->get_return_type().primitive_type() != Type::Primitive::null) {
+        if (fun->get_return_type() != Type(Type::Primitive::null)) {
             std::println("main cannot return a non-null value");
             return false;
         }
@@ -170,6 +240,7 @@ bool Sema::resolve_decl_ref(DeclRefExpr* declref, bool function_call) {
         return false;
     }
 
+    // check if the decls match ie:
     // if we are not trying to call a function and the declaration is a function
     if (!function_call && dynamic_cast<FunDecl*>(decl)) {
         std::println("Did you mean to call a function?");
@@ -177,12 +248,7 @@ bool Sema::resolve_decl_ref(DeclRefExpr* declref, bool function_call) {
     }
 
     declref->set_decl(decl);
-    declref->set_type(decl->get_type()); // debug
-
-    if (function_call) {
-        std::println("decl: {}", decl->get_id());
-        std::println("type: {}", decl->get_type().to_string());
-    }
+    declref->set_type(decl->get_type());
 
     return true;
 }
@@ -208,6 +274,7 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
 
     // Resolve the arguments and check param types are compatible
     for (int i = 0; i < (int)call->get_args().size(); i++) {
+        // we first try to get the argument from the call
         Expr* arg = call->get_args()[i].get();
         bool success_expr = resolve_expr(arg);
         if (!success_expr) {
@@ -215,8 +282,8 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
             return false;
         }
 
+        // now we look at the parameter and see if types match
         ParamDecl* param = params.at(i).get();
-        // TODO: Implement type checking for function calls
         if (arg->get_type() != param->get_type()) {
             std::println("Argument type mismatch");
             return false;
@@ -225,29 +292,6 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
     call->set_type(resolved_fun->get_return_type());
 
     return true;
-}
-
-bool Sema::resolve_expr(Expr* expr) {
-    if (auto* int_lit = dynamic_cast<IntLiteral*>(expr)) {
-        expr->set_type(Type(Type::Primitive::i64));
-        return true;
-    }
-
-    if (auto* float_lit = dynamic_cast<FloatLiteral*>(expr)) {
-        expr->set_type(Type(Type::Primitive::f64));
-        return true;
-    }
-
-    if (auto* declref = dynamic_cast<DeclRefExpr*>(expr)) {
-        return resolve_decl_ref(declref, false);
-    }
-
-    if (auto* call = dynamic_cast<FunCallExpr*>(expr)) {
-        return resolve_function_call(call);
-    }
-
-    std::println("unsupported expr");
-    return false;
 }
 
 bool Sema::resolve_return_stmt(ReturnStmt* stmt) {
@@ -279,15 +323,13 @@ bool Sema::resolve_return_stmt(ReturnStmt* stmt) {
     return true;
 }
 
+// Replace existing resolve_expr and resolve_stmt
+bool Sema::resolve_expr(Expr* expr) {
+    Resolver resolver(*this);
+    return expr->accept(resolver);
+}
+
 bool Sema::resolve_stmt(Stmt* stmt) {
-    if (auto* expr = dynamic_cast<Expr*>(stmt)) {
-        return resolve_expr(expr);
-    }
-
-    if (auto* return_stmt = dynamic_cast<ReturnStmt*>(stmt)) {
-        return resolve_return_stmt(return_stmt);
-    }
-
-    std::println("unsupported stmt");
-    return false;
+    Resolver resolver(*this);
+    return stmt->accept(resolver);
 }
