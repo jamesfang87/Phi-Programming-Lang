@@ -26,6 +26,8 @@ public:
     void set_type(Type t) { type = std::move(t); }
     [[nodiscard]] bool is_resolved() const { return type.has_value(); }
 
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+
 protected:
     std::optional<Type> type;
 };
@@ -42,6 +44,8 @@ public:
 
     [[nodiscard]] int64_t get_value() const { return value; }
 
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+
 private:
     int64_t value;
 };
@@ -57,6 +61,7 @@ public:
     void info_dump(int level = 0) const override;
 
     [[nodiscard]] double get_value() const { return value; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     double value;
@@ -73,6 +78,7 @@ public:
     void info_dump(int level = 0) const override;
 
     [[nodiscard]] const std::string& get_value() const { return value; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::string value;
@@ -89,6 +95,7 @@ public:
     void info_dump(int level = 0) const override;
 
     [[nodiscard]] char get_value() const { return value; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     char value;
@@ -111,6 +118,7 @@ public:
 
     [[nodiscard]] std::unique_ptr<Expr>& get_start() { return start; }
     [[nodiscard]] std::unique_ptr<Expr>& get_end() { return end; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> start, end;
@@ -130,6 +138,7 @@ public:
     [[nodiscard]] std::string& get_id() { return identifier; }
     [[nodiscard]] Decl* get_decl() { return decl; }
     void set_decl(Decl* d) { decl = d; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::string identifier;
@@ -153,6 +162,7 @@ public:
     [[nodiscard]] std::vector<std::unique_ptr<Expr>>& get_args() { return args; }
     [[nodiscard]] FunDecl* get_func_decl() const { return func_decl; }
     void set_func_decl(FunDecl* f) { func_decl = f; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> callee;
@@ -175,6 +185,7 @@ public:
     [[nodiscard]] Expr* get_lhs() { return lhs.get(); }
     [[nodiscard]] Expr* get_rhs() { return rhs.get(); }
     [[nodiscard]] TokenType get_op() { return op; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> lhs;
@@ -197,6 +208,7 @@ public:
     [[nodiscard]] Expr* get_operand() { return operand.get(); }
     [[nodiscard]] TokenType get_op() { return op; }
     [[nodiscard]] bool is_prefix_op() { return is_prefix; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> operand;

@@ -1,6 +1,3 @@
-// global scope are functions
-//
-
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
@@ -12,8 +9,12 @@
 #include <utility>
 #include <vector>
 
+#pragma once
+
 class Sema {
 public:
+    friend class Resolver;
+
     Sema(std::vector<std::unique_ptr<FunDecl>> ast)
         : ast(std::move(ast)) {}
 
@@ -23,6 +24,7 @@ private:
     std::vector<std::unique_ptr<FunDecl>> ast;
     std::vector<std::unordered_map<std::string, Decl*>> active_scopes;
 
+    FunDecl* cur_fun;
     Decl* lookup_decl(const std::string& name);
     bool insert_decl(Decl* decl);
 
@@ -39,6 +41,4 @@ private:
     bool resolve_param_decl(ParamDecl* param);
 
     bool resolve_block(Block* block);
-
-    FunDecl* cur_fun;
 };
