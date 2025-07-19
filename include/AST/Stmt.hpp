@@ -29,6 +29,7 @@ public:
     void info_dump(int level = 0) const;
 
     [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& get_stmts() { return stmts; }
+    bool accept(ASTVisitor& visitor) { return visitor.visit(*this); }
 
 private:
     std::vector<std::unique_ptr<Stmt>> stmts;
