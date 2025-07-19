@@ -1,7 +1,7 @@
 #include "AST/Expr.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
-#include "sema.hpp"
+#include "Sema/Sema.hpp"
 
 #include <cctype>
 #include <fstream>

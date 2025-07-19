@@ -1,3 +1,4 @@
+#include "AST/ASTVisitor.hpp"
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
@@ -11,14 +12,31 @@
 
 #pragma once
 
-class Sema {
+class Sema : public ASTVisitor {
 public:
-    friend class Resolver;
-
     Sema(std::vector<std::unique_ptr<FunDecl>> ast)
         : ast(std::move(ast)) {}
 
     std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> resolve_ast();
+
+    // ASTVisitor interface - Expression visitors
+    bool visit(IntLiteral& expr) override;
+    bool visit(FloatLiteral& expr) override;
+    bool visit(StrLiteral& expr) override;
+    bool visit(CharLiteral& expr) override;
+    bool visit(RangeLiteral& expr) override;
+    bool visit(DeclRefExpr& expr) override;
+    bool visit(FunCallExpr& expr) override;
+    bool visit(BinaryOp& expr) override;
+    bool visit(UnaryOp& expr) override;
+
+    // ASTVisitor interface - Statement visitors
+    bool visit(Block& block) override;
+    bool visit(ReturnStmt& stmt) override;
+    bool visit(IfStmt& stmt) override;
+    bool visit(WhileStmt& stmt) override;
+    bool visit(ForStmt& stmt) override;
+    bool visit(Expr& stmt) override;
 
 private:
     std::vector<std::unique_ptr<FunDecl>> ast;
@@ -28,17 +46,11 @@ private:
     Decl* lookup_decl(const std::string& name);
     bool insert_decl(Decl* decl);
 
-    bool resolve_expr(Expr* expr);
-
-    bool resolve_return_stmt(ReturnStmt* stmt);
-
     bool resolve_decl_ref(DeclRefExpr* declref, bool function_call);
     bool resolve_function_call(FunCallExpr* call);
+    bool resolve_return_stmt(ReturnStmt* stmt);
 
-    bool resolve_stmt(Stmt* stmt);
     bool resolve_fun_decl(FunDecl* fun);
     std::optional<Type> resolve_type(Type type);
     bool resolve_param_decl(ParamDecl* param);
-
-    bool resolve_block(Block* block);
 };
