@@ -89,6 +89,10 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
         case TokenType::tok_float_literal:
             lhs = std::make_unique<FloatLiteral>(tok.get_start(), std::stod(tok.get_lexeme()));
             break;
+        case TokenType::tok_true: lhs = std::make_unique<BoolLiteral>(tok.get_start(), true); break;
+        case TokenType::tok_false:
+            lhs = std::make_unique<BoolLiteral>(tok.get_start(), false);
+            break;
 
         case TokenType::tok_identifier:
             lhs = std::make_unique<DeclRefExpr>(tok.get_start(), tok.get_lexeme());

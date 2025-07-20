@@ -31,6 +31,9 @@ public:
         str,
         character,
 
+        // bool
+        boolean,
+
         // Special types
         null,
         custom
@@ -91,6 +94,7 @@ private:
             case Primitive::f32: return "f32";
             case Primitive::f64: return "f64";
             case Primitive::str: return "str";
+            case Primitive::boolean: return "bool";
             case Primitive::character: return "char";
             case Primitive::null: return "null";
             default: return "unknown";

@@ -5,6 +5,7 @@ class IntLiteral;
 class FloatLiteral;
 class StrLiteral;
 class CharLiteral;
+class BoolLiteral;
 class RangeLiteral;
 class DeclRefExpr;
 class FunCallExpr;
@@ -25,6 +26,7 @@ public:
     virtual bool visit(FloatLiteral& expr) = 0;
     virtual bool visit(StrLiteral& expr) = 0;
     virtual bool visit(CharLiteral& expr) = 0;
+    virtual bool visit(BoolLiteral& expr) = 0;
     virtual bool visit(RangeLiteral& expr) = 0;
     virtual bool visit(DeclRefExpr& expr) = 0;
     virtual bool visit(FunCallExpr& expr) = 0;

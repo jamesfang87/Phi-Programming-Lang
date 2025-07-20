@@ -101,6 +101,23 @@ private:
     char value;
 };
 
+class BoolLiteral : public Expr {
+public:
+    friend class Sema;
+
+    BoolLiteral(SrcLocation location, bool value)
+        : Expr(std::move(location), Type(Type::Primitive::boolean)),
+          value(value) {}
+
+    void info_dump(int level = 0) const override;
+
+    [[nodiscard]] bool get_value() const { return value; }
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+
+private:
+    bool value;
+};
+
 class RangeLiteral : public Expr {
 public:
     friend class Sema;
