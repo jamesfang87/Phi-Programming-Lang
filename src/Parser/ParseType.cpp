@@ -16,6 +16,7 @@ std::optional<Type> Parser::parse_type() {
         {"f64", Type::Primitive::f64},
         {"str", Type::Primitive::str},
         {"char", Type::Primitive::character},
+        {"bool", Type::Primitive::boolean},
         {"null", Type::Primitive::null}};
 
     std::string id = peek_token().get_lexeme();

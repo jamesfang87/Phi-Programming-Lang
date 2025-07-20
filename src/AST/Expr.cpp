@@ -20,6 +20,10 @@ void CharLiteral::info_dump(int level) const {
     std::println("{}CharLiteral: {}", std::string(level * 2, ' '), value);
 }
 
+void BoolLiteral::info_dump(int level) const {
+    std::println("{}BoolLiteral: {}", std::string(level * 2, ' '), value);
+}
+
 void RangeLiteral::info_dump(int level) const {
     std::println("{}RangeLiteral:", std::string(level * 2, ' '));
     std::println("{}  start:", std::string(level * 2, ' '));

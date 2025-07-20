@@ -12,8 +12,16 @@ bool Sema::visit(Block& block) {
 bool Sema::visit(ReturnStmt& stmt) { return resolve_return_stmt(&stmt); }
 
 bool Sema::visit(IfStmt& stmt) {
-    (void)stmt; // suppress unused parameter warning
-    // TODO: Implement actual resolution
+    // first resolve the condition
+    auto res = stmt.get_condition().accept(*this);
+    if (!res) return false;
+
+    // now we check whether the condition is of type bool
+    if (stmt.get_condition().get_type() != Type(Type::Primitive::boolean)) {
+        std::println("error: condition in if statement must have type bool");
+        return false;
+    }
+
     return true;
 }
 
@@ -50,7 +58,6 @@ bool Sema::resolve_return_stmt(ReturnStmt* stmt) {
     }
 
     // compare to the current function
-    std::println("stmt: {}, in fn: {}", stmt->get_expr()->is_resolved(), cur_fun->get_id());
     if (stmt->get_expr()->get_type() != cur_fun->get_return_type()) {
         // throw error
         std::println("type mismatch error: {}", cur_fun->get_id());

@@ -20,6 +20,7 @@ enum class TokenType : uint8_t {
     tok_error,
 
     // keywords
+    tok_bool,     ///< 'bool' keyword for boolean type
     tok_break,    ///< 'break' keyword for loop control
     tok_class,    ///< 'class' keyword for class declarations
     tok_const,    ///< 'const' keyword for constant declarations

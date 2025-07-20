@@ -23,6 +23,11 @@ bool Sema::visit(CharLiteral& expr) {
     return true;
 }
 
+bool Sema::visit(BoolLiteral& expr) {
+    expr.set_type(Type(Type::Primitive::boolean));
+    return true;
+}
+
 bool Sema::visit(DeclRefExpr& expr) { return resolve_decl_ref(&expr, false); }
 
 bool Sema::visit(FunCallExpr& expr) { return resolve_function_call(&expr); }

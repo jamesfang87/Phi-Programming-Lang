@@ -24,6 +24,7 @@ public:
     bool visit(FloatLiteral& expr) override;
     bool visit(StrLiteral& expr) override;
     bool visit(CharLiteral& expr) override;
+    bool visit(BoolLiteral& expr) override;
     bool visit(RangeLiteral& expr) override;
     bool visit(DeclRefExpr& expr) override;
     bool visit(FunCallExpr& expr) override;

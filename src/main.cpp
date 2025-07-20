@@ -61,11 +61,9 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        // why does this line not run?
         for (const auto& fun : resolved_ast) {
             fun->info_dump();
         }
-        std::println("Semantic analysis completed successfully!");
 
     } catch (const std::exception& e) {
         std::println(std::cerr, "Error: {}", e.what());

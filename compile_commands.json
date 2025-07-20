@@ -85,9 +85,9 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Sema/SemaCore.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaCore.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/SemaCore.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/SemaCore.cpp.o"
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Sema/Sema.cpp.o -c /Users/jamesfang/Phi/src/Sema/Sema.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/Sema.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/Sema.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
@@ -97,15 +97,15 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Sema/SemaExprVisitor.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaExprVisitor.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/SemaExprVisitor.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/SemaExprVisitor.cpp.o"
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Sema/SemaExpr.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaExpr.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/SemaExpr.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/SemaExpr.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Sema/SemaStmtVisitor.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaStmtVisitor.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/SemaStmtVisitor.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/SemaStmtVisitor.cpp.o"
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Sema/SemaStmt.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaStmt.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/SemaStmt.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/SemaStmt.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
