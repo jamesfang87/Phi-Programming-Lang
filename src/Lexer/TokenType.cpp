@@ -19,6 +19,7 @@ std::string type_to_string(TokenType type) {
         case TokenType::tok_error: return "ERROR";
 
         // Keywords
+        case TokenType::tok_bool: return "BOOL";
         case TokenType::tok_break: return "BREAK";
         case TokenType::tok_class: return "CLASS";
         case TokenType::tok_const: return "CONST";

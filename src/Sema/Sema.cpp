@@ -1,7 +1,6 @@
 #include "Sema/Sema.hpp"
 #include <cassert>
 #include <memory>
-#include <optional>
 #include <print>
 #include <string>
 #include <unordered_map>
