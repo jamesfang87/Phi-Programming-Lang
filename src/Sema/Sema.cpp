@@ -1,4 +1,5 @@
 #include "Sema/Sema.hpp"
+#include "AST/Decl.hpp"
 #include <cassert>
 #include <memory>
 #include <print>
@@ -7,8 +8,8 @@
 #include <vector>
 
 std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
-    // first create the global scope
-    active_scopes.emplace_back();
+    // Create global scope with RAII
+    ScopeGuard global_scope(active_scopes);
 
     // TODO: first resolve structs so that functions
     // may use user-defined types
@@ -31,11 +32,13 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
     }
 
     // now we 'truly' resolve all functions
-    for (auto ast_it = ast.begin(); ast_it != ast.end(); ++ast_it) {
-        cur_fun = ast_it->get();
-        active_scopes.emplace_back(); // create a new scope for the function
+    for (auto& fun_decl : ast) {
+        cur_fun = fun_decl.get();
 
-        // insert all parameters into the scope
+        // Create function scope with RAII - parameters and body share this scope
+        ScopeGuard function_scope(active_scopes);
+
+        // insert all parameters into the function scope
         for (const std::unique_ptr<ParamDecl>& param : cur_fun->get_params()) {
             if (!insert_decl(param.get())) {
                 // throw error
@@ -45,19 +48,21 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
             }
         }
 
-        // resolve the block
-        bool success = (*ast_it)->get_block()->accept(*this);
+        // Mark the next block as a function body (shouldn't create its own scope)
+        is_function_body_block = true;
+
+        // resolve the block (function body shares scope with parameters)
+        bool success = fun_decl->get_block()->accept(*this);
         if (!success) {
             std::println("while resolving function {}", cur_fun->get_id());
             std::println("failed to resolve block");
             return {false, {}};
         }
 
-        active_scopes.pop_back(); // scope should be popped when moving to the
-                                  // next function
+        // Function scope will be automatically popped by ScopeGuard destructor
     }
-    active_scopes.pop_back();
 
+    // Global scope will be automatically popped by ScopeGuard destructor
     return {true, std::move(ast)};
 }
 

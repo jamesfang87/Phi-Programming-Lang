@@ -10,6 +10,7 @@
 #include "Lexer/TokenType.hpp"
 
 std::expected<std::unique_ptr<Stmt>, Diagnostic> Parser::parse_stmt() {
+    std::println("{}", peek_token().get_name());
     switch (peek_token().get_type()) {
         case TokenType::tok_return: {
             auto res = parse_return_stmt();
@@ -19,9 +20,17 @@ std::expected<std::unique_ptr<Stmt>, Diagnostic> Parser::parse_stmt() {
         case TokenType::tok_while: return parse_while_stmt().value();
         case TokenType::tok_if: return parse_if_stmt().value();
         case TokenType::tok_for: return parse_for_stmt().value();
+        case TokenType::tok_let: {
+            auto res = parse_var_decl();
+            if (!res) {
+                std::println("error here");
+                return std::unexpected(res.error());
+            }
+            return res;
+        }
         default: advance_token();
     }
-    return nullptr;
+    return std::unexpected(Diagnostic());
 }
 
 std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> Parser::parse_return_stmt() {

@@ -1,4 +1,3 @@
-#include "AST/Expr.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
 #include "Sema/Sema.hpp"
@@ -64,6 +63,8 @@ int main(int argc, char* argv[]) {
         for (const auto& fun : resolved_ast) {
             fun->info_dump();
         }
+
+        std::println("Semantic analysis completed successfully!");
 
     } catch (const std::exception& e) {
         std::println(std::cerr, "Error: {}", e.what());

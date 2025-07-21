@@ -4,6 +4,7 @@ fun foo() -> bool {
 
 fun main() {
     if true {
-        return x;
+        while true {
+        }
     }
 }
