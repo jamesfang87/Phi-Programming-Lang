@@ -1,4 +1,5 @@
 #include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
 
 #include <print>
 
@@ -6,7 +7,18 @@ void ParamDecl::info_dump(int level) const {
     std::println("{}ParamDecl: {} (type: {})",
                  std::string(level * 2, ' '),
                  identifier,
-                 type.to_string());
+                 type.value().to_string());
+}
+
+void VarDecl::info_dump(int level) const {
+    std::println("{}VarDecl: {} (type: {})",
+                 std::string(level * 2, ' '),
+                 identifier,
+                 type.value().to_string());
+    if (initializer) {
+        std::println("{}Initializer:", std::string(level * 2, ' '));
+        initializer->info_dump(level + 1);
+    }
 }
 
 void FunDecl::info_dump(int level) const {
@@ -15,7 +27,7 @@ void FunDecl::info_dump(int level) const {
                  identifier,
                  location.line,
                  location.col,
-                 type.to_string());
+                 type.value().to_string());
     for (auto& p : params) {
         p->info_dump(level + 1);
     }

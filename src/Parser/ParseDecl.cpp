@@ -1,6 +1,10 @@
+#include "AST/Stmt.hpp"
 #include "Parser/Parser.hpp"
 
 #include "AST/Decl.hpp"
+#include "SrcLocation.hpp"
+#include <memory>
+#include <print>
 
 std::expected<std::unique_ptr<FunDecl>, Diagnostic> Parser::parse_function_decl() {
     Token tok = advance_token();
@@ -38,7 +42,11 @@ std::expected<std::unique_ptr<FunDecl>, Diagnostic> Parser::parse_function_decl(
 
     // now we parse the function body
     auto body = parse_block();
-    if (!body) return std::unexpected(body.error());
+    if (!body) {
+        std::println("faild here");
+        successful = false; // set success flag to false
+        return std::unexpected(body.error());
+    }
 
     return std::make_unique<FunDecl>(SrcLocation{.path = path, .line = line, .col = col},
                                      std::move(name),
@@ -92,4 +100,62 @@ std::expected<std::unique_ptr<ParamDecl>, Diagnostic> Parser::parse_param_decl()
                                                    .col = peek_token().get_start().col},
                                        name,
                                        type.value());
+}
+
+std::expected<std::unique_ptr<VarDeclStmt>, Diagnostic> Parser::parse_var_decl() {
+    SrcLocation loc = peek_token().get_start();
+    if (advance_token().get_type() != TokenType::tok_let) {
+        successful = false; // set success flag to false
+        std::println("1");
+        return std::unexpected(Diagnostic());
+    }
+
+    if (peek_token().get_type() != TokenType::tok_identifier) {
+        successful = false; // set success flag to false
+        std::println("2");
+        return std::unexpected(Diagnostic());
+    }
+    std::string name = advance_token().get_lexeme();
+
+    // next we expect the current token to be `:`
+    if (peek_token().get_type() != TokenType::tok_colon) {
+        successful = false; // set success flag to false
+        std::println("3");
+        return std::unexpected(Diagnostic());
+    }
+    advance_token();
+
+    // lastly, we expect a type
+    auto type = parse_type();
+    if (!type) {
+        successful = false; // set success flag to false
+        std::println("3");
+        return std::unexpected(Diagnostic());
+    }
+
+    // now we expect a `=` token
+    if (advance_token().get_type() != TokenType::tok_assign) {
+        successful = false; // set success flag to false
+        std::println("4");
+        return std::unexpected(Diagnostic());
+    }
+
+    // lastly, we expect an expression
+    auto expr = parse_expr();
+    if (!expr) {
+        successful = false; // set success flag to false
+        std::println("5");
+        return std::unexpected(Diagnostic());
+    }
+
+    // now we expect a `;` token
+    if (advance_token().get_type() != TokenType::tok_semicolon) {
+        successful = false; // set success flag to false
+        std::println("6");
+        return std::unexpected(Diagnostic());
+    }
+
+    return std::make_unique<VarDeclStmt>(
+        loc,
+        make_unique<VarDecl>(loc, name, type.value(), true, std::move(expr.value())));
 }

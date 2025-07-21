@@ -64,6 +64,7 @@ private:
     // Parsing functions
     std::expected<std::unique_ptr<FunDecl>, Diagnostic> parse_function_decl();
     std::expected<std::unique_ptr<ParamDecl>, Diagnostic> parse_param_decl();
+    std::expected<std::unique_ptr<VarDeclStmt>, Diagnostic> parse_var_decl();
     std::expected<std::unique_ptr<Block>, Diagnostic> parse_block();
 
     // Parsing for statements

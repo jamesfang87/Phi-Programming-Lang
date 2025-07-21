@@ -1,7 +1,7 @@
-#include "AST/Decl.hpp"
 #include "AST/Stmt.hpp"
 #include "Lexer/Token.hpp"
 #include "SrcLocation.hpp"
+#include "Type.hpp"
 #include <cstdint>
 #include <memory>
 #include <optional>

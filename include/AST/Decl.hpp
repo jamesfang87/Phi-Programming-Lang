@@ -1,7 +1,9 @@
+#include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
 #include "SrcLocation.hpp"
 #include "Type.hpp"
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,22 +22,34 @@ public:
 
     [[nodiscard]] std::string& get_id() { return identifier; }
     [[nodiscard]] SrcLocation& get_location() { return location; }
-    [[nodiscard]] Type& get_type() { return type; }
+    [[nodiscard]] Type& get_type() { return type.value(); }
 
 protected:
     SrcLocation location;
     std::string identifier;
-    Type type;
+    std::optional<Type> type;
 };
 
 class VarDecl : public Decl {
 public:
-    VarDecl(SrcLocation location, std::string identifier, Type type)
-        : Decl(std::move(location), std::move(identifier), std::move(type)) {}
+    VarDecl(SrcLocation location,
+            std::string identifier,
+            Type type,
+            bool is_const,
+            std::unique_ptr<Expr> initializer)
+        : Decl(std::move(location), std::move(identifier), std::move(type)),
+          is_const(is_const),
+          initializer(std::move(initializer)) {}
 
     void info_dump(int level = 0) const override;
 
+    [[nodiscard]] bool is_constant() const { return is_const; }
+    [[nodiscard]] Expr* get_initializer() const { return initializer.get(); }
+    [[nodiscard]] bool has_initializer() const { return initializer != nullptr; }
+
 private:
+    bool is_const;
+    std::unique_ptr<Expr> initializer;
 };
 
 class ParamDecl : public Decl {
@@ -45,7 +59,7 @@ public:
 
     void info_dump(int level = 0) const override;
 
-    [[nodiscard]] Type& get_type() { return type; }
+    [[nodiscard]] Type& get_type() { return type.value(); }
 
     void set_type(Type type) { this->type = std::move(type); }
 
@@ -65,7 +79,7 @@ public:
 
     void info_dump(int level = 0) const override;
 
-    [[nodiscard]] Type& get_return_type() { return type; }
+    [[nodiscard]] Type& get_return_type() { return type.value(); }
     [[nodiscard]] std::vector<std::unique_ptr<ParamDecl>>& get_params() { return params; }
     [[nodiscard]] Block* get_block() { return block.get(); }
 

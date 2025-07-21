@@ -16,6 +16,7 @@ class ReturnStmt;
 class IfStmt;
 class WhileStmt;
 class ForStmt;
+class VarDeclStmt;
 
 class ASTVisitor {
 public:
@@ -39,5 +40,6 @@ public:
     virtual bool visit(IfStmt& stmt) = 0;
     virtual bool visit(WhileStmt& stmt) = 0;
     virtual bool visit(ForStmt& stmt) = 0;
+    virtual bool visit(VarDeclStmt& stmt) = 0;
     virtual bool visit(Expr& stmt) = 0;
 };

@@ -33,20 +33,218 @@ bool Sema::visit(DeclRefExpr& expr) { return resolve_decl_ref(&expr, false); }
 bool Sema::visit(FunCallExpr& expr) { return resolve_function_call(&expr); }
 
 bool Sema::visit(RangeLiteral& expr) {
-    (void)expr; // suppress unused parameter warning
-    // TODO: Implement actual resolution
+    // Resolve start and end expressions
+    if (!expr.get_start()->accept(*this)) {
+        return false;
+    }
+    if (!expr.get_end()->accept(*this)) {
+        return false;
+    }
+
+    Type start_type = expr.get_start()->get_type();
+    Type end_type = expr.get_end()->get_type();
+
+    // Both start and end must be integer types
+    if (!start_type.is_primitive() || !is_integer_type(start_type)) {
+        std::println("Range start must be an integer type (i8, i16, i32, i64, u8, u16, u32, u64)");
+        return false;
+    }
+
+    if (!end_type.is_primitive() || !is_integer_type(end_type)) {
+        std::println("Range end must be an integer type (i8, i16, i32, i64, u8, u16, u32, u64)");
+        return false;
+    }
+
+    // Start and end must be the same integer type
+    if (start_type != end_type) {
+        std::println("Range start and end must be the same integer type");
+        return false;
+    }
+
+    // Set the range type to the integer type of its bounds
+    expr.set_type(start_type);
     return true;
 }
 
 bool Sema::visit(BinaryOp& expr) {
-    (void)expr; // suppress unused parameter warning
-    // TODO: Implement actual resolution
+    // Resolve left and right operands first
+    if (!expr.get_lhs()->accept(*this)) {
+        return false;
+    }
+    if (!expr.get_rhs()->accept(*this)) {
+        return false;
+    }
+
+    Type lhs_type = expr.get_lhs()->get_type();
+    Type rhs_type = expr.get_rhs()->get_type();
+    TokenType op = expr.get_op();
+
+    // Check if both operands are primitive types
+    if (!lhs_type.is_primitive() || !rhs_type.is_primitive()) {
+        std::println("Binary operations not supported on custom types");
+        return false;
+    }
+
+    // Type checking based on operation
+    switch (op) {
+        // Arithmetic operations: +, -, *, /, %
+        case TokenType::tok_add:
+        case TokenType::tok_sub:
+        case TokenType::tok_mul:
+        case TokenType::tok_div:
+        case TokenType::tok_mod: {
+            if (!is_numeric_type(lhs_type) || !is_numeric_type(rhs_type)) {
+                std::println("Arithmetic operations require numeric types");
+                return false;
+            }
+            // For modulo, operands must be integers
+            if (op == TokenType::tok_mod &&
+                (!is_integer_type(lhs_type) || !is_integer_type(rhs_type))) {
+                std::println("Modulo operation requires integer types");
+                return false;
+            }
+            // Result type is the promoted type of the operands
+            Type result_type = promote_numeric_types(lhs_type, rhs_type);
+            expr.set_type(result_type);
+            break;
+        }
+
+        // Comparison operations: ==, !=, <, <=, >, >=
+        case TokenType::tok_equal:
+        case TokenType::tok_not_equal:
+            // Equality can be checked on any primitive types if they're the same
+            if (lhs_type != rhs_type) {
+                std::println("Equality comparison requires same types");
+                return false;
+            }
+            expr.set_type(Type(Type::Primitive::boolean));
+            break;
+
+        case TokenType::tok_less:
+        case TokenType::tok_less_equal:
+        case TokenType::tok_greater:
+        case TokenType::tok_greater_equal:
+            // Ordering comparisons only work on numeric types
+            if (!is_numeric_type(lhs_type) || !is_numeric_type(rhs_type)) {
+                std::println("Ordering comparisons require numeric types");
+                return false;
+            }
+            if (lhs_type != rhs_type) {
+                std::println("Ordering comparison requires same types");
+                return false;
+            }
+            expr.set_type(Type(Type::Primitive::boolean));
+            break;
+
+        // Logical operations: &&, ||
+        case TokenType::tok_and:
+        case TokenType::tok_or:
+            if (lhs_type.primitive_type() != Type::Primitive::boolean ||
+                rhs_type.primitive_type() != Type::Primitive::boolean) {
+                std::println("Logical operations require boolean types");
+                return false;
+            }
+            expr.set_type(Type(Type::Primitive::boolean));
+            break;
+
+        default: std::println("Unsupported binary operation"); return false;
+    }
+
     return true;
 }
 
+// Helper functions for type checking
+bool Sema::is_integer_type(const Type& type) {
+    if (!type.is_primitive()) {
+        return false;
+    }
+
+    Type::Primitive prim = type.primitive_type();
+    return prim == Type::Primitive::i8 || prim == Type::Primitive::i16 ||
+           prim == Type::Primitive::i32 || prim == Type::Primitive::i64 ||
+           prim == Type::Primitive::u8 || prim == Type::Primitive::u16 ||
+           prim == Type::Primitive::u32 || prim == Type::Primitive::u64;
+}
+
+bool Sema::is_numeric_type(const Type& type) {
+    if (!type.is_primitive()) {
+        return false;
+    }
+
+    Type::Primitive prim = type.primitive_type();
+    return is_integer_type(type) || prim == Type::Primitive::f32 || prim == Type::Primitive::f64;
+}
+
+Type Sema::promote_numeric_types(const Type& lhs, const Type& rhs) {
+    // Simple type promotion rules
+    // For now, if types are the same, return that type
+    // In the future, implement proper numeric promotion rules
+    if (lhs == rhs) {
+        return lhs;
+    }
+
+    // For mixed integer/float operations, promote to float
+    if (is_integer_type(lhs) && (rhs.primitive_type() == Type::Primitive::f32 ||
+                                 rhs.primitive_type() == Type::Primitive::f64)) {
+        return rhs;
+    }
+    if (is_integer_type(rhs) && (lhs.primitive_type() == Type::Primitive::f32 ||
+                                 lhs.primitive_type() == Type::Primitive::f64)) {
+        return lhs;
+    }
+
+    // Default to left type for now (could be improved)
+    return lhs;
+}
+
 bool Sema::visit(UnaryOp& expr) {
-    (void)expr; // suppress unused parameter warning
-    // TODO: Implement actual resolution
+    // Resolve operand first
+    if (!expr.get_operand()->accept(*this)) {
+        return false;
+    }
+
+    Type operand_type = expr.get_operand()->get_type();
+    TokenType op = expr.get_op();
+
+    // Check if operand is primitive type
+    if (!operand_type.is_primitive()) {
+        std::println("Unary operations not supported on custom types");
+        return false;
+    }
+
+    switch (op) {
+        // Arithmetic negation: -
+        case TokenType::tok_sub:
+            if (!is_numeric_type(operand_type)) {
+                std::println("Arithmetic negation requires numeric type");
+                return false;
+            }
+            // Negation preserves the operand type
+            expr.set_type(operand_type);
+            break;
+
+        // Logical NOT: !
+        case TokenType::tok_bang:
+            if (operand_type.primitive_type() != Type::Primitive::boolean) {
+                std::println("Logical NOT requires boolean type");
+                return false;
+            }
+            expr.set_type(Type(Type::Primitive::boolean));
+            break;
+
+        // Increment/Decrement: ++, --
+        case TokenType::tok_increment:
+        case TokenType::tok_decrement:
+            if (!is_integer_type(operand_type)) {
+                std::println("Increment/decrement requires integer type");
+                return false;
+            }
+            expr.set_type(operand_type);
+            break;
+
+        default: std::println("Unsupported unary operation"); return false;
+    }
+
     return true;
 }
 
