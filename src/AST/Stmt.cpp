@@ -2,6 +2,7 @@
 
 #include <print>
 
+#include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 
 ReturnStmt::ReturnStmt(SrcLocation location, std::unique_ptr<Expr> expr)
@@ -99,5 +100,18 @@ void ForStmt::info_dump(int level) const {
     }
     if (body) {
         body->info_dump(level + 1);
+    }
+}
+
+VarDeclStmt::VarDeclStmt(SrcLocation location, std::unique_ptr<VarDecl> decl)
+    : Stmt(std::move(location)),
+      var_decl(std::move(decl)) {}
+
+VarDeclStmt::~VarDeclStmt() = default;
+
+void VarDeclStmt::info_dump(int level) const {
+    std::println("{}VarDeclStmt", std::string(level * 2, ' '));
+    if (var_decl) {
+        var_decl->info_dump(level + 1);
     }
 }

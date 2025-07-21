@@ -1,4 +1,5 @@
 #include "AST/Expr.hpp"
+#include "AST/Decl.hpp"
 
 #include <print>
 
@@ -60,6 +61,9 @@ void BinaryOp::info_dump(int level) const {
     lhs->info_dump(level + 2);
     std::println("{}  rhs:", std::string(level * 2, ' '));
     rhs->info_dump(level + 2);
+    if (type.has_value()) {
+        std::println("{}  type: {}", std::string(level * 2, ' '), type.value().to_string());
+    }
 }
 
 void UnaryOp::info_dump(int level) const {

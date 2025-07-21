@@ -48,3 +48,38 @@ bool Sema::resolve_param_decl(ParamDecl* param) {
     }
     return true;
 }
+
+bool Sema::resolve_var_decl(VarDecl* var) {
+    // First resolve the variable's declared type
+    std::optional<Type> resolved_var_type = resolve_type(var->get_type());
+    if (!resolved_var_type) {
+        std::println("invalid type for variable");
+        return false;
+    }
+
+    // If there's an initializer, resolve it and check type compatibility
+    if (var->has_initializer()) {
+        Expr* initializer = var->get_initializer();
+        if (!initializer->accept(*this)) {
+            std::println("failed to resolve variable initializer");
+            return false;
+        }
+
+        Type initializer_type = initializer->get_type();
+        Type var_type = resolved_var_type.value();
+
+        // Check if initializer type matches variable type
+        if (initializer_type != var_type) {
+            std::println("variable initializer type mismatch");
+            std::println("variable type: {}", var_type.to_string());
+            std::println("initializer type: {}", initializer_type.to_string());
+            return false;
+        }
+    } else if (var->is_constant()) {
+        // Constant variables must have an initializer
+        std::println("constant variable '{}' must have an initializer", var->get_id());
+        return false;
+    }
+
+    return true;
+}

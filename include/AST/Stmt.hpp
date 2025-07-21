@@ -5,6 +5,10 @@
 
 #pragma once
 
+class Decl;
+class FunDecl;
+class VarDecl;
+
 class Stmt {
 public:
     Stmt(SrcLocation location)
@@ -50,6 +54,7 @@ private:
 
 class IfStmt : public Stmt {
 public:
+    friend class Sema;
     IfStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>, std::unique_ptr<Block>);
     ~IfStmt() override;
 
@@ -67,6 +72,8 @@ private:
 
 class WhileStmt : public Stmt {
 public:
+    friend class Sema;
+
     WhileStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>);
     ~WhileStmt() override;
 
@@ -82,7 +89,7 @@ private:
 
 class ForStmt : public Stmt {
 public:
-    ForStmt(SrcLocation, std::string loop_var, std::unique_ptr<Expr>, std::unique_ptr<Block>);
+    ForStmt(SrcLocation, std::string, std::unique_ptr<Expr>, std::unique_ptr<Block>);
     ~ForStmt() override;
 
     [[nodiscard]] std::string& get_loop_var();
@@ -95,4 +102,18 @@ private:
     std::string loop_var;
     std::unique_ptr<Expr> range;
     std::unique_ptr<Block> body;
+};
+
+class VarDeclStmt : public Stmt {
+public:
+    VarDeclStmt(SrcLocation, std::unique_ptr<VarDecl>);
+    ~VarDeclStmt() override;
+
+    [[nodiscard]] std::string& get_name();
+    [[nodiscard]] Expr& get_initializer();
+    void info_dump(int level) const override;
+    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+
+private:
+    std::unique_ptr<VarDecl> var_decl;
 };

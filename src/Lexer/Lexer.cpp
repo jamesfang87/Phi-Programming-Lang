@@ -117,8 +117,8 @@ Token Lexer::scan_token() {
         case ';': return make_token(TokenType::tok_semicolon);
 
         case '.':
-            if (match_next('.')) return make_token(TokenType::tok_inclusive_range);
             if (match_next_n(".=")) return make_token(TokenType::tok_exclusive_range);
+            if (match_next('.')) return make_token(TokenType::tok_inclusive_range);
             return make_token(TokenType::tok_member);
         case ':':
             return make_token(match_next(':') ? TokenType::tok_namespace_member
