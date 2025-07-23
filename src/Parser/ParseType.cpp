@@ -2,7 +2,9 @@
 
 #include <unordered_map>
 
-std::optional<Type> Parser::parse_type() {
+namespace phi {
+
+std::expected<Type, Diagnostic> Parser::parse_type() {
     const std::unordered_map<std::string, Type::Primitive> primitive_map = {
         {"i8", Type::Primitive::i8},
         {"i16", Type::Primitive::i16},
@@ -22,11 +24,13 @@ std::optional<Type> Parser::parse_type() {
     std::string id = peek_token().get_lexeme();
     auto it = primitive_map.find(id);
     if (it == primitive_map.end() && peek_token().get_type() != TokenType::tok_identifier) {
-        throw_parsing_error(peek_token().get_start().line,
-                            peek_token().get_start().col,
-                            std::format("Invalid token found: {}", peek_token().get_lexeme()),
-                            "Expected a valid type here");
-        return std::nullopt;
+        return std::unexpected(
+            error(std::format("invalid token found: {}", peek_token().get_lexeme()))
+                .with_primary_label(span_from_token(peek_token()), "expected a valid type here")
+                .with_help("valid types include: int, float, bool, string, or custom type names")
+                .with_note("types must be either primitive types or valid identifiers")
+                .with_code("E0030")
+                .build());
     }
 
     advance_token();
@@ -36,3 +40,5 @@ std::optional<Type> Parser::parse_type() {
         return Type(it->second);
     }
 }
+
+} // namespace phi

@@ -2,6 +2,7 @@
 #include "Parser/Parser.hpp"
 #include <print>
 
+namespace phi {
 std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::parse_expr() { return pratt(0); }
 
 // Add to binding power functions
@@ -64,7 +65,7 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
             if (peek_token().get_type() != TokenType::tok_close_paren) {
                 // Error handling for missing ')'
                 successful = false; // set success flag to false
-                return std::unexpected(Diagnostic());
+                return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
             }
             advance_token(); // consume ')'
             break;
@@ -90,6 +91,12 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
             lhs = std::make_unique<FloatLiteral>(tok.get_start(), std::stod(tok.get_lexeme()));
             break;
         case TokenType::tok_true: lhs = std::make_unique<BoolLiteral>(tok.get_start(), true); break;
+        case TokenType::tok_str_literal:
+            lhs = std::make_unique<StrLiteral>(tok.get_start(), tok.get_lexeme());
+            break;
+        case TokenType::tok_char_literal:
+            lhs = std::make_unique<CharLiteral>(tok.get_start(), tok.get_lexeme()[0]);
+            break;
         case TokenType::tok_false:
             lhs = std::make_unique<BoolLiteral>(tok.get_start(), false);
             break;
@@ -102,7 +109,7 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
             // Error handling
             successful = false; // set success flag to false
             std::println("unexpected token");
-            return std::unexpected(Diagnostic());
+            return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
         }
     }
 
@@ -220,3 +227,4 @@ std::unique_ptr<Expr> Parser::parse_member_access(std::unique_ptr<Expr> expr) {
     return std::make_unique<MemberExpr>(std::move(expr), member.get_lexeme(), member.get_start());
 }
 */
+} // namespace phi

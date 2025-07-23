@@ -9,6 +9,7 @@
 #include "Diagnostics/Diagnostic.hpp"
 #include "Lexer/TokenType.hpp"
 
+namespace phi {
 std::expected<std::unique_ptr<Stmt>, Diagnostic> Parser::parse_stmt() {
     std::println("{}", peek_token().get_name());
     switch (peek_token().get_type()) {
@@ -30,7 +31,7 @@ std::expected<std::unique_ptr<Stmt>, Diagnostic> Parser::parse_stmt() {
         }
         default: advance_token();
     }
-    return std::unexpected(Diagnostic());
+    return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
 }
 
 std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> Parser::parse_return_stmt() {
@@ -47,26 +48,23 @@ std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> Parser::parse_return_stmt
     // functions which have a non-void return type
     auto expr = parse_expr();
     if (!expr) {
-        successful = false; // set success flag to false
-        return std::unexpected(Diagnostic());
-        /*
-        throw_parsing_error(peek_token().get_start().line,
-                            peek_token().get_start().col,
-                            "Invalid expression found",
-                            "Expected an expression after `return`");
-        return nullptr;
-        */
+        emit_error(error("invalid return expression")
+                       .with_primary_label(span_from_token(peek_token()), "invalid expression here")
+                       .with_help("return statements can be `return;` or `return expression;`")
+                       .with_code("E0011")
+                       .build());
+        return std::unexpected(expr.error());
     }
 
     // check that the line ends with a semicolon
     if (peek_token().get_type() != TokenType::tok_semicolon) {
-        successful = false; // set success flag to false
-        return std::unexpected(Diagnostic());
-        // throw_parsing_error(peek_token().get_start().line,
-        //                     peek_token().get_start().col,
-        //                     "Invalid token found",
-        //                     "Expected `;` after expression");
-        // return nullptr;
+        emit_error(error("missing semicolon after return statement")
+                       .with_primary_label(span_from_token(peek_token()), "expected `;` here")
+                       .with_help("return statements must end with a semicolon")
+                       .with_suggestion(span_from_token(peek_token()), ";", "add semicolon")
+                       .with_code("E0012")
+                       .build());
+        return std::unexpected(Diagnostic(DiagnosticLevel::Error, "missing semicolon"));
     }
     advance_token();
 
@@ -116,8 +114,12 @@ std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
                                         std::move(body.value()),
                                         std::move(elif_body));
     }
-    successful = false; // set success flag to false
-    return std::unexpected(Diagnostic());
+    emit_error(error("invalid else clause")
+                   .with_primary_label(span_from_token(peek_token()), "unexpected token here")
+                   .with_help("else must be followed by a block `{` or another `if` statement")
+                   .with_code("E0040")
+                   .build());
+    return std::unexpected(Diagnostic(DiagnosticLevel::Error, "invalid else clause"));
 }
 
 std::expected<std::unique_ptr<WhileStmt>, Diagnostic> Parser::parse_while_stmt() {
@@ -133,7 +135,6 @@ std::expected<std::unique_ptr<WhileStmt>, Diagnostic> Parser::parse_while_stmt()
     return std::make_unique<WhileStmt>(loc, std::move(condition.value()), std::move(body.value()));
 }
 
-// ex: for i in [1, 10)
 std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
     SrcLocation loc = peek_token().get_start();
     advance_token(); // eat 'for'
@@ -141,24 +142,26 @@ std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
     // now we expect the looping variable name
     Token looping_var = advance_token();
     if (looping_var.get_type() != TokenType::tok_identifier) {
-        // throw_parsing_error(looping_var.get_start().line,
-        //                     looping_var.get_start().col,
-        //                     "Invalid token found",
-        //                     "Expected identifier for looping variable");
-        successful = false; // set success flag to false
-        return std::unexpected(Diagnostic());
+        emit_error(error("for loop must have a loop variable")
+                       .with_primary_label(span_from_token(looping_var), "expected identifier here")
+                       .with_help("for loops have the form: `for variable in iterable`")
+                       .with_note("the loop variable will be assigned each value from the iterable")
+                       .with_code("E0014")
+                       .build());
+        return std::unexpected(Diagnostic(DiagnosticLevel::Error, "invalid for loop"));
     }
 
     // now we expect the 'in' keyword
     Token in_keyword = advance_token();
     if (in_keyword.get_type() != TokenType::tok_in) {
-        // throw_parsing_error(in_keyword.get_start().line,
-        //                     in_keyword.get_start().col,
-        //                     "Invalid token found",
-        //                     "Expected 'in' keyword");
-        // return nullptr;
-        successful = false; // set success flag to false
-        return std::unexpected(Diagnostic());
+        emit_error(error("missing `in` keyword in for loop")
+                       .with_primary_label(span_from_token(looping_var), "loop variable")
+                       .with_secondary_label(span_from_token(in_keyword), "expected `in` here")
+                       .with_help("for loops have the form: `for variable in iterable`")
+                       .with_suggestion(span_from_token(in_keyword), "in", "add `in` keyword")
+                       .with_code("E0015")
+                       .build());
+        return std::unexpected(Diagnostic(DiagnosticLevel::Error, "missing in keyword"));
     }
 
     // now we parse the range literal
@@ -167,10 +170,11 @@ std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
 
     // parse the body of the for loop
     auto body = parse_block();
-    if (!body) return std::unexpected(range.error());
+    if (!body) return std::unexpected(body.error());
 
     return std::make_unique<ForStmt>(loc,
                                      looping_var.get_lexeme(),
                                      std::move(range.value()),
                                      std::move(body.value()));
 }
+} // namespace phi

@@ -1,0 +1,131 @@
+#pragma once
+
+#include "Diagnostic.hpp"
+#include <iostream>
+#include <map>
+#include <memory>
+#include <optional>
+
+namespace phi {
+
+/// Manages source files and their contents for diagnostic rendering
+class SourceManager {
+public:
+    /// Register a source file with its content
+    void add_source_file(const std::string& path, std::string_view content);
+
+    /// Get a specific line from a source file
+    std::optional<std::string_view> get_line(const std::string& path, int line_num) const;
+
+    /// Get multiple lines from a source file
+    std::vector<std::string_view>
+    get_lines(const std::string& path, int start_line, int end_line) const;
+
+    /// Get the total number of lines in a file
+    int get_line_count(const std::string& path) const;
+
+private:
+    std::map<std::string, std::vector<std::string_view>> source_files_;
+};
+
+/// Configuration for diagnostic rendering
+struct DiagnosticConfig {
+    bool use_colors = true;
+    bool show_line_numbers = true;
+    bool show_source_context = true;
+    int context_lines = 2; // Number of lines to show before/after the error
+    int max_line_width = 120;
+    std::string tab_replacement = "    "; // Replace tabs with spaces for consistent formatting
+};
+
+/// Handles formatting and rendering of diagnostics
+class DiagnosticManager {
+public:
+    explicit DiagnosticManager(std::shared_ptr<SourceManager> source_manager,
+                               DiagnosticConfig config = DiagnosticConfig());
+
+    /// Emit a diagnostic to the specified stream
+    void emit(const Diagnostic& diagnostic, std::ostream& out = std::cerr) const;
+
+    /// Emit multiple diagnostics
+    void emit_all(const std::vector<Diagnostic>& diagnostics, std::ostream& out = std::cerr) const;
+
+    /// Get error/warning counts
+    int error_count() const;
+    int warning_count() const;
+    bool has_errors() const;
+
+    /// Reset counters
+    void reset_counts();
+
+    /// Update configuration
+    void set_config(const DiagnosticConfig& config);
+
+    /// Get the source manager
+    std::shared_ptr<SourceManager> source_manager() const;
+
+private:
+    std::shared_ptr<SourceManager> source_manager_;
+    DiagnosticConfig config_;
+    mutable int error_count_ = 0;
+    mutable int warning_count_ = 0;
+
+    /// Main rendering function
+    void render_diagnostic(const Diagnostic& diagnostic, std::ostream& out) const;
+
+    /// Render the diagnostic header (e.g., "error: message")
+    void render_diagnostic_header(const Diagnostic& diagnostic, std::ostream& out) const;
+
+    /// Render source code snippets with labels and arrows
+    void render_source_snippets(const Diagnostic& diagnostic, std::ostream& out) const;
+
+    /// Render a snippet from a specific file
+    void render_file_snippet(const std::string& file_path,
+                             const std::vector<const DiagnosticLabel*>& labels,
+                             std::ostream& out) const;
+
+    /// Render labels (arrows and underlines) for a specific line
+    void render_labels_for_line(int line_num,
+                                const std::vector<const DiagnosticLabel*>& labels,
+                                int gutter_width,
+                                const std::string& line_content,
+                                std::ostream& out) const;
+
+    /// Render a primary label (with arrow)
+    void render_primary_label_line(int start_col,
+                                   int end_col,
+                                   const DiagnosticLabel& label,
+                                   std::ostream& out) const;
+
+    /// Render a secondary label (with underline)
+    void render_secondary_label_line(int start_col,
+                                     int end_col,
+                                     const DiagnosticLabel& label,
+                                     std::ostream& out) const;
+
+    /// Render a note message
+    void render_note(const std::string& note, std::ostream& out) const;
+
+    /// Render a help message
+    void render_help(const std::string& help, std::ostream& out) const;
+
+    /// Render a suggestion
+    void render_suggestion(const DiagnosticSuggestion& suggestion, std::ostream& out) const;
+
+    /// Helper functions
+    std::string diagnostic_level_to_string(DiagnosticLevel level) const;
+
+    DiagnosticStyle get_style_for_level(DiagnosticLevel level) const;
+
+    /// Format text with ANSI color codes
+    std::string format_with_style(const std::string& text, const DiagnosticStyle& style) const;
+
+    /// Replace tabs with spaces for consistent formatting
+    std::string replace_tabs(std::string_view line) const;
+
+    /// Group labels by file path for rendering
+    std::map<std::string, std::vector<const DiagnosticLabel*>>
+    group_labels_by_location(const std::vector<DiagnosticLabel>& labels) const;
+};
+
+} // namespace phi
