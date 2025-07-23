@@ -1,3 +1,4 @@
+#include "AST/Decl.hpp"
 #include "Sema/Sema.hpp"
 #include <print>
 
@@ -92,4 +93,38 @@ bool Sema::visit(Expr& stmt) {
     return stmt.accept(*this); // Handle expression-as-statement
 }
 
-bool Sema::visit(VarDeclStmt& stmt) { return true; }
+bool Sema::visit(VarDeclStmt& stmt) {
+    // First resolve the variable's declared type
+    VarDecl* var = stmt.var_decl.get();
+    std::optional<Type> type = resolve_type(var->get_type());
+    if (!type) {
+        std::println("invalid type for variable");
+        return false;
+    }
+
+    // If there's an initializer, resolve it and check type compatibility
+    if (var->has_initializer()) {
+        Expr* initializer = var->get_initializer();
+        if (!initializer->accept(*this)) {
+            std::println("failed to resolve variable initializer");
+            return false;
+        }
+
+        const Type& init_type = initializer->get_type();
+        const Type& decl_type = type.value();
+
+        // Check if initializer type matches variable type
+        if (init_type != decl_type) {
+            std::println("variable initializer type mismatch");
+            std::println("variable type: {}", decl_type.to_string());
+            std::println("initializer type: {}", init_type.to_string());
+            return false;
+        }
+    } else if (var->is_constant()) {
+        // Constant variables must have an initializer
+        std::println("constant variable '{}' must have an initializer", var->get_id());
+        return false;
+    }
+
+    return true;
+}

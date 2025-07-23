@@ -41,7 +41,9 @@ int main(int argc, char* argv[]) {
         }
 
         std::println("\nParsing results: ");
-        Parser parser(source, filename, tokens);
+        auto source_manager = std::make_shared<phi::SourceManager>();
+        auto diagnostic_manager = std::make_shared<phi::DiagnosticManager>(source_manager);
+        phi::Parser parser(source, filename, tokens, diagnostic_manager);
         auto [ast, parse_success] = parser.parse();
         if (!parse_success) {
             std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");

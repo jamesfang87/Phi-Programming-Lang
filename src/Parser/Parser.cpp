@@ -1,78 +1,81 @@
 #include "Parser/Parser.hpp"
 
-#include <iostream>
-#include <print>
-
-#include "Lexer/Token.hpp"
+namespace phi {
 
 std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
-    while (peek_token().get_type() != TokenType::tok_eof) {
+    while (!at_eof() && peek_token().get_type() != TokenType::tok_eof) {
         switch (peek_token().get_type()) {
             case TokenType::tok_fun: {
                 auto res = parse_function_decl();
                 if (res.has_value()) {
                     functions.push_back(std::move(res.value()));
+                } else {
+                    // Error was already emitted, try to synchronize and continue
+                    synchronize();
                 }
                 break;
             }
             case TokenType::tok_eof: return {std::move(functions), successful};
-
-            default: advance_token();
+            default:
+                emit_unexpected_token_error(peek_token(), {"fun"});
+                synchronize();
+                break;
         }
     }
 
     return {std::move(functions), successful};
 }
 
-void Parser::throw_parsing_error(int line,
-                                 int col,
-                                 std::string_view message,
-                                 std::string_view expected_message) {
-    successful = false; // set success flag to false
-
-    // we have reached eof
-    if (col == -1) {
-        col = lines.back().size();
+bool Parser::expect_token(TokenType expected_type, const std::string& context) {
+    if (peek_token().get_type() == expected_type) {
+        advance_token();
+        return true;
     }
 
-    // convert line number to string to get its width
-    std::string line_num_str = std::to_string(line);
-    int gutter_width = line_num_str.size() + 2;
-
-    std::println(std::cerr, "\033[31;1;4merror:\033[0m {}", message);
-    std::println(std::cerr, "--> {}:{}:{}", path, line, col);
-
-    std::string_view line_content = lines[line - 1];
-    std::println(std::cerr, "{}|", std::string(gutter_width, ' '));
-    std::println(std::cerr, " {} | {}", line, line_content);
-    std::println(std::cerr,
-                 "{}|{}^ {}\n",
-                 std::string(std::max(1, gutter_width), ' '),
-                 std::string(std::max(1, col), ' '),
-                 expected_message);
-
-    synchronize();
+    std::string context_msg = context.empty() ? "" : " in " + context;
+    emit_expected_found_error(type_to_string(expected_type) + context_msg, peek_token());
+    return false;
 }
 
-void Parser::synchronize() {
-    // Skip tokens until we find a synchronization point
-    while (peek_token().get_type() != TokenType::tok_eof) {
+bool Parser::match_token(TokenType type) {
+    if (peek_token().get_type() == type) {
+        advance_token();
+        return true;
+    }
+    return false;
+}
+
+void Parser::skip_until_recovery_point() {
+    while (!at_eof()) {
         switch (peek_token().get_type()) {
-            // Statement terminators
             case TokenType::tok_semicolon:
-                advance_token(); // Consume the semicolon
-                return;
-
-            // Block/scope boundaries
             case TokenType::tok_close_brace:
-                advance_token(); // Consume the semicolon
-                return;
-
-            // End of file
-            case TokenType::tok_eof: return;
-
-            // Skip all other tokens
+            case TokenType::tok_fun: return;
             default: advance_token(); break;
         }
     }
 }
+
+bool Parser::is_statement_start() const {
+    switch (peek_token().get_type()) {
+        case TokenType::tok_return:
+        case TokenType::tok_if:
+        case TokenType::tok_while:
+        case TokenType::tok_for:
+        case TokenType::tok_identifier:
+        case TokenType::tok_open_brace: return true;
+        default: return false;
+    }
+}
+
+bool Parser::is_expression_start() const {
+    switch (peek_token().get_type()) {
+        case TokenType::tok_identifier:
+        case TokenType::tok_int_literal:
+        case TokenType::tok_float_literal:
+        case TokenType::tok_str_literal:
+        case TokenType::tok_open_paren: return true;
+        default: return false;
+    }
+}
+} // namespace phi
