@@ -32,6 +32,7 @@ protected:
 
 class VarDecl : public Decl {
 public:
+    friend class Sema;
     VarDecl(SrcLocation location,
             std::string identifier,
             Type type,

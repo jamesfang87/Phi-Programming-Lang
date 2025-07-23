@@ -106,6 +106,7 @@ private:
 
 class VarDeclStmt : public Stmt {
 public:
+    friend class Sema;
     VarDeclStmt(SrcLocation, std::unique_ptr<VarDecl>);
     ~VarDeclStmt() override;
 
