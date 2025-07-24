@@ -3,7 +3,6 @@
 #include <unordered_map>
 
 namespace phi {
-
 std::expected<Type, Diagnostic> Parser::parse_type() {
     const std::unordered_map<std::string, Type::Primitive> primitive_map = {
         {"i8", Type::Primitive::i8},
@@ -21,8 +20,8 @@ std::expected<Type, Diagnostic> Parser::parse_type() {
         {"bool", Type::Primitive::boolean},
         {"null", Type::Primitive::null}};
 
-    std::string id = peek_token().get_lexeme();
-    auto it = primitive_map.find(id);
+    const std::string id = peek_token().get_lexeme();
+    const auto it = primitive_map.find(id);
     if (it == primitive_map.end() && peek_token().get_type() != TokenType::tok_identifier) {
         return std::unexpected(
             error(std::format("invalid token found: {}", peek_token().get_lexeme()))
@@ -36,9 +35,7 @@ std::expected<Type, Diagnostic> Parser::parse_type() {
     advance_token();
     if (it == primitive_map.end()) {
         return Type(id);
-    } else {
-        return Type(it->second);
     }
+    return Type(it->second);
 }
-
 } // namespace phi

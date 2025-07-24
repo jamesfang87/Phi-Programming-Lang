@@ -2,7 +2,6 @@
 #include "Parser/Parser.hpp"
 #include "Sema/Sema.hpp"
 
-#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <print>
@@ -13,7 +12,7 @@ std::string read_file_to_string(const std::string& filename) {
     if (!file.is_open()) {
         throw std::runtime_error("Could not open file: " + filename);
     }
-    return std::string{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    return std::string{std::istreambuf_iterator(file), std::istreambuf_iterator<char>()};
 }
 
 int main(int argc, char* argv[]) {
@@ -32,7 +31,7 @@ int main(int argc, char* argv[]) {
 
         if (!scan_success) {
             std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
-            return 0;
+            return 1;
         }
 
         std::println("Tokens:");
@@ -47,11 +46,11 @@ int main(int argc, char* argv[]) {
         auto [ast, parse_success] = parser.parse();
         if (!parse_success) {
             std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
-            return 0;
+            return 1;
         }
 
         for (const auto& fun : ast) {
-            fun->info_dump();
+            fun->info_dump(0);
         }
 
         std::println("Semantic Analysis:");
@@ -59,11 +58,11 @@ int main(int argc, char* argv[]) {
         auto [success, resolved_ast] = analyzer.resolve_ast();
         if (!success) {
             std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");
-            return 0;
+            return 1;
         }
 
         for (const auto& fun : resolved_ast) {
-            fun->info_dump();
+            fun->info_dump(0);
         }
 
         std::println("Semantic analysis completed successfully!");

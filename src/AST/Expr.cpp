@@ -5,27 +5,27 @@
 
 #include "Lexer/TokenType.hpp"
 
-void IntLiteral::info_dump(int level) const {
+void IntLiteral::info_dump(const int level) const {
     std::println("{}IntLiteral: {}", std::string(level * 2, ' '), value);
 }
 
-void FloatLiteral::info_dump(int level) const {
+void FloatLiteral::info_dump(const int level) const {
     std::println("{}FloatLiteral: {}", std::string(level * 2, ' '), value);
 }
 
-void StrLiteral::info_dump(int level) const {
+void StrLiteral::info_dump(const int level) const {
     std::println("{}StrLiteral: {}", std::string(level * 2, ' '), value);
 }
 
-void CharLiteral::info_dump(int level) const {
+void CharLiteral::info_dump(const int level) const {
     std::println("{}CharLiteral: {}", std::string(level * 2, ' '), value);
 }
 
-void BoolLiteral::info_dump(int level) const {
+void BoolLiteral::info_dump(const int level) const {
     std::println("{}BoolLiteral: {}", std::string(level * 2, ' '), value);
 }
 
-void RangeLiteral::info_dump(int level) const {
+void RangeLiteral::info_dump(const int level) const {
     std::println("{}RangeLiteral:", std::string(level * 2, ' '));
     std::println("{}  start:", std::string(level * 2, ' '));
     start->info_dump(level + 2);
@@ -33,7 +33,7 @@ void RangeLiteral::info_dump(int level) const {
     end->info_dump(level + 2);
 }
 
-void DeclRefExpr::info_dump(int level) const {
+void DeclRefExpr::info_dump(const int level) const {
     if (decl == nullptr)
         std::println("{}DeclRefExpr: {}", std::string(level * 2, ' '), identifier);
     else {
@@ -42,7 +42,7 @@ void DeclRefExpr::info_dump(int level) const {
     }
 }
 
-void FunCallExpr::info_dump(int level) const {
+void FunCallExpr::info_dump(const int level) const {
     std::println("{}FunCallExpr", std::string(level * 2, ' '));
     std::println("{}  callee:", std::string(level * 2, ' '));
     if (func_decl != nullptr) {
@@ -55,7 +55,7 @@ void FunCallExpr::info_dump(int level) const {
     }
 }
 
-void BinaryOp::info_dump(int level) const {
+void BinaryOp::info_dump(const int level) const {
     std::println("{}BinaryOp: {}", std::string(level * 2, ' '), type_to_string(op));
     std::println("{}  lhs:", std::string(level * 2, ' '));
     lhs->info_dump(level + 2);
@@ -66,7 +66,7 @@ void BinaryOp::info_dump(int level) const {
     }
 }
 
-void UnaryOp::info_dump(int level) const {
+void UnaryOp::info_dump(const int level) const {
     std::println("{}UnaryOp: {}", std::string(level * 2, ' '), type_to_string(op));
     std::println("{}  expr:", std::string(level * 2, ' '));
     operand->info_dump(level + 2);

@@ -1,9 +1,8 @@
+#pragma once
 #include "ASTVisitor.hpp"
 #include "SrcLocation.hpp"
 #include <memory>
 #include <vector>
-
-#pragma once
 
 class Decl;
 class FunDecl;
@@ -11,12 +10,12 @@ class VarDecl;
 
 class Stmt {
 public:
-    Stmt(SrcLocation location)
+    explicit Stmt(SrcLocation location)
         : location(std::move(location)) {}
 
     virtual ~Stmt() = default;
 
-    virtual void info_dump(int level = 0) const = 0;
+    virtual void info_dump(int level) const = 0;
 
     [[nodiscard]] SrcLocation& get_location() { return location; }
     virtual bool accept(ASTVisitor& visitor) = 0;
@@ -27,10 +26,10 @@ protected:
 
 class Block {
 public:
-    Block(std::vector<std::unique_ptr<Stmt>> stmts)
+    explicit Block(std::vector<std::unique_ptr<Stmt>> stmts)
         : stmts(std::move(stmts)) {}
 
-    void info_dump(int level = 0) const;
+    void info_dump(int level) const;
 
     [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& get_stmts() { return stmts; }
     bool accept(ASTVisitor& visitor) { return visitor.visit(*this); }
@@ -39,12 +38,12 @@ private:
     std::vector<std::unique_ptr<Stmt>> stmts;
 };
 
-class ReturnStmt : public Stmt {
+class ReturnStmt final : public Stmt {
 public:
     ReturnStmt(SrcLocation, std::unique_ptr<Expr>);
     ~ReturnStmt() override;
 
-    [[nodiscard]] Expr* get_expr();
+    [[nodiscard]] Expr* get_expr() const;
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
@@ -52,15 +51,15 @@ private:
     std::unique_ptr<Expr> expr;
 };
 
-class IfStmt : public Stmt {
+class IfStmt final : public Stmt {
 public:
     friend class Sema;
     IfStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>, std::unique_ptr<Block>);
     ~IfStmt() override;
 
-    [[nodiscard]] Expr& get_condition();
-    [[nodiscard]] Block& get_true_body();
-    [[nodiscard]] Block& get_false_body();
+    [[nodiscard]] Expr& get_condition() const;
+    [[nodiscard]] Block& get_true_body() const;
+    [[nodiscard]] Block& get_false_body() const;
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
@@ -70,15 +69,15 @@ private:
     std::unique_ptr<Block> false_body;
 };
 
-class WhileStmt : public Stmt {
+class WhileStmt final : public Stmt {
 public:
     friend class Sema;
 
     WhileStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>);
     ~WhileStmt() override;
 
-    [[nodiscard]] Expr& get_condition();
-    [[nodiscard]] Block& get_body();
+    [[nodiscard]] Expr& get_condition() const;
+    [[nodiscard]] Block& get_body() const;
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
@@ -87,14 +86,14 @@ private:
     std::unique_ptr<Block> body;
 };
 
-class ForStmt : public Stmt {
+class ForStmt final : public Stmt {
 public:
     ForStmt(SrcLocation, std::string, std::unique_ptr<Expr>, std::unique_ptr<Block>);
     ~ForStmt() override;
 
     [[nodiscard]] std::string& get_loop_var();
-    [[nodiscard]] Expr& get_range();
-    [[nodiscard]] Block& get_body();
+    [[nodiscard]] Expr& get_range() const;
+    [[nodiscard]] Block& get_body() const;
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
@@ -104,14 +103,12 @@ private:
     std::unique_ptr<Block> body;
 };
 
-class VarDeclStmt : public Stmt {
+class LetStmt final : public Stmt {
 public:
     friend class Sema;
-    VarDeclStmt(SrcLocation, std::unique_ptr<VarDecl>);
-    ~VarDeclStmt() override;
+    LetStmt(SrcLocation, std::unique_ptr<VarDecl>);
+    ~LetStmt() override;
 
-    [[nodiscard]] std::string& get_name();
-    [[nodiscard]] Expr& get_initializer();
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 

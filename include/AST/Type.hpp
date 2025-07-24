@@ -1,8 +1,6 @@
-#include <cassert>
-#include <cstdint>
-#include <string>
-
 #pragma once
+#include <cassert>
+#include <string>
 
 class Type {
 public:
@@ -40,7 +38,7 @@ public:
     };
 
     // Constructor for primitive types
-    explicit Type(Primitive primitive_type)
+    explicit Type(const Primitive primitive_type)
         : primitive_type_(primitive_type) {
         assert(primitive_type != Primitive::custom &&
                "Use custom_type constructor for custom types");
@@ -81,7 +79,7 @@ public:
     bool operator!=(const Type& other) const { return !(*this == other); }
 
 private:
-    static std::string primitive_to_string(Primitive primitive) {
+    static std::string primitive_to_string(const Primitive& primitive) {
         switch (primitive) {
             case Primitive::i8: return "i8";
             case Primitive::i16: return "i16";

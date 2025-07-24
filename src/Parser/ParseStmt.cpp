@@ -2,7 +2,6 @@
 
 #include <expected>
 #include <memory>
-#include <print>
 #include <vector>
 
 #include "AST/Stmt.hpp"
@@ -10,23 +9,16 @@
 #include "Lexer/TokenType.hpp"
 
 namespace phi {
+
 std::expected<std::unique_ptr<Stmt>, Diagnostic> Parser::parse_stmt() {
-    std::println("{}", peek_token().get_name());
     switch (peek_token().get_type()) {
-        case TokenType::tok_return: {
-            auto res = parse_return_stmt();
-            if (!res) return std::unexpected(res.error());
-            return res;
-        }
-        case TokenType::tok_while: return parse_while_stmt().value();
+        case TokenType::tok_return: return parse_return_stmt();
+        case TokenType::tok_while: return parse_while_stmt();
         case TokenType::tok_if: return parse_if_stmt().value();
         case TokenType::tok_for: return parse_for_stmt().value();
         case TokenType::tok_let: {
-            auto res = parse_var_decl();
-            if (!res) {
-                std::println("error here");
-                return std::unexpected(res.error());
-            }
+            auto res = parse_let_stmt();
+            if (!res) return std::unexpected(res.error());
             return res;
         }
         default: advance_token();
@@ -100,7 +92,8 @@ std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
                                         std::move(condition.value()),
                                         std::move(body.value()),
                                         std::move(else_body.value()));
-    } else if (peek_token().get_type() == TokenType::tok_if) {
+    }
+    if (peek_token().get_type() == TokenType::tok_if) {
         std::vector<std::unique_ptr<Stmt>> elif_stmt;
 
         auto res = parse_if_stmt();
@@ -108,7 +101,7 @@ std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
 
         // otherwise emplace back and return a valid IfStmt
         elif_stmt.emplace_back(std::move(res.value()));
-        std::unique_ptr<Block> elif_body = std::make_unique<Block>(std::move(elif_stmt));
+        auto elif_body = std::make_unique<Block>(std::move(elif_stmt));
         return std::make_unique<IfStmt>(loc,
                                         std::move(condition.value()),
                                         std::move(body.value()),
@@ -176,5 +169,58 @@ std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
                                      looping_var.get_lexeme(),
                                      std::move(range.value()),
                                      std::move(body.value()));
+}
+std::expected<std::unique_ptr<LetStmt>, Diagnostic> Parser::parse_let_stmt() {
+    SrcLocation loc = peek_token().get_start();
+    if (advance_token().get_type() != TokenType::tok_let) {
+        emit_unexpected_token_error(peek_token(), {"let"});
+        return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
+    }
+
+    auto binding = parse_typed_binding();
+    if (!binding) {
+        return std::unexpected(binding.error());
+    }
+
+    std::string name = binding.value().first;
+    Type type = std::move(binding.value().second);
+
+    // now we expect a `=` token
+    if (advance_token().get_type() != TokenType::tok_assign) {
+        emit_error(error("missing assignment in variable declaration")
+                       .with_primary_label(span_from_token(peek_token()), "expected `=` here")
+                       .with_help("variables must be initialized with a value")
+                       .with_note("variable syntax: `let name: type = value;`")
+                       .with_code("E0023")
+                       .build());
+        return std::unexpected(Diagnostic(DiagnosticLevel::Error, "missing assignment"));
+    }
+
+    // lastly, we expect an expression
+    auto expr = parse_expr();
+    if (!expr) {
+        emit_error(
+            error("variable declaration must have an initializer expression")
+                .with_primary_label(span_from_token(peek_token()), "expected expression here")
+                .with_help("provide an expression to initialize the variable")
+                .with_code("E0024")
+                .build());
+        return std::unexpected(Diagnostic(DiagnosticLevel::Error, "missing initializer"));
+    }
+
+    // now we expect a `;` token
+    if (advance_token().get_type() != TokenType::tok_semicolon) {
+        emit_error(error("missing semicolon after variable declaration")
+                       .with_primary_label(span_from_token(peek_token()), "expected `;` here")
+                       .with_help("variable declarations must end with a semicolon")
+                       .with_suggestion(span_from_token(peek_token()), ";", "add semicolon")
+                       .with_code("E0025")
+                       .build());
+        return std::unexpected(Diagnostic(DiagnosticLevel::Error, "missing semicolon"));
+    }
+
+    return std::make_unique<LetStmt>(
+        loc,
+        std::make_unique<VarDecl>(loc, name, type, true, std::move(expr.value())));
 }
 } // namespace phi

@@ -1,5 +1,5 @@
 /**
- * @file scanner.hpp
+ * @file Lexer.hpp
  * @brief Lexical analyzer (scanner) for the Phi programming language
  *
  * This file contains the Lexer class which performs lexical analysis on Phi
@@ -7,12 +7,12 @@
  * The scanner handles all lexical elements including keywords, operators,
  * literals, identifiers, comments, and whitespace.
  */
+#pragma once
 
 #include "token.hpp"
 #include <string>
 #include <vector>
 
-#pragma once
 
 /**
  * @brief Lexical analyzer for the Phi programming language
@@ -135,7 +135,7 @@ private:
      * @brief Peeks at the current character without advancing
      * @return The current character, or '\0' if at end of file
      */
-    [[nodiscard]] char peek_char() const { return (reached_eof()) ? '\0' : *cur_char; }
+    [[nodiscard]] char peek_char() const { return reached_eof() ? '\0' : *cur_char; }
 
     /**
      * @brief Peeks at the next character without advancing
@@ -163,7 +163,7 @@ private:
      * @return true if the character matched and scanner advanced, false
      * otherwise
      */
-    bool match_next(char next) {
+    bool match_next(const char next) {
         if (reached_eof() || peek_char() != next) {
             return false;
         }
@@ -171,7 +171,7 @@ private:
         return true;
     }
 
-    std::string peek_next_n(int n) {
+    std::string peek_next_n(const int n) const {
         auto temp = cur_char;
         for (int i = 0; i < n; ++i) {
             if (reached_eof()) {
@@ -182,7 +182,7 @@ private:
         return std::string{cur_char, temp};
     }
 
-    bool match_next_n(std::string_view next) {
+    bool match_next_n(const std::string_view next) {
         auto temp = cur_char;
         for (const char& c : next) {
             if (reached_eof() || *temp != c) {
@@ -205,7 +205,7 @@ private:
      * @param type The type of token to create
      * @return A new Token with the specified type and current lexeme
      */
-    Token make_token(TokenType type) {
+    Token make_token(TokenType type) const {
         int start_col = static_cast<int>(cur_lexeme - lexeme_line) + 1;
         int end_col = std::distance(cur_char, cur_line) + 1;
 

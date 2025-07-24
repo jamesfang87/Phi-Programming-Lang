@@ -56,7 +56,7 @@ public:
     bool has_errors() const;
 
     /// Reset counters
-    void reset_counts();
+    void reset_counts() const;
 
     /// Update configuration
     void set_config(const DiagnosticConfig& config);
@@ -113,9 +113,9 @@ private:
     void render_suggestion(const DiagnosticSuggestion& suggestion, std::ostream& out) const;
 
     /// Helper functions
-    std::string diagnostic_level_to_string(DiagnosticLevel level) const;
+    static std::string diagnostic_level_to_string(DiagnosticLevel level);
 
-    DiagnosticStyle get_style_for_level(DiagnosticLevel level) const;
+    static DiagnosticStyle get_style_for_level(DiagnosticLevel level);
 
     /// Format text with ANSI color codes
     std::string format_with_style(const std::string& text, const DiagnosticStyle& style) const;
@@ -124,8 +124,8 @@ private:
     std::string replace_tabs(std::string_view line) const;
 
     /// Group labels by file path for rendering
-    std::map<std::string, std::vector<const DiagnosticLabel*>>
-    group_labels_by_location(const std::vector<DiagnosticLabel>& labels) const;
+    static std::map<std::string, std::vector<const DiagnosticLabel*>>
+    group_labels_by_location(const std::vector<DiagnosticLabel>& labels);
 };
 
 } // namespace phi

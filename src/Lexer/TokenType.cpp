@@ -12,7 +12,7 @@
  * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")
  */
 
-std::string type_to_string(TokenType type) {
+std::string type_to_string(const TokenType type) {
     switch (type) {
         // Special tokens
         case TokenType::tok_eof: return "EOF";

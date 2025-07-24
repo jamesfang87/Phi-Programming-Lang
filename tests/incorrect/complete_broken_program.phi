@@ -1,0 +1,215 @@
+// Complete broken program test - demonstrates comprehensive error recovery
+// This program contains multiple types of errors throughout
+// It should produce many errors but parsing should continue to find them all
+
+// Function with missing opening brace and parameter errors
+fun calculate_total(price float, quantity: i64, : str) -> i64
+    let base_cost: i64 = price * quantity  // Missing semicolon
+    let tax_rate: float = 0.08
+    let tax_amount: float = base_cost * tax_rate  // Missing semicolon
+
+    if (base_cost > 100 {  // Missing closing parenthesis
+        tax_amount = tax_amount * 1.5
+    } else
+        tax_amount = tax_amount + 5.0;  // Missing braces
+
+    let total: i64 = base_cost + tax_amount;
+    return total;
+}
+
+// Function with missing closing brace and variable errors
+fun process_order(order_id: i64) -> str {
+    let : str = "pending";  // Missing variable name
+    let priority i64 = 1;  // Missing colon
+    let estimated_time: = 30;  // Missing type
+
+    if (order_id <= 0) {
+        let error_msg: str = "Invalid order ID"  // Missing semicolon
+        return error_msg;
+    }
+
+    while (priority < 5 {  // Missing closing parenthesis
+        let adjustment: i64 = calculate_adjustment(priority)  // Missing semicolon
+        estimated_time = estimated_time + adjustment;
+        priority = priority + 1;
+    }
+
+    for i in 1..priority {
+        if (i % 2 == 0 {  // Missing closing parenthesis
+            estimated_time = estimated_time - 2
+        } else {
+            estimated_time = estimated_time + 1;
+        // Missing closing brace
+    }
+
+    return status;
+// Missing closing brace for function
+
+// Function with C-style for loop and malformed expressions
+fun analyze_data(data_size: i64) -> bool {
+    let results: i64 = 0;
+    let valid_count: i64 = 0;
+
+    // C-style for loop - not supported
+    for (i64 i = 0; i < data_size; i++) {
+        let current_value: i64 = get_data_point(i);
+
+        if (current_value > && 50) {  // Malformed condition
+            valid_count = valid_count + 1;
+        }
+
+        results = results + current_value;
+    }
+
+    let average: float = results / data_size;
+    let threshold: float = 75.0;
+
+    // Missing opening parenthesis
+    if average > threshold) {
+        return true;
+    }
+
+    return false;
+}
+
+// Function with missing parameter list and return type
+fun get_data_point -> {
+    let default_value: i64 = 42;
+    return default_value;
+}
+
+// Multiple functions with various errors
+fun (missing_name: i64) -> i64 {  // Missing function name
+    return missing_name * 2;
+}
+
+fun 123invalid_name() -> i64 {  // Invalid function name
+    return 0;
+}
+
+fun mixed_errors(param1: i64 param2: str,, param3: ) -> invalid_return {  // Multiple parameter errors
+    let var1 = 10;  // Missing type and colon
+    let var2: i64 20;  // Missing assignment operator
+    let var3: i64 = ;  // Missing expression
+
+    if (param1 > 0 && ) {  // Incomplete boolean expression
+        while (var1 < 100 {  // Missing closing parenthesis
+            for missing_var in 1..10 {  // Missing variable declaration
+                var1 = var1 + 1
+            }
+        // Missing closing brace
+    } else invalid_else_part {  // Invalid else syntax
+        return var1;
+    }
+
+fun deeply_nested_errors() -> i64 {
+    let level1: i64 = 1;
+
+    if (level1 > 0) {
+        let level2 i64 = 2;  // Missing colon
+
+        while (level2 < 10 {  // Missing closing parenthesis
+            for i in level2..20 {
+                if (i % 3 == 0 {  // Missing closing parenthesis
+                    let level3: = i * 2;  // Missing type
+
+                    while (level3 > 0) {
+                        level3 = level3 - 1
+
+                        if (level3 == 5 {  // Missing closing parenthesis
+                            for j in 1..=10 {  // Missing opening bracket
+                                return j  // Missing semicolon
+                            // Missing closing brace
+                        }
+                    // Missing closing brace
+                // Missing closing brace
+            // Missing closing brace
+        // Missing closing brace
+    }
+
+    return level1;
+// Missing closing brace
+
+fun expression_errors() -> i64 {
+    let a: i64 = 10 + ;  // Missing right operand
+    let b: i64 = * 5;  // Missing left operand
+    let c: i64 = 15 + + 20;  // Double operator
+    let d: i64 = (10 + 5;  // Unmatched parenthesis
+
+    // Invalid operators
+    let e: i64 = 10 >> 5;
+    let f: i64 = 20 << 3;
+
+    // Incomplete expressions
+    let g: bool = (a > 5) && ;
+    let h: bool = || (b < 10);
+
+    return a + b + c;
+}
+
+fun string_and_literal_errors() -> str {
+    let bad_string: str = "unclosed string;
+    let another_bad: str = 'single quotes not supported';
+    let bad_number: i64 = 123abc;
+    let bad_float: float = 3.14.15;
+
+    return bad_string;
+}
+
+fun control_flow_chaos() -> i64 {
+    let value: i64 = 10;
+
+    // Missing condition
+    if () {
+        return 1;
+    }
+
+    // Missing variable in for loop
+    for in 1..5{
+        value = value + 1;
+    }
+
+    // Missing 'in' keyword
+    for counter 1..value {
+        if (counter > 3 && ) {  // Incomplete condition
+            while () {  // Empty while condition
+                return counter;
+            }
+        }
+    }
+
+    return value;
+}
+
+// Function with nested invalid constructs
+fun nested_invalid_constructs() -> i64 {
+    let result: i64 = 0;
+
+    if (true) {
+        // Nested function - not allowed
+        fun inner_function() -> i64 {
+            return 42;
+        }
+
+        // Class definition - not allowed
+        class InnerClass {
+        }
+
+        // Invalid arrow usage
+        -> some_invalid_syntax;
+
+        result = inner_function();
+    }
+
+    return result;
+}
+
+// Incomplete function at end of file
+fun incomplete_function() -> i64 {
+    let x: i64 = 42;
+    if (x > 0) {
+        while (x > 10) {
+            x = x - 1;
+        }
+    }
+    // Missing return statement and closing brace

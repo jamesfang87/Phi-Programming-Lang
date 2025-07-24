@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace phi {
@@ -22,19 +23,19 @@ struct SourceSpan {
     SrcLocation start;
     SrcLocation end;
 
-    SourceSpan(const SrcLocation& start, const SrcLocation& end)
-        : start(start),
-          end(end) {}
+    SourceSpan(SrcLocation start, SrcLocation end)
+        : start(std::move(start)),
+          end(std::move(end)) {}
 
-    SourceSpan(const SrcLocation& single_pos)
+    explicit SourceSpan(const SrcLocation& single_pos)
         : start(single_pos),
           end(single_pos) {}
 
     /// Returns true if this span covers multiple lines
-    bool is_multiline() const { return start.line != end.line; }
+    [[nodiscard]] bool is_multiline() const { return start.line != end.line; }
 
     /// Returns the number of lines this span covers
-    int line_count() const { return end.line - start.line + 1; }
+    [[nodiscard]] int line_count() const { return end.line - start.line + 1; }
 };
 
 /// Represents styling information for diagnostic output
@@ -46,7 +47,7 @@ struct DiagnosticStyle {
     bool underline = false;
 
     DiagnosticStyle() = default;
-    DiagnosticStyle(Color c, bool bold = false, bool underline = false)
+    explicit DiagnosticStyle(const Color c, const bool bold = false, const bool underline = false)
         : color(c),
           bold(bold),
           underline(underline) {}
@@ -59,11 +60,11 @@ struct DiagnosticLabel {
     DiagnosticStyle style;
     bool is_primary; // Primary labels get special formatting (arrows vs underlines)
 
-    DiagnosticLabel(const SourceSpan& span,
+    DiagnosticLabel(SourceSpan  span,
                     std::string message,
-                    DiagnosticStyle style = DiagnosticStyle(),
-                    bool is_primary = false)
-        : span(span),
+                    const DiagnosticStyle style = DiagnosticStyle(),
+                    const bool is_primary = false)
+        : span(std::move(span)),
           message(std::move(message)),
           style(style),
           is_primary(is_primary) {}
@@ -75,8 +76,8 @@ struct DiagnosticSuggestion {
     std::string replacement_text;
     std::string description;
 
-    DiagnosticSuggestion(const SourceSpan& span, std::string replacement, std::string desc)
-        : span(span),
+    DiagnosticSuggestion(SourceSpan  span, std::string replacement, std::string desc)
+        : span(std::move(span)),
           replacement_text(std::move(replacement)),
           description(std::move(desc)) {}
 };
@@ -85,7 +86,7 @@ struct DiagnosticSuggestion {
 class Diagnostic {
 public:
     /// Create a new diagnostic with the specified level and message
-    Diagnostic(DiagnosticLevel level, std::string message)
+    Diagnostic(const DiagnosticLevel level, std::string message)
         : level_(level),
           message_(std::move(message)) {}
 
@@ -132,23 +133,23 @@ public:
     }
 
     // Getters
-    DiagnosticLevel level() const { return level_; }
-    const std::string& message() const { return message_; }
-    const std::vector<DiagnosticLabel>& labels() const { return labels_; }
-    const std::vector<std::string>& notes() const { return notes_; }
-    const std::vector<std::string>& help_messages() const { return help_messages_; }
-    const std::vector<DiagnosticSuggestion>& suggestions() const { return suggestions_; }
-    const std::optional<std::string>& code() const { return code_; }
+    [[nodiscard]] DiagnosticLevel level() const { return level_; }
+    [[nodiscard]] const std::string& message() const { return message_; }
+    [[nodiscard]] const std::vector<DiagnosticLabel>& labels() const { return labels_; }
+    [[nodiscard]] const std::vector<std::string>& notes() const { return notes_; }
+    [[nodiscard]] const std::vector<std::string>& help_messages() const { return help_messages_; }
+    [[nodiscard]] const std::vector<DiagnosticSuggestion>& suggestions() const { return suggestions_; }
+    [[nodiscard]] const std::optional<std::string>& code() const { return code_; }
 
     /// Check if this diagnostic has any primary labels
-    bool has_primary_labels() const {
-        return std::any_of(labels_.begin(), labels_.end(), [](const DiagnosticLabel& label) {
+    [[nodiscard]] bool has_primary_labels() const {
+        return std::ranges::any_of(labels_, [](const DiagnosticLabel& label) {
             return label.is_primary;
         });
     }
 
     /// Get the primary span (first primary label's span, or first label's span)
-    std::optional<SourceSpan> primary_span() const {
+    [[nodiscard]] std::optional<SourceSpan> primary_span() const {
         for (const auto& label : labels_) {
             if (label.is_primary) {
                 return label.span;
@@ -162,19 +163,19 @@ public:
 
     // Static factory methods for common diagnostic types
     static Diagnostic error(std::string message) {
-        return Diagnostic(DiagnosticLevel::Error, std::move(message));
+        return {DiagnosticLevel::Error, std::move(message)};
     }
 
     static Diagnostic warning(std::string message) {
-        return Diagnostic(DiagnosticLevel::Warning, std::move(message));
+        return {DiagnosticLevel::Warning, std::move(message)};
     }
 
     static Diagnostic note(std::string message) {
-        return Diagnostic(DiagnosticLevel::Note, std::move(message));
+        return {DiagnosticLevel::Note, std::move(message)};
     }
 
     static Diagnostic help(std::string message) {
-        return Diagnostic(DiagnosticLevel::Help, std::move(message));
+        return {DiagnosticLevel::Help, std::move(message)};
     }
 
 private:
@@ -187,7 +188,7 @@ private:
     std::optional<std::string> code_;
 
     /// Get the default style for a diagnostic level
-    static DiagnosticStyle get_style_for_level(DiagnosticLevel level) {
+    static DiagnosticStyle get_style_for_level(const DiagnosticLevel level) {
         switch (level) {
             case DiagnosticLevel::Error: return DiagnosticStyle(DiagnosticStyle::Color::Red, true);
             case DiagnosticLevel::Warning:
@@ -195,7 +196,7 @@ private:
             case DiagnosticLevel::Note: return DiagnosticStyle(DiagnosticStyle::Color::Blue, true);
             case DiagnosticLevel::Help: return DiagnosticStyle(DiagnosticStyle::Color::Green, true);
         }
-        return DiagnosticStyle();
+        return {};
     }
 
     /// Get the default style for secondary labels

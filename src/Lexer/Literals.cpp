@@ -1,4 +1,5 @@
 #include "Lexer/Lexer.hpp"
+#include <regex>
 #include <unordered_map>
 
 /**
@@ -14,32 +15,23 @@
  * @return A token of type tok_int_literal or tok_float_literal
  */
 Token Lexer::parse_number() {
-    bool floating_point = false;
-
-    // integer part
     while (std::isdigit(peek_char())) {
         advance_char();
     }
 
-    // stop parsing if we see the range operator
-    if (peek_next_n(2) == ".." || peek_next_n(3) == "..=") {
-        return make_token(TokenType::tok_int_literal);
-    }
-
-    // fractional part
-    if (peek_char() == '.') {
-        floating_point = true;
+    // fractional part, only if the next two chars match .[0-9]
+    std::regex pattern("^.[0-9]$");
+    if (std::regex_match(peek_next_n(2), pattern)) {
         advance_char(); // consume '.'
         while (std::isdigit(peek_char())) {
             advance_char();
         }
+    } else {
+        return make_token(TokenType::tok_int_literal);
     }
 
     // TODO: implement exponents
-    if (floating_point) {
-        return make_token(TokenType::tok_float_literal);
-    }
-    return make_token(TokenType::tok_int_literal);
+    return make_token(TokenType::tok_float_literal);
 }
 
 /**
@@ -62,7 +54,7 @@ Token Lexer::parse_identifier() {
     while (std::isalnum(peek_char()) || peek_char() == '_') {
         advance_char();
     }
-    std::string identifier(cur_lexeme, cur_char);
+    const std::string identifier(cur_lexeme, cur_char);
 
     static const std::unordered_map<std::string, TokenType> keywords = {
         {"bool", TokenType::tok_bool},
@@ -94,8 +86,8 @@ Token Lexer::parse_identifier() {
         {"str", TokenType::tok_str},
         {"char", TokenType::tok_char}};
 
-    auto it = keywords.find(identifier);
-    return (it != keywords.end()) ? make_token(it->second) : make_token(TokenType::tok_identifier);
+    const auto it = keywords.find(identifier);
+    return it != keywords.end() ? make_token(it->second) : make_token(TokenType::tok_identifier);
 }
 
 /**
@@ -232,8 +224,7 @@ char Lexer::parse_escape_sequence() {
         return '\0';
     }
 
-    char c = advance_char();
-    switch (c) {
+    switch (const char c = advance_char()) {
         case '\'': return '\'';
         case '"': return '\"';
         case 'n': return '\n';
