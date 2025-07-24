@@ -1,9 +1,15 @@
 #include "AST/Stmt.hpp"
 
+#include <memory>
 #include <print>
+#include <string>
 
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
+
+namespace {
+std::string indent(int level) { return std::string(level * 2, ' '); }
+} // namespace
 
 ReturnStmt::ReturnStmt(SrcLocation location, std::unique_ptr<Expr> expr)
     : Stmt(std::move(location)),
@@ -13,8 +19,8 @@ ReturnStmt::~ReturnStmt() = default;
 
 Expr* ReturnStmt::get_expr() const { return expr.get(); }
 
-void ReturnStmt::info_dump(const int level) const {
-    std::println("{}ReturnStmt", std::string(level * 2, ' '));
+void ReturnStmt::info_dump(int level) const {
+    std::println("{}ReturnStmt", indent(level));
     if (expr) {
         expr->info_dump(level + 1);
     }
@@ -37,8 +43,8 @@ Block& IfStmt::get_true_body() const { return *true_body; }
 
 Block& IfStmt::get_false_body() const { return *false_body; }
 
-void IfStmt::info_dump(const int level) const {
-    std::println("{}IfStmt", std::string(level * 2, ' '));
+void IfStmt::info_dump(int level) const {
+    std::println("{}IfStmt", indent(level));
     if (condition) {
         condition->info_dump(level + 1);
     }
@@ -63,8 +69,8 @@ Expr& WhileStmt::get_condition() const { return *condition; }
 
 Block& WhileStmt::get_body() const { return *body; }
 
-void WhileStmt::info_dump(const int level) const {
-    std::println("{}WhileStmt", std::string(level * 2, ' '));
+void WhileStmt::info_dump(int level) const {
+    std::println("{}WhileStmt", indent(level));
     if (condition) {
         condition->info_dump(level + 1);
     }
@@ -90,10 +96,10 @@ Expr& ForStmt::get_range() const { return *range; }
 
 Block& ForStmt::get_body() const { return *body; }
 
-void ForStmt::info_dump(const int level) const {
-    std::println("{}ForStmt", std::string(level * 2, ' '));
+void ForStmt::info_dump(int level) const {
+    std::println("{}ForStmt", indent(level));
     if (!loop_var.empty()) {
-        std::println("{}Loop variable: {}", std::string(level * 2 + 2, ' '), loop_var);
+        std::println("{}Loop variable: {}", indent(level + 1), loop_var);
     }
     if (range) {
         range->info_dump(level + 1);
@@ -109,8 +115,8 @@ LetStmt::LetStmt(SrcLocation location, std::unique_ptr<VarDecl> decl)
 
 LetStmt::~LetStmt() = default;
 
-void LetStmt::info_dump(const int level) const {
-    std::println("{}VarDeclStmt", std::string(level * 2, ' '));
+void LetStmt::info_dump(int level) const {
+    std::println("{}VarDeclStmt", indent(level));
     if (var_decl) {
         var_decl->info_dump(level + 1);
     }

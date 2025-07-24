@@ -1,6 +1,8 @@
 #include "Parser/Parser.hpp"
 
+#include <expected>
 #include <memory>
+#include <utility>
 
 #include "AST/Decl.hpp"
 #include "SrcLocation.hpp"
