@@ -9,6 +9,7 @@
  */
 
 #include "Lexer/Token.hpp"
+
 #include <format>
 #include <string>
 

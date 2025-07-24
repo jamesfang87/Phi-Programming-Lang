@@ -1,7 +1,8 @@
 #include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
 
 #include <print>
+
+#include "AST/Expr.hpp"
 
 void ParamDecl::info_dump(const int level) const {
     std::println("{}ParamDecl: {} (type: {})",

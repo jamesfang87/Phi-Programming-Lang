@@ -1,5 +1,13 @@
 #pragma once
 
+#include <expected>
+#include <format>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
@@ -9,13 +17,6 @@
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenType.hpp"
-#include <expected>
-#include <format>
-#include <memory>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 namespace phi {
 
@@ -64,8 +65,9 @@ private:
         if (token_it >= tokens.end()) {
             // Return a synthetic EOF token
             const SrcLocation eof_loc{.path = path,
-                                .line = static_cast<int>(lines.size()),
-                                .col = lines.empty() ? 0 : static_cast<int>(lines.back().size())};
+                                      .line = static_cast<int>(lines.size()),
+                                      .col = lines.empty() ? 0
+                                                           : static_cast<int>(lines.back().size())};
             return Token{eof_loc, eof_loc, TokenType::tok_eof, ""};
         }
         return *token_it;
@@ -226,7 +228,10 @@ private:
 
     template <typename T, typename F>
     std::expected<std::unique_ptr<std::vector<std::unique_ptr<T>>>, Diagnostic>
-    parse_list(const TokenType opening, const TokenType closing, F fun, const std::string& context = "list") {
+    parse_list(const TokenType opening,
+               const TokenType closing,
+               F fun,
+               const std::string& context = "list") {
         // first we check for opening delimiter
         const Token opening_token = advance_token();
         if (opening_token.get_type() != opening) {
@@ -254,9 +259,9 @@ private:
             } else {
                 emit_error(
                     error("missing comma in " + context)
-                    .with_primary_label(span_from_token(peek_token()), "expected `,` here")
-                    .with_help("separate " + context + " elements with commas")
-                    .build());
+                        .with_primary_label(span_from_token(peek_token()), "expected `,` here")
+                        .with_help("separate " + context + " elements with commas")
+                        .build());
             }
         }
 

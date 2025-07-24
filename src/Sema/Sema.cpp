@@ -1,8 +1,10 @@
 #include "Sema/Sema.hpp"
-#include "AST/Decl.hpp"
+
 #include <memory>
 #include <print>
 #include <vector>
+
+#include "AST/Decl.hpp"
 
 std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
     // Create global scope with RAII

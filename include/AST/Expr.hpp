@@ -1,12 +1,14 @@
 #pragma once
-#include "AST/Stmt.hpp"
-#include "Lexer/Token.hpp"
-#include "SrcLocation.hpp"
-#include "Type.hpp"
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include "AST/Stmt.hpp"
+#include "AST/Type.hpp"
+#include "Lexer/Token.hpp"
+#include "SrcLocation.hpp"
 
 class Expr : public Stmt {
 public:

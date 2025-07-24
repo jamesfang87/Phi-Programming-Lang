@@ -20,10 +20,12 @@
  */
 
 #include "Lexer/Lexer.hpp"
-#include "Lexer/token.hpp"
+
 #include <cstring>
 #include <iostream>
 #include <print>
+
+#include "Lexer/Token.hpp"
 
 // =============================================================================
 // PUBLIC INTERFACE IMPLEMENTATION

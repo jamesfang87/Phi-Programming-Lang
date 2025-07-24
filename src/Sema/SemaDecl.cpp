@@ -1,4 +1,5 @@
 #include "Sema/Sema.hpp"
+
 #include <print>
 
 bool Sema::resolve_fun_decl(FunDecl* fun) {

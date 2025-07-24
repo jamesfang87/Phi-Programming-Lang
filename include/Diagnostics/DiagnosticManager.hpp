@@ -1,10 +1,11 @@
 #pragma once
 
-#include "Diagnostic.hpp"
 #include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
+
+#include "Diagnostics/Diagnostic.hpp"
 
 namespace phi {
 

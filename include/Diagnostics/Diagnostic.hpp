@@ -1,12 +1,13 @@
 #pragma once
 
-#include "SrcLocation.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "SrcLocation.hpp"
 
 namespace phi {
 
@@ -60,7 +61,7 @@ struct DiagnosticLabel {
     DiagnosticStyle style;
     bool is_primary; // Primary labels get special formatting (arrows vs underlines)
 
-    DiagnosticLabel(SourceSpan  span,
+    DiagnosticLabel(SourceSpan span,
                     std::string message,
                     const DiagnosticStyle style = DiagnosticStyle(),
                     const bool is_primary = false)
@@ -76,7 +77,7 @@ struct DiagnosticSuggestion {
     std::string replacement_text;
     std::string description;
 
-    DiagnosticSuggestion(SourceSpan  span, std::string replacement, std::string desc)
+    DiagnosticSuggestion(SourceSpan span, std::string replacement, std::string desc)
         : span(std::move(span)),
           replacement_text(std::move(replacement)),
           description(std::move(desc)) {}
@@ -138,14 +139,15 @@ public:
     [[nodiscard]] const std::vector<DiagnosticLabel>& labels() const { return labels_; }
     [[nodiscard]] const std::vector<std::string>& notes() const { return notes_; }
     [[nodiscard]] const std::vector<std::string>& help_messages() const { return help_messages_; }
-    [[nodiscard]] const std::vector<DiagnosticSuggestion>& suggestions() const { return suggestions_; }
+    [[nodiscard]] const std::vector<DiagnosticSuggestion>& suggestions() const {
+        return suggestions_;
+    }
     [[nodiscard]] const std::optional<std::string>& code() const { return code_; }
 
     /// Check if this diagnostic has any primary labels
     [[nodiscard]] bool has_primary_labels() const {
-        return std::ranges::any_of(labels_, [](const DiagnosticLabel& label) {
-            return label.is_primary;
-        });
+        return std::ranges::any_of(labels_,
+                                   [](const DiagnosticLabel& label) { return label.is_primary; });
     }
 
     /// Get the primary span (first primary label's span, or first label's span)
