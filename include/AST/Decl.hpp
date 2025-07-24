@@ -1,12 +1,14 @@
 #pragma once
-#include "AST/Expr.hpp"
-#include "AST/Stmt.hpp"
-#include "SrcLocation.hpp"
-#include "Type.hpp"
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include "AST/Expr.hpp"
+#include "AST/Stmt.hpp"
+#include "AST/Type.hpp"
+#include "SrcLocation.hpp"
 
 class Decl {
 public:

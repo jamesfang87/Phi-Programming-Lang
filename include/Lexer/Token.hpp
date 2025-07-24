@@ -10,10 +10,10 @@
  */
 #pragma once
 
-#include "SrcLocation.hpp"
-#include "TokenType.hpp"
 #include <string>
 
+#include "Lexer/TokenType.hpp"
+#include "SrcLocation.hpp"
 
 /**
  * @brief Represents a single token in the Phi programming language

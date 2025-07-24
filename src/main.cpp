@@ -1,11 +1,11 @@
-#include "Lexer/Lexer.hpp"
-#include "Parser/Parser.hpp"
-#include "Sema/Sema.hpp"
-
 #include <fstream>
 #include <iostream>
 #include <print>
 #include <string>
+
+#include "Lexer/Lexer.hpp"
+#include "Parser/Parser.hpp"
+#include "Sema/Sema.hpp"
 
 std::string read_file_to_string(const std::string& filename) {
     std::ifstream file(filename);

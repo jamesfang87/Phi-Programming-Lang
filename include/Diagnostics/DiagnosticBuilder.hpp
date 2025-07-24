@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Diagnostic.hpp"
-#include "DiagnosticManager.hpp"
+#include "Diagnostics/Diagnostic.hpp"
+#include "Diagnostics/DiagnosticManager.hpp"
 
 namespace phi {
 
@@ -20,8 +20,10 @@ public:
     }
 
     /// Add a primary label using individual location components
-    DiagnosticBuilder&
-    with_primary_label(const std::string& path, const int line, const int col, std::string message = "") {
+    DiagnosticBuilder& with_primary_label(const std::string& path,
+                                          const int line,
+                                          const int col,
+                                          std::string message = "") {
         const SrcLocation loc{path, line, col};
         return with_primary_label(SourceSpan(loc), std::move(message));
     }
@@ -88,7 +90,7 @@ public:
     [[nodiscard]] Diagnostic build() const& { return diagnostic_; }
 
     /// Emit the diagnostic immediately using the provided manager
-    void emit(const DiagnosticManager& manager, std::ostream& out = std::cerr) const && {
+    void emit(const DiagnosticManager& manager, std::ostream& out = std::cerr) const&& {
         manager.emit(diagnostic_, out);
     }
 
@@ -136,15 +138,19 @@ inline DiagnosticBuilder expected_found_error(const std::string& expected,
 }
 
 /// Create a "unexpected token" error
-inline DiagnosticBuilder
-unexpected_token_error(const std::string& token_name, const std::string& path, const int line, const int col) {
+inline DiagnosticBuilder unexpected_token_error(const std::string& token_name,
+                                                const std::string& path,
+                                                const int line,
+                                                const int col) {
     return error(std::format("unexpected token `{}`", token_name))
         .with_primary_label(path, line, col, "unexpected token");
 }
 
 /// Create a "missing token" error
-inline DiagnosticBuilder
-missing_token_error(const std::string& expected_token, const std::string& path, const int line, const int col) {
+inline DiagnosticBuilder missing_token_error(const std::string& expected_token,
+                                             const std::string& path,
+                                             const int line,
+                                             const int col) {
     return error(std::format("missing `{}`", expected_token))
         .with_primary_label(path, line, col, std::format("expected `{}` here", expected_token));
 }

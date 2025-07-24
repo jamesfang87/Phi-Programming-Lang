@@ -1,7 +1,8 @@
-#include "AST/Decl.hpp"
 #include "Sema/Sema.hpp"
+
 #include <print>
 
+#include "AST/Decl.hpp"
 // ASTVisitor implementation - Statement visitors
 bool Sema::visit(Block& block) {
     // Check if this is a function body block

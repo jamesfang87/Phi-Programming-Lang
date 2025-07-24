@@ -1,14 +1,16 @@
 #pragma once
-#include "AST/ASTVisitor.hpp"
-#include "AST/Decl.hpp"
-#include "AST/Type.hpp"
-#include "Sema/SymbolTable.hpp"
+
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "AST/ASTVisitor.hpp"
+#include "AST/Decl.hpp"
+#include "AST/Type.hpp"
+#include "Sema/SymbolTable.hpp"
 
 class Sema final : public ASTVisitor {
 public:

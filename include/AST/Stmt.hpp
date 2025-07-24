@@ -1,8 +1,10 @@
 #pragma once
-#include "ASTVisitor.hpp"
-#include "SrcLocation.hpp"
+
 #include <memory>
 #include <vector>
+
+#include "AST/ASTVisitor.hpp"
+#include "SrcLocation.hpp"
 
 class Decl;
 class FunDecl;
