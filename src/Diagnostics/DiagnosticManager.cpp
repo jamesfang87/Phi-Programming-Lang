@@ -1,4 +1,5 @@
 #include "Diagnostics/DiagnosticManager.hpp"
+
 #include <algorithm>
 #include <iomanip>
 
@@ -143,7 +144,8 @@ void DiagnosticManager::render_source_snippets(const Diagnostic& diagnostic,
                                                std::ostream& out) const {
     // Group labels by file and line ranges
 
-    for (auto grouped_labels = group_labels_by_location(diagnostic.labels()); const auto& [file_path, file_labels] : grouped_labels) {
+    for (auto grouped_labels = group_labels_by_location(diagnostic.labels());
+         const auto& [file_path, file_labels] : grouped_labels) {
         render_file_snippet(file_path, file_labels, out);
     }
 }
@@ -212,13 +214,12 @@ void DiagnosticManager::render_labels_for_line(const int line_num,
     if (line_labels.empty()) return;
 
     // Sort by priority (primary labels first, then by column)
-    std::ranges::sort(line_labels,
-                      [](const DiagnosticLabel* a, const DiagnosticLabel* b) {
-                          if (a->is_primary != b->is_primary) {
-                              return a->is_primary > b->is_primary;
-                          }
-                          return a->span.start.col < b->span.start.col;
-                      });
+    std::ranges::sort(line_labels, [](const DiagnosticLabel* a, const DiagnosticLabel* b) {
+        if (a->is_primary != b->is_primary) {
+            return a->is_primary > b->is_primary;
+        }
+        return a->span.start.col < b->span.start.col;
+    });
 
     // Render underlines and arrows
     const std::string gutter = std::string(gutter_width, ' ') + " | ";

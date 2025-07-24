@@ -1,8 +1,8 @@
 #include "AST/Expr.hpp"
-#include "AST/Decl.hpp"
 
 #include <print>
 
+#include "AST/Decl.hpp"
 #include "Lexer/TokenType.hpp"
 
 void IntLiteral::info_dump(const int level) const {

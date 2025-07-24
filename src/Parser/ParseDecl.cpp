@@ -1,8 +1,9 @@
 #include "Parser/Parser.hpp"
 
+#include <memory>
+
 #include "AST/Decl.hpp"
 #include "SrcLocation.hpp"
-#include <memory>
 
 namespace phi {
 

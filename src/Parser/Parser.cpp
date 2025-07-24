@@ -1,4 +1,5 @@
 #include "Parser/Parser.hpp"
+
 #include "Lexer/TokenType.hpp"
 
 namespace phi {

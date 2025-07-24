@@ -9,11 +9,10 @@
  */
 #pragma once
 
-#include "token.hpp"
 #include <string>
 #include <vector>
 
-
+#include "Lexer/Token.hpp"
 /**
  * @brief Lexical analyzer for the Phi programming language
  *

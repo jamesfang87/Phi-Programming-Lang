@@ -1,6 +1,7 @@
+#include "Parser/Parser.hpp"
+
 #include "Diagnostics/Diagnostic.hpp"
 #include "Lexer/TokenType.hpp"
-#include "Parser/Parser.hpp"
 
 namespace phi {
 std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::parse_expr() { return pratt(0); }
