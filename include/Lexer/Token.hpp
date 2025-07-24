@@ -8,12 +8,12 @@
  * represents a single token with its type, lexeme, and source location
  * information.
  */
+#pragma once
 
 #include "SrcLocation.hpp"
 #include "TokenType.hpp"
 #include <string>
 
-#pragma once
 
 /**
  * @brief Represents a single token in the Phi programming language
@@ -32,7 +32,7 @@ public:
      * @param type The type of this token
      * @param lexeme The actual text content of this token from the source
      */
-    Token(SrcLocation start, SrcLocation end, TokenType type, std::string lexeme)
+    Token(SrcLocation start, SrcLocation end, const TokenType type, std::string lexeme)
         : start(std::move(start)),
           end(std::move(end)),
           type(type),

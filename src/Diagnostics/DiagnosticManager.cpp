@@ -4,7 +4,7 @@
 
 namespace phi {
 
-void SourceManager::add_source_file(const std::string& path, std::string_view content) {
+void SourceManager::add_source_file(const std::string& path, const std::string_view content) {
     std::vector<std::string_view> lines;
     auto it = content.begin();
     while (it < content.end()) {
@@ -21,8 +21,8 @@ void SourceManager::add_source_file(const std::string& path, std::string_view co
 }
 
 std::optional<std::string_view> SourceManager::get_line(const std::string& path,
-                                                        int line_num) const {
-    auto file_it = source_files_.find(path);
+                                                        const int line_num) const {
+    const auto file_it = source_files_.find(path);
     if (file_it == source_files_.end()) {
         return std::nullopt;
     }
@@ -36,7 +36,7 @@ std::optional<std::string_view> SourceManager::get_line(const std::string& path,
 }
 
 std::vector<std::string_view>
-SourceManager::get_lines(const std::string& path, int start_line, int end_line) const {
+SourceManager::get_lines(const std::string& path, const int start_line, const int end_line) const {
     std::vector<std::string_view> result;
     for (int i = start_line; i <= end_line; ++i) {
         if (auto line = get_line(path, i)) {
@@ -47,7 +47,7 @@ SourceManager::get_lines(const std::string& path, int start_line, int end_line) 
 }
 
 int SourceManager::get_line_count(const std::string& path) const {
-    auto file_it = source_files_.find(path);
+    const auto file_it = source_files_.find(path);
     if (file_it == source_files_.end()) {
         return 0;
     }
@@ -76,7 +76,7 @@ int DiagnosticManager::warning_count() const { return warning_count_; }
 
 bool DiagnosticManager::has_errors() const { return error_count_ > 0; }
 
-void DiagnosticManager::reset_counts() {
+void DiagnosticManager::reset_counts() const {
     error_count_ = 0;
     warning_count_ = 0;
 }
@@ -120,8 +120,8 @@ void DiagnosticManager::render_diagnostic(const Diagnostic& diagnostic, std::ost
 
 void DiagnosticManager::render_diagnostic_header(const Diagnostic& diagnostic,
                                                  std::ostream& out) const {
-    auto level_str = diagnostic_level_to_string(diagnostic.level());
-    auto style = get_style_for_level(diagnostic.level());
+    const auto level_str = diagnostic_level_to_string(diagnostic.level());
+    const auto style = get_style_for_level(diagnostic.level());
 
     // Format: "error[E0308]: message"
     out << format_with_style(level_str, style);
@@ -133,7 +133,7 @@ void DiagnosticManager::render_diagnostic_header(const Diagnostic& diagnostic,
     out << ": " << diagnostic.message() << "\n";
 
     // Show file location if we have a primary span
-    if (auto span = diagnostic.primary_span()) {
+    if (const auto span = diagnostic.primary_span()) {
         out << " --> " << span->start.path << ":" << span->start.line << ":" << span->start.col
             << "\n";
     }
@@ -142,9 +142,8 @@ void DiagnosticManager::render_diagnostic_header(const Diagnostic& diagnostic,
 void DiagnosticManager::render_source_snippets(const Diagnostic& diagnostic,
                                                std::ostream& out) const {
     // Group labels by file and line ranges
-    auto grouped_labels = group_labels_by_location(diagnostic.labels());
 
-    for (const auto& [file_path, file_labels] : grouped_labels) {
+    for (auto grouped_labels = group_labels_by_location(diagnostic.labels()); const auto& [file_path, file_labels] : grouped_labels) {
         render_file_snippet(file_path, file_labels, out);
     }
 }
@@ -164,12 +163,12 @@ void DiagnosticManager::render_file_snippet(const std::string& file_path,
     }
 
     // Add context lines
-    int start_line = std::max(1, min_line - config_.context_lines);
-    int end_line =
+    const int start_line = std::max(1, min_line - config_.context_lines);
+    const int end_line =
         std::min(source_manager_->get_line_count(file_path), max_line + config_.context_lines);
 
     // Calculate gutter width (for line numbers)
-    int gutter_width = std::to_string(end_line).length() + 1;
+    const int gutter_width = std::to_string(end_line).length() + 1;
 
     // Render empty gutter line
     out << std::string(gutter_width, ' ') << " |\n";
@@ -196,9 +195,9 @@ void DiagnosticManager::render_file_snippet(const std::string& file_path,
     out << std::string(gutter_width, ' ') << " |\n";
 }
 
-void DiagnosticManager::render_labels_for_line(int line_num,
+void DiagnosticManager::render_labels_for_line(const int line_num,
                                                const std::vector<const DiagnosticLabel*>& labels,
-                                               int gutter_width,
+                                               const int gutter_width,
                                                const std::string& line_content,
                                                std::ostream& out) const {
     std::vector<const DiagnosticLabel*> line_labels;
@@ -213,23 +212,22 @@ void DiagnosticManager::render_labels_for_line(int line_num,
     if (line_labels.empty()) return;
 
     // Sort by priority (primary labels first, then by column)
-    std::sort(line_labels.begin(),
-              line_labels.end(),
-              [](const DiagnosticLabel* a, const DiagnosticLabel* b) {
-                  if (a->is_primary != b->is_primary) {
-                      return a->is_primary > b->is_primary;
-                  }
-                  return a->span.start.col < b->span.start.col;
-              });
+    std::ranges::sort(line_labels,
+                      [](const DiagnosticLabel* a, const DiagnosticLabel* b) {
+                          if (a->is_primary != b->is_primary) {
+                              return a->is_primary > b->is_primary;
+                          }
+                          return a->span.start.col < b->span.start.col;
+                      });
 
     // Render underlines and arrows
-    std::string gutter = std::string(gutter_width, ' ') + " | ";
+    const std::string gutter = std::string(gutter_width, ' ') + " | ";
 
     for (const auto* label : line_labels) {
         out << gutter;
 
-        int start_col = (line_num == label->span.start.line) ? label->span.start.col - 1 : 0;
-        int end_col = (line_num == label->span.end.line)
+        int start_col = line_num == label->span.start.line ? label->span.start.col - 1 : 0;
+        int end_col = line_num == label->span.end.line
                           ? label->span.end.col - 1
                           : static_cast<int>(line_content.length() - 1);
 
@@ -248,11 +246,11 @@ void DiagnosticManager::render_labels_for_line(int line_num,
     }
 }
 
-void DiagnosticManager::render_primary_label_line(int start_col,
-                                                  int end_col,
+void DiagnosticManager::render_primary_label_line(const int start_col,
+                                                  const int end_col,
                                                   const DiagnosticLabel& label,
                                                   std::ostream& out) const {
-    std::string spaces(start_col, ' ');
+    const std::string spaces(start_col, ' ');
     std::string arrows;
 
     if (end_col > start_col) {
@@ -268,11 +266,11 @@ void DiagnosticManager::render_primary_label_line(int start_col,
     }
 }
 
-void DiagnosticManager::render_secondary_label_line(int start_col,
-                                                    int end_col,
+void DiagnosticManager::render_secondary_label_line(const int start_col,
+                                                    const int end_col,
                                                     const DiagnosticLabel& label,
                                                     std::ostream& out) const {
-    std::string spaces(start_col, ' ');
+    const std::string spaces(start_col, ' ');
     std::string underline;
 
     if (end_col > start_col) {
@@ -289,23 +287,23 @@ void DiagnosticManager::render_secondary_label_line(int start_col,
 }
 
 void DiagnosticManager::render_note(const std::string& note, std::ostream& out) const {
-    auto style = DiagnosticStyle(DiagnosticStyle::Color::Blue, true);
+    const auto style = DiagnosticStyle(DiagnosticStyle::Color::Blue, true);
     out << " " << format_with_style("note", style) << ": " << note << "\n";
 }
 
 void DiagnosticManager::render_help(const std::string& help, std::ostream& out) const {
-    auto style = DiagnosticStyle(DiagnosticStyle::Color::Green, true);
+    const auto style = DiagnosticStyle(DiagnosticStyle::Color::Green, true);
     out << " " << format_with_style("help", style) << ": " << help << "\n";
 }
 
 void DiagnosticManager::render_suggestion(const DiagnosticSuggestion& suggestion,
                                           std::ostream& out) const {
-    auto style = DiagnosticStyle(DiagnosticStyle::Color::Green, true);
+    const auto style = DiagnosticStyle(DiagnosticStyle::Color::Green, true);
     out << " " << format_with_style("suggestion", style) << ": " << suggestion.description << "\n";
     // TODO: Show the actual replacement in context
 }
 
-std::string DiagnosticManager::diagnostic_level_to_string(DiagnosticLevel level) const {
+std::string DiagnosticManager::diagnostic_level_to_string(const DiagnosticLevel level) {
     switch (level) {
         case DiagnosticLevel::Error: return "error";
         case DiagnosticLevel::Warning: return "warning";
@@ -315,7 +313,7 @@ std::string DiagnosticManager::diagnostic_level_to_string(DiagnosticLevel level)
     return "unknown";
 }
 
-DiagnosticStyle DiagnosticManager::get_style_for_level(DiagnosticLevel level) const {
+DiagnosticStyle DiagnosticManager::get_style_for_level(const DiagnosticLevel level) {
     switch (level) {
         case DiagnosticLevel::Error: return DiagnosticStyle(DiagnosticStyle::Color::Red, true);
         case DiagnosticLevel::Warning: return DiagnosticStyle(DiagnosticStyle::Color::Yellow, true);
@@ -368,9 +366,9 @@ std::string DiagnosticManager::format_with_style(const std::string& text,
     return result;
 }
 
-std::string DiagnosticManager::replace_tabs(std::string_view line) const {
+std::string DiagnosticManager::replace_tabs(const std::string_view line) const {
     std::string result;
-    for (char c : line) {
+    for (const char c : line) {
         if (c == '\t') {
             result += config_.tab_replacement;
         } else {
@@ -381,7 +379,7 @@ std::string DiagnosticManager::replace_tabs(std::string_view line) const {
 }
 
 std::map<std::string, std::vector<const DiagnosticLabel*>>
-DiagnosticManager::group_labels_by_location(const std::vector<DiagnosticLabel>& labels) const {
+DiagnosticManager::group_labels_by_location(const std::vector<DiagnosticLabel>& labels) {
     std::map<std::string, std::vector<const DiagnosticLabel*>> grouped;
 
     for (const auto& label : labels) {

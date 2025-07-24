@@ -1,0 +1,156 @@
+// Invalid control flow test - all should produce errors
+
+fun test_missing_if_condition() -> i64 {
+    if () {  // Empty condition
+        return 1;
+    }
+    return 0;
+}
+
+fun test_malformed_if_condition() -> i64 {
+    if (x > 5 && ) {  // Incomplete boolean expression
+        return 2;
+    }
+    return 0;
+}
+
+fun test_missing_if_parentheses() -> i64 {
+    if x > 10 {  // Missing parentheses around condition
+        return 3;
+    }
+    return 0;
+}
+
+fun test_invalid_else_clause() -> i64 {
+    if (true) {
+        return 1;
+    } else invalid_token_here {  // Invalid else clause
+        return 2;
+    }
+}
+
+fun test_missing_while_condition() -> i64 {
+    while () {  // Empty while condition
+        return 1;
+    }
+    return 0;
+}
+
+fun test_malformed_while_condition() -> i64 {
+    while (counter < && 5) {  // Malformed condition
+        counter = counter + 1;
+    }
+    return counter;
+}
+
+fun test_while_missing_parentheses() -> i64 {
+    let count: i64 = 0;
+    while count < 5 {  // Missing parentheses
+        count = count + 1;
+    }
+    return count;
+}
+
+fun test_for_missing_variable() -> i64 {
+    for in [1, 10) {  // Missing loop variable
+        return 1;
+    }
+    return 0;
+}
+
+fun test_for_missing_in_keyword() -> i64 {
+    for i [1, 10) {  // Missing 'in' keyword
+        return i;
+    }
+    return 0;
+}
+
+fun test_for_invalid_range() -> i64 {
+    for i in {  // Missing range expression
+        return i;
+    }
+    return 0;
+}
+
+fun test_for_malformed_range() -> i64 {
+    for i in [1, {  // Incomplete range expression
+        return i;
+    }
+    return 0;
+}
+
+fun test_c_style_for_loop() -> i64 {
+    for (i64 i = 0; i < 10; i++) {  // C-style for loop not supported
+        return i;
+    }
+    return 0;
+}
+
+fun test_nested_malformed_conditions() -> i64 {
+    if (x > 5) {
+        while () {  // Empty while condition inside if
+            return 1;
+        }
+    }
+    return 0;
+}
+
+fun test_multiple_control_flow_errors() -> i64 {
+    if (incomplete_condition && ) {  // Malformed if condition
+        for missing_var in [1, 5) {  // Missing for variable
+            while (another_bad && ) {  // Malformed while condition
+                return 1;
+            }
+        }
+    } else invalid_else {  // Invalid else clause
+        return 2;
+    }
+}
+
+fun test_unmatched_parentheses() -> i64 {
+    if ((x > 5) && (y < 10) {  // Missing closing parenthesis
+        return 1;
+    }
+
+    while (counter < 5)) {  // Extra closing parenthesis
+        counter = counter + 1;
+    }
+
+    return 0;
+}
+
+fun test_incomplete_boolean_operators() -> i64 {
+    if (true && ) {  // Incomplete AND expression
+        return 1;
+    }
+
+    while (false || ) {  // Incomplete OR expression
+        return 2;
+    }
+
+    return 0;
+}
+
+fun test_invalid_comparison_operators() -> i64 {
+    if (x >> 5) {  // Invalid comparison operator
+        return 1;
+    }
+
+    while (y << 10) {  // Invalid comparison operator
+        return 2;
+    }
+
+    return 0;
+}
+
+fun test_missing_condition_expressions() -> i64 {
+    if ( > 5) {  // Missing left operand
+        return 1;
+    }
+
+    while (10 < ) {  // Missing right operand
+        return 2;
+    }
+
+    return 0;
+}

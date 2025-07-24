@@ -1,0 +1,16 @@
+// Basic function with parameters and return type
+fun add_numbers(a: i64, b: i64) -> i64 {
+    let result: i64 = a + b;
+    return result;
+}
+
+// Function with no parameters
+fun get_answer() -> i64 {
+    return 42;
+}
+
+// Function with no return type (returns null)
+fun print_message() {
+    let message: str = "Hello World";
+    return;
+}

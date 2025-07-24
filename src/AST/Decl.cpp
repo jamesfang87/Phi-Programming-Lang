@@ -3,17 +3,17 @@
 
 #include <print>
 
-void ParamDecl::info_dump(int level) const {
+void ParamDecl::info_dump(const int level) const {
     std::println("{}ParamDecl: {} (type: {})",
                  std::string(level * 2, ' '),
-                 identifier,
+                 get_id(),
                  type.value().to_string());
 }
 
-void VarDecl::info_dump(int level) const {
+void VarDecl::info_dump(const int level) const {
     std::println("{}VarDecl: {} (type: {})",
                  std::string(level * 2, ' '),
-                 identifier,
+                 get_id(),
                  type.value().to_string());
     if (initializer) {
         std::println("{}Initializer:", std::string(level * 2, ' '));
@@ -21,10 +21,10 @@ void VarDecl::info_dump(int level) const {
     }
 }
 
-void FunDecl::info_dump(int level) const {
+void FunDecl::info_dump(const int level) const {
     std::println("{}Function {} at {}:{}. Returns {}",
                  std::string(level * 2, ' '), // indent
-                 identifier,
+                 get_id(),
                  location.line,
                  location.col,
                  type.value().to_string());
@@ -34,7 +34,7 @@ void FunDecl::info_dump(int level) const {
     block->info_dump(level + 1);
 }
 
-void Block::info_dump(int level) const {
+void Block::info_dump(const int level) const {
     std::println("{}Block", std::string(level * 2, ' '));
     for (auto& s : this->stmts) {
         s->info_dump(level + 1);

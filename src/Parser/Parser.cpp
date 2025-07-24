@@ -1,21 +1,20 @@
 #include "Parser/Parser.hpp"
+#include "Lexer/TokenType.hpp"
 
 namespace phi {
 
 std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
-    while (!at_eof() && peek_token().get_type() != TokenType::tok_eof) {
+    while (!at_eof()) {
         switch (peek_token().get_type()) {
             case TokenType::tok_fun: {
                 auto res = parse_function_decl();
                 if (res.has_value()) {
                     functions.push_back(std::move(res.value()));
                 } else {
-                    // Error was already emitted, try to synchronize and continue
                     synchronize();
                 }
                 break;
             }
-            case TokenType::tok_eof: return {std::move(functions), successful};
             default:
                 emit_unexpected_token_error(peek_token(), {"fun"});
                 synchronize();
@@ -26,18 +25,18 @@ std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
     return {std::move(functions), successful};
 }
 
-bool Parser::expect_token(TokenType expected_type, const std::string& context) {
+bool Parser::expect_token(const TokenType expected_type, const std::string& context) {
     if (peek_token().get_type() == expected_type) {
         advance_token();
         return true;
     }
 
-    std::string context_msg = context.empty() ? "" : " in " + context;
+    const std::string context_msg = context.empty() ? "" : " in " + context;
     emit_expected_found_error(type_to_string(expected_type) + context_msg, peek_token());
     return false;
 }
 
-bool Parser::match_token(TokenType type) {
+bool Parser::match_token(const TokenType type) {
     if (peek_token().get_type() == type) {
         advance_token();
         return true;
@@ -62,6 +61,7 @@ bool Parser::is_statement_start() const {
         case TokenType::tok_if:
         case TokenType::tok_while:
         case TokenType::tok_for:
+        case TokenType::tok_let:
         case TokenType::tok_identifier:
         case TokenType::tok_open_brace: return true;
         default: return false;

@@ -41,8 +41,8 @@ bool Sema::visit(RangeLiteral& expr) {
         return false;
     }
 
-    Type start_type = expr.get_start()->get_type();
-    Type end_type = expr.get_end()->get_type();
+    const Type start_type = expr.get_start()->get_type();
+    const Type end_type = expr.get_end()->get_type();
 
     // Both start and end must be integer types
     if (!start_type.is_primitive() || !is_integer_type(start_type)) {
@@ -75,9 +75,9 @@ bool Sema::visit(BinaryOp& expr) {
         return false;
     }
 
-    Type lhs_type = expr.get_lhs()->get_type();
-    Type rhs_type = expr.get_rhs()->get_type();
-    TokenType op = expr.get_op();
+    const Type lhs_type = expr.get_lhs()->get_type();
+    const Type rhs_type = expr.get_rhs()->get_type();
+    const TokenType op = expr.get_op();
 
     // Check if both operands are primitive types
     if (!lhs_type.is_primitive() || !rhs_type.is_primitive()) {
@@ -104,7 +104,7 @@ bool Sema::visit(BinaryOp& expr) {
                 return false;
             }
             // Result type is the promoted type of the operands
-            Type result_type = promote_numeric_types(lhs_type, rhs_type);
+            const Type result_type = promote_numeric_types(lhs_type, rhs_type);
             expr.set_type(result_type);
             break;
         }
@@ -159,7 +159,7 @@ bool Sema::is_integer_type(const Type& type) {
         return false;
     }
 
-    Type::Primitive prim = type.primitive_type();
+    const Type::Primitive prim = type.primitive_type();
     return prim == Type::Primitive::i8 || prim == Type::Primitive::i16 ||
            prim == Type::Primitive::i32 || prim == Type::Primitive::i64 ||
            prim == Type::Primitive::u8 || prim == Type::Primitive::u16 ||
@@ -171,7 +171,7 @@ bool Sema::is_numeric_type(const Type& type) {
         return false;
     }
 
-    Type::Primitive prim = type.primitive_type();
+    const Type::Primitive prim = type.primitive_type();
     return is_integer_type(type) || prim == Type::Primitive::f32 || prim == Type::Primitive::f64;
 }
 
@@ -203,8 +203,8 @@ bool Sema::visit(UnaryOp& expr) {
         return false;
     }
 
-    Type operand_type = expr.get_operand()->get_type();
-    TokenType op = expr.get_op();
+    const Type operand_type = expr.get_operand()->get_type();
+    const TokenType op = expr.get_op();
 
     // Check if operand is primitive type
     if (!operand_type.is_primitive()) {
@@ -248,8 +248,8 @@ bool Sema::visit(UnaryOp& expr) {
     return true;
 }
 
-bool Sema::resolve_decl_ref(DeclRefExpr* declref, bool function_call) {
-    Decl* decl = lookup_decl(declref->get_id());
+bool Sema::resolve_decl_ref(DeclRefExpr* declref, const bool function_call) {
+    Decl* decl = symbol_table.lookup_decl(declref->get_id());
 
     // if the declaration is not found
     if (!decl) {
@@ -272,7 +272,7 @@ bool Sema::resolve_decl_ref(DeclRefExpr* declref, bool function_call) {
 }
 
 bool Sema::resolve_function_call(FunCallExpr* call) {
-    auto declref = dynamic_cast<DeclRefExpr*>(call->get_callee());
+    const auto declref = dynamic_cast<DeclRefExpr*>(call->get_callee());
     bool success = resolve_decl_ref(declref, true);
 
     if (!success) {
@@ -281,7 +281,7 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
     }
 
     // Get the resolved function declaration from the decl_ref
-    auto resolved_fun = static_cast<FunDecl*>(declref->get_decl());
+    const auto resolved_fun = dynamic_cast<FunDecl*>(declref->get_decl());
     assert(resolved_fun);
 
     // check param list length is the same
@@ -292,11 +292,10 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
     }
 
     // Resolve the arguments and check param types are compatible
-    for (int i = 0; i < (int)call->get_args().size(); i++) {
+    for (int i = 0; i < static_cast<int>(call->get_args().size()); i++) {
         // we first try to get the argument from the call
         Expr* arg = call->get_args()[i].get();
-        bool success_expr = arg->accept(*this);
-        if (!success_expr) {
+        if (const bool success_expr = arg->accept(*this); !success_expr) {
             std::println("Could not resolve argument");
             return false;
         }

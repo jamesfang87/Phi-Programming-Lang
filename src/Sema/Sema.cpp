@@ -1,15 +1,12 @@
 #include "Sema/Sema.hpp"
 #include "AST/Decl.hpp"
-#include <cassert>
 #include <memory>
 #include <print>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
     // Create global scope with RAII
-    ScopeGuard global_scope(active_scopes);
+    SymbolTable::ScopeGuard global_scope(symbol_table);
 
     // TODO: first resolve structs so that functions
     // may use user-defined types
@@ -24,7 +21,7 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
             return {false, {}};
         }
 
-        if (!insert_decl(fun_decl.get())) {
+        if (!symbol_table.insert_decl(fun_decl.get())) {
             // throw error
             std::println("failed to insert function, probably redefinition");
             return {false, {}};
@@ -36,11 +33,11 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
         cur_fun = fun_decl.get();
 
         // Create function scope with RAII - parameters and body share this scope
-        ScopeGuard function_scope(active_scopes);
+        SymbolTable::ScopeGuard function_scope(symbol_table);
 
         // insert all parameters into the function scope
         for (const std::unique_ptr<ParamDecl>& param : cur_fun->get_params()) {
-            if (!insert_decl(param.get())) {
+            if (!symbol_table.insert_decl(param.get())) {
                 // throw error
                 std::println("while resolving function {}", cur_fun->get_id());
                 std::println("failed to insert param {}, probably redefinition", param->get_id());
@@ -64,26 +61,4 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
 
     // Global scope will be automatically popped by ScopeGuard destructor
     return {true, std::move(ast)};
-}
-
-Decl* Sema::lookup_decl(const std::string& name) {
-    for (int i = active_scopes.size() - 1; i >= 0; --i) {
-        auto it = active_scopes[i].find(name);
-        if (it != active_scopes[i].end()) {
-            return it->second;
-        }
-    }
-    return nullptr;
-}
-
-bool Sema::insert_decl(Decl* decl) {
-    if (lookup_decl(decl->get_id()) != nullptr) {
-        // throw error
-        std::println("redefinition error: {}", decl->get_id());
-        return false;
-    }
-
-    // push into unordered_map representing most inner scope
-    active_scopes.back()[decl->get_id()] = decl;
-    return true;
 }

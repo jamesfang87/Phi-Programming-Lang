@@ -1,5 +1,5 @@
 /**
- * @file scanner.cpp
+ * @file Lexer.cpp
  * @brief Implementation of the Scanner class for lexical analysis
  *
  * This file contains the complete implementation of the Scanner class,
@@ -104,8 +104,7 @@ std::pair<std::vector<Token>, bool> Lexer::scan() {
  * @return A token representing the scanned lexical element
  */
 Token Lexer::scan_token() {
-    char c = advance_char();
-    switch (c) {
+    switch (char c = advance_char()) {
         // One char tokens
         case '(': return make_token(TokenType::tok_open_paren);
         case ')': return make_token(TokenType::tok_close_paren);
@@ -156,15 +155,16 @@ Token Lexer::scan_token() {
         case '"': return parse_string();
         case '\'': return parse_char();
 
-        default:
+        default: {
             if (std::isalpha(c) || c == '_') {
                 return parse_identifier();
-            } else if (std::isdigit(c)) {
-                return parse_number();
-            } else {
-                std::println("Unknown token found: {}\n", c);
-                return make_token(TokenType::tok_error);
             }
+            if (std::isdigit(c)) {
+                return parse_number();
+            }
+            std::println("Unknown token found: {}\n", c);
+            return make_token(TokenType::tok_error);
+        }
     }
 }
 
@@ -201,7 +201,7 @@ void Lexer::throw_lexer_error(std::string_view message, std::string_view expecte
 
     auto line_end = lexeme_line;
     while (line_end < src.end() && *line_end != '\n') {
-        line_end++;
+        ++line_end;
     }
     std::string_view line(&*lexeme_line, static_cast<int>(line_end - lexeme_line));
 
