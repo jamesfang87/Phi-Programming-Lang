@@ -173,12 +173,13 @@ public:
           callee(std::move(callee)),
           args(std::move(args)) {}
 
-    void info_dump(int level) const override;
-
     [[nodiscard]] Expr* get_callee() const { return callee.get(); }
     [[nodiscard]] std::vector<std::unique_ptr<Expr>>& get_args() { return args; }
     [[nodiscard]] FunDecl* get_func_decl() const { return func_decl; }
+
     void set_func_decl(FunDecl* f) { func_decl = f; }
+
+    void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
@@ -197,11 +198,11 @@ public:
           rhs(std::move(rhs)),
           op(op.get_type()) {}
 
-    void info_dump(int level) const override;
-
     [[nodiscard]] Expr* get_lhs() const { return lhs.get(); }
     [[nodiscard]] Expr* get_rhs() const { return rhs.get(); }
     [[nodiscard]] TokenType get_op() const { return op; }
+
+    void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
@@ -220,11 +221,11 @@ public:
           op(op.get_type()),
           is_prefix(is_prefix) {}
 
-    void info_dump(int level) const override;
-
     [[nodiscard]] Expr* get_operand() const { return operand.get(); }
     [[nodiscard]] TokenType get_op() const { return op; }
     [[nodiscard]] bool is_prefix_op() const { return is_prefix; }
+
+    void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:

@@ -24,10 +24,7 @@ public:
 
     [[nodiscard]] std::string& get_id() { return identifier; }
     [[nodiscard]] const std::string& get_id() const { return identifier; }
-    [[nodiscard]] Type& get_type() {
-        if (!type) throw std::logic_error("Type not resolved");
-        return *type;
-    }
+    [[nodiscard]] Type& get_type() { return *type; }
 
 protected:
     SrcLocation location;
