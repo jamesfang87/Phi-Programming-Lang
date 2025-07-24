@@ -1,0 +1,48 @@
+// Variable declaration examples - all correct syntax
+
+fun test_basic_variables() -> i64 {
+    let x: i64 = 42;
+    let y: f64 = 3.14;
+    let message: str = "Hello";
+    let flag: bool = true;
+    return x;
+}
+
+fun test_variable_expressions() -> i64 {
+    let a: i64 = 10;
+    let b: i64 = 20;
+    let sum: i64 = a + b;
+    let product: i64 = a * b;
+    let difference: i64 = b - a;
+    return sum;
+}
+
+fun test_variable_operations() -> f64 {
+    let base: f64 = 5.5;
+    let multiplier: i64 = 3;
+    let result: f64 = base * multiplier;
+    let adjusted: f64 = result + 1.0;
+    return adjusted;
+}
+
+fun test_boolean_variables() -> bool {
+    let is_positive: bool = true;
+    let is_negative: bool = false;
+    let combined: bool = is_positive && !is_negative;
+    return combined;
+}
+
+fun test_string_variables() -> str {
+    let first_name: str = "John";
+    let last_name: str = "Doe";
+    let greeting: str = "Hello, ";
+    return greeting;
+}
+
+fun test_variable_reassignment() -> i64 {
+    let counter: i64 = 0;
+    counter = counter + 1;
+    counter = counter * 2;
+    counter = counter - 1;
+    return counter;
+}

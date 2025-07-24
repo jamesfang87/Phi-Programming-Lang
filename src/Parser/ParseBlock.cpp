@@ -1,5 +1,4 @@
 #include "Parser/Parser.hpp"
-#include <print>
 
 namespace phi {
 std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
@@ -15,11 +14,10 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
     }
 
     // otherwise, parse block. this part also handles the closing brace
-    Token opening_brace = advance_token(); // eat {
+    const Token opening_brace = advance_token(); // eat {
     std::vector<std::unique_ptr<Stmt>> stmts;
     while (peek_token().get_type() != TokenType::tok_close_brace) {
-        auto type = peek_token().get_type();
-        switch (type) {
+        switch (peek_token().get_type()) {
             case TokenType::tok_eof:
                 emit_error(
                     error("unclosed block")
@@ -119,7 +117,6 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
     }
 
     if (peek_token().get_type() != TokenType::tok_close_brace) {
-        std::println("here");
         emit_error(error("missing closing brace for block")
                        .with_primary_label(span_from_token(peek_token()), "expected `}` here")
                        .with_help("blocks must be enclosed in braces")

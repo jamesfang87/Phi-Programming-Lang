@@ -1,7 +1,5 @@
-#include <cstdint>
-#include <string>
-
 #pragma once
+#include <string>
 
 /**
  * @brief Enumeration of all possible token types in the Phi programming

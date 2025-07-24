@@ -11,9 +11,9 @@ ReturnStmt::ReturnStmt(SrcLocation location, std::unique_ptr<Expr> expr)
 
 ReturnStmt::~ReturnStmt() = default;
 
-Expr* ReturnStmt::get_expr() { return expr.get(); }
+Expr* ReturnStmt::get_expr() const { return expr.get(); }
 
-void ReturnStmt::info_dump(int level) const {
+void ReturnStmt::info_dump(const int level) const {
     std::println("{}ReturnStmt", std::string(level * 2, ' '));
     if (expr) {
         expr->info_dump(level + 1);
@@ -31,13 +31,13 @@ IfStmt::IfStmt(SrcLocation location,
 
 IfStmt::~IfStmt() = default;
 
-Expr& IfStmt::get_condition() { return *condition; }
+Expr& IfStmt::get_condition() const { return *condition; }
 
-Block& IfStmt::get_true_body() { return *true_body; }
+Block& IfStmt::get_true_body() const { return *true_body; }
 
-Block& IfStmt::get_false_body() { return *false_body; }
+Block& IfStmt::get_false_body() const { return *false_body; }
 
-void IfStmt::info_dump(int level) const {
+void IfStmt::info_dump(const int level) const {
     std::println("{}IfStmt", std::string(level * 2, ' '));
     if (condition) {
         condition->info_dump(level + 1);
@@ -59,11 +59,11 @@ WhileStmt::WhileStmt(SrcLocation location,
 
 WhileStmt::~WhileStmt() = default;
 
-Expr& WhileStmt::get_condition() { return *condition; }
+Expr& WhileStmt::get_condition() const { return *condition; }
 
-Block& WhileStmt::get_body() { return *body; }
+Block& WhileStmt::get_body() const { return *body; }
 
-void WhileStmt::info_dump(int level) const {
+void WhileStmt::info_dump(const int level) const {
     std::println("{}WhileStmt", std::string(level * 2, ' '));
     if (condition) {
         condition->info_dump(level + 1);
@@ -86,11 +86,11 @@ ForStmt::~ForStmt() = default;
 
 std::string& ForStmt::get_loop_var() { return loop_var; }
 
-Expr& ForStmt::get_range() { return *range; }
+Expr& ForStmt::get_range() const { return *range; }
 
-Block& ForStmt::get_body() { return *body; }
+Block& ForStmt::get_body() const { return *body; }
 
-void ForStmt::info_dump(int level) const {
+void ForStmt::info_dump(const int level) const {
     std::println("{}ForStmt", std::string(level * 2, ' '));
     if (!loop_var.empty()) {
         std::println("{}Loop variable: {}", std::string(level * 2 + 2, ' '), loop_var);
@@ -103,13 +103,13 @@ void ForStmt::info_dump(int level) const {
     }
 }
 
-VarDeclStmt::VarDeclStmt(SrcLocation location, std::unique_ptr<VarDecl> decl)
+LetStmt::LetStmt(SrcLocation location, std::unique_ptr<VarDecl> decl)
     : Stmt(std::move(location)),
       var_decl(std::move(decl)) {}
 
-VarDeclStmt::~VarDeclStmt() = default;
+LetStmt::~LetStmt() = default;
 
-void VarDeclStmt::info_dump(int level) const {
+void LetStmt::info_dump(const int level) const {
     std::println("{}VarDeclStmt", std::string(level * 2, ' '));
     if (var_decl) {
         var_decl->info_dump(level + 1);

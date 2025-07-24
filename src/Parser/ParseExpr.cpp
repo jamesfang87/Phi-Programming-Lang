@@ -1,12 +1,12 @@
 #include "Diagnostics/Diagnostic.hpp"
+#include "Lexer/TokenType.hpp"
 #include "Parser/Parser.hpp"
-#include <print>
 
 namespace phi {
 std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::parse_expr() { return pratt(0); }
 
 // Add to binding power functions
-std::optional<std::pair<int, int>> prefix_bp(TokenType op) {
+std::optional<std::pair<int, int>> prefix_bp(const TokenType op) {
     switch (op) {
         case TokenType::tok_sub:
         case TokenType::tok_bang:
@@ -17,7 +17,7 @@ std::optional<std::pair<int, int>> prefix_bp(TokenType op) {
     }
 }
 
-std::optional<std::pair<int, int>> infix_bp(TokenType op) {
+std::optional<std::pair<int, int>> infix_bp(const TokenType op) {
     switch (op) {
         case TokenType::tok_add:
         case TokenType::tok_sub: return {{30, 31}};
@@ -27,6 +27,9 @@ std::optional<std::pair<int, int>> infix_bp(TokenType op) {
         // Range operators
         case TokenType::tok_exclusive_range:
         case TokenType::tok_inclusive_range: return {{20, 21}};
+        // Logical operators
+        case TokenType::tok_and: return {{18, 19}};
+        case TokenType::tok_or: return {{16, 17}};
         // Comparison operators
         case TokenType::tok_less:
         case TokenType::tok_less_equal:
@@ -39,11 +42,11 @@ std::optional<std::pair<int, int>> infix_bp(TokenType op) {
     }
 }
 
-std::optional<std::pair<int, int>> postfix_bp(TokenType op) {
+std::optional<std::pair<int, int>> postfix_bp(const TokenType op) {
     switch (op) {
-        case TokenType::tok_open_paren: return {{110, -1}};
-        case TokenType::tok_open_bracket: return {{110, -1}};
-        case TokenType::tok_member: return {{110, -1}};
+        case TokenType::tok_open_paren:
+        case TokenType::tok_open_bracket:
+        case TokenType::tok_member:
         case TokenType::tok_increment: // ++ postfix
         case TokenType::tok_decrement: // -- postfix
             return {{110, -1}};
@@ -108,7 +111,6 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
         default: {
             // Error handling
             successful = false; // set success flag to false
-            std::println("unexpected token");
             return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
         }
     }
@@ -136,7 +138,6 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
                 default:
                     auto res = parse_postfix(std::move(lhs));
                     if (!res) {
-                        std::println("error parsing postfix");
                         successful = false; // set success flag to false
                         return std::unexpected(res.error());
                     }
@@ -155,9 +156,8 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
             // Special handling for range operators
             if (op.get_type() == TokenType::tok_exclusive_range ||
                 op.get_type() == TokenType::tok_inclusive_range) {
-                std::println("this happens");
 
-                bool inclusive = (op.get_type() == TokenType::tok_inclusive_range);
+                bool inclusive = op.get_type() == TokenType::tok_inclusive_range;
                 auto end = pratt(r_bp);
                 if (!end) return std::unexpected(end.error());
                 lhs = std::make_unique<RangeLiteral>(op.get_start(),
@@ -168,7 +168,6 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
                 // Regular binary operators
                 auto res = pratt(r_bp);
                 if (!res) {
-                    std::println("error parsing regular binary expression");
                     successful = false;
                     return std::unexpected(res.error());
                 }
@@ -203,7 +202,6 @@ Parser::parse_fun_call(std::unique_ptr<Expr> callee) {
                                  TokenType::tok_close_paren,
                                  &Parser::parse_expr);
     if (!args) {
-        std::println("error parsing function call");
         successful = false;
         return std::unexpected(args.error());
     }

@@ -6,6 +6,7 @@ bool Sema::resolve_fun_decl(FunDecl* fun) {
     std::optional<Type> resolved_return_type = resolve_type(fun->get_return_type());
     if (!resolved_return_type) {
         std::println("invalid type for return");
+        std::println("for function: {}", fun->get_id());
         return false;
     }
 
@@ -32,7 +33,7 @@ bool Sema::resolve_fun_decl(FunDecl* fun) {
 }
 
 bool Sema::resolve_param_decl(ParamDecl* param) {
-    std::optional<Type> resolved_param_type = resolve_type(param->get_type());
+    const std::optional<Type> resolved_param_type = resolve_type(param->get_type());
     if (!resolved_param_type) {
         // throw error
         std::println("invalid type for param");

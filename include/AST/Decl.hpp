@@ -1,3 +1,4 @@
+#pragma once
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
 #include "SrcLocation.hpp"
@@ -7,10 +8,9 @@
 #include <string>
 #include <vector>
 
-#pragma once
-
 class Decl {
 public:
+    friend class Sema;
     Decl(SrcLocation location, std::string identifier, Type type)
         : location(std::move(location)),
           identifier(std::move(identifier)),
@@ -18,11 +18,14 @@ public:
 
     virtual ~Decl() = default;
 
-    virtual void info_dump(int level = 0) const = 0;
+    virtual void info_dump(int level) const = 0;
 
     [[nodiscard]] std::string& get_id() { return identifier; }
-    [[nodiscard]] SrcLocation& get_location() { return location; }
-    [[nodiscard]] Type& get_type() { return type.value(); }
+    [[nodiscard]] const std::string& get_id() const { return identifier; }
+    [[nodiscard]] Type& get_type() {
+        if (!type) throw std::logic_error("Type not resolved");
+        return *type;
+    }
 
 protected:
     SrcLocation location;
@@ -30,44 +33,42 @@ protected:
     std::optional<Type> type;
 };
 
-class VarDecl : public Decl {
+class VarDecl final : public Decl {
 public:
     friend class Sema;
     VarDecl(SrcLocation location,
             std::string identifier,
             Type type,
-            bool is_const,
+            const bool is_const,
             std::unique_ptr<Expr> initializer)
         : Decl(std::move(location), std::move(identifier), std::move(type)),
           is_const(is_const),
           initializer(std::move(initializer)) {}
 
-    void info_dump(int level = 0) const override;
+    void info_dump(int level) const override;
 
     [[nodiscard]] bool is_constant() const { return is_const; }
     [[nodiscard]] Expr* get_initializer() const { return initializer.get(); }
     [[nodiscard]] bool has_initializer() const { return initializer != nullptr; }
 
 private:
-    bool is_const;
+    const bool is_const;
     std::unique_ptr<Expr> initializer;
 };
 
-class ParamDecl : public Decl {
+class ParamDecl final : public Decl {
 public:
     ParamDecl(SrcLocation location, std::string identifier, Type type)
         : Decl(std::move(location), std::move(identifier), std::move(type)) {}
 
-    void info_dump(int level = 0) const override;
-
-    [[nodiscard]] Type& get_type() { return type.value(); }
+    void info_dump(int level) const override;
 
     void set_type(Type type) { this->type = std::move(type); }
 
 private:
 };
 
-class FunDecl : public Decl {
+class FunDecl final : public Decl {
 public:
     FunDecl(SrcLocation location,
             std::string identifier,
@@ -78,11 +79,11 @@ public:
           params(std::move(params)),
           block(std::move(block_ptr)) {}
 
-    void info_dump(int level = 0) const override;
+    void info_dump(int level) const override;
 
     [[nodiscard]] Type& get_return_type() { return type.value(); }
     [[nodiscard]] std::vector<std::unique_ptr<ParamDecl>>& get_params() { return params; }
-    [[nodiscard]] Block* get_block() { return block.get(); }
+    [[nodiscard]] Block* get_block() const { return block.get(); }
 
     void set_return_type(Type type) { this->type = std::move(type); }
     void set_block(std::unique_ptr<Block> block_ptr) { block = std::move(block_ptr); }

@@ -1,5 +1,8 @@
-fun foo() -> i64 {
-    return 42;
+fun foo(sum: i64, : i64) -> i64 {
+    for i in 0..10 {
+        sum += i;
+    }
+    return / 23;
 }
 
 fun main() {

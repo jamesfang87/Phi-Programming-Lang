@@ -8,10 +8,10 @@ bool Sema::visit(Block& block) {
     // Function body shares scope with parameters - don't create new scope
     if (!is_function_body_block) {
         // if not, then create a new scope
-        ScopeGuard block_scope(active_scopes);
+        SymbolTable::ScopeGuard block_scope(symbol_table);
     }
 
-    for (auto& stmt : block.get_stmts()) {
+    for (const auto& stmt : block.get_stmts()) {
         if (!stmt->accept(*this)) return false;
     }
 
@@ -93,10 +93,10 @@ bool Sema::visit(Expr& stmt) {
     return stmt.accept(*this); // Handle expression-as-statement
 }
 
-bool Sema::visit(VarDeclStmt& stmt) {
+bool Sema::visit(LetStmt& stmt) {
     // First resolve the variable's declared type
     VarDecl* var = stmt.var_decl.get();
-    std::optional<Type> type = resolve_type(var->get_type());
+    const std::optional<Type> type = resolve_type(var->get_type());
     if (!type) {
         std::println("invalid type for variable");
         return false;
@@ -125,6 +125,7 @@ bool Sema::visit(VarDeclStmt& stmt) {
         std::println("constant variable '{}' must have an initializer", var->get_id());
         return false;
     }
+    symbol_table.insert_decl(var);
 
     return true;
 }
