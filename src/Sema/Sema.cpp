@@ -3,8 +3,6 @@
 #include <cassert>
 #include <memory>
 #include <print>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "AST/Decl.hpp"

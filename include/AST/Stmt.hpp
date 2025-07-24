@@ -17,9 +17,9 @@ public:
 
     virtual ~Stmt() = default;
 
-    virtual void info_dump(int level) const = 0;
-
     [[nodiscard]] SrcLocation& get_location() { return location; }
+
+    virtual void info_dump(int level) const = 0;
     virtual bool accept(ASTVisitor& visitor) = 0;
 
 protected:
@@ -31,9 +31,9 @@ public:
     explicit Block(std::vector<std::unique_ptr<Stmt>> stmts)
         : stmts(std::move(stmts)) {}
 
-    void info_dump(int level) const;
-
     [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& get_stmts() { return stmts; }
+
+    void info_dump(int level) const;
     bool accept(ASTVisitor& visitor) { return visitor.visit(*this); }
 
 private:
@@ -46,6 +46,7 @@ public:
     ~ReturnStmt() override;
 
     [[nodiscard]] Expr* get_expr() const;
+
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
@@ -62,6 +63,7 @@ public:
     [[nodiscard]] Expr& get_condition() const;
     [[nodiscard]] Block& get_true_body() const;
     [[nodiscard]] Block& get_false_body() const;
+
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
@@ -80,6 +82,7 @@ public:
 
     [[nodiscard]] Expr& get_condition() const;
     [[nodiscard]] Block& get_body() const;
+
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
@@ -96,6 +99,7 @@ public:
     [[nodiscard]] std::string& get_loop_var();
     [[nodiscard]] Expr& get_range() const;
     [[nodiscard]] Block& get_body() const;
+
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
