@@ -255,14 +255,14 @@ bool Sema::resolve_decl_ref(DeclRefExpr* declref, const bool function_call) {
     // if the declaration is not found
     if (!decl) {
         // throw error
-        std::println("undeclared error: {}", declref->get_id());
+        std::println("error: undeclared identifier '{}'", declref->get_id());
         return false;
     }
 
     // check if the decls match ie:
     // if we are not trying to call a function and the declaration is a function
     if (!function_call && dynamic_cast<FunDecl*>(decl)) {
-        std::println("Did you mean to call a function?");
+        std::println("error: did you mean to call a function");
         return false;
     }
 
@@ -277,7 +277,7 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
     bool success = resolve_decl_ref(declref, true);
 
     if (!success) {
-        std::println("You cannot call an expression");
+        std::println("error: cannot call an expression");
         return false;
     }
 
@@ -288,7 +288,7 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
     // check param list length is the same
     const std::vector<std::unique_ptr<ParamDecl>>& params = resolved_fun->get_params();
     if (call->get_args().size() != params.size()) {
-        std::println("Parameter list length mismatch");
+        std::println("error: parameter list length mismatch");
         return false;
     }
 
@@ -297,14 +297,14 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
         // we first try to get the argument from the call
         Expr* arg = call->get_args()[i].get();
         if (const bool success_expr = arg->accept(*this); !success_expr) {
-            std::println("Could not resolve argument");
+            std::println("error: could not resolve argument");
             return false;
         }
 
         // now we look at the parameter and see if types match
         ParamDecl* param = params.at(i).get();
         if (arg->get_type() != param->get_type()) {
-            std::println("Argument type mismatch");
+            std::println("error: argument type mismatch");
             return false;
         }
     }
