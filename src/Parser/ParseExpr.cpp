@@ -211,7 +211,7 @@ Parser::parse_fun_call(std::unique_ptr<Expr> callee) {
                                                      .line = peek_token().get_start().line,
                                                      .col = peek_token().get_start().col},
                                          std::move(callee),
-                                         std::move(*args.value()));
+                                         std::move(args.value()));
 }
 /*
 // New helper function for member access

@@ -52,7 +52,7 @@ private:
     bool resolve_function_call(FunCallExpr* call);
 
     static bool resolve_fun_decl(FunDecl* fun);
-    static std::optional<Type> resolve_type(Type type);
+    static bool resolve_type(std::optional<Type> type);
     static bool resolve_param_decl(ParamDecl* param);
 
     // Type checking helper functions

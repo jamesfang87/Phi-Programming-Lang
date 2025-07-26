@@ -3,6 +3,7 @@
 #include <print>
 
 #include "AST/Decl.hpp"
+
 // ASTVisitor implementation - Statement visitors
 bool Sema::visit(Block& block) {
     // Check if this is a function body block
@@ -97,7 +98,7 @@ bool Sema::visit(Expr& stmt) {
 bool Sema::visit(LetStmt& stmt) {
     // First resolve the variable's declared type
     VarDecl* var = stmt.var_decl.get();
-    const std::optional<Type> type = resolve_type(var->get_type());
+    const bool type = resolve_type(var->get_type());
     if (!type) {
         std::println("invalid type for variable");
         return false;
@@ -111,14 +112,11 @@ bool Sema::visit(LetStmt& stmt) {
             return false;
         }
 
-        const Type& init_type = initializer->get_type();
-        const Type& decl_type = type.value();
-
         // Check if initializer type matches variable type
-        if (init_type != decl_type) {
+        if (initializer->get_type() != var->get_type()) {
             std::println("variable initializer type mismatch");
-            std::println("variable type: {}", decl_type.to_string());
-            std::println("initializer type: {}", init_type.to_string());
+            std::println("variable type: {}", var->get_type().to_string());
+            std::println("initializer type: {}", initializer->get_type().to_string());
             return false;
         }
     } else if (var->is_constant()) {
