@@ -58,7 +58,7 @@ std::expected<std::unique_ptr<FunDecl>, Diagnostic> Parser::parse_function_decl(
     return std::make_unique<FunDecl>(loc,
                                      std::move(name),
                                      return_type,
-                                     std::move(*param_list.value()),
+                                     std::move(param_list.value()),
                                      std::move(body.value()));
 }
 
