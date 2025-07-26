@@ -227,7 +227,7 @@ private:
     parse_fun_call(std::unique_ptr<Expr> callee);
 
     template <typename T, typename F>
-    std::expected<std::unique_ptr<std::vector<std::unique_ptr<T>>>, Diagnostic>
+    std::expected<std::vector<std::unique_ptr<T>>, Diagnostic>
     parse_list(const TokenType opening,
                const TokenType closing,
                F fun,
@@ -272,7 +272,7 @@ private:
         }
 
         advance_token(); // Consume closing delimiter
-        return std::make_unique<std::vector<std::unique_ptr<T>>>(std::move(content));
+        return content;
     }
 
     // Type parsing
