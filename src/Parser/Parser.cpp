@@ -4,6 +4,20 @@
 
 namespace phi {
 
+Parser::Parser(const std::string_view src,
+               const std::string_view path,
+               std::vector<Token>& tokens,
+               std::shared_ptr<DiagnosticManager> diagnostic_manager)
+    : path(path),
+      tokens(tokens),
+      token_it(tokens.begin()),
+      diagnostic_manager(std::move(diagnostic_manager)) {
+
+    if (this->diagnostic_manager->source_manager()) {
+        this->diagnostic_manager->source_manager()->add_source_file(std::string(path), src);
+    }
+}
+
 std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
     while (!at_eof()) {
         switch (peek_token().get_type()) {
@@ -12,71 +26,18 @@ std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
                 if (res.has_value()) {
                     functions.push_back(std::move(res.value()));
                 } else {
-                    synchronize();
+                    sync_to();
                 }
                 break;
             }
             default:
                 emit_unexpected_token_error(peek_token(), {"fun"});
-                synchronize();
+                sync_to();
                 break;
         }
     }
 
-    return {std::move(functions), successful};
+    return {std::move(functions), !diagnostic_manager->has_errors()};
 }
 
-bool Parser::expect_token(const TokenType expected_type, const std::string& context) {
-    if (peek_token().get_type() == expected_type) {
-        advance_token();
-        return true;
-    }
-
-    const std::string context_msg = context.empty() ? "" : " in " + context;
-    emit_expected_found_error(type_to_string(expected_type) + context_msg, peek_token());
-    return false;
-}
-
-bool Parser::match_token(const TokenType type) {
-    if (peek_token().get_type() == type) {
-        advance_token();
-        return true;
-    }
-    return false;
-}
-
-void Parser::skip_until_recovery_point() {
-    while (!at_eof()) {
-        switch (peek_token().get_type()) {
-            case TokenType::tok_semicolon:
-            case TokenType::tok_close_brace:
-            case TokenType::tok_fun: return;
-            default: advance_token(); break;
-        }
-    }
-}
-
-bool Parser::is_statement_start() const {
-    switch (peek_token().get_type()) {
-        case TokenType::tok_return:
-        case TokenType::tok_if:
-        case TokenType::tok_while:
-        case TokenType::tok_for:
-        case TokenType::tok_let:
-        case TokenType::tok_identifier:
-        case TokenType::tok_open_brace: return true;
-        default: return false;
-    }
-}
-
-bool Parser::is_expression_start() const {
-    switch (peek_token().get_type()) {
-        case TokenType::tok_identifier:
-        case TokenType::tok_int_literal:
-        case TokenType::tok_float_literal:
-        case TokenType::tok_str_literal:
-        case TokenType::tok_open_paren: return true;
-        default: return false;
-    }
-}
 } // namespace phi

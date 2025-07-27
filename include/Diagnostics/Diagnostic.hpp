@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "SrcManager/SrcLocation.hpp"
+#include "SrcManager/SrcSpan.hpp"
 
 namespace phi {
 
@@ -36,12 +36,12 @@ struct DiagnosticStyle {
 
 /// Represents a label pointing to a specific source location with a message
 struct DiagnosticLabel {
-    SourceSpan span;
+    SrcSpan span;
     std::string message;
     DiagnosticStyle style;
     bool is_primary; // Primary labels get special formatting (arrows vs underlines)
 
-    DiagnosticLabel(SourceSpan span,
+    DiagnosticLabel(SrcSpan span,
                     std::string message,
                     const DiagnosticStyle style = DiagnosticStyle(),
                     const bool is_primary = false)
@@ -53,11 +53,11 @@ struct DiagnosticLabel {
 
 /// Represents a code suggestion for fixing an issue
 struct DiagnosticSuggestion {
-    SourceSpan span;
+    SrcSpan span;
     std::string replacement_text;
     std::string description;
 
-    DiagnosticSuggestion(SourceSpan span, std::string replacement, std::string desc)
+    DiagnosticSuggestion(SrcSpan span, std::string replacement, std::string desc)
         : span(std::move(span)),
           replacement_text(std::move(replacement)),
           description(std::move(desc)) {}
@@ -72,13 +72,13 @@ public:
           message(std::move(message)) {}
 
     /// Add a primary label (gets arrow pointer and special formatting)
-    Diagnostic& with_primary_label(const SourceSpan& span, std::string message) {
+    Diagnostic& with_primary_label(const SrcSpan& span, std::string message) {
         labels.emplace_back(span, std::move(message), get_style_for_level(level), true);
         return *this;
     }
 
     /// Add a secondary label (gets underline formatting)
-    Diagnostic& with_secondary_label(const SourceSpan& span,
+    Diagnostic& with_secondary_label(const SrcSpan& span,
                                      std::string message,
                                      DiagnosticStyle style = DiagnosticStyle()) {
         if (style.color == DiagnosticStyle::Color::Default) {
@@ -102,7 +102,7 @@ public:
 
     /// Add a code suggestion
     Diagnostic&
-    with_suggestion(const SourceSpan& span, std::string replacement, std::string description) {
+    with_suggestion(const SrcSpan& span, std::string replacement, std::string description) {
         suggestions.emplace_back(span, std::move(replacement), std::move(description));
         return *this;
     }
@@ -133,7 +133,7 @@ public:
     }
 
     /// Get the primary span (first primary label's span, or first label's span)
-    [[nodiscard]] std::optional<SourceSpan> primary_span() const {
+    [[nodiscard]] std::optional<SrcSpan> primary_span() const {
         for (const auto& label : labels) {
             if (label.is_primary) {
                 return label.span;
