@@ -64,7 +64,7 @@ bool Sema::visit(RangeLiteral& expr) {
     }
 
     // Set the range type to the integer type of its bounds
-    expr.set_type(start_type);
+    expr.set_type(Type(Type::Primitive::range));
     return true;
 }
 
