@@ -52,7 +52,7 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
         is_function_body_block = true;
 
         // resolve the block (function body shares scope with parameters)
-        bool success = fun_decl->get_block()->accept(*this);
+        bool success = fun_decl->get_block().accept(*this);
         if (!success) {
             std::println("while resolving function {}", cur_fun->get_id());
             std::println("failed to resolve block");

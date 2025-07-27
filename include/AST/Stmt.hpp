@@ -45,7 +45,8 @@ public:
     ReturnStmt(SrcLocation, std::unique_ptr<Expr>);
     ~ReturnStmt() override;
 
-    [[nodiscard]] Expr* get_expr() const;
+    [[nodiscard]] bool has_expr() const { return expr != nullptr; }
+    [[nodiscard]] Expr& get_expr() const { return *expr; }
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
@@ -56,32 +57,30 @@ private:
 
 class IfStmt final : public Stmt {
 public:
-    friend class Sema;
     IfStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>, std::unique_ptr<Block>);
     ~IfStmt() override;
 
-    [[nodiscard]] Expr& get_condition() const;
-    [[nodiscard]] Block& get_true_body() const;
-    [[nodiscard]] Block& get_false_body() const;
+    [[nodiscard]] Expr& get_condition() const { return *condition; }
+    [[nodiscard]] Block& get_then() const { return *then_block; }
+    [[nodiscard]] Block& get_else() const { return *else_block; }
+    [[nodiscard]] bool has_else() const { return else_block != nullptr; }
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> condition;
-    std::unique_ptr<Block> true_body;
-    std::unique_ptr<Block> false_body;
+    std::unique_ptr<Block> then_block;
+    std::unique_ptr<Block> else_block;
 };
 
 class WhileStmt final : public Stmt {
 public:
-    friend class Sema;
-
     WhileStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>);
     ~WhileStmt() override;
 
-    [[nodiscard]] Expr& get_condition() const;
-    [[nodiscard]] Block& get_body() const;
+    [[nodiscard]] Expr& get_condition() const { return *condition; }
+    [[nodiscard]] Block& get_body() const { return *body; };
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
@@ -96,9 +95,9 @@ public:
     ForStmt(SrcLocation, std::string, std::unique_ptr<Expr>, std::unique_ptr<Block>);
     ~ForStmt() override;
 
-    [[nodiscard]] std::string& get_loop_var();
-    [[nodiscard]] Expr& get_range() const;
-    [[nodiscard]] Block& get_body() const;
+    [[nodiscard]] std::string& get_loop_var() { return loop_var; }
+    [[nodiscard]] Expr& get_range() const { return *range; }
+    [[nodiscard]] Block& get_body() const { return *body; }
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
@@ -111,9 +110,10 @@ private:
 
 class LetStmt final : public Stmt {
 public:
-    friend class Sema;
     LetStmt(SrcLocation, std::unique_ptr<VarDecl>);
     ~LetStmt() override;
+
+    [[nodiscard]] VarDecl& get_var_decl() const { return *var_decl; }
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }

@@ -1,6 +1,7 @@
 #include "Sema/Sema.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <print>
 
 // ASTVisitor implementation - Expression visitors
@@ -35,15 +36,15 @@ bool Sema::visit(FunCallExpr& expr) { return resolve_function_call(&expr); }
 
 bool Sema::visit(RangeLiteral& expr) {
     // Resolve start and end expressions
-    if (!expr.get_start()->accept(*this)) {
+    if (!expr.get_start().accept(*this)) {
         return false;
     }
-    if (!expr.get_end()->accept(*this)) {
+    if (!expr.get_end().accept(*this)) {
         return false;
     }
 
-    const Type start_type = expr.get_start()->get_type();
-    const Type end_type = expr.get_end()->get_type();
+    const Type start_type = expr.get_start().get_type();
+    const Type end_type = expr.get_end().get_type();
 
     // Both start and end must be integer types
     if (!start_type.is_primitive() || !is_integer_type(start_type)) {
@@ -69,15 +70,15 @@ bool Sema::visit(RangeLiteral& expr) {
 
 bool Sema::visit(BinaryOp& expr) {
     // Resolve left and right operands first
-    if (!expr.get_lhs()->accept(*this)) {
+    if (!expr.get_lhs().accept(*this)) {
         return false;
     }
-    if (!expr.get_rhs()->accept(*this)) {
+    if (!expr.get_rhs().accept(*this)) {
         return false;
     }
 
-    const Type lhs_type = expr.get_lhs()->get_type();
-    const Type rhs_type = expr.get_rhs()->get_type();
+    const Type lhs_type = expr.get_lhs().get_type();
+    const Type rhs_type = expr.get_rhs().get_type();
     const TokenType op = expr.get_op();
 
     // Check if both operands are primitive types
@@ -200,11 +201,11 @@ Type Sema::promote_numeric_types(const Type& lhs, const Type& rhs) {
 
 bool Sema::visit(UnaryOp& expr) {
     // Resolve operand first
-    if (!expr.get_operand()->accept(*this)) {
+    if (!expr.get_operand().accept(*this)) {
         return false;
     }
 
-    const Type operand_type = expr.get_operand()->get_type();
+    const Type operand_type = expr.get_operand().get_type();
     const TokenType op = expr.get_op();
 
     // Check if operand is primitive type
@@ -273,7 +274,7 @@ bool Sema::resolve_decl_ref(DeclRefExpr* declref, const bool function_call) {
 }
 
 bool Sema::resolve_function_call(FunCallExpr* call) {
-    const auto declref = dynamic_cast<DeclRefExpr*>(call->get_callee());
+    const auto declref = dynamic_cast<DeclRefExpr*>(&call->get_callee());
     bool success = resolve_decl_ref(declref, true);
 
     if (!success) {
@@ -293,7 +294,7 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
     }
 
     // Resolve the arguments and check param types are compatible
-    for (int i = 0; i < static_cast<int>(call->get_args().size()); i++) {
+    for (size_t i = 0; i < call->get_args().size(); i++) {
         // we first try to get the argument from the call
         Expr* arg = call->get_args()[i].get();
         if (const bool success_expr = arg->accept(*this); !success_expr) {
