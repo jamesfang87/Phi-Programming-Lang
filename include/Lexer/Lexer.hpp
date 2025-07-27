@@ -2,10 +2,13 @@
  * @file Lexer.hpp
  * @brief Lexical analyzer (scanner) for the Phi programming language
  *
- * This file contains the Lexer class which performs lexical analysis on Phi
- * source code, converting a stream of characters into a sequence of tokens.
- * The scanner handles all lexical elements including keywords, operators,
- * literals, identifiers, comments, and whitespace.
+ * Contains the Lexer class responsible for converting Phi source code
+ * from character streams into tokens. Handles lexical elements including:
+ * - Keywords and identifiers
+ * - Operators and punctuation
+ * - String/character literals with escape sequences
+ * - Numeric literals (integers and floats)
+ * - Comments and whitespace
  */
 #pragma once
 
@@ -13,28 +16,26 @@
 #include <vector>
 
 #include "Lexer/Token.hpp"
+
 /**
  * @brief Lexical analyzer for the Phi programming language
  *
- * The Lexer class takes a string of source code and converts it into a
- * sequence of tokens. It handles all aspects of lexical analysis including:
- * - Keyword recognition
- * - Operator tokenization
- * - String and character literal parsing with escape sequences
- * - Numeric literal parsing (integers and floats)
- * - Identifier recognition
- * - Comment skipping (both line and block comments)
- * - Error reporting with source location information
+ * Converts source code into tokens while maintaining precise source location
+ * information. Handles all lexical analysis aspects including:
+ * - Comprehensive token recognition
+ * - Escape sequence processing in literals
+ * - Numeric literal parsing with validation
+ * - Comment skipping (both line and block styles)
+ * - Detailed error reporting with source positions
  *
- * The scanner maintains source location information (line and column numbers)
- * for each token, which is essential for error reporting and debugging.
+ * Maintains line/column tracking throughout scanning for accurate error locations.
  */
 class Lexer {
 public:
     /**
-     * @brief Constructs a new Lexer for the given source code
-     * @param src The source code string to scan
-     * @param path The file path of the source (used for error reporting)
+     * @brief Constructs a Lexer for given source code
+     * @param src Source code string to scan
+     * @param path File path for error reporting
      */
     Lexer(std::string src, std::string path)
         : src(std::move(src)),
@@ -46,99 +47,95 @@ public:
     }
 
     /**
-     * @brief Scans the source code and produces a sequence of tokens
+     * @brief Scans source code to generate tokens
      *
-     * This is the main entry point for lexical analysis. It processes the
-     * entire source string character by character, producing tokens and
-     * handling comments and whitespace appropriately.
+     * Processes the entire source string character-by-character to produce tokens.
+     * Handles comments and whitespace appropriately during scanning.
      *
-     * @return A pair containing:
-     *         - A vector of all tokens found in the source
-     *         - A boolean indicating whether scanning was successful (no
-     * errors)
+     * @return Pair containing:
+     *         - Vector of tokens from source
+     *         - Boolean indicating scanning success (false if errors occurred)
      */
     std::pair<std::vector<Token>, bool> scan();
 
     /**
-     * @brief Gets the source code being scanned
-     * @return A copy of the source code string
+     * @brief Retrieves source code being scanned
+     * @return Copy of source code string
      */
     [[nodiscard]] std::string get_src() const { return src; }
 
     /**
-     * @brief Gets the file path of the source being scanned
-     * @return A copy of the file path string
+     * @brief Retrieves source file path
+     * @return Copy of file path string
      */
     [[nodiscard]] std::string get_path() const { return path; }
 
 private:
-    std::string src;  ///< The source code being scanned
+    std::string src;  ///< Source code being scanned
     std::string path; ///< File path for error reporting
 
     int line_num = 1;                  ///< Current line number (1-indexed)
     std::string::iterator cur_char;    ///< Current character position
     std::string::iterator cur_lexeme;  ///< Start of current lexeme
     std::string::iterator cur_line;    ///< Start of current line
-    std::string::iterator lexeme_line; ///< Start current lexeme's line
+    std::string::iterator lexeme_line; ///< Start of current lexeme's line
 
-    bool inside_str = false;
-
-    bool successful = true; ///< Whether scanning completed without errors
+    bool inside_str = false; ///< Inside string literal state
+    bool successful = true;  ///< Scanning success flag
 
     // MAIN SCANNING LOGIC
 
     /**
-     * @brief Scans a single token from the current position
-     * @return The next token in the source
+     * @brief Scans next token from current position
+     * @return Next token in source stream
      */
     Token scan_token();
 
     // TOKEN PARSING METHODS
 
     /**
-     * @brief Parses a numeric literal (integer or floating point)
-     * @return A token representing the parsed number
+     * @brief Parses numeric literal (integer/float)
+     * @return Token representing parsed number
      */
     Token parse_number();
 
     /**
-     * @brief Parses a string literal with escape sequence handling
-     * @return A token representing the parsed string
+     * @brief Parses string literal with escape sequences
+     * @return Token representing parsed string
      */
     Token parse_string();
 
     /**
-     * @brief Parses a character literal with escape sequence handling
-     * @return A token representing the parsed character
+     * @brief Parses character literal with escape sequences
+     * @return Token representing parsed character
      */
     Token parse_char();
 
     /**
-     * @brief Parses an identifier or keyword
-     * @return A token representing either an identifier or recognized keyword
+     * @brief Parses identifier/keyword
+     * @return Token for identifier or recognized keyword
      */
     Token parse_identifier();
 
     // UTILITY FUNCTIONS
 
     /**
-     * @brief Skips over comment text (both line and block comments)
+     * @brief Skips comment content
      *
-     * This method handles both single-line comments and multi-line
-     * block comments. It properly tracks line numbers when
-     * skipping over newlines within comments.
+     * Handles both single-line and block comments.
+     * Updates line tracking when encountering newlines in comments.
      */
     void skip_comment();
 
     /**
-     * @brief Peeks at the current character without advancing
-     * @return The current character, or '\0' if at end of file
+     * @brief Peeks current character without advancing
+     * @return Current character, or '\0' at EOF
      */
     [[nodiscard]] char peek_char() const { return reached_eof() ? '\0' : *cur_char; }
 
     /**
-     * @brief Peeks at the next character without advancing
-     * @return The next character, or '\0' if at or past end of file
+     * @brief Peeks next character without advancing
+     * @return Next character, or '\0' at/past EOF
      */
     [[nodiscard]] char peek_next() const {
         if (reached_eof() || cur_char + 1 >= src.end()) {
@@ -148,8 +145,8 @@ private:
     }
 
     /**
-     * @brief Advances to the next character and returns the current one
-     * @return The character that was advanced past, or '\0' if at EOF
+     * @brief Advances to next character
+     * @return Character advanced past, or '\0' at EOF
      */
     char advance_char() {
         if (reached_eof()) return '\0';
@@ -157,10 +154,9 @@ private:
     }
 
     /**
-     * @brief Conditionally advances if the current character matches expected
-     * @param next The character to match against
-     * @return true if the character matched and scanner advanced, false
-     * otherwise
+     * @brief Conditionally advances if current character matches
+     * @param next Character to match
+     * @return true if matched and advanced, false otherwise
      */
     bool match_next(const char next) {
         if (reached_eof() || peek_char() != next) {
@@ -170,6 +166,11 @@ private:
         return true;
     }
 
+    /**
+     * @brief Peeks next n characters
+     * @param n Number of characters to peek
+     * @return String of next n characters (empty if insufficient)
+     */
     std::string peek_next_n(const int n) const {
         auto temp = cur_char;
         for (int i = 0; i < n; ++i) {
@@ -181,6 +182,11 @@ private:
         return std::string{cur_char, temp};
     }
 
+    /**
+     * @brief Matches specific character sequence
+     * @param next Sequence to match
+     * @return true if sequence matched and advanced, false otherwise
+     */
     bool match_next_n(const std::string_view next) {
         auto temp = cur_char;
         for (const char& c : next) {
@@ -194,15 +200,15 @@ private:
     }
 
     /**
-     * @brief Checks if the scanner has reached the end of the source
-     * @return true if at end of file, false otherwise
+     * @brief Checks for end of source
+     * @return true at EOF, false otherwise
      */
     [[nodiscard]] bool reached_eof() const { return cur_char >= src.end(); }
 
     /**
-     * @brief Creates a token from the current lexeme
-     * @param type The type of token to create
-     * @return A new Token with the specified type and current lexeme
+     * @brief Creates token from current lexeme
+     * @param type Token type to create
+     * @return Token with specified type and current lexeme
      */
     Token make_token(TokenType type) const {
         int start_col = static_cast<int>(cur_lexeme - lexeme_line) + 1;
@@ -219,30 +225,36 @@ private:
     }
 
     /**
-     * @brief Parses an escape sequence within a string or character literal
-     * @return The actual character value represented by the escape sequence
+     * @brief Parses escape sequence in literals
+     * @return Actual character value of escape sequence
      */
     char parse_escape_sequence();
 
     /**
-     * @brief Parses a hexadecimal escape sequence (\xNN)
-     * @return The character value represented by the hex escape
+     * @brief Parses hexadecimal escape sequence (\xNN)
+     * @return Character value from hex digits
      */
     char parse_hex_escape();
 
     // ERROR HANDLING
 
     /**
-     * @brief Reports a scanning error with formatted output
+     * @brief Reports scanning error with source context
      *
-     * This method handles error reporting by printing a formatted error message
-     * that includes the source location, error description, and a visual
-     * indicator of where the error occurred in the source code.
+     * Generates formatted error message showing:
+     * - Source location (line/column)
+     * - Error description
+     * - Visual indicator of error position
      *
-     * @param message The main error message describing what went wrong
-     * @param expected_message Additional context about what was expected
+     * @param message Primary error description
+     * @param expected_message Context about expected input
      */
     void throw_lexer_error(std::string_view message, std::string_view expected_message);
 
+    /**
+     * @brief Recovers scanner state after error
+     *
+     * Advances to next safe state (end of line/token) after reporting error.
+     */
     void resync_scanner();
 };
