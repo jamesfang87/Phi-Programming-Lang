@@ -32,7 +32,6 @@ public:
     bool visit(UnaryOp& expr) override;
 
     // ASTVisitor interface - Statement visitors
-    bool visit(Block& block) override;
     bool visit(ReturnStmt& stmt) override;
     bool visit(IfStmt& stmt) override;
     bool visit(WhileStmt& stmt) override;
@@ -46,10 +45,11 @@ private:
     std::vector<std::unordered_map<std::string, Decl*>> active_scopes;
 
     FunDecl* cur_fun = nullptr;
-    bool is_function_body_block = false; // Flag to indicate if the next block is a function body
 
     bool resolve_decl_ref(DeclRefExpr* declref, bool function_call);
     bool resolve_function_call(FunCallExpr* call);
+
+    bool resolve_block(Block& block, bool scope_created);
 
     static bool resolve_fun_decl(FunDecl* fun);
     static bool resolve_type(std::optional<Type> type);
