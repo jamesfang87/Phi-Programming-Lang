@@ -61,9 +61,7 @@ bool Sema::visit(IfStmt& stmt) {
 
     // now we resolve the bodies
     if (!resolve_block(stmt.get_then())) return false;
-    if (stmt.has_else()) {
-        if (!resolve_block(stmt.get_else())) return false;
-    }
+    if (stmt.has_else() && !resolve_block(stmt.get_else())) return false;
 
     return true;
 }

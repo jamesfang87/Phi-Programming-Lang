@@ -8,7 +8,7 @@
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
-#include "SrcLocation.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 class Decl {
 public:

@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "SrcLocation.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
@@ -17,26 +17,6 @@ enum class DiagnosticLevel : uint8_t {
     Warning, // Yellow, compilation continues
     Note,    // Blue, additional information
     Help     // Green, suggestions for fixes
-};
-
-/// Represents a span of source code with start and end positions
-struct SourceSpan {
-    SrcLocation start;
-    SrcLocation end;
-
-    SourceSpan(SrcLocation start, SrcLocation end)
-        : start(std::move(start)),
-          end(std::move(end)) {}
-
-    explicit SourceSpan(const SrcLocation& single_pos)
-        : start(single_pos),
-          end(single_pos) {}
-
-    /// Returns true if this span covers multiple lines
-    [[nodiscard]] bool is_multiline() const { return start.line != end.line; }
-
-    /// Returns the number of lines this span covers
-    [[nodiscard]] int line_count() const { return end.line - start.line + 1; }
 };
 
 /// Represents styling information for diagnostic output
@@ -88,12 +68,12 @@ class Diagnostic {
 public:
     /// Create a new diagnostic with the specified level and message
     Diagnostic(const DiagnosticLevel level, std::string message)
-        : level_(level),
-          message_(std::move(message)) {}
+        : level(level),
+          message(std::move(message)) {}
 
     /// Add a primary label (gets arrow pointer and special formatting)
     Diagnostic& with_primary_label(const SourceSpan& span, std::string message) {
-        labels_.emplace_back(span, std::move(message), get_style_for_level(level_), true);
+        labels.emplace_back(span, std::move(message), get_style_for_level(level), true);
         return *this;
     }
 
@@ -104,61 +84,63 @@ public:
         if (style.color == DiagnosticStyle::Color::Default) {
             style = get_secondary_style();
         }
-        labels_.emplace_back(span, std::move(message), style, false);
+        labels.emplace_back(span, std::move(message), style, false);
         return *this;
     }
 
     /// Add a note (additional information, shown after the main diagnostic)
     Diagnostic& with_note(std::string note) {
-        notes_.emplace_back(std::move(note));
+        notes.emplace_back(std::move(note));
         return *this;
     }
 
     /// Add a help message (suggestions, shown after notes)
     Diagnostic& with_help(std::string help) {
-        help_messages_.emplace_back(std::move(help));
+        help_messages.emplace_back(std::move(help));
         return *this;
     }
 
     /// Add a code suggestion
     Diagnostic&
     with_suggestion(const SourceSpan& span, std::string replacement, std::string description) {
-        suggestions_.emplace_back(span, std::move(replacement), std::move(description));
+        suggestions.emplace_back(span, std::move(replacement), std::move(description));
         return *this;
     }
 
     /// Set an error code (e.g., "E0308" like Rust)
     Diagnostic& with_code(std::string code) {
-        code_ = std::move(code);
+        this->code = std::move(code);
         return *this;
     }
 
     // Getters
-    [[nodiscard]] DiagnosticLevel level() const { return level_; }
-    [[nodiscard]] const std::string& message() const { return message_; }
-    [[nodiscard]] const std::vector<DiagnosticLabel>& labels() const { return labels_; }
-    [[nodiscard]] const std::vector<std::string>& notes() const { return notes_; }
-    [[nodiscard]] const std::vector<std::string>& help_messages() const { return help_messages_; }
-    [[nodiscard]] const std::vector<DiagnosticSuggestion>& suggestions() const {
-        return suggestions_;
+    [[nodiscard]] DiagnosticLevel get_level() const { return level; }
+    [[nodiscard]] const std::string& get_message() const { return message; }
+    [[nodiscard]] const std::vector<DiagnosticLabel>& get_labels() const { return labels; }
+    [[nodiscard]] const std::vector<std::string>& get_notes() const { return notes; }
+    [[nodiscard]] const std::vector<std::string>& get_help_messages() const {
+        return help_messages;
     }
-    [[nodiscard]] const std::optional<std::string>& code() const { return code_; }
+    [[nodiscard]] const std::vector<DiagnosticSuggestion>& get_suggestions() const {
+        return suggestions;
+    }
+    [[nodiscard]] const std::optional<std::string>& get_code() const { return code; }
 
     /// Check if this diagnostic has any primary labels
     [[nodiscard]] bool has_primary_labels() const {
-        return std::ranges::any_of(labels_,
+        return std::ranges::any_of(labels,
                                    [](const DiagnosticLabel& label) { return label.is_primary; });
     }
 
     /// Get the primary span (first primary label's span, or first label's span)
     [[nodiscard]] std::optional<SourceSpan> primary_span() const {
-        for (const auto& label : labels_) {
+        for (const auto& label : labels) {
             if (label.is_primary) {
                 return label.span;
             }
         }
-        if (!labels_.empty()) {
-            return labels_[0].span;
+        if (!labels.empty()) {
+            return labels[0].span;
         }
         return std::nullopt;
     }
@@ -181,13 +163,13 @@ public:
     }
 
 private:
-    DiagnosticLevel level_;
-    std::string message_;
-    std::vector<DiagnosticLabel> labels_;
-    std::vector<std::string> notes_;
-    std::vector<std::string> help_messages_;
-    std::vector<DiagnosticSuggestion> suggestions_;
-    std::optional<std::string> code_;
+    DiagnosticLevel level;
+    std::string message;
+    std::vector<DiagnosticLabel> labels;
+    std::vector<std::string> notes;
+    std::vector<std::string> help_messages;
+    std::vector<DiagnosticSuggestion> suggestions;
+    std::optional<std::string> code;
 
     /// Get the default style for a diagnostic level
     static DiagnosticStyle get_style_for_level(const DiagnosticLevel level) {
