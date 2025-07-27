@@ -34,7 +34,6 @@ public:
     [[nodiscard]] std::vector<std::unique_ptr<Stmt>>& get_stmts() { return stmts; }
 
     void info_dump(int level) const;
-    bool accept(ASTVisitor& visitor) { return visitor.visit(*this); }
 
 private:
     std::vector<std::unique_ptr<Stmt>> stmts;
@@ -92,10 +91,10 @@ private:
 
 class ForStmt final : public Stmt {
 public:
-    ForStmt(SrcLocation, std::string, std::unique_ptr<Expr>, std::unique_ptr<Block>);
+    ForStmt(SrcLocation, std::unique_ptr<VarDecl>, std::unique_ptr<Expr>, std::unique_ptr<Block>);
     ~ForStmt() override;
 
-    [[nodiscard]] std::string& get_loop_var() { return loop_var; }
+    [[nodiscard]] VarDecl& get_loop_var() { return *loop_var; }
     [[nodiscard]] Expr& get_range() const { return *range; }
     [[nodiscard]] Block& get_body() const { return *body; }
 
@@ -103,7 +102,7 @@ public:
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
 
 private:
-    std::string loop_var;
+    std::unique_ptr<VarDecl> loop_var;
     std::unique_ptr<Expr> range;
     std::unique_ptr<Block> body;
 };
