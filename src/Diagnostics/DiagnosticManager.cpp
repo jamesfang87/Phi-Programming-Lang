@@ -5,57 +5,7 @@
 
 namespace phi {
 
-void SourceManager::add_source_file(const std::string& path, const std::string_view content) {
-    std::vector<std::string_view> lines;
-    auto it = content.begin();
-    while (it < content.end()) {
-        auto line_start = it;
-        while (it < content.end() && *it != '\n') {
-            it++;
-        }
-        lines.emplace_back(line_start, it);
-        if (it < content.end()) {
-            it++; // skip '\n'
-        }
-    }
-    source_files_[path] = std::move(lines);
-}
-
-std::optional<std::string_view> SourceManager::get_line(const std::string& path,
-                                                        const int line_num) const {
-    const auto file_it = source_files_.find(path);
-    if (file_it == source_files_.end()) {
-        return std::nullopt;
-    }
-
-    const auto& lines = file_it->second;
-    if (line_num < 1 || line_num > static_cast<int>(lines.size())) {
-        return std::nullopt;
-    }
-
-    return lines[line_num - 1];
-}
-
-std::vector<std::string_view>
-SourceManager::get_lines(const std::string& path, const int start_line, const int end_line) const {
-    std::vector<std::string_view> result;
-    for (int i = start_line; i <= end_line; ++i) {
-        if (auto line = get_line(path, i)) {
-            result.push_back(*line);
-        }
-    }
-    return result;
-}
-
-int SourceManager::get_line_count(const std::string& path) const {
-    const auto file_it = source_files_.find(path);
-    if (file_it == source_files_.end()) {
-        return 0;
-    }
-    return static_cast<int>(file_it->second.size());
-}
-
-DiagnosticManager::DiagnosticManager(std::shared_ptr<SourceManager> source_manager,
+DiagnosticManager::DiagnosticManager(std::shared_ptr<SrcManager> source_manager,
                                      DiagnosticConfig config)
     : source_manager_(std::move(source_manager)),
       config_(std::move(config)) {}
@@ -64,9 +14,9 @@ void DiagnosticManager::emit(const Diagnostic& diagnostic, std::ostream& out) co
     render_diagnostic(diagnostic, out);
 
     // Track error count for compilation decisions
-    if (diagnostic.level() == DiagnosticLevel::Error) {
+    if (diagnostic.get_level() == DiagnosticLevel::Error) {
         error_count_++;
-    } else if (diagnostic.level() == DiagnosticLevel::Warning) {
+    } else if (diagnostic.get_level() == DiagnosticLevel::Warning) {
         warning_count_++;
     }
 }
@@ -84,7 +34,7 @@ void DiagnosticManager::reset_counts() const {
 
 void DiagnosticManager::set_config(const DiagnosticConfig& config) { config_ = config; }
 
-std::shared_ptr<SourceManager> DiagnosticManager::source_manager() const { return source_manager_; }
+std::shared_ptr<SrcManager> DiagnosticManager::source_manager() const { return source_manager_; }
 
 void DiagnosticManager::emit_all(const std::vector<Diagnostic>& diagnostics,
                                  std::ostream& out) const {
@@ -99,39 +49,39 @@ void DiagnosticManager::render_diagnostic(const Diagnostic& diagnostic, std::ost
     render_diagnostic_header(diagnostic, out);
 
     // 2. Render source code snippets with labels
-    if (config_.show_source_context && !diagnostic.labels().empty()) {
+    if (config_.show_source_context && !diagnostic.get_labels().empty()) {
         render_source_snippets(diagnostic, out);
     }
 
     // 3. Render notes
-    for (const auto& note : diagnostic.notes()) {
+    for (const auto& note : diagnostic.get_notes()) {
         render_note(note, out);
     }
 
     // 4. Render help messages
-    for (const auto& help : diagnostic.help_messages()) {
+    for (const auto& help : diagnostic.get_help_messages()) {
         render_help(help, out);
     }
 
     // 5. Render suggestions
-    for (const auto& suggestion : diagnostic.suggestions()) {
+    for (const auto& suggestion : diagnostic.get_suggestions()) {
         render_suggestion(suggestion, out);
     }
 }
 
 void DiagnosticManager::render_diagnostic_header(const Diagnostic& diagnostic,
                                                  std::ostream& out) const {
-    const auto level_str = diagnostic_level_to_string(diagnostic.level());
-    const auto style = get_style_for_level(diagnostic.level());
+    const auto level_str = diagnostic_level_to_string(diagnostic.get_level());
+    const auto style = get_style_for_level(diagnostic.get_level());
 
     // Format: "error[E0308]: message"
     out << format_with_style(level_str, style);
 
-    if (diagnostic.code()) {
-        out << "[" << *diagnostic.code() << "]";
+    if (diagnostic.get_code()) {
+        out << "[" << *diagnostic.get_code() << "]";
     }
 
-    out << ": " << diagnostic.message() << "\n";
+    out << ": " << diagnostic.get_message() << "\n";
 
     // Show file location if we have a primary span
     if (const auto span = diagnostic.primary_span()) {
@@ -144,7 +94,7 @@ void DiagnosticManager::render_source_snippets(const Diagnostic& diagnostic,
                                                std::ostream& out) const {
     // Group labels by file and line ranges
 
-    for (auto grouped_labels = group_labels_by_location(diagnostic.labels());
+    for (auto grouped_labels = group_labels_by_location(diagnostic.get_labels());
          const auto& [file_path, file_labels] : grouped_labels) {
         render_file_snippet(file_path, file_labels, out);
     }

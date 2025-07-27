@@ -8,7 +8,7 @@
 #include "AST/Decl.hpp"
 
 std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
-    // Create global scope with RAII
+    // create global scope with RAII
     SymbolTable::ScopeGuard global_scope(symbol_table);
 
     // TODO: first resolve structs so that functions
@@ -35,7 +35,7 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
     for (auto& fun_decl : ast) {
         cur_fun = fun_decl.get();
 
-        // Create function scope with RAII - parameters and body share this scope
+        // create function scope with RAII - parameters and body share this scope
         SymbolTable::ScopeGuard function_scope(symbol_table);
 
         // insert all parameters into the function scope

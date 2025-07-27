@@ -13,7 +13,7 @@
 #include <string>
 
 #include "Lexer/TokenType.hpp"
-#include "SrcLocation.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 /**
  * @brief Represents a single token in the Phi programming language

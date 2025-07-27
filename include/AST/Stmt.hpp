@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "AST/ASTVisitor.hpp"
-#include "SrcLocation.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 class Decl;
 class FunDecl;
