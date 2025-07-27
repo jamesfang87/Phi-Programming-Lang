@@ -6,15 +6,26 @@
 
 namespace phi {
 
+/**
+ * Constructs a diagnostic manager with source manager and configuration.
+ */
 DiagnosticManager::DiagnosticManager(std::shared_ptr<SrcManager> source_manager,
                                      DiagnosticConfig config)
     : source_manager_(std::move(source_manager)),
       config_(std::move(config)) {}
 
+/**
+ * Emits a diagnostic to the output stream.
+ *
+ * @param diagnostic Diagnostic to emit
+ * @param out Output stream
+ *
+ * Also tracks error and warning counts for compilation status.
+ */
 void DiagnosticManager::emit(const Diagnostic& diagnostic, std::ostream& out) const {
     render_diagnostic(diagnostic, out);
 
-    // Track error count for compilation decisions
+    // Update error/warning counters
     if (diagnostic.get_level() == DiagnosticLevel::Error) {
         error_count_++;
     } else if (diagnostic.get_level() == DiagnosticLevel::Warning) {
@@ -22,34 +33,19 @@ void DiagnosticManager::emit(const Diagnostic& diagnostic, std::ostream& out) co
     }
 }
 
-int DiagnosticManager::error_count() const { return error_count_; }
-
-int DiagnosticManager::warning_count() const { return warning_count_; }
-
-bool DiagnosticManager::has_errors() const { return error_count_ > 0; }
-
-void DiagnosticManager::reset_counts() const {
-    error_count_ = 0;
-    warning_count_ = 0;
-}
-
-void DiagnosticManager::set_config(const DiagnosticConfig& config) { config_ = config; }
-
-std::shared_ptr<SrcManager> DiagnosticManager::source_manager() const { return source_manager_; }
-
-void DiagnosticManager::emit_all(const std::vector<Diagnostic>& diagnostics,
-                                 std::ostream& out) const {
-    for (const auto& diag : diagnostics) {
-        emit(diag, out);
-        out << "\n"; // Add spacing between diagnostics
-    }
-}
-
+/**
+ * Renders a complete diagnostic with all components:
+ * 1. Header with error code and message
+ * 2. Source context with labels
+ * 3. Additional notes
+ * 4. Help messages
+ * 5. Code suggestions
+ */
 void DiagnosticManager::render_diagnostic(const Diagnostic& diagnostic, std::ostream& out) const {
-    // 1. Render the main diagnostic header
+    // 1. Render diagnostic header
     render_diagnostic_header(diagnostic, out);
 
-    // 2. Render source code snippets with labels
+    // 2. Render source snippets with labels
     if (config_.show_source_context && !diagnostic.get_labels().empty()) {
         render_source_snippets(diagnostic, out);
     }
@@ -70,6 +66,9 @@ void DiagnosticManager::render_diagnostic(const Diagnostic& diagnostic, std::ost
     }
 }
 
+/**
+ * Renders the diagnostic header with level, code, and message.
+ */
 void DiagnosticManager::render_diagnostic_header(const Diagnostic& diagnostic,
                                                  std::ostream& out) const {
     const auto level_str = diagnostic_level_to_string(diagnostic.get_level());
@@ -84,29 +83,34 @@ void DiagnosticManager::render_diagnostic_header(const Diagnostic& diagnostic,
 
     out << ": " << diagnostic.get_message() << "\n";
 
-    // Show file location if we have a primary span
+    // Show file location for primary span
     if (const auto span = diagnostic.primary_span()) {
         out << " --> " << span->start.path << ":" << span->start.line << ":" << span->start.col
             << "\n";
     }
 }
 
+/**
+ * Renders source code snippets with all labels grouped by file.
+ */
 void DiagnosticManager::render_source_snippets(const Diagnostic& diagnostic,
                                                std::ostream& out) const {
-    // Group labels by file and line ranges
-
+    // Group labels by file
     for (auto grouped_labels = group_labels_by_location(diagnostic.get_labels());
          const auto& [file_path, file_labels] : grouped_labels) {
         render_file_snippet(file_path, file_labels, out);
     }
 }
 
+/**
+ * Renders a file snippet with context lines and labels.
+ */
 void DiagnosticManager::render_file_snippet(const std::string& file_path,
                                             const std::vector<const DiagnosticLabel*>& labels,
                                             std::ostream& out) const {
     if (labels.empty()) return;
 
-    // Find the line range to display
+    // Calculate line range to display with context
     int min_line = labels[0]->span.start.line;
     int max_line = labels[0]->span.end.line;
 
@@ -115,18 +119,17 @@ void DiagnosticManager::render_file_snippet(const std::string& file_path,
         max_line = std::max(max_line, label->span.end.line);
     }
 
-    // Add context lines
     const int start_line = std::max(1, min_line - config_.context_lines);
     const int end_line =
         std::min(source_manager_->get_line_count(file_path), max_line + config_.context_lines);
 
-    // Calculate gutter width (for line numbers)
+    // Calculate gutter width for line numbers
     const int gutter_width = std::to_string(end_line).length() + 1;
 
     // Render empty gutter line
     out << std::string(gutter_width, ' ') << " |\n";
 
-    // Render each line with labels
+    // Render each line with content and labels
     for (int line_num = start_line; line_num <= end_line; ++line_num) {
         auto line_content = source_manager_->get_line(file_path, line_num);
         if (!line_content) continue;
@@ -136,7 +139,6 @@ void DiagnosticManager::render_file_snippet(const std::string& file_path,
             out << std::setw(gutter_width) << line_num << " | ";
         }
 
-        // Replace tabs for consistent formatting
         std::string formatted_line = replace_tabs(*line_content);
         out << formatted_line << "\n";
 
@@ -148,6 +150,9 @@ void DiagnosticManager::render_file_snippet(const std::string& file_path,
     out << std::string(gutter_width, ' ') << " |\n";
 }
 
+/**
+ * Renders labels for a specific line using underlines and arrows.
+ */
 void DiagnosticManager::render_labels_for_line(const int line_num,
                                                const std::vector<const DiagnosticLabel*>& labels,
                                                const int gutter_width,
@@ -155,7 +160,7 @@ void DiagnosticManager::render_labels_for_line(const int line_num,
                                                std::ostream& out) const {
     std::vector<const DiagnosticLabel*> line_labels;
 
-    // Find labels that apply to this line
+    // Collect labels applicable to this line
     for (const auto* label : labels) {
         if (line_num >= label->span.start.line && line_num <= label->span.end.line) {
             line_labels.push_back(label);
@@ -164,7 +169,7 @@ void DiagnosticManager::render_labels_for_line(const int line_num,
 
     if (line_labels.empty()) return;
 
-    // Sort by priority (primary labels first, then by column)
+    // Sort by priority (primary first, then by column)
     std::ranges::sort(line_labels, [](const DiagnosticLabel* a, const DiagnosticLabel* b) {
         if (a->is_primary != b->is_primary) {
             return a->is_primary > b->is_primary;
@@ -172,9 +177,9 @@ void DiagnosticManager::render_labels_for_line(const int line_num,
         return a->span.start.col < b->span.start.col;
     });
 
-    // Render underlines and arrows
     const std::string gutter = std::string(gutter_width, ' ') + " | ";
 
+    // Render each label
     for (const auto* label : line_labels) {
         out << gutter;
 
@@ -183,11 +188,10 @@ void DiagnosticManager::render_labels_for_line(const int line_num,
                           ? label->span.end.col - 1
                           : static_cast<int>(line_content.length() - 1);
 
-        // Ensure valid range
+        // Clamp to valid column range
         start_col = std::max(0, std::min(start_col, static_cast<int>(line_content.length())));
         end_col = std::max(start_col, std::min(end_col, static_cast<int>(line_content.length())));
 
-        // Render the arrow/underline
         if (label->is_primary) {
             render_primary_label_line(start_col, end_col, *label, out);
         } else {
@@ -198,6 +202,9 @@ void DiagnosticManager::render_labels_for_line(const int line_num,
     }
 }
 
+/**
+ * Renders a primary label line with carets (^^^^) and message.
+ */
 void DiagnosticManager::render_primary_label_line(const int start_col,
                                                   const int end_col,
                                                   const DiagnosticLabel& label,
@@ -218,6 +225,9 @@ void DiagnosticManager::render_primary_label_line(const int start_col,
     }
 }
 
+/**
+ * Renders a secondary label line with tildes (~~~~) and message.
+ */
 void DiagnosticManager::render_secondary_label_line(const int start_col,
                                                     const int end_col,
                                                     const DiagnosticLabel& label,
@@ -238,16 +248,25 @@ void DiagnosticManager::render_secondary_label_line(const int start_col,
     }
 }
 
+/**
+ * Renders a note message.
+ */
 void DiagnosticManager::render_note(const std::string& note, std::ostream& out) const {
     const auto style = DiagnosticStyle(DiagnosticStyle::Color::Blue, true);
     out << " " << format_with_style("note", style) << ": " << note << "\n";
 }
 
+/**
+ * Renders a help message.
+ */
 void DiagnosticManager::render_help(const std::string& help, std::ostream& out) const {
     const auto style = DiagnosticStyle(DiagnosticStyle::Color::Green, true);
     out << " " << format_with_style("help", style) << ": " << help << "\n";
 }
 
+/**
+ * Renders a code suggestion.
+ */
 void DiagnosticManager::render_suggestion(const DiagnosticSuggestion& suggestion,
                                           std::ostream& out) const {
     const auto style = DiagnosticStyle(DiagnosticStyle::Color::Green, true);
@@ -255,6 +274,9 @@ void DiagnosticManager::render_suggestion(const DiagnosticSuggestion& suggestion
     // TODO: Show the actual replacement in context
 }
 
+/**
+ * Converts diagnostic level to string representation.
+ */
 std::string DiagnosticManager::diagnostic_level_to_string(const DiagnosticLevel level) {
     switch (level) {
         case DiagnosticLevel::Error: return "error";
@@ -265,6 +287,9 @@ std::string DiagnosticManager::diagnostic_level_to_string(const DiagnosticLevel 
     return "unknown";
 }
 
+/**
+ * Gets the display style for a diagnostic level.
+ */
 DiagnosticStyle DiagnosticManager::get_style_for_level(const DiagnosticLevel level) {
     switch (level) {
         case DiagnosticLevel::Error: return DiagnosticStyle(DiagnosticStyle::Color::Red, true);
@@ -275,6 +300,13 @@ DiagnosticStyle DiagnosticManager::get_style_for_level(const DiagnosticLevel lev
     return DiagnosticStyle();
 }
 
+/**
+ * Formats text with ANSI color codes based on style settings.
+ *
+ * @param text Text to format
+ * @param style Styling instructions
+ * @return Formatted string (or plain text if colors disabled)
+ */
 std::string DiagnosticManager::format_with_style(const std::string& text,
                                                  const DiagnosticStyle& style) const {
     if (!config_.use_colors) {
@@ -282,11 +314,10 @@ std::string DiagnosticManager::format_with_style(const std::string& text,
     }
 
     std::string result;
-
-    // Add color and formatting codes
     result += "\033[";
     bool first = true;
 
+    // Handle text attributes
     if (style.bold) {
         result += "1";
         first = false;
@@ -298,7 +329,7 @@ std::string DiagnosticManager::format_with_style(const std::string& text,
         first = false;
     }
 
-    // Add color
+    // Handle colors
     if (style.color != DiagnosticStyle::Color::Default) {
         if (!first) result += ";";
 
@@ -318,6 +349,9 @@ std::string DiagnosticManager::format_with_style(const std::string& text,
     return result;
 }
 
+/**
+ * Replaces tabs with configured replacement string.
+ */
 std::string DiagnosticManager::replace_tabs(const std::string_view line) const {
     std::string result;
     for (const char c : line) {
@@ -330,6 +364,9 @@ std::string DiagnosticManager::replace_tabs(const std::string_view line) const {
     return result;
 }
 
+/**
+ * Groups diagnostic labels by their source file path.
+ */
 std::map<std::string, std::vector<const DiagnosticLabel*>>
 DiagnosticManager::group_labels_by_location(const std::vector<DiagnosticLabel>& labels) {
     std::map<std::string, std::vector<const DiagnosticLabel*>> grouped;
@@ -339,6 +376,25 @@ DiagnosticManager::group_labels_by_location(const std::vector<DiagnosticLabel>& 
     }
 
     return grouped;
+}
+
+// Public interface methods
+int DiagnosticManager::error_count() const { return error_count_; }
+int DiagnosticManager::warning_count() const { return warning_count_; }
+bool DiagnosticManager::has_errors() const { return error_count_ > 0; }
+void DiagnosticManager::reset_counts() const {
+    error_count_ = 0;
+    warning_count_ = 0;
+}
+void DiagnosticManager::set_config(const DiagnosticConfig& config) { config_ = config; }
+std::shared_ptr<SrcManager> DiagnosticManager::source_manager() const { return source_manager_; }
+
+void DiagnosticManager::emit_all(const std::vector<Diagnostic>& diagnostics,
+                                 std::ostream& out) const {
+    for (const auto& diag : diagnostics) {
+        emit(diag, out);
+        out << "\n"; // Add spacing between diagnostics
+    }
 }
 
 } // namespace phi

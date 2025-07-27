@@ -17,7 +17,7 @@ DiagnosticBuilder& DiagnosticBuilder::with_primary_label(const std::string& path
     return with_primary_label(SrcSpan(loc), std::move(message));
 }
 
-/// Add a primary label spanning from start to end
+/// Add a primary label spanning multiple positions
 DiagnosticBuilder& DiagnosticBuilder::with_primary_span(const std::string& path,
                                                         const int start_line,
                                                         const int start_col,
@@ -73,10 +73,10 @@ DiagnosticBuilder& DiagnosticBuilder::with_code(std::string code) {
     return *this;
 }
 
-/// Get the built diagnostic (move semantics)
+/// Build and return the diagnostic (move semantics)
 Diagnostic DiagnosticBuilder::build() && { return std::move(diagnostic); }
 
-/// Get the built diagnostic (copy)
+/// Build and return the diagnostic (copy semantics)
 [[nodiscard]] Diagnostic DiagnosticBuilder::build() const& { return diagnostic; }
 
 /// Emit the diagnostic immediately using the provided manager
@@ -84,7 +84,7 @@ void DiagnosticBuilder::emit(const DiagnosticManager& manager, std::ostream& out
     manager.emit(diagnostic, out);
 }
 
-/// Emit the diagnostic immediately using the provided manager (copy version)
+/// Emit the diagnostic immediately (copy version)
 void DiagnosticBuilder::emit(const DiagnosticManager& manager, std::ostream& out) const& {
     manager.emit(diagnostic, out);
 }

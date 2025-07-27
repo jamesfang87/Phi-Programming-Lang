@@ -7,23 +7,40 @@
 
 namespace phi {
 
+/**
+ * Resolves all statements within a block.
+ *
+ * @param block Block to resolve
+ * @param scope_created Whether a scope was already created for this block
+ * @return true if all statements resolved successfully, false otherwise
+ *
+ * Manages scope creation/destruction via RAII guard.
+ * Recursively resolves nested statements and expressions.
+ */
 bool Sema::resolve_block(Block& block, bool scope_created = false) {
-    // do not create scope if already created
+    // Create new scope unless parent already created one
     if (!scope_created) {
         SymbolTable::ScopeGuard block_scope(symbol_table);
     }
 
-    // resolve all statements
+    // Resolve all statements in the block
     for (const auto& stmt : block.get_stmts()) {
         if (!stmt->accept(*this)) return false;
     }
 
-    // scope automatically popped by ScopeGuard destructor
     return true;
 }
 
+/**
+ * Resolves a return statement.
+ *
+ * Validates:
+ * - Void functions don't return values
+ * - Non-void functions return correct type
+ * - Return expression resolves successfully
+ */
 bool Sema::visit(ReturnStmt& stmt) {
-    // case that the function is void
+    // Void function return
     if (!stmt.has_expr()) {
         if (cur_fun->get_return_type() != Type(Type::Primitive::null)) {
             std::println("error: function '{}' should return a value", cur_fun->get_id());
@@ -32,15 +49,12 @@ bool Sema::visit(ReturnStmt& stmt) {
         return true;
     }
 
-    // now handle the case that the function is not void
+    // Resolve return expression
     bool success = stmt.get_expr().accept(*this);
-    if (!success) {
-        return false;
-    }
+    if (!success) return false;
 
-    // compare to the current function
+    // Validate return type matches function signature
     if (stmt.get_expr().get_type() != cur_fun->get_return_type()) {
-        // throw error
         std::println("type mismatch error: {}", cur_fun->get_id());
         std::println("return stmt type: {}", stmt.get_expr().get_type().to_string());
         std::println("expected type: {}", cur_fun->get_return_type().to_string());
@@ -50,66 +64,107 @@ bool Sema::visit(ReturnStmt& stmt) {
     return true;
 }
 
+/**
+ * Resolves an if statement.
+ *
+ * Validates:
+ * - Condition is boolean type
+ * - Then/else blocks resolve successfully
+ */
 bool Sema::visit(IfStmt& stmt) {
-    // first resolve the condition
+    // Resolve condition
     bool res = stmt.get_condition().accept(*this);
     if (!res) return false;
 
-    // now we check whether the condition is of type bool
+    // Validate condition is boolean
     if (stmt.get_condition().get_type() != Type(Type::Primitive::boolean)) {
         std::println("error: condition in if statement must have type bool");
         return false;
     }
 
-    // now we resolve the bodies
+    // Resolve then and else blocks
     if (!resolve_block(stmt.get_then())) return false;
     if (stmt.has_else() && !resolve_block(stmt.get_else())) return false;
 
     return true;
 }
 
+/**
+ * Resolves a while loop statement.
+ *
+ * Validates:
+ * - Condition is boolean type
+ * - Loop body resolves successfully
+ */
 bool Sema::visit(WhileStmt& stmt) {
     bool res = stmt.get_condition().accept(*this);
     if (!res) return false;
 
-    // now we check whether the condition is of type bool
+    // Validate condition is boolean
     if (stmt.get_condition().get_type() != Type(Type::Primitive::boolean)) {
         std::println("error: condition in while statement must have type bool");
         return false;
     }
 
-    // now we resolve the body
+    // Resolve loop body
     if (!resolve_block(stmt.get_body())) return false;
 
     return true;
 }
 
+/**
+ * Resolves a for loop statement.
+ *
+ * Validates:
+ * - Range expression resolves successfully
+ * - Loop body resolves successfully
+ *
+ * Creates new scope for loop variable.
+ */
 bool Sema::visit(ForStmt& stmt) {
+    // Resolve range expression
     bool res = stmt.get_range().accept(*this);
     if (!res) return false;
 
+    // Create scope for loop variable
     SymbolTable::ScopeGuard block_scope(symbol_table);
     symbol_table.insert_decl(&stmt.get_loop_var());
 
+    // Resolve loop body (scope already created)
     if (!resolve_block(stmt.get_body(), true)) return false;
 
     return true;
 }
 
-bool Sema::visit(Expr& stmt) {
-    return stmt.accept(*this); // Handle expression-as-statement
-}
+/**
+ * Resolves an expression statement.
+ *
+ * Simply delegates to expression resolution.
+ */
+bool Sema::visit(Expr& stmt) { return stmt.accept(*this); }
 
+/**
+ * Resolves a variable declaration statement.
+ *
+ * Validates:
+ * - Type specification is valid
+ * - Initializer expression resolves
+ * - Initializer type matches declared type
+ * - Constants have initializers
+ *
+ * Adds variable to current symbol table.
+ */
 bool Sema::visit(LetStmt& stmt) {
-    // First resolve the variable's declared type
     VarDecl& var = stmt.get_var_decl();
+
+    // Resolve variable type
     const bool type = resolve_type(var.get_type());
     if (!type) {
         std::println("invalid type for variable");
         return false;
     }
 
-    // If there's an initializer, resolve it and check type compatibility
+    // Handle initializer if present
     if (var.has_initializer()) {
         Expr& initializer = var.get_initializer();
         if (!initializer.accept(*this)) {
@@ -117,7 +172,7 @@ bool Sema::visit(LetStmt& stmt) {
             return false;
         }
 
-        // Check if initializer type matches variable type
+        // Check type compatibility
         if (initializer.get_type() != var.get_type()) {
             std::println("variable initializer type mismatch");
             std::println("variable type: {}", var.get_type().to_string());
@@ -125,10 +180,12 @@ bool Sema::visit(LetStmt& stmt) {
             return false;
         }
     } else if (var.is_constant()) {
-        // Constant variables must have an initializer
+        // Constants require initializers
         std::println("constant variable '{}' must have an initializer", var.get_id());
         return false;
     }
+
+    // Add to symbol table
     symbol_table.insert_decl(&var);
 
     return true;

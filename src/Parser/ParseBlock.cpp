@@ -2,9 +2,21 @@
 
 namespace phi {
 
+/**
+ * Parses a block of statements enclosed in braces.
+ *
+ * @return std::expected<std::unique_ptr<Block>, Diagnostic> Block AST or error
+ *
+ * Handles:
+ * - { statement1; statement2; ... }
+ *
+ * Performs extensive error recovery and validation:
+ * - Validates opening/closing braces
+ * - Recovers from nested declaration errors
+ * - Synchronizes to statement boundaries after errors
+ */
 std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
-    // make sure that the block starts with an open brace, exit and emit error
-    // otherwise
+    // Validate opening brace
     if (peek_token().get_type() != TokenType::tok_open_brace) {
         emit_error(error("missing opening brace for block")
                        .with_primary_label(span_from_token(peek_token()), "expected `{` here")
@@ -14,12 +26,13 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
         return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
     }
 
-    // otherwise, parse block. this part also handles the closing brace
-    const Token opening_brace = advance_token(); // eat {
+    const Token opening_brace = advance_token(); // eat '{'
     std::vector<std::unique_ptr<Stmt>> stmts;
+
+    // Parse statements until closing brace
     while (peek_token().get_type() != TokenType::tok_close_brace) {
         switch (peek_token().get_type()) {
-            case TokenType::tok_eof:
+            case TokenType::tok_eof: // Unclosed block
                 emit_error(
                     error("unclosed block")
                         .with_primary_label(span_from_token(opening_brace), "block opened here")
@@ -30,7 +43,9 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
                         .with_code("E0002")
                         .build());
                 return std::unexpected(Diagnostic(DiagnosticLevel::Error, "unclosed block"));
-            case TokenType::tok_class:
+
+            // Handle invalid declarations inside blocks
+            case TokenType::tok_class: // Class in block
                 emit_error(
                     error("class declarations are not allowed inside function bodies")
                         .with_primary_label(span_from_token(peek_token()), "class declaration here")
@@ -42,7 +57,6 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
                                          "consider moving this to the top level")
                         .with_code("E0003")
                         .build());
-                // Skip to next statement boundary
                 if (!sync_to({TokenType::tok_close_brace,
                               TokenType::tok_return,
                               TokenType::tok_if,
@@ -52,7 +66,7 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
                     return std::unexpected(Diagnostic(DiagnosticLevel::Error, "unclosed block"));
                 }
                 continue;
-            case TokenType::tok_fun_return:
+            case TokenType::tok_fun_return: // Return type in block
                 emit_error(
                     error("function return type syntax not allowed inside function body")
                         .with_primary_label(span_from_token(peek_token()), "unexpected `->` here")
@@ -61,7 +75,6 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
                         .with_note("did you mean to use a `return` statement instead?")
                         .with_code("E0013")
                         .build());
-                // Skip to next statement boundary
                 if (!sync_to({TokenType::tok_close_brace,
                               TokenType::tok_return,
                               TokenType::tok_if,
@@ -71,7 +84,7 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
                     return std::unexpected(Diagnostic(DiagnosticLevel::Error, "unclosed block"));
                 }
                 continue;
-            case TokenType::tok_fun:
+            case TokenType::tok_fun: // Nested function
                 emit_error(
                     error("nested functions are not allowed")
                         .with_primary_label(span_from_token(peek_token()), "nested function here")
@@ -80,7 +93,6 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
                         .with_note("functions cannot be declared inside other functions")
                         .with_code("E0004")
                         .build());
-                // Skip to next statement boundary
                 if (!sync_to({TokenType::tok_close_brace,
                               TokenType::tok_return,
                               TokenType::tok_if,
@@ -90,11 +102,12 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
                     return std::unexpected(Diagnostic(DiagnosticLevel::Error, "unclosed block"));
                 }
                 continue;
+
+            // Parse valid statements
             default:
                 auto res = parse_stmt();
                 if (!res) {
-                    // Error was already emitted during statement parsing
-                    // Try to sync to next statement or end of block
+                    // Sync to next statement boundary
                     if (!sync_to({TokenType::tok_semicolon,
                                   TokenType::tok_close_brace,
                                   TokenType::tok_return,
@@ -102,12 +115,11 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
                                   TokenType::tok_while,
                                   TokenType::tok_for,
                                   TokenType::tok_let})) {
-                        // Reached EOF without finding recovery point
                         return std::unexpected(
                             Diagnostic(DiagnosticLevel::Error, "unclosed block"));
                     }
 
-                    // If we found a semicolon, consume it and continue
+                    // Consume semicolon if found
                     if (peek_token().get_type() == TokenType::tok_semicolon) {
                         advance_token();
                     }
@@ -117,6 +129,7 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
         }
     }
 
+    // Validate closing brace
     if (peek_token().get_type() != TokenType::tok_close_brace) {
         emit_error(error("missing closing brace for block")
                        .with_primary_label(span_from_token(peek_token()), "expected `}` here")
@@ -126,6 +139,7 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
         return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
     }
     advance_token(); // eat `}`
+
     return std::make_unique<Block>(std::move(stmts));
 }
 

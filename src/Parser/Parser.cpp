@@ -4,6 +4,14 @@
 
 namespace phi {
 
+/**
+ * Constructs a parser instance.
+ *
+ * @param src Source code string
+ * @param path Source file path
+ * @param tokens Token stream from lexer
+ * @param diagnostic_manager Shared diagnostic manager
+ */
 Parser::Parser(const std::string_view src,
                const std::string_view path,
                std::vector<Token>& tokens,
@@ -13,11 +21,21 @@ Parser::Parser(const std::string_view src,
       token_it(tokens.begin()),
       diagnostic_manager(std::move(diagnostic_manager)) {
 
+    // Register source file with diagnostic manager
     if (this->diagnostic_manager->source_manager()) {
         this->diagnostic_manager->source_manager()->add_source_file(std::string(path), src);
     }
 }
 
+/**
+ * Main parsing entry point.
+ *
+ * @return std::pair<std::vector<std::unique_ptr<FunDecl>>, bool>
+ *         Pair of function declarations and success status
+ *
+ * Parses entire token stream, collecting function declarations.
+ * Uses error recovery via sync_to() after errors.
+ */
 std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
     while (!at_eof()) {
         switch (peek_token().get_type()) {
@@ -26,13 +44,13 @@ std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
                 if (res.has_value()) {
                     functions.push_back(std::move(res.value()));
                 } else {
-                    sync_to();
+                    sync_to(); // Error recovery
                 }
                 break;
             }
             default:
                 emit_unexpected_token_error(peek_token(), {"fun"});
-                sync_to();
+                sync_to(); // Error recovery
                 break;
         }
     }
