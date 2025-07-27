@@ -9,59 +9,58 @@
 
 namespace phi {
 
+/**
+ * Main entry point for semantic analysis.
+ *
+ * @return Pair of success status and resolved AST
+ *
+ * Performs in two phases:
+ * 1. Resolve all function signatures (allows mutual recursion)
+ * 2. Resolve function bodies with proper scoping
+ */
 std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
-    // create global scope with RAII
+    // Create global scope
     SymbolTable::ScopeGuard global_scope(symbol_table);
 
-    // TODO: first resolve structs so that functions
-    // may use user-defined types
+    // TODO: Add struct resolution here
 
-    // then we resolve all function declarations first
-    // to allow for declarations in any order
+    // Phase 1: Resolve function signatures
     for (auto& fun_decl : ast) {
-        bool success = resolve_fun_decl(fun_decl.get());
-        if (!success) {
-            // throw error
-            std::println("failed to resolve function");
+        if (!resolve_fun_decl(fun_decl.get())) {
+            std::println("failed to resolve function signature: {}", fun_decl->get_id());
             return {false, {}};
         }
 
         if (!symbol_table.insert_decl(fun_decl.get())) {
-            // throw error
-            std::println("failed to insert function, probably redefinition");
+            std::println("function redefinition: {}", fun_decl->get_id());
             return {false, {}};
         }
     }
 
-    // now we 'truly' resolve all functions
+    // Phase 2: Resolve function bodies
     for (auto& fun_decl : ast) {
         cur_fun = fun_decl.get();
 
-        // create function scope with RAII - parameters and body share this scope
+        // Create function scope
         SymbolTable::ScopeGuard function_scope(symbol_table);
 
-        // insert all parameters into the function scope
+        // Add parameters to function scope
         for (const std::unique_ptr<ParamDecl>& param : cur_fun->get_params()) {
             if (!symbol_table.insert_decl(param.get())) {
-                // throw error
-                std::println("while resolving function {}", cur_fun->get_id());
-                std::println("failed to insert param {}, probably redefinition", param->get_id());
+                std::println("parameter redefinition in {}: {}",
+                             cur_fun->get_id(),
+                             param->get_id());
                 return {false, {}};
             }
         }
 
-        // resolve the block (function body shares scope with parameters)
-        bool success = resolve_block(fun_decl->get_block(), true);
-        if (!success) {
-            std::println("while resolving function {}", cur_fun->get_id());
-            std::println("failed to resolve block");
+        // Resolve function body
+        if (!resolve_block(fun_decl->get_block(), true)) {
+            std::println("failed to resolve body of: {}", cur_fun->get_id());
             return {false, {}};
         }
-
-        // Function scope will be automatically popped by ScopeGuard destructor
     }
 
-    // Global scope will be automatically popped by ScopeGuard destructor
     return {true, std::move(ast)};
 }
 

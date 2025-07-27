@@ -8,11 +8,26 @@
 
 namespace phi {
 
+/**
+ * Parses a function declaration from the token stream.
+ *
+ * @return std::expected<std::unique_ptr<FunDecl>, Diagnostic> Function AST node or diagnostic
+ * error.
+ *
+ * Parsing sequence:
+ * 1. 'fun' keyword
+ * 2. Function name identifier
+ * 3. Parameter list in parentheses
+ * 4. Optional return type (-> type)
+ * 5. Function body block
+ *
+ * Emits detailed errors for each parsing stage with context-specific suggestions.
+ */
 std::expected<std::unique_ptr<FunDecl>, Diagnostic> Parser::parse_function_decl() {
-    Token tok = advance_token();
+    Token tok = advance_token(); // Eat 'fun'
     SrcLocation loc = tok.get_start();
 
-    // we expect the next token to be an identifier
+    // Validate function name
     if (peek_token().get_type() != TokenType::tok_identifier) {
         emit_error(
             error("invalid function name")
@@ -26,18 +41,16 @@ std::expected<std::unique_ptr<FunDecl>, Diagnostic> Parser::parse_function_decl(
     }
     std::string name = advance_token().get_lexeme();
 
-    // here we handle the parameter list
+    // Parse parameter list
     auto param_list = parse_list<ParamDecl>(TokenType::tok_open_paren,
                                             TokenType::tok_close_paren,
                                             &Parser::parse_param_decl);
     if (!param_list) return std::unexpected(param_list.error());
 
-    // now we handle the return type. if there is a `->`, then we need to parse
-    // otherwise, we set the return type to null
+    // Handle optional return type
     auto return_type = Type(Type::Primitive::null);
     if (peek_token().get_type() == TokenType::tok_fun_return) {
-        advance_token(); // eat `->`
-
+        advance_token(); // eat '->'
         auto res = parse_type();
         if (!res) {
             auto error = res.error();
@@ -47,10 +60,9 @@ std::expected<std::unique_ptr<FunDecl>, Diagnostic> Parser::parse_function_decl(
         return_type = res.value();
     }
 
-    // now we parse the function body
+    // Parse function body
     auto body = parse_block();
     if (!body) {
-        // Error already emitted during block parsing
         return std::unexpected(body.error());
     }
 
@@ -61,8 +73,16 @@ std::expected<std::unique_ptr<FunDecl>, Diagnostic> Parser::parse_function_decl(
                                      std::move(body.value()));
 }
 
+/**
+ * Parses a typed binding (name: type) used in declarations.
+ *
+ * @return std::expected<std::pair<std::string, Type>, Diagnostic> Name-type pair or error.
+ *
+ * Format: identifier ':' type
+ * Used in variable declarations, function parameters, etc.
+ */
 std::expected<std::pair<std::string, Type>, Diagnostic> Parser::parse_typed_binding() {
-    // we expect the first token to be an identifier
+    // Parse identifier
     if (peek_token().get_type() != TokenType::tok_identifier) {
         emit_error(
             error("expected identifier")
@@ -72,7 +92,7 @@ std::expected<std::pair<std::string, Type>, Diagnostic> Parser::parse_typed_bind
     }
     std::string name = advance_token().get_lexeme();
 
-    // next we expect the current token to be `:`
+    // Parse colon separator
     if (peek_token().get_type() != TokenType::tok_colon) {
         emit_error(error("expected colon")
                        .with_primary_label(span_from_token(peek_token()), "expected `:` here")
@@ -82,7 +102,7 @@ std::expected<std::pair<std::string, Type>, Diagnostic> Parser::parse_typed_bind
     }
     advance_token();
 
-    // lastly, we expect a type
+    // Parse type
     auto type = parse_type();
     if (!type) {
         emit_error(error("expected type")
@@ -94,6 +114,13 @@ std::expected<std::pair<std::string, Type>, Diagnostic> Parser::parse_typed_bind
     return std::make_pair(name, std::move(type.value()));
 }
 
+/**
+ * Parses a function parameter declaration.
+ *
+ * @return std::expected<std::unique_ptr<ParamDecl>, Diagnostic> Parameter AST or error.
+ *
+ * Wrapper around parse_typed_binding() that creates a ParamDecl node.
+ */
 std::expected<std::unique_ptr<ParamDecl>, Diagnostic> Parser::parse_param_decl() {
     auto binding = parse_typed_binding();
     if (!binding) {

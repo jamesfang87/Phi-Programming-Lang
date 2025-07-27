@@ -1,5 +1,5 @@
 /**
- * @file token.cpp
+ * @file Token.cpp
  * @brief Implementation of the Token class and utility functions
  *
  * This file contains the implementation of the Token class constructor,
