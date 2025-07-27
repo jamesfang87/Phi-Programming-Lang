@@ -72,7 +72,7 @@ void WhileStmt::info_dump(int level) const {
 
 //======================== ForStmt =========================//
 ForStmt::ForStmt(SrcLocation location,
-                 std::string loop_var,
+                 std::unique_ptr<VarDecl> loop_var,
                  std::unique_ptr<Expr> range,
                  std::unique_ptr<Block> body)
     : Stmt(std::move(location)),
@@ -84,8 +84,8 @@ ForStmt::~ForStmt() = default;
 
 void ForStmt::info_dump(int level) const {
     std::println("{}ForStmt", indent(level));
-    if (!loop_var.empty()) {
-        std::println("{}Loop variable: {}", indent(level + 1), loop_var);
+    if (loop_var) {
+        loop_var->info_dump(level + 1);
     }
     if (range) {
         range->info_dump(level + 1);
