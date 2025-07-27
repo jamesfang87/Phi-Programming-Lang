@@ -6,7 +6,7 @@
 
 namespace phi {
 
-// ASTVisitor implementation - Expression visitors
+// Literal expression resolution
 bool Sema::visit(IntLiteral& expr) {
     expr.set_type(Type(Type::Primitive::i64));
     return true;
@@ -32,23 +32,43 @@ bool Sema::visit(BoolLiteral& expr) {
     return true;
 }
 
+/**
+ * Resolves a variable reference expression.
+ *
+ * Validates:
+ * - Identifier exists in symbol table
+ * - Not attempting to use function as value
+ */
 bool Sema::visit(DeclRefExpr& expr) { return resolve_decl_ref(&expr, false); }
 
+/**
+ * Resolves a function call expression.
+ *
+ * Validates:
+ * - Callee is a function
+ * - Argument count matches parameter count
+ * - Argument types match parameter types
+ */
 bool Sema::visit(FunCallExpr& expr) { return resolve_function_call(&expr); }
 
+/**
+ * Resolves a range literal expression.
+ *
+ * Validates:
+ * - Start and end expressions resolve
+ * - Both are integer types
+ * - Both have same integer type
+ */
 bool Sema::visit(RangeLiteral& expr) {
     // Resolve start and end expressions
-    if (!expr.get_start().accept(*this)) {
-        return false;
-    }
-    if (!expr.get_end().accept(*this)) {
+    if (!expr.get_start().accept(*this) || !expr.get_end().accept(*this)) {
         return false;
     }
 
     const Type start_type = expr.get_start().get_type();
     const Type end_type = expr.get_end().get_type();
 
-    // Both start and end must be integer types
+    // Validate integer types
     if (!start_type.is_primitive() || !is_integer_type(start_type)) {
         std::println("Range start must be an integer type (i8, i16, i32, i64, u8, u16, u32, u64)");
         return false;
@@ -59,23 +79,27 @@ bool Sema::visit(RangeLiteral& expr) {
         return false;
     }
 
-    // Start and end must be the same integer type
+    // Validate same integer type
     if (start_type != end_type) {
         std::println("Range start and end must be the same integer type");
         return false;
     }
 
-    // Set the range type to the integer type of its bounds
     expr.set_type(Type(Type::Primitive::range));
     return true;
 }
 
+/**
+ * Resolves a binary operation expression.
+ *
+ * Validates:
+ * - Both operands resolve successfully
+ * - Operation is supported for operand types
+ * - Type promotion rules are followed
+ */
 bool Sema::visit(BinaryOp& expr) {
-    // Resolve left and right operands first
-    if (!expr.get_lhs().accept(*this)) {
-        return false;
-    }
-    if (!expr.get_rhs().accept(*this)) {
+    // Resolve operands
+    if (!expr.get_lhs().accept(*this) || !expr.get_rhs().accept(*this)) {
         return false;
     }
 
@@ -83,15 +107,15 @@ bool Sema::visit(BinaryOp& expr) {
     const Type rhs_type = expr.get_rhs().get_type();
     const TokenType op = expr.get_op();
 
-    // Check if both operands are primitive types
+    // Only primitive types supported
     if (!lhs_type.is_primitive() || !rhs_type.is_primitive()) {
         std::println("Binary operations not supported on custom types");
         return false;
     }
 
-    // Type checking based on operation
+    // Operation-specific validation
     switch (op) {
-        // Arithmetic operations: +, -, *, /, %
+        // Arithmetic operations
         case TokenType::tok_add:
         case TokenType::tok_sub:
         case TokenType::tok_mul:
@@ -101,22 +125,19 @@ bool Sema::visit(BinaryOp& expr) {
                 std::println("Arithmetic operations require numeric types");
                 return false;
             }
-            // For modulo, operands must be integers
             if (op == TokenType::tok_mod &&
                 (!is_integer_type(lhs_type) || !is_integer_type(rhs_type))) {
                 std::println("Modulo operation requires integer types");
                 return false;
             }
-            // Result type is the promoted type of the operands
-            const Type result_type = promote_numeric_types(lhs_type, rhs_type);
-            expr.set_type(result_type);
+            // Apply type promotion
+            expr.set_type(promote_numeric_types(lhs_type, rhs_type));
             break;
         }
 
-        // Comparison operations: ==, !=, <, <=, >, >=
+        // Comparison operations
         case TokenType::tok_equal:
         case TokenType::tok_not_equal:
-            // Equality can be checked on any primitive types if they're the same
             if (lhs_type != rhs_type) {
                 std::println("Equality comparison requires same types");
                 return false;
@@ -128,19 +149,14 @@ bool Sema::visit(BinaryOp& expr) {
         case TokenType::tok_less_equal:
         case TokenType::tok_greater:
         case TokenType::tok_greater_equal:
-            // Ordering comparisons only work on numeric types
-            if (!is_numeric_type(lhs_type) || !is_numeric_type(rhs_type)) {
-                std::println("Ordering comparisons require numeric types");
-                return false;
-            }
-            if (lhs_type != rhs_type) {
-                std::println("Ordering comparison requires same types");
+            if (!is_numeric_type(lhs_type) || !is_numeric_type(rhs_type) || lhs_type != rhs_type) {
+                std::println("Ordering comparisons require same numeric types");
                 return false;
             }
             expr.set_type(Type(Type::Primitive::boolean));
             break;
 
-        // Logical operations: &&, ||
+        // Logical operations
         case TokenType::tok_and:
         case TokenType::tok_or:
             if (lhs_type.primitive_type() != Type::Primitive::boolean ||
@@ -157,11 +173,11 @@ bool Sema::visit(BinaryOp& expr) {
     return true;
 }
 
-// Helper functions for type checking
+/**
+ * Checks if type is an integer primitive.
+ */
 bool Sema::is_integer_type(const Type& type) {
-    if (!type.is_primitive()) {
-        return false;
-    }
+    if (!type.is_primitive()) return false;
 
     const Type::Primitive prim = type.primitive_type();
     return prim == Type::Primitive::i8 || prim == Type::Primitive::i16 ||
@@ -170,24 +186,27 @@ bool Sema::is_integer_type(const Type& type) {
            prim == Type::Primitive::u32 || prim == Type::Primitive::u64;
 }
 
+/**
+ * Checks if type is numeric (integer or float).
+ */
 bool Sema::is_numeric_type(const Type& type) {
-    if (!type.is_primitive()) {
-        return false;
-    }
+    if (!type.is_primitive()) return false;
 
     const Type::Primitive prim = type.primitive_type();
     return is_integer_type(type) || prim == Type::Primitive::f32 || prim == Type::Primitive::f64;
 }
 
+/**
+ * Promotes numeric types for binary operations.
+ *
+ * Current rules:
+ * - Same type: return type
+ * - Integer + float: promote to float
+ * - Mixed integers: promote to larger type (placeholder)
+ */
 Type Sema::promote_numeric_types(const Type& lhs, const Type& rhs) {
-    // Simple type promotion rules
-    // For now, if types are the same, return that type
-    // In the future, implement proper numeric promotion rules
-    if (lhs == rhs) {
-        return lhs;
-    }
+    if (lhs == rhs) return lhs;
 
-    // For mixed integer/float operations, promote to float
     if (is_integer_type(lhs) && (rhs.primitive_type() == Type::Primitive::f32 ||
                                  rhs.primitive_type() == Type::Primitive::f64)) {
         return rhs;
@@ -197,12 +216,18 @@ Type Sema::promote_numeric_types(const Type& lhs, const Type& rhs) {
         return lhs;
     }
 
-    // Default to left type for now (could be improved)
-    return lhs;
+    return lhs; // Default to left type
 }
 
+/**
+ * Resolves a unary operation expression.
+ *
+ * Validates:
+ * - Operand resolves successfully
+ * - Operation is supported for operand type
+ */
 bool Sema::visit(UnaryOp& expr) {
-    // Resolve operand first
+    // Resolve operand
     if (!expr.get_operand().accept(*this)) {
         return false;
     }
@@ -210,24 +235,24 @@ bool Sema::visit(UnaryOp& expr) {
     const Type operand_type = expr.get_operand().get_type();
     const TokenType op = expr.get_op();
 
-    // Check if operand is primitive type
+    // Only primitive types supported
     if (!operand_type.is_primitive()) {
         std::println("Unary operations not supported on custom types");
         return false;
     }
 
+    // Operation-specific validation
     switch (op) {
-        // Arithmetic negation: -
+        // Arithmetic negation
         case TokenType::tok_sub:
             if (!is_numeric_type(operand_type)) {
                 std::println("Arithmetic negation requires numeric type");
                 return false;
             }
-            // Negation preserves the operand type
             expr.set_type(operand_type);
             break;
 
-        // Logical NOT: !
+        // Logical NOT
         case TokenType::tok_bang:
             if (operand_type.primitive_type() != Type::Primitive::boolean) {
                 std::println("Logical NOT requires boolean type");
@@ -236,7 +261,7 @@ bool Sema::visit(UnaryOp& expr) {
             expr.set_type(Type(Type::Primitive::boolean));
             break;
 
-        // Increment/Decrement: ++, --
+        // Increment/Decrement
         case TokenType::tok_increment:
         case TokenType::tok_decrement:
             if (!is_integer_type(operand_type)) {
@@ -252,18 +277,26 @@ bool Sema::visit(UnaryOp& expr) {
     return true;
 }
 
+/**
+ * Resolves a declaration reference.
+ *
+ * @param declref Reference to resolve
+ * @param function_call Whether this is part of a function call
+ * @return true if resolution succeeded, false otherwise
+ *
+ * Handles:
+ * - Variable references
+ * - Function references (only when function_call = true)
+ */
 bool Sema::resolve_decl_ref(DeclRefExpr* declref, const bool function_call) {
     Decl* decl = symbol_table.lookup_decl(declref->get_id());
 
-    // if the declaration is not found
     if (!decl) {
-        // throw error
         std::println("error: undeclared identifier '{}'", declref->get_id());
         return false;
     }
 
-    // check if the decls match ie:
-    // if we are not trying to call a function and the declaration is a function
+    // Prevent using function as value
     if (!function_call && dynamic_cast<FunDecl*>(decl)) {
         std::println("error: did you mean to call a function");
         return false;
@@ -275,44 +308,48 @@ bool Sema::resolve_decl_ref(DeclRefExpr* declref, const bool function_call) {
     return true;
 }
 
+/**
+ * Resolves a function call.
+ *
+ * Validates:
+ * - Callee is a function
+ * - Argument count matches parameter count
+ * - Argument types match parameter types
+ */
 bool Sema::resolve_function_call(FunCallExpr* call) {
+    // Resolve callee (must be function reference)
     const auto declref = dynamic_cast<DeclRefExpr*>(&call->get_callee());
-    bool success = resolve_decl_ref(declref, true);
-
-    if (!success) {
+    if (!resolve_decl_ref(declref, true)) {
         std::println("error: cannot call an expression");
         return false;
     }
 
-    // Get the resolved function declaration from the decl_ref
+    // Get resolved function
     const auto resolved_fun = dynamic_cast<FunDecl*>(declref->get_decl());
     assert(resolved_fun);
 
-    // check param list length is the same
-    const std::vector<std::unique_ptr<ParamDecl>>& params = resolved_fun->get_params();
-    if (call->get_args().size() != params.size()) {
+    // Validate argument count
+    if (call->get_args().size() != resolved_fun->get_params().size()) {
         std::println("error: parameter list length mismatch");
         return false;
     }
 
-    // Resolve the arguments and check param types are compatible
+    // Resolve arguments and validate types
     for (size_t i = 0; i < call->get_args().size(); i++) {
-        // we first try to get the argument from the call
         Expr* arg = call->get_args()[i].get();
-        if (const bool success_expr = arg->accept(*this); !success_expr) {
+        if (!arg->accept(*this)) {
             std::println("error: could not resolve argument");
             return false;
         }
 
-        // now we look at the parameter and see if types match
-        ParamDecl* param = params.at(i).get();
+        ParamDecl* param = resolved_fun->get_params().at(i).get();
         if (arg->get_type() != param->get_type()) {
             std::println("error: argument type mismatch");
             return false;
         }
     }
-    call->set_type(resolved_fun->get_return_type());
 
+    call->set_type(resolved_fun->get_return_type());
     return true;
 }
 

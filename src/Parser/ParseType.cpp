@@ -4,7 +4,20 @@
 
 namespace phi {
 
+/**
+ * Parses a type specification from the token stream.
+ *
+ * @return std::expected<Type, Diagnostic> The parsed type on success, or a diagnostic error on
+ * failure.
+ *
+ * Handles both primitive types (i8, i16, etc.) and custom type identifiers.
+ * Emits detailed errors for invalid type tokens, including:
+ * - Unexpected tokens in type position
+ * - Suggestions for valid primitive types
+ * - Notes about type syntax rules
+ */
 std::expected<Type, Diagnostic> Parser::parse_type() {
+    // Map of primitive type names to their enum representations
     const std::unordered_map<std::string, Type::Primitive> primitive_map = {
         {"i8", Type::Primitive::i8},
         {"i16", Type::Primitive::i16},
@@ -23,6 +36,8 @@ std::expected<Type, Diagnostic> Parser::parse_type() {
 
     const std::string id = peek_token().get_lexeme();
     const auto it = primitive_map.find(id);
+
+    // Validate token is either primitive type or identifier
     if (it == primitive_map.end() && peek_token().get_type() != TokenType::tok_identifier) {
         return std::unexpected(
             error(std::format("invalid token found: {}", peek_token().get_lexeme()))
@@ -35,9 +50,9 @@ std::expected<Type, Diagnostic> Parser::parse_type() {
 
     advance_token();
     if (it == primitive_map.end()) {
-        return Type(id);
+        return Type(id); // Custom type
     }
-    return Type(it->second);
+    return Type(it->second); // Primitive type
 }
 
 } // namespace phi

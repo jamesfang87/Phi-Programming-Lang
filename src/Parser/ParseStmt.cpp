@@ -10,6 +10,18 @@
 
 namespace phi {
 
+/**
+ * Dispatches to specific statement parsers based on current token.
+ *
+ * @return std::expected<std::unique_ptr<Stmt>, Diagnostic> Statement AST or error.
+ *
+ * Handles:
+ * - Return statements
+ * - While loops
+ * - If statements
+ * - For loops
+ * - Variable declarations (let)
+ */
 std::expected<std::unique_ptr<Stmt>, Diagnostic> Parser::parse_stmt() {
     switch (peek_token().get_type()) {
         case TokenType::tok_return: return parse_return_stmt();
@@ -26,18 +38,28 @@ std::expected<std::unique_ptr<Stmt>, Diagnostic> Parser::parse_stmt() {
     return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
 }
 
+/**
+ * Parses a return statement.
+ *
+ * @return std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> Return AST or error.
+ *
+ * Formats:
+ * - return;       (implicit null)
+ * - return expr;  (explicit value)
+ *
+ * Validates semicolon terminator and expression validity.
+ */
 std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> Parser::parse_return_stmt() {
     SrcLocation loc = peek_token().get_start();
     advance_token(); // eat 'return'
 
-    // case that there is no expression after 'return'
-    // (functions which return null)
+    // Null return: return;
     if (peek_token().get_type() == TokenType::tok_semicolon) {
         advance_token(); // eat ';'
         return std::make_unique<ReturnStmt>(loc, nullptr);
     }
 
-    // functions which have a non-void return type
+    // Value return: return expr;
     auto expr = parse_expr();
     if (!expr) {
         emit_error(error("invalid return expression")
@@ -48,7 +70,7 @@ std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> Parser::parse_return_stmt
         return std::unexpected(expr.error());
     }
 
-    // check that the line ends with a semicolon
+    // Validate semicolon terminator
     if (peek_token().get_type() != TokenType::tok_semicolon) {
         emit_error(error("missing semicolon after return statement")
                        .with_primary_label(span_from_token(peek_token()), "expected `;` here")
@@ -63,6 +85,16 @@ std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> Parser::parse_return_stmt
     return std::make_unique<ReturnStmt>(loc, std::move(expr.value()));
 }
 
+/**
+ * Parses an if statement with optional else clause.
+ *
+ * @return std::expected<std::unique_ptr<IfStmt>, Diagnostic> If statement AST or error.
+ *
+ * Handles:
+ * - if (cond) { ... }
+ * - if (cond) { ... } else { ... }
+ * - if (cond) { ... } else if { ... } (chained)
+ */
 std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
     SrcLocation loc = peek_token().get_start();
     advance_token(); // eat 'if'
@@ -73,6 +105,7 @@ std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
     auto body = parse_block();
     if (!body) return std::unexpected(body.error());
 
+    // No else clause
     if (peek_token().get_type() != TokenType::tok_else) {
         return std::make_unique<IfStmt>(loc,
                                         std::move(condition.value()),
@@ -80,11 +113,11 @@ std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
                                         nullptr);
     }
 
-    // otherwise, we expect an 'else' keyword
+    // Else clause
     advance_token(); // eat 'else'
 
+    // Else block: else { ... }
     if (peek_token().get_type() == TokenType::tok_open_brace) {
-        // parse the body of the else statement
         auto else_body = parse_block();
         if (!else_body) return std::unexpected(else_body.error());
 
@@ -93,13 +126,13 @@ std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
                                         std::move(body.value()),
                                         std::move(else_body.value()));
     }
+    // Else if: else if ...
     if (peek_token().get_type() == TokenType::tok_if) {
         std::vector<std::unique_ptr<Stmt>> elif_stmt;
 
         auto res = parse_if_stmt();
         if (!res) return std::unexpected(res.error());
 
-        // otherwise emplace back and return a valid IfStmt
         elif_stmt.emplace_back(std::move(res.value()));
         auto elif_body = std::make_unique<Block>(std::move(elif_stmt));
         return std::make_unique<IfStmt>(loc,
@@ -107,6 +140,8 @@ std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
                                         std::move(body.value()),
                                         std::move(elif_body));
     }
+
+    // Invalid else clause
     emit_error(error("invalid else clause")
                    .with_primary_label(span_from_token(peek_token()), "unexpected token here")
                    .with_help("else must be followed by a block `{` or another `if` statement")
@@ -115,6 +150,13 @@ std::expected<std::unique_ptr<IfStmt>, Diagnostic> Parser::parse_if_stmt() {
     return std::unexpected(Diagnostic(DiagnosticLevel::Error, "invalid else clause"));
 }
 
+/**
+ * Parses a while loop statement.
+ *
+ * @return std::expected<std::unique_ptr<WhileStmt>, Diagnostic> While loop AST or error.
+ *
+ * Format: while (condition) { body }
+ */
 std::expected<std::unique_ptr<WhileStmt>, Diagnostic> Parser::parse_while_stmt() {
     SrcLocation loc = peek_token().get_start();
     advance_token(); // eat 'while'
@@ -128,11 +170,21 @@ std::expected<std::unique_ptr<WhileStmt>, Diagnostic> Parser::parse_while_stmt()
     return std::make_unique<WhileStmt>(loc, std::move(condition.value()), std::move(body.value()));
 }
 
+/**
+ * Parses a for loop statement.
+ *
+ * @return std::expected<std::unique_ptr<ForStmt>, Diagnostic> For loop AST or error.
+ *
+ * Format: for variable in range { body }
+ *
+ * Creates implicit loop variable declaration (i64 type).
+ * Validates loop variable and 'in' keyword syntax.
+ */
 std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
     SrcLocation loc = peek_token().get_start();
     advance_token(); // eat 'for'
 
-    // now we expect the looping variable name
+    // Parse loop variable
     Token looping_var = advance_token();
     if (looping_var.get_type() != TokenType::tok_identifier) {
         emit_error(error("for loop must have a loop variable")
@@ -144,7 +196,7 @@ std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
         return std::unexpected(Diagnostic(DiagnosticLevel::Error, "invalid for loop"));
     }
 
-    // now we expect the 'in' keyword
+    // Validate 'in' keyword
     Token in_keyword = advance_token();
     if (in_keyword.get_type() != TokenType::tok_in) {
         emit_error(error("missing `in` keyword in for loop")
@@ -157,14 +209,15 @@ std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
         return std::unexpected(Diagnostic(DiagnosticLevel::Error, "missing in keyword"));
     }
 
-    // now we parse the range literal
+    // Parse range expression
     auto range = parse_expr();
     if (!range) return std::unexpected(range.error());
 
-    // parse the body of the for loop
+    // Parse loop body
     auto body = parse_block();
     if (!body) return std::unexpected(body.error());
 
+    // Create loop variable declaration (implicit i64 type)
     auto loop_var = make_unique<VarDecl>(looping_var.get_start(),
                                          looping_var.get_lexeme(),
                                          Type(Type::Primitive::i64),
@@ -177,6 +230,20 @@ std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
                                      std::move(body.value()));
 }
 
+/**
+ * Parses a variable declaration (let statement).
+ *
+ * @return std::expected<std::unique_ptr<LetStmt>, Diagnostic> Variable declaration AST or error.
+ *
+ * Format: let name: type = value;
+ *
+ * Validates:
+ * - Colon after identifier
+ * - Valid type annotation
+ * - Assignment operator
+ * - Initializer expression
+ * - Semicolon terminator
+ */
 std::expected<std::unique_ptr<LetStmt>, Diagnostic> Parser::parse_let_stmt() {
     SrcLocation loc = peek_token().get_start();
     if (advance_token().get_type() != TokenType::tok_let) {
@@ -192,7 +259,7 @@ std::expected<std::unique_ptr<LetStmt>, Diagnostic> Parser::parse_let_stmt() {
     std::string name = binding.value().first;
     Type type = std::move(binding.value().second);
 
-    // now we expect a `=` token
+    // Validate assignment operator
     if (advance_token().get_type() != TokenType::tok_assign) {
         emit_error(error("missing assignment in variable declaration")
                        .with_primary_label(span_from_token(peek_token()), "expected `=` here")
@@ -203,7 +270,7 @@ std::expected<std::unique_ptr<LetStmt>, Diagnostic> Parser::parse_let_stmt() {
         return std::unexpected(Diagnostic(DiagnosticLevel::Error, "missing assignment"));
     }
 
-    // lastly, we expect an expression
+    // Parse initializer expression
     auto expr = parse_expr();
     if (!expr) {
         emit_error(
@@ -215,7 +282,7 @@ std::expected<std::unique_ptr<LetStmt>, Diagnostic> Parser::parse_let_stmt() {
         return std::unexpected(Diagnostic(DiagnosticLevel::Error, "missing initializer"));
     }
 
-    // now we expect a `;` token
+    // Validate semicolon terminator
     if (advance_token().get_type() != TokenType::tok_semicolon) {
         emit_error(error("missing semicolon after variable declaration")
                        .with_primary_label(span_from_token(peek_token()), "expected `;` here")
