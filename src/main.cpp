@@ -40,7 +40,7 @@ int main(int argc, char* argv[]) {
         }
 
         std::println("\nParsing results: ");
-        auto source_manager = std::make_shared<phi::SourceManager>();
+        auto source_manager = std::make_shared<phi::SrcManager>();
         auto diagnostic_manager = std::make_shared<phi::DiagnosticManager>(source_manager);
         phi::Parser parser(source, filename, tokens, diagnostic_manager);
         auto [ast, parse_success] = parser.parse();

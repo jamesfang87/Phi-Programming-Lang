@@ -3,31 +3,11 @@
 #include <iostream>
 #include <map>
 #include <memory>
-#include <optional>
 
 #include "Diagnostics/Diagnostic.hpp"
+#include "SrcManager/SrcManager.hpp"
 
 namespace phi {
-
-/// Manages source files and their contents for diagnostic rendering
-class SourceManager {
-public:
-    /// Register a source file with its content
-    void add_source_file(const std::string& path, std::string_view content);
-
-    /// Get a specific line from a source file
-    std::optional<std::string_view> get_line(const std::string& path, int line_num) const;
-
-    /// Get multiple lines from a source file
-    std::vector<std::string_view>
-    get_lines(const std::string& path, int start_line, int end_line) const;
-
-    /// Get the total number of lines in a file
-    int get_line_count(const std::string& path) const;
-
-private:
-    std::map<std::string, std::vector<std::string_view>> source_files_;
-};
 
 /// Configuration for diagnostic rendering
 struct DiagnosticConfig {
@@ -42,7 +22,7 @@ struct DiagnosticConfig {
 /// Handles formatting and rendering of diagnostics
 class DiagnosticManager {
 public:
-    explicit DiagnosticManager(std::shared_ptr<SourceManager> source_manager,
+    explicit DiagnosticManager(std::shared_ptr<SrcManager> source_manager,
                                DiagnosticConfig config = DiagnosticConfig());
 
     /// Emit a diagnostic to the specified stream
@@ -63,10 +43,10 @@ public:
     void set_config(const DiagnosticConfig& config);
 
     /// Get the source manager
-    std::shared_ptr<SourceManager> source_manager() const;
+    std::shared_ptr<SrcManager> source_manager() const;
 
 private:
-    std::shared_ptr<SourceManager> source_manager_;
+    std::shared_ptr<SrcManager> source_manager_;
     DiagnosticConfig config_;
     mutable int error_count_ = 0;
     mutable int warning_count_ = 0;

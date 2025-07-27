@@ -9,7 +9,7 @@
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenType.hpp"
-#include "SrcLocation.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 class Expr : public Stmt {
 public:
