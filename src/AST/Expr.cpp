@@ -4,7 +4,6 @@
 #include <print>
 #include <string>
 
-#include "AST/Decl.hpp"
 #include "Lexer/TokenType.hpp"
 
 namespace {
@@ -80,14 +79,8 @@ DeclRefExpr::DeclRefExpr(SrcLocation location, std::string identifier)
       identifier(std::move(identifier)) {}
 
 void DeclRefExpr::info_dump(int level) const {
-    if (decl == nullptr)
-        std::println("{}DeclRefExpr: {}", indent(level), identifier);
-    else {
-        std::print("{}DeclRefExpr: {} referencing ", indent(level), identifier);
-        decl->info_dump(0);
-    }
+    std::println("{}DeclRefExpr: {}", indent(level), identifier);
 }
-
 //====================== FunCallExpr ========================//
 FunCallExpr::FunCallExpr(SrcLocation location,
                          std::unique_ptr<Expr> callee,
@@ -99,9 +92,6 @@ FunCallExpr::FunCallExpr(SrcLocation location,
 void FunCallExpr::info_dump(int level) const {
     std::println("{}FunCallExpr", indent(level));
     std::println("{}  callee:", indent(level));
-    if (func_decl != nullptr) {
-        func_decl->info_dump(0);
-    }
     callee->info_dump(level + 2);
     std::println("{}  args:", indent(level));
     for (const auto& arg : args) {

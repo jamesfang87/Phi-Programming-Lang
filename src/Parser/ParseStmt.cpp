@@ -165,11 +165,18 @@ std::expected<std::unique_ptr<ForStmt>, Diagnostic> Parser::parse_for_stmt() {
     auto body = parse_block();
     if (!body) return std::unexpected(body.error());
 
+    auto loop_var = make_unique<VarDecl>(looping_var.get_start(),
+                                         looping_var.get_lexeme(),
+                                         Type(Type::Primitive::i64),
+                                         false,
+                                         nullptr);
+
     return std::make_unique<ForStmt>(loc,
-                                     looping_var.get_lexeme(),
+                                     std::move(loop_var),
                                      std::move(range.value()),
                                      std::move(body.value()));
 }
+
 std::expected<std::unique_ptr<LetStmt>, Diagnostic> Parser::parse_let_stmt() {
     SrcLocation loc = peek_token().get_start();
     if (advance_token().get_type() != TokenType::tok_let) {
