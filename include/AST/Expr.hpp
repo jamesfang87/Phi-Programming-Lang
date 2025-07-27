@@ -58,7 +58,7 @@ class StrLiteral final : public Expr {
 public:
     StrLiteral(SrcLocation location, std::string value);
 
-    [[nodiscard]] const std::string& get_value() const { return value; }
+    [[nodiscard]] std::string get_value() const { return value; }
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
@@ -115,7 +115,7 @@ class DeclRefExpr final : public Expr {
 public:
     DeclRefExpr(SrcLocation location, std::string identifier);
 
-    [[nodiscard]] std::string& get_id() { return identifier; }
+    [[nodiscard]] std::string get_id() { return identifier; }
     [[nodiscard]] Decl* get_decl() const { return decl; }
 
     void set_decl(Decl* d) { decl = d; }
