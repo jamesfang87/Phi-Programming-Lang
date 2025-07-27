@@ -35,7 +35,6 @@ public:
     virtual bool visit(UnaryOp& expr) = 0;
 
     // Statement visitors
-    virtual bool visit(Block& block) = 0;
     virtual bool visit(ReturnStmt& stmt) = 0;
     virtual bool visit(IfStmt& stmt) = 0;
     virtual bool visit(WhileStmt& stmt) = 0;
