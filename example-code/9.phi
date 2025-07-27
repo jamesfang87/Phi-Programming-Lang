@@ -7,4 +7,20 @@ fun foo(x: i64) ->  i64 {
 }
 
 fun main() {
+    while (true) {
+        let x: i64 = foo(32);
+    }
+
+    for i in 0..10 {
+        let x: i64 = foo(i);
+    }
+
+    let x: i64 = 1;
+    if x > 1 {
+        let y: i64  = 1;
+    else {
+        let y: i64 = 2;
+    }
+
+
 }
