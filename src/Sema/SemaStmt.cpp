@@ -1,14 +1,13 @@
+#include "AST/Expr.hpp"
 #include "Sema/Sema.hpp"
 
 #include <print>
 
 #include "AST/Decl.hpp"
 
-bool Sema::visit(Block& block) {
-    // check if this is a function body block
-    // function body shares scope with parameters - don't create new scope
-    if (!is_function_body_block) {
-        // if not, then create a new scope
+bool Sema::resolve_block(Block& block, bool scope_created = false) {
+    // do not create scope if already created
+    if (!scope_created) {
         SymbolTable::ScopeGuard block_scope(symbol_table);
     }
 
@@ -61,9 +60,9 @@ bool Sema::visit(IfStmt& stmt) {
     }
 
     // now we resolve the bodies
-    if (!stmt.get_then().accept(*this)) return false;
+    if (!resolve_block(stmt.get_then())) return false;
     if (stmt.has_else()) {
-        if (!stmt.get_else().accept(*this)) return false;
+        if (!resolve_block(stmt.get_else())) return false;
     }
 
     return true;
@@ -80,14 +79,20 @@ bool Sema::visit(WhileStmt& stmt) {
     }
 
     // now we resolve the body
-    if (!stmt.get_body().accept(*this)) return false;
+    if (!resolve_block(stmt.get_body())) return false;
 
     return true;
 }
 
 bool Sema::visit(ForStmt& stmt) {
-    (void)stmt; // suppress unused parameter warning
-    // TODO: Implement actual resolution
+    bool res = stmt.get_range().accept(*this);
+    if (!res) return false;
+
+    SymbolTable::ScopeGuard block_scope(symbol_table);
+    symbol_table.insert_decl(&stmt.get_loop_var());
+
+    if (!resolve_block(stmt.get_body(), true)) return false;
+
     return true;
 }
 
