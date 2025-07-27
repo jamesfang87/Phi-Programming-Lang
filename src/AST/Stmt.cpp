@@ -28,12 +28,12 @@ void ReturnStmt::info_dump(int level) const {
 //======================== IfStmt =========================//
 IfStmt::IfStmt(SrcLocation location,
                std::unique_ptr<Expr> condition,
-               std::unique_ptr<Block> true_body,
-               std::unique_ptr<Block> false_body)
+               std::unique_ptr<Block> then_block,
+               std::unique_ptr<Block> else_block)
     : Stmt(std::move(location)),
       condition(std::move(condition)),
-      then_block(std::move(true_body)),
-      else_block(std::move(false_body)) {}
+      then_block(std::move(then_block)),
+      else_block(std::move(else_block)) {}
 
 IfStmt::~IfStmt() = default;
 

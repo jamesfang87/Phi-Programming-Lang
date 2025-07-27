@@ -14,7 +14,7 @@ public:
         : diagnostic_(level, std::move(message)) {}
 
     /// Add a primary label (shown with arrow pointer)
-    DiagnosticBuilder& with_primary_label(const SourceSpan& span, std::string message = "") {
+    DiagnosticBuilder& with_primary_label(const SrcSpan& span, std::string message = "") {
         diagnostic_.with_primary_label(span, std::move(message));
         return *this;
     }
@@ -25,7 +25,7 @@ public:
                                           const int col,
                                           std::string message = "") {
         const SrcLocation loc{path, line, col};
-        return with_primary_label(SourceSpan(loc), std::move(message));
+        return with_primary_label(SrcSpan(loc), std::move(message));
     }
 
     /// Add a primary label spanning from start to end
@@ -37,11 +37,11 @@ public:
                                          std::string message = "") {
         const SrcLocation start{path, start_line, start_col};
         const SrcLocation end{path, end_line, end_col};
-        return with_primary_label(SourceSpan(start, end), std::move(message));
+        return with_primary_label(SrcSpan(start, end), std::move(message));
     }
 
     /// Add a secondary label (shown with underline)
-    DiagnosticBuilder& with_secondary_label(const SourceSpan& span,
+    DiagnosticBuilder& with_secondary_label(const SrcSpan& span,
                                             std::string message,
                                             const DiagnosticStyle style = DiagnosticStyle()) {
         diagnostic_.with_secondary_label(span, std::move(message), style);
@@ -55,7 +55,7 @@ public:
                                             std::string message,
                                             const DiagnosticStyle style = DiagnosticStyle()) {
         const SrcLocation loc{path, line, col};
-        return with_secondary_label(SourceSpan(loc), std::move(message), style);
+        return with_secondary_label(SrcSpan(loc), std::move(message), style);
     }
 
     /// Add a note (additional information)
@@ -72,7 +72,7 @@ public:
 
     /// Add a code suggestion for fixing the issue
     DiagnosticBuilder&
-    with_suggestion(const SourceSpan& span, std::string replacement, std::string description) {
+    with_suggestion(const SrcSpan& span, std::string replacement, std::string description) {
         diagnostic_.with_suggestion(span, std::move(replacement), std::move(description));
         return *this;
     }

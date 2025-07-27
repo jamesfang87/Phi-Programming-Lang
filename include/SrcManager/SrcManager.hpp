@@ -22,6 +22,6 @@ public:
     [[nodiscard]] int get_line_count(const std::string& path) const;
 
 private:
-    std::map<std::string, std::vector<std::string_view>> source_files_;
+    std::map<std::string, std::vector<std::string_view>> source_files;
 };
 } // namespace phi

@@ -15,13 +15,13 @@ void SrcManager::add_source_file(const std::string& path, const std::string_view
             it++; // skip '\n'
         }
     }
-    source_files_[path] = std::move(lines);
+    source_files[path] = std::move(lines);
 }
 
 std::optional<std::string_view> SrcManager::get_line(const std::string& path,
                                                      const int line_num) const {
-    const auto file_it = source_files_.find(path);
-    if (file_it == source_files_.end()) {
+    const auto file_it = source_files.find(path);
+    if (file_it == source_files.end()) {
         return std::nullopt;
     }
 
@@ -45,8 +45,8 @@ SrcManager::get_lines(const std::string& path, const int start_line, const int e
 }
 
 int SrcManager::get_line_count(const std::string& path) const {
-    const auto file_it = source_files_.find(path);
-    if (file_it == source_files_.end()) {
+    const auto file_it = source_files.find(path);
+    if (file_it == source_files.end()) {
         return 0;
     }
     return static_cast<int>(file_it->second.size());

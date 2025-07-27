@@ -41,7 +41,7 @@ private:
 
 class ReturnStmt final : public Stmt {
 public:
-    ReturnStmt(SrcLocation, std::unique_ptr<Expr>);
+    ReturnStmt(SrcLocation location, std::unique_ptr<Expr> expr);
     ~ReturnStmt() override;
 
     [[nodiscard]] bool has_expr() const { return expr != nullptr; }
@@ -56,7 +56,10 @@ private:
 
 class IfStmt final : public Stmt {
 public:
-    IfStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>, std::unique_ptr<Block>);
+    IfStmt(SrcLocation location,
+           std::unique_ptr<Expr> condition,
+           std::unique_ptr<Block> then_block,
+           std::unique_ptr<Block> else_block);
     ~IfStmt() override;
 
     [[nodiscard]] Expr& get_condition() const { return *condition; }
@@ -75,7 +78,7 @@ private:
 
 class WhileStmt final : public Stmt {
 public:
-    WhileStmt(SrcLocation, std::unique_ptr<Expr>, std::unique_ptr<Block>);
+    WhileStmt(SrcLocation location, std::unique_ptr<Expr> condition, std::unique_ptr<Block> body);
     ~WhileStmt() override;
 
     [[nodiscard]] Expr& get_condition() const { return *condition; }
@@ -91,7 +94,10 @@ private:
 
 class ForStmt final : public Stmt {
 public:
-    ForStmt(SrcLocation, std::unique_ptr<VarDecl>, std::unique_ptr<Expr>, std::unique_ptr<Block>);
+    ForStmt(SrcLocation location,
+            std::unique_ptr<VarDecl> loop_var,
+            std::unique_ptr<Expr> range,
+            std::unique_ptr<Block> body);
     ~ForStmt() override;
 
     [[nodiscard]] VarDecl& get_loop_var() { return *loop_var; }
@@ -109,7 +115,7 @@ private:
 
 class LetStmt final : public Stmt {
 public:
-    LetStmt(SrcLocation, std::unique_ptr<VarDecl>);
+    LetStmt(SrcLocation location, std::unique_ptr<VarDecl> decl);
     ~LetStmt() override;
 
     [[nodiscard]] VarDecl& get_var_decl() const { return *var_decl; }
