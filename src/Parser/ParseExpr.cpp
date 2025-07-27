@@ -68,7 +68,6 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
 
             if (peek_token().get_type() != TokenType::tok_close_paren) {
                 // Error handling for missing ')'
-                successful = false; // set success flag to false
                 return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
             }
             advance_token(); // consume ')'
@@ -111,7 +110,6 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
 
         default: {
             // Error handling
-            successful = false; // set success flag to false
             return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
         }
     }
@@ -139,7 +137,6 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
                 default:
                     auto res = parse_postfix(std::move(lhs));
                     if (!res) {
-                        successful = false; // set success flag to false
                         return std::unexpected(res.error());
                     }
                     lhs = std::move(res.value());
@@ -169,7 +166,6 @@ std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::pratt(int min_bp) {
                 // Regular binary operators
                 auto res = pratt(r_bp);
                 if (!res) {
-                    successful = false;
                     return std::unexpected(res.error());
                 }
                 lhs = std::make_unique<BinaryOp>(std::move(lhs), std::move(res.value()), op);
@@ -203,13 +199,10 @@ Parser::parse_fun_call(std::unique_ptr<Expr> callee) {
                                  TokenType::tok_close_paren,
                                  &Parser::parse_expr);
     if (!args) {
-        successful = false;
         return std::unexpected(args.error());
     }
 
-    return std::make_unique<FunCallExpr>(SrcLocation{.path = path,
-                                                     .line = peek_token().get_start().line,
-                                                     .col = peek_token().get_start().col},
+    return std::make_unique<FunCallExpr>(callee->get_location(),
                                          std::move(callee),
                                          std::move(args.value()));
 }
