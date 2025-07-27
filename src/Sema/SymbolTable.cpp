@@ -1,5 +1,7 @@
 #include "Sema/SymbolTable.hpp"
 
+namespace phi {
+
 void SymbolTable::enter_scope() { scopes.emplace_back(); }
 void SymbolTable::exit_scope() { scopes.pop_back(); }
 
@@ -19,3 +21,5 @@ Decl* SymbolTable::lookup_decl(const std::string& name) {
     }
     return nullptr;
 }
+
+} // namespace phi

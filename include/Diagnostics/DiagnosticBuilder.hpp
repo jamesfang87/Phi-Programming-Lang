@@ -11,22 +11,16 @@ class DiagnosticBuilder {
 public:
     /// Create a new diagnostic builder with the specified level and message
     DiagnosticBuilder(const DiagnosticLevel level, std::string message)
-        : diagnostic_(level, std::move(message)) {}
+        : diagnostic(level, std::move(message)) {}
 
     /// Add a primary label (shown with arrow pointer)
-    DiagnosticBuilder& with_primary_label(const SrcSpan& span, std::string message = "") {
-        diagnostic_.with_primary_label(span, std::move(message));
-        return *this;
-    }
+    DiagnosticBuilder& with_primary_label(const SrcSpan& span, std::string message = "");
 
     /// Add a primary label using individual location components
     DiagnosticBuilder& with_primary_label(const std::string& path,
                                           const int line,
                                           const int col,
-                                          std::string message = "") {
-        const SrcLocation loc{path, line, col};
-        return with_primary_label(SrcSpan(loc), std::move(message));
-    }
+                                          std::string message = "");
 
     /// Add a primary label spanning from start to end
     DiagnosticBuilder& with_primary_span(const std::string& path,
@@ -34,73 +28,47 @@ public:
                                          const int start_col,
                                          const int end_line,
                                          const int end_col,
-                                         std::string message = "") {
-        const SrcLocation start{path, start_line, start_col};
-        const SrcLocation end{path, end_line, end_col};
-        return with_primary_label(SrcSpan(start, end), std::move(message));
-    }
+                                         std::string message = "");
 
     /// Add a secondary label (shown with underline)
     DiagnosticBuilder& with_secondary_label(const SrcSpan& span,
                                             std::string message,
-                                            const DiagnosticStyle style = DiagnosticStyle()) {
-        diagnostic_.with_secondary_label(span, std::move(message), style);
-        return *this;
-    }
+                                            const DiagnosticStyle style = DiagnosticStyle());
 
     /// Add a secondary label using individual location components
     DiagnosticBuilder& with_secondary_label(const std::string& path,
                                             const int line,
                                             const int col,
                                             std::string message,
-                                            const DiagnosticStyle style = DiagnosticStyle()) {
-        const SrcLocation loc{path, line, col};
-        return with_secondary_label(SrcSpan(loc), std::move(message), style);
-    }
+                                            const DiagnosticStyle style = DiagnosticStyle());
 
     /// Add a note (additional information)
-    DiagnosticBuilder& with_note(std::string note) {
-        diagnostic_.with_note(std::move(note));
-        return *this;
-    }
+    DiagnosticBuilder& with_note(std::string note);
 
     /// Add a help message (suggestions)
-    DiagnosticBuilder& with_help(std::string help) {
-        diagnostic_.with_help(std::move(help));
-        return *this;
-    }
+    DiagnosticBuilder& with_help(std::string help);
 
     /// Add a code suggestion for fixing the issue
     DiagnosticBuilder&
-    with_suggestion(const SrcSpan& span, std::string replacement, std::string description) {
-        diagnostic_.with_suggestion(span, std::move(replacement), std::move(description));
-        return *this;
-    }
+    with_suggestion(const SrcSpan& span, std::string replacement, std::string description);
 
     /// Set an error code (e.g., "E0308")
-    DiagnosticBuilder& with_code(std::string code) {
-        diagnostic_.with_code(std::move(code));
-        return *this;
-    }
+    DiagnosticBuilder& with_code(std::string code);
 
     /// Get the built diagnostic (move semantics)
-    Diagnostic build() && { return std::move(diagnostic_); }
+    Diagnostic build() &&;
 
     /// Get the built diagnostic (copy)
-    [[nodiscard]] Diagnostic build() const& { return diagnostic_; }
+    [[nodiscard]] Diagnostic build() const&;
 
     /// Emit the diagnostic immediately using the provided manager
-    void emit(const DiagnosticManager& manager, std::ostream& out = std::cerr) const&& {
-        manager.emit(diagnostic_, out);
-    }
+    void emit(const DiagnosticManager& manager, std::ostream& out = std::cerr) const&&;
 
     /// Emit the diagnostic immediately using the provided manager (copy version)
-    void emit(const DiagnosticManager& manager, std::ostream& out = std::cerr) const& {
-        manager.emit(diagnostic_, out);
-    }
+    void emit(const DiagnosticManager& manager, std::ostream& out = std::cerr) const&;
 
 private:
-    Diagnostic diagnostic_;
+    Diagnostic diagnostic;
 };
 
 /// Convenience factory functions for creating diagnostic builders

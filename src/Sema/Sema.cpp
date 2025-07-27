@@ -7,6 +7,8 @@
 
 #include "AST/Decl.hpp"
 
+namespace phi {
+
 std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
     // create global scope with RAII
     SymbolTable::ScopeGuard global_scope(symbol_table);
@@ -62,3 +64,5 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
     // Global scope will be automatically popped by ScopeGuard destructor
     return {true, std::move(ast)};
 }
+
+} // namespace phi

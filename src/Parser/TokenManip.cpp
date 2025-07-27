@@ -1,6 +1,7 @@
 #include "Parser/Parser.hpp"
 
 namespace phi {
+
 bool Parser::at_eof() const {
     return token_it >= tokens.end() || peek_token().get_type() == TokenType::tok_eof;
 }
@@ -40,4 +41,5 @@ bool Parser::match_token(const TokenType type) {
     }
     return false;
 }
+
 } // namespace phi

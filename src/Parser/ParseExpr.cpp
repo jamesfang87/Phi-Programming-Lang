@@ -4,6 +4,7 @@
 #include "Lexer/TokenType.hpp"
 
 namespace phi {
+
 std::expected<std::unique_ptr<Expr>, Diagnostic> Parser::parse_expr() { return pratt(0); }
 
 // Add to binding power functions
@@ -219,4 +220,5 @@ std::unique_ptr<Expr> Parser::parse_member_access(std::unique_ptr<Expr> expr) {
     return std::make_unique<MemberExpr>(std::move(expr), member.get_lexeme(), member.get_start());
 }
 */
+
 } // namespace phi

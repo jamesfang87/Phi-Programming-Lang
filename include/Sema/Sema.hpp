@@ -12,6 +12,8 @@
 #include "AST/Type.hpp"
 #include "Sema/SymbolTable.hpp"
 
+namespace phi {
+
 class Sema final : public ASTVisitor {
 public:
     explicit Sema(std::vector<std::unique_ptr<FunDecl>> ast)
@@ -60,3 +62,5 @@ private:
     static bool is_numeric_type(const Type& type);
     static Type promote_numeric_types(const Type& lhs, const Type& rhs);
 };
+
+} // namespace phi

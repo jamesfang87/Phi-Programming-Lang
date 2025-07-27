@@ -3,6 +3,7 @@
 #include <unordered_map>
 
 namespace phi {
+
 std::expected<Type, Diagnostic> Parser::parse_type() {
     const std::unordered_map<std::string, Type::Primitive> primitive_map = {
         {"i8", Type::Primitive::i8},
@@ -38,4 +39,5 @@ std::expected<Type, Diagnostic> Parser::parse_type() {
     }
     return Type(it->second);
 }
+
 } // namespace phi

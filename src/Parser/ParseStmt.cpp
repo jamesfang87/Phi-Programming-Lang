@@ -230,4 +230,5 @@ std::expected<std::unique_ptr<LetStmt>, Diagnostic> Parser::parse_let_stmt() {
         loc,
         std::make_unique<VarDecl>(loc, name, type, true, std::move(expr.value())));
 }
+
 } // namespace phi

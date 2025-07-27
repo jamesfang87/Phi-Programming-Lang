@@ -5,6 +5,8 @@
 
 #include "AST/Decl.hpp"
 
+namespace phi {
+
 bool Sema::resolve_block(Block& block, bool scope_created = false) {
     // do not create scope if already created
     if (!scope_created) {
@@ -131,3 +133,5 @@ bool Sema::visit(LetStmt& stmt) {
 
     return true;
 }
+
+} // namespace phi

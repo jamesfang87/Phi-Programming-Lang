@@ -1,6 +1,7 @@
 #include "Parser/Parser.hpp"
 
 namespace phi {
+
 std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
     // make sure that the block starts with an open brace, exit and emit error
     // otherwise
@@ -127,4 +128,5 @@ std::expected<std::unique_ptr<Block>, Diagnostic> Parser::parse_block() {
     advance_token(); // eat `}`
     return std::make_unique<Block>(std::move(stmts));
 }
+
 } // namespace phi
