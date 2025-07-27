@@ -2,6 +2,8 @@
 
 #include <print>
 
+namespace phi {
+
 bool Sema::resolve_fun_decl(FunDecl* fun) {
     // first resolve the return type in the funciton decl
     bool resolved_return_type = resolve_type(fun->get_return_type());
@@ -50,3 +52,5 @@ bool Sema::resolve_param_decl(ParamDecl* param) {
     }
     return true;
 }
+
+} // namespace phi

@@ -1,6 +1,7 @@
 #include "Parser/Parser.hpp"
 
 namespace phi {
+
 // Emit a "expected X found Y" error
 void Parser::emit_expected_found_error(const std::string& expected, const Token& found_token) {
     emit_error(error(std::format("expected {}, found `{}`", expected, found_token.get_lexeme()))
