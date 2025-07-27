@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
         }
 
         std::println("Semantic Analysis:");
-        Sema analyzer(std::move(ast));
+        phi::Sema analyzer(std::move(ast));
         auto [success, resolved_ast] = analyzer.resolve_ast();
         if (!success) {
             std::println("\033[31;1;4merror:\033[0m exiting due to previous error(s)");

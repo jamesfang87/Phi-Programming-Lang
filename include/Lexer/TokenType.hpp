@@ -11,7 +11,6 @@
  * The tokens are organized into logical groups for better maintainability.
  * Using enum class avoids namespace pollution by requiring scope resolution.
  */
-
 enum class TokenType : uint8_t {
     /// End of file token
     tok_eof,

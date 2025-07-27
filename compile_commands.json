@@ -19,6 +19,18 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Diagnostics/Diagnostic.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/Diagnostic.cpp",
+  "file": "/Users/jamesfang/Phi/src/Diagnostics/Diagnostic.cpp",
+  "output": "CMakeFiles/phi.dir/src/Diagnostics/Diagnostic.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Diagnostics/DiagnosticBuilder.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/DiagnosticBuilder.cpp",
+  "file": "/Users/jamesfang/Phi/src/Diagnostics/DiagnosticBuilder.cpp",
+  "output": "CMakeFiles/phi.dir/src/Diagnostics/DiagnosticBuilder.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
   "command": "/opt/homebrew/bin/g++-14  -I/Users/jamesfang/Phi/include -O3 -DNDEBUG -std=c++26 -arch arm64 -Wall -Wextra -Wpedantic -O3 -o CMakeFiles/phi.dir/src/Diagnostics/DiagnosticManager.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/DiagnosticManager.cpp",
   "file": "/Users/jamesfang/Phi/src/Diagnostics/DiagnosticManager.cpp",
   "output": "CMakeFiles/phi.dir/src/Diagnostics/DiagnosticManager.cpp.o"

@@ -1,5 +1,7 @@
 #include "Sema/Sema.hpp"
 
+namespace phi {
+
 bool Sema::resolve_type(std::optional<Type> type) {
     if (!type.has_value()) {
         return false;
@@ -12,3 +14,5 @@ bool Sema::resolve_type(std::optional<Type> type) {
     // TODO: support user-defined types
     return false;
 }
+
+} // namespace phi

@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <print>
 
+namespace phi {
+
 // ASTVisitor implementation - Expression visitors
 bool Sema::visit(IntLiteral& expr) {
     expr.set_type(Type(Type::Primitive::i64));
@@ -313,3 +315,5 @@ bool Sema::resolve_function_call(FunCallExpr* call) {
 
     return true;
 }
+
+} // namespace phi

@@ -6,6 +6,8 @@
 
 #include "AST/Decl.hpp"
 
+namespace phi {
+
 class SymbolTable {
 public:
     class ScopeGuard {
@@ -34,3 +36,5 @@ private:
     void enter_scope();
     void exit_scope();
 };
+
+} // namespace phi
