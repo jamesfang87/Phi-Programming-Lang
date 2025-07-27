@@ -88,4 +88,5 @@ void DiagnosticBuilder::emit(const DiagnosticManager& manager, std::ostream& out
 void DiagnosticBuilder::emit(const DiagnosticManager& manager, std::ostream& out) const& {
     manager.emit(diagnostic, out);
 }
+
 } // namespace phi

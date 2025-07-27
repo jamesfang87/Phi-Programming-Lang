@@ -5,24 +5,62 @@
 
 namespace phi {
 
-/// A fluent builder class for constructing diagnostics with a convenient API
-/// This class makes it easy to build complex diagnostics in a chain-like manner
+/**
+ * @brief Fluent interface for constructing diagnostics
+ *
+ * Provides a chainable API for incrementally building complex
+ * diagnostics with multiple annotations and suggestions.
+ *
+ * Usage:
+ * ```
+ * error("Invalid type")
+ *     .with_primary_label(span, "Expected integer")
+ *     .with_secondary_label(alt_span, "Found string here")
+ *     .with_note("Variables must be declared before use")
+ *     .emit(manager);
+ * ```
+ */
 class DiagnosticBuilder {
 public:
-    /// Create a new diagnostic builder with the specified level and message
+    /**
+     * @brief Initializes builder with severity and message
+     * @param level Diagnostic importance level
+     * @param message Primary description (1 sentence)
+     */
     DiagnosticBuilder(const DiagnosticLevel level, std::string message)
         : diagnostic(level, std::move(message)) {}
 
-    /// Add a primary label (shown with arrow pointer)
+    /**
+     * @brief Adds primary source marker with span
+     * @param span Source location range
+     * @param message Concise explanation (optional)
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder& with_primary_label(const SrcSpan& span, std::string message = "");
 
-    /// Add a primary label using individual location components
+    /**
+     * @brief Adds primary marker with discrete location
+     * @param path Source file path
+     * @param line Line number (1-indexed)
+     * @param col Column number (1-indexed)
+     * @param message Concise explanation (optional)
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder& with_primary_label(const std::string& path,
                                           const int line,
                                           const int col,
                                           std::string message = "");
 
-    /// Add a primary label spanning from start to end
+    /**
+     * @brief Adds primary marker with explicit range
+     * @param path Source file path
+     * @param start_line Start line (1-indexed)
+     * @param start_col Start column (1-indexed)
+     * @param end_line End line (1-indexed)
+     * @param end_col End column (1-indexed)
+     * @param message Concise explanation (optional)
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder& with_primary_span(const std::string& path,
                                          const int start_line,
                                          const int start_col,
@@ -30,72 +68,146 @@ public:
                                          const int end_col,
                                          std::string message = "");
 
-    /// Add a secondary label (shown with underline)
+    /**
+     * @brief Adds secondary source marker with style
+     * @param span Source location range
+     * @param message Contextual information
+     * @param style Custom visual style
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder& with_secondary_label(const SrcSpan& span,
                                             std::string message,
                                             const DiagnosticStyle style = DiagnosticStyle());
 
-    /// Add a secondary label using individual location components
+    /**
+     * @brief Adds secondary marker with discrete location
+     * @param path Source file path
+     * @param line Line number (1-indexed)
+     * @param col Column number (1-indexed)
+     * @param message Contextual information
+     * @param style Custom visual style
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder& with_secondary_label(const std::string& path,
                                             const int line,
                                             const int col,
                                             std::string message,
                                             const DiagnosticStyle style = DiagnosticStyle());
 
-    /// Add a note (additional information)
+    /**
+     * @brief Adds supplementary note
+     * @param note Technical explanation (1-2 sentences)
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder& with_note(std::string note);
 
-    /// Add a help message (suggestions)
+    /**
+     * @brief Adds resolution advice
+     * @param help Actionable suggestion (1 sentence)
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder& with_help(std::string help);
 
-    /// Add a code suggestion for fixing the issue
+    /**
+     * @brief Adds automated code fix
+     * @param span Source range to modify
+     * @param replacement New code to insert
+     * @param description Explanation of change
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder&
     with_suggestion(const SrcSpan& span, std::string replacement, std::string description);
 
-    /// Set an error code (e.g., "E0308")
+    /**
+     * @brief Sets documentation reference code
+     * @param code Alphanumeric error code (e.g., "E0425")
+     * @return DiagnosticBuilder& Reference for chaining
+     */
     DiagnosticBuilder& with_code(std::string code);
 
-    /// Get the built diagnostic (move semantics)
+    /**
+     * @brief Finalizes diagnostic (rvalue version)
+     * @return Diagnostic Fully constructed diagnostic
+     *
+     * @note Use when moving the builder (efficient)
+     */
     Diagnostic build() &&;
 
-    /// Get the built diagnostic (copy)
+    /**
+     * @brief Finalizes diagnostic (lvalue version)
+     * @return Diagnostic Copy of constructed diagnostic
+     */
     [[nodiscard]] Diagnostic build() const&;
 
-    /// Emit the diagnostic immediately using the provided manager
+    /**
+     * @brief Immediately emits diagnostic
+     * @param manager Diagnostic rendering system
+     * @param out Output stream (default: stderr)
+     *
+     * @note Use rvalue version for one-time emission
+     */
     void emit(const DiagnosticManager& manager, std::ostream& out = std::cerr) const&&;
 
-    /// Emit the diagnostic immediately using the provided manager (copy version)
+    /**
+     * @brief Immediately emits diagnostic (copy version)
+     * @param manager Diagnostic rendering system
+     * @param out Output stream (default: stderr)
+     */
     void emit(const DiagnosticManager& manager, std::ostream& out = std::cerr) const&;
 
 private:
-    Diagnostic diagnostic;
+    Diagnostic diagnostic; ///< Diagnostic being constructed
 };
 
-/// Convenience factory functions for creating diagnostic builders
+// FLUENT FACTORY FUNCTIONS
 
-/// Create an error diagnostic builder
+/**
+ * @brief Creates error-level diagnostic builder
+ * @param message Primary description
+ * @return DiagnosticBuilder Builder instance
+ */
 inline DiagnosticBuilder error(std::string message) {
     return {DiagnosticLevel::Error, std::move(message)};
 }
 
-/// Create a warning diagnostic builder
+/**
+ * @brief Creates warning-level diagnostic builder
+ * @param message Primary description
+ * @return DiagnosticBuilder Builder instance
+ */
 inline DiagnosticBuilder warning(std::string message) {
     return {DiagnosticLevel::Warning, std::move(message)};
 }
 
-/// Create a note diagnostic builder
+/**
+ * @brief Creates note-level diagnostic builder
+ * @param message Supplementary information
+ * @return DiagnosticBuilder Builder instance
+ */
 inline DiagnosticBuilder note(std::string message) {
     return {DiagnosticLevel::Note, std::move(message)};
 }
 
-/// Create a help diagnostic builder
+/**
+ * @brief Creates help-level diagnostic builder
+ * @param message Actionable advice
+ * @return DiagnosticBuilder Builder instance
+ */
 inline DiagnosticBuilder help(std::string message) {
     return {DiagnosticLevel::Help, std::move(message)};
 }
 
-/// Convenience functions for common parsing errors
+// COMMON ERROR HELPERS
 
-/// Create a "expected X found Y" error
+/**
+ * @brief Creates "expected X found Y" error
+ * @param expected Description of expected token/type
+ * @param found Description of found token/type
+ * @param path Source file path
+ * @param line Location line
+ * @param col Location column
+ * @return DiagnosticBuilder Preconfigured error builder
+ */
 inline DiagnosticBuilder expected_found_error(const std::string& expected,
                                               const std::string& found,
                                               const std::string& path,
@@ -105,7 +217,14 @@ inline DiagnosticBuilder expected_found_error(const std::string& expected,
         .with_primary_label(path, line, col, std::format("expected {} here", expected));
 }
 
-/// Create a "unexpected token" error
+/**
+ * @brief Creates unexpected token error
+ * @param token_name Unexpected token string
+ * @param path Source file path
+ * @param line Location line
+ * @param col Location column
+ * @return DiagnosticBuilder Preconfigured error builder
+ */
 inline DiagnosticBuilder unexpected_token_error(const std::string& token_name,
                                                 const std::string& path,
                                                 const int line,
@@ -114,7 +233,14 @@ inline DiagnosticBuilder unexpected_token_error(const std::string& token_name,
         .with_primary_label(path, line, col, "unexpected token");
 }
 
-/// Create a "missing token" error
+/**
+ * @brief Creates missing token error
+ * @param expected_token Description of missing token
+ * @param path Source file path
+ * @param line Location line
+ * @param col Location column
+ * @return DiagnosticBuilder Preconfigured error builder
+ */
 inline DiagnosticBuilder missing_token_error(const std::string& expected_token,
                                              const std::string& path,
                                              const int line,
@@ -123,7 +249,14 @@ inline DiagnosticBuilder missing_token_error(const std::string& expected_token,
         .with_primary_label(path, line, col, std::format("expected `{}` here", expected_token));
 }
 
-/// Create an "undeclared identifier" error
+/**
+ * @brief Creates undeclared identifier error
+ * @param identifier Unknown identifier name
+ * @param path Source file path
+ * @param line Location line
+ * @param col Location column
+ * @return DiagnosticBuilder Preconfigured error builder
+ */
 inline DiagnosticBuilder undeclared_identifier_error(const std::string& identifier,
                                                      const std::string& path,
                                                      const int line,
@@ -133,7 +266,15 @@ inline DiagnosticBuilder undeclared_identifier_error(const std::string& identifi
         .with_help("consider declaring the variable before using it");
 }
 
-/// Create a "type mismatch" error
+/**
+ * @brief Creates type mismatch error
+ * @param expected_type Expected type name
+ * @param found_type Actual type name
+ * @param path Source file path
+ * @param line Location line
+ * @param col Location column
+ * @return DiagnosticBuilder Preconfigured error builder
+ */
 inline DiagnosticBuilder type_mismatch_error(const std::string& expected_type,
                                              const std::string& found_type,
                                              const std::string& path,
