@@ -1,11 +1,11 @@
 # The Phi Programming Language
 
-A modern language compiler written in C++26.
+A modern language compiler written in C++23.
 
 ## Prerequisites
 
 - CMake (3.16 or higher)
-- C++26 compatible compiler
+- C++23 compatible compiler
 - Make (for the convenience Makefile)
 
 ## Building
