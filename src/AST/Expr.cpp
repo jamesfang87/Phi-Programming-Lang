@@ -15,6 +15,8 @@ std::string indent(int level) { return std::string(level * 2, ' '); }
 
 //======================== IntLiteral Implementation ========================//
 
+namespace phi {
+
 /**
  * @brief Constructs an integer literal expression
  *
@@ -321,3 +323,5 @@ void UnaryOp::info_dump(int level) const {
     std::println("{}  expr:", indent(level));
     operand->info_dump(level + 2);
 }
+
+} // namespace phi

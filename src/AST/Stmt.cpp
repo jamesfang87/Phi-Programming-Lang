@@ -14,6 +14,8 @@ namespace {
 std::string indent(int level) { return std::string(level * 2, ' '); }
 } // namespace
 
+namespace phi {
+
 //======================== ReturnStmt Implementation =========================//
 
 /**
@@ -219,3 +221,5 @@ void Block::info_dump(int level) const {
         s->info_dump(level + 1);
     }
 }
+
+} // namespace phi
