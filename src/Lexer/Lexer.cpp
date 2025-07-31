@@ -13,19 +13,18 @@
  * - Numeric literal parsing (integers and floats)
  * - Keyword vs identifier distinction
  * - Comment handling (line and block comments)
- * - Comprehensive error reporting with source location
- *
- * TODO:
- * 1. pass in location to throw_scanning_error
+ * - Comprehensive error reporting using diagnostic system
  */
 
 #include "Lexer/Lexer.hpp"
 
 #include <cstring>
-#include <iostream>
 #include <print>
 
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/Token.hpp"
+
+namespace phi {
 
 // =============================================================================
 // PUBLIC INTERFACE IMPLEMENTATION
@@ -77,7 +76,7 @@ std::pair<std::vector<Token>, bool> Lexer::scan() {
         // finally, scan the token
         ret.push_back(scan_token());
     }
-    return {ret, successful};
+    return {ret, !diagnostic_manager_->has_errors()};
 }
 
 /**
@@ -150,9 +149,29 @@ Token Lexer::scan_token() {
             return make_token(match_next('=') ? TokenType::tok_greater_equal
                                               : TokenType::tok_greater);
         // Handle single & as error or bitwise operator
-        case '&': return make_token(match_next('&') ? TokenType::tok_and : TokenType::tok_error);
+        case '&':
+            if (match_next('&')) {
+                return make_token(TokenType::tok_and);
+            } else {
+                error("unexpected character '&'")
+                    .with_primary_label(get_current_span(), "unexpected character")
+                    .with_help("use '&&' for logical AND operation")
+                    .with_note("single '&' is not supported in this language")
+                    .emit(*diagnostic_manager_);
+                return make_token(TokenType::tok_error);
+            }
         // Handle single | as error or bitwise operator
-        case '|': return make_token(match_next('|') ? TokenType::tok_or : TokenType::tok_error);
+        case '|':
+            if (match_next('|')) {
+                return make_token(TokenType::tok_or);
+            } else {
+                error("unexpected character '|'")
+                    .with_primary_label(get_current_span(), "unexpected character")
+                    .with_help("use '||' for logical OR operation")
+                    .with_note("single '|' is not supported in this language")
+                    .emit(*diagnostic_manager_);
+                return make_token(TokenType::tok_error);
+            }
 
         case '"': return parse_string();
         case '\'': return parse_char();
@@ -164,7 +183,21 @@ Token Lexer::scan_token() {
             if (std::isdigit(c)) {
                 return parse_number();
             }
-            std::println("Unknown token found: {}\n", c);
+
+            // Handle unknown character with better error message
+            std::string char_display;
+            if (std::isprint(c)) {
+                char_display = "'" + std::string(1, c) + "'";
+            } else {
+                char_display = "\\x" + std::format("{:02x}", static_cast<unsigned char>(c));
+            }
+
+            error("unexpected character " + char_display)
+                .with_primary_label(get_current_span(), "unexpected character")
+                .with_help("remove this character or use a valid token")
+                .with_note("valid characters include letters, digits, operators, and punctuation")
+                .emit(*diagnostic_manager_);
+
             return make_token(TokenType::tok_error);
         }
     }
@@ -174,71 +207,95 @@ Token Lexer::scan_token() {
 // ERROR HANDLING
 // =============================================================================
 
-/**
- * @brief Reports a scanning error with formatted output
- *
- * This method handles error reporting by printing a formatted error message
- * that includes the source location, error description, and a visual indicator
- * of where the error occurred in the source code. It automatically sets the
- * successful flag to false to indicate that scanning encountered an error.
- *
- * The error output includes:
- * - Colored error header
- * - File location (path:line:column)
- * - Source line with error highlighted
- * - Contextual help message
- */
-void Lexer::throw_lexer_error(std::string_view message, std::string_view expected_message) {
-    successful = false;
+void Lexer::emit_lexer_error(std::string_view message, std::string_view help_message) {
+    auto diagnostic = error(std::string(message)).with_primary_label(get_current_span());
 
-    // compute column (1-based) where the error begins
+    if (!help_message.empty()) {
+        diagnostic.with_help(std::string(help_message));
+    }
+
+    diagnostic.emit(*diagnostic_manager_);
+}
+
+void Lexer::emit_unterminated_string_error(std::string::iterator string_start_pos,
+                                           std::string::iterator string_start_line,
+                                           int string_start_line_num) {
+    // Calculate where we are now (end of file or current position)
+    int current_col = static_cast<int>(cur_char - cur_line) + 1;
+    SrcLocation eof_start{.path = path, .line = line_num, .col = current_col};
+    SrcLocation eof_end{.path = path, .line = line_num, .col = current_col};
+    SrcSpan eof_span{eof_start, eof_end};
+
+    // Calculate where the string started (the opening quote) using passed parameters
+    int quote_col = static_cast<int>(string_start_pos - string_start_line) + 1;
+    SrcLocation quote_start{.path = path, .line = string_start_line_num, .col = quote_col};
+    SrcLocation quote_end{.path = path, .line = string_start_line_num, .col = quote_col + 1};
+    SrcSpan quote_span{quote_start, quote_end};
+
+    error("unterminated string literal")
+        .with_primary_label(eof_span, "reached end of file")
+        .with_secondary_label(quote_span,
+                              "string starts here",
+                              DiagnosticStyle(DiagnosticStyle::Color::Cyan))
+        .with_help("add a closing double quote (\") to terminate the string")
+        .emit(*diagnostic_manager_);
+}
+
+void Lexer::emit_unterminated_char_error() {
+    // Find the opening quote position
+    auto quote_pos = cur_lexeme;
+    int quote_col = static_cast<int>(quote_pos - lexeme_line) + 1;
+
+    SrcLocation quote_start{.path = path, .line = line_num, .col = quote_col};
+    SrcLocation quote_end{.path = path, .line = line_num, .col = quote_col + 1};
+    SrcSpan quote_span{quote_start, quote_end};
+
+    error("unterminated character literal")
+        .with_primary_label(get_current_span(), "character literal not terminated")
+        .with_secondary_label(quote_span,
+                              "character started here",
+                              DiagnosticStyle(DiagnosticStyle::Color::Cyan))
+        .with_help("add a closing single quote (') to terminate the character")
+        .emit(*diagnostic_manager_);
+}
+
+void Lexer::emit_unclosed_block_comment_error(std::string::iterator comment_start_pos,
+                                              std::string::iterator comment_start_line,
+                                              int comment_start_line_num) {
+    // Calculate current position (where we reached EOF)
+    int current_col = static_cast<int>(cur_char - cur_line) + 1;
+    SrcLocation current_start{.path = path, .line = line_num, .col = current_col};
+    SrcLocation current_end{.path = path, .line = line_num, .col = current_col};
+    SrcSpan current_span{current_start, current_end};
+
+    // Calculate where the block comment started using passed parameters
+    int comment_col = static_cast<int>(comment_start_pos - comment_start_line) + 1;
+    SrcLocation start_loc{.path = path, .line = comment_start_line_num, .col = comment_col};
+    SrcLocation end_loc{.path = path, .line = comment_start_line_num, .col = comment_col + 2};
+    SrcSpan comment_span{start_loc, end_loc};
+
+    error("unclosed block comment")
+        .with_primary_label(current_span, "reached end of file")
+        .with_secondary_label(comment_span,
+                              "block comment starts here",
+                              DiagnosticStyle(DiagnosticStyle::Color::Cyan))
+        .with_help("add a closing `*/` to terminate the block comment")
+        .emit(*diagnostic_manager_);
+}
+
+SrcLocation Lexer::get_current_location() const {
     int col = static_cast<int>(cur_lexeme - lexeme_line) + 1;
-
-    // convert line number to string to get its width
-    std::string line_no_str = std::to_string(line_num);
-    int gutter_width = line_no_str.size() + 2;
-
-    std::println(std::cerr, "\033[31;1;4merror:\033[0m {}", message);
-    std::println(std::cerr, "--> {}:{}:{}", path, line_num, col);
-
-    auto line_end = lexeme_line;
-    while (line_end < src.end() && *line_end != '\n') {
-        ++line_end;
-    }
-    std::string_view line(&*lexeme_line, static_cast<int>(line_end - lexeme_line));
-
-    std::println(std::cerr, "{}|", std::string(gutter_width, ' '));
-    std::println(std::cerr, " {} | {}", line_num, line);
-    std::println(std::cerr,
-                 "{}|{}^ {}\n",
-                 std::string(gutter_width, ' '),
-                 std::string(col, ' '),
-                 expected_message);
-
-    resync_scanner();
+    return SrcLocation{.path = path, .line = line_num, .col = col};
 }
 
-void Lexer::resync_scanner() {
-    // skip until next valid token start
-    while (!reached_eof()) {
-        // skip to the end of str if we are inside a str
-        if (inside_str) {
-            if (peek_char() == '"') {
-                advance_char();
-                inside_str = false;
-                return;
-            }
-            advance_char();
-            continue;
-        }
+SrcSpan Lexer::get_current_span() const {
+    int start_col = static_cast<int>(cur_lexeme - lexeme_line) + 1;
+    int end_col = static_cast<int>(cur_char - cur_line) + 1;
 
-        // valid token starters
-        if (strchr("(){}[];,.:", peek_char())) break;
+    SrcLocation start{.path = path, .line = line_num, .col = start_col};
+    SrcLocation end{.path = path, .line = line_num, .col = end_col};
 
-        // significant operators
-        if (strchr("+-*/%=!<>&|", peek_char())) break;
-        advance_char();
-    }
-
-    inside_str = false;
+    return SrcSpan{start, end};
 }
+
+} // namespace phi
