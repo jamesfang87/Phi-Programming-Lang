@@ -4,6 +4,7 @@
 #include <vector>
 
 namespace phi {
+
 /**
  * @brief Source code manager for diagnostics
  *

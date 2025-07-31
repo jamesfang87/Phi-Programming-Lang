@@ -2,6 +2,8 @@
 
 #include <string>
 
+namespace phi {
+
 /**
  * @brief Represents a source code location
  *
@@ -12,3 +14,5 @@ struct SrcLocation {
     std::string path; ///< Source file path
     int line, col;    ///< Line and column numbers (1-indexed)
 };
+
+} // namespace phi
