@@ -3,6 +3,10 @@
 #include <regex>
 #include <unordered_map>
 
+#include "Diagnostics/DiagnosticBuilder.hpp"
+
+namespace phi {
+
 /**
  * @brief Parses numeric literals (integers and floating-point numbers)
  *
@@ -110,6 +114,9 @@ Token Lexer::parse_identifier() {
 Token Lexer::parse_string() {
     inside_str = true;
     const int starting_line = line_num;
+    auto string_start_pos = cur_lexeme;
+    auto string_start_line = lexeme_line;
+    int string_start_line_num = line_num;
     std::string str;
 
     // parse until we see closing double quote
@@ -131,8 +138,7 @@ Token Lexer::parse_string() {
 
     if (reached_eof()) {
         // reached eof without finding closing double quote
-        throw_lexer_error("untermianted string literal",
-                          "expected closing double quote to match this");
+        emit_unterminated_string_error(string_start_pos, string_start_line, string_start_line_num);
         return make_token(TokenType::tok_error);
     }
     advance_char();     // consume closing quote
@@ -168,7 +174,11 @@ Token Lexer::parse_string() {
 Token Lexer::parse_char() {
     // handle case that char literal is empty
     if (peek_char() == '\'') {
-        throw_lexer_error("char literal cannot be empty", "expected expression here");
+        error("empty character literal")
+            .with_primary_label(get_current_span(), "character literal is empty")
+            .with_help("character literals must contain exactly one character")
+            .with_note("try using a space character: ' ' or an escape sequence like '\\n'")
+            .emit(*diagnostic_manager_);
     }
 
     char c;
@@ -180,11 +190,15 @@ Token Lexer::parse_char() {
     }
 
     if (peek_char() != '\'') {
-        std::string error_msg = "char must contain exactly 1 character";
         if (peek_char() == '\0') {
-            error_msg = "unterminated character literal";
+            emit_unterminated_char_error();
+        } else {
+            error("character literal contains too many characters")
+                .with_primary_label(get_current_span(), "too many characters")
+                .with_help("character literals must contain exactly one character")
+                .with_note("use a string literal (\"\") for multiple characters")
+                .emit(*diagnostic_manager_);
         }
-        throw_lexer_error(error_msg, "expected closing single quote to match this");
         return make_token(TokenType::tok_error);
     }
 
@@ -220,8 +234,11 @@ Token Lexer::parse_char() {
  */
 char Lexer::parse_escape_sequence() {
     if (reached_eof()) {
-        throw_lexer_error("Unfinished escape sequence",
-                          "Expected a valid escape sequence character here");
+        error("unfinished escape sequence")
+            .with_primary_label(get_current_span(), "escape sequence incomplete")
+            .with_help("add a valid escape character after the backslash")
+            .with_note("valid escape sequences: \\n, \\t, \\r, \\\\, \\\", \\', \\0, \\xNN")
+            .emit(*diagnostic_manager_);
         return '\0';
     }
 
@@ -235,7 +252,12 @@ char Lexer::parse_escape_sequence() {
         case '0': return '\0';
         case 'x': return parse_hex_escape();
         default:
-            throw_lexer_error("Invalid escape sequence: \\" + std::string(1, c), "");
+            error("unknown escape sequence")
+                .with_primary_label(get_current_span(),
+                                    "unknown escape sequence '\\" + std::string(1, c) + "'")
+                .with_help("use a valid escape sequence")
+                .with_note("valid escape sequences: \\n, \\t, \\r, \\\\, \\\", \\', \\0, \\xNN")
+                .emit(*diagnostic_manager_);
             return c; // Return character as-is for error recovery
     }
 }
@@ -251,18 +273,26 @@ char Lexer::parse_escape_sequence() {
  */
 char Lexer::parse_hex_escape() {
     if (!isxdigit(peek_char()) || !isxdigit(peek_next())) {
-        throw_lexer_error("Incomplete hex escape sequence",
-                          "Expected exactly two hexadecimal digits");
+        error("incomplete hexadecimal escape sequence")
+            .with_primary_label(get_current_span(), "expected two hex digits here")
+            .with_help("hexadecimal escapes require exactly two digits: \\x00 to \\xFF")
+            .with_note("example: \\x41 represents the character 'A'")
+            .emit(*diagnostic_manager_);
         return '\0';
     }
 
     char hex[3] = {0};
     for (int i = 0; i < 2; i++) {
         if (reached_eof() || !isxdigit(peek_char())) {
-            throw_lexer_error("Incomplete hex escape", "");
+            error("incomplete hexadecimal escape sequence")
+                .with_primary_label(get_current_span(), "expected hex digit here")
+                .with_help("hexadecimal escapes require exactly two digits")
+                .emit(*diagnostic_manager_);
             return '\0';
         }
         hex[i] = advance_char();
     }
     return static_cast<char>(std::stoi(hex, nullptr, 16));
 }
+
+} // namespace phi
