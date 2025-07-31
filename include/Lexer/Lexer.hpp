@@ -12,10 +12,14 @@
  */
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "Diagnostics/DiagnosticManager.hpp"
 #include "Lexer/Token.hpp"
+
+namespace phi {
 
 /**
  * @brief Lexical analyzer for the Phi programming language
@@ -36,10 +40,12 @@ public:
      * @brief Constructs a Lexer for given source code
      * @param src Source code string to scan
      * @param path File path for error reporting
+     * @param diagnostic_manager Diagnostic system for error reporting
      */
-    Lexer(std::string src, std::string path)
+    Lexer(std::string src, std::string path, std::shared_ptr<DiagnosticManager> diagnostic_manager)
         : src(std::move(src)),
-          path(std::move(path)) {
+          path(std::move(path)),
+          diagnostic_manager_(std::move(diagnostic_manager)) {
         cur_char = this->src.begin();
         cur_lexeme = this->src.begin();
         cur_line = this->src.begin();
@@ -71,8 +77,9 @@ public:
     [[nodiscard]] std::string get_path() const { return path; }
 
 private:
-    std::string src;  ///< Source code being scanned
-    std::string path; ///< File path for error reporting
+    std::string src;                                        ///< Source code being scanned
+    std::string path;                                       ///< File path for error reporting
+    std::shared_ptr<DiagnosticManager> diagnostic_manager_; ///< Diagnostic system
 
     int line_num = 1;                  ///< Current line number (1-indexed)
     std::string::iterator cur_char;    ///< Current character position
@@ -81,7 +88,6 @@ private:
     std::string::iterator lexeme_line; ///< Start of current lexeme's line
 
     bool inside_str = false; ///< Inside string literal state
-    bool successful = true;  ///< Scanning success flag
 
     // MAIN SCANNING LOGIC
 
@@ -239,22 +245,42 @@ private:
     // ERROR HANDLING
 
     /**
-     * @brief Reports scanning error with source context
-     *
-     * Generates formatted error message showing:
-     * - Source location (line/column)
-     * - Error description
-     * - Visual indicator of error position
-     *
+     * @brief Reports scanning error using diagnostic system
      * @param message Primary error description
-     * @param expected_message Context about expected input
+     * @param help_message Optional help message for resolution
      */
-    void throw_lexer_error(std::string_view message, std::string_view expected_message);
+    void emit_lexer_error(std::string_view message, std::string_view help_message = "");
 
     /**
-     * @brief Recovers scanner state after error
-     *
-     * Advances to next safe state (end of line/token) after reporting error.
+     * @brief Reports unterminated string literal error with ASCII art
      */
-    void resync_scanner();
+    void emit_unterminated_string_error(std::string::iterator string_start_pos,
+                                        std::string::iterator string_start_line,
+                                        int string_start_line_num);
+
+    /**
+     * @brief Reports unterminated character literal error with ASCII art
+     */
+    void emit_unterminated_char_error();
+
+    /**
+     * @brief Reports unclosed block comment error with ASCII art
+     */
+    void emit_unclosed_block_comment_error(std::string::iterator comment_start_pos,
+                                           std::string::iterator comment_start_line,
+                                           int comment_start_line_num);
+
+    /**
+     * @brief Gets current source location for error reporting
+     * @return SrcLocation representing current lexeme position
+     */
+    SrcLocation get_current_location() const;
+
+    /**
+     * @brief Gets current source span for error reporting
+     * @return SrcSpan representing current lexeme range
+     */
+    SrcSpan get_current_span() const;
 };
+
+} // namespace phi
