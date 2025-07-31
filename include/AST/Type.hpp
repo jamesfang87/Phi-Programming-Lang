@@ -3,6 +3,8 @@
 #include <cassert>
 #include <string>
 
+namespace phi {
+
 /**
  * @brief Represents a type in the Phi type system
  *
@@ -138,3 +140,5 @@ private:
     Primitive primitive_type_;     ///< Underlying primitive type
     std::string custom_type_name_; ///< Name for custom types
 };
+
+} // namespace phi

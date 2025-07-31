@@ -10,6 +10,8 @@
 #include "AST/Type.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
+namespace phi {
+
 /**
  * @brief Base class for all declaration nodes in the AST
  *
@@ -203,3 +205,5 @@ private:
     std::vector<std::unique_ptr<ParamDecl>> params; ///< Function parameters
     std::unique_ptr<Block> block;                   ///< Function body statements
 };
+
+}; // namespace phi
