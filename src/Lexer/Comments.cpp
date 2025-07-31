@@ -1,5 +1,7 @@
 #include "Lexer/Lexer.hpp"
 
+namespace phi {
+
 /**
  * @brief Skips over comment text (both line and block comments)
  *
@@ -23,6 +25,11 @@ void Lexer::skip_comment() {
             advance_char();
         }
     } else if (match_next('*')) {
+        // Track where the block comment started
+        auto comment_start_pos = cur_lexeme;
+        auto comment_start_line = lexeme_line;
+        int comment_start_line_num = line_num;
+
         int depth = 1; // depth for nested comments
         // skip until we reach a depth of 0
         while (!reached_eof() && depth > 0) {
@@ -36,18 +43,22 @@ void Lexer::skip_comment() {
                 advance_char();
                 advance_char();
                 depth--;
+            } else {
+                // increment line number if we see '\n'
+                if (peek_char() == '\n') {
+                    line_num++;
+                    cur_line = cur_char + 1; // Point to start of next line
+                }
+                advance_char();
             }
-
-            // increment line number if we see '\n'
-            if (peek_char() == '\n') {
-                line_num++;
-                cur_line = cur_char;
-            }
-            advance_char();
         }
 
         if (depth > 0) {
-            throw_lexer_error("unclosed block comment", "expected closing `*/` to match this");
+            emit_unclosed_block_comment_error(comment_start_pos,
+                                              comment_start_line,
+                                              comment_start_line_num);
         }
     }
 }
+
+} // namespace phi

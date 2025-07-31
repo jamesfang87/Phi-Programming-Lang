@@ -1,5 +1,7 @@
 #include "Lexer/TokenType.hpp"
 
+namespace phi {
+
 /**
  * @brief Converts a TokenType enumeration value to its string representation
  *
@@ -123,3 +125,5 @@ std::string type_to_string(const TokenType type) {
         default: return "UNKNOWN";
     }
 }
+
+} // namespace phi
