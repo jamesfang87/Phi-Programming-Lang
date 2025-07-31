@@ -1,6 +1,8 @@
 #include "Lexer/Token.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
+namespace phi {
+
 /**
  * @brief Represents a source code span
  *
@@ -59,3 +61,5 @@ struct SrcSpan {
 [[nodiscard]] inline SrcSpan span_from_tokens(const Token& start, const Token& end) {
     return SrcSpan{start.get_start(), end.get_end()};
 }
+
+} // namespace phi
