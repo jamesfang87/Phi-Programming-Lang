@@ -12,6 +12,8 @@ namespace {
 std::string indent(int level) { return std::string(level * 2, ' '); }
 } // namespace
 
+namespace phi {
+
 //======================== VarDecl Implementation ========================//
 
 /**
@@ -118,3 +120,5 @@ void FunDecl::info_dump(int level) const {
     // Dump function body
     block->info_dump(level + 1);
 }
+
+} // namespace phi
