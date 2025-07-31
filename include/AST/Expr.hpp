@@ -11,6 +11,8 @@
 #include "Lexer/TokenType.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
+namespace phi {
+
 /**
  * @brief Base class for all expression nodes
  *
@@ -386,3 +388,5 @@ private:
     TokenType op;                  ///< Operator token type
     bool is_prefix;                ///< Prefix position flag
 };
+
+} // namespace phi

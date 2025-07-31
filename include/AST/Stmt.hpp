@@ -6,6 +6,8 @@
 #include "AST/ASTVisitor.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
+namespace phi {
+
 // Forward declarations
 class Decl;
 class FunDecl;
@@ -265,3 +267,5 @@ public:
 private:
     std::unique_ptr<VarDecl> var_decl; ///< Variable declaration
 };
+
+} // namespace phi

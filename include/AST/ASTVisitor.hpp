@@ -1,5 +1,7 @@
 #pragma once
 
+namespace phi {
+
 // Forward declarations of AST node types
 class Expr;
 class IntLiteral;
@@ -147,3 +149,5 @@ public:
      */
     virtual bool visit(Expr& stmt) = 0;
 };
+
+}; // namespace phi
