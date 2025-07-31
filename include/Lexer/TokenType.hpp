@@ -2,6 +2,8 @@
 
 #include <string>
 
+namespace phi {
+
 /**
  * @brief Enumeration of token types for Phi language
  *
@@ -127,3 +129,5 @@ enum class TokenType : uint8_t {
  * @return String representation of token type
  */
 std::string type_to_string(TokenType type);
+
+} // namespace phi

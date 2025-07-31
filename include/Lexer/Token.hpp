@@ -1,5 +1,5 @@
 /**
- * @file token.hpp
+ * @file Token.hpp
  * @brief Token definitions and Token class for Phi language lexer
  *
  * Defines the TokenType enumeration and Token class representing lexical units.
@@ -11,6 +11,8 @@
 
 #include "Lexer/TokenType.hpp"
 #include "SrcManager/SrcLocation.hpp"
+
+namespace phi {
 
 /**
  * @brief Represents a lexical token in Phi language
@@ -81,3 +83,5 @@ private:
     TokenType type;         ///< Token classification type
     std::string lexeme;     ///< Original source text content
 };
+
+} // namespace phi
