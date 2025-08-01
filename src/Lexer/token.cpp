@@ -13,6 +13,8 @@
 #include <format>
 #include <string>
 
+namespace phi {
+
 /**
  * @brief Formats the token as a human-readable string for debugging
  *
@@ -28,3 +30,5 @@ std::string Token::to_string() const {
     auto [path, line, col] = start;
     return std::format("[{}] \"{}\" at {}:{}:{}", this->get_name(), lexeme, path, line, col);
 }
+
+} // namespace phi

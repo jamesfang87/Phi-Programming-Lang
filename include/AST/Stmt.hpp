@@ -43,7 +43,7 @@ public:
      * @param visitor Visitor implementation
      * @return Visitor control result
      */
-    virtual bool accept(ASTVisitor& visitor) = 0;
+    virtual bool accept(ASTVisitor<bool>& visitor) = 0;
 
 protected:
     SrcLocation location; ///< Source location of statement
@@ -106,7 +106,7 @@ public:
     [[nodiscard]] Expr& get_expr() const { return *expr; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> expr; ///< Return value expression
@@ -155,7 +155,7 @@ public:
     [[nodiscard]] bool has_else() const { return else_block != nullptr; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> condition;   ///< Conditional expression
@@ -190,7 +190,7 @@ public:
     [[nodiscard]] Block& get_body() const { return *body; };
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> condition; ///< Loop condition
@@ -234,7 +234,7 @@ public:
     [[nodiscard]] Block& get_body() const { return *body; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<VarDecl> loop_var; ///< Loop variable declaration
@@ -262,7 +262,7 @@ public:
     [[nodiscard]] VarDecl& get_var_decl() const { return *var_decl; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<VarDecl> var_decl; ///< Variable declaration
