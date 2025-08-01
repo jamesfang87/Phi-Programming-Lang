@@ -53,7 +53,7 @@ public:
      * @param visitor Visitor implementation
      * @return Visitor control result
      */
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 protected:
     std::optional<Type> type; ///< Resolved type (after semantic analysis)
@@ -78,7 +78,7 @@ public:
     [[nodiscard]] int64_t get_value() const { return value; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     int64_t value; ///< Literal integer value
@@ -103,7 +103,7 @@ public:
     [[nodiscard]] double get_value() const { return value; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     double value; ///< Literal float value
@@ -128,7 +128,7 @@ public:
     [[nodiscard]] std::string get_value() const { return value; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::string value; ///< Literal string content
@@ -153,7 +153,7 @@ public:
     [[nodiscard]] char get_value() const { return value; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     char value; ///< Literal character value
@@ -178,7 +178,7 @@ public:
     [[nodiscard]] bool get_value() const { return value; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     bool value; ///< Literal boolean value
@@ -214,7 +214,7 @@ public:
     [[nodiscard]] Expr& get_end() { return *end; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> start, end; ///< Range bounds
@@ -254,7 +254,7 @@ public:
     void set_decl(Decl* d) { decl = d; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::string identifier; ///< Referenced identifier
@@ -301,7 +301,7 @@ public:
     void set_func_decl(FunDecl* f) { func_decl = f; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> callee;            ///< Function being called
@@ -341,7 +341,7 @@ public:
     [[nodiscard]] TokenType get_op() const { return op; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> lhs; ///< Left operand
@@ -381,7 +381,7 @@ public:
     [[nodiscard]] bool is_prefix_op() const { return is_prefix; }
 
     void info_dump(int level) const override;
-    bool accept(ASTVisitor& visitor) override { return visitor.visit(*this); }
+    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> operand; ///< Target expression
