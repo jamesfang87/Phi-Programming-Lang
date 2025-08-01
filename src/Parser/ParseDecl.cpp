@@ -62,9 +62,7 @@ std::expected<std::unique_ptr<FunDecl>, Diagnostic> Parser::parse_function_decl(
 
     // Parse function body
     auto body = parse_block();
-    if (!body) {
-        return std::unexpected(body.error());
-    }
+    if (!body) return std::unexpected(body.error());
 
     return std::make_unique<FunDecl>(loc,
                                      std::move(name),

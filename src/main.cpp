@@ -26,7 +26,13 @@ int main(int argc, char* argv[]) {
         std::string source = read_file_to_string(filename);
         std::println("File content:\n{}", source);
 
-        Lexer scanner(source, filename);
+        auto source_manager = std::make_shared<phi::SrcManager>();
+        auto diagnostic_manager = std::make_shared<phi::DiagnosticManager>(source_manager);
+
+        // Register source content for diagnostic display
+        source_manager->add_source_file(filename, source);
+
+        phi::Lexer scanner(source, filename, diagnostic_manager);
         auto [tokens, scan_success] = scanner.scan();
 
         if (!scan_success) {
@@ -40,8 +46,6 @@ int main(int argc, char* argv[]) {
         }
 
         std::println("\nParsing results: ");
-        auto source_manager = std::make_shared<phi::SrcManager>();
-        auto diagnostic_manager = std::make_shared<phi::DiagnosticManager>(source_manager);
         phi::Parser parser(source, filename, tokens, diagnostic_manager);
         auto [ast, parse_success] = parser.parse();
         if (!parse_success) {

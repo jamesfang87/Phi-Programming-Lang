@@ -29,7 +29,7 @@ class LetStmt;
  * type, allowing custom operations during traversal. Implementers should
  * override these methods to define node-specific behavior.
  */
-class ASTVisitor {
+template <typename return_t> class ASTVisitor {
 public:
     virtual ~ASTVisitor() = default;
 
@@ -40,70 +40,70 @@ public:
      * @param expr Reference to IntLiteral node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(IntLiteral& expr) = 0;
+    virtual return_t visit(IntLiteral& expr) = 0;
 
     /**
      * @brief Visit method for float literals
      * @param expr Reference to FloatLiteral node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(FloatLiteral& expr) = 0;
+    virtual return_t visit(FloatLiteral& expr) = 0;
 
     /**
      * @brief Visit method for string literals
      * @param expr Reference to StrLiteral node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(StrLiteral& expr) = 0;
+    virtual return_t visit(StrLiteral& expr) = 0;
 
     /**
      * @brief Visit method for character literals
      * @param expr Reference to CharLiteral node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(CharLiteral& expr) = 0;
+    virtual return_t visit(CharLiteral& expr) = 0;
 
     /**
      * @brief Visit method for boolean literals
      * @param expr Reference to BoolLiteral node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(BoolLiteral& expr) = 0;
+    virtual return_t visit(BoolLiteral& expr) = 0;
 
     /**
      * @brief Visit method for range literals
      * @param expr Reference to RangeLiteral node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(RangeLiteral& expr) = 0;
+    virtual return_t visit(RangeLiteral& expr) = 0;
 
     /**
      * @brief Visit method for declaration references
      * @param expr Reference to DeclRefExpr node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(DeclRefExpr& expr) = 0;
+    virtual return_t visit(DeclRefExpr& expr) = 0;
 
     /**
      * @brief Visit method for function calls
      * @param expr Reference to FunCallExpr node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(FunCallExpr& expr) = 0;
+    virtual return_t visit(FunCallExpr& expr) = 0;
 
     /**
      * @brief Visit method for binary operations
      * @param expr Reference to BinaryOp node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(BinaryOp& expr) = 0;
+    virtual return_t visit(BinaryOp& expr) = 0;
 
     /**
      * @brief Visit method for unary operations
      * @param expr Reference to UnaryOp node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(UnaryOp& expr) = 0;
+    virtual return_t visit(UnaryOp& expr) = 0;
 
     // STATEMENT VISITORS
 
@@ -112,42 +112,42 @@ public:
      * @param stmt Reference to ReturnStmt node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(ReturnStmt& stmt) = 0;
+    virtual return_t visit(ReturnStmt& stmt) = 0;
 
     /**
      * @brief Visit method for if statements
      * @param stmt Reference to IfStmt node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(IfStmt& stmt) = 0;
+    virtual return_t visit(IfStmt& stmt) = 0;
 
     /**
      * @brief Visit method for while loops
      * @param stmt Reference to WhileStmt node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(WhileStmt& stmt) = 0;
+    virtual return_t visit(WhileStmt& stmt) = 0;
 
     /**
      * @brief Visit method for for loops
      * @param stmt Reference to ForStmt node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(ForStmt& stmt) = 0;
+    virtual return_t visit(ForStmt& stmt) = 0;
 
     /**
      * @brief Visit method for let statements
      * @param stmt Reference to LetStmt node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(LetStmt& stmt) = 0;
+    virtual return_t visit(LetStmt& stmt) = 0;
 
     /**
      * @brief Visit method for generic expressions
      * @param stmt Reference to Expr node
      * @return Boolean indicating whether to continue traversal
      */
-    virtual bool visit(Expr& stmt) = 0;
+    virtual return_t visit(Expr& stmt) = 0;
 };
 
 }; // namespace phi
