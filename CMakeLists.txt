@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Set compiler to g++-14 BEFORE project declaration
-set(CMAKE_CXX_COMPILER g++-14)
+# Use system default compiler (Apple Clang) to match LLVM build
+# set(CMAKE_CXX_COMPILER g++-14)
 
-project(Phi LANGUAGES CXX)
+project(Phi LANGUAGES C CXX)
 
 # Set C++ standard with fallback
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "14.0")
@@ -18,6 +18,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Export compile commands for static analysis tools
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Find LLVM installation
+find_package(LLVM REQUIRED CONFIG PATHS ~/llvm-project/build)
+
+message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
+message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+
+# Set up LLVM
+include_directories(${LLVM_INCLUDE_DIRS})
+separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${LLVM_DEFINITIONS_LIST})
+
 # Add include directory
 include_directories(include)
 
@@ -30,6 +41,10 @@ add_executable(phi ${SOURCES} ${HEADERS})
 
 # Set target properties
 target_include_directories(phi PRIVATE include)
+
+# Link against LLVM libraries
+llvm_map_components_to_libnames(llvm_libs support core irreader)
+target_link_libraries(phi ${llvm_libs})
 
 # Set compiler flags for better debugging and warnings
 target_compile_options(phi PRIVATE
