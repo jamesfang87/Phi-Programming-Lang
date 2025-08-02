@@ -1,17 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Use system default compiler (Apple Clang) to match LLVM build
-# set(CMAKE_CXX_COMPILER g++-14)
-
 project(Phi LANGUAGES C CXX)
 
-# Set C++ standard with fallback
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "14.0")
-    set(CMAKE_CXX_STANDARD 26)
-else()
-    set(CMAKE_CXX_STANDARD 23)
-    message(WARNING "C++26 not supported, falling back to C++23")
-endif()
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
