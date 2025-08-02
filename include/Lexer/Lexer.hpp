@@ -45,7 +45,7 @@ public:
     Lexer(std::string src, std::string path, std::shared_ptr<DiagnosticManager> diagnostic_manager)
         : src(std::move(src)),
           path(std::move(path)),
-          diagnostic_manager_(std::move(diagnostic_manager)) {
+          diagnostic_manager(std::move(diagnostic_manager)) {
         cur_char = this->src.begin();
         cur_lexeme = this->src.begin();
         cur_line = this->src.begin();
@@ -77,9 +77,9 @@ public:
     [[nodiscard]] std::string get_path() const { return path; }
 
 private:
-    std::string src;                                        ///< Source code being scanned
-    std::string path;                                       ///< File path for error reporting
-    std::shared_ptr<DiagnosticManager> diagnostic_manager_; ///< Diagnostic system
+    std::string src;                                       ///< Source code being scanned
+    std::string path;                                      ///< File path for error reporting
+    std::shared_ptr<DiagnosticManager> diagnostic_manager; ///< Diagnostic system
 
     int line_num = 1;                  ///< Current line number (1-indexed)
     std::string::iterator cur_char;    ///< Current character position
