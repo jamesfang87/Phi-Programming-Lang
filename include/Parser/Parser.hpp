@@ -1,7 +1,7 @@
 #pragma once
 
-#include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -131,7 +131,17 @@ private:
      *
      * @return true if synchronized successfully, false if reached EOF
      */
-    bool sync_to();
+    bool sync_to_top_lvl();
+
+    /**
+     * @brief Synchronizes parser state to next safe point
+     *
+     * Attempts to recover from errors by skipping tokens until reaching a
+     * token that likely begins a new construct (statement or declaration).
+     *
+     * @return true if synchronized successfully, false if reached EOF
+     */
+    bool sync_to_stmt();
 
     /**
      * @brief Synchronizes to one of specified token types
@@ -153,57 +163,62 @@ private:
     /**
      * @brief Parses type annotations
      *
-     * @return std::expected<Type, Diagnostic>
-     *         Valid type if successful, diagnostic on failure
+     * @return std::optional<Type>
+     *         Valid type if successful, std::nullopt on failure
+     *         Errors are reported through the DiagnosticManager
      */
-    std::expected<Type, Diagnostic> parse_type();
+    std::optional<Type> parse_type();
 
     // FUNCTION DECLARATION PARSING
-    std::expected<std::unique_ptr<FunDecl>, Diagnostic> parse_function_decl();
-    std::expected<std::unique_ptr<ParamDecl>, Diagnostic> parse_param_decl();
-    std::expected<std::unique_ptr<Block>, Diagnostic> parse_block();
+    std::unique_ptr<FunDecl> parse_function_decl();
+    std::unique_ptr<ParamDecl> parse_param_decl();
+    std::unique_ptr<Block> parse_block();
 
     // STATEMENT PARSING
-    std::expected<std::unique_ptr<Stmt>, Diagnostic> parse_stmt();
-    std::expected<std::unique_ptr<ReturnStmt>, Diagnostic> parse_return_stmt();
-    std::expected<std::unique_ptr<IfStmt>, Diagnostic> parse_if_stmt();
-    std::expected<std::unique_ptr<WhileStmt>, Diagnostic> parse_while_stmt();
-    std::expected<std::unique_ptr<ForStmt>, Diagnostic> parse_for_stmt();
-    std::expected<std::unique_ptr<LetStmt>, Diagnostic> parse_let_stmt();
+    std::unique_ptr<Stmt> parse_stmt();
+    std::unique_ptr<ReturnStmt> parse_return_stmt();
+    std::unique_ptr<IfStmt> parse_if_stmt();
+    std::unique_ptr<WhileStmt> parse_while_stmt();
+    std::unique_ptr<ForStmt> parse_for_stmt();
+    std::unique_ptr<LetStmt> parse_let_stmt();
 
     // EXPRESSION PARSING
-    std::expected<std::unique_ptr<Expr>, Diagnostic> parse_expr();
+    std::unique_ptr<Expr> parse_expr();
 
     /**
      * @brief Pratt parser implementation for expressions
      *
      * @param min_bp Minimum binding power for current context
-     * @return std::expected<std::unique_ptr<Expr>, Diagnostic>
-     *         Parsed expression or diagnostic
+     * @return std::unique_ptr<Expr>
+     *         Parsed expression or nullptr on failure
+     *         Errors are emitted to DiagnosticManager
      */
-    std::expected<std::unique_ptr<Expr>, Diagnostic> pratt(int min_bp);
+    std::unique_ptr<Expr> pratt(int min_bp);
+
+    std::unique_ptr<Expr> parse_prefix(const Token& tok);
 
     /**
      * @brief Parses postfix operators for an expression
      *
      * @param expr The expression to apply postfix operators to
-     * @return std::expected<std::unique_ptr<Expr>, Diagnostic>
-     *         Expression with postfix operators applied
+     * @return std::unique_ptr<Expr>
+     *         Expression with postfix operators applied or nullptr on failure
+     *         Errors are emitted to DiagnosticManager
      */
-    std::expected<std::unique_ptr<Expr>, Diagnostic> parse_postfix(std::unique_ptr<Expr> expr);
+    std::unique_ptr<Expr> parse_postfix(std::unique_ptr<Expr> expr);
 
     /**
      * @brief Parses function call expressions
      *
      * @param callee The expression being called
-     * @return std::expected<std::unique_ptr<FunCallExpr>, Diagnostic>
-     *         Function call expression or diagnostic
+     * @return std::unique_ptr<FunCallExpr>
+     *         Function call expression or nullptr on failure
+     *         Errors are emitted to DiagnosticManager
      */
-    std::expected<std::unique_ptr<FunCallExpr>, Diagnostic>
-    parse_fun_call(std::unique_ptr<Expr> callee);
+    std::unique_ptr<FunCallExpr> parse_fun_call(std::unique_ptr<Expr> callee);
 
     // PARSING UTILITIES
-    std::expected<std::pair<std::string, Type>, Diagnostic> parse_typed_binding();
+    std::optional<std::pair<std::string, Type>> parse_typed_binding();
 
     /**
      * @brief Generic list parsing template
@@ -216,20 +231,20 @@ private:
      * @param closing Closing delimiter token type
      * @param fun Member function pointer to element parser
      * @param context Description of list context for error messages
-     * @return std::expected<std::vector<std::unique_ptr<T>>, Diagnostic>
-     *         Vector of parsed elements or diagnostic
+     * @return std::vector<std::unique_ptr<T>>
+     *         Vector of parsed elements (empty on failure)
+     *         Errors are emitted to DiagnosticManager
      */
     template <typename T, typename F>
-    std::expected<std::vector<std::unique_ptr<T>>, Diagnostic>
-    parse_list(const TokenType opening,
-               const TokenType closing,
-               F fun,
-               const std::string& context = "list") {
+    std::optional<std::vector<std::unique_ptr<T>>> parse_list(const TokenType opening,
+                                                              const TokenType closing,
+                                                              F fun,
+                                                              const std::string& context = "list") {
         // Verify opening delimiter
         const Token opening_token = advance_token();
         if (opening_token.get_type() != opening) {
             emit_expected_found_error(type_to_string(opening), peek_token());
-            return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
+            return std::nullopt;
         }
 
         // Parse list elements
@@ -241,7 +256,7 @@ private:
                 sync_to({closing, TokenType::tok_comma});
                 continue;
             }
-            content.push_back(std::move(result.value()));
+            content.push_back(std::move(result));
 
             // Check for closing delimiter before comma
             if (peek_token().get_type() == closing) {
@@ -257,13 +272,14 @@ private:
                         .with_primary_label(span_from_token(peek_token()), "expected `,` here")
                         .with_help("separate " + context + " elements with commas")
                         .build());
+                return std::nullopt;
             }
         }
 
         // Verify closing delimiter
         if (at_eof() || peek_token().get_type() != closing) {
             emit_unclosed_delimiter_error(opening_token, type_to_string(closing));
-            return std::unexpected(Diagnostic(DiagnosticLevel::Error, "unclosed delimiter"));
+            return std::nullopt;
         }
 
         advance_token(); // Consume closing delimiter

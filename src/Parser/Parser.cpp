@@ -40,18 +40,16 @@ std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
     while (!at_eof()) {
         switch (peek_token().get_type()) {
             case TokenType::tok_fun: {
-                auto res = parse_function_decl();
-                if (res.has_value()) {
-                    functions.push_back(std::move(res.value()));
+                if (auto res = parse_function_decl()) {
+                    functions.push_back(std::move(res));
                 } else {
-                    sync_to(); // Error recovery
+                    sync_to_top_lvl(); // Error recovery
                 }
                 break;
             }
             default:
                 emit_unexpected_token_error(peek_token(), {"fun"});
-                sync_to(); // Error recovery
-                break;
+                sync_to_top_lvl(); // Error recovery
         }
     }
 
