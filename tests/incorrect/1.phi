@@ -1,0 +1,4 @@
+fun main() {
+    /* this is an unclosed comment
+    let x = 42;
+}

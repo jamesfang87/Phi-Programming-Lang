@@ -25,15 +25,11 @@ namespace phi {
 std::expected<std::unique_ptr<Stmt>, Diagnostic> Parser::parse_stmt() {
     switch (peek_token().get_type()) {
         case TokenType::tok_return: return parse_return_stmt();
+        case TokenType::tok_if: return parse_if_stmt();
         case TokenType::tok_while: return parse_while_stmt();
-        case TokenType::tok_if: return parse_if_stmt().value();
-        case TokenType::tok_for: return parse_for_stmt().value();
-        case TokenType::tok_let: {
-            auto res = parse_let_stmt();
-            if (!res) return std::unexpected(res.error());
-            return res;
-        }
-        default: advance_token();
+        case TokenType::tok_for: return parse_for_stmt();
+        case TokenType::tok_let: return parse_let_stmt();
+        default: return parse_expr(); // attempt to parse as expr
     }
     return std::unexpected(Diagnostic(DiagnosticLevel::Error, "parse error"));
 }

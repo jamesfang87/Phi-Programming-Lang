@@ -121,7 +121,7 @@ private:
      * @brief Parses identifier/keyword
      * @return Token for identifier or recognized keyword
      */
-    Token parse_identifier();
+    Token parse_identifier_or_kw();
 
     // UTILITY FUNCTIONS
 
