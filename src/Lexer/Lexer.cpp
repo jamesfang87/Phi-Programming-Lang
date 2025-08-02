@@ -76,7 +76,7 @@ std::pair<std::vector<Token>, bool> Lexer::scan() {
         // finally, scan the token
         ret.push_back(scan_token());
     }
-    return {ret, !diagnostic_manager_->has_errors()};
+    return {ret, !diagnostic_manager->has_errors()};
 }
 
 /**
@@ -157,7 +157,7 @@ Token Lexer::scan_token() {
                     .with_primary_label(get_current_span(), "unexpected character")
                     .with_help("use '&&' for logical AND operation")
                     .with_note("single '&' is not supported in this language")
-                    .emit(*diagnostic_manager_);
+                    .emit(*diagnostic_manager);
                 return make_token(TokenType::tok_error);
             }
         // Handle single | as error or bitwise operator
@@ -169,7 +169,7 @@ Token Lexer::scan_token() {
                     .with_primary_label(get_current_span(), "unexpected character")
                     .with_help("use '||' for logical OR operation")
                     .with_note("single '|' is not supported in this language")
-                    .emit(*diagnostic_manager_);
+                    .emit(*diagnostic_manager);
                 return make_token(TokenType::tok_error);
             }
 
@@ -196,7 +196,7 @@ Token Lexer::scan_token() {
                 .with_primary_label(get_current_span(), "unexpected character")
                 .with_help("remove this character or use a valid token")
                 .with_note("valid characters include letters, digits, operators, and punctuation")
-                .emit(*diagnostic_manager_);
+                .emit(*diagnostic_manager);
 
             return make_token(TokenType::tok_error);
         }
@@ -214,43 +214,7 @@ void Lexer::emit_lexer_error(std::string_view message, std::string_view help_mes
         diagnostic.with_help(std::string(help_message));
     }
 
-    diagnostic.emit(*diagnostic_manager_);
-}
-
-void Lexer::emit_unterminated_string_error(std::string::iterator string_start_pos,
-                                           std::string::iterator string_start_line,
-                                           int string_start_line_num) {
-    // Calculate where we are now (end of file or current position)
-    int current_col = static_cast<int>(cur_char - cur_line) + 1;
-    SrcLocation eof_start{.path = path, .line = line_num, .col = current_col};
-    SrcLocation eof_end{.path = path, .line = line_num, .col = current_col};
-    SrcSpan eof_span{eof_start, eof_end};
-
-    // Calculate where the string started (the opening quote) using passed parameters
-    int quote_col = static_cast<int>(string_start_pos - string_start_line) + 1;
-    SrcLocation quote_start{.path = path, .line = string_start_line_num, .col = quote_col};
-    SrcLocation quote_end{.path = path, .line = string_start_line_num, .col = quote_col + 1};
-    SrcSpan quote_span{quote_start, quote_end};
-
-    error("unterminated string literal")
-        .with_primary_label(quote_span, "string starts here")
-        .with_help("add a closing double quote (\") to terminate the string")
-        .emit(*diagnostic_manager_);
-}
-
-void Lexer::emit_unterminated_char_error() {
-    // Find the opening quote position
-    auto quote_pos = cur_lexeme;
-    int quote_col = static_cast<int>(quote_pos - lexeme_line) + 1;
-
-    SrcLocation quote_start{.path = path, .line = line_num, .col = quote_col};
-    SrcLocation quote_end{.path = path, .line = line_num, .col = quote_col + 1};
-    SrcSpan quote_span{quote_start, quote_end};
-
-    error("unterminated character literal")
-        .with_primary_label(quote_span, "character started here")
-        .with_help("add a closing single quote (') to terminate the character")
-        .emit(*diagnostic_manager_);
+    diagnostic.emit(*diagnostic_manager);
 }
 
 void Lexer::emit_unclosed_block_comment_error(std::string::iterator comment_start_pos,
@@ -271,7 +235,7 @@ void Lexer::emit_unclosed_block_comment_error(std::string::iterator comment_star
     error("unclosed block comment")
         .with_primary_label(comment_span, "block comment starts here")
         .with_help("add a closing `*/` to terminate the block comment")
-        .emit(*diagnostic_manager_);
+        .emit(*diagnostic_manager);
 }
 
 SrcLocation Lexer::get_current_location() const {
