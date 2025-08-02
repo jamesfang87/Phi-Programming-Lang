@@ -4,6 +4,8 @@
 #include <unordered_map>
 
 #include "Diagnostics/DiagnosticBuilder.hpp"
+#include "Lexer/TokenType.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
@@ -44,7 +46,7 @@ Token Lexer::parse_number() {
  *
  * This method parses sequences of alphanumeric characters and underscores
  * that start with a letter or underscore. It then checks the parsed identifier
- * against a comprehensive keyword table to determine if it should be tokenized
+ * against the keyword table to determine if it should be tokenized
  * as a keyword or as a user-defined identifier.
  *
  * The keyword table includes:
@@ -55,7 +57,7 @@ Token Lexer::parse_number() {
  *
  * @return A token of the appropriate keyword type or tok_identifier
  */
-Token Lexer::parse_identifier() {
+Token Lexer::parse_identifier_or_kw() {
     while (std::isalnum(peek_char()) || peek_char() == '_') {
         advance_char();
     }
@@ -174,11 +176,14 @@ Token Lexer::parse_string() {
 Token Lexer::parse_char() {
     // handle case that char literal is empty
     if (peek_char() == '\'') {
+        advance_char(); // consume the opening quote
+        advance_char(); // consume the closing quote
         error("empty character literal")
             .with_primary_label(get_current_span(), "character literal is empty")
             .with_help("character literals must contain exactly one character")
             .with_note("try using a space character: ' ' or an escape sequence like '\\n'")
             .emit(*diagnostic_manager_);
+        return make_token(TokenType::tok_error);
     }
 
     char c;
@@ -242,6 +247,8 @@ char Lexer::parse_escape_sequence() {
         return '\0';
     }
 
+    // save location for error reporting
+    SrcLocation loc = get_current_location();
     switch (const char c = advance_char()) {
         case '\'': return '\'';
         case '"': return '\"';
@@ -253,8 +260,8 @@ char Lexer::parse_escape_sequence() {
         case 'x': return parse_hex_escape();
         default:
             error("unknown escape sequence")
-                .with_primary_label(get_current_span(),
-                                    "unknown escape sequence '\\" + std::string(1, c) + "'")
+                .with_primary_label(SrcSpan(loc),
+                                    std::format("invalid char for escape sequence '\\{}'", c))
                 .with_help("use a valid escape sequence")
                 .with_note("valid escape sequences: \\n, \\t, \\r, \\\\, \\\", \\', \\0, \\xNN")
                 .emit(*diagnostic_manager_);

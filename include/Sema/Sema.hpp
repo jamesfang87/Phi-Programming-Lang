@@ -26,7 +26,7 @@ namespace phi {
  *
  * Implements the visitor pattern to traverse and annotate the AST.
  */
-class Sema final : public ASTVisitor {
+class Sema final : public ASTVisitor<bool> {
 public:
     /**
      * @brief Constructs a semantic analyzer

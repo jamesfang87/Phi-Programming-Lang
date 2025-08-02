@@ -1,9 +1,11 @@
 #include "AST/Expr.hpp"
 #include "Sema/Sema.hpp"
 
+#include <optional>
 #include <print>
 
 #include "AST/Decl.hpp"
+#include "Sema/SymbolTable.hpp"
 
 namespace phi {
 
@@ -19,8 +21,9 @@ namespace phi {
  */
 bool Sema::resolve_block(Block& block, bool scope_created = false) {
     // Create new scope unless parent already created one
+    std::optional<SymbolTable::ScopeGuard> block_scope;
     if (!scope_created) {
-        SymbolTable::ScopeGuard block_scope(symbol_table);
+        block_scope.emplace(symbol_table);
     }
 
     // Resolve all statements in the block
@@ -137,13 +140,6 @@ bool Sema::visit(ForStmt& stmt) {
 }
 
 /**
- * Resolves an expression statement.
- *
- * Simply delegates to expression resolution.
- */
-bool Sema::visit(Expr& stmt) { return stmt.accept(*this); }
-
-/**
  * Resolves a variable declaration statement.
  *
  * Validates:
@@ -190,5 +186,7 @@ bool Sema::visit(LetStmt& stmt) {
 
     return true;
 }
+
+bool Sema::visit(Expr& stmt) { return stmt.accept(*this); }
 
 } // namespace phi

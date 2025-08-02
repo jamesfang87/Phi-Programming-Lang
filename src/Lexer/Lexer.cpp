@@ -178,7 +178,7 @@ Token Lexer::scan_token() {
 
         default: {
             if (std::isalpha(c) || c == '_') {
-                return parse_identifier();
+                return parse_identifier_or_kw();
             }
             if (std::isdigit(c)) {
                 return parse_number();
@@ -233,10 +233,7 @@ void Lexer::emit_unterminated_string_error(std::string::iterator string_start_po
     SrcSpan quote_span{quote_start, quote_end};
 
     error("unterminated string literal")
-        .with_primary_label(eof_span, "reached end of file")
-        .with_secondary_label(quote_span,
-                              "string starts here",
-                              DiagnosticStyle(DiagnosticStyle::Color::Cyan))
+        .with_primary_label(quote_span, "string starts here")
         .with_help("add a closing double quote (\") to terminate the string")
         .emit(*diagnostic_manager_);
 }
@@ -251,10 +248,7 @@ void Lexer::emit_unterminated_char_error() {
     SrcSpan quote_span{quote_start, quote_end};
 
     error("unterminated character literal")
-        .with_primary_label(get_current_span(), "character literal not terminated")
-        .with_secondary_label(quote_span,
-                              "character started here",
-                              DiagnosticStyle(DiagnosticStyle::Color::Cyan))
+        .with_primary_label(quote_span, "character started here")
         .with_help("add a closing single quote (') to terminate the character")
         .emit(*diagnostic_manager_);
 }
@@ -275,16 +269,13 @@ void Lexer::emit_unclosed_block_comment_error(std::string::iterator comment_star
     SrcSpan comment_span{start_loc, end_loc};
 
     error("unclosed block comment")
-        .with_primary_label(current_span, "reached end of file")
-        .with_secondary_label(comment_span,
-                              "block comment starts here",
-                              DiagnosticStyle(DiagnosticStyle::Color::Cyan))
+        .with_primary_label(comment_span, "block comment starts here")
         .with_help("add a closing `*/` to terminate the block comment")
         .emit(*diagnostic_manager_);
 }
 
 SrcLocation Lexer::get_current_location() const {
-    int col = static_cast<int>(cur_lexeme - lexeme_line) + 1;
+    int col = static_cast<int>(cur_char - lexeme_line) + 1;
     return SrcLocation{.path = path, .line = line_num, .col = col};
 }
 
