@@ -1,0 +1,23 @@
+fun process_numbers(input: i64) -> i64 {
+    let result: i64 = input;
+    let counter: i64 = 0;
+
+    // Apply processing loop
+    while (counter < 5) {
+        result = result + calculate_increment(counter);
+        counter = counter + 1;
+    }
+
+    // Apply conditional adjustments
+    if (result > 500) {
+        result = result / 2;
+    } else {
+        if (result < 100) {
+            result = result * 2;
+        } else {
+            result = result + 50;
+        }
+    }
+
+    return result;
+}

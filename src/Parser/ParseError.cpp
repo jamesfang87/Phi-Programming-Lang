@@ -1,3 +1,4 @@
+#include "Lexer/TokenType.hpp"
 #include "Parser/Parser.hpp"
 
 namespace phi {
@@ -12,10 +13,9 @@ namespace phi {
  * and highlights the location of the unexpected token in the source code.
  */
 void Parser::emit_expected_found_error(const std::string& expected, const Token& found_token) {
-    emit_error(error(std::format("expected {}, found `{}`", expected, found_token.get_lexeme()))
-                   .with_primary_label(span_from_token(found_token),
-                                       std::format("expected {} here", expected))
-                   .build());
+    error(std::format("expected {}, found `{}`", expected, found_token.get_lexeme()))
+        .with_primary_label(span_from_token(found_token), std::format("expected {} here", expected))
+        .emit(*diagnostic_manager);
 }
 
 /**
@@ -44,7 +44,7 @@ void Parser::emit_unexpected_token_error(const Token& token,
         builder.with_help(suggestion);
     }
 
-    emit_error(std::move(builder).build());
+    builder.emit(*diagnostic_manager);
 }
 
 /**
@@ -59,13 +59,12 @@ void Parser::emit_unexpected_token_error(const Token& token,
  */
 void Parser::emit_unclosed_delimiter_error(const Token& opening_token,
                                            const std::string& expected_closing) {
-    emit_error(
-        error("unclosed delimiter")
-            .with_primary_label(span_from_token(opening_token),
-                                std::format("unclosed `{}`", opening_token.get_lexeme()))
-            .with_help(std::format("expected `{}` to close this delimiter", expected_closing))
-            .with_note("delimiters must be properly matched")
-            .build());
+    error("unclosed delimiter")
+        .with_primary_label(span_from_token(opening_token),
+                            std::format("unclosed `{}`", opening_token.get_lexeme()))
+        .with_help(std::format("expected `{}` to close this delimiter", expected_closing))
+        .with_note("delimiters must be properly matched")
+        .emit(*diagnostic_manager);
 }
 
 /**
@@ -81,25 +80,32 @@ void Parser::emit_unclosed_delimiter_error(const Token& opening_token,
  *    - End of file
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
-bool Parser::sync_to() {
-    advance_token(); // Skip the problematic token
+bool Parser::sync_to_top_lvl() {
+    return sync_to({
+        TokenType::tok_fun,
+        TokenType::tok_class,
+    });
+}
 
-    while (!at_eof()) {
-        // Check for synchronization points
-        switch (peek_token().get_type()) {
-            case TokenType::tok_fun:       // Function declaration
-            case TokenType::tok_class:     // Class definition
-            case TokenType::tok_return:    // Return statement
-            case TokenType::tok_if:        // If statement
-            case TokenType::tok_while:     // While loop
-            case TokenType::tok_for:       // For loop
-            case TokenType::tok_semicolon: // Statement terminator
-                return true;
-            default: break;
-        }
-        advance_token();
-    }
-    return false;
+/**
+ * Synchronizes the parser to the next statement boundary after an error.
+ *
+ * @return true if synchronized to a statement boundary, false if reached EOF
+ *
+ * Recovery strategy:
+ * 1. Skips the current erroneous token
+ * 2. Advances through tokens until encountering:
+ *    - Statement starters (function, class, return, if, while, for)
+ *    - Statement block terminators (closing brace)
+ * This minimizes cascading errors by resuming at logical statement boundaries.
+ */
+bool Parser::sync_to_stmt() {
+    return sync_to({TokenType::tok_close_brace,
+                    TokenType::tok_return,
+                    TokenType::tok_if,
+                    TokenType::tok_while,
+                    TokenType::tok_for,
+                    TokenType::tok_let});
 }
 
 /**

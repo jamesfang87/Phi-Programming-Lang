@@ -1,5 +1,6 @@
 #include "Parser/Parser.hpp"
 
+#include <optional>
 #include <unordered_map>
 
 namespace phi {
@@ -16,7 +17,7 @@ namespace phi {
  * - Suggestions for valid primitive types
  * - Notes about type syntax rules
  */
-std::expected<Type, Diagnostic> Parser::parse_type() {
+std::optional<Type> Parser::parse_type() {
     // Map of primitive type names to their enum representations
     const std::unordered_map<std::string, Type::Primitive> primitive_map = {
         {"i8", Type::Primitive::i8},
@@ -39,20 +40,17 @@ std::expected<Type, Diagnostic> Parser::parse_type() {
 
     // Validate token is either primitive type or identifier
     if (it == primitive_map.end() && peek_token().get_type() != TokenType::tok_identifier) {
-        return std::unexpected(
-            error(std::format("invalid token found: {}", peek_token().get_lexeme()))
-                .with_primary_label(span_from_token(peek_token()), "expected a valid type here")
-                .with_help("valid types include: int, float, bool, string, or custom type names")
-                .with_note("types must be either primitive types or valid identifiers")
-                .with_code("E0030")
-                .build());
+        error(std::format("invalid token found: {}", peek_token().get_lexeme()))
+            .with_primary_label(span_from_token(peek_token()), "expected a valid type here")
+            .with_help("valid types include: int, float, bool, string, or custom type names")
+            .with_note("types must be either primitive types or valid identifiers")
+            .with_code("E0030")
+            .emit(*diagnostic_manager);
+        return std::nullopt;
     }
 
     advance_token();
-    if (it == primitive_map.end()) {
-        return Type(id); // Custom type
-    }
-    return Type(it->second); // Primitive type
+    return ((it == primitive_map.end()) ? Type(id) : Type(it->second));
 }
 
 } // namespace phi
