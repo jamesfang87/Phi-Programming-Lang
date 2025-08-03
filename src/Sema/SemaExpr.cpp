@@ -69,22 +69,19 @@ bool Sema::visit(RangeLiteral& expr) {
     const Type end_type = expr.get_end().get_type();
 
     // Validate integer types
-    if (!start_type.is_primitive() || !is_integer_type(start_type)) {
+    if (!start_type.is_primitive() || !is_int_type(start_type)) {
         std::println("Range start must be an integer type (i8, i16, i32, i64, u8, u16, u32, u64)");
         return false;
     }
 
-    if (!end_type.is_primitive() || !is_integer_type(end_type)) {
+    if (!end_type.is_primitive() || !is_int_type(end_type)) {
         std::println("Range end must be an integer type (i8, i16, i32, i64, u8, u16, u32, u64)");
         return false;
     }
 
-    // Validate same integer type
-    if (start_type != end_type) {
-        std::println("Range start and end must be the same integer type");
-        return false;
-    }
-
+    // Set types
+    expr.get_start().set_type(Type(Type::Primitive::i64));
+    expr.get_end().set_type(Type(Type::Primitive::i64));
     expr.set_type(Type(Type::Primitive::range));
     return true;
 }
@@ -121,12 +118,11 @@ bool Sema::visit(BinaryOp& expr) {
         case TokenType::tok_mul:
         case TokenType::tok_div:
         case TokenType::tok_mod: {
-            if (!is_numeric_type(lhs_type) || !is_numeric_type(rhs_type)) {
+            if (!is_num_type(lhs_type) || !is_num_type(rhs_type)) {
                 std::println("Arithmetic operations require numeric types");
                 return false;
             }
-            if (op == TokenType::tok_mod &&
-                (!is_integer_type(lhs_type) || !is_integer_type(rhs_type))) {
+            if (op == TokenType::tok_mod && (!is_int_type(lhs_type) || !is_int_type(rhs_type))) {
                 std::println("Modulo operation requires integer types");
                 return false;
             }
@@ -149,7 +145,7 @@ bool Sema::visit(BinaryOp& expr) {
         case TokenType::tok_less_equal:
         case TokenType::tok_greater:
         case TokenType::tok_greater_equal:
-            if (!is_numeric_type(lhs_type) || !is_numeric_type(rhs_type) || lhs_type != rhs_type) {
+            if (!is_num_type(lhs_type) || !is_num_type(rhs_type) || lhs_type != rhs_type) {
                 std::println("Ordering comparisons require same numeric types");
                 return false;
             }
@@ -174,29 +170,6 @@ bool Sema::visit(BinaryOp& expr) {
 }
 
 /**
- * Checks if type is an integer primitive.
- */
-bool Sema::is_integer_type(const Type& type) {
-    if (!type.is_primitive()) return false;
-
-    const Type::Primitive prim = type.primitive_type();
-    return prim == Type::Primitive::i8 || prim == Type::Primitive::i16 ||
-           prim == Type::Primitive::i32 || prim == Type::Primitive::i64 ||
-           prim == Type::Primitive::u8 || prim == Type::Primitive::u16 ||
-           prim == Type::Primitive::u32 || prim == Type::Primitive::u64;
-}
-
-/**
- * Checks if type is numeric (integer or float).
- */
-bool Sema::is_numeric_type(const Type& type) {
-    if (!type.is_primitive()) return false;
-
-    const Type::Primitive prim = type.primitive_type();
-    return is_integer_type(type) || prim == Type::Primitive::f32 || prim == Type::Primitive::f64;
-}
-
-/**
  * Promotes numeric types for binary operations.
  *
  * Current rules:
@@ -207,18 +180,15 @@ bool Sema::is_numeric_type(const Type& type) {
 Type Sema::promote_numeric_types(const Type& lhs, const Type& rhs) {
     if (lhs == rhs) return lhs;
 
-    if (is_integer_type(lhs) && (rhs.primitive_type() == Type::Primitive::f32 ||
-                                 rhs.primitive_type() == Type::Primitive::f64)) {
+    if (is_int_type(lhs) && is_float_type(rhs)) {
         return rhs;
     }
-    if (is_integer_type(rhs) && (lhs.primitive_type() == Type::Primitive::f32 ||
-                                 lhs.primitive_type() == Type::Primitive::f64)) {
+    if (is_int_type(rhs) && is_float_type(lhs)) {
         return lhs;
     }
 
     return lhs; // Default to left type
 }
-
 /**
  * Resolves a unary operation expression.
  *
@@ -245,7 +215,7 @@ bool Sema::visit(UnaryOp& expr) {
     switch (op) {
         // Arithmetic negation
         case TokenType::tok_sub:
-            if (!is_numeric_type(operand_type)) {
+            if (!is_num_type(operand_type)) {
                 std::println("Arithmetic negation requires numeric type");
                 return false;
             }
@@ -264,7 +234,7 @@ bool Sema::visit(UnaryOp& expr) {
         // Increment/Decrement
         case TokenType::tok_increment:
         case TokenType::tok_decrement:
-            if (!is_integer_type(operand_type)) {
+            if (!is_int_type(operand_type)) {
                 std::println("Increment/decrement requires integer type");
                 return false;
             }

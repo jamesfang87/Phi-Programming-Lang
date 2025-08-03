@@ -262,21 +262,19 @@ private:
 
     // TYPE SYSTEM UTILITIES
     /// Checks if type is any integer type (signed or unsigned)
-    static bool is_integer_type(const Type& type);
-
-    /// Checks if type is numeric (integer or float)
-    static bool is_numeric_type(const Type& type);
-
     /**
      * @brief Determines result type for binary operations on numeric types
      *
-     * Implements type promotion rules:
-     * - If either operand is float, result is float
-     * - Otherwise, result is integer with widest type
+     * Implements type promotion rules based on promotion rank:
+     * - If either operand is float, result is the float type (f64 > f32)
+     * - For integers, promotes to type with higher rank:
+     *   i8(1) < u8(2) < i16(3) < u16(4) < i32(5) < u32(6) < i64(7) < u64(8)
+     * - Mixed signed/unsigned of same size promotes to unsigned
+     * - Floats have highest precedence: f32(10) < f64(11)
      *
      * @param lhs Type of left operand
      * @param rhs Type of right operand
-     * @return Type Resulting promoted type
+     * @return Type Resulting promoted type with highest promotion rank
      */
     static Type promote_numeric_types(const Type& lhs, const Type& rhs);
 };

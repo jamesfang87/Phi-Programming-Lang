@@ -18,7 +18,14 @@ namespace phi {
  *
  * Uses Pratt parsing with operator precedence handling.
  */
-std::unique_ptr<Expr> Parser::parse_expr() { return pratt(0); }
+std::unique_ptr<Expr> Parser::parse_expr() {
+    auto res = pratt(0);
+    if (!res) {
+        std::println("Error parsing expression");
+        return nullptr;
+    }
+    return res;
+}
 
 // =============================================================================
 // OPERATOR PRECEDENCE TABLES
