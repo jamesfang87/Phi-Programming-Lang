@@ -45,6 +45,12 @@ public:
      */
     virtual bool accept(ASTVisitor<bool>& visitor) = 0;
 
+    /**
+     * @brief Accepts AST visitor for code generation
+     * @param visitor Visitor implementation returning void
+     */
+    virtual void accept(ASTVisitor<void>& visitor) = 0;
+
 protected:
     SrcLocation location; ///< Source location of statement
 };
@@ -107,6 +113,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> expr; ///< Return value expression
@@ -156,6 +163,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> condition;   ///< Conditional expression
@@ -191,6 +199,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> condition; ///< Loop condition
@@ -235,6 +244,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<VarDecl> loop_var; ///< Loop variable declaration
@@ -263,6 +273,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<VarDecl> var_decl; ///< Variable declaration

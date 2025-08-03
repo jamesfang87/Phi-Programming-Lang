@@ -55,6 +55,12 @@ public:
      */
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
 
+    /**
+     * @brief Accepts AST visitor for code generation
+     * @param visitor Visitor implementation returning void
+     */
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+
 protected:
     std::optional<Type> type; ///< Resolved type (after semantic analysis)
 };
@@ -79,6 +85,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     int64_t value; ///< Literal integer value
@@ -104,6 +111,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     double value; ///< Literal float value
@@ -129,6 +137,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::string value; ///< Literal string content
@@ -154,6 +163,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     char value; ///< Literal character value
@@ -179,6 +189,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     bool value; ///< Literal boolean value
@@ -215,6 +226,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> start, end; ///< Range bounds
@@ -255,6 +267,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::string identifier; ///< Referenced identifier
@@ -292,21 +305,22 @@ public:
      * @brief Retrieves function declaration
      * @return Pointer to function declaration
      */
-    [[nodiscard]] FunDecl* get_func_decl() const { return func_decl; }
+    [[nodiscard]] FunDecl* get_fun_decl() const { return fun_decl; }
 
     /**
      * @brief Sets function declaration
      * @param f Function declaration pointer
      */
-    void set_func_decl(FunDecl* f) { func_decl = f; }
+    void set_fun_decl(FunDecl* f) { fun_decl = f; }
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> callee;            ///< Function being called
     std::vector<std::unique_ptr<Expr>> args; ///< Argument expressions
-    FunDecl* func_decl = nullptr;            ///< Resolved function declaration
+    FunDecl* fun_decl = nullptr;             ///< Resolved function declaration
 };
 
 /**
@@ -342,6 +356,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> lhs; ///< Left operand
@@ -382,6 +397,7 @@ public:
 
     void info_dump(int level) const override;
     bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
 
 private:
     std::unique_ptr<Expr> operand; ///< Target expression

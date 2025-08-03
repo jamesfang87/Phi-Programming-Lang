@@ -1,6 +1,5 @@
 #include "AST/ASTVisitor.hpp"
 #include "AST/Decl.hpp"
-#include <iostream>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
@@ -49,14 +48,14 @@ private:
     llvm::Function* printf_func = nullptr;
 
     llvm::Type* gen_type(const Type& type);
-    void generate_function(phi::FunDecl& func);
-    void generate_main_function();
+    void generate_function(phi::FunDecl& fun);
+    void generate_main(phi::FunDecl& main_decl);
     void generate_println_call(phi::FunCallExpr& call);
-    void generate_println_function(phi::FunDecl& func);
+    void generate_println_function(phi::FunDecl& fun);
 
-    // Helper methods for traversing AST nodes
-    void visit_expr(phi::Expr& expr);
-    void visit_stmt(phi::Stmt& stmt);
+    void generate_sint_op(llvm::Value* lhs, llvm::Value* rhs, phi::BinaryOp& expr);
+    void generate_uint_op(llvm::Value* lhs, llvm::Value* rhs, phi::BinaryOp& expr);
+    void generate_float_op(llvm::Value* lhs, llvm::Value* rhs, phi::BinaryOp& expr);
 
     // Visitor methods for expressions
     void visit(phi::IntLiteral& expr) override;

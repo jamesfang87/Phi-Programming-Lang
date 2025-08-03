@@ -1,0 +1,26 @@
+fun println(a: i64) {}
+fun println1(msg: str) {}
+
+fun add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fun sub(a: i64, b: i64) -> i64 {
+    return a - b;
+}
+
+fun mul(a: i64, b: i64) -> i64 {
+    return a * b;
+}
+
+fun div(a: i64, b: i64) -> i64 {
+    return a / b;
+}
+
+fun main() {
+    println1("results");
+    println(add(1, 1));
+    println(sub(1, 5));
+    println(mul(6, 7));
+    println(div(8, 2));
+}

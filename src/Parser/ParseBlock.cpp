@@ -24,6 +24,7 @@ std::unique_ptr<Block> Parser::parse_block() {
     if (peek_token().get_type() != TokenType::tok_open_brace) {
         emit_expected_found_error("{", peek_token());
     }
+    advance_token();
 
     // Parse statements until closing brace
     std::vector<std::unique_ptr<Stmt>> stmts;

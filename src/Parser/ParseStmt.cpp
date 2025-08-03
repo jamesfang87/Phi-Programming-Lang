@@ -30,7 +30,10 @@ std::unique_ptr<Stmt> Parser::parse_stmt() {
         case TokenType::tok_while: return parse_while_stmt();
         case TokenType::tok_for: return parse_for_stmt();
         case TokenType::tok_let: return parse_let_stmt();
-        default: return parse_expr();
+        default:
+            auto res = parse_expr();
+            advance_token();
+            return res;
     }
 }
 
@@ -235,19 +238,15 @@ std::unique_ptr<ForStmt> Parser::parse_for_stmt() {
  * - Semicolon terminator
  */
 std::unique_ptr<LetStmt> Parser::parse_let_stmt() {
-    SrcLocation loc = peek_token().get_start();
+    SrcLocation let_loc = peek_token().get_start();
     if (advance_token().get_type() != TokenType::tok_let) {
         emit_unexpected_token_error(peek_token(), {"let"});
         return nullptr;
     }
 
     auto binding = parse_typed_binding();
-    if (!binding) {
-        return nullptr;
-    }
-
-    std::string name = binding->first;
-    Type type = std::move(binding->second);
+    if (!binding) return nullptr;
+    auto [var_loc, name, type] = *binding;
 
     // Validate assignment operator
     if (advance_token().get_type() != TokenType::tok_assign) {
@@ -262,9 +261,7 @@ std::unique_ptr<LetStmt> Parser::parse_let_stmt() {
 
     // Parse initializer expression
     auto expr = parse_expr();
-    if (!expr) {
-        return nullptr;
-    }
+    if (!expr) return nullptr;
 
     // Validate semicolon terminator
     if (advance_token().get_type() != TokenType::tok_semicolon) {
@@ -278,8 +275,8 @@ std::unique_ptr<LetStmt> Parser::parse_let_stmt() {
     }
 
     return std::make_unique<LetStmt>(
-        loc,
-        std::make_unique<VarDecl>(loc, name, type, true, std::move(expr)));
+        let_loc,
+        std::make_unique<VarDecl>(var_loc, name, type, true, std::move(expr)));
 }
 
 } // namespace phi
