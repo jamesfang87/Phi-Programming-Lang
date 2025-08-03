@@ -67,11 +67,6 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        std::println("Tokens:");
-        for (const auto& t : tokens) {
-            std::cout << t.to_string() << '\n';
-        }
-
         std::println("\nParsing results: ");
         phi::Parser parser(source, filename, tokens, diagnostic_manager);
         auto [ast, parse_success] = parser.parse();
