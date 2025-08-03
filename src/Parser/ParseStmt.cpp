@@ -1,6 +1,7 @@
 #include "Parser/Parser.hpp"
 
 #include <memory>
+#include <print>
 #include <vector>
 
 #include "AST/Stmt.hpp"
@@ -29,7 +30,7 @@ std::unique_ptr<Stmt> Parser::parse_stmt() {
         case TokenType::tok_while: return parse_while_stmt();
         case TokenType::tok_for: return parse_for_stmt();
         case TokenType::tok_let: return parse_let_stmt();
-        default: return parse_expr(); // attempt to parse as expr
+        default: return parse_expr();
     }
 }
 

@@ -3,6 +3,7 @@
 
 #include <expected>
 #include <memory>
+#include <print>
 #include <utility>
 
 #include "AST/Decl.hpp"
