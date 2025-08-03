@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "AST/Decl.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
@@ -77,7 +78,7 @@ std::unique_ptr<FunDecl> Parser::parse_function_decl() {
  * Format: identifier ':' type
  * Used in variable declarations, function parameters, etc.
  */
-std::optional<std::pair<std::string, Type>> Parser::parse_typed_binding() {
+std::optional<Parser::TypedBinding> Parser::parse_typed_binding() {
     // Parse identifier
     if (peek_token().get_type() != TokenType::tok_identifier) {
         error("expected identifier")
@@ -85,6 +86,7 @@ std::optional<std::pair<std::string, Type>> Parser::parse_typed_binding() {
             .emit(*diagnostic_manager);
         return std::nullopt;
     }
+    SrcLocation start = peek_token().get_start();
     std::string name = advance_token().get_lexeme();
 
     // Parse colon separator
@@ -99,11 +101,9 @@ std::optional<std::pair<std::string, Type>> Parser::parse_typed_binding() {
 
     // Parse type
     auto type = parse_type();
-    if (!type) {
-        return std::nullopt;
-    }
+    if (!type) return std::nullopt;
 
-    return std::make_pair(name, std::move(type.value()));
+    return TypedBinding{.loc = start, .name = name, .type = std::move(type.value())};
 }
 
 /**
@@ -116,15 +116,10 @@ std::optional<std::pair<std::string, Type>> Parser::parse_typed_binding() {
  */
 std::unique_ptr<ParamDecl> Parser::parse_param_decl() {
     auto binding = parse_typed_binding();
-    if (!binding) {
-        return nullptr;
-    }
+    if (!binding) return nullptr;
 
-    return std::make_unique<ParamDecl>(SrcLocation{.path = path,
-                                                   .line = peek_token().get_start().line,
-                                                   .col = peek_token().get_start().col},
-                                       binding->first,
-                                       binding->second);
+    auto [loc, name, type] = *binding;
+    return std::make_unique<ParamDecl>(loc, name, type);
 }
 
 } // namespace phi

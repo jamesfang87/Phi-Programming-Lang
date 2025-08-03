@@ -218,7 +218,12 @@ private:
     std::unique_ptr<FunCallExpr> parse_fun_call(std::unique_ptr<Expr> callee);
 
     // PARSING UTILITIES
-    std::optional<std::pair<std::string, Type>> parse_typed_binding();
+    struct TypedBinding {
+        SrcLocation loc;
+        std::string name;
+        Type type;
+    };
+    std::optional<TypedBinding> parse_typed_binding();
 
     /**
      * @brief Generic list parsing template

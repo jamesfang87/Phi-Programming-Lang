@@ -141,4 +141,15 @@ private:
     std::string custom_type_name_; ///< Name for custom types
 };
 
+bool is_int_type(const Type& type);
+
+bool is_signed_int(const Type& type);
+bool is_unsigned_int(const Type& type);
+
+/// Checks if type is any float type
+bool is_float_type(const Type& type);
+
+/// Checks if type is numeric (integer or float)
+bool is_num_type(const Type& type);
+
 } // namespace phi

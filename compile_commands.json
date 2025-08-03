@@ -19,9 +19,39 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/cmake-build-ninja",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -march=native -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/AST/Type.cpp.o -c /Users/jamesfang/Phi/src/AST/Type.cpp",
+  "file": "/Users/jamesfang/Phi/src/AST/Type.cpp",
+  "output": "CMakeFiles/phi.dir/src/AST/Type.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/cmake-build-ninja",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -march=native -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/Calls.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Calls.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Calls.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Calls.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/cmake-build-ninja",
   "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -march=native -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/CodeGen.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/CodeGen.cpp",
   "file": "/Users/jamesfang/Phi/src/CodeGen/CodeGen.cpp",
   "output": "CMakeFiles/phi.dir/src/CodeGen/CodeGen.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/cmake-build-ninja",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -march=native -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/Literals.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Literals.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Literals.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Literals.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/cmake-build-ninja",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -march=native -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/Ops.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Ops.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Ops.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Ops.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/cmake-build-ninja",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -march=native -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/Stmts.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Stmts.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Stmts.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Stmts.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/cmake-build-ninja",
