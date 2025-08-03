@@ -241,11 +241,12 @@ private:
                                                               F fun,
                                                               const std::string& context = "list") {
         // Verify opening delimiter
-        const Token opening_token = advance_token();
+        const Token opening_token = peek_token();
         if (opening_token.get_type() != opening) {
             emit_expected_found_error(type_to_string(opening), peek_token());
             return std::nullopt;
         }
+        advance_token();
 
         // Parse list elements
         std::vector<std::unique_ptr<T>> content;

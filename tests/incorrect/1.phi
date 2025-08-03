@@ -1,8 +1,15 @@
-fun main()
+fun foo() -> i64  {
+    let x: i64 = 42;
+    for i in 0..10 {
+        let a: f64 = ;
+        let y: i64 = 1;
+    }
+}
+
+fun main() {
     let x: i64 = 42;
     for i in 0..10 {
         let a: f64 = 1.0;
-        let y i64 = 1;
+        let y: i64 = 1;
     }
-    ->
 }
