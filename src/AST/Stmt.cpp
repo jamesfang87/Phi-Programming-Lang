@@ -51,16 +51,15 @@ void ReturnStmt::emit(int level) const {
  * @brief Constructs an if statement
  *
  * @param location Source location of if
- * @param condition Conditional expression
+ * @param cond condal expression
  * @param then_block Then clause block
  * @param else_block Else clause block (optional)
  */
-IfStmt::IfStmt(SrcLocation location, std::unique_ptr<Expr> condition,
+IfStmt::IfStmt(SrcLocation location, std::unique_ptr<Expr> cond,
                std::unique_ptr<Block> then_block,
                std::unique_ptr<Block> else_block)
-    : Stmt(Stmt::Kind::IfStmtKind, std::move(location)),
-      condition(std::move(condition)), then_block(std::move(then_block)),
-      else_block(std::move(else_block)) {}
+    : Stmt(Stmt::Kind::IfStmtKind, std::move(location)), cond(std::move(cond)),
+      thenBlock(std::move(then_block)), elseBlock(std::move(else_block)) {}
 
 IfStmt::~IfStmt() = default;
 
@@ -69,7 +68,7 @@ IfStmt::~IfStmt() = default;
  *
  * Output format:
  *   [indent]IfStmt
- *     [condition dump]
+ *     [cond dump]
  *     [then block dump]
  *     [else block dump] (if exists)
  *
@@ -77,14 +76,14 @@ IfStmt::~IfStmt() = default;
  */
 void IfStmt::emit(int level) const {
   std::println("{}IfStmt", indent(level));
-  if (condition) {
-    condition->emit(level + 1);
+  if (cond) {
+    cond->emit(level + 1);
   }
-  if (then_block) {
-    then_block->info_dump(level + 1);
+  if (thenBlock) {
+    thenBlock->info_dump(level + 1);
   }
-  if (else_block) {
-    else_block->info_dump(level + 1);
+  if (elseBlock) {
+    elseBlock->info_dump(level + 1);
   }
 }
 
@@ -94,13 +93,13 @@ void IfStmt::emit(int level) const {
  * @brief Constructs a while loop statement
  *
  * @param location Source location of while
- * @param condition Loop condition expression
+ * @param cond Loop cond expression
  * @param body Loop body block
  */
-WhileStmt::WhileStmt(SrcLocation location, std::unique_ptr<Expr> condition,
+WhileStmt::WhileStmt(SrcLocation location, std::unique_ptr<Expr> cond,
                      std::unique_ptr<Block> body)
     : Stmt(Stmt::Kind::WhileStmtKind, std::move(location)),
-      condition(std::move(condition)), body(std::move(body)) {}
+      cond(std::move(cond)), body(std::move(body)) {}
 
 WhileStmt::~WhileStmt() = default;
 
@@ -109,15 +108,15 @@ WhileStmt::~WhileStmt() = default;
  *
  * Output format:
  *   [indent]WhileStmt
- *     [condition dump]
+ *     [cond dump]
  *     [body dump]
  *
  * @param level Current indentation level
  */
 void WhileStmt::emit(int level) const {
   std::println("{}WhileStmt", indent(level));
-  if (condition) {
-    condition->emit(level + 1);
+  if (cond) {
+    cond->emit(level + 1);
   }
   if (body) {
     body->info_dump(level + 1);
@@ -137,7 +136,7 @@ void WhileStmt::emit(int level) const {
 ForStmt::ForStmt(SrcLocation location, std::unique_ptr<VarDecl> loop_var,
                  std::unique_ptr<Expr> range, std::unique_ptr<Block> body)
     : Stmt(Stmt::Kind::ForStmtKind, std::move(location)),
-      loop_var(std::move(loop_var)), range(std::move(range)),
+      loopVar(std::move(loop_var)), range(std::move(range)),
       body(std::move(body)) {}
 
 ForStmt::~ForStmt() = default;
@@ -155,8 +154,8 @@ ForStmt::~ForStmt() = default;
  */
 void ForStmt::emit(int level) const {
   std::println("{}ForStmt", indent(level));
-  if (loop_var) {
-    loop_var->emit(level + 1);
+  if (loopVar) {
+    loopVar->emit(level + 1);
   }
   if (range) {
     range->emit(level + 1);

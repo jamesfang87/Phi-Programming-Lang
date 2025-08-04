@@ -108,8 +108,8 @@ private:
    * @param expected String description of expected token
    * @param found_token The actual token encountered
    */
-  void emit_expected_found_error(const std::string &expected,
-                                 const Token &found_token);
+  void emitExpectedFoundError(const std::string &expected,
+                              const Token &found_token);
 
   /**
    * @brief Reports unexpected token error
@@ -117,7 +117,7 @@ private:
    * @param token The unexpected token
    * @param expected_tokens List of expected token descriptions
    */
-  void emit_unexpected_token_error(
+  void emitUnexpectedTokenError(
       const Token &token, const std::vector<std::string> &expected_tokens = {});
 
   /**
@@ -126,8 +126,8 @@ private:
    * @param opening_token The opening delimiter token
    * @param expected_closing String representation of expected closing delimiter
    */
-  void emit_unclosed_delimiter_error(const Token &opening_token,
-                                     const std::string &expected_closing);
+  void emitUnclosedDelimiterError(const Token &opening_token,
+                                  const std::string &expected_closing);
 
   // ERROR RECOVERY
   /**
@@ -138,7 +138,7 @@ private:
    *
    * @return true if synchronized successfully, false if reached EOF
    */
-  bool sync_to_top_lvl();
+  bool SyncToTopLvl();
 
   /**
    * @brief Synchronizes parser state to next safe point
@@ -148,7 +148,7 @@ private:
    *
    * @return true if synchronized successfully, false if reached EOF
    */
-  bool sync_to_stmt();
+  bool SyncToStmt();
 
   /**
    * @brief Synchronizes to one of specified token types
@@ -156,7 +156,7 @@ private:
    * @param target_tokens Set of tokens to synchronize to
    * @return true if found synchronization token, false if reached EOF
    */
-  bool sync_to(const std::initializer_list<TokenType> target_tokens);
+  bool syncTo(const std::initializer_list<TokenType> target_tokens);
 
   /**
    * @brief Synchronizes to specific token type
@@ -164,7 +164,7 @@ private:
    * @param target_token Token type to synchronize to
    * @return true if found target token, false if reached EOF
    */
-  bool sync_to(const TokenType target_token);
+  bool syncTo(const TokenType target_token);
 
   // TYPE SYSTEM PARSING
   /**
@@ -174,23 +174,23 @@ private:
    *         Valid type if successful, std::nullopt on failure
    *         Errors are reported through the DiagnosticManager
    */
-  std::optional<Type> parse_type();
+  std::optional<Type> parseType();
 
   // FUNCTION DECLARATION PARSING
-  std::unique_ptr<FunDecl> parse_fun_decl();
-  std::unique_ptr<ParamDecl> parse_param_decl();
-  std::unique_ptr<Block> parse_block();
+  std::unique_ptr<FunDecl> parseFunDecl();
+  std::unique_ptr<ParamDecl> parseParamDecl();
+  std::unique_ptr<Block> parseBlock();
 
   // STATEMENT PARSING
-  std::unique_ptr<Stmt> parse_stmt();
-  std::unique_ptr<ReturnStmt> parse_return_stmt();
-  std::unique_ptr<IfStmt> parse_if_stmt();
-  std::unique_ptr<WhileStmt> parse_while_stmt();
-  std::unique_ptr<ForStmt> parse_for_stmt();
-  std::unique_ptr<LetStmt> parse_let_stmt();
+  std::unique_ptr<Stmt> parseStmt();
+  std::unique_ptr<ReturnStmt> parseReturn();
+  std::unique_ptr<IfStmt> parseIf();
+  std::unique_ptr<WhileStmt> parseWhile();
+  std::unique_ptr<ForStmt> parseFor();
+  std::unique_ptr<LetStmt> parseLet();
 
   // EXPRESSION PARSING
-  std::unique_ptr<Expr> parse_expr();
+  std::unique_ptr<Expr> parseExpr();
 
   /**
    * @brief Pratt parser implementation for expressions
@@ -202,7 +202,7 @@ private:
    */
   std::unique_ptr<Expr> pratt(int min_bp);
 
-  std::unique_ptr<Expr> parse_prefix(const Token &tok);
+  std::unique_ptr<Expr> parsePrefix(const Token &tok);
 
   /**
    * @brief Parses postfix operators for an expression
@@ -212,7 +212,7 @@ private:
    *         Expression with postfix operators applied or nullptr on failure
    *         Errors are emitted to DiagnosticManager
    */
-  std::unique_ptr<Expr> parse_postfix(std::unique_ptr<Expr> expr);
+  std::unique_ptr<Expr> parsePostfix(std::unique_ptr<Expr> expr);
 
   /**
    * @brief Parses function call expressions
@@ -222,7 +222,7 @@ private:
    *         Function call expression or nullptr on failure
    *         Errors are emitted to DiagnosticManager
    */
-  std::unique_ptr<FunCallExpr> parse_fun_call(std::unique_ptr<Expr> callee);
+  std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> callee);
 
   // PARSING UTILITIES
   struct TypedBinding {
@@ -230,7 +230,7 @@ private:
     std::string name;
     Type type;
   };
-  std::optional<TypedBinding> parse_typed_binding();
+  std::optional<TypedBinding> parseTypedBinding();
 
   /**
    * @brief Generic list parsing template
@@ -250,12 +250,12 @@ private:
    */
   template <typename T, typename F>
   std::optional<std::vector<std::unique_ptr<T>>>
-  parse_list(const TokenType opening, const TokenType closing, F fun,
-             const std::string &context = "list") {
+  parseList(const TokenType opening, const TokenType closing, F fun,
+            const std::string &context = "list") {
     // Verify opening delimiter
     const Token opening_token = peekToken();
     if (opening_token.getTy() != opening) {
-      emit_expected_found_error(type_to_string(opening), peekToken());
+      emitExpectedFoundError(type_to_string(opening), peekToken());
       return std::nullopt;
     }
     advanceToken();
@@ -266,7 +266,7 @@ private:
       auto result = (this->*fun)();
       if (!result) {
         // Recover by syncing to comma or closing delimiter
-        sync_to({closing, TokenType::tok_comma});
+        syncTo({closing, TokenType::tokComma});
         continue;
       }
       content.push_back(std::move(result));
@@ -277,7 +277,7 @@ private:
       }
 
       // Handle comma separator
-      if (peekToken().getTy() == TokenType::tok_comma) {
+      if (peekToken().getTy() == TokenType::tokComma) {
         advanceToken();
       } else {
         emitError(
@@ -292,7 +292,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekToken().getTy() != closing) {
-      emit_unclosed_delimiter_error(opening_token, type_to_string(closing));
+      emitUnclosedDelimiterError(opening_token, type_to_string(closing));
       return std::nullopt;
     }
 

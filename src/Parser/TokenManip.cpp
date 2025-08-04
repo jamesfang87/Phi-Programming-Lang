@@ -10,7 +10,7 @@ namespace phi {
  * Handles edge cases where token iterator might be out of bounds.
  */
 bool Parser::atEOF() const {
-  return tokenIt >= tokens.end() || peekToken().getTy() == TokenType::tok_eof;
+  return tokenIt >= tokens.end() || peekToken().getTy() == TokenType::tokEOF;
 }
 
 /**
@@ -23,7 +23,7 @@ bool Parser::atEOF() const {
 Token Parser::peekToken() const {
   if (tokenIt >= tokens.end()) {
     const SrcLocation eof_loc{.path = "", .line = -1, .col = -1};
-    return Token{eof_loc, eof_loc, TokenType::tok_eof, ""};
+    return Token{eof_loc, eof_loc, TokenType::tokEOF, ""};
   }
   return *tokenIt;
 }
@@ -58,8 +58,8 @@ bool Parser::expectToken(const TokenType expected_type,
   }
 
   const std::string context_msg = context.empty() ? "" : " in " + context;
-  emit_expected_found_error(type_to_string(expected_type) + context_msg,
-                            peekToken());
+  emitExpectedFoundError(type_to_string(expected_type) + context_msg,
+                         peekToken());
   return false;
 }
 

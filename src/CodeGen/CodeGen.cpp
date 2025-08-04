@@ -66,7 +66,7 @@ void phi::CodeGen::generate_println_call(phi::FunCallExpr &call) {
 
     // Determine format string based on argument type
     llvm::Value *format;
-    if (is_int_type(arg->getTy())) {
+    if (isIntTy(arg->getTy())) {
       format = builder.CreateGlobalString("%lld\n");
     } else if (is_float_type(arg->getTy())) {
       format = builder.CreateGlobalString("%g\n");
@@ -106,7 +106,7 @@ void phi::CodeGen::generateMain(phi::FunDecl &main_decl) {
   builder.SetInsertPoint(entry);
 
   // Generate function body by visiting each statement
-  for (auto &stmt : main_decl.getBlock().get_stmts()) {
+  for (auto &stmt : main_decl.getBlock().getStmts()) {
     stmt->accept(*this);
   }
 
@@ -187,7 +187,7 @@ void phi::CodeGen::generateFun(phi::FunDecl &func) {
   }
 
   // Generate function body by visiting each statement
-  for (auto &stmt : func.getBlock().get_stmts()) {
+  for (auto &stmt : func.getBlock().getStmts()) {
     stmt->accept(*this);
   }
 
