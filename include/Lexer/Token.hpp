@@ -33,7 +33,7 @@ public:
    * @param type Token type classification
    * @param lexeme Original source text of token
    */
-  Token(SrcLocation start, SrcLocation end, const TokenType type,
+  Token(SrcLocation start, SrcLocation end, const TokenKind type,
         std::string lexeme)
       : start(std::move(start)), end(std::move(end)), type(type),
         lexeme(std::move(lexeme)) {}
@@ -54,7 +54,7 @@ public:
    * @brief Retrieves token type
    * @return TokenType enumeration value
    */
-  [[nodiscard]] TokenType getTy() const { return type; }
+  [[nodiscard]] TokenKind getTy() const { return type; }
 
   /**
    * @brief Retrieves token type name
@@ -79,7 +79,7 @@ public:
 
 private:
   SrcLocation start, end; ///< Source position span (inclusive)
-  TokenType type;         ///< Token classification type
+  TokenKind type;         ///< Token classification type
   std::string lexeme;     ///< Original source text content
 };
 

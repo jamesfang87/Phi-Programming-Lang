@@ -218,7 +218,7 @@ private:
    * @param type Token type to create
    * @return Token with specified type and current lexeme
    */
-  [[nodiscard]] Token makeToken(TokenType type) const {
+  [[nodiscard]] Token makeToken(TokenKind type) const {
     int startCol = static_cast<int>(curLexeme - lexemeLine) + 1;
     int endCol = std::distance(curChar, curLine) + 1;
 

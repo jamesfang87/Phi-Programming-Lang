@@ -34,11 +34,11 @@ Token Lexer::parseNumber() {
       advanceChar();
     }
   } else {
-    return makeToken(TokenType::tokIntLiteral);
+    return makeToken(TokenKind::tokIntLiteral);
   }
 
   // TODO: implement exponents
-  return makeToken(TokenType::tokFloatLiteral);
+  return makeToken(TokenKind::tokFloatLiteral);
 }
 
 /**
@@ -63,39 +63,39 @@ Token Lexer::parseIdentifierOrKw() {
   }
   const std::string id(curLexeme, curChar);
 
-  static const std::unordered_map<std::string, TokenType> keywords = {
-      {"bool", TokenType::tokBool},
-      {"break", TokenType::tokBreak},
-      {"class", TokenType::tokClass},
-      {"const", TokenType::tokConst},
-      {"continue", TokenType::tokContinue},
-      {"else", TokenType::tokElse},
-      {"false", TokenType::tokFalse},
-      {"for", TokenType::tokFor},
-      {"fun", TokenType::tokFun},
-      {"if", TokenType::tokIf},
-      {"import", TokenType::tokImport},
-      {"in", TokenType::tokIn},
-      {"let", TokenType::tokLet},
-      {"return", TokenType::tokReturn},
-      {"true", TokenType::tokTrue},
-      {"while", TokenType::tokWhile},
-      {"i8", TokenType::tokI8},
-      {"i16", TokenType::tokI16},
-      {"i32", TokenType::tokI32},
-      {"i64", TokenType::tokI64},
-      {"u8", TokenType::tokU8},
-      {"u16", TokenType::tokU16},
-      {"u32", TokenType::tokU32},
-      {"u64", TokenType::tokU64},
-      {"f32", TokenType::tokF32},
-      {"f64", TokenType::tokF64},
-      {"str", TokenType::tokStr},
-      {"char", TokenType::tokChar}};
+  static const std::unordered_map<std::string, TokenKind> keywords = {
+      {"bool", TokenKind::tokBool},
+      {"break", TokenKind::tokBreak},
+      {"class", TokenKind::tokClass},
+      {"const", TokenKind::tokConst},
+      {"continue", TokenKind::tokContinue},
+      {"else", TokenKind::tokElse},
+      {"false", TokenKind::tokFalse},
+      {"for", TokenKind::tokFor},
+      {"fun", TokenKind::tokFun},
+      {"if", TokenKind::tokIf},
+      {"import", TokenKind::tokImport},
+      {"in", TokenKind::tokIn},
+      {"let", TokenKind::tokLet},
+      {"return", TokenKind::tokReturn},
+      {"true", TokenKind::tokTrue},
+      {"while", TokenKind::tokWhile},
+      {"i8", TokenKind::tokI8},
+      {"i16", TokenKind::tokI16},
+      {"i32", TokenKind::tokI32},
+      {"i64", TokenKind::tokI64},
+      {"u8", TokenKind::tokU8},
+      {"u16", TokenKind::tokU16},
+      {"u32", TokenKind::tokU32},
+      {"u64", TokenKind::tokU64},
+      {"f32", TokenKind::tokF32},
+      {"f64", TokenKind::tokF64},
+      {"str", TokenKind::tokStr},
+      {"char", TokenKind::tokChar}};
 
   const auto it = keywords.find(id);
   return it != keywords.end() ? makeToken(it->second)
-                              : makeToken(TokenType::tokIdentifier);
+                              : makeToken(TokenKind::tokIdentifier);
 }
 
 /**
@@ -147,7 +147,7 @@ Token Lexer::parseStr() {
         .with_primary_label(span, "string starts here")
         .with_help("add a closing double quote (\") to terminate the string")
         .emit(*diagnosticManager);
-    return makeToken(TokenType::tokError);
+    return makeToken(TokenKind::tokError);
   }
   advanceChar();     // consume closing quote
   insideStr = false; // we are no longer inside str
@@ -160,7 +160,7 @@ Token Lexer::parseStr() {
                      .line = lineNum,
                      .col = static_cast<int>(curChar - curLine) + 1};
 
-  return {start, end, TokenType::tokStrLiteral, str};
+  return {start, end, TokenKind::tokStrLiteral, str};
 }
 
 /**
@@ -190,7 +190,7 @@ Token Lexer::parseChar() {
         .with_note(
             "try using a space character: ' ' or an escape sequence like '\\n'")
         .emit(*diagnosticManager);
-    return makeToken(TokenType::tokError);
+    return makeToken(TokenKind::tokError);
   }
 
   char c;
@@ -219,7 +219,7 @@ Token Lexer::parseChar() {
           .with_note("use a string literal (\"\") for multiple characters")
           .emit(*diagnosticManager);
     }
-    return makeToken(TokenType::tokError);
+    return makeToken(TokenKind::tokError);
   }
 
   advanceChar(); // consume closing quote
@@ -232,7 +232,7 @@ Token Lexer::parseChar() {
                      .line = lineNum,
                      .col = static_cast<int>(curChar - curLine) + 1};
 
-  return {start, end, TokenType::tokCharLiteral, std::string(1, c)};
+  return {start, end, TokenKind::tokCharLiteral, std::string(1, c)};
 }
 
 /**

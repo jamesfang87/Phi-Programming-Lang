@@ -430,7 +430,7 @@ public:
    * @brief Retrieves operator
    * @return Operator token type
    */
-  [[nodiscard]] TokenType getOp() const { return op; }
+  [[nodiscard]] TokenKind getOp() const { return op; }
 
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &visitor) override {
@@ -444,7 +444,7 @@ public:
 private:
   std::unique_ptr<Expr> lhs; ///< Left operand
   std::unique_ptr<Expr> rhs; ///< Right operand
-  TokenType op;              ///< Operator token type
+  TokenKind op;              ///< Operator token type
 };
 
 /**
@@ -470,7 +470,7 @@ public:
    * @brief Retrieves operator
    * @return Operator token type
    */
-  [[nodiscard]] TokenType getOp() const { return op; }
+  [[nodiscard]] TokenKind getOp() const { return op; }
 
   /**
    * @brief Checks if operator is prefix
@@ -490,7 +490,7 @@ public:
 
 private:
   std::unique_ptr<Expr> operand; ///< Target expression
-  TokenType op;                  ///< Operator token type
+  TokenKind op;                  ///< Operator token type
   bool isPrefix;                 ///< Prefix position flag
 };
 
