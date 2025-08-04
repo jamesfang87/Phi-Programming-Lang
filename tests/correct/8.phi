@@ -18,7 +18,22 @@ fun div(a: i64, b: i64) -> i64 {
 }
 
 fun main() {
-    println1("results");
+    let a: i64 = 10;
+    if (a > 0) {
+        println(1);
+    } else {
+        println(0);
+    }
+
+    while (a < 20) {
+        println(a);
+        a = a + 1;
+    }
+
+    for i in 0..10 {
+        println(i);
+    }
+
     println(add(1, 1));
     println(sub(1, 5));
     println(mul(6, 7));

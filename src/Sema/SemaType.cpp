@@ -13,17 +13,17 @@ namespace phi {
  * - Placeholder for future user-defined type support
  * - Returns false for unresolved types
  */
-bool Sema::resolve_type(std::optional<Type> type) {
-    if (!type.has_value()) {
-        return false;
-    }
-
-    if (type.value().is_primitive()) {
-        return true;
-    }
-
-    // TODO: support user-defined types
+bool Sema::resolveTy(std::optional<Type> type) {
+  if (!type.has_value()) {
     return false;
+  }
+
+  if (type.value().is_primitive()) {
+    return true;
+  }
+
+  // TODO: support user-defined types
+  return false;
 }
 
 } // namespace phi

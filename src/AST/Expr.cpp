@@ -4,6 +4,7 @@
 #include <print>
 #include <string>
 
+#include "AST/Stmt.hpp"
 #include "Lexer/TokenType.hpp"
 
 namespace {
@@ -27,7 +28,8 @@ namespace phi {
  * @param value Integer value
  */
 IntLiteral::IntLiteral(SrcLocation location, const int64_t value)
-    : Expr(std::move(location), Type(Type::Primitive::i64)),
+    : Expr(Stmt::Kind::IntLiteralKind, std::move(location),
+           Type(Type::Primitive::i64)),
       value(value) {}
 
 /**
@@ -38,8 +40,8 @@ IntLiteral::IntLiteral(SrcLocation location, const int64_t value)
  *
  * @param level Current indentation level
  */
-void IntLiteral::info_dump(int level) const {
-    std::println("{}IntLiteral: {}", indent(level), value);
+void IntLiteral::emit(int level) const {
+  std::println("{}IntLiteral: {}", indent(level), value);
 }
 
 // ====================== FloatLiteral Implementation ========================//
@@ -54,7 +56,8 @@ void IntLiteral::info_dump(int level) const {
  * @param value Floating-point value
  */
 FloatLiteral::FloatLiteral(SrcLocation location, const double value)
-    : Expr(std::move(location), Type(Type::Primitive::f64)),
+    : Expr(Stmt::Kind::FloatLiteralKind, std::move(location),
+           Type(Type::Primitive::f64)),
       value(value) {}
 
 /**
@@ -65,8 +68,8 @@ FloatLiteral::FloatLiteral(SrcLocation location, const double value)
  *
  * @param level Current indentation level
  */
-void FloatLiteral::info_dump(int level) const {
-    std::println("{}FloatLiteral: {}", indent(level), value);
+void FloatLiteral::emit(int level) const {
+  std::println("{}FloatLiteral: {}", indent(level), value);
 }
 
 // ====================== StrLiteral Implementation ========================//
@@ -80,7 +83,8 @@ void FloatLiteral::info_dump(int level) const {
  * @param value String content
  */
 StrLiteral::StrLiteral(SrcLocation location, std::string value)
-    : Expr(std::move(location), Type(Type::Primitive::str)),
+    : Expr(Stmt::Kind::StrLiteralKind, std::move(location),
+           Type(Type::Primitive::str)),
       value(std::move(value)) {}
 
 /**
@@ -91,8 +95,8 @@ StrLiteral::StrLiteral(SrcLocation location, std::string value)
  *
  * @param level Current indentation level
  */
-void StrLiteral::info_dump(int level) const {
-    std::println("{}StrLiteral: {}", indent(level), value);
+void StrLiteral::emit(int level) const {
+  std::println("{}StrLiteral: {}", indent(level), value);
 }
 
 // ====================== CharLiteral Implementation ========================//
@@ -106,7 +110,8 @@ void StrLiteral::info_dump(int level) const {
  * @param value Character value
  */
 CharLiteral::CharLiteral(SrcLocation location, char value)
-    : Expr(std::move(location), Type(Type::Primitive::character)),
+    : Expr(Stmt::Kind::CharLiteralKind, std::move(location),
+           Type(Type::Primitive::character)),
       value(value) {}
 
 /**
@@ -117,8 +122,8 @@ CharLiteral::CharLiteral(SrcLocation location, char value)
  *
  * @param level Current indentation level
  */
-void CharLiteral::info_dump(int level) const {
-    std::println("{}CharLiteral: {}", indent(level), value);
+void CharLiteral::emit(int level) const {
+  std::println("{}CharLiteral: {}", indent(level), value);
 }
 
 // ====================== BoolLiteral Implementation ========================//
@@ -132,7 +137,8 @@ void CharLiteral::info_dump(int level) const {
  * @param value Boolean value
  */
 BoolLiteral::BoolLiteral(SrcLocation location, bool value)
-    : Expr(std::move(location), Type(Type::Primitive::boolean)),
+    : Expr(Stmt::Kind::BoolLiteralKind, std::move(location),
+           Type(Type::Primitive::boolean)),
       value(value) {}
 
 /**
@@ -143,8 +149,8 @@ BoolLiteral::BoolLiteral(SrcLocation location, bool value)
  *
  * @param level Current indentation level
  */
-void BoolLiteral::info_dump(int level) const {
-    std::println("{}BoolLiteral: {}", indent(level), value);
+void BoolLiteral::emit(int level) const {
+  std::println("{}BoolLiteral: {}", indent(level), value);
 }
 
 // ====================== RangeLiteral Implementation ========================//
@@ -160,14 +166,11 @@ void BoolLiteral::info_dump(int level) const {
  * @param end End expression
  * @param inclusive True for inclusive range, false for exclusive
  */
-RangeLiteral::RangeLiteral(SrcLocation location,
-                           std::unique_ptr<Expr> start,
-                           std::unique_ptr<Expr> end,
-                           const bool inclusive)
-    : Expr(std::move(location)),
-      start(std::move(start)),
-      end(std::move(end)),
-      inclusive(inclusive) {}
+RangeLiteral::RangeLiteral(SrcLocation location, std::unique_ptr<Expr> start,
+                           std::unique_ptr<Expr> end, const bool inclusive)
+    : Expr(Stmt::Kind::RangeLiteralKind, std::move(location),
+           Type(Type::Primitive::range)),
+      start(std::move(start)), end(std::move(end)), inclusive(inclusive) {}
 
 /**
  * @brief Dumps range literal information
@@ -181,12 +184,12 @@ RangeLiteral::RangeLiteral(SrcLocation location,
  *
  * @param level Current indentation level
  */
-void RangeLiteral::info_dump(int level) const {
-    std::println("{}RangeLiteral:", indent(level));
-    std::println("{}  start:", indent(level));
-    start->info_dump(level + 2);
-    std::println("{}  end:", indent(level));
-    end->info_dump(level + 2);
+void RangeLiteral::emit(int level) const {
+  std::println("{}RangeLiteral:", indent(level));
+  std::println("{}  start:", indent(level));
+  start->emit(level + 2);
+  std::println("{}  end:", indent(level));
+  end->emit(level + 2);
 }
 
 // ====================== DeclRefExpr Implementation ========================//
@@ -201,8 +204,8 @@ void RangeLiteral::info_dump(int level) const {
  * @param identifier Declaration name
  */
 DeclRefExpr::DeclRefExpr(SrcLocation location, std::string identifier)
-    : Expr(std::move(location)),
-      identifier(std::move(identifier)) {}
+    : Expr(Stmt::Kind::DeclRefExprKind, std::move(location)),
+      id(std::move(identifier)) {}
 
 /**
  * @brief Dumps declaration reference information
@@ -212,8 +215,8 @@ DeclRefExpr::DeclRefExpr(SrcLocation location, std::string identifier)
  *
  * @param level Current indentation level
  */
-void DeclRefExpr::info_dump(int level) const {
-    std::println("{}DeclRefExpr: {}", indent(level), identifier);
+void DeclRefExpr::emit(int level) const {
+  std::println("{}DeclRefExpr: {}", indent(level), id);
 }
 
 //====================== FunCallExpr Implementation ========================//
@@ -225,12 +228,10 @@ void DeclRefExpr::info_dump(int level) const {
  * @param callee Expression being called (usually DeclRefExpr)
  * @param args Argument expressions
  */
-FunCallExpr::FunCallExpr(SrcLocation location,
-                         std::unique_ptr<Expr> callee,
+FunCallExpr::FunCallExpr(SrcLocation location, std::unique_ptr<Expr> callee,
                          std::vector<std::unique_ptr<Expr>> args)
-    : Expr(std::move(location)),
-      callee(std::move(callee)),
-      args(std::move(args)) {}
+    : Expr(Stmt::Kind::FunCallExprKind, std::move(location)),
+      callee(std::move(callee)), args(std::move(args)) {}
 
 /**
  * @brief Dumps function call information
@@ -244,14 +245,14 @@ FunCallExpr::FunCallExpr(SrcLocation location,
  *
  * @param level Current indentation level
  */
-void FunCallExpr::info_dump(int level) const {
-    std::println("{}FunCallExpr", indent(level));
-    std::println("{}  callee:", indent(level));
-    callee->info_dump(level + 2);
-    std::println("{}  args:", indent(level));
-    for (const auto& arg : args) {
-        arg->info_dump(level + 2);
-    }
+void FunCallExpr::emit(int level) const {
+  std::println("{}FunCallExpr", indent(level));
+  std::println("{}  callee:", indent(level));
+  callee->emit(level + 2);
+  std::println("{}  args:", indent(level));
+  for (const auto &arg : args) {
+    arg->emit(level + 2);
+  }
 }
 
 //====================== BinaryOp Implementation ========================//
@@ -263,11 +264,10 @@ void FunCallExpr::info_dump(int level) const {
  * @param rhs Right-hand operand
  * @param op Operator token
  */
-BinaryOp::BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs, const Token& op)
-    : Expr(op.get_start()),
-      lhs(std::move(lhs)),
-      rhs(std::move(rhs)),
-      op(op.get_type()) {}
+BinaryOp::BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
+                   const Token &op)
+    : Expr(Stmt::Kind::BinaryOpKind, op.get_start()), lhs(std::move(lhs)),
+      rhs(std::move(rhs)), op(op.get_type()) {}
 
 /**
  * @brief Dumps binary operation information
@@ -282,15 +282,15 @@ BinaryOp::BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs, const T
  *
  * @param level Current indentation level
  */
-void BinaryOp::info_dump(int level) const {
-    std::println("{}BinaryOp: {}", indent(level), type_to_string(op));
-    std::println("{}  lhs:", indent(level));
-    lhs->info_dump(level + 2);
-    std::println("{}  rhs:", indent(level));
-    rhs->info_dump(level + 2);
-    if (type.has_value()) {
-        std::println("{}  type: {}", indent(level), type.value().to_string());
-    }
+void BinaryOp::emit(int level) const {
+  std::println("{}BinaryOp: {}", indent(level), type_to_string(op));
+  std::println("{}  lhs:", indent(level));
+  lhs->emit(level + 2);
+  std::println("{}  rhs:", indent(level));
+  rhs->emit(level + 2);
+  if (type.has_value()) {
+    std::println("{}  type: {}", indent(level), type.value().to_string());
+  }
 }
 
 //====================== UnaryOp Implementation ========================//
@@ -302,11 +302,10 @@ void BinaryOp::info_dump(int level) const {
  * @param op Operator token
  * @param is_prefix True if prefix operator, false if postfix
  */
-UnaryOp::UnaryOp(std::unique_ptr<Expr> operand, const Token& op, const bool is_prefix)
-    : Expr(op.get_start()),
-      operand(std::move(operand)),
-      op(op.get_type()),
-      is_prefix(is_prefix) {}
+UnaryOp::UnaryOp(std::unique_ptr<Expr> operand, const Token &op,
+                 const bool is_prefix)
+    : Expr(Stmt::Kind::UnaryOpKind, op.get_start()),
+      operand(std::move(operand)), op(op.get_type()), isPrefix(is_prefix) {}
 
 /**
  * @brief Dumps unary operation information
@@ -318,10 +317,10 @@ UnaryOp::UnaryOp(std::unique_ptr<Expr> operand, const Token& op, const bool is_p
  *
  * @param level Current indentation level
  */
-void UnaryOp::info_dump(int level) const {
-    std::println("{}UnaryOp: {}", indent(level), type_to_string(op));
-    std::println("{}  expr:", indent(level));
-    operand->info_dump(level + 2);
+void UnaryOp::emit(int level) const {
+  std::println("{}UnaryOp: {}", indent(level), type_to_string(op));
+  std::println("{}  expr:", indent(level));
+  operand->emit(level + 2);
 }
 
 } // namespace phi
