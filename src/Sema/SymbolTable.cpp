@@ -1,4 +1,7 @@
 #include "Sema/SymbolTable.hpp"
+#include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
+#include "llvm/Support/Casting.h"
 
 namespace phi {
 
@@ -17,37 +20,45 @@ void SymbolTable::enter_scope() { scopes.emplace_back(); }
  */
 void SymbolTable::exit_scope() { scopes.pop_back(); }
 
-/**
- * Inserts a declaration into the current scope.
- *
- * @param decl Declaration to insert
- * @return true if insertion succeeded, false if identifier already exists
- *
- * Prevents redeclaration in the same scope while allowing shadowing in inner scopes.
- */
-bool SymbolTable::insert_decl(Decl* decl) {
-    if (lookup_decl(decl->get_id())) {
-        return false; // Already exists in current scope
-    }
-    scopes.back()[decl->get_id()] = decl;
-    return true;
+bool SymbolTable::insert(FunDecl *fun) {
+  scopes.back().funs[fun->getID()] = fun;
+  return true;
 }
 
-/**
- * Looks up a declaration by name using lexical scoping rules.
- *
- * @param name Identifier to search for
- * @return Pointer to declaration if found, nullptr otherwise
- *
- * Searches from innermost to outermost scope (LIFO order).
- */
-Decl* SymbolTable::lookup_decl(const std::string& name) {
-    for (int i = scopes.size() - 1; i >= 0; --i) {
-        if (auto it = scopes[i].find(name); it != scopes[i].end()) {
-            return it->second;
-        }
+bool SymbolTable::insert(Decl *decl) {
+  // not implemented
+  return false;
+}
+
+bool SymbolTable::insert(VarDecl *decl) {
+  scopes.back().vars[decl->getID()] = decl;
+  return true;
+}
+
+bool SymbolTable::insert(ParamDecl *decl) {
+  scopes.back().vars[decl->getID()] = decl;
+  return true;
+}
+
+Decl *SymbolTable::lookup(DeclRefExpr &declref) {
+  for (int i = scopes.size() - 1; i >= 0; --i) {
+    if (auto it = scopes[i].vars.find(declref.getID());
+        it != scopes[i].vars.end()) {
+      return it->second;
     }
-    return nullptr;
+  }
+  return nullptr;
+}
+
+FunDecl *SymbolTable::lookup(FunCallExpr &fun) {
+  auto declref = llvm::dyn_cast<DeclRefExpr>(&fun.getCallee());
+  for (int i = scopes.size() - 1; i >= 0; --i) {
+    if (auto it = scopes[i].funs.find(declref->getID());
+        it != scopes[i].funs.end()) {
+      return it->second;
+    }
+  }
+  return nullptr;
 }
 
 } // namespace phi

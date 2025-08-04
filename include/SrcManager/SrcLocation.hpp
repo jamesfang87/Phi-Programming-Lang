@@ -11,8 +11,8 @@ namespace phi {
  * error reporting and debugging.
  */
 struct SrcLocation {
-    std::string path; ///< Source file path
-    int line, col;    ///< Line and column numbers (1-indexed)
+  std::string path; ///< Source file path
+  int line, col;    ///< Line and column numbers (1-indexed)
 };
 
 } // namespace phi
