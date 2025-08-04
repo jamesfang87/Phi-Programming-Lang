@@ -15,8 +15,8 @@ namespace phi {
  */
 void Parser::emit_expected_found_error(const std::string &expected,
                                        const Token &found_token) {
-  error(std::format("expected {}, found `{}`", expected,
-                    found_token.get_lexeme()))
+  error(
+      std::format("expected {}, found `{}`", expected, found_token.getLexeme()))
       .with_primary_label(spanFromToken(found_token),
                           std::format("expected {} here", expected))
       .emit(*diagnosticsManager);
@@ -35,7 +35,7 @@ void Parser::emit_expected_found_error(const std::string &expected,
 void Parser::emit_unexpected_token_error(
     const Token &token, const std::vector<std::string> &expected_tokens) {
   auto builder =
-      error(std::format("unexpected token `{}`", token.get_lexeme()))
+      error(std::format("unexpected token `{}`", token.getLexeme()))
           .with_primary_label(spanFromToken(token), "unexpected token");
 
   if (!expected_tokens.empty()) {
@@ -68,7 +68,7 @@ void Parser::emit_unclosed_delimiter_error(
   error("unclosed delimiter")
       .with_primary_label(
           spanFromToken(opening_token),
-          std::format("unclosed `{}`", opening_token.get_lexeme()))
+          std::format("unclosed `{}`", opening_token.getLexeme()))
       .with_help(std::format("expected `{}` to close this delimiter",
                              expected_closing))
       .with_note("delimiters must be properly matched")
@@ -125,7 +125,7 @@ bool Parser::sync_to_stmt() {
 bool Parser::sync_to(const std::initializer_list<TokenType> target_tokens) {
   while (!atEOF()) {
     for (const TokenType target : target_tokens) {
-      if (peekToken().get_type() == target) {
+      if (peekToken().getTy() == target) {
         return true;
       }
     }
@@ -144,7 +144,7 @@ bool Parser::sync_to(const std::initializer_list<TokenType> target_tokens) {
  * Useful for recovering from errors where a specific closing token is expected.
  */
 bool Parser::sync_to(const TokenType target_token) {
-  while (!atEOF() && peekToken().get_type() != target_token) {
+  while (!atEOF() && peekToken().getTy() != target_token) {
     advanceToken();
   }
   return !atEOF(); // Found target unless EOF reached

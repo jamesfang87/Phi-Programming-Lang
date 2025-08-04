@@ -266,8 +266,8 @@ void FunCallExpr::emit(int level) const {
  */
 BinaryOp::BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
                    const Token &op)
-    : Expr(Stmt::Kind::BinaryOpKind, op.get_start()), lhs(std::move(lhs)),
-      rhs(std::move(rhs)), op(op.get_type()) {}
+    : Expr(Stmt::Kind::BinaryOpKind, op.getStart()), lhs(std::move(lhs)),
+      rhs(std::move(rhs)), op(op.getTy()) {}
 
 /**
  * @brief Dumps binary operation information
@@ -304,8 +304,8 @@ void BinaryOp::emit(int level) const {
  */
 UnaryOp::UnaryOp(std::unique_ptr<Expr> operand, const Token &op,
                  const bool is_prefix)
-    : Expr(Stmt::Kind::UnaryOpKind, op.get_start()),
-      operand(std::move(operand)), op(op.get_type()), isPrefix(is_prefix) {}
+    : Expr(Stmt::Kind::UnaryOpKind, op.getStart()), operand(std::move(operand)),
+      op(op.getTy()), isPrefix(is_prefix) {}
 
 /**
  * @brief Dumps unary operation information

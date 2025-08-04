@@ -41,7 +41,7 @@ bool Sema::visit(BoolLiteral &expr) {
  * - Not attempting to use function as value
  */
 bool Sema::visit(DeclRefExpr &expr) {
-  Decl *decl = symbol_table.lookup(expr);
+  Decl *decl = symbolTable.lookup(expr);
 
   if (!decl) {
     std::println("error: undeclared identifier '{}'", expr.getID());
@@ -63,7 +63,7 @@ bool Sema::visit(DeclRefExpr &expr) {
  * - Argument types match parameter types
  */
 bool Sema::visit(FunCallExpr &expr) {
-  FunDecl *fun = symbol_table.lookup(expr);
+  FunDecl *fun = symbolTable.lookup(expr);
 
   // Validate argument count
   if (expr.getArgs().size() != fun->getParams().size()) {
@@ -169,7 +169,7 @@ bool Sema::visit(BinaryOp &expr) {
       return false;
     }
     // Apply type promotion
-    expr.setTy(promote_numeric_types(lhs_type, rhs_type));
+    expr.setTy(promoteNumTypes(lhs_type, rhs_type));
     break;
   }
 
@@ -237,7 +237,7 @@ bool Sema::visit(BinaryOp &expr) {
  * - Integer + float: promote to float
  * - Mixed integers: promote to larger type (placeholder)
  */
-Type Sema::promote_numeric_types(const Type &lhs, const Type &rhs) {
+Type Sema::promoteNumTypes(const Type &lhs, const Type &rhs) {
   if (lhs == rhs)
     return lhs;
 

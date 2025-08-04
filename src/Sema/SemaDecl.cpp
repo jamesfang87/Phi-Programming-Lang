@@ -12,7 +12,7 @@ namespace phi {
  * - Parameters are valid
  * - Special rules for main() function
  */
-bool Sema::resolve_fun_decl(FunDecl *fun) {
+bool Sema::resolveFunDecl(FunDecl *fun) {
   // Resolve return type
   if (!resolveTy(fun->getReturnTy())) {
     std::println("invalid type for return in function: {}", fun->getID());
@@ -33,7 +33,7 @@ bool Sema::resolve_fun_decl(FunDecl *fun) {
 
   // Resolve parameters
   for (const auto &param : fun->getParams()) {
-    if (!resolve_param_decl(param.get())) {
+    if (!resolveParamDecl(param.get())) {
       return false;
     }
   }
@@ -48,7 +48,7 @@ bool Sema::resolve_fun_decl(FunDecl *fun) {
  * - Type is valid
  * - Type is not null
  */
-bool Sema::resolve_param_decl(ParamDecl *param) {
+bool Sema::resolveParamDecl(ParamDecl *param) {
   // Resolve parameter type
   if (!resolveTy(param->getTy())) {
     std::println("invalid type for parameter: {}", param->getID());

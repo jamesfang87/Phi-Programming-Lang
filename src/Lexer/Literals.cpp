@@ -61,7 +61,7 @@ Token Lexer::parseIdentifierOrKw() {
   while (std::isalnum(peekChar()) || peekChar() == '_') {
     advanceChar();
   }
-  const std::string identifier(curLexeme, curChar);
+  const std::string id(curLexeme, curChar);
 
   static const std::unordered_map<std::string, TokenType> keywords = {
       {"bool", TokenType::tok_bool},
@@ -93,7 +93,7 @@ Token Lexer::parseIdentifierOrKw() {
       {"str", TokenType::tok_str},
       {"char", TokenType::tok_char}};
 
-  const auto it = keywords.find(identifier);
+  const auto it = keywords.find(id);
   return it != keywords.end() ? makeToken(it->second)
                               : makeToken(TokenType::tok_identifier);
 }
