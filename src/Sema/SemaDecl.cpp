@@ -57,7 +57,7 @@ bool Sema::resolveParamDecl(ParamDecl *param) {
 
   // Parameters can't be null type
   const Type &t = param->getTy();
-  if (t.is_primitive() && t.primitive_type() == Type::Primitive::null) {
+  if (t.isPrimitive() && t.primitive_type() == Type::Primitive::null) {
     std::println("param type cannot be null for: {}", param->getID());
     return false;
   }

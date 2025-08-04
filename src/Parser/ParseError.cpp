@@ -13,8 +13,8 @@ namespace phi {
  * found, and highlights the location of the unexpected token in the source
  * code.
  */
-void Parser::emit_expected_found_error(const std::string &expected,
-                                       const Token &found_token) {
+void Parser::emitExpectedFoundError(const std::string &expected,
+                                    const Token &found_token) {
   error(
       std::format("expected {}, found `{}`", expected, found_token.getLexeme()))
       .with_primary_label(spanFromToken(found_token),
@@ -32,7 +32,7 @@ void Parser::emit_expected_found_error(const std::string &expected,
  * message listing valid alternatives when available. The error highlights the
  * token's location and suggests possible corrections.
  */
-void Parser::emit_unexpected_token_error(
+void Parser::emitUnexpectedTokenError(
     const Token &token, const std::vector<std::string> &expected_tokens) {
   auto builder =
       error(std::format("unexpected token `{}`", token.getLexeme()))
@@ -63,8 +63,8 @@ void Parser::emit_unexpected_token_error(
  * opening delimiter's location, suggests the required closing delimiter, and
  * adds a note about proper delimiter matching.
  */
-void Parser::emit_unclosed_delimiter_error(
-    const Token &opening_token, const std::string &expected_closing) {
+void Parser::emitUnclosedDelimiterError(const Token &opening_token,
+                                        const std::string &expected_closing) {
   error("unclosed delimiter")
       .with_primary_label(
           spanFromToken(opening_token),
@@ -88,10 +88,10 @@ void Parser::emit_unclosed_delimiter_error(
  *    - End of file
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
-bool Parser::sync_to_top_lvl() {
-  return sync_to({
-      TokenType::tok_fun,
-      TokenType::tok_class,
+bool Parser::SyncToTopLvl() {
+  return syncTo({
+      TokenType::tokFun,
+      TokenType::tokClass,
   });
 }
 
@@ -107,10 +107,10 @@ bool Parser::sync_to_top_lvl() {
  *    - Statement block terminators (closing brace)
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
-bool Parser::sync_to_stmt() {
-  return sync_to({TokenType::tok_close_brace, TokenType::tok_return,
-                  TokenType::tok_if, TokenType::tok_while, TokenType::tok_for,
-                  TokenType::tok_let});
+bool Parser::SyncToStmt() {
+  return syncTo({TokenType::tokRightBrace, TokenType::tokReturn,
+                 TokenType::tokIf, TokenType::tokWhile, TokenType::tokFor,
+                 TokenType::tokLet});
 }
 
 /**
@@ -122,7 +122,7 @@ bool Parser::sync_to_stmt() {
  * Advances through the token stream until encountering one of the specified
  * target tokens. Used for context-specific recovery (e.g., block endings).
  */
-bool Parser::sync_to(const std::initializer_list<TokenType> target_tokens) {
+bool Parser::syncTo(const std::initializer_list<TokenType> target_tokens) {
   while (!atEOF()) {
     for (const TokenType target : target_tokens) {
       if (peekToken().getTy() == target) {
@@ -143,7 +143,7 @@ bool Parser::sync_to(const std::initializer_list<TokenType> target_tokens) {
  * Efficiently skips tokens until the exact specified token type is found.
  * Useful for recovering from errors where a specific closing token is expected.
  */
-bool Parser::sync_to(const TokenType target_token) {
+bool Parser::syncTo(const TokenType target_token) {
   while (!atEOF() && peekToken().getTy() != target_token) {
     advanceToken();
   }

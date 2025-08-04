@@ -17,7 +17,7 @@ namespace phi {
  * - Suggestions for valid primitive types
  * - Notes about type syntax rules
  */
-std::optional<Type> Parser::parse_type() {
+std::optional<Type> Parser::parseType() {
   // Map of primitive type names to their enum representations
   const std::unordered_map<std::string, Type::Primitive> primitive_map = {
       {"i8", Type::Primitive::i8},        {"i16", Type::Primitive::i16},
@@ -33,7 +33,7 @@ std::optional<Type> Parser::parse_type() {
 
   // Validate token is either primitive type or identifier
   if (it == primitive_map.end() &&
-      peekToken().getTy() != TokenType::tok_identifier) {
+      peekToken().getTy() != TokenType::tokIdentifier) {
     error(std::format("invalid token found: {}", peekToken().getLexeme()))
         .with_primary_label(spanFromToken(peekToken()),
                             "expected a valid type here")

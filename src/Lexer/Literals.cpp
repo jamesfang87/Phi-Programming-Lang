@@ -34,11 +34,11 @@ Token Lexer::parseNumber() {
       advanceChar();
     }
   } else {
-    return makeToken(TokenType::tok_int_literal);
+    return makeToken(TokenType::tokIntLiteral);
   }
 
   // TODO: implement exponents
-  return makeToken(TokenType::tok_float_literal);
+  return makeToken(TokenType::tokFloatLiteral);
 }
 
 /**
@@ -64,13 +64,13 @@ Token Lexer::parseIdentifierOrKw() {
   const std::string id(curLexeme, curChar);
 
   static const std::unordered_map<std::string, TokenType> keywords = {
-      {"bool", TokenType::tok_bool},
-      {"break", TokenType::tok_break},
-      {"class", TokenType::tok_class},
-      {"const", TokenType::tok_const},
-      {"continue", TokenType::tok_continue},
-      {"else", TokenType::tok_else},
-      {"false", TokenType::tok_false},
+      {"bool", TokenType::tokBool},
+      {"break", TokenType::tokBreak},
+      {"class", TokenType::tokClass},
+      {"const", TokenType::tokConst},
+      {"continue", TokenType::tokContinue},
+      {"else", TokenType::tokElse},
+      {"false", TokenType::tokFalse},
       {"for", TokenType::tok_for},
       {"fun", TokenType::tok_fun},
       {"if", TokenType::tok_if},
@@ -95,7 +95,7 @@ Token Lexer::parseIdentifierOrKw() {
 
   const auto it = keywords.find(id);
   return it != keywords.end() ? makeToken(it->second)
-                              : makeToken(TokenType::tok_identifier);
+                              : makeToken(TokenType::tokIdentifier);
 }
 
 /**
@@ -149,7 +149,7 @@ Token Lexer::parseStr() {
         .with_primary_label(quote_span, "string starts here")
         .with_help("add a closing double quote (\") to terminate the string")
         .emit(*diagnosticsManager);
-    return makeToken(TokenType::tok_error);
+    return makeToken(TokenType::tokError);
   }
   advanceChar();     // consume closing quote
   insideStr = false; // we are no longer inside str
@@ -162,7 +162,7 @@ Token Lexer::parseStr() {
                      .line = line_num,
                      .col = static_cast<int>(curChar - curLine) + 1};
 
-  return {start, end, TokenType::tok_str_literal, str};
+  return {start, end, TokenType::tokStrLiteral, str};
 }
 
 /**
@@ -192,7 +192,7 @@ Token Lexer::parseChar() {
         .with_note(
             "try using a space character: ' ' or an escape sequence like '\\n'")
         .emit(*diagnosticsManager);
-    return makeToken(TokenType::tok_error);
+    return makeToken(TokenType::tokError);
   }
 
   char c;
@@ -221,7 +221,7 @@ Token Lexer::parseChar() {
           .with_note("use a string literal (\"\") for multiple characters")
           .emit(*diagnosticsManager);
     }
-    return makeToken(TokenType::tok_error);
+    return makeToken(TokenType::tokError);
   }
 
   advanceChar(); // consume closing quote
@@ -234,7 +234,7 @@ Token Lexer::parseChar() {
                      .line = line_num,
                      .col = static_cast<int>(curChar - curLine) + 1};
 
-  return {start, end, TokenType::tok_char_literal, std::string(1, c)};
+  return {start, end, TokenType::tokCharLiteral, std::string(1, c)};
 }
 
 /**

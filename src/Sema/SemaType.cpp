@@ -18,7 +18,7 @@ bool Sema::resolveTy(std::optional<Type> type) {
     return false;
   }
 
-  if (type.value().is_primitive()) {
+  if (type.value().isPrimitive()) {
     return true;
   }
 

@@ -37,17 +37,17 @@ Parser::Parser(const std::string_view src, const std::string_view path,
 std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
   while (!atEOF()) {
     switch (peekToken().getTy()) {
-    case TokenType::tok_fun: {
-      if (auto res = parse_fun_decl()) {
+    case TokenType::tokFun: {
+      if (auto res = parseFunDecl()) {
         functions.push_back(std::move(res));
       } else {
-        sync_to_top_lvl(); // Error recovery
+        SyncToTopLvl(); // Error recovery
       }
       break;
     }
     default:
-      emit_unexpected_token_error(peekToken(), {"fun"});
-      sync_to_top_lvl(); // Error recovery
+      emitUnexpectedTokenError(peekToken(), {"fun"});
+      SyncToTopLvl(); // Error recovery
     }
   }
 

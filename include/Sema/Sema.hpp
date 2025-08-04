@@ -133,7 +133,7 @@ public:
    * @brief Validates if statements
    *
    * Checks:
-   * - Condition expression is boolean
+   * - cond expression is boolean
    * - Resolves then and else blocks
    *
    * @param stmt The if statement
@@ -145,7 +145,7 @@ public:
    * @brief Validates while loops
    *
    * Checks:
-   * - Condition expression is boolean
+   * - cond expression is boolean
    * - Resolves loop body
    *
    * @param stmt The while statement
@@ -247,7 +247,7 @@ private:
    * @param rhs Type of right operand
    * @return Type Resulting promoted type with highest promotion rank
    */
-  static Type promoteNumTypes(const Type &lhs, const Type &rhs);
+  static Type promoteNumTys(const Type &lhs, const Type &rhs);
 };
 
 } // namespace phi

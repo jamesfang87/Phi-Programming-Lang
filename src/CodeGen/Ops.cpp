@@ -6,37 +6,37 @@
 void phi::CodeGen::generateFloatOp(llvm::Value *lhs, llvm::Value *rhs,
                                    phi::BinaryOp &expr) {
   switch (expr.getOp()) {
-  case TokenType::tok_add:
+  case TokenType::tokPlus:
     curValue = builder.CreateFAdd(lhs, rhs);
     break;
-  case TokenType::tok_sub:
+  case TokenType::tokMinus:
     curValue = builder.CreateFSub(lhs, rhs);
     break;
-  case TokenType::tok_mul:
+  case TokenType::tokStar:
     curValue = builder.CreateFMul(lhs, rhs);
     break;
-  case TokenType::tok_div:
+  case TokenType::tokSlash:
     curValue = builder.CreateFDiv(lhs, rhs);
     break;
-  case TokenType::tok_mod:
+  case TokenType::tokPercent:
     curValue = builder.CreateFRem(lhs, rhs);
     break;
-  case TokenType::tok_less:
+  case TokenType::tokLeftCaret:
     curValue = builder.CreateFCmpOLT(lhs, rhs);
     break;
-  case TokenType::tok_greater:
+  case TokenType::tokRightCaret:
     curValue = builder.CreateFCmpOGT(lhs, rhs);
     break;
-  case TokenType::tok_less_equal:
+  case TokenType::tokLessEqual:
     curValue = builder.CreateFCmpOLE(lhs, rhs);
     break;
-  case TokenType::tok_greater_equal:
+  case TokenType::tokGreaterEqual:
     curValue = builder.CreateFCmpOGE(lhs, rhs);
     break;
-  case TokenType::tok_equal:
+  case TokenType::tokDoubleEquals:
     curValue = builder.CreateFCmpOEQ(lhs, rhs);
     break;
-  case TokenType::tok_not_equal:
+  case TokenType::tokBangEquals:
     curValue = builder.CreateFCmpONE(lhs, rhs);
     break;
   default:
@@ -47,38 +47,38 @@ void phi::CodeGen::generateFloatOp(llvm::Value *lhs, llvm::Value *rhs,
 void phi::CodeGen::generateSintOp(llvm::Value *lhs, llvm::Value *rhs,
                                   phi::BinaryOp &expr) {
   switch (expr.getOp()) {
-  case TokenType::tok_add:
+  case TokenType::tokPlus:
     curValue = builder.CreateAdd(lhs, rhs);
     break;
-  case TokenType::tok_sub:
+  case TokenType::tokMinus:
     curValue = builder.CreateSub(lhs, rhs);
     break;
-  case TokenType::tok_mul:
+  case TokenType::tokStar:
     curValue = builder.CreateMul(lhs, rhs);
     break;
-  case TokenType::tok_div:
+  case TokenType::tokSlash:
     curValue = builder.CreateSDiv(lhs, rhs);
     break;
-  case TokenType::tok_mod:
+  case TokenType::tokPercent:
     curValue = builder.CreateSRem(lhs, rhs);
     break;
 
-  case TokenType::tok_less:
+  case TokenType::tokLeftCaret:
     curValue = builder.CreateICmpSLT(lhs, rhs);
     break;
-  case TokenType::tok_greater:
+  case TokenType::tokRightCaret:
     curValue = builder.CreateICmpSGT(lhs, rhs);
     break;
-  case TokenType::tok_less_equal:
+  case TokenType::tokLessEqual:
     curValue = builder.CreateICmpSLE(lhs, rhs);
     break;
-  case TokenType::tok_greater_equal:
+  case TokenType::tokGreaterEqual:
     curValue = builder.CreateICmpSGE(lhs, rhs);
     break;
-  case TokenType::tok_equal:
+  case TokenType::tokDoubleEquals:
     curValue = builder.CreateICmpEQ(lhs, rhs);
     break;
-  case TokenType::tok_not_equal:
+  case TokenType::tokBangEquals:
     curValue = builder.CreateICmpNE(lhs, rhs);
     break;
   default:
@@ -89,37 +89,37 @@ void phi::CodeGen::generateSintOp(llvm::Value *lhs, llvm::Value *rhs,
 void phi::CodeGen::generateUintOp(llvm::Value *lhs, llvm::Value *rhs,
                                   phi::BinaryOp &expr) {
   switch (expr.getOp()) {
-  case TokenType::tok_add:
+  case TokenType::tokPlus:
     curValue = builder.CreateAdd(lhs, rhs);
     break;
-  case TokenType::tok_sub:
+  case TokenType::tokMinus:
     curValue = builder.CreateSub(lhs, rhs);
     break;
-  case TokenType::tok_mul:
+  case TokenType::tokStar:
     curValue = builder.CreateMul(lhs, rhs);
     break;
-  case TokenType::tok_div:
+  case TokenType::tokSlash:
     curValue = builder.CreateUDiv(lhs, rhs);
     break;
-  case TokenType::tok_mod:
+  case TokenType::tokPercent:
     curValue = builder.CreateURem(lhs, rhs);
     break;
-  case TokenType::tok_less:
+  case TokenType::tokLeftCaret:
     curValue = builder.CreateICmpULT(lhs, rhs);
     break;
-  case TokenType::tok_greater:
+  case TokenType::tokRightCaret:
     curValue = builder.CreateICmpUGT(lhs, rhs);
     break;
-  case TokenType::tok_less_equal:
+  case TokenType::tokLessEqual:
     curValue = builder.CreateICmpULE(lhs, rhs);
     break;
-  case TokenType::tok_greater_equal:
+  case TokenType::tokGreaterEqual:
     curValue = builder.CreateICmpUGE(lhs, rhs);
     break;
-  case TokenType::tok_equal:
+  case TokenType::tokDoubleEquals:
     curValue = builder.CreateICmpEQ(lhs, rhs);
     break;
-  case TokenType::tok_not_equal:
+  case TokenType::tokBangEquals:
     curValue = builder.CreateICmpNE(lhs, rhs);
     break;
   default:
@@ -129,7 +129,7 @@ void phi::CodeGen::generateUintOp(llvm::Value *lhs, llvm::Value *rhs,
 
 void phi::CodeGen::visit(phi::BinaryOp &expr) {
   // Handle assignment operations separately
-  if (expr.getOp() == TokenType::tok_assign) {
+  if (expr.getOp() == TokenType::tokEquals) {
     // For assignment, we need the pointer to the left-hand side variable
     // Don't load the value - we need the allocation pointer
     auto *decl_ref = dynamic_cast<DeclRefExpr *>(&expr.getLhs());

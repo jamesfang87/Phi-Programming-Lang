@@ -22,7 +22,7 @@ class VarDecl;
 class Stmt {
 public:
   /// @brief Kind enumeration for LLVM RTTI
-  enum class Kind {
+  enum class Kind : uint8_t {
     // Statements
     ReturnStmtKind,
     IfStmtKind,
@@ -50,13 +50,13 @@ public:
   virtual ~Stmt() = default;
 
   /// @brief Get the kind of this statement
-  Kind getKind() const { return StmtKind; }
+  [[nodiscard]] Kind getKind() const { return StmtKind; }
 
   /**
    * @brief Retrieves source location
    * @return Reference to source location
    */
-  [[nodiscard]] SrcLocation &get_location() { return location; }
+  [[nodiscard]] SrcLocation &getLocation() { return location; }
 
   /**
    * @brief Debug output method
@@ -103,9 +103,7 @@ public:
    * @brief Retrieves contained statements
    * @return Reference to statement list
    */
-  [[nodiscard]] std::vector<std::unique_ptr<Stmt>> &get_stmts() {
-    return stmts;
-  }
+  [[nodiscard]] std::vector<std::unique_ptr<Stmt>> &getStmts() { return stmts; }
 
   /**
    * @brief Debug output for block
@@ -134,13 +132,13 @@ public:
    * @brief Checks if has return value
    * @return true if has expression, false otherwise
    */
-  [[nodiscard]] bool has_expr() const { return expr != nullptr; }
+  [[nodiscard]] bool hasExpr() const { return expr != nullptr; }
 
   /**
    * @brief Retrieves return expression
    * @return Reference to return expression
    */
-  [[nodiscard]] Expr &get_expr() const { return *expr; }
+  [[nodiscard]] Expr &getExpr() const { return *expr; }
 
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &visitor) override {
@@ -158,44 +156,44 @@ private:
 };
 
 /**
- * @brief If conditional statement
+ * @brief If condal statement
  */
 class IfStmt final : public Stmt {
 public:
   /**
    * @brief Constructs if statement
    * @param location Source location
-   * @param condition Conditional expression
+   * @param cond condal expression
    * @param then_block Then block
    * @param else_block Else block (optional)
    */
-  IfStmt(SrcLocation location, std::unique_ptr<Expr> condition,
-         std::unique_ptr<Block> then_block, std::unique_ptr<Block> else_block);
+  IfStmt(SrcLocation location, std::unique_ptr<Expr> cond,
+         std::unique_ptr<Block> thenBlock, std::unique_ptr<Block> elseBlock);
   ~IfStmt() override;
 
   /**
-   * @brief Retrieves condition expression
-   * @return Reference to condition
+   * @brief Retrieves cond expression
+   * @return Reference to cond
    */
-  [[nodiscard]] Expr &get_condition() const { return *condition; }
+  [[nodiscard]] Expr &getCond() const { return *cond; }
 
   /**
    * @brief Retrieves then block
    * @return Reference to then block
    */
-  [[nodiscard]] Block &get_then() const { return *then_block; }
+  [[nodiscard]] Block &getThen() const { return *thenBlock; }
 
   /**
    * @brief Retrieves else block
    * @return Reference to else block
    */
-  [[nodiscard]] Block &get_else() const { return *else_block; }
+  [[nodiscard]] Block &getElse() const { return *elseBlock; }
 
   /**
    * @brief Checks if has else block
    * @return true if has else block, false otherwise
    */
-  [[nodiscard]] bool has_else() const { return else_block != nullptr; }
+  [[nodiscard]] bool hasElse() const { return elseBlock != nullptr; }
 
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &visitor) override {
@@ -209,9 +207,9 @@ public:
   }
 
 private:
-  std::unique_ptr<Expr> condition;   ///< Conditional expression
-  std::unique_ptr<Block> then_block; ///< Then clause block
-  std::unique_ptr<Block> else_block; ///< Else clause block (optional)
+  std::unique_ptr<Expr> cond;       ///< condal expression
+  std::unique_ptr<Block> thenBlock; ///< Then clause block
+  std::unique_ptr<Block> elseBlock; ///< Else clause block (optional)
 };
 
 /**
@@ -222,24 +220,24 @@ public:
   /**
    * @brief Constructs while loop
    * @param location Source location
-   * @param condition Loop condition
+   * @param cond Loop cond
    * @param body Loop body block
    */
-  WhileStmt(SrcLocation location, std::unique_ptr<Expr> condition,
+  WhileStmt(SrcLocation location, std::unique_ptr<Expr> cond,
             std::unique_ptr<Block> body);
   ~WhileStmt() override;
 
   /**
-   * @brief Retrieves condition expression
-   * @return Reference to condition
+   * @brief Retrieves cond expression
+   * @return Reference to cond
    */
-  [[nodiscard]] Expr &get_condition() const { return *condition; }
+  [[nodiscard]] Expr &getCond() const { return *cond; }
 
   /**
    * @brief Retrieves loop body
    * @return Reference to body block
    */
-  [[nodiscard]] Block &get_body() const { return *body; };
+  [[nodiscard]] Block &getBody() const { return *body; };
 
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &visitor) override {
@@ -253,8 +251,8 @@ public:
   }
 
 private:
-  std::unique_ptr<Expr> condition; ///< Loop condition
-  std::unique_ptr<Block> body;     ///< Loop body block
+  std::unique_ptr<Expr> cond;  ///< Loop cond
+  std::unique_ptr<Block> body; ///< Loop body block
 };
 
 /**
@@ -269,7 +267,7 @@ public:
    * @param range Range expression
    * @param body Loop body block
    */
-  ForStmt(SrcLocation location, std::unique_ptr<VarDecl> loop_var,
+  ForStmt(SrcLocation location, std::unique_ptr<VarDecl> loopVar,
           std::unique_ptr<Expr> range, std::unique_ptr<Block> body);
   ~ForStmt() override;
 
@@ -277,19 +275,19 @@ public:
    * @brief Retrieves loop variable
    * @return Reference to loop variable declaration
    */
-  [[nodiscard]] VarDecl &get_loop_var() { return *loop_var; }
+  [[nodiscard]] VarDecl &getLoopVar() { return *loopVar; }
 
   /**
    * @brief Retrieves range expression
    * @return Reference to range expression
    */
-  [[nodiscard]] Expr &get_range() const { return *range; }
+  [[nodiscard]] Expr &getRange() const { return *range; }
 
   /**
    * @brief Retrieves loop body
    * @return Reference to body block
    */
-  [[nodiscard]] Block &get_body() const { return *body; }
+  [[nodiscard]] Block &getBody() const { return *body; }
 
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &visitor) override {
@@ -303,9 +301,9 @@ public:
   }
 
 private:
-  std::unique_ptr<VarDecl> loop_var; ///< Loop variable declaration
-  std::unique_ptr<Expr> range;       ///< Range expression
-  std::unique_ptr<Block> body;       ///< Loop body block
+  std::unique_ptr<VarDecl> loopVar; ///< Loop variable declaration
+  std::unique_ptr<Expr> range;      ///< Range expression
+  std::unique_ptr<Block> body;      ///< Loop body block
 };
 
 /**
