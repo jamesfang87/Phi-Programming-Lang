@@ -19,11 +19,11 @@ namespace phi {
  * Manages scope creation/destruction via RAII guard.
  * Recursively resolves nested statements and expressions.
  */
-bool Sema::resolveBlock(Block &block, bool scope_created = false) {
+bool Sema::resolveBlock(Block &block, bool scopeCreated = false) {
   // Create new scope unless parent already created one
-  std::optional<SymbolTable::ScopeGuard> block_scope;
-  if (!scope_created) {
-    block_scope.emplace(symbolTable);
+  std::optional<SymbolTable::ScopeGuard> blockScope;
+  if (!scopeCreated) {
+    blockScope.emplace(symbolTable);
   }
 
   // Resolve all statements in the block
@@ -62,8 +62,8 @@ bool Sema::visit(ReturnStmt &stmt) {
   // Validate return type matches function signature
   if (stmt.getExpr().getTy() != curFun->getReturnTy()) {
     std::println("type mismatch error: {}", curFun->getID());
-    std::println("return stmt type: {}", stmt.getExpr().getTy().to_string());
-    std::println("expected type: {}", curFun->getReturnTy().to_string());
+    std::println("return stmt type: {}", stmt.getExpr().getTy().toString());
+    std::println("expected type: {}", curFun->getReturnTy().toString());
     return false;
   }
 
@@ -139,7 +139,7 @@ bool Sema::visit(ForStmt &stmt) {
     return false;
 
   // Create scope for loop variable
-  SymbolTable::ScopeGuard block_scope(symbolTable);
+  SymbolTable::ScopeGuard blockScope(symbolTable);
   symbolTable.insert(&stmt.getLoopVar());
 
   // Resolve loop body (scope already created)
@@ -172,17 +172,17 @@ bool Sema::visit(LetStmt &stmt) {
 
   // Handle initializer if present
   if (var.hasInit()) {
-    Expr &initializer = var.getInit();
-    if (!initializer.accept(*this)) {
+    Expr &init = var.getInit();
+    if (!init.accept(*this)) {
       std::println("failed to resolve variable initializer");
       return false;
     }
 
     // Check type compatibility
-    if (initializer.getTy() != var.getTy()) {
+    if (init.getTy() != var.getTy()) {
       std::println("variable initializer type mismatch");
-      std::println("variable type: {}", var.getTy().to_string());
-      std::println("initializer type: {}", initializer.getTy().to_string());
+      std::println("variable type: {}", var.getTy().toString());
+      std::println("initializer type: {}", init.getTy().toString());
       return false;
     }
   } else if (var.isConst()) {

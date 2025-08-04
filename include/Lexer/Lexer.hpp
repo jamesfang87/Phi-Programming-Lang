@@ -44,9 +44,9 @@ public:
    * @param diagnostic_manager Diagnostic system for error reporting
    */
   Lexer(std::string src, std::string path,
-        std::shared_ptr<DiagnosticManager> diagnosticsManager)
+        std::shared_ptr<DiagnosticManager> diagnosticManager)
       : src(std::move(src)), path(std::move(path)),
-        diagnosticsManager(std::move(diagnosticsManager)) {
+        diagnosticManager(std::move(diagnosticManager)) {
     curChar = this->src.begin();
     curLexeme = this->src.begin();
     curLine = this->src.begin();
@@ -80,9 +80,9 @@ public:
 private:
   std::string src;  ///< Source code being scanned
   std::string path; ///< File path for error reporting
-  std::shared_ptr<DiagnosticManager> diagnosticsManager; ///< Diagnostic system
+  std::shared_ptr<DiagnosticManager> diagnosticManager; ///< Diagnostic system
 
-  int line_num = 1;                 ///< Current line number (1-indexed)
+  int lineNum = 1;                  ///< Current line number (1-indexed)
   std::string::iterator curChar;    ///< Current character position
   std::string::iterator curLexeme;  ///< Start of current lexeme
   std::string::iterator curLine;    ///< Start of current line
@@ -219,17 +219,16 @@ private:
    * @return Token with specified type and current lexeme
    */
   [[nodiscard]] Token makeToken(TokenType type) const {
-    int start_col = static_cast<int>(curLexeme - lexemeLine) + 1;
-    int end_col = std::distance(curChar, curLine) + 1;
+    int startCol = static_cast<int>(curLexeme - lexemeLine) + 1;
+    int endCol = std::distance(curChar, curLine) + 1;
 
     // TODO: correctly use start line
-    int start_line = line_num;
-    int end_line = line_num;
+    int startLine = lineNum;
+    int endLine = lineNum;
 
-    return {
-        SrcLocation{.path = this->path, .line = start_line, .col = start_col},
-        SrcLocation{.path = this->path, .line = end_line, .col = end_col}, type,
-        std::string(curLexeme, curChar)};
+    return {SrcLocation{.path = this->path, .line = startLine, .col = startCol},
+            SrcLocation{.path = this->path, .line = endLine, .col = endCol},
+            type, std::string(curLexeme, curChar)};
   }
 
   /**

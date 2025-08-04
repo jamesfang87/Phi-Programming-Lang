@@ -19,7 +19,7 @@ public:
    * @return true if primitive, false if custom
    */
   [[nodiscard]] bool isPrimitive() const noexcept {
-    return primitive_type_ != Primitive::custom;
+    return primitiveType != Primitive::custom;
   }
 
   /**
@@ -61,8 +61,7 @@ public:
    * @brief Constructs primitive type
    * @param primitive_type Primitive type value
    */
-  explicit Type(const Primitive primitive_type)
-      : primitive_type_(primitive_type) {
+  explicit Type(const Primitive primitiveType) : primitiveType(primitiveType) {
     assert(primitive_type != Primitive::custom &&
            "Use custom_type constructor for custom types");
   }
@@ -72,23 +71,23 @@ public:
    * @param custom_type_name Name of custom type
    */
   explicit Type(std::string custom_type_name)
-      : primitive_type_(Primitive::custom),
+      : primitiveType(Primitive::custom),
         custom_type_name_(std::move(custom_type_name)) {}
 
   /**
    * @brief Converts type to string representation
    * @return Type name string
    */
-  [[nodiscard]] std::string to_string() const {
-    if (primitive_type_ == Primitive::custom) {
+  [[nodiscard]] std::string toString() const {
+    if (primitiveType == Primitive::custom) {
       return custom_type_name_;
     }
-    return primitive_to_string(primitive_type_);
+    return primitive_to_string(primitiveType);
   }
 
   // ACCESSORS
   [[nodiscard]] Primitive primitive_type() const noexcept {
-    return primitive_type_;
+    return primitiveType;
   }
 
   /**
@@ -102,10 +101,10 @@ public:
 
   // OPERATORS
   bool operator==(const Type &other) const {
-    if (primitive_type_ != other.primitive_type_) {
+    if (primitiveType != other.primitiveType) {
       return false;
     }
-    if (primitive_type_ == Primitive::custom) {
+    if (primitiveType == Primitive::custom) {
       return custom_type_name_ == other.custom_type_name_;
     }
     return true;
@@ -156,17 +155,17 @@ private:
     }
   }
 
-  Primitive primitive_type_;     ///< Underlying primitive type
+  Primitive primitiveType;       ///< Underlying primitive type
   std::string custom_type_name_; ///< Name for custom types
 };
 
 bool isIntTy(const Type &type);
 
-bool is_signed_int(const Type &type);
-bool is_unsigned_int(const Type &type);
+bool isSignedInt(const Type &type);
+bool isUnsignedInt(const Type &type);
 
 /// Checks if type is any float type
-bool is_float_type(const Type &type);
+bool isFloat(const Type &type);
 
 /// Checks if type is numeric (integer or float)
 bool isNumTy(const Type &type);

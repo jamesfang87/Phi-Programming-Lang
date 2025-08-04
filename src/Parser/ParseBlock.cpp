@@ -41,7 +41,7 @@ std::unique_ptr<Block> Parser::parseBlock() {
           .with_suggestion(spanFromToken(peekToken()), "",
                            "consider moving this to the top level")
           .with_code("E0003")
-          .emit(*diagnosticsManager);
+          .emit(*diagnosticManager);
       SyncToStmt();
       continue;
     }

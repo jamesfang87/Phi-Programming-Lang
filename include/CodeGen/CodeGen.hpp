@@ -47,9 +47,8 @@ private:
 
   llvm::Type *getTy(const Type &type);
   void generateFun(phi::FunDecl &fun);
-  void generateMain(phi::FunDecl &main_decl);
-  void generate_println_call(phi::FunCallExpr &call);
-  void generate_println_function(phi::FunDecl &fun);
+  void generateMain(phi::FunDecl &decl);
+  void generatePrintlnCall(phi::FunCallExpr &call);
 
   void generateSintOp(llvm::Value *lhs, llvm::Value *rhs, phi::BinaryOp &expr);
   void generateUintOp(llvm::Value *lhs, llvm::Value *rhs, phi::BinaryOp &expr);

@@ -104,17 +104,17 @@ bool Sema::visit(RangeLiteral &expr) {
     return false;
   }
 
-  const Type start_type = expr.getStart().getTy();
-  const Type end_type = expr.getEnd().getTy();
+  const Type startTy = expr.getStart().getTy();
+  const Type endTy = expr.getEnd().getTy();
 
   // Validate integer types
-  if (!start_type.isPrimitive() || !isIntTy(start_type)) {
+  if (!startTy.isPrimitive() || !isIntTy(startTy)) {
     std::println("Range start must be an integer type (i8, i16, i32, i64, u8, "
                  "u16, u32, u64)");
     return false;
   }
 
-  if (!end_type.isPrimitive() || !isIntTy(end_type)) {
+  if (!endTy.isPrimitive() || !isIntTy(endTy)) {
     std::println("Range end must be an integer type (i8, i16, i32, i64, u8, "
                  "u16, u32, u64)");
     return false;
@@ -240,10 +240,10 @@ Type Sema::promoteNumTys(const Type &lhs, const Type &rhs) {
   if (lhs == rhs)
     return lhs;
 
-  if (isIntTy(lhs) && is_float_type(rhs)) {
+  if (isIntTy(lhs) && isFloat(rhs)) {
     return rhs;
   }
-  if (isIntTy(rhs) && is_float_type(lhs)) {
+  if (isIntTy(rhs) && isFloat(lhs)) {
     return lhs;
   }
 

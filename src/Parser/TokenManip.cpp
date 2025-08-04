@@ -22,8 +22,8 @@ bool Parser::atEOF() const {
  */
 Token Parser::peekToken() const {
   if (tokenIt >= tokens.end()) {
-    const SrcLocation eof_loc{.path = "", .line = -1, .col = -1};
-    return Token{eof_loc, eof_loc, TokenType::tokEOF, ""};
+    const SrcLocation eofLoc{.path = "", .line = -1, .col = -1};
+    return Token{eofLoc, eofLoc, TokenType::tokEOF, ""};
   }
   return *tokenIt;
 }
@@ -50,16 +50,15 @@ Token Parser::advanceToken() {
  *
  * Automatically advances on match. Emits detailed error on mismatch.
  */
-bool Parser::expectToken(const TokenType expected_type,
+bool Parser::expectToken(const TokenType expectedTy,
                          const std::string &context) {
-  if (peekToken().getTy() == expected_type) {
+  if (peekToken().getTy() == expectedTy) {
     advanceToken();
     return true;
   }
 
-  const std::string context_msg = context.empty() ? "" : " in " + context;
-  emitExpectedFoundError(type_to_string(expected_type) + context_msg,
-                         peekToken());
+  const std::string contextMsg = context.empty() ? "" : " in " + context;
+  emitExpectedFoundError(tyToStr(expectedTy) + contextMsg, peekToken());
   return false;
 }
 

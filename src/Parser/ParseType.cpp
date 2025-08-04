@@ -19,7 +19,7 @@ namespace phi {
  */
 std::optional<Type> Parser::parseType() {
   // Map of primitive type names to their enum representations
-  const std::unordered_map<std::string, Type::Primitive> primitive_map = {
+  const std::unordered_map<std::string, Type::Primitive> primitiveMap = {
       {"i8", Type::Primitive::i8},        {"i16", Type::Primitive::i16},
       {"i32", Type::Primitive::i32},      {"i64", Type::Primitive::i64},
       {"u8", Type::Primitive::u8},        {"u16", Type::Primitive::u16},
@@ -29,10 +29,10 @@ std::optional<Type> Parser::parseType() {
       {"bool", Type::Primitive::boolean}, {"null", Type::Primitive::null}};
 
   const std::string id = peekToken().getLexeme();
-  const auto it = primitive_map.find(id);
+  const auto it = primitiveMap.find(id);
 
   // Validate token is either primitive type or identifier
-  if (it == primitive_map.end() &&
+  if (it == primitiveMap.end() &&
       peekToken().getTy() != TokenType::tokIdentifier) {
     error(std::format("invalid token found: {}", peekToken().getLexeme()))
         .with_primary_label(spanFromToken(peekToken()),
@@ -41,12 +41,12 @@ std::optional<Type> Parser::parseType() {
                    "type names")
         .with_note("types must be either primitive types or valid identifiers")
         .with_code("E0030")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return std::nullopt;
   }
 
   advanceToken();
-  return ((it == primitive_map.end()) ? Type(id) : Type(it->second));
+  return ((it == primitiveMap.end()) ? Type(id) : Type(it->second));
 }
 
 } // namespace phi

@@ -15,7 +15,7 @@ bool isIntTy(const Type &type) {
          prim == Type::Primitive::u32 || prim == Type::Primitive::u64;
 }
 
-bool is_signed_int(const Type &type) {
+bool isSignedInt(const Type &type) {
   if (!type.isPrimitive())
     return false;
 
@@ -24,11 +24,11 @@ bool is_signed_int(const Type &type) {
          prim == Type::Primitive::i32 || prim == Type::Primitive::i64;
 }
 
-bool is_unsigned_int(const Type &type) {
-  return (isIntTy(type) && !is_signed_int(type));
+bool isUnsignedInt(const Type &type) {
+  return (isIntTy(type) && !isSignedInt(type));
 }
 
-bool is_float_type(const Type &type) {
+bool isFloat(const Type &type) {
   if (!type.isPrimitive())
     return false;
 
@@ -43,7 +43,7 @@ bool isNumTy(const Type &type) {
   if (!type.isPrimitive())
     return false;
 
-  return isIntTy(type) || is_float_type(type);
+  return isIntTy(type) || isFloat(type);
 }
 
 } // namespace phi

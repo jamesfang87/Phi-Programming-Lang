@@ -42,7 +42,7 @@ VarDecl::VarDecl(SrcLocation location, std::string identifier, Type type,
  */
 void VarDecl::emit(int level) const {
   std::println("{}VarDecl: {} (type: {})", indent(level), id,
-               type.value().to_string());
+               type.value().toString());
   if (init) {
     std::println("{}Initializer:", indent(level));
     init->emit(level + 1);
@@ -71,7 +71,7 @@ ParamDecl::ParamDecl(SrcLocation location, std::string identifier, Type type)
  */
 void ParamDecl::emit(int level) const {
   std::println("{}ParamDecl: {} (type: {})", indent(level), id,
-               type.value().to_string());
+               type.value().toString());
 }
 
 //======================== FunDecl Implementation ========================//
@@ -103,13 +103,13 @@ FunDecl::FunDecl(SrcLocation location, std::string identifier, Type return_type,
  */
 void FunDecl::emit(int level) const {
   std::println("{}Function {} at {}:{}. Returns {}", indent(level), id,
-               location.line, location.col, type.value().to_string());
+               location.line, location.col, type.value().toString());
   // Dump parameters
   for (auto &p : params) {
     p->emit(level + 1);
   }
   // Dump function body
-  block->info_dump(level + 1);
+  block->emit(level + 1);
 }
 
 } // namespace phi

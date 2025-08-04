@@ -60,7 +60,7 @@ std::pair<std::vector<Token>, bool> Lexer::scan() {
     // handle whitespace
     if (std::isspace(peekChar())) {
       if (advanceChar() == '\n') {
-        line_num++;
+        lineNum++;
         curLine = curChar;
       }
       continue;
@@ -75,7 +75,7 @@ std::pair<std::vector<Token>, bool> Lexer::scan() {
     // finally, scan the token
     ret.push_back(scanToken());
   }
-  return {ret, !diagnosticsManager->has_errors()};
+  return {ret, !diagnosticManager->has_errors()};
 }
 
 /**
@@ -150,7 +150,7 @@ Token Lexer::scanToken() {
     return makeToken(TokenType::tokMinus);
   case '*':
     return makeToken(matchNext('=') ? TokenType::tokMulEquals
-                                    : TokenType::tokStart);
+                                    : TokenType::tokStar);
   case '/':
     return makeToken(matchNext('=') ? TokenType::tokDivEquals
                                     : TokenType::tokSlash);
@@ -178,7 +178,7 @@ Token Lexer::scanToken() {
           .with_primary_label(getCurSpan(), "unexpected character")
           .with_help("use '&&' for logical AND operation")
           .with_note("single '&' is not supported in this language")
-          .emit(*diagnosticsManager);
+          .emit(*diagnosticManager);
       return makeToken(TokenType::tokError);
     }
   // Handle single | as error or bitwise operator
@@ -190,7 +190,7 @@ Token Lexer::scanToken() {
           .with_primary_label(getCurSpan(), "unexpected character")
           .with_help("use '||' for logical OR operation")
           .with_note("single '|' is not supported in this language")
-          .emit(*diagnosticsManager);
+          .emit(*diagnosticManager);
       return makeToken(TokenType::tokError);
     }
 
@@ -208,20 +208,20 @@ Token Lexer::scanToken() {
     }
 
     // Handle unknown character with better error message
-    std::string char_display;
+    std::string charDisplay;
     if (std::isprint(c)) {
-      char_display = "'" + std::string(1, c) + "'";
+      charDisplay = "'" + std::string(1, c) + "'";
     } else {
-      char_display =
+      charDisplay =
           "\\x" + std::format("{:02x}", static_cast<unsigned char>(c));
     }
 
-    error("unexpected character " + char_display)
+    error("unexpected character " + charDisplay)
         .with_primary_label(getCurSpan(), "unexpected character")
         .with_help("remove this character or use a valid token")
         .with_note("valid characters include letters, digits, operators, and "
                    "punctuation")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
 
     return makeToken(TokenType::tokError);
   }
@@ -232,52 +232,48 @@ Token Lexer::scanToken() {
 // ERROR HANDLING
 // =============================================================================
 
-void Lexer::emitError(std::string_view message, std::string_view help_message) {
-  auto diagnostic =
-      error(std::string(message)).with_primary_label(getCurSpan());
+void Lexer::emitError(std::string_view msg, std::string_view helpMsg) {
+  auto diagnostic = error(std::string(msg)).with_primary_label(getCurSpan());
 
-  if (!help_message.empty()) {
-    diagnostic.with_help(std::string(help_message));
+  if (!helpMsg.empty()) {
+    diagnostic.with_help(std::string(helpMsg));
   }
 
-  diagnostic.emit(*diagnosticsManager);
+  diagnostic.emit(*diagnosticManager);
 }
 
-void Lexer::emitUnclosedBlockCommentError(
-    std::string::iterator comment_start_pos,
-    std::string::iterator comment_start_line, int comment_start_line_num) {
+void Lexer::emitUnclosedBlockCommentError(std::string::iterator startPos,
+                                          std::string::iterator startLine,
+                                          int startLineNum) {
   // Calculate current position (where we reached EOF)
-  int current_col = static_cast<int>(curChar - curLine) + 1;
-  SrcLocation current_start{.path = path, .line = line_num, .col = current_col};
-  SrcLocation current_end{.path = path, .line = line_num, .col = current_col};
-  SrcSpan current_span{current_start, current_end};
+  int curCol = static_cast<int>(curChar - curLine) + 1;
+  SrcLocation curStart{.path = path, .line = lineNum, .col = curCol};
+  SrcLocation curEnd{.path = path, .line = lineNum, .col = curCol};
+  SrcSpan curSpan{curStart, curEnd};
 
   // Calculate where the block comment started using passed parameters
-  int comment_col =
-      static_cast<int>(comment_start_pos - comment_start_line) + 1;
-  SrcLocation start_loc{
-      .path = path, .line = comment_start_line_num, .col = comment_col};
-  SrcLocation end_loc{
-      .path = path, .line = comment_start_line_num, .col = comment_col + 2};
-  SrcSpan comment_span{start_loc, end_loc};
+  int col = static_cast<int>(startPos - startLine) + 1;
+  SrcLocation start{.path = path, .line = startLineNum, .col = col};
+  SrcLocation end{.path = path, .line = startLineNum, .col = col + 2};
+  SrcSpan span{start, end};
 
   error("unclosed block comment")
-      .with_primary_label(comment_span, "block comment starts here")
+      .with_primary_label(span, "block comment starts here")
       .with_help("add a closing `*/` to terminate the block comment")
-      .emit(*diagnosticsManager);
+      .emit(*diagnosticManager);
 }
 
 SrcLocation Lexer::getCurLocation() const {
   int col = static_cast<int>(curChar - lexemeLine) + 1;
-  return SrcLocation{.path = path, .line = line_num, .col = col};
+  return SrcLocation{.path = path, .line = lineNum, .col = col};
 }
 
 SrcSpan Lexer::getCurSpan() const {
-  int start_col = static_cast<int>(curLexeme - lexemeLine) + 1;
-  int end_col = static_cast<int>(curChar - curLine) + 1;
+  int startCol = static_cast<int>(curLexeme - lexemeLine) + 1;
+  int endCol = static_cast<int>(curChar - curLine) + 1;
 
-  SrcLocation start{.path = path, .line = line_num, .col = start_col};
-  SrcLocation end{.path = path, .line = line_num, .col = end_col};
+  SrcLocation start{.path = path, .line = lineNum, .col = startCol};
+  SrcLocation end{.path = path, .line = lineNum, .col = endCol};
 
   return SrcSpan{start, end};
 }

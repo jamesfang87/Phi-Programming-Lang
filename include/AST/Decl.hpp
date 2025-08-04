@@ -73,10 +73,10 @@ public:
    * @param location Source location of declaration
    * @param identifier Variable name
    * @param type Variable type
-   * @param is_const Constant flag (true for const)
+   * @param isConst Constant flag (true for const)
    * @param initializer Initial value expression
    */
-  VarDecl(SrcLocation location, std::string id, Type type, const bool is_const,
+  VarDecl(SrcLocation location, std::string id, Type type, const bool isConst,
           std::unique_ptr<Expr> init);
 
   /**
