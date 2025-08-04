@@ -80,10 +80,10 @@ void IfStmt::emit(int level) const {
     cond->emit(level + 1);
   }
   if (thenBlock) {
-    thenBlock->info_dump(level + 1);
+    thenBlock->emit(level + 1);
   }
   if (elseBlock) {
-    elseBlock->info_dump(level + 1);
+    elseBlock->emit(level + 1);
   }
 }
 
@@ -119,7 +119,7 @@ void WhileStmt::emit(int level) const {
     cond->emit(level + 1);
   }
   if (body) {
-    body->info_dump(level + 1);
+    body->emit(level + 1);
   }
 }
 
@@ -161,7 +161,7 @@ void ForStmt::emit(int level) const {
     range->emit(level + 1);
   }
   if (body) {
-    body->info_dump(level + 1);
+    body->emit(level + 1);
   }
 }
 
@@ -206,7 +206,7 @@ void LetStmt::emit(int level) const {
  *
  * @param level Current indentation level
  */
-void Block::info_dump(int level) const {
+void Block::emit(int level) const {
   std::println("{}Block", indent(level));
   for (auto &s : this->stmts) {
     s->emit(level + 1);

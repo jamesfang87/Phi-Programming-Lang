@@ -26,9 +26,9 @@ void Lexer::skipComment() {
     }
   } else if (matchNext('*')) {
     // Track where the block comment started
-    auto comment_start_pos = curLexeme;
-    auto comment_start_line = lexemeLine;
-    int comment_start_line_num = line_num;
+    auto startPos = curLexeme;
+    auto startLine = lexemeLine;
+    int startLineNum = lineNum;
 
     int depth = 1; // depth for nested comments
     // skip until we reach a depth of 0
@@ -46,7 +46,7 @@ void Lexer::skipComment() {
       } else {
         // increment line number if we see '\n'
         if (peekChar() == '\n') {
-          line_num++;
+          lineNum++;
           curLine = curChar + 1; // Point to start of next line
         }
         advanceChar();
@@ -54,8 +54,7 @@ void Lexer::skipComment() {
     }
 
     if (depth > 0) {
-      emitUnclosedBlockCommentError(comment_start_pos, comment_start_line,
-                                    comment_start_line_num);
+      emitUnclosedBlockCommentError(startPos, startLine, startLineNum);
     }
   }
 }

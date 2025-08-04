@@ -39,16 +39,16 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
         .with_help("function names must be valid identifiers")
         .with_note("identifiers must start with a letter or underscore")
         .with_code("E0006")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return nullptr;
   }
   std::string name = advanceToken().getLexeme();
 
   // Parse parameter list
-  auto param_list =
+  auto params =
       parseList<ParamDecl>(TokenType::tokOpenParen, TokenType::tokRightParen,
                            &Parser::parseParamDecl);
-  if (!param_list)
+  if (!params)
     return nullptr;
 
   // Handle optional return type
@@ -67,8 +67,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
     return nullptr;
 
   return std::make_unique<FunDecl>(loc, std::move(name), return_type,
-                                   std::move(param_list.value()),
-                                   std::move(body));
+                                   std::move(params.value()), std::move(body));
 }
 
 /**
@@ -86,7 +85,7 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
     error("expected identifier")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected identifier here")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return std::nullopt;
   }
   SrcLocation start = peekToken().getStart();
@@ -98,7 +97,7 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
         .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
         .with_suggestion(spanFromToken(peekToken()), ":",
                          "add colon before type")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return std::nullopt;
   }
   advanceToken();

@@ -37,18 +37,18 @@ void SrcManager::addSrcFile(const std::string &path,
  * Performs bounds checking to ensure valid line numbers.
  */
 std::optional<std::string_view> SrcManager::getLine(const std::string &path,
-                                                    const int line_num) const {
-  const auto file_it = srcFiles.find(path);
-  if (file_it == srcFiles.end()) {
+                                                    const int lineNum) const {
+  const auto fileIt = srcFiles.find(path);
+  if (fileIt == srcFiles.end()) {
     return std::nullopt;
   }
 
-  const auto &lines = file_it->second;
-  if (line_num < 1 || line_num > static_cast<int>(lines.size())) {
+  const auto &lines = fileIt->second;
+  if (lineNum < 1 || lineNum > static_cast<int>(lines.size())) {
     return std::nullopt;
   }
 
-  return lines[line_num - 1];
+  return lines[lineNum - 1];
 }
 
 /**
@@ -62,10 +62,10 @@ std::optional<std::string_view> SrcManager::getLine(const std::string &path,
  * Automatically handles invalid ranges by returning available lines.
  */
 std::vector<std::string_view> SrcManager::getLines(const std::string &path,
-                                                   const int start_line,
-                                                   const int end_line) const {
+                                                   const int startLine,
+                                                   const int endLine) const {
   std::vector<std::string_view> result;
-  for (int i = start_line; i <= end_line; ++i) {
+  for (int i = startLine; i <= endLine; ++i) {
     if (auto line = getLine(path, i)) {
       result.push_back(*line);
     }
@@ -80,10 +80,11 @@ std::vector<std::string_view> SrcManager::getLines(const std::string &path,
  * @return Line count, or 0 if file not found
  */
 int SrcManager::getLineCount(const std::string &path) const {
-  const auto file_it = srcFiles.find(path);
-  if (file_it == srcFiles.end()) {
+  const auto fileIt = srcFiles.find(path);
+  if (fileIt == srcFiles.end()) {
     return 0;
   }
-  return static_cast<int>(file_it->second.size());
+  return static_cast<int>(fileIt->second.size());
 }
+
 } // namespace phi

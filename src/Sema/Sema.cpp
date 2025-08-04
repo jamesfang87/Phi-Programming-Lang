@@ -25,22 +25,22 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolveAST() {
   // TODO: Add struct resolution here
 
   // Phase 1: Resolve function signatures
-  for (auto &fun_decl : ast) {
-    if (!resolveFunDecl(fun_decl.get())) {
+  for (auto &funDecl : ast) {
+    if (!resolveFunDecl(funDecl.get())) {
       std::println("failed to resolve function signature: {}",
-                   fun_decl->getID());
+                   funDecl->getID());
       return {false, {}};
     }
 
-    if (!symbolTable.insert(fun_decl.get())) {
-      std::println("function redefinition: {}", fun_decl->getID());
+    if (!symbolTable.insert(funDecl.get())) {
+      std::println("function redefinition: {}", funDecl->getID());
       return {false, {}};
     }
   }
 
   // Phase 2: Resolve function bodies
-  for (auto &fun_decl : ast) {
-    curFun = fun_decl.get();
+  for (auto &funDecl : ast) {
+    curFun = funDecl.get();
 
     // Create function scope
     SymbolTable::ScopeGuard function_scope(symbolTable);
@@ -55,7 +55,7 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolveAST() {
     }
 
     // Resolve function body
-    if (!resolveBlock(fun_decl->getBlock(), true)) {
+    if (!resolveBlock(funDecl->getBlock(), true)) {
       std::println("failed to resolve body of: {}", curFun->getID());
       return {false, {}};
     }

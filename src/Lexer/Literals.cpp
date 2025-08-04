@@ -71,27 +71,27 @@ Token Lexer::parseIdentifierOrKw() {
       {"continue", TokenType::tokContinue},
       {"else", TokenType::tokElse},
       {"false", TokenType::tokFalse},
-      {"for", TokenType::tok_for},
-      {"fun", TokenType::tok_fun},
-      {"if", TokenType::tok_if},
-      {"import", TokenType::tok_import},
-      {"in", TokenType::tok_in},
-      {"let", TokenType::tok_let},
-      {"return", TokenType::tok_return},
-      {"true", TokenType::tok_true},
-      {"while", TokenType::tok_while},
-      {"i8", TokenType::tok_i8},
-      {"i16", TokenType::tok_i16},
-      {"i32", TokenType::tok_i32},
-      {"i64", TokenType::tok_i64},
-      {"u8", TokenType::tok_u8},
-      {"u16", TokenType::tok_u16},
-      {"u32", TokenType::tok_u32},
-      {"u64", TokenType::tok_u64},
-      {"f32", TokenType::tok_f32},
-      {"f64", TokenType::tok_f64},
-      {"str", TokenType::tok_str},
-      {"char", TokenType::tok_char}};
+      {"for", TokenType::tokFor},
+      {"fun", TokenType::tokFun},
+      {"if", TokenType::tokIf},
+      {"import", TokenType::tokImport},
+      {"in", TokenType::tokIn},
+      {"let", TokenType::tokLet},
+      {"return", TokenType::tokReturn},
+      {"true", TokenType::tokTrue},
+      {"while", TokenType::tokWhile},
+      {"i8", TokenType::tokI8},
+      {"i16", TokenType::tokI16},
+      {"i32", TokenType::tokI32},
+      {"i64", TokenType::tokI64},
+      {"u8", TokenType::tokU8},
+      {"u16", TokenType::tokU16},
+      {"u32", TokenType::tokU32},
+      {"u64", TokenType::tokU64},
+      {"f32", TokenType::tokF32},
+      {"f64", TokenType::tokF64},
+      {"str", TokenType::tokStr},
+      {"char", TokenType::tokChar}};
 
   const auto it = keywords.find(id);
   return it != keywords.end() ? makeToken(it->second)
@@ -116,10 +116,9 @@ Token Lexer::parseIdentifierOrKw() {
  */
 Token Lexer::parseStr() {
   insideStr = true;
-  const int starting_line = line_num;
-  auto str_start_pos = curLexeme;
-  auto str_start_line = lexemeLine;
-  int str_start_line_num = line_num;
+  const int startLineNum = lineNum;
+  auto startPos = curLexeme;
+  auto startLinePos = lexemeLine;
   std::string str;
 
   // parse until we see closing double quote
@@ -131,7 +130,7 @@ Token Lexer::parseStr() {
     }
     // increment line number if we see '\n'
     if (peekChar() == '\n') {
-      line_num++;
+      lineNum++;
       curLine = curChar;
       advanceChar();
     } else {
@@ -141,25 +140,24 @@ Token Lexer::parseStr() {
 
   if (atEOF()) {
     // reached eof without finding closing double quote
-    int quote_col = static_cast<int>(str_start_pos - str_start_line) + 1;
-    SrcLocation quote_start{
-        .path = path, .line = str_start_line_num, .col = quote_col};
-    SrcSpan quote_span{quote_start};
+    int col = static_cast<int>(startPos - startLinePos) + 1;
+    SrcLocation start{.path = path, .line = startLineNum, .col = col};
+    SrcSpan span{start};
     error("unterminated string literal")
-        .with_primary_label(quote_span, "string starts here")
+        .with_primary_label(span, "string starts here")
         .with_help("add a closing double quote (\") to terminate the string")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return makeToken(TokenType::tokError);
   }
   advanceChar();     // consume closing quote
   insideStr = false; // we are no longer inside str
 
   SrcLocation start = {.path = this->path,
-                       .line = starting_line,
+                       .line = startLineNum,
                        .col = static_cast<int>(curLexeme - lexemeLine) + 1};
 
   SrcLocation end = {.path = this->path,
-                     .line = line_num,
+                     .line = lineNum,
                      .col = static_cast<int>(curChar - curLine) + 1};
 
   return {start, end, TokenType::tokStrLiteral, str};
@@ -191,7 +189,7 @@ Token Lexer::parseChar() {
         .with_help("character literals must contain exactly one character")
         .with_note(
             "try using a space character: ' ' or an escape sequence like '\\n'")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return makeToken(TokenType::tokError);
   }
 
@@ -205,21 +203,21 @@ Token Lexer::parseChar() {
 
   if (peekChar() != '\'') {
     if (atEOF() || peekChar() == '\n' || peekChar() == ';') {
-      int quote_col = static_cast<int>(curLexeme - lexemeLine) + 1;
-      SrcLocation quote_start{.path = path, .line = line_num, .col = quote_col};
-      SrcSpan quote_span{quote_start};
+      int col = static_cast<int>(curLexeme - lexemeLine) + 1;
+      SrcLocation start{.path = path, .line = lineNum, .col = col};
+      SrcSpan span{start};
 
       error("unterminated character literal")
-          .with_primary_label(quote_span, "character started here")
+          .with_primary_label(span, "character started here")
           .with_help(
               "add a closing single quote (') to terminate the character")
-          .emit(*diagnosticsManager);
+          .emit(*diagnosticManager);
     } else {
       error("character literal contains too many characters")
           .with_primary_label(getCurSpan(), "too many characters")
           .with_help("character literals must contain exactly one character")
           .with_note("use a string literal (\"\") for multiple characters")
-          .emit(*diagnosticsManager);
+          .emit(*diagnosticManager);
     }
     return makeToken(TokenType::tokError);
   }
@@ -227,11 +225,11 @@ Token Lexer::parseChar() {
   advanceChar(); // consume closing quote
 
   SrcLocation start = {.path = this->path,
-                       .line = line_num,
+                       .line = lineNum,
                        .col = static_cast<int>(curLexeme - lexemeLine) + 1};
 
   SrcLocation end = {.path = this->path,
-                     .line = line_num,
+                     .line = lineNum,
                      .col = static_cast<int>(curChar - curLine) + 1};
 
   return {start, end, TokenType::tokCharLiteral, std::string(1, c)};
@@ -261,7 +259,7 @@ char Lexer::parseEscapeSeq() {
         .with_help("add a valid escape character after the backslash")
         .with_note("valid escape sequences: \\n, \\t, \\r, \\\\, \\\", \\', "
                    "\\0, \\xNN")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return '\0';
   }
 
@@ -292,7 +290,7 @@ char Lexer::parseEscapeSeq() {
         .with_help("use a valid escape sequence")
         .with_note("valid escape sequences: \\n, \\t, \\r, \\\\, \\\", \\', "
                    "\\0, \\xNN")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return c; // Return character as-is for error recovery
   }
 }
@@ -313,7 +311,7 @@ char Lexer::parseHexEscape() {
         .with_help(
             "hexadecimal escapes require exactly two digits: \\x00 to \\xFF")
         .with_note("example: \\x41 represents the character 'A'")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return '\0';
   }
 
@@ -323,7 +321,7 @@ char Lexer::parseHexEscape() {
       error("incomplete hexadecimal escape sequence")
           .with_primary_label(getCurSpan(), "expected hex digit here")
           .with_help("hexadecimal escapes require exactly two digits")
-          .emit(*diagnosticsManager);
+          .emit(*diagnosticManager);
       return '\0';
     }
     hex[i] = advanceChar();

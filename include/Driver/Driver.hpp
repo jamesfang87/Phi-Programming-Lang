@@ -5,17 +5,16 @@ namespace phi {
 
 class PhiCompiler {
 public:
-    PhiCompiler(std::string src,
-                std::string path,
-                std::shared_ptr<DiagnosticManager> diagnostic_manager);
-    ~PhiCompiler();
+  PhiCompiler(std::string src, std::string path,
+              std::shared_ptr<DiagnosticManager> diagnosticsManager);
+  ~PhiCompiler();
 
-    bool compile();
+  bool compile();
 
 private:
-    std::string src_file;
-    std::string path;
-    std::shared_ptr<DiagnosticManager> diagnostic_manager;
+  std::string srcFile;
+  std::string path;
+  std::shared_ptr<DiagnosticManager> diagnosticManager;
 };
 
 } // namespace phi

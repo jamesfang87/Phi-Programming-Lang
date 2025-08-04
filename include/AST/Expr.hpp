@@ -458,7 +458,7 @@ public:
    * @param op Operator token
    * @param is_prefix Prefix position flag
    */
-  UnaryOp(std::unique_ptr<Expr> operand, const Token &op, const bool is_prefix);
+  UnaryOp(std::unique_ptr<Expr> operand, const Token &op, const bool isPrefix);
 
   /**
    * @brief Retrieves operand expression

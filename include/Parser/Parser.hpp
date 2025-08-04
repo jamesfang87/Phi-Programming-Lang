@@ -55,15 +55,12 @@ public:
 
 private:
   // PARSER STATE
-  std::string path; ///< Source file path for diagnostics
-  std::vector<std::string_view>
-      lines;                  ///< Cached source lines for error context
-  std::vector<Token> &tokens; ///< Reference to token sequence
-  std::vector<Token>::iterator tokenIt; ///< Current position in token sequence
-  std::vector<std::unique_ptr<FunDecl>>
-      functions; ///< Collected function declarations
-  std::shared_ptr<DiagnosticManager>
-      diagnosticsManager; ///< Diagnostic reporting system
+  std::string path;
+  std::vector<std::string_view> lines;
+  std::vector<Token> &tokens;
+  std::vector<Token>::iterator tokenIt;
+  std::vector<std::unique_ptr<FunDecl>> functions;
+  std::shared_ptr<DiagnosticManager> diagnosticManager;
 
   // TOKEN NAVIGATION UTILITIES
   /// Checks if parser has reached end of token stream
@@ -96,10 +93,10 @@ private:
 
   // DIAGNOSTIC REPORTING
   void emitError(Diagnostic &&diagnostic) {
-    diagnosticsManager->emit(diagnostic);
+    diagnosticManager->emit(diagnostic);
   }
   void emitWarning(Diagnostic &&diagnostic) const {
-    diagnosticsManager->emit(diagnostic);
+    diagnosticManager->emit(diagnostic);
   }
 
   /**
@@ -255,7 +252,7 @@ private:
     // Verify opening delimiter
     const Token opening_token = peekToken();
     if (opening_token.getTy() != opening) {
-      emitExpectedFoundError(type_to_string(opening), peekToken());
+      emitExpectedFoundError(tyToStr(opening), peekToken());
       return std::nullopt;
     }
     advanceToken();
@@ -292,7 +289,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekToken().getTy() != closing) {
-      emitUnclosedDelimiterError(opening_token, type_to_string(closing));
+      emitUnclosedDelimiterError(opening_token, tyToStr(closing));
       return std::nullopt;
     }
 

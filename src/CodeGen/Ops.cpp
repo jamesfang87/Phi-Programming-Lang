@@ -167,17 +167,17 @@ void phi::CodeGen::visit(phi::BinaryOp &expr) {
   // to use For arithmetic operations, use result type
   Type operand_type = expr.getLhs().getTy();
 
-  if (is_float_type(operand_type)) {
+  if (isFloat(operand_type)) {
     generateFloatOp(lhs, rhs, expr);
     return;
   }
 
-  if (is_signed_int(operand_type)) {
+  if (isSignedInt(operand_type)) {
     generateSintOp(lhs, rhs, expr);
     return;
   }
 
-  if (is_unsigned_int(operand_type)) {
+  if (isUnsignedInt(operand_type)) {
     generateUintOp(lhs, rhs, expr);
     return;
   }

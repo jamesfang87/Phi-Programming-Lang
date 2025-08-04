@@ -14,14 +14,14 @@ namespace phi {
  */
 Parser::Parser(const std::string_view src, const std::string_view path,
                std::vector<Token> &tokens,
-               std::shared_ptr<DiagnosticManager> diagnostic_manager)
+               std::shared_ptr<DiagnosticManager> diagnosticManager)
     : path(path), tokens(tokens), tokenIt(tokens.begin()),
-      diagnosticsManager(std::move(diagnostic_manager)) {
+      diagnosticManager(std::move(diagnosticManager)) {
 
   // Register source file with diagnostic manager
-  if (this->diagnosticsManager->source_manager()) {
-    this->diagnosticsManager->source_manager()->addSrcFile(std::string(path),
-                                                           src);
+  if (this->diagnosticManager->source_manager()) {
+    this->diagnosticManager->source_manager()->addSrcFile(std::string(path),
+                                                          src);
   }
 }
 
@@ -51,7 +51,7 @@ std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
     }
   }
 
-  return {std::move(functions), !diagnosticsManager->has_errors()};
+  return {std::move(functions), !diagnosticManager->has_errors()};
 }
 
 } // namespace phi
