@@ -28,10 +28,10 @@ namespace phi {
  */
 std::unique_ptr<FunDecl> Parser::parse_fun_decl() {
   Token tok = advanceToken(); // Eat 'fun'
-  SrcLocation loc = tok.get_start();
+  SrcLocation loc = tok.getStart();
 
   // Validate function name
-  if (peekToken().get_type() != TokenType::tok_identifier) {
+  if (peekToken().getTy() != TokenType::tok_identifier) {
     error("invalid function name")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected function name here")
@@ -42,7 +42,7 @@ std::unique_ptr<FunDecl> Parser::parse_fun_decl() {
         .emit(*diagnosticsManager);
     return nullptr;
   }
-  std::string name = advanceToken().get_lexeme();
+  std::string name = advanceToken().getLexeme();
 
   // Parse parameter list
   auto param_list = parse_list<ParamDecl>(TokenType::tok_open_paren,
@@ -53,7 +53,7 @@ std::unique_ptr<FunDecl> Parser::parse_fun_decl() {
 
   // Handle optional return type
   auto return_type = Type(Type::Primitive::null);
-  if (peekToken().get_type() == TokenType::tok_fun_return) {
+  if (peekToken().getTy() == TokenType::tok_fun_return) {
     advanceToken(); // eat '->'
     auto res = parse_type();
     if (!res)
@@ -82,18 +82,18 @@ std::unique_ptr<FunDecl> Parser::parse_fun_decl() {
  */
 std::optional<Parser::TypedBinding> Parser::parse_typed_binding() {
   // Parse identifier
-  if (peekToken().get_type() != TokenType::tok_identifier) {
+  if (peekToken().getTy() != TokenType::tok_identifier) {
     error("expected identifier")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected identifier here")
         .emit(*diagnosticsManager);
     return std::nullopt;
   }
-  SrcLocation start = peekToken().get_start();
-  std::string name = advanceToken().get_lexeme();
+  SrcLocation start = peekToken().getStart();
+  std::string name = advanceToken().getLexeme();
 
   // Parse colon separator
-  if (peekToken().get_type() != TokenType::tok_colon) {
+  if (peekToken().getTy() != TokenType::tok_colon) {
     error("expected colon")
         .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
         .with_suggestion(spanFromToken(peekToken()), ":",

@@ -10,8 +10,7 @@ namespace phi {
  * Handles edge cases where token iterator might be out of bounds.
  */
 bool Parser::atEOF() const {
-  return tokenIt >= tokens.end() ||
-         peekToken().get_type() == TokenType::tok_eof;
+  return tokenIt >= tokens.end() || peekToken().getTy() == TokenType::tok_eof;
 }
 
 /**
@@ -53,7 +52,7 @@ Token Parser::advanceToken() {
  */
 bool Parser::expectToken(const TokenType expected_type,
                          const std::string &context) {
-  if (peekToken().get_type() == expected_type) {
+  if (peekToken().getTy() == expected_type) {
     advanceToken();
     return true;
   }
@@ -71,7 +70,7 @@ bool Parser::expectToken(const TokenType expected_type,
  * @return true if token matched and was consumed, false otherwise
  */
 bool Parser::matchToken(const TokenType type) {
-  if (peekToken().get_type() == type) {
+  if (peekToken().getTy() == type) {
     advanceToken();
     return true;
   }

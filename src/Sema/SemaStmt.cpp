@@ -19,11 +19,11 @@ namespace phi {
  * Manages scope creation/destruction via RAII guard.
  * Recursively resolves nested statements and expressions.
  */
-bool Sema::resolve_block(Block &block, bool scope_created = false) {
+bool Sema::resolveBlock(Block &block, bool scope_created = false) {
   // Create new scope unless parent already created one
   std::optional<SymbolTable::ScopeGuard> block_scope;
   if (!scope_created) {
-    block_scope.emplace(symbol_table);
+    block_scope.emplace(symbolTable);
   }
 
   // Resolve all statements in the block
@@ -46,9 +46,9 @@ bool Sema::resolve_block(Block &block, bool scope_created = false) {
 bool Sema::visit(ReturnStmt &stmt) {
   // Void function return
   if (!stmt.has_expr()) {
-    if (cur_fun->getReturnTy() != Type(Type::Primitive::null)) {
+    if (curFun->getReturnTy() != Type(Type::Primitive::null)) {
       std::println("error: function '{}' should return a value",
-                   cur_fun->getID());
+                   curFun->getID());
       return false;
     }
     return true;
@@ -60,10 +60,10 @@ bool Sema::visit(ReturnStmt &stmt) {
     return false;
 
   // Validate return type matches function signature
-  if (stmt.get_expr().getTy() != cur_fun->getReturnTy()) {
-    std::println("type mismatch error: {}", cur_fun->getID());
+  if (stmt.get_expr().getTy() != curFun->getReturnTy()) {
+    std::println("type mismatch error: {}", curFun->getID());
     std::println("return stmt type: {}", stmt.get_expr().getTy().to_string());
-    std::println("expected type: {}", cur_fun->getReturnTy().to_string());
+    std::println("expected type: {}", curFun->getReturnTy().to_string());
     return false;
   }
 
@@ -90,9 +90,9 @@ bool Sema::visit(IfStmt &stmt) {
   }
 
   // Resolve then and else blocks
-  if (!resolve_block(stmt.get_then()))
+  if (!resolveBlock(stmt.get_then()))
     return false;
-  if (stmt.has_else() && !resolve_block(stmt.get_else()))
+  if (stmt.has_else() && !resolveBlock(stmt.get_else()))
     return false;
 
   return true;
@@ -117,7 +117,7 @@ bool Sema::visit(WhileStmt &stmt) {
   }
 
   // Resolve loop body
-  if (!resolve_block(stmt.get_body()))
+  if (!resolveBlock(stmt.get_body()))
     return false;
 
   return true;
@@ -139,11 +139,11 @@ bool Sema::visit(ForStmt &stmt) {
     return false;
 
   // Create scope for loop variable
-  SymbolTable::ScopeGuard block_scope(symbol_table);
-  symbol_table.insert(&stmt.get_loop_var());
+  SymbolTable::ScopeGuard block_scope(symbolTable);
+  symbolTable.insert(&stmt.get_loop_var());
 
   // Resolve loop body (scope already created)
-  if (!resolve_block(stmt.get_body(), true))
+  if (!resolveBlock(stmt.get_body(), true))
     return false;
 
   return true;
@@ -193,7 +193,7 @@ bool Sema::visit(LetStmt &stmt) {
   }
 
   // Add to symbol table
-  symbol_table.insert(&var);
+  symbolTable.insert(&var);
 
   return true;
 }

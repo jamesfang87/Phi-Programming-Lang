@@ -28,13 +28,13 @@ std::optional<Type> Parser::parse_type() {
       {"str", Type::Primitive::str},      {"char", Type::Primitive::character},
       {"bool", Type::Primitive::boolean}, {"null", Type::Primitive::null}};
 
-  const std::string id = peekToken().get_lexeme();
+  const std::string id = peekToken().getLexeme();
   const auto it = primitive_map.find(id);
 
   // Validate token is either primitive type or identifier
   if (it == primitive_map.end() &&
-      peekToken().get_type() != TokenType::tok_identifier) {
-    error(std::format("invalid token found: {}", peekToken().get_lexeme()))
+      peekToken().getTy() != TokenType::tok_identifier) {
+    error(std::format("invalid token found: {}", peekToken().getLexeme()))
         .with_primary_label(spanFromToken(peekToken()),
                             "expected a valid type here")
         .with_help("valid types include: int, float, bool, string, or custom "

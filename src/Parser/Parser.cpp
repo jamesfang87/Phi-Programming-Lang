@@ -20,8 +20,8 @@ Parser::Parser(const std::string_view src, const std::string_view path,
 
   // Register source file with diagnostic manager
   if (this->diagnosticsManager->source_manager()) {
-    this->diagnosticsManager->source_manager()->add_source_file(
-        std::string(path), src);
+    this->diagnosticsManager->source_manager()->addSrcFile(std::string(path),
+                                                           src);
   }
 }
 
@@ -36,7 +36,7 @@ Parser::Parser(const std::string_view src, const std::string_view path,
  */
 std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
   while (!atEOF()) {
-    switch (peekToken().get_type()) {
+    switch (peekToken().getTy()) {
     case TokenType::tok_fun: {
       if (auto res = parse_fun_decl()) {
         functions.push_back(std::move(res));

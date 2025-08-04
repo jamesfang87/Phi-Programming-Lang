@@ -189,8 +189,8 @@ public:
    * @brief Sets function body
    * @param block_ptr New body block
    */
-  void setBlock(std::unique_ptr<Block> block_ptr) {
-    block = std::move(block_ptr);
+  void setBlock(std::unique_ptr<Block> blockPtr) {
+    block = std::move(blockPtr);
   }
 
   /**
