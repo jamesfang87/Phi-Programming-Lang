@@ -130,7 +130,7 @@ void phi::CodeGen::visit(phi::ForStmt &stmt) {
   decls[&loop_var] = alloca;
 
   // Handle range literals properly
-  auto *range_literal = dynamic_cast<RangeLiteral *>(&stmt.getRange());
+  auto range_literal = llvm::dyn_cast<RangeLiteral>(&stmt.getRange());
   if (!range_literal) {
     throw std::runtime_error("For loops currently only support range literals");
   }

@@ -20,21 +20,21 @@ namespace phi {
  */
 std::unique_ptr<Block> Parser::parseBlock() {
   // Validate opening brace
-  if (peekToken().getTy() != TokenType::tokLeftBrace) {
+  if (peekToken().getTy() != TokenKind::tokLeftBrace) {
     emitExpectedFoundError("{", peekToken());
   }
   advanceToken();
 
   // Parse statements until closing brace
   std::vector<std::unique_ptr<Stmt>> stmts;
-  while (peekToken().getTy() != TokenType::tokRightBrace) {
-    if (peekToken().getTy() == TokenType::tokEOF) {
+  while (peekToken().getTy() != TokenKind::tokRightBrace) {
+    if (peekToken().getTy() == TokenKind::tokEOF) {
       emitUnclosedDelimiterError(peekToken(), "}");
       return nullptr;
     }
 
-    if (peekToken().getTy() == TokenType::tokClass ||
-        peekToken().getTy() == TokenType::tokFun) {
+    if (peekToken().getTy() == TokenKind::tokClass ||
+        peekToken().getTy() == TokenKind::tokFun) {
       error("top-level declarations are not allowed inside function bodies")
           .with_primary_label(spanFromToken(peekToken()),
                               "top-level declaration here")
