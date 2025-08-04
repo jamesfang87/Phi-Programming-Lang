@@ -25,8 +25,7 @@ namespace phi {
  * @param expr Return value expression (optional)
  */
 ReturnStmt::ReturnStmt(SrcLocation location, std::unique_ptr<Expr> expr)
-    : Stmt(std::move(location)),
-      expr(std::move(expr)) {}
+    : Stmt(Kind::ReturnStmtKind, std::move(location)), expr(std::move(expr)) {}
 
 ReturnStmt::~ReturnStmt() = default;
 
@@ -39,11 +38,11 @@ ReturnStmt::~ReturnStmt() = default;
  *
  * @param level Current indentation level
  */
-void ReturnStmt::info_dump(int level) const {
-    std::println("{}ReturnStmt", indent(level));
-    if (expr) {
-        expr->info_dump(level + 1);
-    }
+void ReturnStmt::emit(int level) const {
+  std::println("{}ReturnStmt", indent(level));
+  if (expr) {
+    expr->emit(level + 1);
+  }
 }
 
 //======================== IfStmt Implementation =========================//
@@ -56,13 +55,11 @@ void ReturnStmt::info_dump(int level) const {
  * @param then_block Then clause block
  * @param else_block Else clause block (optional)
  */
-IfStmt::IfStmt(SrcLocation location,
-               std::unique_ptr<Expr> condition,
+IfStmt::IfStmt(SrcLocation location, std::unique_ptr<Expr> condition,
                std::unique_ptr<Block> then_block,
                std::unique_ptr<Block> else_block)
-    : Stmt(std::move(location)),
-      condition(std::move(condition)),
-      then_block(std::move(then_block)),
+    : Stmt(Stmt::Kind::IfStmtKind, std::move(location)),
+      condition(std::move(condition)), then_block(std::move(then_block)),
       else_block(std::move(else_block)) {}
 
 IfStmt::~IfStmt() = default;
@@ -78,17 +75,17 @@ IfStmt::~IfStmt() = default;
  *
  * @param level Current indentation level
  */
-void IfStmt::info_dump(int level) const {
-    std::println("{}IfStmt", indent(level));
-    if (condition) {
-        condition->info_dump(level + 1);
-    }
-    if (then_block) {
-        then_block->info_dump(level + 1);
-    }
-    if (else_block) {
-        else_block->info_dump(level + 1);
-    }
+void IfStmt::emit(int level) const {
+  std::println("{}IfStmt", indent(level));
+  if (condition) {
+    condition->emit(level + 1);
+  }
+  if (then_block) {
+    then_block->info_dump(level + 1);
+  }
+  if (else_block) {
+    else_block->info_dump(level + 1);
+  }
 }
 
 //======================== WhileStmt Implementation =========================//
@@ -100,12 +97,10 @@ void IfStmt::info_dump(int level) const {
  * @param condition Loop condition expression
  * @param body Loop body block
  */
-WhileStmt::WhileStmt(SrcLocation location,
-                     std::unique_ptr<Expr> condition,
+WhileStmt::WhileStmt(SrcLocation location, std::unique_ptr<Expr> condition,
                      std::unique_ptr<Block> body)
-    : Stmt(std::move(location)),
-      condition(std::move(condition)),
-      body(std::move(body)) {}
+    : Stmt(Stmt::Kind::WhileStmtKind, std::move(location)),
+      condition(std::move(condition)), body(std::move(body)) {}
 
 WhileStmt::~WhileStmt() = default;
 
@@ -119,14 +114,14 @@ WhileStmt::~WhileStmt() = default;
  *
  * @param level Current indentation level
  */
-void WhileStmt::info_dump(int level) const {
-    std::println("{}WhileStmt", indent(level));
-    if (condition) {
-        condition->info_dump(level + 1);
-    }
-    if (body) {
-        body->info_dump(level + 1);
-    }
+void WhileStmt::emit(int level) const {
+  std::println("{}WhileStmt", indent(level));
+  if (condition) {
+    condition->emit(level + 1);
+  }
+  if (body) {
+    body->info_dump(level + 1);
+  }
 }
 
 //======================== ForStmt Implementation =========================//
@@ -139,13 +134,10 @@ void WhileStmt::info_dump(int level) const {
  * @param range Range expression
  * @param body Loop body block
  */
-ForStmt::ForStmt(SrcLocation location,
-                 std::unique_ptr<VarDecl> loop_var,
-                 std::unique_ptr<Expr> range,
-                 std::unique_ptr<Block> body)
-    : Stmt(std::move(location)),
-      loop_var(std::move(loop_var)),
-      range(std::move(range)),
+ForStmt::ForStmt(SrcLocation location, std::unique_ptr<VarDecl> loop_var,
+                 std::unique_ptr<Expr> range, std::unique_ptr<Block> body)
+    : Stmt(Stmt::Kind::ForStmtKind, std::move(location)),
+      loop_var(std::move(loop_var)), range(std::move(range)),
       body(std::move(body)) {}
 
 ForStmt::~ForStmt() = default;
@@ -161,17 +153,17 @@ ForStmt::~ForStmt() = default;
  *
  * @param level Current indentation level
  */
-void ForStmt::info_dump(int level) const {
-    std::println("{}ForStmt", indent(level));
-    if (loop_var) {
-        loop_var->info_dump(level + 1);
-    }
-    if (range) {
-        range->info_dump(level + 1);
-    }
-    if (body) {
-        body->info_dump(level + 1);
-    }
+void ForStmt::emit(int level) const {
+  std::println("{}ForStmt", indent(level));
+  if (loop_var) {
+    loop_var->emit(level + 1);
+  }
+  if (range) {
+    range->emit(level + 1);
+  }
+  if (body) {
+    body->info_dump(level + 1);
+  }
 }
 
 //======================== LetStmt Implementation =========================//
@@ -183,8 +175,8 @@ void ForStmt::info_dump(int level) const {
  * @param decl Variable declaration
  */
 LetStmt::LetStmt(SrcLocation location, std::unique_ptr<VarDecl> decl)
-    : Stmt(std::move(location)),
-      var_decl(std::move(decl)) {}
+    : Stmt(Stmt::Kind::LetStmtKind, std::move(location)),
+      decl(std::move(decl)) {}
 
 LetStmt::~LetStmt() = default;
 
@@ -197,11 +189,11 @@ LetStmt::~LetStmt() = default;
  *
  * @param level Current indentation level
  */
-void LetStmt::info_dump(int level) const {
-    std::println("{}VarDeclStmt", indent(level));
-    if (var_decl) {
-        var_decl->info_dump(level + 1);
-    }
+void LetStmt::emit(int level) const {
+  std::println("{}VarDeclStmt", indent(level));
+  if (decl) {
+    decl->emit(level + 1);
+  }
 }
 
 //======================== Block Implementation =========================//
@@ -216,10 +208,10 @@ void LetStmt::info_dump(int level) const {
  * @param level Current indentation level
  */
 void Block::info_dump(int level) const {
-    std::println("{}Block", indent(level));
-    for (auto& s : this->stmts) {
-        s->info_dump(level + 1);
-    }
+  std::println("{}Block", indent(level));
+  for (auto &s : this->stmts) {
+    s->emit(level + 1);
+  }
 }
 
 } // namespace phi

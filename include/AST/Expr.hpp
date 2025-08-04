@@ -21,48 +21,62 @@ namespace phi {
  */
 class Expr : public Stmt {
 public:
-    /**
-     * @brief Constructs expression
-     * @param location Source location
-     * @param type Optional type information
-     */
-    explicit Expr(SrcLocation location, std::optional<Type> type = std::nullopt)
-        : Stmt(std::move(location)),
-          type(std::move(type)) {}
+  /**
+   * @brief Constructs expression
+   * @param K Kind of expression for RTTI
+   * @param location Source location
+   * @param type Optional type information
+   */
+  explicit Expr(Kind K, SrcLocation location,
+                std::optional<Type> type = std::nullopt)
+      : Stmt(K, std::move(location)), type(std::move(type)) {}
 
-    /**
-     * @brief Retrieves expression type
-     * @return Type object
-     */
-    [[nodiscard]] Type get_type() { return type.value(); }
+  /**
+   * @brief Retrieves expression type
+   * @return Type object
+   */
+  [[nodiscard]] Type getTy() { return type.value(); }
 
-    /**
-     * @brief Checks if type has been resolved
-     * @return true if type resolved, false otherwise
-     */
-    [[nodiscard]] bool is_resolved() const { return type.has_value(); }
+  /**
+   * @brief Checks if type has been resolved
+   * @return true if type resolved, false otherwise
+   */
+  [[nodiscard]] bool isResolved() const { return type.has_value(); }
 
-    /**
-     * @brief Sets expression type
-     * @param t New type value
-     */
-    void set_type(Type t) { type = std::move(t); }
+  /**
+   * @brief Sets expression type
+   * @param t New type value
+   */
+  void setTy(Type t) { type = std::move(t); }
 
-    /**
-     * @brief Accepts AST visitor
-     * @param visitor Visitor implementation
-     * @return Visitor control result
-     */
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
+  /**
+   * @brief Checks if expression is lvalue
+   * @return true if expression is lvalue, false otherwise
+   */
+  [[nodiscard]] virtual bool isAssignable() const = 0;
 
-    /**
-     * @brief Accepts AST visitor for code generation
-     * @param visitor Visitor implementation returning void
-     */
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  /**
+   * @brief Accepts AST visitor
+   * @param visitor Visitor implementation
+   * @return Visitor control result
+   */
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+
+  /**
+   * @brief Accepts AST visitor for code generation
+   * @param visitor Visitor implementation returning void
+   */
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  /// @brief LLVM RTTI support - check if statement is an expression
+  static bool classof(const Stmt *S) {
+    return S->getKind() >= Kind::ExprFirst && S->getKind() <= Kind::ExprLast;
+  }
 
 protected:
-    std::optional<Type> type; ///< Resolved type (after semantic analysis)
+  std::optional<Type> type; ///< Resolved type (after semantic analysis)
 };
 
 /**
@@ -70,25 +84,35 @@ protected:
  */
 class IntLiteral final : public Expr {
 public:
-    /**
-     * @brief Constructs integer literal
-     * @param location Source location
-     * @param value Integer value
-     */
-    IntLiteral(SrcLocation location, const int64_t value);
+  /**
+   * @brief Constructs integer literal
+   * @param location Source location
+   * @param value Integer value
+   */
+  IntLiteral(SrcLocation location, const int64_t value);
 
-    /**
-     * @brief Retrieves literal value
-     * @return Integer value
-     */
-    [[nodiscard]] int64_t get_value() const { return value; }
+  /**
+   * @brief Retrieves literal value
+   * @return Integer value
+   */
+  [[nodiscard]] int64_t getValue() const { return value; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  void emit(int level) const override;
+
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  /// @brief LLVM RTTI support
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::IntLiteralKind;
+  }
 
 private:
-    int64_t value; ///< Literal integer value
+  int64_t value; ///< Literal integer value
 };
 
 /**
@@ -96,25 +120,33 @@ private:
  */
 class FloatLiteral final : public Expr {
 public:
-    /**
-     * @brief Constructs float literal
-     * @param location Source location
-     * @param value Float value
-     */
-    FloatLiteral(SrcLocation location, const double value);
+  /**
+   * @brief Constructs float literal
+   * @param location Source location
+   * @param value Float value
+   */
+  FloatLiteral(SrcLocation location, const double value);
 
-    /**
-     * @brief Retrieves literal value
-     * @return Float value
-     */
-    [[nodiscard]] double get_value() const { return value; }
+  /**
+   * @brief Retrieves literal value
+   * @return Float value
+   */
+  [[nodiscard]] double getValue() const { return value; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::FloatLiteralKind;
+  }
 
 private:
-    double value; ///< Literal float value
+  double value; ///< Literal float value
 };
 
 /**
@@ -122,25 +154,32 @@ private:
  */
 class StrLiteral final : public Expr {
 public:
-    /**
-     * @brief Constructs string literal
-     * @param location Source location
-     * @param value String value
-     */
-    StrLiteral(SrcLocation location, std::string value);
+  /**
+   * @brief Constructs string literal
+   * @param location Source location
+   * @param value String value
+   */
+  StrLiteral(SrcLocation location, std::string value);
 
-    /**
-     * @brief Retrieves string value
-     * @return String content
-     */
-    [[nodiscard]] std::string get_value() const { return value; }
+  /**
+   * @brief Retrieves string value
+   * @return String content
+   */
+  [[nodiscard]] std::string getValue() const { return value; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  [[nodiscard]] bool isAssignable() const override { return false; }
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::StrLiteralKind;
+  }
 
 private:
-    std::string value; ///< Literal string content
+  std::string value; ///< Literal string content
 };
 
 /**
@@ -148,25 +187,32 @@ private:
  */
 class CharLiteral final : public Expr {
 public:
-    /**
-     * @brief Constructs char literal
-     * @param location Source location
-     * @param value Character value
-     */
-    CharLiteral(SrcLocation location, const char value);
+  /**
+   * @brief Constructs char literal
+   * @param location Source location
+   * @param value Character value
+   */
+  CharLiteral(SrcLocation location, const char value);
 
-    /**
-     * @brief Retrieves character value
-     * @return Character value
-     */
-    [[nodiscard]] char get_value() const { return value; }
+  /**
+   * @brief Retrieves character value
+   * @return Character value
+   */
+  [[nodiscard]] char getValue() const { return value; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  [[nodiscard]] bool isAssignable() const override { return false; }
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::CharLiteralKind;
+  }
 
 private:
-    char value; ///< Literal character value
+  char value; ///< Literal character value
 };
 
 /**
@@ -174,25 +220,32 @@ private:
  */
 class BoolLiteral final : public Expr {
 public:
-    /**
-     * @brief Constructs boolean literal
-     * @param location Source location
-     * @param value Boolean value
-     */
-    BoolLiteral(SrcLocation location, const bool value);
+  /**
+   * @brief Constructs boolean literal
+   * @param location Source location
+   * @param value Boolean value
+   */
+  BoolLiteral(SrcLocation location, const bool value);
 
-    /**
-     * @brief Retrieves boolean value
-     * @return true or false
-     */
-    [[nodiscard]] bool get_value() const { return value; }
+  /**
+   * @brief Retrieves boolean value
+   * @return true or false
+   */
+  [[nodiscard]] bool getValue() const { return value; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  [[nodiscard]] bool isAssignable() const override { return false; }
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::BoolLiteralKind;
+  }
 
 private:
-    bool value; ///< Literal boolean value
+  bool value; ///< Literal boolean value
 };
 
 /**
@@ -200,37 +253,48 @@ private:
  */
 class RangeLiteral final : public Expr {
 public:
-    /**
-     * @brief Constructs range literal
-     * @param location Source location
-     * @param start Start expression
-     * @param end End expression
-     * @param inclusive Inclusive range flag
-     */
-    RangeLiteral(SrcLocation location,
-                 std::unique_ptr<Expr> start,
-                 std::unique_ptr<Expr> end,
-                 const bool inclusive);
+  /**
+   * @brief Constructs range literal
+   * @param location Source location
+   * @param start Start expression
+   * @param end End expression
+   * @param inclusive Inclusive range flag
+   */
+  RangeLiteral(SrcLocation location, std::unique_ptr<Expr> start,
+               std::unique_ptr<Expr> end, const bool inclusive);
 
-    /**
-     * @brief Retrieves start expression
-     * @return Reference to start expression
-     */
-    [[nodiscard]] Expr& get_start() { return *start; }
+  /**
+   * @brief Retrieves start expression
+   * @return Reference to start expression
+   */
+  [[nodiscard]] Expr &getStart() { return *start; }
 
-    /**
-     * @brief Retrieves end expression
-     * @return Reference to end expression
-     */
-    [[nodiscard]] Expr& get_end() { return *end; }
+  /**
+   * @brief Retrieves end expression
+   * @return Reference to end expression
+   */
+  [[nodiscard]] Expr &getEnd() { return *end; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  /**
+   * @brief Checks if range is inclusive
+   * @return True if inclusive range, false if exclusive
+   */
+  [[nodiscard]] bool isInclusive() const { return inclusive; }
+
+  [[nodiscard]] bool isAssignable() const override { return false; }
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::RangeLiteralKind;
+  }
 
 private:
-    std::unique_ptr<Expr> start, end; ///< Range bounds
-    bool inclusive;                   ///< Inclusive range flag
+  std::unique_ptr<Expr> start, end; ///< Range bounds
+  bool inclusive;                   ///< Inclusive range flag
 };
 
 /**
@@ -240,38 +304,45 @@ private:
  */
 class DeclRefExpr final : public Expr {
 public:
-    /**
-     * @brief Constructs declaration reference
-     * @param location Source location
-     * @param identifier Declaration name
-     */
-    DeclRefExpr(SrcLocation location, std::string identifier);
+  /**
+   * @brief Constructs declaration reference
+   * @param location Source location
+   * @param identifier Declaration name
+   */
+  DeclRefExpr(SrcLocation location, std::string id);
 
-    /**
-     * @brief Retrieves identifier
-     * @return Identifier string
-     */
-    [[nodiscard]] std::string get_id() { return identifier; }
+  /**
+   * @brief Retrieves identifier
+   * @return Identifier string
+   */
+  [[nodiscard]] std::string getID() { return id; }
 
-    /**
-     * @brief Retrieves referenced declaration
-     * @return Pointer to declaration (null if unresolved)
-     */
-    [[nodiscard]] Decl* get_decl() const { return decl; }
+  /**
+   * @brief Retrieves referenced declaration
+   * @return Pointer to declaration (null if unresolved)
+   */
+  [[nodiscard]] Decl *getDecl() const { return decl; }
 
-    /**
-     * @brief Sets referenced declaration
-     * @param d Declaration pointer
-     */
-    void set_decl(Decl* d) { decl = d; }
+  /**
+   * @brief Sets referenced declaration
+   * @param d Declaration pointer
+   */
+  void setDecl(Decl *d) { decl = d; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  [[nodiscard]] bool isAssignable() const override { return true; }
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  static bool classof(const Expr *expr) {
+    return expr->getKind() == Stmt::Kind::DeclRefExprKind;
+  }
 
 private:
-    std::string identifier; ///< Referenced identifier
-    Decl* decl = nullptr;   ///< Resolved declaration
+  std::string id;       ///< Referenced identifier
+  Decl *decl = nullptr; ///< Resolved declaration
 };
 
 /**
@@ -279,48 +350,53 @@ private:
  */
 class FunCallExpr final : public Expr {
 public:
-    /**
-     * @brief Constructs function call
-     * @param location Source location
-     * @param callee Callable expression
-     * @param args Argument expressions
-     */
-    FunCallExpr(SrcLocation location,
-                std::unique_ptr<Expr> callee,
-                std::vector<std::unique_ptr<Expr>> args);
+  /**
+   * @brief Constructs function call
+   * @param location Source location
+   * @param callee Callable expression
+   * @param args Argument expressions
+   */
+  FunCallExpr(SrcLocation location, std::unique_ptr<Expr> callee,
+              std::vector<std::unique_ptr<Expr>> args);
 
-    /**
-     * @brief Retrieves callee expression
-     * @return Reference to callee expression
-     */
-    [[nodiscard]] Expr& get_callee() const { return *callee; }
+  /**
+   * @brief Retrieves callee expression
+   * @return Reference to callee expression
+   */
+  [[nodiscard]] Expr &getCallee() const { return *callee; }
 
-    /**
-     * @brief Retrieves arguments
-     * @return Reference to argument list
-     */
-    [[nodiscard]] std::vector<std::unique_ptr<Expr>>& get_args() { return args; }
+  /**
+   * @brief Retrieves arguments
+   * @return Reference to argument list
+   */
+  [[nodiscard]] std::vector<std::unique_ptr<Expr>> &getArgs() { return args; }
 
-    /**
-     * @brief Retrieves function declaration
-     * @return Pointer to function declaration
-     */
-    [[nodiscard]] FunDecl* get_fun_decl() const { return fun_decl; }
+  /**
+   * @brief Retrieves function declaration
+   * @return Pointer to function declaration
+   */
+  [[nodiscard]] FunDecl *getDecl() const { return decl; }
 
-    /**
-     * @brief Sets function declaration
-     * @param f Function declaration pointer
-     */
-    void set_fun_decl(FunDecl* f) { fun_decl = f; }
+  [[nodiscard]] bool isAssignable() const override { return false; }
+  /**
+   * @brief Sets function declaration
+   * @param f Function declaration pointer
+   */
+  void setDecl(FunDecl *f) { decl = f; }
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  static bool classof(const Expr *expr) {
+    return expr->getKind() == Stmt::Kind::FunCallExprKind;
+  }
 
 private:
-    std::unique_ptr<Expr> callee;            ///< Function being called
-    std::vector<std::unique_ptr<Expr>> args; ///< Argument expressions
-    FunDecl* fun_decl = nullptr;             ///< Resolved function declaration
+  std::unique_ptr<Expr> callee;            ///< Function being called
+  std::vector<std::unique_ptr<Expr>> args; ///< Argument expressions
+  FunDecl *decl = nullptr;                 ///< Resolved function declaration
 };
 
 /**
@@ -328,40 +404,47 @@ private:
  */
 class BinaryOp final : public Expr {
 public:
-    /**
-     * @brief Constructs binary operation
-     * @param lhs Left-hand expression
-     * @param rhs Right-hand expression
-     * @param op Operator token
-     */
-    BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs, const Token& op);
+  /**
+   * @brief Constructs binary operation
+   * @param lhs Left-hand expression
+   * @param rhs Right-hand expression
+   * @param op Operator token
+   */
+  BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
+           const Token &op);
 
-    /**
-     * @brief Retrieves left operand
-     * @return Reference to left expression
-     */
-    [[nodiscard]] Expr& get_lhs() const { return *lhs; }
+  /**
+   * @brief Retrieves left operand
+   * @return Reference to left expression
+   */
+  [[nodiscard]] Expr &getLhs() const { return *lhs; }
 
-    /**
-     * @brief Retrieves right operand
-     * @return Reference to right expression
-     */
-    [[nodiscard]] Expr& get_rhs() const { return *rhs; }
+  /**
+   * @brief Retrieves right operand
+   * @return Reference to right expression
+   */
+  [[nodiscard]] Expr &getRhs() const { return *rhs; }
 
-    /**
-     * @brief Retrieves operator
-     * @return Operator token type
-     */
-    [[nodiscard]] TokenType get_op() const { return op; }
+  [[nodiscard]] bool isAssignable() const override { return false; }
+  /**
+   * @brief Retrieves operator
+   * @return Operator token type
+   */
+  [[nodiscard]] TokenType getOp() const { return op; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+  static bool classof(const Expr *expr) {
+    return expr->getKind() == Stmt::Kind::BinaryOpKind;
+  }
 
 private:
-    std::unique_ptr<Expr> lhs; ///< Left operand
-    std::unique_ptr<Expr> rhs; ///< Right operand
-    TokenType op;              ///< Operator token type
+  std::unique_ptr<Expr> lhs; ///< Left operand
+  std::unique_ptr<Expr> rhs; ///< Right operand
+  TokenType op;              ///< Operator token type
 };
 
 /**
@@ -369,40 +452,46 @@ private:
  */
 class UnaryOp final : public Expr {
 public:
-    /**
-     * @brief Constructs unary operation
-     * @param operand Target expression
-     * @param op Operator token
-     * @param is_prefix Prefix position flag
-     */
-    UnaryOp(std::unique_ptr<Expr> operand, const Token& op, const bool is_prefix);
+  /**
+   * @brief Constructs unary operation
+   * @param operand Target expression
+   * @param op Operator token
+   * @param is_prefix Prefix position flag
+   */
+  UnaryOp(std::unique_ptr<Expr> operand, const Token &op, const bool is_prefix);
 
-    /**
-     * @brief Retrieves operand expression
-     * @return Reference to operand
-     */
-    [[nodiscard]] Expr& get_operand() const { return *operand; }
+  /**
+   * @brief Retrieves operand expression
+   * @return Reference to operand
+   */
+  [[nodiscard]] Expr &getOperand() const { return *operand; }
 
-    /**
-     * @brief Retrieves operator
-     * @return Operator token type
-     */
-    [[nodiscard]] TokenType get_op() const { return op; }
+  /**
+   * @brief Retrieves operator
+   * @return Operator token type
+   */
+  [[nodiscard]] TokenType getOp() const { return op; }
 
-    /**
-     * @brief Checks if operator is prefix
-     * @return true if prefix, false if postfix
-     */
-    [[nodiscard]] bool is_prefix_op() const { return is_prefix; }
+  /**
+   * @brief Checks if operator is prefix
+   * @return true if prefix, false if postfix
+   */
+  [[nodiscard]] bool isPrefixOp() const { return isPrefix; }
 
-    void info_dump(int level) const override;
-    bool accept(ASTVisitor<bool>& visitor) override { return visitor.visit(*this); }
-    void accept(ASTVisitor<void>& visitor) override { visitor.visit(*this); }
+  [[nodiscard]] bool isAssignable() const override { return false; }
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+  static bool classof(const Expr *expr) {
+    return expr->getKind() == Stmt::Kind::UnaryOpKind;
+  }
 
 private:
-    std::unique_ptr<Expr> operand; ///< Target expression
-    TokenType op;                  ///< Operator token type
-    bool is_prefix;                ///< Prefix position flag
+  std::unique_ptr<Expr> operand; ///< Target expression
+  TokenType op;                  ///< Operator token type
+  bool isPrefix;                 ///< Prefix position flag
 };
 
 } // namespace phi

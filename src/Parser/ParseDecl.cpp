@@ -26,84 +26,90 @@ namespace phi {
  *
  * Handles comprehensive error recovery and validation at each step.
  */
-std::unique_ptr<FunDecl> Parser::parse_function_decl() {
-    Token tok = advance_token(); // Eat 'fun'
-    SrcLocation loc = tok.get_start();
+std::unique_ptr<FunDecl> Parser::parse_fun_decl() {
+  Token tok = advanceToken(); // Eat 'fun'
+  SrcLocation loc = tok.get_start();
 
-    // Validate function name
-    if (peek_token().get_type() != TokenType::tok_identifier) {
-        error("invalid function name")
-            .with_primary_label(span_from_token(peek_token()), "expected function name here")
-            .with_secondary_label(span_from_token(tok), "after `fun` keyword")
-            .with_help("function names must be valid identifiers")
-            .with_note("identifiers must start with a letter or underscore")
-            .with_code("E0006")
-            .emit(*diagnostic_manager);
-        return nullptr;
-    }
-    std::string name = advance_token().get_lexeme();
+  // Validate function name
+  if (peekToken().get_type() != TokenType::tok_identifier) {
+    error("invalid function name")
+        .with_primary_label(spanFromToken(peekToken()),
+                            "expected function name here")
+        .with_secondary_label(spanFromToken(tok), "after `fun` keyword")
+        .with_help("function names must be valid identifiers")
+        .with_note("identifiers must start with a letter or underscore")
+        .with_code("E0006")
+        .emit(*diagnosticsManager);
+    return nullptr;
+  }
+  std::string name = advanceToken().get_lexeme();
 
-    // Parse parameter list
-    auto param_list = parse_list<ParamDecl>(TokenType::tok_open_paren,
-                                            TokenType::tok_close_paren,
-                                            &Parser::parse_param_decl);
-    if (!param_list) return nullptr;
+  // Parse parameter list
+  auto param_list = parse_list<ParamDecl>(TokenType::tok_open_paren,
+                                          TokenType::tok_close_paren,
+                                          &Parser::parse_param_decl);
+  if (!param_list)
+    return nullptr;
 
-    // Handle optional return type
-    auto return_type = Type(Type::Primitive::null);
-    if (peek_token().get_type() == TokenType::tok_fun_return) {
-        advance_token(); // eat '->'
-        auto res = parse_type();
-        if (!res) return nullptr;
-        return_type = res.value();
-    }
+  // Handle optional return type
+  auto return_type = Type(Type::Primitive::null);
+  if (peekToken().get_type() == TokenType::tok_fun_return) {
+    advanceToken(); // eat '->'
+    auto res = parse_type();
+    if (!res)
+      return nullptr;
+    return_type = res.value();
+  }
 
-    // Parse function body
-    auto body = parse_block();
-    if (!body) return nullptr;
+  // Parse function body
+  auto body = parse_block();
+  if (!body)
+    return nullptr;
 
-    return std::make_unique<FunDecl>(loc,
-                                     std::move(name),
-                                     return_type,
-                                     std::move(param_list.value()),
-                                     std::move(body));
+  return std::make_unique<FunDecl>(loc, std::move(name), return_type,
+                                   std::move(param_list.value()),
+                                   std::move(body));
 }
 
 /**
  * Parses a typed binding (name: type) used in declarations.
  *
- * @return std::optional<std::pair<std::string, Type>> Name-type pair or nullopt on error.
- *         Errors are emitted to DiagnosticManager.
+ * @return std::optional<std::pair<std::string, Type>> Name-type pair or nullopt
+ * on error. Errors are emitted to DiagnosticManager.
  *
  * Format: identifier ':' type
  * Used in variable declarations, function parameters, etc.
  */
 std::optional<Parser::TypedBinding> Parser::parse_typed_binding() {
-    // Parse identifier
-    if (peek_token().get_type() != TokenType::tok_identifier) {
-        error("expected identifier")
-            .with_primary_label(span_from_token(peek_token()), "expected identifier here")
-            .emit(*diagnostic_manager);
-        return std::nullopt;
-    }
-    SrcLocation start = peek_token().get_start();
-    std::string name = advance_token().get_lexeme();
+  // Parse identifier
+  if (peekToken().get_type() != TokenType::tok_identifier) {
+    error("expected identifier")
+        .with_primary_label(spanFromToken(peekToken()),
+                            "expected identifier here")
+        .emit(*diagnosticsManager);
+    return std::nullopt;
+  }
+  SrcLocation start = peekToken().get_start();
+  std::string name = advanceToken().get_lexeme();
 
-    // Parse colon separator
-    if (peek_token().get_type() != TokenType::tok_colon) {
-        error("expected colon")
-            .with_primary_label(span_from_token(peek_token()), "expected `:` here")
-            .with_suggestion(span_from_token(peek_token()), ":", "add colon before type")
-            .emit(*diagnostic_manager);
-        return std::nullopt;
-    }
-    advance_token();
+  // Parse colon separator
+  if (peekToken().get_type() != TokenType::tok_colon) {
+    error("expected colon")
+        .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
+        .with_suggestion(spanFromToken(peekToken()), ":",
+                         "add colon before type")
+        .emit(*diagnosticsManager);
+    return std::nullopt;
+  }
+  advanceToken();
 
-    // Parse type
-    auto type = parse_type();
-    if (!type) return std::nullopt;
+  // Parse type
+  auto type = parse_type();
+  if (!type)
+    return std::nullopt;
 
-    return TypedBinding{.loc = start, .name = name, .type = std::move(type.value())};
+  return TypedBinding{
+      .loc = start, .name = name, .type = std::move(type.value())};
 }
 
 /**
@@ -115,11 +121,12 @@ std::optional<Parser::TypedBinding> Parser::parse_typed_binding() {
  * Wrapper around parse_typed_binding() that creates a ParamDecl node.
  */
 std::unique_ptr<ParamDecl> Parser::parse_param_decl() {
-    auto binding = parse_typed_binding();
-    if (!binding) return nullptr;
+  auto binding = parse_typed_binding();
+  if (!binding)
+    return nullptr;
 
-    auto [loc, name, type] = *binding;
-    return std::make_unique<ParamDecl>(loc, name, type);
+  auto [loc, name, type] = *binding;
+  return std::make_unique<ParamDecl>(loc, name, type);
 }
 
 } // namespace phi

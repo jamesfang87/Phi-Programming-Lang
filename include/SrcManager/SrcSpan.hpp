@@ -10,37 +10,35 @@ namespace phi {
  * Used for error highlighting and source context.
  */
 struct SrcSpan {
-    SrcLocation start; ///< Start position (inclusive)
-    SrcLocation end;   ///< End position (inclusive)
+  SrcLocation start; ///< Start position (inclusive)
+  SrcLocation end;   ///< End position (inclusive)
 
-    /**
-     * @brief Constructs span from positions
-     * @param start Start location
-     * @param end End location
-     */
-    SrcSpan(SrcLocation start, SrcLocation end)
-        : start(std::move(start)),
-          end(std::move(end)) {}
+  /**
+   * @brief Constructs span from positions
+   * @param start Start location
+   * @param end End location
+   */
+  SrcSpan(SrcLocation start, SrcLocation end)
+      : start(std::move(start)), end(std::move(end)) {}
 
-    /**
-     * @brief Constructs single-position span
-     * @param single_pos Location for single point
-     */
-    explicit SrcSpan(const SrcLocation& single_pos)
-        : start(single_pos),
-          end(single_pos) {}
+  /**
+   * @brief Constructs single-position span
+   * @param single_pos Location for single point
+   */
+  explicit SrcSpan(const SrcLocation &single_pos)
+      : start(single_pos), end(single_pos) {}
 
-    /**
-     * @brief Checks for multi-line span
-     * @return true if spans multiple lines
-     */
-    [[nodiscard]] bool is_multiline() const { return start.line != end.line; }
+  /**
+   * @brief Checks for multi-line span
+   * @return true if spans multiple lines
+   */
+  [[nodiscard]] bool isMultiline() const { return start.line != end.line; }
 
-    /**
-     * @brief Calculates line count
-     * @return Number of lines covered
-     */
-    [[nodiscard]] int line_count() const { return end.line - start.line + 1; }
+  /**
+   * @brief Calculates line count
+   * @return Number of lines covered
+   */
+  [[nodiscard]] int lineCount() const { return end.line - start.line + 1; }
 };
 
 /**
@@ -48,8 +46,8 @@ struct SrcSpan {
  * @param token Source token
  * @return Span covering token
  */
-[[nodiscard]] inline SrcSpan span_from_token(const Token& token) {
-    return SrcSpan{token.get_start(), token.get_end()};
+[[nodiscard]] inline SrcSpan spanFromToken(const Token &token) {
+  return SrcSpan{token.get_start(), token.get_end()};
 }
 
 /**
@@ -58,8 +56,9 @@ struct SrcSpan {
  * @param end Last token
  * @return Span covering token range
  */
-[[nodiscard]] inline SrcSpan span_from_tokens(const Token& start, const Token& end) {
-    return SrcSpan{start.get_start(), end.get_end()};
+[[nodiscard]] inline SrcSpan span_from_tokens(const Token &start,
+                                              const Token &end) {
+  return SrcSpan{start.get_start(), end.get_end()};
 }
 
 } // namespace phi
