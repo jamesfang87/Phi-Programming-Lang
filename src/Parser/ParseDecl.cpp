@@ -31,7 +31,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   SrcLocation loc = tok.getStart();
 
   // Validate function name
-  if (peekToken().getTy() != TokenType::tokIdentifier) {
+  if (peekToken().getTy() != TokenKind::tokIdentifier) {
     error("invalid function name")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected function name here")
@@ -46,14 +46,14 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
 
   // Parse parameter list
   auto params =
-      parseList<ParamDecl>(TokenType::tokOpenParen, TokenType::tokRightParen,
+      parseList<ParamDecl>(TokenKind::tokOpenParen, TokenKind::tokRightParen,
                            &Parser::parseParamDecl);
   if (!params)
     return nullptr;
 
   // Handle optional return type
   auto return_type = Type(Type::Primitive::null);
-  if (peekToken().getTy() == TokenType::tokArrow) {
+  if (peekToken().getTy() == TokenKind::tokArrow) {
     advanceToken(); // eat '->'
     auto res = parseType();
     if (!res)
@@ -81,7 +81,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
  */
 std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   // Parse identifier
-  if (peekToken().getTy() != TokenType::tokIdentifier) {
+  if (peekToken().getTy() != TokenKind::tokIdentifier) {
     error("expected identifier")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected identifier here")
@@ -92,7 +92,7 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   std::string name = advanceToken().getLexeme();
 
   // Parse colon separator
-  if (peekToken().getTy() != TokenType::tokColon) {
+  if (peekToken().getTy() != TokenKind::tokColon) {
     error("expected colon")
         .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
         .with_suggestion(spanFromToken(peekToken()), ":",

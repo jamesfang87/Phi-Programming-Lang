@@ -15,7 +15,7 @@ namespace phi {
  *
  * Uses enum class for type safety and namespace protection.
  */
-enum class TokenType : uint8_t {
+enum class TokenKind : uint8_t {
   /// End of file marker
   tokEOF,
   /// Error token for invalid inputs
@@ -128,6 +128,6 @@ enum class TokenType : uint8_t {
  * @param type Token type to convert
  * @return String representation of token type
  */
-std::string tyToStr(TokenType type);
+std::string tyToStr(TokenKind type);
 
 } // namespace phi

@@ -90,8 +90,8 @@ void Parser::emitUnclosedDelimiterError(const Token &openingToken,
  */
 bool Parser::SyncToTopLvl() {
   return syncTo({
-      TokenType::tokFun,
-      TokenType::tokClass,
+      TokenKind::tokFun,
+      TokenKind::tokClass,
   });
 }
 
@@ -108,9 +108,9 @@ bool Parser::SyncToTopLvl() {
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
 bool Parser::SyncToStmt() {
-  return syncTo({TokenType::tokRightBrace, TokenType::tokReturn,
-                 TokenType::tokIf, TokenType::tokWhile, TokenType::tokFor,
-                 TokenType::tokLet});
+  return syncTo({TokenKind::tokRightBrace, TokenKind::tokReturn,
+                 TokenKind::tokIf, TokenKind::tokWhile, TokenKind::tokFor,
+                 TokenKind::tokLet});
 }
 
 /**
@@ -122,9 +122,9 @@ bool Parser::SyncToStmt() {
  * Advances through the token stream until encountering one of the specified
  * target tokens. Used for context-specific recovery (e.g., block endings).
  */
-bool Parser::syncTo(const std::initializer_list<TokenType> targetTokens) {
+bool Parser::syncTo(const std::initializer_list<TokenKind> targetTokens) {
   while (!atEOF()) {
-    for (const TokenType target : targetTokens) {
+    for (const TokenKind target : targetTokens) {
       if (peekToken().getTy() == target) {
         return true;
       }
@@ -143,7 +143,7 @@ bool Parser::syncTo(const std::initializer_list<TokenType> targetTokens) {
  * Efficiently skips tokens until the exact specified token type is found.
  * Useful for recovering from errors where a specific closing token is expected.
  */
-bool Parser::syncTo(const TokenType targetToken) {
+bool Parser::syncTo(const TokenKind targetToken) {
   while (!atEOF() && peekToken().getTy() != targetToken) {
     advanceToken();
   }

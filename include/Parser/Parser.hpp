@@ -41,7 +41,7 @@ public:
    */
   Parser(const std::string_view src, const std::string_view path,
          std::vector<Token> &tokens,
-         std::shared_ptr<DiagnosticManager> diagnosticsManager);
+         std::shared_ptr<DiagnosticManager> diagnosticManager);
 
   /**
    * @brief Main entry point for parsing
@@ -81,7 +81,7 @@ private:
    *
    * @note Automatically generates error if token doesn't match
    */
-  bool expectToken(TokenType expected_type, const std::string &context = "");
+  bool expectToken(TokenKind expected_type, const std::string &context = "");
 
   /**
    * @brief Conditionally consumes token if it matches
@@ -89,7 +89,7 @@ private:
    * @param type Token type to match
    * @return true if token matched and consumed, false otherwise
    */
-  bool matchToken(TokenType type);
+  bool matchToken(TokenKind type);
 
   // DIAGNOSTIC REPORTING
   void emitError(Diagnostic &&diagnostic) {
@@ -153,7 +153,7 @@ private:
    * @param target_tokens Set of tokens to synchronize to
    * @return true if found synchronization token, false if reached EOF
    */
-  bool syncTo(const std::initializer_list<TokenType> target_tokens);
+  bool syncTo(const std::initializer_list<TokenKind> target_tokens);
 
   /**
    * @brief Synchronizes to specific token type
@@ -161,7 +161,7 @@ private:
    * @param target_token Token type to synchronize to
    * @return true if found target token, false if reached EOF
    */
-  bool syncTo(const TokenType target_token);
+  bool syncTo(const TokenKind target_token);
 
   // TYPE SYSTEM PARSING
   /**
@@ -247,7 +247,7 @@ private:
    */
   template <typename T, typename F>
   std::optional<std::vector<std::unique_ptr<T>>>
-  parseList(const TokenType opening, const TokenType closing, F fun,
+  parseList(const TokenKind opening, const TokenKind closing, F fun,
             const std::string &context = "list") {
     // Verify opening delimiter
     const Token opening_token = peekToken();
@@ -263,7 +263,7 @@ private:
       auto result = (this->*fun)();
       if (!result) {
         // Recover by syncing to comma or closing delimiter
-        syncTo({closing, TokenType::tokComma});
+        syncTo({closing, TokenKind::tokComma});
         continue;
       }
       content.push_back(std::move(result));
@@ -274,7 +274,7 @@ private:
       }
 
       // Handle comma separator
-      if (peekToken().getTy() == TokenType::tokComma) {
+      if (peekToken().getTy() == TokenKind::tokComma) {
         advanceToken();
       } else {
         emitError(

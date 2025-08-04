@@ -33,7 +33,7 @@ std::optional<Type> Parser::parseType() {
 
   // Validate token is either primitive type or identifier
   if (it == primitiveMap.end() &&
-      peekToken().getTy() != TokenType::tokIdentifier) {
+      peekToken().getTy() != TokenKind::tokIdentifier) {
     error(std::format("invalid token found: {}", peekToken().getLexeme()))
         .with_primary_label(spanFromToken(peekToken()),
                             "expected a valid type here")

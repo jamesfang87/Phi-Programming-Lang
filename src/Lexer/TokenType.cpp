@@ -14,183 +14,183 @@ namespace phi {
  * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")
  */
 
-std::string tyToStr(const TokenType type) {
+std::string tyToStr(const TokenKind type) {
   switch (type) {
   // Special tokens
-  case TokenType::tokEOF:
+  case TokenKind::tokEOF:
     return "EOF";
-  case TokenType::tokError:
+  case TokenKind::tokError:
     return "ERROR";
 
   // Keywords
-  case TokenType::tokBool:
+  case TokenKind::tokBool:
     return "BOOL";
-  case TokenType::tokBreak:
+  case TokenKind::tokBreak:
     return "BREAK";
-  case TokenType::tokClass:
+  case TokenKind::tokClass:
     return "CLASS";
-  case TokenType::tokConst:
+  case TokenKind::tokConst:
     return "CONST";
-  case TokenType::tokContinue:
+  case TokenKind::tokContinue:
     return "CONTINUE";
-  case TokenType::tokElse:
+  case TokenKind::tokElse:
     return "ELSE";
-  case TokenType::tokFalse:
+  case TokenKind::tokFalse:
     return "FALSE";
-  case TokenType::tokFor:
+  case TokenKind::tokFor:
     return "FOR";
-  case TokenType::tokFun:
+  case TokenKind::tokFun:
     return "FUN";
-  case TokenType::tokIf:
+  case TokenKind::tokIf:
     return "IF";
-  case TokenType::tokImport:
+  case TokenKind::tokImport:
     return "IMPORT";
-  case TokenType::tokIn:
+  case TokenKind::tokIn:
     return "IN";
-  case TokenType::tokLet:
+  case TokenKind::tokLet:
     return "LET";
-  case TokenType::tokReturn:
+  case TokenKind::tokReturn:
     return "RETURN";
-  case TokenType::tokTrue:
+  case TokenKind::tokTrue:
     return "TRUE";
-  case TokenType::tokWhile:
+  case TokenKind::tokWhile:
     return "WHILE";
 
   // Signed integer types
-  case TokenType::tokI8:
+  case TokenKind::tokI8:
     return "I8";
-  case TokenType::tokI16:
+  case TokenKind::tokI16:
     return "I16";
-  case TokenType::tokI32:
+  case TokenKind::tokI32:
     return "I32";
-  case TokenType::tokI64:
+  case TokenKind::tokI64:
     return "I64";
 
   // Unsigned integer types
-  case TokenType::tokU8:
+  case TokenKind::tokU8:
     return "U8";
-  case TokenType::tokU16:
+  case TokenKind::tokU16:
     return "U16";
-  case TokenType::tokU32:
+  case TokenKind::tokU32:
     return "U32";
-  case TokenType::tokU64:
+  case TokenKind::tokU64:
     return "U64";
 
   // Floating point types
-  case TokenType::tokF32:
+  case TokenKind::tokF32:
     return "F32";
-  case TokenType::tokF64:
+  case TokenKind::tokF64:
     return "F64";
 
   // Text types
-  case TokenType::tokStr:
+  case TokenKind::tokStr:
     return "STR";
-  case TokenType::tokChar:
+  case TokenKind::tokChar:
     return "CHAR";
 
   // Syntax elements
-  case TokenType::tokOpenParen:
+  case TokenKind::tokOpenParen:
     return "OPEN_PAREN";
-  case TokenType::tokRightParen:
+  case TokenKind::tokRightParen:
     return "CLOSE_PAREN";
-  case TokenType::tokLeftBrace:
+  case TokenKind::tokLeftBrace:
     return "OPEN_BRACE";
-  case TokenType::tokRightBrace:
+  case TokenKind::tokRightBrace:
     return "CLOSE_BRACE";
-  case TokenType::tokLeftBracket:
+  case TokenKind::tokLeftBracket:
     return "OPEN_BRACKET";
-  case TokenType::tokRightBracket:
+  case TokenKind::tokRightBracket:
     return "CLOSE_BRACKET";
-  case TokenType::tokArrow:
+  case TokenKind::tokArrow:
     return "FUN_RETURN";
-  case TokenType::tokComma:
+  case TokenKind::tokComma:
     return "COMMA";
-  case TokenType::tokSemicolon:
+  case TokenKind::tokSemicolon:
     return "SEMICOLON";
 
   // Basic operators
-  case TokenType::tokPlus:
+  case TokenKind::tokPlus:
     return "ADD";
-  case TokenType::tokMinus:
+  case TokenKind::tokMinus:
     return "SUB";
-  case TokenType::tokStar:
+  case TokenKind::tokStar:
     return "MUL";
-  case TokenType::tokSlash:
+  case TokenKind::tokSlash:
     return "DIV";
-  case TokenType::tokPercent:
+  case TokenKind::tokPercent:
     return "MOD";
-  case TokenType::tokBang:
+  case TokenKind::tokBang:
     return "BANG";
 
   // Assignment operators
-  case TokenType::tokPlusEquals:
+  case TokenKind::tokPlusEquals:
     return "PLUS_EQUALS";
-  case TokenType::tokSubEquals:
+  case TokenKind::tokSubEquals:
     return "SUB_EQUALS";
-  case TokenType::tokMulEquals:
+  case TokenKind::tokMulEquals:
     return "MUL_EQUALS";
-  case TokenType::tokDivEquals:
+  case TokenKind::tokDivEquals:
     return "DIV_EQUALS";
-  case TokenType::tokModEquals:
+  case TokenKind::tokModEquals:
     return "MOD_EQUALS";
 
   // Member access
-  case TokenType::tokPeriod:
+  case TokenKind::tokPeriod:
     return "MEMBER";
-  case TokenType::tokDoubleColon:
+  case TokenKind::tokDoubleColon:
     return "NAMESPACE_MEMBER";
 
   // Increment/decrement
-  case TokenType::tokDoublePlus:
+  case TokenKind::tokDoublePlus:
     return "INCREMENT";
-  case TokenType::tokDoubleMinus:
+  case TokenKind::tokDoubleMinus:
     return "DECREMENT";
 
   // Comparison
-  case TokenType::tokDoubleEquals:
+  case TokenKind::tokDoubleEquals:
     return "EQUAL";
-  case TokenType::tokBangEquals:
+  case TokenKind::tokBangEquals:
     return "NOT_EQUAL";
 
   // Logical
-  case TokenType::tokDoubleAmp:
+  case TokenKind::tokDoubleAmp:
     return "AND";
-  case TokenType::tokDoublePipe:
+  case TokenKind::tokDoublePipe:
     return "OR";
 
   // Relational
-  case TokenType::tokLeftCaret:
+  case TokenKind::tokLeftCaret:
     return "LESS";
-  case TokenType::tokLessEqual:
+  case TokenKind::tokLessEqual:
     return "LESS_EQUAL";
-  case TokenType::tokRightCaret:
+  case TokenKind::tokRightCaret:
     return "GREATER";
-  case TokenType::tokGreaterEqual:
+  case TokenKind::tokGreaterEqual:
     return "GREATER_EQUAL";
 
   // Other operators
-  case TokenType::tokEquals:
+  case TokenKind::tokEquals:
     return "ASSIGN";
-  case TokenType::tokColon:
+  case TokenKind::tokColon:
     return "COLON";
 
-  case TokenType::tokExclusiveRange:
+  case TokenKind::tokExclusiveRange:
     return "EXCLUSIVE_RANGE";
-  case TokenType::tokInclusiveRange:
+  case TokenKind::tokInclusiveRange:
     return "INCLUSIVE_RANGE";
 
   // Literals
-  case TokenType::tokIntLiteral:
+  case TokenKind::tokIntLiteral:
     return "INT_LITERAL";
-  case TokenType::tokFloatLiteral:
+  case TokenKind::tokFloatLiteral:
     return "FLOAT_LITERAL";
-  case TokenType::tokStrLiteral:
+  case TokenKind::tokStrLiteral:
     return "STRING_LITERAL";
-  case TokenType::tokCharLiteral:
+  case TokenKind::tokCharLiteral:
     return "CHAR_LITERAL";
 
   // Identifier
-  case TokenType::tokIdentifier:
+  case TokenKind::tokIdentifier:
     return "IDENTIFIER";
 
   default:

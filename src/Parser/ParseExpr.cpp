@@ -41,46 +41,46 @@ std::unique_ptr<Expr> Parser::parseExpr() {
  * Left-associative: (left_bp, right_bp) where right_bp = left_bp + 1
  * Right-associative: (left_bp, right_bp) where right_bp = left_bp
  */
-std::optional<std::pair<int, int>> infixBP(const TokenType &type) {
+std::optional<std::pair<int, int>> infixBP(const TokenKind &type) {
   switch (type) {
   // Assignment (right-associative, lowest precedence)
-  case TokenType::tokEquals:
+  case TokenKind::tokEquals:
     return std::make_pair(2, 1);
 
   // Logical OR
-  case TokenType::tokDoublePipe:
+  case TokenKind::tokDoublePipe:
     return std::make_pair(3, 4);
 
   // Logical AND
-  case TokenType::tokDoubleAmp:
+  case TokenKind::tokDoubleAmp:
     return std::make_pair(5, 6);
 
   // Equality
-  case TokenType::tokDoubleEquals:
-  case TokenType::tokBangEquals:
+  case TokenKind::tokDoubleEquals:
+  case TokenKind::tokBangEquals:
     return std::make_pair(7, 8);
 
   // Relational
-  case TokenType::tokLeftCaret:
-  case TokenType::tokLessEqual:
-  case TokenType::tokRightCaret:
-  case TokenType::tokGreaterEqual:
+  case TokenKind::tokLeftCaret:
+  case TokenKind::tokLessEqual:
+  case TokenKind::tokRightCaret:
+  case TokenKind::tokGreaterEqual:
     return std::make_pair(9, 10);
 
   // Range operators
-  case TokenType::tokInclusiveRange:
-  case TokenType::tokExclusiveRange:
+  case TokenKind::tokInclusiveRange:
+  case TokenKind::tokExclusiveRange:
     return std::make_pair(11, 12);
 
   // Additive
-  case TokenType::tokPlus:
-  case TokenType::tokMinus:
+  case TokenKind::tokPlus:
+  case TokenKind::tokMinus:
     return std::make_pair(13, 14);
 
   // Multiplicative
-  case TokenType::tokStar:
-  case TokenType::tokSlash:
-  case TokenType::tokPercent:
+  case TokenKind::tokStar:
+  case TokenKind::tokSlash:
+  case TokenKind::tokPercent:
     return std::make_pair(15, 16);
 
   default:
@@ -94,12 +94,12 @@ std::optional<std::pair<int, int>> infixBP(const TokenType &type) {
  * @param type Token type to check
  * @return Optional pair of (ignored, right_bp) if operator is prefix
  */
-std::optional<std::pair<int, int>> prefixBP(const TokenType &type) {
+std::optional<std::pair<int, int>> prefixBP(const TokenKind &type) {
   switch (type) {
-  case TokenType::tokMinus:       // Unary minus
-  case TokenType::tokBang:        // Logical NOT
-  case TokenType::tokDoublePlus:  // Pre-increment
-  case TokenType::tokDoubleMinus: // Pre-decrement
+  case TokenKind::tokMinus:       // Unary minus
+  case TokenKind::tokBang:        // Logical NOT
+  case TokenKind::tokDoublePlus:  // Pre-increment
+  case TokenKind::tokDoubleMinus: // Pre-decrement
     return std::make_pair(0, 17);
   default:
     return std::nullopt;
@@ -112,12 +112,12 @@ std::optional<std::pair<int, int>> prefixBP(const TokenType &type) {
  * @param type Token type to check
  * @return Optional pair of (left_bp, ignored) if operator is postfix
  */
-std::optional<std::pair<int, int>> postfixBP(const TokenType &type) {
+std::optional<std::pair<int, int>> postfixBP(const TokenKind &type) {
   switch (type) {
-  case TokenType::tokDoublePlus:  // Post-increment
-  case TokenType::tokDoubleMinus: // Post-decrement
-  case TokenType::tokOpenParen:   // Function call
-  case TokenType::tokPeriod:      // Member access
+  case TokenKind::tokDoublePlus:  // Post-increment
+  case TokenKind::tokDoubleMinus: // Post-decrement
+  case TokenKind::tokOpenParen:   // Function call
+  case TokenKind::tokPeriod:      // Member access
     return std::make_pair(19, 0);
   default:
     return std::nullopt;
@@ -146,7 +146,7 @@ std::unique_ptr<Expr> Parser::pratt(int minBP) {
   // Process right-hand side and operators
   while (true) {
     Token op = peekToken();
-    if (op.getTy() == TokenType::tokEOF)
+    if (op.getTy() == TokenKind::tokEOF)
       break;
 
     // Handle postfix operators
@@ -156,8 +156,8 @@ std::unique_ptr<Expr> Parser::pratt(int minBP) {
         break;
 
       switch (op.getTy()) {
-      case TokenType::tokDoublePlus:
-      case TokenType::tokDoubleMinus:
+      case TokenKind::tokDoublePlus:
+      case TokenKind::tokDoubleMinus:
         advanceToken();
         lhs = std::make_unique<UnaryOp>(std::move(lhs), op, false); // postfix
         break;
@@ -179,10 +179,10 @@ std::unique_ptr<Expr> Parser::pratt(int minBP) {
       advanceToken(); // consume operator
 
       // Special handling for range operators
-      if (op.getTy() == TokenType::tokExclusiveRange ||
-          op.getTy() == TokenType::tokInclusiveRange) {
+      if (op.getTy() == TokenKind::tokExclusiveRange ||
+          op.getTy() == TokenKind::tokInclusiveRange) {
 
-        bool inclusive = op.getTy() == TokenType::tokInclusiveRange;
+        bool inclusive = op.getTy() == TokenKind::tokInclusiveRange;
         auto end = pratt(r);
         if (!end)
           return nullptr;
@@ -208,13 +208,13 @@ std::unique_ptr<Expr> Parser::parsePrefix(const Token &tok) {
   std::unique_ptr<Expr> lhs;
   switch (tok.getTy()) {
   // Grouping: ( expr )
-  case TokenType::tokOpenParen: {
+  case TokenKind::tokOpenParen: {
     auto res = pratt(0);
     if (!res)
       return nullptr;
     lhs = std::move(res);
 
-    if (peekToken().getTy() != TokenType::tokRightParen) {
+    if (peekToken().getTy() != TokenKind::tokRightParen) {
       error("missing closing parenthesis")
           .with_primary_label(spanFromToken(peekToken()), "expected `)` here")
           .with_help("parentheses must be properly matched")
@@ -227,10 +227,10 @@ std::unique_ptr<Expr> Parser::parsePrefix(const Token &tok) {
   }
 
   // Prefix operators: -a, !b, ++c
-  case TokenType::tokMinus:       // -
-  case TokenType::tokBang:        // !
-  case TokenType::tokDoublePlus:  // ++
-  case TokenType::tokDoubleMinus: // --
+  case TokenKind::tokMinus:       // -
+  case TokenKind::tokBang:        // !
+  case TokenKind::tokDoublePlus:  // ++
+  case TokenKind::tokDoubleMinus: // --
   {
     auto [ignore, r] = prefixBP(tok.getTy()).value();
     auto rhs = pratt(r);
@@ -241,29 +241,29 @@ std::unique_ptr<Expr> Parser::parsePrefix(const Token &tok) {
   }
 
   // Literals
-  case TokenType::tokIntLiteral:
+  case TokenKind::tokIntLiteral:
     lhs = std::make_unique<IntLiteral>(tok.getStart(),
                                        std::stoll(tok.getLexeme()));
     break;
-  case TokenType::tokFloatLiteral:
+  case TokenKind::tokFloatLiteral:
     lhs = std::make_unique<FloatLiteral>(tok.getStart(),
                                          std::stod(tok.getLexeme()));
     break;
-  case TokenType::tokStrLiteral:
+  case TokenKind::tokStrLiteral:
     lhs = std::make_unique<StrLiteral>(tok.getStart(), tok.getLexeme());
     break;
-  case TokenType::tokCharLiteral:
+  case TokenKind::tokCharLiteral:
     lhs = std::make_unique<CharLiteral>(tok.getStart(), tok.getLexeme()[0]);
     break;
-  case TokenType::tokTrue:
+  case TokenKind::tokTrue:
     lhs = std::make_unique<BoolLiteral>(tok.getStart(), true);
     break;
-  case TokenType::tokFalse:
+  case TokenKind::tokFalse:
     lhs = std::make_unique<BoolLiteral>(tok.getStart(), false);
     break;
 
   // Identifiers
-  case TokenType::tokIdentifier:
+  case TokenKind::tokIdentifier:
     lhs = std::make_unique<DeclRefExpr>(tok.getStart(), tok.getLexeme());
     break;
 
@@ -286,12 +286,12 @@ std::unique_ptr<Expr> Parser::parsePrefix(const Token &tok) {
  */
 std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
   // Function call: expr(...)
-  if (peekToken().getTy() == TokenType::tokOpenParen) {
+  if (peekToken().getTy() == TokenKind::tokOpenParen) {
     return parseFunCall(std::move(expr));
   }
 
   // Member access: expr.ident (stubbed)
-  if (peekToken().getTy() == TokenType::tokPeriod) {
+  if (peekToken().getTy() == TokenKind::tokPeriod) {
     // Implementation pending
   }
 
@@ -307,7 +307,7 @@ std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
  */
 std::unique_ptr<FunCallExpr>
 Parser::parseFunCall(std::unique_ptr<Expr> callee) {
-  auto args = parseList<Expr>(TokenType::tokOpenParen, TokenType::tokRightParen,
+  auto args = parseList<Expr>(TokenKind::tokOpenParen, TokenKind::tokRightParen,
                               &Parser::parseExpr);
 
   // Check if there were errors during argument parsing

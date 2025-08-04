@@ -107,91 +107,91 @@ Token Lexer::scanToken() {
   switch (char c = advanceChar()) {
   // One char tokens
   case '(':
-    return makeToken(TokenType::tokOpenParen);
+    return makeToken(TokenKind::tokOpenParen);
   case ')':
-    return makeToken(TokenType::tokRightParen);
+    return makeToken(TokenKind::tokRightParen);
   case '{':
-    return makeToken(TokenType::tokLeftBrace);
+    return makeToken(TokenKind::tokLeftBrace);
   case '}':
-    return makeToken(TokenType::tokRightBrace);
+    return makeToken(TokenKind::tokRightBrace);
   case '[':
-    return makeToken(TokenType::tokLeftBracket);
+    return makeToken(TokenKind::tokLeftBracket);
   case ']':
-    return makeToken(TokenType::tokRightBracket);
+    return makeToken(TokenKind::tokRightBracket);
   case ',':
-    return makeToken(TokenType::tokComma);
+    return makeToken(TokenKind::tokComma);
   case ';':
-    return makeToken(TokenType::tokSemicolon);
+    return makeToken(TokenKind::tokSemicolon);
 
   case '.':
     if (matchNextN(".="))
-      return makeToken(TokenType::tokInclusiveRange);
+      return makeToken(TokenKind::tokInclusiveRange);
     if (matchNext('.'))
-      return makeToken(TokenType::tokExclusiveRange);
-    return makeToken(TokenType::tokPeriod);
+      return makeToken(TokenKind::tokExclusiveRange);
+    return makeToken(TokenKind::tokPeriod);
   case ':':
-    return makeToken(matchNext(':') ? TokenType::tokDoubleColon
-                                    : TokenType::tokColon);
+    return makeToken(matchNext(':') ? TokenKind::tokDoubleColon
+                                    : TokenKind::tokColon);
 
   // Operators
   case '+':
     if (matchNext('+'))
-      return makeToken(TokenType::tokDoublePlus);
+      return makeToken(TokenKind::tokDoublePlus);
     if (matchNext('='))
-      return makeToken(TokenType::tokPlusEquals);
-    return makeToken(TokenType::tokPlus);
+      return makeToken(TokenKind::tokPlusEquals);
+    return makeToken(TokenKind::tokPlus);
   case '-':
     if (matchNext('>'))
-      return makeToken(TokenType::tokArrow);
+      return makeToken(TokenKind::tokArrow);
     if (matchNext('-'))
-      return makeToken(TokenType::tokDoubleMinus);
+      return makeToken(TokenKind::tokDoubleMinus);
     if (matchNext('='))
-      return makeToken(TokenType::tokSubEquals);
-    return makeToken(TokenType::tokMinus);
+      return makeToken(TokenKind::tokSubEquals);
+    return makeToken(TokenKind::tokMinus);
   case '*':
-    return makeToken(matchNext('=') ? TokenType::tokMulEquals
-                                    : TokenType::tokStar);
+    return makeToken(matchNext('=') ? TokenKind::tokMulEquals
+                                    : TokenKind::tokStar);
   case '/':
-    return makeToken(matchNext('=') ? TokenType::tokDivEquals
-                                    : TokenType::tokSlash);
+    return makeToken(matchNext('=') ? TokenKind::tokDivEquals
+                                    : TokenKind::tokSlash);
   case '%':
-    return makeToken(matchNext('=') ? TokenType::tokModEquals
-                                    : TokenType::tokPercent);
+    return makeToken(matchNext('=') ? TokenKind::tokModEquals
+                                    : TokenKind::tokPercent);
   case '!':
-    return makeToken(matchNext('=') ? TokenType::tokBangEquals
-                                    : TokenType::tokBang);
+    return makeToken(matchNext('=') ? TokenKind::tokBangEquals
+                                    : TokenKind::tokBang);
   case '=':
-    return makeToken(matchNext('=') ? TokenType::tokDoubleEquals
-                                    : TokenType::tokEquals);
+    return makeToken(matchNext('=') ? TokenKind::tokDoubleEquals
+                                    : TokenKind::tokEquals);
   case '<':
-    return makeToken(matchNext('=') ? TokenType::tokLessEqual
-                                    : TokenType::tokLeftCaret);
+    return makeToken(matchNext('=') ? TokenKind::tokLessEqual
+                                    : TokenKind::tokLeftCaret);
   case '>':
-    return makeToken(matchNext('=') ? TokenType::tokGreaterEqual
-                                    : TokenType::tokRightCaret);
+    return makeToken(matchNext('=') ? TokenKind::tokGreaterEqual
+                                    : TokenKind::tokRightCaret);
   // Handle single & as error or bitwise operator
   case '&':
     if (matchNext('&')) {
-      return makeToken(TokenType::tokDoubleAmp);
+      return makeToken(TokenKind::tokDoubleAmp);
     } else {
       error("unexpected character '&'")
           .with_primary_label(getCurSpan(), "unexpected character")
           .with_help("use '&&' for logical AND operation")
           .with_note("single '&' is not supported in this language")
           .emit(*diagnosticManager);
-      return makeToken(TokenType::tokError);
+      return makeToken(TokenKind::tokError);
     }
   // Handle single | as error or bitwise operator
   case '|':
     if (matchNext('|')) {
-      return makeToken(TokenType::tokDoublePipe);
+      return makeToken(TokenKind::tokDoublePipe);
     } else {
       error("unexpected character '|'")
           .with_primary_label(getCurSpan(), "unexpected character")
           .with_help("use '||' for logical OR operation")
           .with_note("single '|' is not supported in this language")
           .emit(*diagnosticManager);
-      return makeToken(TokenType::tokError);
+      return makeToken(TokenKind::tokError);
     }
 
   case '"':
@@ -223,7 +223,7 @@ Token Lexer::scanToken() {
                    "punctuation")
         .emit(*diagnosticManager);
 
-    return makeToken(TokenType::tokError);
+    return makeToken(TokenKind::tokError);
   }
   }
 }
