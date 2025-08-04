@@ -18,21 +18,21 @@ namespace phi {
  * 1. Resolve all function signatures (allows mutual recursion)
  * 2. Resolve function bodies with proper scoping
  */
-std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
+std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolveAST() {
   // Create global scope
-  SymbolTable::ScopeGuard global_scope(symbol_table);
+  SymbolTable::ScopeGuard global_scope(symbolTable);
 
   // TODO: Add struct resolution here
 
   // Phase 1: Resolve function signatures
   for (auto &fun_decl : ast) {
-    if (!resolve_fun_decl(fun_decl.get())) {
+    if (!resolveFunDecl(fun_decl.get())) {
       std::println("failed to resolve function signature: {}",
                    fun_decl->getID());
       return {false, {}};
     }
 
-    if (!symbol_table.insert(fun_decl.get())) {
+    if (!symbolTable.insert(fun_decl.get())) {
       std::println("function redefinition: {}", fun_decl->getID());
       return {false, {}};
     }
@@ -40,23 +40,23 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolve_ast() {
 
   // Phase 2: Resolve function bodies
   for (auto &fun_decl : ast) {
-    cur_fun = fun_decl.get();
+    curFun = fun_decl.get();
 
     // Create function scope
-    SymbolTable::ScopeGuard function_scope(symbol_table);
+    SymbolTable::ScopeGuard function_scope(symbolTable);
 
     // Add parameters to function scope
-    for (const std::unique_ptr<ParamDecl> &param : cur_fun->getParams()) {
-      if (!symbol_table.insert(param.get())) {
-        std::println("parameter redefinition in {}: {}", cur_fun->getID(),
+    for (const std::unique_ptr<ParamDecl> &param : curFun->getParams()) {
+      if (!symbolTable.insert(param.get())) {
+        std::println("parameter redefinition in {}: {}", curFun->getID(),
                      param->getID());
         return {false, {}};
       }
     }
 
     // Resolve function body
-    if (!resolve_block(fun_decl->getBlock(), true)) {
-      std::println("failed to resolve body of: {}", cur_fun->getID());
+    if (!resolveBlock(fun_decl->getBlock(), true)) {
+      std::println("failed to resolve body of: {}", curFun->getID());
       return {false, {}};
     }
   }

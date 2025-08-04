@@ -254,7 +254,7 @@ private:
              const std::string &context = "list") {
     // Verify opening delimiter
     const Token opening_token = peekToken();
-    if (opening_token.get_type() != opening) {
+    if (opening_token.getTy() != opening) {
       emit_expected_found_error(type_to_string(opening), peekToken());
       return std::nullopt;
     }
@@ -262,7 +262,7 @@ private:
 
     // Parse list elements
     std::vector<std::unique_ptr<T>> content;
-    while (!atEOF() && peekToken().get_type() != closing) {
+    while (!atEOF() && peekToken().getTy() != closing) {
       auto result = (this->*fun)();
       if (!result) {
         // Recover by syncing to comma or closing delimiter
@@ -272,12 +272,12 @@ private:
       content.push_back(std::move(result));
 
       // Check for closing delimiter before comma
-      if (peekToken().get_type() == closing) {
+      if (peekToken().getTy() == closing) {
         break;
       }
 
       // Handle comma separator
-      if (peekToken().get_type() == TokenType::tok_comma) {
+      if (peekToken().getTy() == TokenType::tok_comma) {
         advanceToken();
       } else {
         emitError(
@@ -291,7 +291,7 @@ private:
     }
 
     // Verify closing delimiter
-    if (atEOF() || peekToken().get_type() != closing) {
+    if (atEOF() || peekToken().getTy() != closing) {
       emit_unclosed_delimiter_error(opening_token, type_to_string(closing));
       return std::nullopt;
     }

@@ -47,7 +47,7 @@ struct SrcSpan {
  * @return Span covering token
  */
 [[nodiscard]] inline SrcSpan spanFromToken(const Token &token) {
-  return SrcSpan{token.get_start(), token.get_end()};
+  return SrcSpan{token.getStart(), token.getEnd()};
 }
 
 /**
@@ -58,7 +58,7 @@ struct SrcSpan {
  */
 [[nodiscard]] inline SrcSpan span_from_tokens(const Token &start,
                                               const Token &end) {
-  return SrcSpan{start.get_start(), end.get_end()};
+  return SrcSpan{start.getStart(), end.getEnd()};
 }
 
 } // namespace phi

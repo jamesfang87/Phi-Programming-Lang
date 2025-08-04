@@ -146,16 +146,16 @@ std::unique_ptr<Expr> Parser::pratt(int min_bp) {
   // Process right-hand side and operators
   while (true) {
     Token op = peekToken();
-    if (op.get_type() == TokenType::tok_eof)
+    if (op.getTy() == TokenType::tok_eof)
       break;
 
     // Handle postfix operators
-    if (postfix_bp(op.get_type())) {
-      auto [l_bp, r_bp] = postfix_bp(op.get_type()).value();
+    if (postfix_bp(op.getTy())) {
+      auto [l_bp, r_bp] = postfix_bp(op.getTy()).value();
       if (l_bp < min_bp)
         break;
 
-      switch (op.get_type()) {
+      switch (op.getTy()) {
       case TokenType::tok_increment:
       case TokenType::tok_decrement:
         advanceToken();
@@ -171,22 +171,22 @@ std::unique_ptr<Expr> Parser::pratt(int min_bp) {
     }
 
     // Handle infix operators
-    if (infix_bp(op.get_type())) {
-      auto [l_bp, r_bp] = infix_bp(op.get_type()).value();
+    if (infix_bp(op.getTy())) {
+      auto [l_bp, r_bp] = infix_bp(op.getTy()).value();
       if (l_bp < min_bp)
         break;
 
       advanceToken(); // consume operator
 
       // Special handling for range operators
-      if (op.get_type() == TokenType::tok_exclusive_range ||
-          op.get_type() == TokenType::tok_inclusive_range) {
+      if (op.getTy() == TokenType::tok_exclusive_range ||
+          op.getTy() == TokenType::tok_inclusive_range) {
 
-        bool inclusive = op.get_type() == TokenType::tok_inclusive_range;
+        bool inclusive = op.getTy() == TokenType::tok_inclusive_range;
         auto end = pratt(r_bp);
         if (!end)
           return nullptr;
-        lhs = std::make_unique<RangeLiteral>(op.get_start(), std::move(lhs),
+        lhs = std::make_unique<RangeLiteral>(op.getStart(), std::move(lhs),
                                              std::move(end), inclusive);
       } else {
         // Regular binary operators
@@ -206,7 +206,7 @@ std::unique_ptr<Expr> Parser::pratt(int min_bp) {
 
 std::unique_ptr<Expr> Parser::parse_prefix(const Token &tok) {
   std::unique_ptr<Expr> lhs;
-  switch (tok.get_type()) {
+  switch (tok.getTy()) {
   // Grouping: ( expr )
   case TokenType::tok_open_paren: {
     auto res = pratt(0);
@@ -214,7 +214,7 @@ std::unique_ptr<Expr> Parser::parse_prefix(const Token &tok) {
       return nullptr;
     lhs = std::move(res);
 
-    if (peekToken().get_type() != TokenType::tok_close_paren) {
+    if (peekToken().getTy() != TokenType::tok_close_paren) {
       error("missing closing parenthesis")
           .with_primary_label(spanFromToken(peekToken()), "expected `)` here")
           .with_help("parentheses must be properly matched")
@@ -232,7 +232,7 @@ std::unique_ptr<Expr> Parser::parse_prefix(const Token &tok) {
   case TokenType::tok_increment: // ++
   case TokenType::tok_decrement: // --
   {
-    auto [ignore, r_bp] = prefix_bp(tok.get_type()).value();
+    auto [ignore, r_bp] = prefix_bp(tok.getTy()).value();
     auto rhs = pratt(r_bp);
     if (!rhs)
       return nullptr;
@@ -242,29 +242,29 @@ std::unique_ptr<Expr> Parser::parse_prefix(const Token &tok) {
 
   // Literals
   case TokenType::tok_int_literal:
-    lhs = std::make_unique<IntLiteral>(tok.get_start(),
-                                       std::stoll(tok.get_lexeme()));
+    lhs = std::make_unique<IntLiteral>(tok.getStart(),
+                                       std::stoll(tok.getLexeme()));
     break;
   case TokenType::tok_float_literal:
-    lhs = std::make_unique<FloatLiteral>(tok.get_start(),
-                                         std::stod(tok.get_lexeme()));
+    lhs = std::make_unique<FloatLiteral>(tok.getStart(),
+                                         std::stod(tok.getLexeme()));
     break;
   case TokenType::tok_str_literal:
-    lhs = std::make_unique<StrLiteral>(tok.get_start(), tok.get_lexeme());
+    lhs = std::make_unique<StrLiteral>(tok.getStart(), tok.getLexeme());
     break;
   case TokenType::tok_char_literal:
-    lhs = std::make_unique<CharLiteral>(tok.get_start(), tok.get_lexeme()[0]);
+    lhs = std::make_unique<CharLiteral>(tok.getStart(), tok.getLexeme()[0]);
     break;
   case TokenType::tok_true:
-    lhs = std::make_unique<BoolLiteral>(tok.get_start(), true);
+    lhs = std::make_unique<BoolLiteral>(tok.getStart(), true);
     break;
   case TokenType::tok_false:
-    lhs = std::make_unique<BoolLiteral>(tok.get_start(), false);
+    lhs = std::make_unique<BoolLiteral>(tok.getStart(), false);
     break;
 
   // Identifiers
   case TokenType::tok_identifier:
-    lhs = std::make_unique<DeclRefExpr>(tok.get_start(), tok.get_lexeme());
+    lhs = std::make_unique<DeclRefExpr>(tok.getStart(), tok.getLexeme());
     break;
 
   default: {
@@ -287,12 +287,12 @@ std::unique_ptr<Expr> Parser::parse_prefix(const Token &tok) {
  */
 std::unique_ptr<Expr> Parser::parse_postfix(std::unique_ptr<Expr> expr) {
   // Function call: expr(...)
-  if (peekToken().get_type() == TokenType::tok_open_paren) {
+  if (peekToken().getTy() == TokenType::tok_open_paren) {
     return parse_fun_call(std::move(expr));
   }
 
   // Member access: expr.ident (stubbed)
-  if (peekToken().get_type() == TokenType::tok_member) {
+  if (peekToken().getTy() == TokenType::tok_member) {
     // Implementation pending
   }
 
