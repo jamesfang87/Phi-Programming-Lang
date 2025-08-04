@@ -26,7 +26,7 @@ void phi::CodeGen::visit(phi::FunCallExpr &expr) {
 
   // Temp linking to printf
   if (decl_ref->getID() == "println") {
-    generate_println_call(expr);
+    generatePrintlnCall(expr);
     return;
   }
 

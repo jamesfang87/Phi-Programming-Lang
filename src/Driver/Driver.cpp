@@ -8,20 +8,19 @@ namespace phi {
 
 PhiCompiler::PhiCompiler(std::string src, std::string path,
                          std::shared_ptr<DiagnosticManager> diagnostic_manager)
-    : src_file(std::move(src)), path(std::move(path)),
-      diagnostic_manager(std::move(diagnostic_manager)) {}
+    : srcFile(std::move(src)), path(std::move(path)),
+      diagnosticManager(std::move(diagnostic_manager)) {}
 
 PhiCompiler::~PhiCompiler() = default;
 
 bool PhiCompiler::compile() {
-  auto [tokens, scan_success] =
-      Lexer(src_file, path, diagnostic_manager).scan();
+  auto [tokens, scan_success] = Lexer(srcFile, path, diagnosticManager).scan();
   if (!scan_success) {
     return false;
   }
 
   auto [ast, parse_success] =
-      Parser(src_file, path, tokens, diagnostic_manager).parse();
+      Parser(srcFile, path, tokens, diagnosticManager).parse();
   if (!parse_success) {
     return false;
   }

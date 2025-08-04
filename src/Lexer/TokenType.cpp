@@ -14,7 +14,7 @@ namespace phi {
  * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")
  */
 
-std::string type_to_string(const TokenType type) {
+std::string tyToStr(const TokenType type) {
   switch (type) {
   // Special tokens
   case TokenType::tokEOF:
@@ -29,154 +29,154 @@ std::string type_to_string(const TokenType type) {
     return "BREAK";
   case TokenType::tokClass:
     return "CLASS";
-  case TokenType::tok_const:
+  case TokenType::tokConst:
     return "CONST";
-  case TokenType::tok_continue:
+  case TokenType::tokContinue:
     return "CONTINUE";
-  case TokenType::tok_else:
+  case TokenType::tokElse:
     return "ELSE";
-  case TokenType::tok_false:
+  case TokenType::tokFalse:
     return "FALSE";
-  case TokenType::tok_for:
+  case TokenType::tokFor:
     return "FOR";
-  case TokenType::tok_fun:
+  case TokenType::tokFun:
     return "FUN";
-  case TokenType::tok_if:
+  case TokenType::tokIf:
     return "IF";
-  case TokenType::tok_import:
+  case TokenType::tokImport:
     return "IMPORT";
-  case TokenType::tok_in:
+  case TokenType::tokIn:
     return "IN";
-  case TokenType::tok_let:
+  case TokenType::tokLet:
     return "LET";
-  case TokenType::tok_return:
+  case TokenType::tokReturn:
     return "RETURN";
-  case TokenType::tok_true:
+  case TokenType::tokTrue:
     return "TRUE";
-  case TokenType::tok_while:
+  case TokenType::tokWhile:
     return "WHILE";
 
   // Signed integer types
-  case TokenType::tok_i8:
+  case TokenType::tokI8:
     return "I8";
-  case TokenType::tok_i16:
+  case TokenType::tokI16:
     return "I16";
-  case TokenType::tok_i32:
+  case TokenType::tokI32:
     return "I32";
-  case TokenType::tok_i64:
+  case TokenType::tokI64:
     return "I64";
 
   // Unsigned integer types
-  case TokenType::tok_u8:
+  case TokenType::tokU8:
     return "U8";
-  case TokenType::tok_u16:
+  case TokenType::tokU16:
     return "U16";
-  case TokenType::tok_u32:
+  case TokenType::tokU32:
     return "U32";
-  case TokenType::tok_u64:
+  case TokenType::tokU64:
     return "U64";
 
   // Floating point types
-  case TokenType::tok_f32:
+  case TokenType::tokF32:
     return "F32";
-  case TokenType::tok_f64:
+  case TokenType::tokF64:
     return "F64";
 
   // Text types
-  case TokenType::tok_str:
+  case TokenType::tokStr:
     return "STR";
-  case TokenType::tok_char:
+  case TokenType::tokChar:
     return "CHAR";
 
   // Syntax elements
-  case TokenType::tok_open_paren:
+  case TokenType::tokOpenParen:
     return "OPEN_PAREN";
-  case TokenType::tok_close_paren:
+  case TokenType::tokRightParen:
     return "CLOSE_PAREN";
-  case TokenType::tok_open_brace:
+  case TokenType::tokLeftBrace:
     return "OPEN_BRACE";
-  case TokenType::tok_close_brace:
+  case TokenType::tokRightBrace:
     return "CLOSE_BRACE";
-  case TokenType::tok_open_bracket:
+  case TokenType::tokLeftBracket:
     return "OPEN_BRACKET";
-  case TokenType::tok_close_bracket:
+  case TokenType::tokRightBracket:
     return "CLOSE_BRACKET";
-  case TokenType::tok_fun_return:
+  case TokenType::tokArrow:
     return "FUN_RETURN";
-  case TokenType::tok_comma:
+  case TokenType::tokComma:
     return "COMMA";
-  case TokenType::tok_semicolon:
+  case TokenType::tokSemicolon:
     return "SEMICOLON";
 
   // Basic operators
-  case TokenType::tok_add:
+  case TokenType::tokPlus:
     return "ADD";
-  case TokenType::tok_sub:
+  case TokenType::tokMinus:
     return "SUB";
-  case TokenType::tok_mul:
+  case TokenType::tokStar:
     return "MUL";
-  case TokenType::tok_div:
+  case TokenType::tokSlash:
     return "DIV";
-  case TokenType::tok_mod:
+  case TokenType::tokPercent:
     return "MOD";
-  case TokenType::tok_bang:
+  case TokenType::tokBang:
     return "BANG";
 
   // Assignment operators
-  case TokenType::tok_plus_equals:
+  case TokenType::tokPlusEquals:
     return "PLUS_EQUALS";
-  case TokenType::tok_sub_equals:
+  case TokenType::tokSubEquals:
     return "SUB_EQUALS";
-  case TokenType::tok_mul_equals:
+  case TokenType::tokMulEquals:
     return "MUL_EQUALS";
-  case TokenType::tok_div_equals:
+  case TokenType::tokDivEquals:
     return "DIV_EQUALS";
-  case TokenType::tok_mod_equals:
+  case TokenType::tokModEquals:
     return "MOD_EQUALS";
 
   // Member access
-  case TokenType::tok_member:
+  case TokenType::tokPeriod:
     return "MEMBER";
-  case TokenType::tok_namespace_member:
+  case TokenType::tokDoubleColon:
     return "NAMESPACE_MEMBER";
 
   // Increment/decrement
-  case TokenType::tok_increment:
+  case TokenType::tokDoublePlus:
     return "INCREMENT";
-  case TokenType::tok_decrement:
+  case TokenType::tokDoubleMinus:
     return "DECREMENT";
 
   // Comparison
-  case TokenType::tok_equal:
+  case TokenType::tokDoubleEquals:
     return "EQUAL";
-  case TokenType::tok_not_equal:
+  case TokenType::tokBangEquals:
     return "NOT_EQUAL";
 
   // Logical
-  case TokenType::tok_and:
+  case TokenType::tokDoubleAmp:
     return "AND";
-  case TokenType::tok_or:
+  case TokenType::tokDoublePipe:
     return "OR";
 
   // Relational
-  case TokenType::tok_less:
+  case TokenType::tokLeftCaret:
     return "LESS";
-  case TokenType::tok_less_equal:
+  case TokenType::tokLessEqual:
     return "LESS_EQUAL";
-  case TokenType::tok_greater:
+  case TokenType::tokRightCaret:
     return "GREATER";
-  case TokenType::tok_greater_equal:
+  case TokenType::tokGreaterEqual:
     return "GREATER_EQUAL";
 
   // Other operators
-  case TokenType::tok_assign:
+  case TokenType::tokEquals:
     return "ASSIGN";
-  case TokenType::tok_colon:
+  case TokenType::tokColon:
     return "COLON";
 
-  case TokenType::tok_exclusive_range:
+  case TokenType::tokExclusiveRange:
     return "EXCLUSIVE_RANGE";
-  case TokenType::tok_inclusive_range:
+  case TokenType::tokInclusiveRange:
     return "INCLUSIVE_RANGE";
 
   // Literals
@@ -186,11 +186,11 @@ std::string type_to_string(const TokenType type) {
     return "FLOAT_LITERAL";
   case TokenType::tokStrLiteral:
     return "STRING_LITERAL";
-  case TokenType::tok_char_literal:
+  case TokenType::tokCharLiteral:
     return "CHAR_LITERAL";
 
   // Identifier
-  case TokenType::tok_identifier:
+  case TokenType::tokIdentifier:
     return "IDENTIFIER";
 
   default:

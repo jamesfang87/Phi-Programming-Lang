@@ -283,13 +283,13 @@ BinaryOp::BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
  * @param level Current indentation level
  */
 void BinaryOp::emit(int level) const {
-  std::println("{}BinaryOp: {}", indent(level), type_to_string(op));
+  std::println("{}BinaryOp: {}", indent(level), tyToStr(op));
   std::println("{}  lhs:", indent(level));
   lhs->emit(level + 2);
   std::println("{}  rhs:", indent(level));
   rhs->emit(level + 2);
   if (type.has_value()) {
-    std::println("{}  type: {}", indent(level), type.value().to_string());
+    std::println("{}  type: {}", indent(level), type.value().toString());
   }
 }
 
@@ -318,7 +318,7 @@ UnaryOp::UnaryOp(std::unique_ptr<Expr> operand, const Token &op,
  * @param level Current indentation level
  */
 void UnaryOp::emit(int level) const {
-  std::println("{}UnaryOp: {}", indent(level), type_to_string(op));
+  std::println("{}UnaryOp: {}", indent(level), tyToStr(op));
   std::println("{}  expr:", indent(level));
   operand->emit(level + 2);
 }

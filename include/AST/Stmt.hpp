@@ -109,7 +109,7 @@ public:
    * @brief Debug output for block
    * @param level Indentation level
    */
-  void info_dump(int level) const;
+  void emit(int level) const;
 
 private:
   std::vector<std::unique_ptr<Stmt>> stmts; ///< Contained statements

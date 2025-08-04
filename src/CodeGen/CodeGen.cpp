@@ -37,7 +37,7 @@ llvm::Type *phi::CodeGen::getTy(const phi::Type &type) {
   case Type::Primitive::range:
     return llvm::Type::getVoidTy(context); // TODO: proper range type
   default:
-    throw std::runtime_error("Unsupported type: " + type.to_string());
+    throw std::runtime_error("Unsupported type: " + type.toString());
   }
 }
 
@@ -51,7 +51,7 @@ void phi::CodeGen::visit(phi::UnaryOp &expr) {
   (void)expr; // Suppress unused parameter warning
 }
 
-void phi::CodeGen::generate_println_call(phi::FunCallExpr &call) {
+void phi::CodeGen::generatePrintlnCall(phi::FunCallExpr &call) {
   std::vector<llvm::Value *> args;
 
   if (call.getArgs().empty()) {
@@ -68,7 +68,7 @@ void phi::CodeGen::generate_println_call(phi::FunCallExpr &call) {
     llvm::Value *format;
     if (isIntTy(arg->getTy())) {
       format = builder.CreateGlobalString("%lld\n");
-    } else if (is_float_type(arg->getTy())) {
+    } else if (isFloat(arg->getTy())) {
       format = builder.CreateGlobalString("%g\n");
     } else {
       // Default to string format

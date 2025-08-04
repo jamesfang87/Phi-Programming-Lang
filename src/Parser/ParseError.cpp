@@ -14,12 +14,12 @@ namespace phi {
  * code.
  */
 void Parser::emitExpectedFoundError(const std::string &expected,
-                                    const Token &found_token) {
+                                    const Token &foundToken) {
   error(
-      std::format("expected {}, found `{}`", expected, found_token.getLexeme()))
-      .with_primary_label(spanFromToken(found_token),
+      std::format("expected {}, found `{}`", expected, foundToken.getLexeme()))
+      .with_primary_label(spanFromToken(foundToken),
                           std::format("expected {} here", expected))
-      .emit(*diagnosticsManager);
+      .emit(*diagnosticManager);
 }
 
 /**
@@ -33,23 +33,23 @@ void Parser::emitExpectedFoundError(const std::string &expected,
  * token's location and suggests possible corrections.
  */
 void Parser::emitUnexpectedTokenError(
-    const Token &token, const std::vector<std::string> &expected_tokens) {
+    const Token &token, const std::vector<std::string> &expectedTokens) {
   auto builder =
       error(std::format("unexpected token `{}`", token.getLexeme()))
           .with_primary_label(spanFromToken(token), "unexpected token");
 
-  if (!expected_tokens.empty()) {
+  if (!expectedTokens.empty()) {
     std::string suggestion = "expected ";
-    for (size_t i = 0; i < expected_tokens.size(); ++i) {
+    for (size_t i = 0; i < expectedTokens.size(); ++i) {
       if (i > 0) {
-        suggestion += i == expected_tokens.size() - 1 ? " or " : ", ";
+        suggestion += i == expectedTokens.size() - 1 ? " or " : ", ";
       }
-      suggestion += "`" + expected_tokens[i] + "`";
+      suggestion += "`" + expectedTokens[i] + "`";
     }
     builder.with_help(suggestion);
   }
 
-  builder.emit(*diagnosticsManager);
+  builder.emit(*diagnosticManager);
 }
 
 /**
@@ -63,16 +63,16 @@ void Parser::emitUnexpectedTokenError(
  * opening delimiter's location, suggests the required closing delimiter, and
  * adds a note about proper delimiter matching.
  */
-void Parser::emitUnclosedDelimiterError(const Token &opening_token,
-                                        const std::string &expected_closing) {
+void Parser::emitUnclosedDelimiterError(const Token &openingToken,
+                                        const std::string &expectedClosing) {
   error("unclosed delimiter")
       .with_primary_label(
-          spanFromToken(opening_token),
-          std::format("unclosed `{}`", opening_token.getLexeme()))
-      .with_help(std::format("expected `{}` to close this delimiter",
-                             expected_closing))
+          spanFromToken(openingToken),
+          std::format("unclosed `{}`", openingToken.getLexeme()))
+      .with_help(
+          std::format("expected `{}` to close this delimiter", expectedClosing))
       .with_note("delimiters must be properly matched")
-      .emit(*diagnosticsManager);
+      .emit(*diagnosticManager);
 }
 
 /**
@@ -122,9 +122,9 @@ bool Parser::SyncToStmt() {
  * Advances through the token stream until encountering one of the specified
  * target tokens. Used for context-specific recovery (e.g., block endings).
  */
-bool Parser::syncTo(const std::initializer_list<TokenType> target_tokens) {
+bool Parser::syncTo(const std::initializer_list<TokenType> targetTokens) {
   while (!atEOF()) {
-    for (const TokenType target : target_tokens) {
+    for (const TokenType target : targetTokens) {
       if (peekToken().getTy() == target) {
         return true;
       }
@@ -143,8 +143,8 @@ bool Parser::syncTo(const std::initializer_list<TokenType> target_tokens) {
  * Efficiently skips tokens until the exact specified token type is found.
  * Useful for recovering from errors where a specific closing token is expected.
  */
-bool Parser::syncTo(const TokenType target_token) {
-  while (!atEOF() && peekToken().getTy() != target_token) {
+bool Parser::syncTo(const TokenType targetToken) {
+  while (!atEOF() && peekToken().getTy() != targetToken) {
     advanceToken();
   }
   return !atEOF(); // Found target unless EOF reached

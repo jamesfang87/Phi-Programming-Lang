@@ -128,6 +128,6 @@ enum class TokenType : uint8_t {
  * @param type Token type to convert
  * @return String representation of token type
  */
-std::string type_to_string(TokenType type);
+std::string tyToStr(TokenType type);
 
 } // namespace phi

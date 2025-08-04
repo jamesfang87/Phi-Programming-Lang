@@ -77,7 +77,7 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
         .with_help("return statements must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
         .with_code("E0012")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return nullptr;
   }
   advanceToken();
@@ -100,8 +100,8 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
   SrcLocation loc = peekToken().getStart();
   advanceToken(); // eat 'if'
 
-  auto condition = parseExpr();
-  if (!condition)
+  auto cond = parseExpr();
+  if (!cond)
     return nullptr;
 
   auto body = parseBlock();
@@ -110,7 +110,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
 
   // No else clause
   if (peekToken().getTy() != TokenType::tokElse) {
-    return std::make_unique<IfStmt>(loc, std::move(condition), std::move(body),
+    return std::make_unique<IfStmt>(loc, std::move(cond), std::move(body),
                                     nullptr);
   }
 
@@ -119,25 +119,25 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
 
   // Else block: else { ... }
   if (peekToken().getTy() == TokenType::tokLeftBrace) {
-    auto else_body = parseBlock();
-    if (!else_body)
+    auto elseBody = parseBlock();
+    if (!elseBody)
       return nullptr;
 
-    return std::make_unique<IfStmt>(loc, std::move(condition), std::move(body),
-                                    std::move(else_body));
+    return std::make_unique<IfStmt>(loc, std::move(cond), std::move(body),
+                                    std::move(elseBody));
   }
   // Else if: else if ...
   if (peekToken().getTy() == TokenType::tokIf) {
-    std::vector<std::unique_ptr<Stmt>> elif_stmt;
+    std::vector<std::unique_ptr<Stmt>> elifStmt;
 
     auto res = parseIf();
     if (!res)
       return nullptr;
 
-    elif_stmt.emplace_back(std::move(res));
-    auto elif_body = std::make_unique<Block>(std::move(elif_stmt));
-    return std::make_unique<IfStmt>(loc, std::move(condition), std::move(body),
-                                    std::move(elif_body));
+    elifStmt.emplace_back(std::move(res));
+    auto elifBody = std::make_unique<Block>(std::move(elifStmt));
+    return std::make_unique<IfStmt>(loc, std::move(cond), std::move(body),
+                                    std::move(elifBody));
   }
 
   // Invalid else clause
@@ -146,7 +146,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
       .with_help(
           "else must be followed by a block `{` or another `if` statement")
       .with_code("E0040")
-      .emit(*diagnosticsManager);
+      .emit(*diagnosticManager);
   return nullptr;
 }
 
@@ -162,16 +162,15 @@ std::unique_ptr<WhileStmt> Parser::parseWhile() {
   SrcLocation loc = peekToken().getStart();
   advanceToken(); // eat 'while'
 
-  auto condition = parseExpr();
-  if (!condition)
+  auto cond = parseExpr();
+  if (!cond)
     return nullptr;
 
   auto body = parseBlock();
   if (!body)
     return nullptr;
 
-  return std::make_unique<WhileStmt>(loc, std::move(condition),
-                                     std::move(body));
+  return std::make_unique<WhileStmt>(loc, std::move(cond), std::move(body));
 }
 
 /**
@@ -190,29 +189,28 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
   advanceToken(); // eat 'for'
 
   // Parse loop variable
-  Token looping_var = advanceToken();
-  if (looping_var.getTy() != TokenType::tokIdentifier) {
+  Token loopVar = advanceToken();
+  if (loopVar.getTy() != TokenType::tokIdentifier) {
     error("for loop must have a loop variable")
-        .with_primary_label(spanFromToken(looping_var),
-                            "expected identifier here")
+        .with_primary_label(spanFromToken(loopVar), "expected identifier here")
         .with_help("for loops have the form: `for variable in iterable`")
         .with_note(
             "the loop variable will be assigned each value from the iterable")
         .with_code("E0014")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return nullptr;
   }
 
   // Validate 'in' keyword
-  Token in_keyword = advanceToken();
-  if (in_keyword.getTy() != TokenType::tokIn) {
+  Token inKw = advanceToken();
+  if (inKw.getTy() != TokenType::tokIn) {
     error("missing `in` keyword in for loop")
-        .with_primary_label(spanFromToken(looping_var), "loop variable")
-        .with_secondary_label(spanFromToken(in_keyword), "expected `in` here")
+        .with_primary_label(spanFromToken(loopVar), "loop variable")
+        .with_secondary_label(spanFromToken(inKw), "expected `in` here")
         .with_help("for loops have the form: `for variable in iterable`")
-        .with_suggestion(spanFromToken(in_keyword), "in", "add `in` keyword")
+        .with_suggestion(spanFromToken(inKw), "in", "add `in` keyword")
         .with_code("E0015")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return nullptr;
   }
 
@@ -228,7 +226,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
 
   // Create loop variable declaration (implicit i64 type)
   auto loop_var =
-      std::make_unique<VarDecl>(looping_var.getStart(), looping_var.getLexeme(),
+      std::make_unique<VarDecl>(loopVar.getStart(), loopVar.getLexeme(),
                                 Type(Type::Primitive::i64), false, nullptr);
 
   return std::make_unique<ForStmt>(loc, std::move(loop_var), std::move(range),
@@ -251,7 +249,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
  * - Semicolon terminator
  */
 std::unique_ptr<LetStmt> Parser::parseLet() {
-  SrcLocation let_loc = peekToken().getStart();
+  SrcLocation letLoc = peekToken().getStart();
   if (advanceToken().getTy() != TokenType::tokLet) {
     emitUnexpectedTokenError(peekToken(), {"let"});
     return nullptr;
@@ -260,7 +258,7 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
   auto binding = parseTypedBinding();
   if (!binding)
     return nullptr;
-  auto [var_loc, name, type] = *binding;
+  auto [varLoc, name, type] = *binding;
 
   // Validate assignment operator
   if (advanceToken().getTy() != TokenType::tokEquals) {
@@ -269,7 +267,7 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
         .with_help("variables must be initialized with a value")
         .with_note("variable syntax: `let name: type = value;`")
         .with_code("E0023")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return nullptr;
   }
 
@@ -285,13 +283,13 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
         .with_help("variable declarations must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
         .with_code("E0025")
-        .emit(*diagnosticsManager);
+        .emit(*diagnosticManager);
     return nullptr;
   }
 
   return std::make_unique<LetStmt>(
-      let_loc,
-      std::make_unique<VarDecl>(var_loc, name, type, true, std::move(expr)));
+      letLoc,
+      std::make_unique<VarDecl>(varLoc, name, type, true, std::move(expr)));
 }
 
 } // namespace phi

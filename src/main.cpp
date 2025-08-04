@@ -55,14 +55,14 @@ int main(int argc, char *argv[]) {
     std::string source = readFileToStr(filename);
     std::println("File content:\n{}", source);
 
-    auto source_manager = std::make_shared<phi::SrcManager>();
-    auto diagnostic_manager =
-        std::make_shared<phi::DiagnosticManager>(source_manager);
+    auto srcManager = std::make_shared<phi::SrcManager>();
+    auto diagnosticManager =
+        std::make_shared<phi::DiagnosticManager>(srcManager);
 
     // Register source content for diagnostic display
-    source_manager->addSrcFile(filename, source);
+    srcManager->addSrcFile(filename, source);
 
-    phi::Lexer scanner(source, filename, diagnostic_manager);
+    phi::Lexer scanner(source, filename, diagnosticManager);
     auto [tokens, scan_success] = scanner.scan();
 
     if (!scan_success) {
@@ -72,7 +72,7 @@ int main(int argc, char *argv[]) {
     }
 
     std::println("\nParsing results: ");
-    phi::Parser parser(source, filename, tokens, diagnostic_manager);
+    phi::Parser parser(source, filename, tokens, diagnosticManager);
     auto [ast, parse_success] = parser.parse();
     if (!parse_success) {
       std::println(
