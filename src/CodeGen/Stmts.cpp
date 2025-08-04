@@ -4,8 +4,8 @@
 #include "llvm/IR/Function.h"
 
 void phi::CodeGen::visit(phi::ReturnStmt &stmt) {
-  if (stmt.has_expr()) {
-    stmt.get_expr().accept(*this);
+  if (stmt.hasExpr()) {
+    stmt.getExpr().accept(*this);
     builder.CreateRet(curValue);
   } else {
     builder.CreateRetVoid();
@@ -23,24 +23,24 @@ void phi::CodeGen::visit(phi::IfStmt &stmt) {
   llvm::BasicBlock *merge_block =
       llvm::BasicBlock::Create(context, "if.end", function);
 
-  if (stmt.has_else()) {
+  if (stmt.hasElse()) {
     else_block = llvm::BasicBlock::Create(context, "if.else", function);
   }
 
-  // Evaluate condition
-  stmt.get_condition().accept(*this);
-  llvm::Value *condition = curValue;
+  // Evaluate cond
+  stmt.getCond().accept(*this);
+  llvm::Value *cond = curValue;
 
-  // Branch based on condition
-  if (stmt.has_else()) {
-    builder.CreateCondBr(condition, then_block, else_block);
+  // Branch based on cond
+  if (stmt.hasElse()) {
+    builder.CreateCondBr(cond, then_block, else_block);
   } else {
-    builder.CreateCondBr(condition, then_block, merge_block);
+    builder.CreateCondBr(cond, then_block, merge_block);
   }
 
   // Generate then block
   builder.SetInsertPoint(then_block);
-  for (auto &then_stmt : stmt.get_then().get_stmts()) {
+  for (auto &then_stmt : stmt.getThen().getStmts()) {
     then_stmt->accept(*this);
   }
   // Branch to merge if no terminator was created
@@ -49,9 +49,9 @@ void phi::CodeGen::visit(phi::IfStmt &stmt) {
   }
 
   // Generate else block if it exists
-  if (stmt.has_else()) {
+  if (stmt.hasElse()) {
     builder.SetInsertPoint(else_block);
-    for (auto &else_stmt : stmt.get_else().get_stmts()) {
+    for (auto &else_stmt : stmt.getElse().getStmts()) {
       else_stmt->accept(*this);
     }
     // Branch to merge if no terminator was created
@@ -76,22 +76,22 @@ void phi::CodeGen::visit(phi::WhileStmt &stmt) {
   llvm::BasicBlock *exit_block =
       llvm::BasicBlock::Create(context, "while.end", function);
 
-  // Jump to condition block
+  // Jump to cond block
   builder.CreateBr(cond_block);
 
-  // Generate condition block
+  // Generate cond block
   builder.SetInsertPoint(cond_block);
-  stmt.get_condition().accept(*this);
-  llvm::Value *condition = curValue;
+  stmt.getCond().accept(*this);
+  llvm::Value *cond = curValue;
 
-  builder.CreateCondBr(condition, body_block, exit_block);
+  builder.CreateCondBr(cond, body_block, exit_block);
 
   // Generate body block
   builder.SetInsertPoint(body_block);
-  for (auto &body_stmt : stmt.get_body().get_stmts()) {
+  for (auto &body_stmt : stmt.getBody().getStmts()) {
     body_stmt->accept(*this);
   }
-  // Branch back to condition if no terminator was created
+  // Branch back to cond if no terminator was created
   if (!builder.GetInsertBlock()->getTerminator()) {
     builder.CreateBr(cond_block);
   }
@@ -123,14 +123,14 @@ void phi::CodeGen::visit(phi::ForStmt &stmt) {
   builder.SetInsertPoint(init_block);
 
   // Create allocation for loop variable
-  VarDecl &loop_var = stmt.get_loop_var();
+  VarDecl &loop_var = stmt.getLoopVar();
   llvm::Type *var_type = getTy(loop_var.getTy());
   llvm::AllocaInst *alloca =
       builder.CreateAlloca(var_type, nullptr, loop_var.getID());
   decls[&loop_var] = alloca;
 
   // Handle range literals properly
-  auto *range_literal = dynamic_cast<RangeLiteral *>(&stmt.get_range());
+  auto *range_literal = dynamic_cast<RangeLiteral *>(&stmt.getRange());
   if (!range_literal) {
     throw std::runtime_error("For loops currently only support range literals");
   }
@@ -140,10 +140,10 @@ void phi::CodeGen::visit(phi::ForStmt &stmt) {
   llvm::Value *start_val = curValue;
   builder.CreateStore(start_val, alloca);
 
-  // Jump to condition block
+  // Jump to cond block
   builder.CreateBr(cond_block);
 
-  // Generate condition block
+  // Generate cond block
   builder.SetInsertPoint(cond_block);
   llvm::Value *current_val = builder.CreateLoad(var_type, alloca, "loop_var");
 
@@ -151,34 +151,33 @@ void phi::CodeGen::visit(phi::ForStmt &stmt) {
   range_literal->getEnd().accept(*this);
   llvm::Value *end_val = curValue;
 
-  // Create condition: current < end (for exclusive range) or current <= end
+  // Create cond: current < end (for exclusive range) or current <= end
   // (for inclusive)
-  llvm::Value *condition;
+  llvm::Value *cond;
   if (range_literal->isInclusive()) {
-    condition = builder.CreateICmpSLE(current_val, end_val, "loopcond");
+    cond = builder.CreateICmpSLE(current_val, end_val, "loopcond");
   } else {
-    condition = builder.CreateICmpSLT(current_val, end_val, "loopcond");
+    cond = builder.CreateICmpSLT(current_val, end_val, "loopcond");
   }
 
-  // Ensure condition is boolean (i1 type) - should already be from
+  // Ensure cond is boolean (i1 type) - should already be from
   // CreateICmpSLT, but safety check
-  if (!condition->getType()->isIntegerTy(1)) {
+  if (!cond->getType()->isIntegerTy(1)) {
     // Convert to boolean by comparing with zero
-    if (condition->getType()->isIntegerTy()) {
-      condition = builder.CreateICmpNE(
-          condition, llvm::ConstantInt::get(condition->getType(), 0), "tobool");
-    } else if (condition->getType()->isFloatingPointTy()) {
-      condition = builder.CreateFCmpONE(
-          condition, llvm::ConstantFP::get(condition->getType(), 0.0),
-          "tobool");
+    if (cond->getType()->isIntegerTy()) {
+      cond = builder.CreateICmpNE(
+          cond, llvm::ConstantInt::get(cond->getType(), 0), "tobool");
+    } else if (cond->getType()->isFloatingPointTy()) {
+      cond = builder.CreateFCmpONE(
+          cond, llvm::ConstantFP::get(cond->getType(), 0.0), "tobool");
     }
   }
 
-  builder.CreateCondBr(condition, body_block, exit_block);
+  builder.CreateCondBr(cond, body_block, exit_block);
 
   // Generate body block
   builder.SetInsertPoint(body_block);
-  for (auto &body_stmt : stmt.get_body().get_stmts()) {
+  for (auto &body_stmt : stmt.getBody().getStmts()) {
     body_stmt->accept(*this);
   }
   // Branch to increment if no terminator was created

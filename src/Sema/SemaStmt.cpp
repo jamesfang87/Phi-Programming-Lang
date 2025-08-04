@@ -27,7 +27,7 @@ bool Sema::resolveBlock(Block &block, bool scope_created = false) {
   }
 
   // Resolve all statements in the block
-  for (const auto &stmt : block.get_stmts()) {
+  for (const auto &stmt : block.getStmts()) {
     if (!stmt->accept(*this))
       return false;
   }
@@ -45,7 +45,7 @@ bool Sema::resolveBlock(Block &block, bool scope_created = false) {
  */
 bool Sema::visit(ReturnStmt &stmt) {
   // Void function return
-  if (!stmt.has_expr()) {
+  if (!stmt.hasExpr()) {
     if (curFun->getReturnTy() != Type(Type::Primitive::null)) {
       std::println("error: function '{}' should return a value",
                    curFun->getID());
@@ -55,14 +55,14 @@ bool Sema::visit(ReturnStmt &stmt) {
   }
 
   // Resolve return expression
-  bool success = stmt.get_expr().accept(*this);
+  bool success = stmt.getExpr().accept(*this);
   if (!success)
     return false;
 
   // Validate return type matches function signature
-  if (stmt.get_expr().getTy() != curFun->getReturnTy()) {
+  if (stmt.getExpr().getTy() != curFun->getReturnTy()) {
     std::println("type mismatch error: {}", curFun->getID());
-    std::println("return stmt type: {}", stmt.get_expr().getTy().to_string());
+    std::println("return stmt type: {}", stmt.getExpr().getTy().to_string());
     std::println("expected type: {}", curFun->getReturnTy().to_string());
     return false;
   }
@@ -74,25 +74,25 @@ bool Sema::visit(ReturnStmt &stmt) {
  * Resolves an if statement.
  *
  * Validates:
- * - Condition is boolean type
+ * - cond is boolean type
  * - Then/else blocks resolve successfully
  */
 bool Sema::visit(IfStmt &stmt) {
-  // Resolve condition
-  bool res = stmt.get_condition().accept(*this);
+  // Resolve cond
+  bool res = stmt.getCond().accept(*this);
   if (!res)
     return false;
 
-  // Validate condition is boolean
-  if (stmt.get_condition().getTy() != Type(Type::Primitive::boolean)) {
-    std::println("error: condition in if statement must have type bool");
+  // Validate cond is boolean
+  if (stmt.getCond().getTy() != Type(Type::Primitive::boolean)) {
+    std::println("error: cond in if statement must have type bool");
     return false;
   }
 
   // Resolve then and else blocks
-  if (!resolveBlock(stmt.get_then()))
+  if (!resolveBlock(stmt.getThen()))
     return false;
-  if (stmt.has_else() && !resolveBlock(stmt.get_else()))
+  if (stmt.hasElse() && !resolveBlock(stmt.getElse()))
     return false;
 
   return true;
@@ -102,22 +102,22 @@ bool Sema::visit(IfStmt &stmt) {
  * Resolves a while loop statement.
  *
  * Validates:
- * - Condition is boolean type
+ * - cond is boolean type
  * - Loop body resolves successfully
  */
 bool Sema::visit(WhileStmt &stmt) {
-  bool res = stmt.get_condition().accept(*this);
+  bool res = stmt.getCond().accept(*this);
   if (!res)
     return false;
 
-  // Validate condition is boolean
-  if (stmt.get_condition().getTy() != Type(Type::Primitive::boolean)) {
-    std::println("error: condition in while statement must have type bool");
+  // Validate cond is boolean
+  if (stmt.getCond().getTy() != Type(Type::Primitive::boolean)) {
+    std::println("error: cond in while statement must have type bool");
     return false;
   }
 
   // Resolve loop body
-  if (!resolveBlock(stmt.get_body()))
+  if (!resolveBlock(stmt.getBody()))
     return false;
 
   return true;
@@ -134,16 +134,16 @@ bool Sema::visit(WhileStmt &stmt) {
  */
 bool Sema::visit(ForStmt &stmt) {
   // Resolve range expression
-  bool res = stmt.get_range().accept(*this);
+  bool res = stmt.getRange().accept(*this);
   if (!res)
     return false;
 
   // Create scope for loop variable
   SymbolTable::ScopeGuard block_scope(symbolTable);
-  symbolTable.insert(&stmt.get_loop_var());
+  symbolTable.insert(&stmt.getLoopVar());
 
   // Resolve loop body (scope already created)
-  if (!resolveBlock(stmt.get_body(), true))
+  if (!resolveBlock(stmt.getBody(), true))
     return false;
 
   return true;

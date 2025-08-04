@@ -26,12 +26,12 @@ namespace phi {
  *
  * Handles comprehensive error recovery and validation at each step.
  */
-std::unique_ptr<FunDecl> Parser::parse_fun_decl() {
+std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   Token tok = advanceToken(); // Eat 'fun'
   SrcLocation loc = tok.getStart();
 
   // Validate function name
-  if (peekToken().getTy() != TokenType::tok_identifier) {
+  if (peekToken().getTy() != TokenType::tokIdentifier) {
     error("invalid function name")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected function name here")
@@ -45,24 +45,24 @@ std::unique_ptr<FunDecl> Parser::parse_fun_decl() {
   std::string name = advanceToken().getLexeme();
 
   // Parse parameter list
-  auto param_list = parse_list<ParamDecl>(TokenType::tok_open_paren,
-                                          TokenType::tok_close_paren,
-                                          &Parser::parse_param_decl);
+  auto param_list =
+      parseList<ParamDecl>(TokenType::tokOpenParen, TokenType::tokRightParen,
+                           &Parser::parseParamDecl);
   if (!param_list)
     return nullptr;
 
   // Handle optional return type
   auto return_type = Type(Type::Primitive::null);
-  if (peekToken().getTy() == TokenType::tok_fun_return) {
+  if (peekToken().getTy() == TokenType::tokArrow) {
     advanceToken(); // eat '->'
-    auto res = parse_type();
+    auto res = parseType();
     if (!res)
       return nullptr;
     return_type = res.value();
   }
 
   // Parse function body
-  auto body = parse_block();
+  auto body = parseBlock();
   if (!body)
     return nullptr;
 
@@ -80,9 +80,9 @@ std::unique_ptr<FunDecl> Parser::parse_fun_decl() {
  * Format: identifier ':' type
  * Used in variable declarations, function parameters, etc.
  */
-std::optional<Parser::TypedBinding> Parser::parse_typed_binding() {
+std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   // Parse identifier
-  if (peekToken().getTy() != TokenType::tok_identifier) {
+  if (peekToken().getTy() != TokenType::tokIdentifier) {
     error("expected identifier")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected identifier here")
@@ -93,7 +93,7 @@ std::optional<Parser::TypedBinding> Parser::parse_typed_binding() {
   std::string name = advanceToken().getLexeme();
 
   // Parse colon separator
-  if (peekToken().getTy() != TokenType::tok_colon) {
+  if (peekToken().getTy() != TokenType::tokColon) {
     error("expected colon")
         .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
         .with_suggestion(spanFromToken(peekToken()), ":",
@@ -104,7 +104,7 @@ std::optional<Parser::TypedBinding> Parser::parse_typed_binding() {
   advanceToken();
 
   // Parse type
-  auto type = parse_type();
+  auto type = parseType();
   if (!type)
     return std::nullopt;
 
@@ -120,8 +120,8 @@ std::optional<Parser::TypedBinding> Parser::parse_typed_binding() {
  *
  * Wrapper around parse_typed_binding() that creates a ParamDecl node.
  */
-std::unique_ptr<ParamDecl> Parser::parse_param_decl() {
-  auto binding = parse_typed_binding();
+std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
+  auto binding = parseTypedBinding();
   if (!binding)
     return nullptr;
 

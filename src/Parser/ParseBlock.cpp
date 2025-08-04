@@ -18,23 +18,23 @@ namespace phi {
  * - Skips invalid tokens with detailed error messages
  * - Continues parsing after recoverable errors
  */
-std::unique_ptr<Block> Parser::parse_block() {
+std::unique_ptr<Block> Parser::parseBlock() {
   // Validate opening brace
-  if (peekToken().getTy() != TokenType::tok_open_brace) {
-    emit_expected_found_error("{", peekToken());
+  if (peekToken().getTy() != TokenType::tokLeftBrace) {
+    emitExpectedFoundError("{", peekToken());
   }
   advanceToken();
 
   // Parse statements until closing brace
   std::vector<std::unique_ptr<Stmt>> stmts;
-  while (peekToken().getTy() != TokenType::tok_close_brace) {
-    if (peekToken().getTy() == TokenType::tok_eof) {
-      emit_unclosed_delimiter_error(peekToken(), "}");
+  while (peekToken().getTy() != TokenType::tokRightBrace) {
+    if (peekToken().getTy() == TokenType::tokEOF) {
+      emitUnclosedDelimiterError(peekToken(), "}");
       return nullptr;
     }
 
-    if (peekToken().getTy() == TokenType::tok_class ||
-        peekToken().getTy() == TokenType::tok_fun) {
+    if (peekToken().getTy() == TokenType::tokClass ||
+        peekToken().getTy() == TokenType::tokFun) {
       error("top-level declarations are not allowed inside function bodies")
           .with_primary_label(spanFromToken(peekToken()),
                               "top-level declaration here")
@@ -42,18 +42,18 @@ std::unique_ptr<Block> Parser::parse_block() {
                            "consider moving this to the top level")
           .with_code("E0003")
           .emit(*diagnosticsManager);
-      sync_to_stmt();
+      SyncToStmt();
       continue;
     }
 
     // Parse valid statements
-    auto res = parse_stmt();
+    auto res = parseStmt();
     if (res) {
       stmts.push_back(std::move(res));
       continue;
     }
 
-    sync_to_stmt();
+    SyncToStmt();
   }
 
   advanceToken(); // eat `}`
