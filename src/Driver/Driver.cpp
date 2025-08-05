@@ -1,8 +1,11 @@
 #include "Driver/Driver.hpp"
 
+#include "CodeGen/CodeGen.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
 #include "Sema/Sema.hpp"
+#include <cstdlib>
+#include <format>
 
 namespace phi {
 
@@ -30,7 +33,21 @@ bool PhiCompiler::compile() {
     return false;
   }
 
-  // Implementation of the compile method
+  // Code Generation
+  phi::CodeGen codegen(std::move(resolved_ast), path);
+  codegen.generate();
+
+  // Output IR to file
+  std::string ir_filename = path;
+  size_t dot_pos = ir_filename.find_last_of('.');
+  if (dot_pos != std::string::npos) {
+    ir_filename = ir_filename.substr(0, dot_pos);
+  }
+  ir_filename += ".ll";
+
+  codegen.outputIR(ir_filename);
+
+  system(std::format("clang {} -o output", ir_filename).c_str());
   return true;
 }
 

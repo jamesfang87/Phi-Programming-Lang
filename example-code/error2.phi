@@ -1,3 +1,0 @@
-fn main() {
-    let path = "C:\new\file.txt";
-}

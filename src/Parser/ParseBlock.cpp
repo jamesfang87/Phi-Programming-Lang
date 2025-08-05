@@ -33,19 +33,6 @@ std::unique_ptr<Block> Parser::parseBlock() {
       return nullptr;
     }
 
-    if (peekToken().getTy() == TokenKind::tokClass ||
-        peekToken().getTy() == TokenKind::tokFun) {
-      error("top-level declarations are not allowed inside function bodies")
-          .with_primary_label(spanFromToken(peekToken()),
-                              "top-level declaration here")
-          .with_suggestion(spanFromToken(peekToken()), "",
-                           "consider moving this to the top level")
-          .with_code("E0003")
-          .emit(*diagnosticManager);
-      SyncToStmt();
-      continue;
-    }
-
     // Parse valid statements
     auto res = parseStmt();
     if (res) {

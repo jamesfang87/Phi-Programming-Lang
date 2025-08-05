@@ -195,6 +195,54 @@ void LetStmt::emit(int level) const {
   }
 }
 
+//======================== BreakStmt Implementation =========================//
+
+/**
+ * @brief Constructs a break statement
+ *
+ * @param location Source location of break statement
+ */
+BreakStmt::BreakStmt(SrcLocation location)
+    : Stmt(Stmt::Kind::BreakStmtKind, std::move(location)) {}
+
+BreakStmt::~BreakStmt() = default;
+
+/**
+ * @brief Dumps break statement information
+ *
+ * Output format:
+ *   [indent]BreakStmt
+ *
+ * @param level Current indentation level
+ */
+void BreakStmt::emit(int level) const {
+  std::println("{}BreakStmt", indent(level));
+}
+
+//======================= ContinueStmt Implementation ========================//
+
+/**
+ * @brief Constructs a continue statement
+ *
+ * @param location Source location of continue statement
+ */
+ContinueStmt::ContinueStmt(SrcLocation location)
+    : Stmt(Stmt::Kind::ContinueStmtKind, std::move(location)) {}
+
+ContinueStmt::~ContinueStmt() = default;
+
+/**
+ * @brief Dumps continue statement information
+ *
+ * Output format:
+ *   [indent]ContinueStmt
+ *
+ * @param level Current indentation level
+ */
+void ContinueStmt::emit(int level) const {
+  std::println("{}ContinueStmt", indent(level));
+}
+
 //======================== Block Implementation =========================//
 
 /**

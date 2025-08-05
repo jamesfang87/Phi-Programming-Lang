@@ -89,10 +89,7 @@ void Parser::emitUnclosedDelimiterError(const Token &openingToken,
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
 bool Parser::SyncToTopLvl() {
-  return syncTo({
-      TokenKind::tokFun,
-      TokenKind::tokClass,
-  });
+  return syncTo({TokenKind::tokFun, TokenKind::TokStruct, TokenKind::TokEnum});
 }
 
 /**

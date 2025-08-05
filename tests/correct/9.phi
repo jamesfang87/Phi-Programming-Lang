@@ -1,0 +1,27 @@
+fun println(a: i64) {}
+
+fun main() {
+    let a: i64 = 0;
+    while (a < 10) {
+        if a == 5 {
+            a = a + 1;
+            continue;
+        } else if a == 7 {
+            break;
+        }
+        println(a);
+        a = a + 1;
+    }
+
+    for i in 0..10 {
+        if i == 5 {
+            continue;
+        } else if i == 8 {
+            break;
+        }
+        println(i);
+    }
+
+    println(a);
+
+}

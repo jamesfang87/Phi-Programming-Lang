@@ -24,20 +24,21 @@ enum class TokenKind : uint8_t {
   // KEYWORDS
   tokBool,     ///< `bool` keyword
   tokBreak,    ///< `break` keyword
-  tokClass,    ///< `class` keyword
   tokConst,    ///< `const` keyword
   tokContinue, ///< `continue` keyword
   tokElse,     ///< `else` keyword
-  tokFalse,    ///< `false` literal
-  tokFor,      ///< `for` keyword
-  tokFun,      ///< `fun` keyword
-  tokIf,       ///< `if` keyword
-  tokImport,   ///< `import` keyword
-  tokIn,       ///< `in` keyword
-  tokLet,      ///< `let` keyword
-  tokReturn,   ///< `return` keyword
-  tokTrue,     ///< `true` literal
-  tokWhile,    ///< `while` keyword
+  TokEnum,
+  tokFalse,  ///< `false` literal
+  tokFor,    ///< `for` keyword
+  tokFun,    ///< `fun` keyword
+  tokIf,     ///< `if` keyword
+  tokImport, ///< `import` keyword
+  tokIn,     ///< `in` keyword
+  tokLet,    ///< `let` keyword
+  tokReturn, ///< `return` keyword
+  TokStruct,
+  tokTrue,  ///< `true` literal
+  tokWhile, ///< `while` keyword
 
   // SIGNED INTEGER TYPES
   tokI8,  ///< `i8` type (8-bit signed)
@@ -56,8 +57,8 @@ enum class TokenKind : uint8_t {
   tokF64, ///< `f64` type (64-bit float)
 
   // TEXT TYPES
-  tokStr,  ///< `str` type keyword
-  tokChar, ///< `char` type keyword
+  tokString, ///< `str` type keyword
+  tokChar,   ///< `char` type keyword
 
   // SYNTAX DELIMITERS
   tokOpenParen,    ///< `(` parenthesis
