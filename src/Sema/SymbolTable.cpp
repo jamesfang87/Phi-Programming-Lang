@@ -11,14 +11,14 @@ namespace phi {
  * Scopes are implemented as stack of hash maps.
  * Each scope corresponds to a lexical block (function, if, for, etc.).
  */
-void SymbolTable::enter_scope() { scopes.emplace_back(); }
+void SymbolTable::enterScope() { scopes.emplace_back(); }
 
 /**
  * Exits the current scope, discarding all declarations within it.
  *
  * Automatically removes all symbols defined in the current scope.
  */
-void SymbolTable::exit_scope() { scopes.pop_back(); }
+void SymbolTable::exitScope() { scopes.pop_back(); }
 
 bool SymbolTable::insert(FunDecl *fun) {
   scopes.back().funs[fun->getID()] = fun;

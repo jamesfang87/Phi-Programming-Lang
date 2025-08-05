@@ -27,14 +27,14 @@ std::string tyToStr(const TokenKind type) {
     return "BOOL";
   case TokenKind::tokBreak:
     return "BREAK";
-  case TokenKind::tokClass:
-    return "CLASS";
   case TokenKind::tokConst:
     return "CONST";
   case TokenKind::tokContinue:
     return "CONTINUE";
   case TokenKind::tokElse:
     return "ELSE";
+  case TokenKind::TokEnum:
+    return "ENUM";
   case TokenKind::tokFalse:
     return "FALSE";
   case TokenKind::tokFor:
@@ -51,6 +51,8 @@ std::string tyToStr(const TokenKind type) {
     return "LET";
   case TokenKind::tokReturn:
     return "RETURN";
+  case TokenKind::TokStruct:
+    return "STRUCT";
   case TokenKind::tokTrue:
     return "TRUE";
   case TokenKind::tokWhile:
@@ -83,7 +85,7 @@ std::string tyToStr(const TokenKind type) {
     return "F64";
 
   // Text types
-  case TokenKind::tokStr:
+  case TokenKind::tokString:
     return "STR";
   case TokenKind::tokChar:
     return "CHAR";
