@@ -6,6 +6,9 @@ cmake-build-*/
 *.o
 *.obj
 
+# LLVM files
+*.ll
+
 # Executables
 *.exe
 *.out
