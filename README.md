@@ -10,12 +10,6 @@ A modern language compiler written in C++23.
 
 ## Building
 
-### Using the build script
-
-```bash
-./build.sh
-```
-
 ### Using Make
 
 ```bash
