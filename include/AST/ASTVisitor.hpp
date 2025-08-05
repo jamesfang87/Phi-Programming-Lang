@@ -20,6 +20,8 @@ class IfStmt;
 class WhileStmt;
 class ForStmt;
 class LetStmt;
+class BreakStmt;
+class ContinueStmt;
 
 /**
  * @brief Abstract visitor interface for AST traversal
@@ -141,6 +143,10 @@ public:
    * @return Boolean indicating whether to continue traversal
    */
   virtual ReturnType visit(LetStmt &stmt) = 0;
+
+  virtual ReturnType visit(BreakStmt &stmt) = 0;
+
+  virtual ReturnType visit(ContinueStmt &stmt) = 0;
 
   /**
    * @brief Visit method for generic expressions

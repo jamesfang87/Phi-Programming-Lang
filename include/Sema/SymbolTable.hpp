@@ -37,13 +37,13 @@ public:
      * @param table Reference to the symbol table to manage
      */
     explicit ScopeGuard(SymbolTable &table) : table(table) {
-      table.enter_scope();
+      table.enterScope();
     }
 
     /**
      * @brief Destructor that automatically exits the scope
      */
-    ~ScopeGuard() { table.exit_scope(); }
+    ~ScopeGuard() { table.exitScope(); }
 
     // Explicitly disable copying and moving to prevent accidental scope
     // mismanagement
@@ -79,7 +79,7 @@ private:
    * when entering any block that introduces a new lexical scope (function
    * bodies, control structures, etc.).
    */
-  void enter_scope();
+  void enterScope();
 
   /**
    * @brief Exits the current innermost scope
@@ -87,7 +87,7 @@ private:
    * Pops the current scope from the scope stack, effectively ending the
    * current lexical scope. All declarations in this scope become inaccessible.
    */
-  void exit_scope();
+  void exitScope();
 };
 
 } // namespace phi

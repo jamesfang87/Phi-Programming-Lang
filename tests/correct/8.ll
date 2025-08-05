@@ -13,13 +13,6 @@ target triple = "arm64-apple-darwin24.5.0"
 
 declare i32 @printf(ptr, ...)
 
-define void @println1(ptr %0) {
-entry:
-  %msg = alloca ptr, align 8
-  store ptr %0, ptr %msg, align 8
-  ret void
-}
-
 define i64 @add(i64 %0, i64 %1) {
 entry:
   %a = alloca i64, align 8
@@ -80,12 +73,12 @@ if.then:                                          ; preds = %entry
   %1 = call i32 (ptr, ...) @printf(ptr @0, i64 1)
   br label %if.end
 
-if.end:                                           ; preds = %if.else, %if.then
-  br label %while.cond
-
 if.else:                                          ; preds = %entry
   %2 = call i32 (ptr, ...) @printf(ptr @1, i64 0)
   br label %if.end
+
+if.end:                                           ; preds = %if.else, %if.then
+  br label %while.cond
 
 while.cond:                                       ; preds = %while.body, %if.end
   %a2 = load i64, ptr %a, align 4
@@ -111,7 +104,8 @@ for.init:                                         ; preds = %while.end
 for.cond:                                         ; preds = %for.inc, %for.init
   %loop_var = load i64, ptr %i, align 4
   %loopcond = icmp slt i64 %loop_var, 10
-  br i1 %loopcond, label %for.body, label %for.end
+  %tobool = icmp ne i1 %loopcond, false
+  br i1 %tobool, label %for.body, label %for.end
 
 for.body:                                         ; preds = %for.cond
   %i5 = load i64, ptr %i, align 4

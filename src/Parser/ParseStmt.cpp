@@ -35,9 +35,13 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return parseFor();
   case TokenKind::tokLet:
     return parseLet();
+  case TokenKind::tokBreak:
+    return parseBreak();
+  case TokenKind::tokContinue:
+    return parseContinue();
   default:
     auto res = parseExpr();
-    advanceToken();
+    advanceToken(); // this is for the semicolon
     return res;
   }
 }
@@ -290,6 +294,57 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
   return std::make_unique<LetStmt>(
       letLoc,
       std::make_unique<VarDecl>(varLoc, name, type, true, std::move(expr)));
+}
+
+std::unique_ptr<BreakStmt> Parser::parseBreak() {
+  SrcLocation Loc = peekToken().getStart();
+  if (advanceToken().getTy() != TokenKind::tokBreak) {
+    error("missing break keyword")
+        .with_primary_label(spanFromToken(peekToken()), "expected `break` here")
+        .with_help("break statements must be preceded by a loop")
+        .with_code("E0026")
+        .emit(*diagnosticManager);
+    return nullptr;
+  }
+
+  // Validate semicolon terminator
+  if (advanceToken().getTy() != TokenKind::tokSemicolon) {
+    error("missing semicolon after break statement")
+        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_help("break statements must end with a semicolon")
+        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_code("E0027")
+        .emit(*diagnosticManager);
+    return nullptr;
+  }
+
+  return std::make_unique<BreakStmt>(Loc);
+}
+
+std::unique_ptr<ContinueStmt> Parser::parseContinue() {
+  SrcLocation Loc = peekToken().getStart();
+  if (advanceToken().getTy() != TokenKind::tokContinue) {
+    error("missing continue keyword")
+        .with_primary_label(spanFromToken(peekToken()),
+                            "expected `continue` here")
+        .with_help("continue statements must be preceded by a loop")
+        .with_code("E0028")
+        .emit(*diagnosticManager);
+    return nullptr;
+  }
+
+  // Validate semicolon terminator
+  if (advanceToken().getTy() != TokenKind::tokSemicolon) {
+    error("missing semicolon after continue statement")
+        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_help("continue statements must end with a semicolon")
+        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_code("E0029")
+        .emit(*diagnosticManager);
+    return nullptr;
+  }
+
+  return std::make_unique<ContinueStmt>(Loc);
 }
 
 } // namespace phi

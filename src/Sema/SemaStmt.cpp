@@ -1,4 +1,5 @@
 #include "AST/Expr.hpp"
+#include "AST/Stmt.hpp"
 #include "Sema/Sema.hpp"
 
 #include <optional>
@@ -106,6 +107,8 @@ bool Sema::visit(IfStmt &stmt) {
  * - Loop body resolves successfully
  */
 bool Sema::visit(WhileStmt &stmt) {
+  LoopContextRAII LoopContext(LoopDepth);
+
   bool res = stmt.getCond().accept(*this);
   if (!res)
     return false;
@@ -133,6 +136,7 @@ bool Sema::visit(WhileStmt &stmt) {
  * Creates new scope for loop variable.
  */
 bool Sema::visit(ForStmt &stmt) {
+  LoopContextRAII LoopContext(LoopDepth);
   // Resolve range expression
   bool res = stmt.getRange().accept(*this);
   if (!res)
@@ -197,6 +201,9 @@ bool Sema::visit(LetStmt &stmt) {
 
   return true;
 }
+
+bool Sema::visit(BreakStmt &stmt) { return LoopDepth > 0; }
+bool Sema::visit(ContinueStmt &stmt) { return LoopDepth > 0; }
 
 bool Sema::visit(Expr &stmt) { return stmt.accept(*this); }
 

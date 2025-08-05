@@ -29,6 +29,9 @@ public:
     WhileStmtKind,
     ForStmtKind,
     LetStmtKind,
+    ContinueStmtKind,
+    BreakStmtKind,
+
     // Expressions (ranges for easier checking)
     ExprFirst,
     IntLiteralKind = ExprFirst,
@@ -207,7 +210,7 @@ public:
   }
 
 private:
-  std::unique_ptr<Expr> cond;       ///< condal expression
+  std::unique_ptr<Expr> cond;       ///< cond expression
   std::unique_ptr<Block> thenBlock; ///< Then clause block
   std::unique_ptr<Block> elseBlock; ///< Else clause block (optional)
 };
@@ -338,6 +341,48 @@ public:
 
 private:
   std::unique_ptr<VarDecl> decl; ///< Variable declaration
+};
+
+class BreakStmt final : public Stmt {
+public:
+  /**
+   * @brief Constructs break statement
+   * @param location Source location
+   */
+  BreakStmt(SrcLocation Location);
+  ~BreakStmt() override;
+
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &Visitor) override {
+    return Visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &Visitor) override { Visitor.visit(*this); }
+
+  /// @brief LLVM RTTI support
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::BreakStmtKind;
+  }
+};
+
+class ContinueStmt final : public Stmt {
+public:
+  /**
+   * @brief Constructs continue statement
+   * @param location Source location
+   */
+  ContinueStmt(SrcLocation Location);
+  ~ContinueStmt() override;
+
+  void emit(int level) const override;
+  bool accept(ASTVisitor<bool> &visitor) override {
+    return visitor.visit(*this);
+  }
+  void accept(ASTVisitor<void> &visitor) override { visitor.visit(*this); }
+
+  /// @brief LLVM RTTI support
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::ContinueStmtKind;
+  }
 };
 
 } // namespace phi

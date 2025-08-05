@@ -4,7 +4,7 @@
 #include "AST/Type.hpp"
 #include <stdexcept>
 
-llvm::Type *phi::CodeGen::getTy(const phi::Type &type) {
+llvm::Type *phi::CodeGen::getType(const phi::Type &type) {
   switch (type.primitive_type()) {
   case Type::Primitive::null:
     return llvm::Type::getVoidTy(context);
@@ -142,8 +142,6 @@ void phi::CodeGen::generate() {
     } else if (func_decl->getID() != "println") {
       generateFun(*func_decl);
     }
-    // Ignore println function declarations - we link them to printf
-    // automatically
   }
 }
 
@@ -156,10 +154,10 @@ void phi::CodeGen::generateFun(phi::FunDecl &func) {
   // Create function type
   std::vector<llvm::Type *> param_types;
   for (auto &param : func.getParams()) {
-    param_types.push_back(getTy(param->getTy()));
+    param_types.push_back(getType(param->getTy()));
   }
 
-  auto *return_type = getTy(func.getReturnTy());
+  auto *return_type = getType(func.getReturnTy());
   auto *func_type = llvm::FunctionType::get(return_type, param_types, false);
 
   // Create function
@@ -174,7 +172,7 @@ void phi::CodeGen::generateFun(phi::FunDecl &func) {
   auto arg_it = llvm_func->arg_begin();
   for (auto &param : func.getParams()) {
     // Create allocation for parameter
-    llvm::Type *param_type = getTy(param->getTy());
+    llvm::Type *param_type = getType(param->getTy());
     llvm::AllocaInst *alloca =
         builder.CreateAlloca(param_type, nullptr, param->getID());
 

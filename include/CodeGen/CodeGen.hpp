@@ -1,4 +1,3 @@
-#include "AST/ASTVisitor.hpp"
 #include "AST/Decl.hpp"
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
@@ -16,7 +15,7 @@
 
 namespace phi {
 
-class CodeGen : public ASTVisitor<void> {
+class CodeGen : ASTVisitor<void> {
 public:
   CodeGen(std::vector<std::unique_ptr<FunDecl>> ast, std::string_view path,
           std::string_view targetTriple = "")
@@ -45,7 +44,14 @@ private:
   llvm::Value *curFun = nullptr;
   llvm::Function *printfFun = nullptr;
 
-  llvm::Type *getTy(const Type &type);
+  struct LoopContext {
+    llvm::BasicBlock *BreakTarget;
+    llvm::BasicBlock *ContinueTarget; // for `continue`, optional
+  };
+
+  std::vector<LoopContext> LoopStack; // member of CodeGen
+
+  llvm::Type *getType(const Type &type);
   void generateFun(phi::FunDecl &fun);
   void generateMain(phi::FunDecl &decl);
   void generatePrintlnCall(phi::FunCallExpr &call);
@@ -55,24 +61,26 @@ private:
   void generateFloatOp(llvm::Value *lhs, llvm::Value *rhs, phi::BinaryOp &expr);
 
   // Visitor methods for expressions
-  void visit(phi::IntLiteral &expr) override;
-  void visit(phi::FloatLiteral &expr) override;
-  void visit(phi::StrLiteral &expr) override;
-  void visit(phi::CharLiteral &expr) override;
-  void visit(phi::BoolLiteral &expr) override;
-  void visit(phi::RangeLiteral &expr) override;
-  void visit(phi::DeclRefExpr &expr) override;
-  void visit(phi::FunCallExpr &expr) override;
-  void visit(phi::BinaryOp &expr) override;
-  void visit(phi::UnaryOp &expr) override;
+  void visit(phi::IntLiteral &expr);
+  void visit(phi::FloatLiteral &expr);
+  void visit(phi::StrLiteral &expr);
+  void visit(phi::CharLiteral &expr);
+  void visit(phi::BoolLiteral &expr);
+  void visit(phi::RangeLiteral &expr);
+  void visit(phi::DeclRefExpr &expr);
+  void visit(phi::FunCallExpr &expr);
+  void visit(phi::BinaryOp &expr);
+  void visit(phi::UnaryOp &expr);
 
   // Visitor methods for statements
-  void visit(phi::ReturnStmt &stmt) override;
-  void visit(phi::IfStmt &stmt) override;
-  void visit(phi::WhileStmt &stmt) override;
-  void visit(phi::ForStmt &stmt) override;
-  void visit(phi::LetStmt &stmt) override;
-  void visit(phi::Expr &expr) override;
+  void visit(phi::ReturnStmt &stmt);
+  void visit(phi::IfStmt &stmt);
+  void visit(phi::WhileStmt &stmt);
+  void visit(phi::ForStmt &stmt);
+  void visit(phi::LetStmt &stmt);
+  void visit(phi::BreakStmt &stmt);
+  void visit(phi::ContinueStmt &stmt);
+  void visit(phi::Expr &expr);
 };
 
 } // namespace phi

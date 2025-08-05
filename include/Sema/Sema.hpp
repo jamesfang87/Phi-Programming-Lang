@@ -1,9 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
-#include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -179,6 +178,9 @@ public:
    */
   bool visit(LetStmt &stmt) override;
 
+  bool visit(BreakStmt &stmt) override;
+  bool visit(ContinueStmt &stmt) override;
+
   /**
    * @brief Validates expression statements
    *
@@ -198,6 +200,15 @@ private:
 
   /// Pointer to the function currently being analyzed
   FunDecl *curFun = nullptr;
+
+  int64_t LoopDepth = 0;
+  class LoopContextRAII {
+    int64_t &depth;
+
+  public:
+    explicit LoopContextRAII(int64_t &d) : depth(d) { ++depth; }
+    ~LoopContextRAII() { --depth; }
+  };
 
   /**
    * @brief Resolves a block statement
