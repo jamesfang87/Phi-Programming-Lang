@@ -141,7 +141,7 @@ private:
     case Primitive::f64:
       return "f64";
     case Primitive::str:
-      return "str";
+      return "string";
     case Primitive::character:
       return "char";
     case Primitive::boolean:

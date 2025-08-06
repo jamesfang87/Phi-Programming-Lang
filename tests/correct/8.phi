@@ -1,5 +1,12 @@
-fun println(msg: str) {}
+fun println(msg: string) {}
+
+fun foo(mut a: i64, mut b: i64) {
+    a = 10;
+    b = 20;
+}
 
 fun main() {
+    let mut x: i64 = 10;
+    x = 9;
     println("Hello, World!");
 }

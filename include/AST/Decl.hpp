@@ -51,6 +51,8 @@ public:
    */
   virtual void emit(int level) const = 0;
 
+  virtual bool isMutable() const = 0;
+
 protected:
   SrcLocation location;     ///< Source location of declaration
   std::string id;           ///< Name of declared entity
@@ -76,14 +78,14 @@ public:
    * @param isConst Constant flag (true for const)
    * @param initializer Initial value expression
    */
-  VarDecl(SrcLocation location, std::string id, Type type, const bool isConst,
+  VarDecl(SrcLocation location, std::string id, Type type, const bool IsMut,
           std::unique_ptr<Expr> init);
 
   /**
    * @brief Checks constant status
    * @return true if constant, false if mutable
    */
-  [[nodiscard]] bool isConst() const { return isConstant; }
+  [[nodiscard]] bool isConst() const { return IsMut; }
 
   /**
    * @brief Retrieves initializer expression
@@ -103,8 +105,10 @@ public:
    */
   void emit(int level) const override;
 
+  bool isMutable() const override { return IsMut; }
+
 private:
-  const bool isConstant;      ///< Constant declaration flag
+  const bool IsMut;           ///< Constant declaration flag
   std::unique_ptr<Expr> init; ///< Initial value expression
 };
 
@@ -122,7 +126,7 @@ public:
    * @param identifier Parameter name
    * @param type Parameter type
    */
-  ParamDecl(SrcLocation location, std::string id, Type type);
+  ParamDecl(SrcLocation location, std::string id, Type type, bool IsMut);
 
   /**
    * @brief Sets parameter type
@@ -135,6 +139,11 @@ public:
    * @param level Current indentation level
    */
   void emit(int level) const override;
+
+  bool isMutable() const override { return IsMut; }
+
+private:
+  const bool IsMut = false;
 };
 
 /**
@@ -192,6 +201,8 @@ public:
   void setBlock(std::unique_ptr<Block> blockPtr) {
     block = std::move(blockPtr);
   }
+
+  bool isMutable() const override { return false; }
 
   /**
    * @brief Debug output for function

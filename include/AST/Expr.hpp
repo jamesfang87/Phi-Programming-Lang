@@ -47,7 +47,7 @@ public:
    * @brief Sets expression type
    * @param t New type value
    */
-  void setTy(Type t) { type = std::move(t); }
+  void setType(Type t) { type = std::move(t); }
 
   /**
    * @brief Checks if expression is lvalue
