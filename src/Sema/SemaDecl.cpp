@@ -50,13 +50,13 @@ bool Sema::resolveFunDecl(FunDecl *fun) {
  */
 bool Sema::resolveParamDecl(ParamDecl *param) {
   // Resolve parameter type
-  if (!resolveTy(param->getTy())) {
+  if (!resolveTy(param->getType())) {
     std::println("invalid type for parameter: {}", param->getID());
     return false;
   }
 
   // Parameters can't be null type
-  const Type &t = param->getTy();
+  const Type &t = param->getType();
   if (t.isPrimitive() && t.primitive_type() == Type::Primitive::null) {
     std::println("param type cannot be null for: {}", param->getID());
     return false;

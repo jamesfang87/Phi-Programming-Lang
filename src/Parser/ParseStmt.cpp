@@ -24,7 +24,7 @@ namespace phi {
  * - Variable declarations (let)
  */
 std::unique_ptr<Stmt> Parser::parseStmt() {
-  switch (peekToken().getTy()) {
+  switch (peekToken().getType()) {
   case TokenKind::tokReturn:
     return parseReturn();
   case TokenKind::tokIf:
@@ -63,7 +63,7 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   advanceToken(); // eat 'return'
 
   // Null return: return;
-  if (peekToken().getTy() == TokenKind::tokSemicolon) {
+  if (peekToken().getType() == TokenKind::tokSemicolon) {
     advanceToken(); // eat ';'
     return std::make_unique<ReturnStmt>(loc, nullptr);
   }
@@ -75,7 +75,7 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   }
 
   // Validate semicolon terminator
-  if (peekToken().getTy() != TokenKind::tokSemicolon) {
+  if (peekToken().getType() != TokenKind::tokSemicolon) {
     error("missing semicolon after return statement")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("return statements must end with a semicolon")
@@ -113,7 +113,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
     return nullptr;
 
   // No else clause
-  if (peekToken().getTy() != TokenKind::tokElse) {
+  if (peekToken().getType() != TokenKind::tokElse) {
     return std::make_unique<IfStmt>(loc, std::move(cond), std::move(body),
                                     nullptr);
   }
@@ -122,7 +122,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
   advanceToken(); // eat 'else'
 
   // Else block: else { ... }
-  if (peekToken().getTy() == TokenKind::tokLeftBrace) {
+  if (peekToken().getType() == TokenKind::tokLeftBrace) {
     auto elseBody = parseBlock();
     if (!elseBody)
       return nullptr;
@@ -131,7 +131,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
                                     std::move(elseBody));
   }
   // Else if: else if ...
-  if (peekToken().getTy() == TokenKind::tokIf) {
+  if (peekToken().getType() == TokenKind::tokIf) {
     std::vector<std::unique_ptr<Stmt>> elifStmt;
 
     auto res = parseIf();
@@ -194,7 +194,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
 
   // Parse loop variable
   Token loopVar = advanceToken();
-  if (loopVar.getTy() != TokenKind::tokIdentifier) {
+  if (loopVar.getType() != TokenKind::tokIdentifier) {
     error("for loop must have a loop variable")
         .with_primary_label(spanFromToken(loopVar), "expected identifier here")
         .with_help("for loops have the form: `for variable in iterable`")
@@ -207,7 +207,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
 
   // Validate 'in' keyword
   Token inKw = advanceToken();
-  if (inKw.getTy() != TokenKind::tokIn) {
+  if (inKw.getType() != TokenKind::tokIn) {
     error("missing `in` keyword in for loop")
         .with_primary_label(spanFromToken(loopVar), "loop variable")
         .with_secondary_label(spanFromToken(inKw), "expected `in` here")
@@ -254,7 +254,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
  */
 std::unique_ptr<LetStmt> Parser::parseLet() {
   SrcLocation letLoc = peekToken().getStart();
-  if (advanceToken().getTy() != TokenKind::tokLet) {
+  if (advanceToken().getType() != TokenKind::tokLet) {
     emitUnexpectedTokenError(peekToken(), {"let"});
     return nullptr;
   }
@@ -265,7 +265,7 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
   auto [varLoc, name, type] = *binding;
 
   // Validate assignment operator
-  if (advanceToken().getTy() != TokenKind::tokEquals) {
+  if (advanceToken().getType() != TokenKind::tokEquals) {
     error("missing assignment in variable declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `=` here")
         .with_help("variables must be initialized with a value")
@@ -281,7 +281,7 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
     return nullptr;
 
   // Validate semicolon terminator
-  if (advanceToken().getTy() != TokenKind::tokSemicolon) {
+  if (advanceToken().getType() != TokenKind::tokSemicolon) {
     error("missing semicolon after variable declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("variable declarations must end with a semicolon")
@@ -298,7 +298,7 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
 
 std::unique_ptr<BreakStmt> Parser::parseBreak() {
   SrcLocation Loc = peekToken().getStart();
-  if (advanceToken().getTy() != TokenKind::tokBreak) {
+  if (advanceToken().getType() != TokenKind::tokBreak) {
     error("missing break keyword")
         .with_primary_label(spanFromToken(peekToken()), "expected `break` here")
         .with_help("break statements must be preceded by a loop")
@@ -308,7 +308,7 @@ std::unique_ptr<BreakStmt> Parser::parseBreak() {
   }
 
   // Validate semicolon terminator
-  if (advanceToken().getTy() != TokenKind::tokSemicolon) {
+  if (advanceToken().getType() != TokenKind::tokSemicolon) {
     error("missing semicolon after break statement")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("break statements must end with a semicolon")
@@ -323,7 +323,7 @@ std::unique_ptr<BreakStmt> Parser::parseBreak() {
 
 std::unique_ptr<ContinueStmt> Parser::parseContinue() {
   SrcLocation Loc = peekToken().getStart();
-  if (advanceToken().getTy() != TokenKind::tokContinue) {
+  if (advanceToken().getType() != TokenKind::tokContinue) {
     error("missing continue keyword")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected `continue` here")
@@ -334,7 +334,7 @@ std::unique_ptr<ContinueStmt> Parser::parseContinue() {
   }
 
   // Validate semicolon terminator
-  if (advanceToken().getTy() != TokenKind::tokSemicolon) {
+  if (advanceToken().getType() != TokenKind::tokSemicolon) {
     error("missing semicolon after continue statement")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("continue statements must end with a semicolon")

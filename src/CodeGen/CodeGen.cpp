@@ -66,9 +66,9 @@ void phi::CodeGen::generatePrintlnCall(phi::FunCallExpr &call) {
 
     // Determine format string based on argument type
     llvm::Value *format;
-    if (isIntTy(arg->getTy())) {
+    if (isIntTy(arg->getType())) {
       format = builder.CreateGlobalString("%lld\n");
-    } else if (isFloat(arg->getTy())) {
+    } else if (isFloat(arg->getType())) {
       format = builder.CreateGlobalString("%g\n");
     } else {
       // Default to string format
@@ -154,7 +154,7 @@ void phi::CodeGen::generateFun(phi::FunDecl &func) {
   // Create function type
   std::vector<llvm::Type *> param_types;
   for (auto &param : func.getParams()) {
-    param_types.push_back(getType(param->getTy()));
+    param_types.push_back(getType(param->getType()));
   }
 
   auto *return_type = getType(func.getReturnTy());
@@ -172,7 +172,7 @@ void phi::CodeGen::generateFun(phi::FunDecl &func) {
   auto arg_it = llvm_func->arg_begin();
   for (auto &param : func.getParams()) {
     // Create allocation for parameter
-    llvm::Type *param_type = getType(param->getTy());
+    llvm::Type *param_type = getType(param->getType());
     llvm::AllocaInst *alloca =
         builder.CreateAlloca(param_type, nullptr, param->getID());
 

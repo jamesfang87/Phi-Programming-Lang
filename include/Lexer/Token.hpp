@@ -35,38 +35,38 @@ public:
    */
   Token(SrcLocation start, SrcLocation end, const TokenKind type,
         std::string lexeme)
-      : start(std::move(start)), end(std::move(end)), type(type),
-        lexeme(std::move(lexeme)) {}
+      : Start(std::move(start)), End(std::move(end)), Type(type),
+        Lexeme(std::move(lexeme)) {}
 
   /**
    * @brief Retrieves token's start position
    * @return Constant reference to start SrcLocation
    */
-  [[nodiscard]] const SrcLocation &getStart() const { return start; }
+  [[nodiscard]] const SrcLocation &getStart() const { return Start; }
 
   /**
    * @brief Retrieves token's end position
    * @return Constant reference to end SrcLocation
    */
-  [[nodiscard]] const SrcLocation &getEnd() const { return end; }
+  [[nodiscard]] const SrcLocation &getEnd() const { return End; }
 
   /**
    * @brief Retrieves token type
    * @return TokenType enumeration value
    */
-  [[nodiscard]] TokenKind getTy() const { return type; }
+  [[nodiscard]] TokenKind getType() const { return Type; }
 
   /**
    * @brief Retrieves token type name
    * @return Human-readable type name string
    */
-  [[nodiscard]] std::string getName() const { return tyToStr(type); }
+  [[nodiscard]] std::string getName() const { return tyToStr(Type); }
 
   /**
    * @brief Retrieves original source text
    * @return Lexeme string as it appears in source
    */
-  [[nodiscard]] std::string getLexeme() const { return lexeme; }
+  [[nodiscard]] std::string getLexeme() const { return Lexeme; }
 
   /**
    * @brief Generates human-readable token representation
@@ -78,9 +78,9 @@ public:
   [[nodiscard]] std::string toString() const;
 
 private:
-  SrcLocation start, end; ///< Source position span (inclusive)
-  TokenKind type;         ///< Token classification type
-  std::string lexeme;     ///< Original source text content
+  SrcLocation Start, End; ///< Source position span (inclusive)
+  TokenKind Type;         ///< Token classification type
+  std::string Lexeme;     ///< Original source text content
 };
 
 } // namespace phi
