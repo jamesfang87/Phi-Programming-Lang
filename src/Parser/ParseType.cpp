@@ -25,7 +25,7 @@ std::optional<Type> Parser::parseType() {
       {"u8", Type::Primitive::u8},        {"u16", Type::Primitive::u16},
       {"u32", Type::Primitive::u32},      {"u64", Type::Primitive::u64},
       {"f32", Type::Primitive::f32},      {"f64", Type::Primitive::f64},
-      {"str", Type::Primitive::str},      {"char", Type::Primitive::character},
+      {"string", Type::Primitive::str},   {"char", Type::Primitive::character},
       {"bool", Type::Primitive::boolean}, {"null", Type::Primitive::null}};
 
   const std::string id = peekToken().getLexeme();

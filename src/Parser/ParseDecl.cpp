@@ -1,4 +1,5 @@
 #include "Diagnostics/DiagnosticBuilder.hpp"
+#include "Lexer/TokenType.hpp"
 #include "Parser/Parser.hpp"
 
 #include <expected>
@@ -120,12 +121,18 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
  * Wrapper around parse_typed_binding() that creates a ParamDecl node.
  */
 std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
+  bool IsMut = false;
+  if (peekToken().getType() == TokenKind::TokMut) {
+    IsMut = true;
+    advanceToken();
+  }
+
   auto binding = parseTypedBinding();
   if (!binding)
     return nullptr;
 
-  auto [loc, name, type] = *binding;
-  return std::make_unique<ParamDecl>(loc, name, type);
+  auto [loc, id, type] = *binding;
+  return std::make_unique<ParamDecl>(loc, id, type, IsMut);
 }
 
 } // namespace phi
