@@ -165,7 +165,7 @@ void phi::CodeGen::visit(phi::BinaryOp &expr) {
 
   // For comparison operations, use operand types to determine which comparison
   // to use For arithmetic operations, use result type
-  Type operand_type = expr.getLhs().getTy();
+  Type operand_type = expr.getLhs().getType();
 
   if (isFloat(operand_type)) {
     generateFloatOp(lhs, rhs, expr);

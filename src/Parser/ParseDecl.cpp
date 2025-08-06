@@ -31,7 +31,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   SrcLocation loc = tok.getStart();
 
   // Validate function name
-  if (peekToken().getTy() != TokenKind::tokIdentifier) {
+  if (peekToken().getType() != TokenKind::tokIdentifier) {
     error("invalid function name")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected function name here")
@@ -53,7 +53,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
 
   // Handle optional return type
   auto return_type = Type(Type::Primitive::null);
-  if (peekToken().getTy() == TokenKind::tokArrow) {
+  if (peekToken().getType() == TokenKind::tokArrow) {
     advanceToken(); // eat '->'
     auto res = parseType();
     if (!res)
@@ -81,7 +81,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
  */
 std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   // Parse identifier
-  if (peekToken().getTy() != TokenKind::tokIdentifier) {
+  if (peekToken().getType() != TokenKind::tokIdentifier) {
     error("expected identifier")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected identifier here")
@@ -92,7 +92,7 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   std::string name = advanceToken().getLexeme();
 
   // Parse colon separator
-  if (peekToken().getTy() != TokenKind::tokColon) {
+  if (peekToken().getType() != TokenKind::tokColon) {
     error("expected colon")
         .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
         .with_suggestion(spanFromToken(peekToken()), ":",

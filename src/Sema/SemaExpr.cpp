@@ -49,7 +49,7 @@ bool Sema::visit(DeclRefExpr &expr) {
   }
 
   expr.setDecl(decl);
-  expr.setTy(decl->getTy());
+  expr.setTy(decl->getType());
 
   return true;
 }
@@ -80,7 +80,7 @@ bool Sema::visit(FunCallExpr &expr) {
     }
 
     ParamDecl *param = fun->getParams().at(i).get();
-    if (arg->getTy() != param->getTy()) {
+    if (arg->getType() != param->getType()) {
       std::println("error: argument type mismatch");
       return false;
     }
@@ -104,8 +104,8 @@ bool Sema::visit(RangeLiteral &expr) {
     return false;
   }
 
-  const Type startTy = expr.getStart().getTy();
-  const Type endTy = expr.getEnd().getTy();
+  const Type startTy = expr.getStart().getType();
+  const Type endTy = expr.getEnd().getType();
 
   // Validate integer types
   if (!startTy.isPrimitive() || !isIntTy(startTy)) {
@@ -141,8 +141,8 @@ bool Sema::visit(BinaryOp &expr) {
     return false;
   }
 
-  const Type lhs_type = expr.getLhs().getTy();
-  const Type rhs_type = expr.getRhs().getTy();
+  const Type lhs_type = expr.getLhs().getType();
+  const Type rhs_type = expr.getRhs().getType();
   const TokenKind op = expr.getOp();
 
   // Only primitive types supported
@@ -262,7 +262,7 @@ bool Sema::visit(UnaryOp &expr) {
     return false;
   }
 
-  const Type operand_type = expr.getOperand().getTy();
+  const Type operand_type = expr.getOperand().getType();
   const TokenKind op = expr.getOp();
 
   // Only primitive types supported

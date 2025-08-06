@@ -135,7 +135,7 @@ void phi::CodeGen::visit(phi::ForStmt &stmt) {
 
   // Create allocation for loop variable
   VarDecl &loop_var = stmt.getLoopVar();
-  llvm::Type *var_type = getType(loop_var.getTy());
+  llvm::Type *var_type = getType(loop_var.getType());
   llvm::AllocaInst *alloca =
       builder.CreateAlloca(var_type, nullptr, loop_var.getID());
   decls[&loop_var] = alloca;
@@ -204,7 +204,7 @@ void phi::CodeGen::visit(phi::LetStmt &stmt) {
   VarDecl &Decl = stmt.getDecl();
 
   // Create allocation for the variable
-  llvm::Type *Ty = getType(Decl.getTy());
+  llvm::Type *Ty = getType(Decl.getType());
   llvm::AllocaInst *Alloca = builder.CreateAlloca(Ty, nullptr, Decl.getID());
 
   // Store in declarations map
@@ -218,6 +218,7 @@ void phi::CodeGen::visit(phi::LetStmt &stmt) {
 }
 
 void phi::CodeGen::visit(phi::BreakStmt &stmt) {
+  (void)stmt;
   assert(!LoopStack.empty() && "Break statement used outside of loop. "
                                "LoopStack should also not be empty");
 
@@ -230,6 +231,7 @@ void phi::CodeGen::visit(phi::BreakStmt &stmt) {
 }
 
 void phi::CodeGen::visit(phi::ContinueStmt &stmt) {
+  (void)stmt;
   assert(!LoopStack.empty() && "Continuestatement used outside of loop. "
                                "LoopStack should also not be empty");
 

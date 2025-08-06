@@ -2,7 +2,7 @@ fun println(a: i64) {}
 
 fun main() {
     let a: i64 = 0;
-    while (a < 10) {
+    while a < 10 {
         if a == 5 {
             a = a + 1;
             continue;

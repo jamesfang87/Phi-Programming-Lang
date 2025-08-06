@@ -35,7 +35,7 @@ public:
    * @brief Retrieves expression type
    * @return Type object
    */
-  [[nodiscard]] Type getTy() { return type.value(); }
+  [[nodiscard]] Type getType() { return type.value(); }
 
   /**
    * @brief Checks if type has been resolved

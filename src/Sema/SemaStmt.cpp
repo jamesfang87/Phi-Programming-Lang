@@ -61,9 +61,9 @@ bool Sema::visit(ReturnStmt &stmt) {
     return false;
 
   // Validate return type matches function signature
-  if (stmt.getExpr().getTy() != curFun->getReturnTy()) {
+  if (stmt.getExpr().getType() != curFun->getReturnTy()) {
     std::println("type mismatch error: {}", curFun->getID());
-    std::println("return stmt type: {}", stmt.getExpr().getTy().toString());
+    std::println("return stmt type: {}", stmt.getExpr().getType().toString());
     std::println("expected type: {}", curFun->getReturnTy().toString());
     return false;
   }
@@ -85,7 +85,7 @@ bool Sema::visit(IfStmt &stmt) {
     return false;
 
   // Validate cond is boolean
-  if (stmt.getCond().getTy() != Type(Type::Primitive::boolean)) {
+  if (stmt.getCond().getType() != Type(Type::Primitive::boolean)) {
     std::println("error: cond in if statement must have type bool");
     return false;
   }
@@ -114,7 +114,7 @@ bool Sema::visit(WhileStmt &stmt) {
     return false;
 
   // Validate cond is boolean
-  if (stmt.getCond().getTy() != Type(Type::Primitive::boolean)) {
+  if (stmt.getCond().getType() != Type(Type::Primitive::boolean)) {
     std::println("error: cond in while statement must have type bool");
     return false;
   }
@@ -168,7 +168,7 @@ bool Sema::visit(LetStmt &stmt) {
   VarDecl &var = stmt.getDecl();
 
   // Resolve variable type
-  const bool type = resolveTy(var.getTy());
+  const bool type = resolveTy(var.getType());
   if (!type) {
     std::println("invalid type for variable");
     return false;
@@ -183,10 +183,10 @@ bool Sema::visit(LetStmt &stmt) {
     }
 
     // Check type compatibility
-    if (init.getTy() != var.getTy()) {
+    if (init.getType() != var.getType()) {
       std::println("variable initializer type mismatch");
-      std::println("variable type: {}", var.getTy().toString());
-      std::println("initializer type: {}", init.getTy().toString());
+      std::println("variable type: {}", var.getType().toString());
+      std::println("initializer type: {}", init.getType().toString());
       return false;
     }
   } else if (var.isConst()) {
