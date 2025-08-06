@@ -27,7 +27,7 @@ std::string tyToStr(const TokenKind type) {
     return "BOOL";
   case TokenKind::tokBreak:
     return "BREAK";
-  case TokenKind::tokConst:
+  case TokenKind::TokMut:
     return "CONST";
   case TokenKind::tokContinue:
     return "CONTINUE";
@@ -86,7 +86,7 @@ std::string tyToStr(const TokenKind type) {
 
   // Text types
   case TokenKind::tokString:
-    return "STR";
+    return "STRING";
   case TokenKind::tokChar:
     return "CHAR";
 

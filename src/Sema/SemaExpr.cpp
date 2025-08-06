@@ -1,5 +1,8 @@
 #include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
 #include "Sema/Sema.hpp"
+
+#include <llvm/Support/Casting.h>
 
 #include <cassert>
 #include <cstddef>
@@ -9,27 +12,27 @@ namespace phi {
 
 // Literal expression resolution
 bool Sema::visit(IntLiteral &expr) {
-  expr.setTy(Type(Type::Primitive::i64));
+  expr.setType(Type(Type::Primitive::i64));
   return true;
 }
 
 bool Sema::visit(FloatLiteral &expr) {
-  expr.setTy(Type(Type::Primitive::f64));
+  expr.setType(Type(Type::Primitive::f64));
   return true;
 }
 
 bool Sema::visit(StrLiteral &expr) {
-  expr.setTy(Type(Type::Primitive::str));
+  expr.setType(Type(Type::Primitive::str));
   return true;
 }
 
 bool Sema::visit(CharLiteral &expr) {
-  expr.setTy(Type(Type::Primitive::character));
+  expr.setType(Type(Type::Primitive::character));
   return true;
 }
 
 bool Sema::visit(BoolLiteral &expr) {
-  expr.setTy(Type(Type::Primitive::boolean));
+  expr.setType(Type(Type::Primitive::boolean));
   return true;
 }
 
@@ -49,7 +52,7 @@ bool Sema::visit(DeclRefExpr &expr) {
   }
 
   expr.setDecl(decl);
-  expr.setTy(decl->getType());
+  expr.setType(decl->getType());
 
   return true;
 }
@@ -86,7 +89,7 @@ bool Sema::visit(FunCallExpr &expr) {
     }
   }
 
-  expr.setTy(fun->getReturnTy());
+  expr.setType(fun->getReturnTy());
   return true;
 }
 
@@ -121,9 +124,9 @@ bool Sema::visit(RangeLiteral &expr) {
   }
 
   // Set types
-  expr.getStart().setTy(Type(Type::Primitive::i64));
-  expr.getEnd().setTy(Type(Type::Primitive::i64));
-  expr.setTy(Type(Type::Primitive::range));
+  expr.getStart().setType(Type(Type::Primitive::i64));
+  expr.getEnd().setType(Type(Type::Primitive::i64));
+  expr.setType(Type(Type::Primitive::range));
   return true;
 }
 
@@ -169,7 +172,7 @@ bool Sema::visit(BinaryOp &expr) {
       return false;
     }
     // Apply type promotion
-    expr.setTy(promoteNumTys(lhs_type, rhs_type));
+    expr.setType(promoteNumTys(lhs_type, rhs_type));
     break;
   }
 
@@ -184,7 +187,13 @@ bool Sema::visit(BinaryOp &expr) {
       return false;
     }
 
-    expr.setTy(lhs_type);
+    auto DeclRef = llvm::dyn_cast<DeclRefExpr>(&expr.getLhs());
+    if (!DeclRef->getDecl()->isMutable()) {
+      std::println("Error: attempt to reassign value of constant variable");
+      return false;
+    }
+
+    expr.setType(lhs_type);
     break;
   }
 
@@ -195,7 +204,7 @@ bool Sema::visit(BinaryOp &expr) {
       std::println("Equality comparison requires same types");
       return false;
     }
-    expr.setTy(Type(Type::Primitive::boolean));
+    expr.setType(Type(Type::Primitive::boolean));
     break;
 
   case TokenKind::tokLeftCaret:
@@ -206,7 +215,7 @@ bool Sema::visit(BinaryOp &expr) {
       std::println("Ordering comparisons require same numeric types");
       return false;
     }
-    expr.setTy(Type(Type::Primitive::boolean));
+    expr.setType(Type(Type::Primitive::boolean));
     break;
 
   // Logical operations
@@ -217,7 +226,7 @@ bool Sema::visit(BinaryOp &expr) {
       std::println("Logical operations require boolean types");
       return false;
     }
-    expr.setTy(Type(Type::Primitive::boolean));
+    expr.setType(Type(Type::Primitive::boolean));
     break;
 
   default:
@@ -279,7 +288,7 @@ bool Sema::visit(UnaryOp &expr) {
       std::println("Arithmetic negation requires numeric type");
       return false;
     }
-    expr.setTy(operand_type);
+    expr.setType(operand_type);
     break;
 
   // Logical NOT
@@ -288,7 +297,7 @@ bool Sema::visit(UnaryOp &expr) {
       std::println("Logical NOT requires boolean type");
       return false;
     }
-    expr.setTy(Type(Type::Primitive::boolean));
+    expr.setType(Type(Type::Primitive::boolean));
     break;
 
   // Increment/Decrement
@@ -298,7 +307,7 @@ bool Sema::visit(UnaryOp &expr) {
       std::println("Increment/decrement requires integer type");
       return false;
     }
-    expr.setTy(operand_type);
+    expr.setType(operand_type);
     break;
 
   default:

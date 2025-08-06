@@ -28,7 +28,7 @@ namespace phi {
 VarDecl::VarDecl(SrcLocation location, std::string identifier, Type type,
                  const bool is_const, std::unique_ptr<Expr> initializer)
     : Decl(std::move(location), std::move(identifier), std::move(type)),
-      isConstant(is_const), init(std::move(initializer)) {}
+      IsMut(is_const), init(std::move(initializer)) {}
 
 /**
  * @brief Dumps variable declaration information for debugging
@@ -58,8 +58,10 @@ void VarDecl::emit(int level) const {
  * @param identifier Parameter name
  * @param type Parameter type
  */
-ParamDecl::ParamDecl(SrcLocation location, std::string identifier, Type type)
-    : Decl(std::move(location), std::move(identifier), std::move(type)) {}
+ParamDecl::ParamDecl(SrcLocation location, std::string identifier, Type type,
+                     bool IsMut)
+    : Decl(std::move(location), std::move(identifier), std::move(type)),
+      IsMut(IsMut) {}
 
 /**
  * @brief Dumps parameter declaration information

@@ -259,10 +259,17 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
     return nullptr;
   }
 
+  // Check if they specified that this should be mutable
+  bool isMut = false;
+  if (peekToken().getType() == TokenKind::TokMut) {
+    advanceToken();
+    isMut = true;
+  }
+
   auto binding = parseTypedBinding();
   if (!binding)
     return nullptr;
-  auto [varLoc, name, type] = *binding;
+  auto [VarLoc, Id, type] = *binding;
 
   // Validate assignment operator
   if (advanceToken().getType() != TokenKind::tokEquals) {
@@ -276,8 +283,8 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
   }
 
   // Parse initializer expression
-  auto expr = parseExpr();
-  if (!expr)
+  auto Init = parseExpr();
+  if (!Init)
     return nullptr;
 
   // Validate semicolon terminator
@@ -293,7 +300,7 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
 
   return std::make_unique<LetStmt>(
       letLoc,
-      std::make_unique<VarDecl>(varLoc, name, type, true, std::move(expr)));
+      std::make_unique<VarDecl>(VarLoc, Id, type, isMut, std::move(Init)));
 }
 
 std::unique_ptr<BreakStmt> Parser::parseBreak() {
