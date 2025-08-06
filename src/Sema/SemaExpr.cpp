@@ -188,7 +188,7 @@ bool Sema::visit(BinaryOp &expr) {
     }
 
     auto DeclRef = llvm::dyn_cast<DeclRefExpr>(&expr.getLhs());
-    if (!DeclRef->getDecl()->isMutable()) {
+    if (DeclRef->getDecl()->isConst()) {
       std::println("Error: attempt to reassign value of constant variable");
       return false;
     }

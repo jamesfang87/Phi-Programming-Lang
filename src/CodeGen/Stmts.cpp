@@ -200,7 +200,7 @@ void phi::CodeGen::visit(phi::ForStmt &stmt) {
   builder.SetInsertPoint(ExitBlock);
 }
 
-void phi::CodeGen::visit(phi::LetStmt &stmt) {
+void phi::CodeGen::visit(phi::DeclStmt &stmt) {
   VarDecl &Decl = stmt.getDecl();
 
   // Create allocation for the variable

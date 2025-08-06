@@ -51,7 +51,7 @@ public:
    */
   virtual void emit(int level) const = 0;
 
-  virtual bool isMutable() const = 0;
+  virtual bool isConst() const = 0;
 
 protected:
   SrcLocation location;     ///< Source location of declaration
@@ -78,14 +78,14 @@ public:
    * @param isConst Constant flag (true for const)
    * @param initializer Initial value expression
    */
-  VarDecl(SrcLocation location, std::string id, Type type, const bool IsMut,
+  VarDecl(SrcLocation location, std::string id, Type type, const bool IsConst,
           std::unique_ptr<Expr> init);
 
   /**
    * @brief Checks constant status
    * @return true if constant, false if mutable
    */
-  [[nodiscard]] bool isConst() const { return IsMut; }
+  [[nodiscard]] bool isConst() const override { return IsConst; }
 
   /**
    * @brief Retrieves initializer expression
@@ -105,10 +105,8 @@ public:
    */
   void emit(int level) const override;
 
-  bool isMutable() const override { return IsMut; }
-
 private:
-  const bool IsMut;           ///< Constant declaration flag
+  const bool IsConst;         ///< Constant declaration flag
   std::unique_ptr<Expr> init; ///< Initial value expression
 };
 
@@ -140,7 +138,7 @@ public:
    */
   void emit(int level) const override;
 
-  bool isMutable() const override { return IsMut; }
+  bool isConst() const override { return IsMut; }
 
 private:
   const bool IsMut = false;
@@ -202,7 +200,7 @@ public:
     block = std::move(blockPtr);
   }
 
-  bool isMutable() const override { return false; }
+  bool isConst() const override { return false; }
 
   /**
    * @brief Debug output for function

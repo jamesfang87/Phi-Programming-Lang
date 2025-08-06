@@ -77,7 +77,7 @@ private:
   void visit(phi::IfStmt &stmt);
   void visit(phi::WhileStmt &stmt);
   void visit(phi::ForStmt &stmt);
-  void visit(phi::LetStmt &stmt);
+  void visit(phi::DeclStmt &stmt);
   void visit(phi::BreakStmt &stmt);
   void visit(phi::ContinueStmt &stmt);
   void visit(phi::Expr &expr);
