@@ -176,7 +176,7 @@ public:
    * @param stmt The let statement
    * @return true if validation succeeded, false otherwise
    */
-  bool visit(LetStmt &stmt) override;
+  bool visit(DeclStmt &stmt) override;
 
   bool visit(BreakStmt &stmt) override;
   bool visit(ContinueStmt &stmt) override;

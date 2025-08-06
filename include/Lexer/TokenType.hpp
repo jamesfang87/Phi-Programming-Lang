@@ -24,7 +24,7 @@ enum class TokenKind : uint8_t {
   // KEYWORDS
   tokBool,     ///< `bool` keyword
   tokBreak,    ///< `break` keyword
-  TokMut,      ///< `const` keyword
+  TokConst,    ///< `const` keyword
   tokContinue, ///< `continue` keyword
   tokElse,     ///< `else` keyword
   TokEnum,
@@ -34,7 +34,7 @@ enum class TokenKind : uint8_t {
   tokIf,     ///< `if` keyword
   tokImport, ///< `import` keyword
   tokIn,     ///< `in` keyword
-  tokLet,    ///< `let` keyword
+  TokVar,    ///< `let` keyword
   tokReturn, ///< `return` keyword
   TokStruct,
   tokTrue,  ///< `true` literal

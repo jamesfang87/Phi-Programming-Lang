@@ -164,7 +164,7 @@ bool Sema::visit(ForStmt &stmt) {
  *
  * Adds variable to current symbol table.
  */
-bool Sema::visit(LetStmt &stmt) {
+bool Sema::visit(DeclStmt &stmt) {
   VarDecl &var = stmt.getDecl();
 
   // Resolve variable type

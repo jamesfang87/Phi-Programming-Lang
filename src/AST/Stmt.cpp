@@ -173,11 +173,11 @@ void ForStmt::emit(int level) const {
  * @param location Source location of declaration
  * @param decl Variable declaration
  */
-LetStmt::LetStmt(SrcLocation location, std::unique_ptr<VarDecl> decl)
-    : Stmt(Stmt::Kind::LetStmtKind, std::move(location)),
+DeclStmt::DeclStmt(SrcLocation location, std::unique_ptr<VarDecl> decl)
+    : Stmt(Stmt::Kind::DeclStmtKind, std::move(location)),
       decl(std::move(decl)) {}
 
-LetStmt::~LetStmt() = default;
+DeclStmt::~DeclStmt() = default;
 
 /**
  * @brief Dumps variable declaration statement information
@@ -188,7 +188,7 @@ LetStmt::~LetStmt() = default;
  *
  * @param level Current indentation level
  */
-void LetStmt::emit(int level) const {
+void DeclStmt::emit(int level) const {
   std::println("{}VarDeclStmt", indent(level));
   if (decl) {
     decl->emit(level + 1);

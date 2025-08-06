@@ -19,7 +19,7 @@ class ReturnStmt;
 class IfStmt;
 class WhileStmt;
 class ForStmt;
-class LetStmt;
+class DeclStmt;
 class BreakStmt;
 class ContinueStmt;
 
@@ -142,7 +142,7 @@ public:
    * @param stmt Reference to LetStmt node
    * @return Boolean indicating whether to continue traversal
    */
-  virtual ReturnType visit(LetStmt &stmt) = 0;
+  virtual ReturnType visit(DeclStmt &stmt) = 0;
 
   virtual ReturnType visit(BreakStmt &stmt) = 0;
 

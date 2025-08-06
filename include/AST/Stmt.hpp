@@ -28,7 +28,7 @@ public:
     IfStmtKind,
     WhileStmtKind,
     ForStmtKind,
-    LetStmtKind,
+    DeclStmtKind,
     ContinueStmtKind,
     BreakStmtKind,
 
@@ -312,15 +312,15 @@ private:
 /**
  * @brief Variable declaration statement
  */
-class LetStmt final : public Stmt {
+class DeclStmt final : public Stmt {
 public:
   /**
    * @brief Constructs let statement
    * @param location Source location
    * @param decl Variable declaration
    */
-  LetStmt(SrcLocation location, std::unique_ptr<VarDecl> decl);
-  ~LetStmt() override;
+  DeclStmt(SrcLocation location, std::unique_ptr<VarDecl> decl);
+  ~DeclStmt() override;
 
   /**
    * @brief Retrieves variable declaration
@@ -336,7 +336,7 @@ public:
 
   /// @brief LLVM RTTI support
   static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::LetStmtKind;
+    return S->getKind() == Kind::DeclStmtKind;
   }
 
 private:
