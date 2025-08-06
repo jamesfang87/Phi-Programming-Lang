@@ -33,8 +33,8 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return parseWhile();
   case TokenKind::tokFor:
     return parseFor();
-  case TokenKind::tokLet:
-    return parseLet();
+  case TokenKind::TokVar:
+    return parseDecl();
   case TokenKind::tokBreak:
     return parseBreak();
   case TokenKind::tokContinue:
@@ -252,18 +252,18 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
  * - Initializer expression
  * - Semicolon terminator
  */
-std::unique_ptr<LetStmt> Parser::parseLet() {
+std::unique_ptr<DeclStmt> Parser::parseDecl() {
   SrcLocation letLoc = peekToken().getStart();
-  if (advanceToken().getType() != TokenKind::tokLet) {
-    emitUnexpectedTokenError(peekToken(), {"let"});
-    return nullptr;
-  }
-
-  // Check if they specified that this should be mutable
-  bool isMut = false;
-  if (peekToken().getType() == TokenKind::TokMut) {
+  bool IsConst;
+  if (peekToken().getType() == TokenKind::TokConst) {
+    IsConst = true;
     advanceToken();
-    isMut = true;
+  } else if (peekToken().getType() == TokenKind::TokVar) {
+    IsConst = false;
+    advanceToken();
+  } else {
+    emitUnexpectedTokenError(peekToken(), {"var", "const"});
+    return nullptr;
   }
 
   auto binding = parseTypedBinding();
@@ -298,9 +298,9 @@ std::unique_ptr<LetStmt> Parser::parseLet() {
     return nullptr;
   }
 
-  return std::make_unique<LetStmt>(
+  return std::make_unique<DeclStmt>(
       letLoc,
-      std::make_unique<VarDecl>(VarLoc, Id, type, isMut, std::move(Init)));
+      std::make_unique<VarDecl>(VarLoc, Id, type, IsConst, std::move(Init)));
 }
 
 std::unique_ptr<BreakStmt> Parser::parseBreak() {

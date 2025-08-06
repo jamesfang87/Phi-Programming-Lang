@@ -184,7 +184,7 @@ private:
   std::unique_ptr<IfStmt> parseIf();
   std::unique_ptr<WhileStmt> parseWhile();
   std::unique_ptr<ForStmt> parseFor();
-  std::unique_ptr<LetStmt> parseLet();
+  std::unique_ptr<DeclStmt> parseDecl();
   std::unique_ptr<BreakStmt> parseBreak();
   std::unique_ptr<ContinueStmt> parseContinue();
 

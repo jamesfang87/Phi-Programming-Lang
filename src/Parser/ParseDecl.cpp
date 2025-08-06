@@ -121,10 +121,15 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
  * Wrapper around parse_typed_binding() that creates a ParamDecl node.
  */
 std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
-  bool IsMut = false;
-  if (peekToken().getType() == TokenKind::TokMut) {
-    IsMut = true;
+  bool IsConst;
+  if (peekToken().getType() == TokenKind::TokConst) {
+    IsConst = true;
     advanceToken();
+  } else if (peekToken().getType() == TokenKind::TokVar) {
+    IsConst = false;
+    advanceToken();
+  } else {
+    return nullptr;
   }
 
   auto binding = parseTypedBinding();
@@ -132,7 +137,7 @@ std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
     return nullptr;
 
   auto [loc, id, type] = *binding;
-  return std::make_unique<ParamDecl>(loc, id, type, IsMut);
+  return std::make_unique<ParamDecl>(loc, id, type, IsConst);
 }
 
 } // namespace phi

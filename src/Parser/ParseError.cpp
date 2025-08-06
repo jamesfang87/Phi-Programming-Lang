@@ -107,7 +107,7 @@ bool Parser::SyncToTopLvl() {
 bool Parser::SyncToStmt() {
   return syncTo({TokenKind::tokRightBrace, TokenKind::tokReturn,
                  TokenKind::tokIf, TokenKind::tokWhile, TokenKind::tokFor,
-                 TokenKind::tokLet});
+                 TokenKind::TokVar});
 }
 
 /**
