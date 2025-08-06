@@ -122,7 +122,7 @@ bool Parser::SyncToStmt() {
 bool Parser::syncTo(const std::initializer_list<TokenKind> targetTokens) {
   while (!atEOF()) {
     for (const TokenKind target : targetTokens) {
-      if (peekToken().getTy() == target) {
+      if (peekToken().getType() == target) {
         return true;
       }
     }
@@ -141,7 +141,7 @@ bool Parser::syncTo(const std::initializer_list<TokenKind> targetTokens) {
  * Useful for recovering from errors where a specific closing token is expected.
  */
 bool Parser::syncTo(const TokenKind targetToken) {
-  while (!atEOF() && peekToken().getTy() != targetToken) {
+  while (!atEOF() && peekToken().getType() != targetToken) {
     advanceToken();
   }
   return !atEOF(); // Found target unless EOF reached

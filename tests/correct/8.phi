@@ -1,40 +1,5 @@
-fun println(a: i64) {}
-
-fun add(a: i64, b: i64) -> i64 {
-    return a + b;
-}
-
-fun sub(a: i64, b: i64) -> i64 {
-    return a - b;
-}
-
-fun mul(a: i64, b: i64) -> i64 {
-    return a * b;
-}
-
-fun div(a: i64, b: i64) -> i64 {
-    return a / b;
-}
+fun println(msg: str) {}
 
 fun main() {
-    let a: i64 = 10;
-    if (a > 0) {
-        println(1);
-    } else {
-        println(0);
-    }
-
-    while (a < 20) {
-        println(a);
-        a = a + 1;
-    }
-
-    for i in 0..10 {
-        println(i);
-    }
-
-    println(add(1, 1));
-    println(sub(1, 5));
-    println(mul(6, 7));
-    println(div(8, 2));
+    println("Hello, World!");
 }

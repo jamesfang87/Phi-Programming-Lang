@@ -253,7 +253,7 @@ private:
             const std::string &context = "list") {
     // Verify opening delimiter
     const Token opening_token = peekToken();
-    if (opening_token.getTy() != opening) {
+    if (opening_token.getType() != opening) {
       emitExpectedFoundError(tyToStr(opening), peekToken());
       return std::nullopt;
     }
@@ -261,7 +261,7 @@ private:
 
     // Parse list elements
     std::vector<std::unique_ptr<T>> content;
-    while (!atEOF() && peekToken().getTy() != closing) {
+    while (!atEOF() && peekToken().getType() != closing) {
       auto result = (this->*fun)();
       if (!result) {
         // Recover by syncing to comma or closing delimiter
@@ -271,12 +271,12 @@ private:
       content.push_back(std::move(result));
 
       // Check for closing delimiter before comma
-      if (peekToken().getTy() == closing) {
+      if (peekToken().getType() == closing) {
         break;
       }
 
       // Handle comma separator
-      if (peekToken().getTy() == TokenKind::tokComma) {
+      if (peekToken().getType() == TokenKind::tokComma) {
         advanceToken();
       } else {
         emitError(
@@ -290,7 +290,7 @@ private:
     }
 
     // Verify closing delimiter
-    if (atEOF() || peekToken().getTy() != closing) {
+    if (atEOF() || peekToken().getType() != closing) {
       emitUnclosedDelimiterError(opening_token, tyToStr(closing));
       return std::nullopt;
     }

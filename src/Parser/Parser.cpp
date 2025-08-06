@@ -36,7 +36,7 @@ Parser::Parser(const std::string_view src, const std::string_view path,
  */
 std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
   while (!atEOF()) {
-    switch (peekToken().getTy()) {
+    switch (peekToken().getType()) {
     case TokenKind::tokFun: {
       if (auto res = parseFunDecl()) {
         functions.push_back(std::move(res));

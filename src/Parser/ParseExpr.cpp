@@ -146,16 +146,16 @@ std::unique_ptr<Expr> Parser::pratt(int minBP) {
   // Process right-hand side and operators
   while (true) {
     Token op = peekToken();
-    if (op.getTy() == TokenKind::tokEOF)
+    if (op.getType() == TokenKind::tokEOF)
       break;
 
     // Handle postfix operators
-    if (postfixBP(op.getTy())) {
-      auto [l, r] = postfixBP(op.getTy()).value();
+    if (postfixBP(op.getType())) {
+      auto [l, r] = postfixBP(op.getType()).value();
       if (l < minBP)
         break;
 
-      switch (op.getTy()) {
+      switch (op.getType()) {
       case TokenKind::tokDoublePlus:
       case TokenKind::tokDoubleMinus:
         advanceToken();
@@ -171,18 +171,18 @@ std::unique_ptr<Expr> Parser::pratt(int minBP) {
     }
 
     // Handle infix operators
-    if (infixBP(op.getTy())) {
-      auto [l, r] = infixBP(op.getTy()).value();
+    if (infixBP(op.getType())) {
+      auto [l, r] = infixBP(op.getType()).value();
       if (l < minBP)
         break;
 
       advanceToken(); // consume operator
 
       // Special handling for range operators
-      if (op.getTy() == TokenKind::tokExclusiveRange ||
-          op.getTy() == TokenKind::tokInclusiveRange) {
+      if (op.getType() == TokenKind::tokExclusiveRange ||
+          op.getType() == TokenKind::tokInclusiveRange) {
 
-        bool inclusive = op.getTy() == TokenKind::tokInclusiveRange;
+        bool inclusive = op.getType() == TokenKind::tokInclusiveRange;
         auto end = pratt(r);
         if (!end)
           return nullptr;
@@ -206,7 +206,7 @@ std::unique_ptr<Expr> Parser::pratt(int minBP) {
 
 std::unique_ptr<Expr> Parser::parsePrefix(const Token &tok) {
   std::unique_ptr<Expr> lhs;
-  switch (tok.getTy()) {
+  switch (tok.getType()) {
   // Grouping: ( expr )
   case TokenKind::tokOpenParen: {
     auto res = pratt(0);
@@ -214,7 +214,7 @@ std::unique_ptr<Expr> Parser::parsePrefix(const Token &tok) {
       return nullptr;
     lhs = std::move(res);
 
-    if (peekToken().getTy() != TokenKind::tokRightParen) {
+    if (peekToken().getType() != TokenKind::tokRightParen) {
       error("missing closing parenthesis")
           .with_primary_label(spanFromToken(peekToken()), "expected `)` here")
           .with_help("parentheses must be properly matched")
@@ -232,7 +232,7 @@ std::unique_ptr<Expr> Parser::parsePrefix(const Token &tok) {
   case TokenKind::tokDoublePlus:  // ++
   case TokenKind::tokDoubleMinus: // --
   {
-    auto [ignore, r] = prefixBP(tok.getTy()).value();
+    auto [ignore, r] = prefixBP(tok.getType()).value();
     auto rhs = pratt(r);
     if (!rhs)
       return nullptr;
@@ -286,12 +286,12 @@ std::unique_ptr<Expr> Parser::parsePrefix(const Token &tok) {
  */
 std::unique_ptr<Expr> Parser::parsePostfix(std::unique_ptr<Expr> expr) {
   // Function call: expr(...)
-  if (peekToken().getTy() == TokenKind::tokOpenParen) {
+  if (peekToken().getType() == TokenKind::tokOpenParen) {
     return parseFunCall(std::move(expr));
   }
 
   // Member access: expr.ident (stubbed)
-  if (peekToken().getTy() == TokenKind::tokPeriod) {
+  if (peekToken().getType() == TokenKind::tokPeriod) {
     // Implementation pending
   }
 

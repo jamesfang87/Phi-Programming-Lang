@@ -43,7 +43,7 @@ public:
    * @brief Retrieves declared type
    * @return Type object
    */
-  [[nodiscard]] Type getTy() { return *type; }
+  [[nodiscard]] Type getType() { return *type; }
 
   /**
    * @brief Debug output for AST structure
