@@ -59,9 +59,9 @@ void VarDecl::emit(int level) const {
  * @param type Parameter type
  */
 ParamDecl::ParamDecl(SrcLocation location, std::string identifier, Type type,
-                     bool IsMut)
+                     bool IsConst)
     : Decl(std::move(location), std::move(identifier), std::move(type)),
-      IsMut(IsMut) {}
+      IsConst(IsConst) {}
 
 /**
  * @brief Dumps parameter declaration information

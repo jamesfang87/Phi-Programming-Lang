@@ -129,6 +129,7 @@ std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
     IsConst = false;
     advanceToken();
   } else {
+    emitUnexpectedTokenError(peekToken(), {"const", "var"});
     return nullptr;
   }
 

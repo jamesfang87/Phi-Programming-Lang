@@ -1,3 +1,4 @@
+#include "AST/Stmt.hpp"
 #include "Lexer/TokenType.hpp"
 #include "Parser/Parser.hpp"
 
@@ -120,6 +121,7 @@ bool Parser::SyncToStmt() {
  * target tokens. Used for context-specific recovery (e.g., block endings).
  */
 bool Parser::syncTo(const std::initializer_list<TokenKind> targetTokens) {
+  advanceToken();
   while (!atEOF()) {
     for (const TokenKind target : targetTokens) {
       if (peekToken().getType() == target) {

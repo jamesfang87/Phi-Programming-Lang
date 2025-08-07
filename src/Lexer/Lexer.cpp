@@ -49,7 +49,7 @@ namespace phi {
  *
  * @return A pair containing the vector of tokens and success status
  */
-std::pair<std::vector<Token>, bool> Lexer::scan() {
+std::vector<Token> Lexer::scan() {
   std::vector<Token> ret;
 
   while (!atEOF()) {
@@ -75,7 +75,7 @@ std::pair<std::vector<Token>, bool> Lexer::scan() {
     // finally, scan the token
     ret.push_back(scanToken());
   }
-  return {ret, !diagnosticManager->has_errors()};
+  return ret;
 }
 
 /**
