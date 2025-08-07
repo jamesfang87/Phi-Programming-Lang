@@ -49,7 +49,7 @@ bool Sema::visit(ReturnStmt &stmt) {
   if (!stmt.hasExpr()) {
     if (curFun->getReturnTy() != Type(Type::Primitive::null)) {
       std::println("error: function '{}' should return a value",
-                   curFun->getID());
+                   curFun->getId());
       return false;
     }
     return true;
@@ -62,7 +62,7 @@ bool Sema::visit(ReturnStmt &stmt) {
 
   // Validate return type matches function signature
   if (stmt.getExpr().getType() != curFun->getReturnTy()) {
-    std::println("type mismatch error: {}", curFun->getID());
+    std::println("type mismatch error: {}", curFun->getId());
     std::println("return stmt type: {}", stmt.getExpr().getType().toString());
     std::println("expected type: {}", curFun->getReturnTy().toString());
     return false;
@@ -192,7 +192,7 @@ bool Sema::visit(DeclStmt &stmt) {
   } else if (var.isConst()) {
     // Constants require initializers
     std::println("constant variable '{}' must have an initializer",
-                 var.getID());
+                 var.getId());
     return false;
   }
 

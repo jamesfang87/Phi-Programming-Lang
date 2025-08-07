@@ -28,12 +28,12 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolveAST() {
   for (auto &funDecl : ast) {
     if (!resolveFunDecl(funDecl.get())) {
       std::println("failed to resolve function signature: {}",
-                   funDecl->getID());
+                   funDecl->getId());
       return {false, {}};
     }
 
     if (!symbolTable.insert(funDecl.get())) {
-      std::println("function redefinition: {}", funDecl->getID());
+      std::println("function redefinition: {}", funDecl->getId());
       return {false, {}};
     }
   }
@@ -48,15 +48,15 @@ std::pair<bool, std::vector<std::unique_ptr<FunDecl>>> Sema::resolveAST() {
     // Add parameters to function scope
     for (const std::unique_ptr<ParamDecl> &param : curFun->getParams()) {
       if (!symbolTable.insert(param.get())) {
-        std::println("parameter redefinition in {}: {}", curFun->getID(),
-                     param->getID());
+        std::println("parameter redefinition in {}: {}", curFun->getId(),
+                     param->getId());
         return {false, {}};
       }
     }
 
     // Resolve function body
     if (!resolveBlock(funDecl->getBlock(), true)) {
-      std::println("failed to resolve body of: {}", curFun->getID());
+      std::println("failed to resolve body of: {}", curFun->getId());
       return {false, {}};
     }
   }

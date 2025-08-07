@@ -1,6 +1,6 @@
 fun println(var msg: string) {}
 
-fun foo(let a: i64, var b: i64) {
+fun foo(var a: i64, var b: i64) {
     a = 10;
     b = 20;
 }

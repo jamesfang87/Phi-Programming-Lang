@@ -137,7 +137,7 @@ void phi::CodeGen::visit(phi::ForStmt &stmt) {
   VarDecl &loop_var = stmt.getLoopVar();
   llvm::Type *var_type = getType(loop_var.getType());
   llvm::AllocaInst *alloca =
-      builder.CreateAlloca(var_type, nullptr, loop_var.getID());
+      builder.CreateAlloca(var_type, nullptr, loop_var.getId());
   decls[&loop_var] = alloca;
 
   // Handle range literals properly
@@ -205,7 +205,7 @@ void phi::CodeGen::visit(phi::DeclStmt &stmt) {
 
   // Create allocation for the variable
   llvm::Type *Ty = getType(Decl.getType());
-  llvm::AllocaInst *Alloca = builder.CreateAlloca(Ty, nullptr, Decl.getID());
+  llvm::AllocaInst *Alloca = builder.CreateAlloca(Ty, nullptr, Decl.getId());
 
   // Store in declarations map
   decls[&Decl] = Alloca;
