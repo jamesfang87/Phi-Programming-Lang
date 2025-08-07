@@ -137,9 +137,9 @@ void phi::CodeGen::generate() {
 
   // Generate functions, ignoring any user-defined println functions
   for (auto &func_decl : ast) {
-    if (func_decl->getID() == "main") {
+    if (func_decl->getId() == "main") {
       generateMain(*func_decl);
-    } else if (func_decl->getID() != "println") {
+    } else if (func_decl->getId() != "println") {
       generateFun(*func_decl);
     }
   }
@@ -147,7 +147,7 @@ void phi::CodeGen::generate() {
 
 void phi::CodeGen::generateFun(phi::FunDecl &func) {
   // Ignore println function declarations - we link them to printf automatically
-  if (func.getID() == "println") {
+  if (func.getId() == "println") {
     return;
   }
 
@@ -162,7 +162,7 @@ void phi::CodeGen::generateFun(phi::FunDecl &func) {
 
   // Create function
   auto *llvm_func = llvm::Function::Create(
-      func_type, llvm::Function::ExternalLinkage, func.getID(), &module);
+      func_type, llvm::Function::ExternalLinkage, func.getId(), &module);
 
   // Create entry block
   auto *entry = llvm::BasicBlock::Create(context, "entry", llvm_func);
@@ -174,7 +174,7 @@ void phi::CodeGen::generateFun(phi::FunDecl &func) {
     // Create allocation for parameter
     llvm::Type *param_type = getType(param->getType());
     llvm::AllocaInst *alloca =
-        builder.CreateAlloca(param_type, nullptr, param->getID());
+        builder.CreateAlloca(param_type, nullptr, param->getId());
 
     // Store argument value into allocation
     builder.CreateStore(&(*arg_it), alloca);
