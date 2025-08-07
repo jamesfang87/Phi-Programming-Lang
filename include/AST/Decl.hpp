@@ -21,43 +21,23 @@ namespace phi {
  */
 class Decl {
 public:
-  /**
-   * @brief Constructs a Decl node
-   * @param location Source location of declaration
-   * @param identifier Name of declared entity
-   * @param type Type of declared entity
-   */
-  Decl(SrcLocation location, std::string id, Type type)
-      : location(std::move(location)), id(std::move(id)),
-        type(std::move(type)) {}
+  Decl(SrcLocation Location, std::string Id, Type DeclType)
+      : Location(std::move(Location)), Id(std::move(Id)),
+        DeclType(std::move(DeclType)) {}
 
   virtual ~Decl() = default;
 
-  /**
-   * @brief Retrieves declared identifier
-   * @return Identifier string
-   */
-  [[nodiscard]] std::string getID() { return id; }
+  [[nodiscard]] std::string getId() { return Id; }
+  [[nodiscard]] Type getType() { return *DeclType; }
+  [[nodiscard]] virtual bool isConst() const = 0;
 
-  /**
-   * @brief Retrieves declared type
-   * @return Type object
-   */
-  [[nodiscard]] Type getType() { return *type; }
-
-  /**
-   * @brief Debug output for AST structure
-   * @param level Current indentation level for formatting
-   */
   virtual void emit(int level) const = 0;
 
-  virtual bool isConst() const = 0;
-
 protected:
-  SrcLocation location;     ///< Source location of declaration
-  std::string id;           ///< Name of declared entity
-  std::optional<Type> type; ///< Type information (std::nullopt for
-                            ///< unresolved declarations)
+  SrcLocation Location;         ///< Source location of declaration
+  std::string Id;               ///< Name of declared entity
+  std::optional<Type> DeclType; ///< Type information (std::nullopt for
+                                ///< unresolved declarations)
 };
 
 /**
@@ -78,36 +58,20 @@ public:
    * @param isConst Constant flag (true for const)
    * @param initializer Initial value expression
    */
-  VarDecl(SrcLocation location, std::string id, Type type, const bool IsConst,
-          std::unique_ptr<Expr> init);
+  VarDecl(SrcLocation Location, std::string Id, Type DeclType,
+          const bool IsConst, std::unique_ptr<Expr> Init)
+      : Decl(std::move(Location), std::move(Id), std::move(DeclType)),
+        IsConst(IsConst), Init(std::move(Init)) {}
 
-  /**
-   * @brief Checks constant status
-   * @return true if constant, false if mutable
-   */
   [[nodiscard]] bool isConst() const override { return IsConst; }
+  [[nodiscard]] bool hasInit() const { return Init != nullptr; }
+  [[nodiscard]] Expr &getInit() const { return *Init; }
 
-  /**
-   * @brief Retrieves initializer expression
-   * @return Reference to initializer expression
-   */
-  [[nodiscard]] Expr &getInit() const { return *init; }
-
-  /**
-   * @brief Checks for initializer presence
-   * @return true if has initializer, false otherwise
-   */
-  [[nodiscard]] bool hasInit() const { return init != nullptr; }
-
-  /**
-   * @brief Debug output for variable declaration
-   * @param level Current indentation level
-   */
   void emit(int level) const override;
 
 private:
   const bool IsConst;         ///< Constant declaration flag
-  std::unique_ptr<Expr> init; ///< Initial value expression
+  std::unique_ptr<Expr> Init; ///< Initial value expression
 };
 
 /**
@@ -124,21 +88,13 @@ public:
    * @param identifier Parameter name
    * @param type Parameter type
    */
-  ParamDecl(SrcLocation location, std::string id, Type type, bool IsConst);
+  ParamDecl(SrcLocation Location, std::string Id, Type DeclType, bool IsConst)
+      : Decl(std::move(Location), std::move(Id), std::move(DeclType)),
+        IsConst(IsConst) {}
 
-  /**
-   * @brief Sets parameter type
-   * @param type New type for parameter
-   */
-  void setTy(Type type) { this->type = std::move(type); }
+  [[nodiscard]] bool isConst() const override { return IsConst; }
 
-  /**
-   * @brief Debug output for parameter
-   * @param level Current indentation level
-   */
   void emit(int level) const override;
-
-  bool isConst() const override { return IsConst; }
 
 private:
   const bool IsConst = false;
@@ -162,55 +118,49 @@ public:
    * @param params List of function parameters
    * @param block_ptr Function body block
    */
-  FunDecl(SrcLocation location, std::string id, Type returnType,
-          std::vector<std::unique_ptr<ParamDecl>> params,
-          std::unique_ptr<Block> blockPtr);
+  FunDecl(SrcLocation Location, std::string Id, Type ReturnType,
+          std::vector<std::unique_ptr<ParamDecl>> Params,
+          std::unique_ptr<Block> BlockPtr)
+      : Decl(std::move(Location), std::move(Id), std::move(ReturnType)),
+        Params(std::move(Params)), Block(std::move(BlockPtr)) {}
 
-  /**
-   * @brief Retrieves return type
-   * @return Function return type
-   */
-  [[nodiscard]] Type getReturnTy() { return type.value(); }
-
-  /**
-   * @brief Retrieves parameter declarations
-   * @return Reference to parameter list
-   */
+  [[nodiscard]] bool isConst() const override { return false; }
+  [[nodiscard]] Type getReturnTy() const { return DeclType.value(); }
+  [[nodiscard]] Block &getBlock() const { return *Block; }
   [[nodiscard]] std::vector<std::unique_ptr<ParamDecl>> &getParams() {
-    return params;
+    return Params;
   }
+  void setBlock(std::unique_ptr<Block> BPtr) { Block = std::move(BPtr); }
 
-  /**
-   * @brief Retrieves function body
-   * @return Reference to body block
-   */
-  [[nodiscard]] Block &getBlock() const { return *block; }
-
-  /**
-   * @brief Sets return type
-   * @param type New return type
-   */
-  void setReturnTy(Type type) { this->type = std::move(type); }
-
-  /**
-   * @brief Sets function body
-   * @param block_ptr New body block
-   */
-  void setBlock(std::unique_ptr<Block> blockPtr) {
-    block = std::move(blockPtr);
-  }
-
-  bool isConst() const override { return false; }
-
-  /**
-   * @brief Debug output for function
-   * @param level Current indentation level
-   */
   void emit(int level) const override;
 
 private:
-  std::vector<std::unique_ptr<ParamDecl>> params; ///< Function parameters
-  std::unique_ptr<Block> block;                   ///< Function body statements
+  std::vector<std::unique_ptr<ParamDecl>> Params; ///< Function parameters
+  std::unique_ptr<Block> Block;                   ///< Function body statements
 };
+
+// class StructDecl final : public Decl {
+// public:
+//   /**
+//    * @brief Constructs a StructDecl node
+//    * @param location Source location of struct
+//    * @param identifier Struct name
+//    * @param fields List of struct fields
+//    */
+//   StructDecl(SrcLocation Location, std::string Id,
+//              std::vector<std::unique_ptr<FieldDecl>> Fields)
+//       : Decl(std::move(Location), std::move(Id), Type::VOID),
+//         Fields(std::move(Fields)) {}
+
+//   [[nodiscard]] bool isConst() const override { return false; }
+//   [[nodiscard]] std::vector<std::unique_ptr<FieldDecl>> &getFields() {
+//     return Fields;
+//   }
+
+//   void emit(int level) const override;
+
+// private:
+//   std::vector<std::unique_ptr<FieldDecl>> Fields; ///< Struct fields
+// };
 
 }; // namespace phi

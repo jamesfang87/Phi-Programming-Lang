@@ -21,7 +21,7 @@ void SymbolTable::enterScope() { scopes.emplace_back(); }
 void SymbolTable::exitScope() { scopes.pop_back(); }
 
 bool SymbolTable::insert(FunDecl *fun) {
-  scopes.back().funs[fun->getID()] = fun;
+  scopes.back().funs[fun->getId()] = fun;
   return true;
 }
 
@@ -31,12 +31,12 @@ bool SymbolTable::insert(Decl *decl) {
 }
 
 bool SymbolTable::insert(VarDecl *decl) {
-  scopes.back().vars[decl->getID()] = decl;
+  scopes.back().vars[decl->getId()] = decl;
   return true;
 }
 
 bool SymbolTable::insert(ParamDecl *decl) {
-  scopes.back().vars[decl->getID()] = decl;
+  scopes.back().vars[decl->getId()] = decl;
   return true;
 }
 
