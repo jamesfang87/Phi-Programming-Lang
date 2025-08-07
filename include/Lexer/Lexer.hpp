@@ -63,7 +63,7 @@ public:
    *         - Vector of tokens from source
    *         - Boolean indicating scanning success (false if errors occurred)
    */
-  std::pair<std::vector<Token>, bool> scan();
+  std::vector<Token> scan();
 
   /**
    * @brief Retrieves source code being scanned
