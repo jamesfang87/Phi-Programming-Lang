@@ -124,7 +124,7 @@ public:
    * @param identifier Parameter name
    * @param type Parameter type
    */
-  ParamDecl(SrcLocation location, std::string id, Type type, bool IsMut);
+  ParamDecl(SrcLocation location, std::string id, Type type, bool IsConst);
 
   /**
    * @brief Sets parameter type
@@ -138,10 +138,10 @@ public:
    */
   void emit(int level) const override;
 
-  bool isConst() const override { return IsMut; }
+  bool isConst() const override { return IsConst; }
 
 private:
-  const bool IsMut = false;
+  const bool IsConst = false;
 };
 
 /**

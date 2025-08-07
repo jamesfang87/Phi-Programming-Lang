@@ -17,14 +17,13 @@ PhiCompiler::PhiCompiler(std::string src, std::string path,
 PhiCompiler::~PhiCompiler() = default;
 
 bool PhiCompiler::compile() {
-  auto [tokens, scan_success] = Lexer(srcFile, path, diagnosticManager).scan();
-  if (!scan_success) {
+  auto tokens = Lexer(srcFile, path, diagnosticManager).scan();
+  if (diagnosticManager->error_count() > 0) {
     return false;
   }
 
-  auto [ast, parse_success] =
-      Parser(srcFile, path, tokens, diagnosticManager).parse();
-  if (!parse_success) {
+  auto ast = Parser(srcFile, path, tokens, diagnosticManager).parse();
+  if (diagnosticManager->error_count() > 0) {
     return false;
   }
 
@@ -47,7 +46,7 @@ bool PhiCompiler::compile() {
 
   codegen.outputIR(ir_filename);
 
-  system(std::format("clang {} -o output", ir_filename).c_str());
+  system(std::format("clang {}", ir_filename).c_str());
   return true;
 }
 

@@ -34,7 +34,7 @@ Parser::Parser(const std::string_view src, const std::string_view path,
  * Parses entire token stream, collecting function declarations.
  * Uses error recovery via sync_to() after errors.
  */
-std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
+std::vector<std::unique_ptr<FunDecl>> Parser::parse() {
   while (!atEOF()) {
     switch (peekToken().getType()) {
     case TokenKind::tokFun: {
@@ -51,7 +51,7 @@ std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> Parser::parse() {
     }
   }
 
-  return {std::move(functions), !diagnosticManager->has_errors()};
+  return std::move(functions);
 }
 
 } // namespace phi

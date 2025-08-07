@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -51,7 +52,7 @@ public:
    *         Second element: true if parsing completed without errors,
    *                        false if errors occurred
    */
-  std::pair<std::vector<std::unique_ptr<FunDecl>>, bool> parse();
+  std::vector<std::unique_ptr<FunDecl>> parse();
 
 private:
   // PARSER STATE
@@ -252,9 +253,9 @@ private:
   parseList(const TokenKind opening, const TokenKind closing, F fun,
             const std::string &context = "list") {
     // Verify opening delimiter
-    const Token opening_token = peekToken();
-    if (opening_token.getType() != opening) {
-      emitExpectedFoundError(tyToStr(opening), peekToken());
+    const Token OpeningToken = peekToken();
+    if (OpeningToken.getType() != opening) {
+      emitExpectedFoundError(tyToStr(opening), OpeningToken);
       return std::nullopt;
     }
     advanceToken();
@@ -263,12 +264,12 @@ private:
     std::vector<std::unique_ptr<T>> content;
     while (!atEOF() && peekToken().getType() != closing) {
       auto result = (this->*fun)();
-      if (!result) {
+      if (result) {
+        content.push_back(std::move(result));
+      } else {
         // Recover by syncing to comma or closing delimiter
         syncTo({closing, TokenKind::tokComma});
-        continue;
       }
-      content.push_back(std::move(result));
 
       // Check for closing delimiter before comma
       if (peekToken().getType() == closing) {
@@ -291,7 +292,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekToken().getType() != closing) {
-      emitUnclosedDelimiterError(opening_token, tyToStr(closing));
+      emitUnclosedDelimiterError(OpeningToken, tyToStr(closing));
       return std::nullopt;
     }
 
