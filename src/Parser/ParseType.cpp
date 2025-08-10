@@ -19,14 +19,21 @@ namespace phi {
  */
 std::optional<Type> Parser::parseType() {
   // Map of primitive type names to their enum representations
-  const std::unordered_map<std::string, Type::Primitive> PrimitiveMap = {
-      {"i8", Type::Primitive::i8},        {"i16", Type::Primitive::i16},
-      {"i32", Type::Primitive::i32},      {"i64", Type::Primitive::i64},
-      {"u8", Type::Primitive::u8},        {"u16", Type::Primitive::u16},
-      {"u32", Type::Primitive::u32},      {"u64", Type::Primitive::u64},
-      {"f32", Type::Primitive::f32},      {"f64", Type::Primitive::f64},
-      {"string", Type::Primitive::str},   {"char", Type::Primitive::character},
-      {"bool", Type::Primitive::boolean}, {"null", Type::Primitive::null}};
+  const std::unordered_map<std::string, Type::PrimitiveKind> PrimitiveMap = {
+      {"i8", Type::PrimitiveKind::I8Kind},
+      {"i16", Type::PrimitiveKind::I16Kind},
+      {"i32", Type::PrimitiveKind::I32Kind},
+      {"i64", Type::PrimitiveKind::I64Kind},
+      {"u8", Type::PrimitiveKind::U8Kind},
+      {"u16", Type::PrimitiveKind::U16Kind},
+      {"u32", Type::PrimitiveKind::U32Kind},
+      {"u64", Type::PrimitiveKind::U64Kind},
+      {"f32", Type::PrimitiveKind::F32Kind},
+      {"f64", Type::PrimitiveKind::F64Kind},
+      {"string", Type::PrimitiveKind::StringKind},
+      {"char", Type::PrimitiveKind::CharKind},
+      {"bool", Type::PrimitiveKind::BoolKind},
+      {"null", Type::PrimitiveKind::NullKind}};
 
   const std::string Id = peekToken().getLexeme();
   const auto It = PrimitiveMap.find(Id);

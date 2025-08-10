@@ -295,7 +295,7 @@ void ContinueStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  */
 void Block::emit(int Level) const {
   std::println("{}Block", indent(Level));
-  for (auto &s : this->stmts) {
+  for (auto &s : this->Stmts) {
     s->emit(Level + 1);
   }
 }
