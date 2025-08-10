@@ -19,50 +19,51 @@ public:
    * @return true if primitive, false if custom
    */
   [[nodiscard]] bool isPrimitive() const noexcept {
-    return PrimitiveType != Primitive::Custom;
+    return PrimitiveType != PrimitiveKind::CustomKind;
   }
 
   /**
    * @brief Enumeration of primitive types
    */
-  enum class Primitive : uint8_t {
+  enum class PrimitiveKind : uint8_t {
     // SIGNED INTEGERS
-    i8,
-    i16,
-    i32,
-    i64,
+    I8Kind,
+    I16Kind,
+    I32Kind,
+    I64Kind,
 
     // UNSIGNED INTEGERS
-    u8,
-    u16,
-    u32,
-    u64,
+    U8Kind,
+    U16Kind,
+    U32Kind,
+    U64Kind,
 
     // FLOATING-POINT
-    f32,
-    f64,
+    F32Kind,
+    F64Kind,
 
     // TEXT TYPES
-    str,
-    character,
+    StringKind,
+    CharKind,
 
     // BOOLEAN
-    boolean,
+    BoolKind,
 
     // RANGE
-    range,
+    RangeKind,
 
     // SPECIAL TYPES
-    null,
-    Custom
+    NullKind,
+    CustomKind
   };
 
   /**
    * @brief Constructs primitive type
    * @param primitiveType
    */
-  explicit Type(const Primitive PrimitiveType) : PrimitiveType(PrimitiveType) {
-    assert(PrimitiveType != Primitive::Custom &&
+  explicit Type(const PrimitiveKind PrimitiveType)
+      : PrimitiveType(PrimitiveType) {
+    assert(PrimitiveType != PrimitiveKind::CustomKind &&
            "Use custom_type constructor for custom types");
   }
 
@@ -71,7 +72,7 @@ public:
    * @param CustomTypeName Name of custom type
    */
   explicit Type(std::string CustomTypeName)
-      : PrimitiveType(Primitive::Custom),
+      : PrimitiveType(PrimitiveKind::CustomKind),
         CustomTypeName(std::move(CustomTypeName)) {}
 
   /**
@@ -79,14 +80,14 @@ public:
    * @return Type name string
    */
   [[nodiscard]] std::string toString() const {
-    if (PrimitiveType == Primitive::Custom) {
+    if (PrimitiveType == PrimitiveKind::CustomKind) {
       return CustomTypeName;
     }
     return primitiveToString(PrimitiveType);
   }
 
   // ACCESSORS
-  [[nodiscard]] Primitive getPrimitiveType() const noexcept {
+  [[nodiscard]] PrimitiveKind getPrimitiveType() const noexcept {
     return PrimitiveType;
   }
 
@@ -95,7 +96,7 @@ public:
    * @return Custom type name string
    */
   [[nodiscard]] const std::string &getCustomTypeName() const {
-    assert(PrimitiveType == Primitive::Custom);
+    assert(PrimitiveType == PrimitiveKind::CustomKind);
     return CustomTypeName;
   }
 
@@ -104,7 +105,7 @@ public:
     if (PrimitiveType != Other.PrimitiveType) {
       return false;
     }
-    if (PrimitiveType == Primitive::Custom) {
+    if (PrimitiveType == PrimitiveKind::CustomKind) {
       return CustomTypeName == Other.CustomTypeName;
     }
     return true;
@@ -118,45 +119,45 @@ private:
    * @param primitive Primitive type value
    * @return Primitive type name
    */
-  static std::string primitiveToString(const Primitive &Prim) {
+  static std::string primitiveToString(const PrimitiveKind &Prim) {
     switch (Prim) {
-    case Primitive::i8:
+    case PrimitiveKind::I8Kind:
       return "i8";
-    case Primitive::i16:
+    case PrimitiveKind::I16Kind:
       return "i16";
-    case Primitive::i32:
+    case PrimitiveKind::I32Kind:
       return "i32";
-    case Primitive::i64:
+    case PrimitiveKind::I64Kind:
       return "i64";
-    case Primitive::u8:
+    case PrimitiveKind::U8Kind:
       return "u8";
-    case Primitive::u16:
+    case PrimitiveKind::U16Kind:
       return "u16";
-    case Primitive::u32:
+    case PrimitiveKind::U32Kind:
       return "u32";
-    case Primitive::u64:
+    case PrimitiveKind::U64Kind:
       return "u64";
-    case Primitive::f32:
+    case PrimitiveKind::F32Kind:
       return "f32";
-    case Primitive::f64:
+    case PrimitiveKind::F64Kind:
       return "f64";
-    case Primitive::str:
+    case PrimitiveKind::StringKind:
       return "string";
-    case Primitive::character:
+    case PrimitiveKind::CharKind:
       return "char";
-    case Primitive::boolean:
+    case PrimitiveKind::BoolKind:
       return "bool";
-    case Primitive::range:
+    case PrimitiveKind::RangeKind:
       return "range";
-    case Primitive::null:
+    case PrimitiveKind::NullKind:
       return "null";
     default:
       return "unknown";
     }
   }
 
-  Primitive PrimitiveType;    ///< Underlying primitive type
-  std::string CustomTypeName; ///< Name for custom types
+  PrimitiveKind PrimitiveType; ///< Underlying primitive type
+  std::string CustomTypeName;  ///< Name for custom types
 };
 
 bool isIntTy(const Type &type);

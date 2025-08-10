@@ -47,23 +47,23 @@ public:
     ExprLast = MemberFunAccessKind
   };
 
-  explicit Stmt(Kind K, SrcLocation location)
-      : StmtKind(K), location(std::move(location)) {}
+  explicit Stmt(Kind K, SrcLocation Location)
+      : StmtKind(K), Location(std::move(Location)) {}
 
   virtual ~Stmt() = default;
 
   [[nodiscard]] Kind getKind() const { return StmtKind; }
-  [[nodiscard]] SrcLocation &getLocation() { return location; }
+  [[nodiscard]] SrcLocation &getLocation() { return Location; }
 
-  virtual void emit(int level) const = 0;
-  virtual bool accept(ASTVisitor<bool> &visitor) = 0;
-  virtual void accept(ASTVisitor<void> &visitor) = 0;
+  virtual void emit(int Level) const = 0;
+  virtual bool accept(ASTVisitor<bool> &Visitor) = 0;
+  virtual void accept(ASTVisitor<void> &Visitor) = 0;
 
 private:
   const Kind StmtKind;
 
 protected:
-  SrcLocation location;
+  SrcLocation Location;
 };
 
 /**
@@ -71,31 +71,31 @@ protected:
  */
 class Block {
 public:
-  explicit Block(std::vector<std::unique_ptr<Stmt>> stmts)
-      : stmts(std::move(stmts)) {}
+  explicit Block(std::vector<std::unique_ptr<Stmt>> Stmts)
+      : Stmts(std::move(Stmts)) {}
 
-  [[nodiscard]] std::vector<std::unique_ptr<Stmt>> &getStmts() { return stmts; }
-  void emit(int level) const;
+  [[nodiscard]] std::vector<std::unique_ptr<Stmt>> &getStmts() { return Stmts; }
+  void emit(int Level) const;
 
 private:
-  std::vector<std::unique_ptr<Stmt>> stmts;
+  std::vector<std::unique_ptr<Stmt>> Stmts;
 };
 
 // Statement class declarations
 class ReturnStmt final : public Stmt {
 public:
-  ReturnStmt(SrcLocation location, std::unique_ptr<Expr> expr);
+  ReturnStmt(SrcLocation Location, std::unique_ptr<Expr> expr);
   ~ReturnStmt() override;
 
   [[nodiscard]] bool hasExpr() const { return ReturnExpr != nullptr; }
   [[nodiscard]] Expr &getExpr() const { return *ReturnExpr; }
 
-  void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  void emit(int Level) const override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::ReturnStmtKind;
+  static bool classof(const Stmt *Other) {
+    return Other->getKind() == Kind::ReturnStmtKind;
   }
 
 private:
@@ -104,8 +104,8 @@ private:
 
 class IfStmt final : public Stmt {
 public:
-  IfStmt(SrcLocation location, std::unique_ptr<Expr> cond,
-         std::unique_ptr<Block> thenBlock, std::unique_ptr<Block> elseBlock);
+  IfStmt(SrcLocation Location, std::unique_ptr<Expr> Cond,
+         std::unique_ptr<Block> ThenBody, std::unique_ptr<Block> ElseBody);
   ~IfStmt() override;
 
   [[nodiscard]] Expr &getCond() const { return *Cond; }
@@ -113,12 +113,12 @@ public:
   [[nodiscard]] Block &getElse() const { return *ElseBody; }
   [[nodiscard]] bool hasElse() const { return ElseBody != nullptr; }
 
-  void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  void emit(int Level) const override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::IfStmtKind;
+  static bool classof(const Stmt *Other) {
+    return Other->getKind() == Kind::IfStmtKind;
   }
 
 private:
@@ -129,19 +129,19 @@ private:
 
 class WhileStmt final : public Stmt {
 public:
-  WhileStmt(SrcLocation location, std::unique_ptr<Expr> cond,
-            std::unique_ptr<Block> body);
+  WhileStmt(SrcLocation Location, std::unique_ptr<Expr> Cond,
+            std::unique_ptr<Block> Body);
   ~WhileStmt() override;
 
   [[nodiscard]] Expr &getCond() const { return *Cond; }
   [[nodiscard]] Block &getBody() const { return *Body; }
 
-  void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  void emit(int Level) const override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::WhileStmtKind;
+  static bool classof(const Stmt *Other) {
+    return Other->getKind() == Kind::WhileStmtKind;
   }
 
 private:
@@ -151,20 +151,20 @@ private:
 
 class ForStmt final : public Stmt {
 public:
-  ForStmt(SrcLocation location, std::unique_ptr<VarDecl> loopVar,
-          std::unique_ptr<Expr> range, std::unique_ptr<Block> body);
+  ForStmt(SrcLocation Location, std::unique_ptr<VarDecl> LoopVar,
+          std::unique_ptr<Expr> Range, std::unique_ptr<Block> Body);
   ~ForStmt() override;
 
   [[nodiscard]] VarDecl &getLoopVar() { return *LoopVar; }
   [[nodiscard]] Expr &getRange() const { return *Range; }
   [[nodiscard]] Block &getBody() const { return *Body; }
 
-  void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  void emit(int Level) const override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::ForStmtKind;
+  static bool classof(const Stmt *Other) {
+    return Other->getKind() == Kind::ForStmtKind;
   }
 
 private:
@@ -175,17 +175,17 @@ private:
 
 class DeclStmt final : public Stmt {
 public:
-  DeclStmt(SrcLocation location, std::unique_ptr<VarDecl> decl);
+  DeclStmt(SrcLocation Location, std::unique_ptr<VarDecl> Var);
   ~DeclStmt() override;
 
   [[nodiscard]] VarDecl &getDecl() const { return *Var; }
 
-  void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  void emit(int Level) const override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::DeclStmtKind;
+  static bool classof(const Stmt *Other) {
+    return Other->getKind() == Kind::DeclStmtKind;
   }
 
 private:
@@ -197,12 +197,12 @@ public:
   BreakStmt(SrcLocation Location);
   ~BreakStmt() override;
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::BreakStmtKind;
+  static bool classof(const Stmt *Other) {
+    return Other->getKind() == Kind::BreakStmtKind;
   }
 };
 
@@ -211,12 +211,12 @@ public:
   ContinueStmt(SrcLocation Location);
   ~ContinueStmt() override;
 
-  void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  void emit(int Level) const override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::ContinueStmtKind;
+  static bool classof(const Stmt *Other) {
+    return Other->getKind() == Kind::ContinueStmtKind;
   }
 };
 

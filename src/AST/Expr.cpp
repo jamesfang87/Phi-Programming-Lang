@@ -44,7 +44,7 @@ void Expr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  */
 IntLiteral::IntLiteral(SrcLocation Location, const int64_t Value)
     : Expr(Stmt::Kind::IntLiteralKind, std::move(Location),
-           Type(Type::Primitive::i64)),
+           Type(Type::PrimitiveKind::I64Kind)),
       Value(Value) {}
 
 /**
@@ -78,7 +78,7 @@ void IntLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  */
 FloatLiteral::FloatLiteral(SrcLocation Location, const double Value)
     : Expr(Stmt::Kind::FloatLiteralKind, std::move(Location),
-           Type(Type::Primitive::f64)),
+           Type(Type::PrimitiveKind::F64Kind)),
       Value(Value) {}
 
 /**
@@ -111,7 +111,7 @@ void FloatLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  */
 StrLiteral::StrLiteral(SrcLocation Location, std::string Value)
     : Expr(Stmt::Kind::StrLiteralKind, std::move(Location),
-           Type(Type::Primitive::str)),
+           Type(Type::PrimitiveKind::StringKind)),
       Value(std::move(Value)) {}
 
 /**
@@ -144,7 +144,7 @@ void StrLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  */
 CharLiteral::CharLiteral(SrcLocation Location, char Value)
     : Expr(Stmt::Kind::CharLiteralKind, std::move(Location),
-           Type(Type::Primitive::character)),
+           Type(Type::PrimitiveKind::CharKind)),
       Value(Value) {}
 
 /**
@@ -177,7 +177,7 @@ void CharLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  */
 BoolLiteral::BoolLiteral(SrcLocation Location, bool Value)
     : Expr(Stmt::Kind::BoolLiteralKind, std::move(Location),
-           Type(Type::Primitive::boolean)),
+           Type(Type::PrimitiveKind::BoolKind)),
       Value(Value) {}
 
 /**
@@ -214,7 +214,7 @@ void BoolLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 RangeLiteral::RangeLiteral(SrcLocation Location, std::unique_ptr<Expr> Start,
                            std::unique_ptr<Expr> End, const bool Inclusive)
     : Expr(Stmt::Kind::RangeLiteralKind, std::move(Location),
-           Type(Type::Primitive::range)),
+           Type(Type::PrimitiveKind::RangeKind)),
       Start(std::move(Start)), End(std::move(End)), Inclusive(Inclusive) {}
 
 /**
@@ -351,8 +351,8 @@ void BinaryOp::emit(int Level) const {
   Lhs->emit(Level + 2);
   std::println("{}  rhs:", indent(Level));
   Rhs->emit(Level + 2);
-  if (type.has_value()) {
-    std::println("{}  type: {}", indent(Level), type.value().toString());
+  if (Ty.has_value()) {
+    std::println("{}  type: {}", indent(Level), Ty.value().toString());
   }
 }
 
