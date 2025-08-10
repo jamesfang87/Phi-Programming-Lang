@@ -29,24 +29,18 @@ public:
    * resource management and prevents scope leaks.
    */
   class ScopeGuard {
-    SymbolTable &table; ///< Reference to the parent symbol table
+    SymbolTable &SymbolTab; ///< Reference to the parent symbol table
 
   public:
     /**
      * @brief Constructs a ScopeGuard and enters a new scope
      * @param table Reference to the symbol table to manage
      */
-    explicit ScopeGuard(SymbolTable &table) : table(table) {
-      table.enterScope();
+    explicit ScopeGuard(SymbolTable &Table) : SymbolTab(Table) {
+      Table.enterScope();
     }
 
-    /**
-     * @brief Destructor that automatically exits the scope
-     */
-    ~ScopeGuard() { table.exitScope(); }
-
-    // Explicitly disable copying and moving to prevent accidental scope
-    // mismanagement
+    ~ScopeGuard() { SymbolTab.exitScope(); }
     ScopeGuard(const ScopeGuard &) = delete;
     ScopeGuard &operator=(const ScopeGuard &) = delete;
     ScopeGuard(ScopeGuard &&) = delete;
@@ -54,23 +48,23 @@ public:
   };
 
   struct Scope {
-    std::unordered_map<std::string, Decl *> vars;
-    std::unordered_map<std::string, FunDecl *> funs;
-    // std::vector<std::unordered_map<std::string, Decl*>> structs;
+    std::unordered_map<std::string, Decl *> Vars;
+    std::unordered_map<std::string, FunDecl *> Funs;
+    std::unordered_map<std::string, StructDecl *> Structs;
   };
 
-  bool insert(FunDecl *fun);
-  bool insert(Decl *s);
-  bool insert(VarDecl *var);
-  bool insert(ParamDecl *param);
+  bool insert(FunDecl *Fun);
+  bool insert(StructDecl *Struct);
+  bool insert(VarDecl *Var);
+  bool insert(ParamDecl *Param);
 
-  FunDecl *lookup(FunCallExpr &call);
-  Decl *lookup_struct(const std::string &name);
-  Decl *lookup(DeclRefExpr &var);
+  FunDecl *lookup(FunCallExpr &Fun);
+  StructDecl *lookup(const std::string &Struct);
+  Decl *lookup(DeclRefExpr &Var);
 
 private:
   /// Stack of scopes, with the back being the innermost current scope
-  std::vector<Scope> scopes;
+  std::vector<Scope> Scopes;
 
   /**
    * @brief Enters a new scope

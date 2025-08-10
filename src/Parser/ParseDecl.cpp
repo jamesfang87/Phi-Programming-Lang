@@ -1,5 +1,5 @@
 #include "Diagnostics/DiagnosticBuilder.hpp"
-#include "Lexer/TokenType.hpp"
+#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
 #include <expected>
@@ -28,47 +28,47 @@ namespace phi {
  * Handles comprehensive error recovery and validation at each step.
  */
 std::unique_ptr<FunDecl> Parser::parseFunDecl() {
-  Token tok = advanceToken(); // Eat 'fun'
-  SrcLocation loc = tok.getStart();
+  Token Tok = advanceToken(); // Eat 'fun'
+  SrcLocation Loc = Tok.getStart();
 
   // Validate function name
-  if (peekToken().getType() != TokenKind::tokIdentifier) {
+  if (peekToken().getKind() != TokenKind::IdentifierKind) {
     error("invalid function name")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected function name here")
-        .with_secondary_label(spanFromToken(tok), "after `fun` keyword")
+        .with_secondary_label(spanFromToken(Tok), "after `fun` keyword")
         .with_help("function names must be valid identifiers")
         .with_note("identifiers must start with a letter or underscore")
         .with_code("E0006")
-        .emit(*diagnosticManager);
+        .emit(*DiagnosticsMan);
     return nullptr;
   }
-  std::string name = advanceToken().getLexeme();
+  std::string Id = advanceToken().getLexeme();
 
   // Parse parameter list
-  auto params =
-      parseList<ParamDecl>(TokenKind::tokOpenParen, TokenKind::tokRightParen,
+  auto Params =
+      parseList<ParamDecl>(TokenKind::OpenParenKind, TokenKind::CloseParenKind,
                            &Parser::parseParamDecl);
-  if (!params)
+  if (!Params)
     return nullptr;
 
   // Handle optional return type
-  auto return_type = Type(Type::Primitive::null);
-  if (peekToken().getType() == TokenKind::tokArrow) {
+  auto ReturnType = Type(Type::Primitive::null);
+  if (peekToken().getKind() == TokenKind::ArrowKind) {
     advanceToken(); // eat '->'
-    auto res = parseType();
-    if (!res)
+    auto Res = parseType();
+    if (!Res.has_value())
       return nullptr;
-    return_type = res.value();
+    ReturnType = Res.value();
   }
 
   // Parse function body
-  auto body = parseBlock();
-  if (!body)
+  auto Body = parseBlock();
+  if (!Body)
     return nullptr;
 
-  return std::make_unique<FunDecl>(loc, std::move(name), return_type,
-                                   std::move(params.value()), std::move(body));
+  return std::make_unique<FunDecl>(Loc, std::move(Id), ReturnType,
+                                   std::move(Params.value()), std::move(Body));
 }
 
 /**
@@ -82,30 +82,30 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
  */
 std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   // Parse identifier
-  if (peekToken().getType() != TokenKind::tokIdentifier) {
+  if (peekToken().getKind() != TokenKind::IdentifierKind) {
     error("expected identifier")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected identifier here")
-        .emit(*diagnosticManager);
+        .emit(*DiagnosticsMan);
     return std::nullopt;
   }
   SrcLocation start = peekToken().getStart();
   std::string name = advanceToken().getLexeme();
 
   // Parse colon separator
-  if (peekToken().getType() != TokenKind::tokColon) {
+  if (peekToken().getKind() != TokenKind::ColonKind) {
     error("expected colon")
         .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
         .with_suggestion(spanFromToken(peekToken()), ":",
                          "add colon before type")
-        .emit(*diagnosticManager);
+        .emit(*DiagnosticsMan);
     return std::nullopt;
   }
   advanceToken();
 
   // Parse type
   auto type = parseType();
-  if (!type)
+  if (!type.has_value())
     return std::nullopt;
 
   return TypedBinding{
@@ -122,10 +122,10 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
  */
 std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
   bool IsConst;
-  if (peekToken().getType() == TokenKind::TokConst) {
+  if (peekToken().getKind() == TokenKind::ConstKwKind) {
     IsConst = true;
     advanceToken();
-  } else if (peekToken().getType() == TokenKind::TokVar) {
+  } else if (peekToken().getKind() == TokenKind::VarKwKind) {
     IsConst = false;
     advanceToken();
   } else {

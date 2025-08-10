@@ -43,14 +43,14 @@ public:
    * @param path File path for error reporting
    * @param diagnostic_manager Diagnostic system for error reporting
    */
-  Lexer(std::string src, std::string path,
-        std::shared_ptr<DiagnosticManager> diagnosticManager)
-      : src(std::move(src)), path(std::move(path)),
-        diagnosticManager(std::move(diagnosticManager)) {
-    curChar = this->src.begin();
-    curLexeme = this->src.begin();
-    curLine = this->src.begin();
-    lexemeLine = this->src.begin();
+  Lexer(std::string Src, std::string Path,
+        std::shared_ptr<DiagnosticManager> DiagnosticsMan)
+      : Src(std::move(Src)), Path(std::move(Path)),
+        DiagnosticsMan(std::move(DiagnosticsMan)) {
+    CurChar = this->Src.begin();
+    CurLexeme = this->Src.begin();
+    CurLine = this->Src.begin();
+    LexemeLine = this->Src.begin();
   }
 
   /**
@@ -69,26 +69,26 @@ public:
    * @brief Retrieves source code being scanned
    * @return Copy of source code string
    */
-  [[nodiscard]] std::string getSrc() const { return src; }
+  [[nodiscard]] std::string getSrc() const { return Src; }
 
   /**
    * @brief Retrieves source file path
    * @return Copy of file path string
    */
-  [[nodiscard]] std::string getPath() const { return path; }
+  [[nodiscard]] std::string getPath() const { return Path; }
 
 private:
-  std::string src;  ///< Source code being scanned
-  std::string path; ///< File path for error reporting
-  std::shared_ptr<DiagnosticManager> diagnosticManager; ///< Diagnostic system
+  std::string Src;  ///< Source code being scanned
+  std::string Path; ///< File path for error reporting
+  std::shared_ptr<DiagnosticManager> DiagnosticsMan; ///< Diagnostic system
 
-  int lineNum = 1;                  ///< Current line number (1-indexed)
-  std::string::iterator curChar;    ///< Current character position
-  std::string::iterator curLexeme;  ///< Start of current lexeme
-  std::string::iterator curLine;    ///< Start of current line
-  std::string::iterator lexemeLine; ///< Start of current lexeme's line
+  int LineNum = 1;                  ///< Current line number (1-indexed)
+  std::string::iterator CurChar;    ///< Current character position
+  std::string::iterator CurLexeme;  ///< Start of current lexeme
+  std::string::iterator CurLine;    ///< Start of current line
+  std::string::iterator LexemeLine; ///< Start of current lexeme's line
 
-  bool insideStr = false; ///< Inside string literal state
+  bool InsideStr = false; ///< Inside string literal state
 
   // MAIN SCANNING LOGIC
 
@@ -110,7 +110,7 @@ private:
    * @brief Parses string literal with escape sequences
    * @return Token representing parsed string
    */
-  Token parseStr();
+  Token parseString();
 
   /**
    * @brief Parses character literal with escape sequences
@@ -138,17 +138,17 @@ private:
    * @brief Peeks current character without advancing
    * @return Current character, or '\0' at EOF
    */
-  [[nodiscard]] char peekChar() const { return atEOF() ? '\0' : *curChar; }
+  [[nodiscard]] char peekChar() const { return atEOF() ? '\0' : *CurChar; }
 
   /**
    * @brief Peeks next character without advancing
    * @return Next character, or '\0' at/past EOF
    */
   [[nodiscard]] char peekNext() const {
-    if (atEOF() || curChar + 1 >= src.end()) {
+    if (atEOF() || CurChar + 1 >= Src.end()) {
       return '\0';
     }
-    return *(curChar + 1);
+    return *(CurChar + 1);
   }
 
   /**
@@ -158,7 +158,7 @@ private:
   char advanceChar() {
     if (atEOF())
       return '\0';
-    return *curChar++;
+    return *CurChar++;
   }
 
   /**
@@ -166,11 +166,11 @@ private:
    * @param next Character to match
    * @return true if matched and advanced, false otherwise
    */
-  bool matchNext(const char next) {
-    if (atEOF() || peekChar() != next) {
+  bool matchNext(const char Next) {
+    if (atEOF() || peekChar() != Next) {
       return false;
     }
-    ++curChar;
+    ++CurChar;
     return true;
   }
 
@@ -179,15 +179,15 @@ private:
    * @param n Number of characters to peek
    * @return String of next n characters (empty if insufficient)
    */
-  [[nodiscard]] std::string peekNextN(const int n) const {
-    auto temp = curChar;
-    for (int i = 0; i < n; ++i) {
+  [[nodiscard]] std::string peekNextN(const int N) const {
+    auto Temp = CurChar;
+    for (int i = 0; i < N; ++i) {
       if (atEOF()) {
         return "";
       }
-      ++temp;
+      ++Temp;
     }
-    return std::string{curChar, temp};
+    return std::string{CurChar, Temp};
   }
 
   /**
@@ -195,15 +195,15 @@ private:
    * @param next Sequence to match
    * @return true if sequence matched and advanced, false otherwise
    */
-  bool matchNextN(const std::string_view next) {
-    auto temp = curChar;
-    for (const char &c : next) {
-      if (atEOF() || *temp != c) {
+  bool matchNextN(const std::string_view Next) {
+    auto Temp = CurChar;
+    for (const char &C : Next) {
+      if (atEOF() || *Temp != C) {
         return false;
       }
-      ++temp;
+      ++Temp;
     }
-    curChar = temp;
+    CurChar = Temp;
     return true;
   }
 
@@ -211,24 +211,24 @@ private:
    * @brief Checks for end of source
    * @return true at EOF, false otherwise
    */
-  [[nodiscard]] bool atEOF() const { return curChar >= src.end(); }
+  [[nodiscard]] bool atEOF() const { return CurChar >= Src.end(); }
 
   /**
    * @brief Creates token from current lexeme
    * @param type Token type to create
    * @return Token with specified type and current lexeme
    */
-  [[nodiscard]] Token makeToken(TokenKind type) const {
-    int startCol = static_cast<int>(curLexeme - lexemeLine) + 1;
-    int endCol = std::distance(curChar, curLine) + 1;
+  [[nodiscard]] Token makeToken(TokenKind Kind) const {
+    int StartCol = static_cast<int>(CurLexeme - LexemeLine) + 1;
+    int EndCol = std::distance(CurChar, CurLine) + 1;
 
     // TODO: correctly use start line
-    int startLine = lineNum;
-    int endLine = lineNum;
+    int StartLine = LineNum;
+    int EndLine = LineNum;
 
-    return {SrcLocation{.path = this->path, .line = startLine, .col = startCol},
-            SrcLocation{.path = this->path, .line = endLine, .col = endCol},
-            type, std::string(curLexeme, curChar)};
+    return {SrcLocation{.path = this->Path, .line = StartLine, .col = StartCol},
+            SrcLocation{.path = this->Path, .line = EndLine, .col = EndCol},
+            Kind, std::string(CurLexeme, CurChar)};
   }
 
   /**
@@ -250,14 +250,14 @@ private:
    * @param message Primary error description
    * @param help_message Optional help message for resolution
    */
-  void emitError(std::string_view message, std::string_view helpMessage = "");
+  void emitError(std::string_view Msg, std::string_view HelpMsg = "");
 
   /**
    * @brief Reports unterminated string literal error with ASCII art
    */
-  void emitUnterminatedStrError(std::string::iterator startPos,
-                                std::string::iterator startLine,
-                                int startLineNum);
+  void emitUnterminatedStrError(std::string::iterator StartPos,
+                                std::string::iterator StartLine,
+                                int StartLineNum);
 
   /**
    * @brief Reports unterminated character literal error with ASCII art
@@ -267,9 +267,9 @@ private:
   /**
    * @brief Reports unclosed block comment error with ASCII art
    */
-  void emitUnclosedBlockCommentError(std::string::iterator startPos,
-                                     std::string::iterator startLine,
-                                     int startLineNum);
+  void emitUnclosedBlockCommentError(std::string::iterator StartPos,
+                                     std::string::iterator StartLine,
+                                     int StartLineNum);
 
   /**
    * @brief Gets current source location for error reporting

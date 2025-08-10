@@ -4,33 +4,48 @@
 #include <print>
 #include <string>
 
+#include "AST/ASTVisitor.hpp"
+
 #include "AST/Stmt.hpp"
-#include "Lexer/TokenType.hpp"
+#include "Lexer/TokenKind.hpp"
 
 namespace {
 /// Generates indentation string for AST dumping
-/// @param level Current indentation level
+/// @param Level Current indentation Level
 /// @return String of spaces for indentation
-std::string indent(int level) { return std::string(level * 2, ' '); }
+std::string indent(int Level) { return std::string(Level * 2, ' '); }
 } // namespace
 
 //======================== IntLiteral Implementation ========================//
 
 namespace phi {
+// Destructor implementations
+RangeLiteral::~RangeLiteral() = default;
+FunCallExpr::~FunCallExpr() = default;
+BinaryOp::~BinaryOp() = default;
+UnaryOp::~UnaryOp() = default;
+FieldInitExpr::~FieldInitExpr() = default;
+StructInitExpr::~StructInitExpr() = default;
+MemberAccessExpr::~MemberAccessExpr() = default;
+MemberFunCallExpr::~MemberFunCallExpr() = default;
 
+// Accept method implementations
+bool Expr::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
+
+void Expr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 /**
  * @brief Constructs an integer literal expression
  *
  * Default type is set to i64. The actual type may be
  * adjusted during semantic analysis based on value.
  *
- * @param location Source location of literal
+ * @param Location Source Location of literal
  * @param value Integer value
  */
-IntLiteral::IntLiteral(SrcLocation location, const int64_t value)
-    : Expr(Stmt::Kind::IntLiteralKind, std::move(location),
+IntLiteral::IntLiteral(SrcLocation Location, const int64_t Value)
+    : Expr(Stmt::Kind::IntLiteralKind, std::move(Location),
            Type(Type::Primitive::i64)),
-      value(value) {}
+      Value(Value) {}
 
 /**
  * @brief Dumps integer literal information
@@ -38,11 +53,17 @@ IntLiteral::IntLiteral(SrcLocation location, const int64_t value)
  * Output format:
  *   [indent]IntLiteral: value
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void IntLiteral::emit(int level) const {
-  std::println("{}IntLiteral: {}", indent(level), value);
+void IntLiteral::emit(int Level) const {
+  std::println("{}IntLiteral: {}", indent(Level), Value);
 }
+
+bool IntLiteral::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void IntLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== FloatLiteral Implementation ========================//
 
@@ -52,13 +73,13 @@ void IntLiteral::emit(int level) const {
  * Default type is set to f64. The actual type may be
  * adjusted during semantic analysis based on value.
  *
- * @param location Source location of literal
+ * @param Location Source Location of literal
  * @param value Floating-point value
  */
-FloatLiteral::FloatLiteral(SrcLocation location, const double value)
-    : Expr(Stmt::Kind::FloatLiteralKind, std::move(location),
+FloatLiteral::FloatLiteral(SrcLocation Location, const double Value)
+    : Expr(Stmt::Kind::FloatLiteralKind, std::move(Location),
            Type(Type::Primitive::f64)),
-      value(value) {}
+      Value(Value) {}
 
 /**
  * @brief Dumps float literal information
@@ -66,11 +87,17 @@ FloatLiteral::FloatLiteral(SrcLocation location, const double value)
  * Output format:
  *   [indent]FloatLiteral: value
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void FloatLiteral::emit(int level) const {
-  std::println("{}FloatLiteral: {}", indent(level), value);
+void FloatLiteral::emit(int Level) const {
+  std::println("{}FloatLiteral: {}", indent(Level), Value);
 }
+
+bool FloatLiteral::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void FloatLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== StrLiteral Implementation ========================//
 
@@ -79,13 +106,13 @@ void FloatLiteral::emit(int level) const {
  *
  * Type is always set to str primitive type.
  *
- * @param location Source location of literal
+ * @param Location Source Location of literal
  * @param value String content
  */
-StrLiteral::StrLiteral(SrcLocation location, std::string value)
-    : Expr(Stmt::Kind::StrLiteralKind, std::move(location),
+StrLiteral::StrLiteral(SrcLocation Location, std::string Value)
+    : Expr(Stmt::Kind::StrLiteralKind, std::move(Location),
            Type(Type::Primitive::str)),
-      value(std::move(value)) {}
+      Value(std::move(Value)) {}
 
 /**
  * @brief Dumps string literal information
@@ -93,11 +120,17 @@ StrLiteral::StrLiteral(SrcLocation location, std::string value)
  * Output format:
  *   [indent]StrLiteral: value
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void StrLiteral::emit(int level) const {
-  std::println("{}StrLiteral: {}", indent(level), value);
+void StrLiteral::emit(int Level) const {
+  std::println("{}StrLiteral: {}", indent(Level), Value);
 }
+
+bool StrLiteral::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void StrLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== CharLiteral Implementation ========================//
 
@@ -106,13 +139,13 @@ void StrLiteral::emit(int level) const {
  *
  * Type is always set to char primitive type.
  *
- * @param location Source location of literal
+ * @param Location Source Location of literal
  * @param value Character value
  */
-CharLiteral::CharLiteral(SrcLocation location, char value)
-    : Expr(Stmt::Kind::CharLiteralKind, std::move(location),
+CharLiteral::CharLiteral(SrcLocation Location, char Value)
+    : Expr(Stmt::Kind::CharLiteralKind, std::move(Location),
            Type(Type::Primitive::character)),
-      value(value) {}
+      Value(Value) {}
 
 /**
  * @brief Dumps character literal information
@@ -120,11 +153,17 @@ CharLiteral::CharLiteral(SrcLocation location, char value)
  * Output format:
  *   [indent]CharLiteral: value
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void CharLiteral::emit(int level) const {
-  std::println("{}CharLiteral: {}", indent(level), value);
+void CharLiteral::emit(int Level) const {
+  std::println("{}CharLiteral: {}", indent(Level), Value);
 }
+
+bool CharLiteral::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void CharLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== BoolLiteral Implementation ========================//
 
@@ -133,13 +172,13 @@ void CharLiteral::emit(int level) const {
  *
  * Type is always set to bool primitive type.
  *
- * @param location Source location of literal
+ * @param Location Source Location of literal
  * @param value Boolean value
  */
-BoolLiteral::BoolLiteral(SrcLocation location, bool value)
-    : Expr(Stmt::Kind::BoolLiteralKind, std::move(location),
+BoolLiteral::BoolLiteral(SrcLocation Location, bool Value)
+    : Expr(Stmt::Kind::BoolLiteralKind, std::move(Location),
            Type(Type::Primitive::boolean)),
-      value(value) {}
+      Value(Value) {}
 
 /**
  * @brief Dumps boolean literal information
@@ -147,11 +186,17 @@ BoolLiteral::BoolLiteral(SrcLocation location, bool value)
  * Output format:
  *   [indent]BoolLiteral: value
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void BoolLiteral::emit(int level) const {
-  std::println("{}BoolLiteral: {}", indent(level), value);
+void BoolLiteral::emit(int Level) const {
+  std::println("{}BoolLiteral: {}", indent(Level), Value);
 }
+
+bool BoolLiteral::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void BoolLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== RangeLiteral Implementation ========================//
 
@@ -161,16 +206,16 @@ void BoolLiteral::emit(int level) const {
  * Represents inclusive (..=) or exclusive (..) ranges.
  * Type is set during semantic analysis.
  *
- * @param location Source location of range
+ * @param Location Source Location of range
  * @param start Start expression
  * @param end End expression
  * @param inclusive True for inclusive range, false for exclusive
  */
-RangeLiteral::RangeLiteral(SrcLocation location, std::unique_ptr<Expr> start,
-                           std::unique_ptr<Expr> end, const bool inclusive)
-    : Expr(Stmt::Kind::RangeLiteralKind, std::move(location),
+RangeLiteral::RangeLiteral(SrcLocation Location, std::unique_ptr<Expr> Start,
+                           std::unique_ptr<Expr> End, const bool Inclusive)
+    : Expr(Stmt::Kind::RangeLiteralKind, std::move(Location),
            Type(Type::Primitive::range)),
-      start(std::move(start)), end(std::move(end)), inclusive(inclusive) {}
+      Start(std::move(Start)), End(std::move(End)), Inclusive(Inclusive) {}
 
 /**
  * @brief Dumps range literal information
@@ -182,15 +227,21 @@ RangeLiteral::RangeLiteral(SrcLocation location, std::unique_ptr<Expr> start,
  *     [indent]  end:
  *       [child expression dump]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void RangeLiteral::emit(int level) const {
-  std::println("{}RangeLiteral:", indent(level));
-  std::println("{}  start:", indent(level));
-  start->emit(level + 2);
-  std::println("{}  end:", indent(level));
-  end->emit(level + 2);
+void RangeLiteral::emit(int Level) const {
+  std::println("{}RangeLiteral:", indent(Level));
+  std::println("{}  start:", indent(Level));
+  Start->emit(Level + 2);
+  std::println("{}  end:", indent(Level));
+  End->emit(Level + 2);
 }
+
+bool RangeLiteral::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void RangeLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== DeclRefExpr Implementation ========================//
 
@@ -200,12 +251,12 @@ void RangeLiteral::emit(int level) const {
  * Represents references to variables, functions, etc.
  * The actual declaration is resolved during semantic analysis.
  *
- * @param location Source location of reference
+ * @param Location Source Location of reference
  * @param identifier Declaration name
  */
-DeclRefExpr::DeclRefExpr(SrcLocation location, std::string identifier)
-    : Expr(Stmt::Kind::DeclRefExprKind, std::move(location)),
-      id(std::move(identifier)) {}
+DeclRefExpr::DeclRefExpr(SrcLocation Location, std::string Id)
+    : Expr(Stmt::Kind::DeclRefExprKind, std::move(Location)),
+      Id(std::move(Id)) {}
 
 /**
  * @brief Dumps declaration reference information
@@ -213,25 +264,31 @@ DeclRefExpr::DeclRefExpr(SrcLocation location, std::string identifier)
  * Output format:
  *   [indent]DeclRefExpr: identifier
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void DeclRefExpr::emit(int level) const {
-  std::println("{}DeclRefExpr: {}", indent(level), id);
+void DeclRefExpr::emit(int Level) const {
+  std::println("{}DeclRefExpr: {}", indent(Level), Id);
 }
+
+bool DeclRefExpr::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void DeclRefExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //====================== FunCallExpr Implementation ========================//
 
 /**
  * @brief Constructs a function call expression
  *
- * @param location Source location of call
+ * @param Location Source Location of call
  * @param callee Expression being called (usually DeclRefExpr)
  * @param args Argument expressions
  */
-FunCallExpr::FunCallExpr(SrcLocation location, std::unique_ptr<Expr> callee,
-                         std::vector<std::unique_ptr<Expr>> args)
-    : Expr(Stmt::Kind::FunCallExprKind, std::move(location)),
-      callee(std::move(callee)), args(std::move(args)) {}
+FunCallExpr::FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
+                         std::vector<std::unique_ptr<Expr>> Args)
+    : Expr(Stmt::Kind::FunCallExprKind, std::move(Location)),
+      Callee(std::move(Callee)), Args(std::move(Args)) {}
 
 /**
  * @brief Dumps function call information
@@ -243,17 +300,23 @@ FunCallExpr::FunCallExpr(SrcLocation location, std::unique_ptr<Expr> callee,
  *     [indent]  args:
  *       [argument dumps]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void FunCallExpr::emit(int level) const {
-  std::println("{}FunCallExpr", indent(level));
-  std::println("{}  callee:", indent(level));
-  callee->emit(level + 2);
-  std::println("{}  args:", indent(level));
-  for (const auto &arg : args) {
-    arg->emit(level + 2);
+void FunCallExpr::emit(int Level) const {
+  std::println("{}FunCallExpr", indent(Level));
+  std::println("{}  callee:", indent(Level));
+  Callee->emit(Level + 2);
+  std::println("{}  args:", indent(Level));
+  for (const auto &arg : Args) {
+    arg->emit(Level + 2);
   }
 }
+
+bool FunCallExpr::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void FunCallExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //====================== BinaryOp Implementation ========================//
 
@@ -264,10 +327,10 @@ void FunCallExpr::emit(int level) const {
  * @param rhs Right-hand operand
  * @param op Operator token
  */
-BinaryOp::BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
-                   const Token &op)
-    : Expr(Stmt::Kind::BinaryOpKind, op.getStart()), lhs(std::move(lhs)),
-      rhs(std::move(rhs)), op(op.getType()) {}
+BinaryOp::BinaryOp(std::unique_ptr<Expr> Lhs, std::unique_ptr<Expr> Rhs,
+                   const Token &Op)
+    : Expr(Stmt::Kind::BinaryOpKind, Op.getStart()), Lhs(std::move(Lhs)),
+      Rhs(std::move(Rhs)), Op(Op.getKind()) {}
 
 /**
  * @brief Dumps binary operation information
@@ -280,18 +343,24 @@ BinaryOp::BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
  *       [child expression dump]
  *   [indent]  type: resolved_type (if available)
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void BinaryOp::emit(int level) const {
-  std::println("{}BinaryOp: {}", indent(level), tyToStr(op));
-  std::println("{}  lhs:", indent(level));
-  lhs->emit(level + 2);
-  std::println("{}  rhs:", indent(level));
-  rhs->emit(level + 2);
+void BinaryOp::emit(int Level) const {
+  std::println("{}BinaryOp: {}", indent(Level), tyToStr(Op));
+  std::println("{}  lhs:", indent(Level));
+  Lhs->emit(Level + 2);
+  std::println("{}  rhs:", indent(Level));
+  Rhs->emit(Level + 2);
   if (type.has_value()) {
-    std::println("{}  type: {}", indent(level), type.value().toString());
+    std::println("{}  type: {}", indent(Level), type.value().toString());
   }
 }
+
+bool BinaryOp::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void BinaryOp::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //====================== UnaryOp Implementation ========================//
 
@@ -302,10 +371,10 @@ void BinaryOp::emit(int level) const {
  * @param op Operator token
  * @param is_prefix True if prefix operator, false if postfix
  */
-UnaryOp::UnaryOp(std::unique_ptr<Expr> operand, const Token &op,
-                 const bool is_prefix)
-    : Expr(Stmt::Kind::UnaryOpKind, op.getStart()), operand(std::move(operand)),
-      op(op.getType()), isPrefix(is_prefix) {}
+UnaryOp::UnaryOp(std::unique_ptr<Expr> Operand, const Token &Op,
+                 const bool IsPrefix)
+    : Expr(Stmt::Kind::UnaryOpKind, Op.getStart()), Operand(std::move(Operand)),
+      Op(Op.getKind()), IsPrefix(IsPrefix) {}
 
 /**
  * @brief Dumps unary operation information
@@ -315,12 +384,145 @@ UnaryOp::UnaryOp(std::unique_ptr<Expr> operand, const Token &op,
  *     [indent]  expr:
  *       [child expression dump]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void UnaryOp::emit(int level) const {
-  std::println("{}UnaryOp: {}", indent(level), tyToStr(op));
-  std::println("{}  expr:", indent(level));
-  operand->emit(level + 2);
+void UnaryOp::emit(int Level) const {
+  std::println("{}UnaryOp: {}", indent(Level), tyToStr(Op));
+  std::println("{}  expr:", indent(Level));
+  Operand->emit(Level + 2);
+}
+
+bool UnaryOp::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
+
+void UnaryOp::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
+
+FieldInitExpr::FieldInitExpr(SrcLocation Location, std::string FieldId,
+                             std::unique_ptr<Expr> Init)
+    : Expr(Stmt::Kind::FieldInitKind, std::move(Location)),
+      FieldId(std::move(FieldId)), Init(std::move(Init)) {}
+
+void FieldInitExpr::emit(int Level) const {
+  std::println("{}FieldInitExpr:", indent(Level));
+  std::println("{}  field: {}", indent(Level), FieldId);
+  std::println("{}  value:", indent(Level));
+  Init->emit(Level + 2);
+}
+
+bool FieldInitExpr::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void FieldInitExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
+
+StructInitExpr::StructInitExpr(
+    SrcLocation Location, std::string StructId,
+    std::vector<std::unique_ptr<FieldInitExpr>> Fields)
+    : Expr(Stmt::Kind::StructInitKind, std::move(Location)),
+      StructId(std::move(StructId)), Fields(std::move(Fields)) {}
+
+void StructInitExpr::emit(int Level) const {
+  std::println("{}StructInitExpr:", indent(Level));
+  std::println("{}  struct: {}", indent(Level), StructId);
+  std::println("{}  fields:", indent(Level));
+  for (const auto &Field : Fields) {
+    Field->emit(Level + 2);
+  }
+}
+
+bool StructInitExpr::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void StructInitExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
+
+//====================== MemberAccessExpr Implementation
+//========================//
+
+/**
+ * @brief Constructs a member access expression
+ *
+ * Represents accessing a field or member of a struct/object (e.g., obj.field)
+ *
+ * @param Location Source Location of the access
+ * @param Base The base expression being accessed
+ * @param MemberId The name of the member being accessed
+ */
+MemberAccessExpr::MemberAccessExpr(SrcLocation Location,
+                                   std::unique_ptr<Expr> Base,
+                                   std::string MemberId)
+    : Expr(Stmt::Kind::MemberAccessKind, std::move(Location)),
+      Base(std::move(Base)), MemberId(std::move(MemberId)) {}
+
+/**
+ * @brief Dumps member access expression information
+ *
+ * Output format:
+ *   [indent]MemberAccessExpr:
+ *     [indent]  base:
+ *       [child expression dump]
+ *     [indent]  member: member_name
+ *
+ * @param Level Current indentation Level
+ */
+void MemberAccessExpr::emit(int Level) const {
+  std::println("{}MemberAccessExpr:", indent(Level));
+  std::println("{}  base:", indent(Level));
+  Base->emit(Level + 2);
+  std::println("{}  member: {}", indent(Level), MemberId);
+}
+
+bool MemberAccessExpr::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void MemberAccessExpr::accept(ASTVisitor<void> &Visitor) {
+  Visitor.visit(*this);
+}
+
+//====================== MemberFunCallExpr Implementation
+//========================//
+
+/**
+ * @brief Constructs a member function call expression
+ *
+ * Represents calling a method on an object (e.g., obj.method(args))
+ *
+ * @param Location Source Location of the call
+ * @param Base The base expression on which the method is called
+ * @param FunCall The function call expression for the method
+ */
+MemberFunCallExpr::MemberFunCallExpr(SrcLocation Location,
+                                     std::unique_ptr<Expr> Base,
+                                     std::unique_ptr<FunCallExpr> FunCall)
+    : Expr(Stmt::Kind::MemberFunAccessKind, std::move(Location)),
+      Base(std::move(Base)), FunCall(std::move(FunCall)) {}
+
+/**
+ * @brief Dumps member function call expression information
+ *
+ * Output format:
+ *   [indent]MemberFunCallExpr:
+ *     [indent]  base:
+ *       [child expression dump]
+ *     [indent]  call:
+ *       [function call dump]
+ *
+ * @param Level Current indentation Level
+ */
+void MemberFunCallExpr::emit(int Level) const {
+  std::println("{}MemberFunCallExpr:", indent(Level));
+  std::println("{}  base:", indent(Level));
+  Base->emit(Level + 2);
+  std::println("{}  call:", indent(Level));
+  FunCall->emit(Level + 2);
+}
+
+bool MemberFunCallExpr::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void MemberFunCallExpr::accept(ASTVisitor<void> &Visitor) {
+  Visitor.visit(*this);
 }
 
 } // namespace phi

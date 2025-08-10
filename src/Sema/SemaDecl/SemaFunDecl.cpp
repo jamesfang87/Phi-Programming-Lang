@@ -12,28 +12,28 @@ namespace phi {
  * - Parameters are valid
  * - Special rules for main() function
  */
-bool Sema::resolveFunDecl(FunDecl *fun) {
+bool Sema::resolveFunDecl(FunDecl *Fun) {
   // Resolve return type
-  if (!resolveTy(fun->getReturnTy())) {
-    std::println("invalid type for return in function: {}", fun->getId());
+  if (!resolveTy(Fun->getReturnTy())) {
+    std::println("invalid type for return in function: {}", Fun->getId());
     return false;
   }
 
   // Special handling for main function
-  if (fun->getId() == "main") {
-    if (fun->getReturnTy() != Type(Type::Primitive::null)) {
+  if (Fun->getId() == "main") {
+    if (Fun->getReturnTy() != Type(Type::Primitive::null)) {
       std::println("main cannot return a non-null value");
       return false;
     }
-    if (!fun->getParams().empty()) {
+    if (!Fun->getParams().empty()) {
       std::println("main cannot have parameters");
       return false;
     }
   }
 
   // Resolve parameters
-  for (const auto &param : fun->getParams()) {
-    if (!resolveParamDecl(param.get())) {
+  for (const auto &Param : Fun->getParams()) {
+    if (!resolveParamDecl(Param.get())) {
       return false;
     }
   }
@@ -48,17 +48,17 @@ bool Sema::resolveFunDecl(FunDecl *fun) {
  * - Type is valid
  * - Type is not null
  */
-bool Sema::resolveParamDecl(ParamDecl *param) {
+bool Sema::resolveParamDecl(ParamDecl *Param) {
   // Resolve parameter type
-  if (!resolveTy(param->getType())) {
-    std::println("invalid type for parameter: {}", param->getId());
+  if (!resolveTy(Param->getType())) {
+    std::println("invalid type for parameter: {}", Param->getId());
     return false;
   }
 
   // Parameters can't be null type
-  const Type &t = param->getType();
-  if (t.isPrimitive() && t.primitive_type() == Type::Primitive::null) {
-    std::println("param type cannot be null for: {}", param->getId());
+  const Type &T = Param->getType();
+  if (T.isPrimitive() && T.getPrimitiveType() == Type::Primitive::null) {
+    std::println("param type cannot be null for: {}", Param->getId());
     return false;
   }
   return true;
