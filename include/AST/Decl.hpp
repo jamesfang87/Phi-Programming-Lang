@@ -236,18 +236,18 @@ public:
   [[nodiscard]] std::vector<FieldDecl> &getFields() { return Fields; }
   [[nodiscard]] std::vector<FunDecl> &getMethods() { return Methods; }
 
-  [[nodiscard]] FieldDecl *getField(const std::string &id) {
-    if (!FieldMap.contains(id))
+  [[nodiscard]] FieldDecl *getField(const std::string &Id) {
+    if (!FieldMap.contains(Id))
       return nullptr;
 
-    return FieldMap[id];
+    return FieldMap[Id];
   }
 
-  [[nodiscard]] FunDecl *getMethod(const std::string &id) {
-    if (!MethodMap.contains(id))
+  [[nodiscard]] FunDecl *getMethod(const std::string &Id) {
+    if (!MethodMap.contains(Id))
       return nullptr;
 
-    return MethodMap[id];
+    return MethodMap[Id];
   }
 
   static bool classof(const Decl *D) {
