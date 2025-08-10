@@ -160,15 +160,15 @@ private:
   std::string CustomTypeName;  ///< Name for custom types
 };
 
-bool isIntTy(const Type &type);
+bool isIntTy(const Type &Ty);
 
-bool isSignedInt(const Type &type);
-bool isUnsignedInt(const Type &type);
+bool isSignedInt(const Type &Ty);
+bool isUnsignedInt(const Type &Ty);
 
 /// Checks if type is any float type
-bool isFloat(const Type &type);
+bool isFloat(const Type &Ty);
 
 /// Checks if type is numeric (integer or float)
-bool isNumTy(const Type &type);
+bool isNumTy(const Type &Ty);
 
 } // namespace phi
