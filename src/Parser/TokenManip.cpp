@@ -10,7 +10,7 @@ namespace phi {
  * Handles edge cases where token iterator might be out of bounds.
  */
 bool Parser::atEOF() const {
-  return tokenIt >= tokens.end() || peekToken().getType() == TokenKind::tokEOF;
+  return TokenIt >= Tokens.end() || peekToken().getKind() == TokenKind::EOFKind;
 }
 
 /**
@@ -21,11 +21,11 @@ bool Parser::atEOF() const {
  * Returns synthetic EOF token if at end of stream.
  */
 Token Parser::peekToken() const {
-  if (tokenIt >= tokens.end()) {
-    const SrcLocation eofLoc{.path = "", .line = -1, .col = -1};
-    return Token{eofLoc, eofLoc, TokenKind::tokEOF, ""};
+  if (TokenIt >= Tokens.end()) {
+    const SrcLocation EofLoc{.path = "", .line = -1, .col = -1};
+    return Token{EofLoc, EofLoc, TokenKind::EOFKind, ""};
   }
-  return *tokenIt;
+  return *TokenIt;
 }
 
 /**
@@ -34,11 +34,11 @@ Token Parser::peekToken() const {
  * @return Token The consumed token.
  */
 Token Parser::advanceToken() {
-  Token ret = peekToken();
-  if (tokenIt < tokens.end()) {
-    ++tokenIt;
+  Token Ret = peekToken();
+  if (TokenIt < Tokens.end()) {
+    ++TokenIt;
   }
-  return ret;
+  return Ret;
 }
 
 /**
@@ -50,15 +50,15 @@ Token Parser::advanceToken() {
  *
  * Automatically advances on match. Emits detailed error on mismatch.
  */
-bool Parser::expectToken(const TokenKind expectedTy,
-                         const std::string &context) {
-  if (peekToken().getType() == expectedTy) {
+bool Parser::expectToken(const TokenKind ExpectedTy,
+                         const std::string &Context) {
+  if (peekToken().getKind() == ExpectedTy) {
     advanceToken();
     return true;
   }
 
-  const std::string contextMsg = context.empty() ? "" : " in " + context;
-  emitExpectedFoundError(tyToStr(expectedTy) + contextMsg, peekToken());
+  const std::string Msg = Context.empty() ? "" : " in " + Context;
+  emitExpectedFoundError(tyToStr(ExpectedTy) + Msg, peekToken());
   return false;
 }
 
@@ -68,8 +68,8 @@ bool Parser::expectToken(const TokenKind expectedTy,
  * @param type Token type to match
  * @return true if token matched and was consumed, false otherwise
  */
-bool Parser::matchToken(const TokenKind type) {
-  if (peekToken().getType() == type) {
+bool Parser::matchToken(const TokenKind Expected) {
+  if (peekToken().getKind() == Expected) {
     advanceToken();
     return true;
   }

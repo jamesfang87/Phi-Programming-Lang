@@ -50,18 +50,17 @@ namespace phi {
  * @return A pair containing the vector of tokens and success status
  */
 std::vector<Token> Lexer::scan() {
-  std::vector<Token> ret;
-
+  std::vector<Token> Tokens;
   while (!atEOF()) {
-    // make sure that these two it are pointing to the same place
-    curLexeme = curChar;
-    lexemeLine = curLine;
+    // make sure that these two iters are pointing to the same place
+    CurLexeme = CurChar;
+    LexemeLine = CurLine;
 
     // handle whitespace
     if (std::isspace(peekChar())) {
       if (advanceChar() == '\n') {
-        lineNum++;
-        curLine = curChar;
+        LineNum++;
+        CurLine = CurChar;
       }
       continue;
     }
@@ -73,9 +72,9 @@ std::vector<Token> Lexer::scan() {
     }
 
     // finally, scan the token
-    ret.push_back(scanToken());
+    Tokens.push_back(scanToken());
   }
-  return ret;
+  return Tokens;
 }
 
 /**
@@ -104,116 +103,116 @@ std::vector<Token> Lexer::scan() {
  * @return A token representing the scanned lexical element
  */
 Token Lexer::scanToken() {
-  switch (char c = advanceChar()) {
+  switch (char C = advanceChar()) {
   // One char tokens
   case '(':
-    return makeToken(TokenKind::tokOpenParen);
+    return makeToken(TokenKind::OpenParenKind);
   case ')':
-    return makeToken(TokenKind::tokRightParen);
+    return makeToken(TokenKind::CloseParenKind);
   case '{':
-    return makeToken(TokenKind::tokLeftBrace);
+    return makeToken(TokenKind::OpenBraceKind);
   case '}':
-    return makeToken(TokenKind::tokRightBrace);
+    return makeToken(TokenKind::CloseBraceKind);
   case '[':
-    return makeToken(TokenKind::tokLeftBracket);
+    return makeToken(TokenKind::OpenBracketKind);
   case ']':
-    return makeToken(TokenKind::tokRightBracket);
+    return makeToken(TokenKind::CloseBracketKind);
   case ',':
-    return makeToken(TokenKind::tokComma);
+    return makeToken(TokenKind::CommaKind);
   case ';':
-    return makeToken(TokenKind::tokSemicolon);
+    return makeToken(TokenKind::SemicolonKind);
 
   case '.':
     if (matchNextN(".="))
-      return makeToken(TokenKind::tokInclusiveRange);
+      return makeToken(TokenKind::InclRangeKind);
     if (matchNext('.'))
-      return makeToken(TokenKind::tokExclusiveRange);
-    return makeToken(TokenKind::tokPeriod);
+      return makeToken(TokenKind::ExclRangeKind);
+    return makeToken(TokenKind::PeriodKind);
   case ':':
-    return makeToken(matchNext(':') ? TokenKind::tokDoubleColon
-                                    : TokenKind::tokColon);
+    return makeToken(matchNext(':') ? TokenKind::DoubleColonKind
+                                    : TokenKind::ColonKind);
 
   // Operators
   case '+':
     if (matchNext('+'))
-      return makeToken(TokenKind::tokDoublePlus);
+      return makeToken(TokenKind::DoublePlusKind);
     if (matchNext('='))
-      return makeToken(TokenKind::tokPlusEquals);
-    return makeToken(TokenKind::tokPlus);
+      return makeToken(TokenKind::PlusEqualsKind);
+    return makeToken(TokenKind::PlusKind);
   case '-':
     if (matchNext('>'))
-      return makeToken(TokenKind::tokArrow);
+      return makeToken(TokenKind::ArrowKind);
     if (matchNext('-'))
-      return makeToken(TokenKind::tokDoubleMinus);
+      return makeToken(TokenKind::DoubleMinusKind);
     if (matchNext('='))
-      return makeToken(TokenKind::tokSubEquals);
-    return makeToken(TokenKind::tokMinus);
+      return makeToken(TokenKind::SubEqualsKind);
+    return makeToken(TokenKind::MinusKind);
   case '*':
-    return makeToken(matchNext('=') ? TokenKind::tokMulEquals
-                                    : TokenKind::tokStar);
+    return makeToken(matchNext('=') ? TokenKind::MulEqualKind
+                                    : TokenKind::StarKind);
   case '/':
-    return makeToken(matchNext('=') ? TokenKind::tokDivEquals
-                                    : TokenKind::tokSlash);
+    return makeToken(matchNext('=') ? TokenKind::DivEqualsKind
+                                    : TokenKind::SlashKind);
   case '%':
-    return makeToken(matchNext('=') ? TokenKind::tokModEquals
-                                    : TokenKind::tokPercent);
+    return makeToken(matchNext('=') ? TokenKind::ModEqualsKind
+                                    : TokenKind::PercentKind);
   case '!':
-    return makeToken(matchNext('=') ? TokenKind::tokBangEquals
-                                    : TokenKind::tokBang);
+    return makeToken(matchNext('=') ? TokenKind::BangEqualsKind
+                                    : TokenKind::BangKind);
   case '=':
-    return makeToken(matchNext('=') ? TokenKind::tokDoubleEquals
-                                    : TokenKind::tokEquals);
+    return makeToken(matchNext('=') ? TokenKind::DoubleEqualsKind
+                                    : TokenKind::EqualsKind);
   case '<':
-    return makeToken(matchNext('=') ? TokenKind::tokLessEqual
-                                    : TokenKind::tokLeftCaret);
+    return makeToken(matchNext('=') ? TokenKind::LessEqualKind
+                                    : TokenKind::OpenCaretKind);
   case '>':
-    return makeToken(matchNext('=') ? TokenKind::tokGreaterEqual
-                                    : TokenKind::tokRightCaret);
+    return makeToken(matchNext('=') ? TokenKind::GreaterEqualKind
+                                    : TokenKind::CloseCaretKind);
   // Handle single & as error or bitwise operator
   case '&':
     if (matchNext('&')) {
-      return makeToken(TokenKind::tokDoubleAmp);
+      return makeToken(TokenKind::DoubleAmpKind);
     } else {
       error("unexpected character '&'")
           .with_primary_label(getCurSpan(), "unexpected character")
           .with_help("use '&&' for logical AND operation")
           .with_note("single '&' is not supported in this language")
-          .emit(*diagnosticManager);
-      return makeToken(TokenKind::tokError);
+          .emit(*DiagnosticsMan);
+      return makeToken(TokenKind::ErrorKind);
     }
   // Handle single | as error or bitwise operator
   case '|':
     if (matchNext('|')) {
-      return makeToken(TokenKind::tokDoublePipe);
+      return makeToken(TokenKind::DoublePipeKind);
     } else {
       error("unexpected character '|'")
           .with_primary_label(getCurSpan(), "unexpected character")
           .with_help("use '||' for logical OR operation")
           .with_note("single '|' is not supported in this language")
-          .emit(*diagnosticManager);
-      return makeToken(TokenKind::tokError);
+          .emit(*DiagnosticsMan);
+      return makeToken(TokenKind::ErrorKind);
     }
 
   case '"':
-    return parseStr();
+    return parseString();
   case '\'':
     return parseChar();
 
   default: {
-    if (std::isalpha(c) || c == '_') {
+    if (std::isalpha(C) || C == '_') {
       return parseIdentifierOrKw();
     }
-    if (std::isdigit(c)) {
+    if (std::isdigit(C)) {
       return parseNumber();
     }
 
     // Handle unknown character with better error message
     std::string charDisplay;
-    if (std::isprint(c)) {
-      charDisplay = "'" + std::string(1, c) + "'";
+    if (std::isprint(C)) {
+      charDisplay = "'" + std::string(1, C) + "'";
     } else {
       charDisplay =
-          "\\x" + std::format("{:02x}", static_cast<unsigned char>(c));
+          "\\x" + std::format("{:02x}", static_cast<unsigned char>(C));
     }
 
     error("unexpected character " + charDisplay)
@@ -221,9 +220,9 @@ Token Lexer::scanToken() {
         .with_help("remove this character or use a valid token")
         .with_note("valid characters include letters, digits, operators, and "
                    "punctuation")
-        .emit(*diagnosticManager);
+        .emit(*DiagnosticsMan);
 
-    return makeToken(TokenKind::tokError);
+    return makeToken(TokenKind::ErrorKind);
   }
   }
 }
@@ -239,41 +238,41 @@ void Lexer::emitError(std::string_view msg, std::string_view helpMsg) {
     diagnostic.with_help(std::string(helpMsg));
   }
 
-  diagnostic.emit(*diagnosticManager);
+  diagnostic.emit(*DiagnosticsMan);
 }
 
 void Lexer::emitUnclosedBlockCommentError(std::string::iterator startPos,
                                           std::string::iterator startLine,
                                           int startLineNum) {
   // Calculate current position (where we reached EOF)
-  int curCol = static_cast<int>(curChar - curLine) + 1;
-  SrcLocation curStart{.path = path, .line = lineNum, .col = curCol};
-  SrcLocation curEnd{.path = path, .line = lineNum, .col = curCol};
+  int curCol = static_cast<int>(CurChar - CurLine) + 1;
+  SrcLocation curStart{.path = Path, .line = LineNum, .col = curCol};
+  SrcLocation curEnd{.path = Path, .line = LineNum, .col = curCol};
   SrcSpan curSpan{curStart, curEnd};
 
   // Calculate where the block comment started using passed parameters
   int col = static_cast<int>(startPos - startLine) + 1;
-  SrcLocation start{.path = path, .line = startLineNum, .col = col};
-  SrcLocation end{.path = path, .line = startLineNum, .col = col + 2};
+  SrcLocation start{.path = Path, .line = startLineNum, .col = col};
+  SrcLocation end{.path = Path, .line = startLineNum, .col = col + 2};
   SrcSpan span{start, end};
 
   error("unclosed block comment")
       .with_primary_label(span, "block comment starts here")
       .with_help("add a closing `*/` to terminate the block comment")
-      .emit(*diagnosticManager);
+      .emit(*DiagnosticsMan);
 }
 
 SrcLocation Lexer::getCurLocation() const {
-  int col = static_cast<int>(curChar - lexemeLine) + 1;
-  return SrcLocation{.path = path, .line = lineNum, .col = col};
+  int col = static_cast<int>(CurChar - LexemeLine) + 1;
+  return SrcLocation{.path = Path, .line = LineNum, .col = col};
 }
 
 SrcSpan Lexer::getCurSpan() const {
-  int startCol = static_cast<int>(curLexeme - lexemeLine) + 1;
-  int endCol = static_cast<int>(curChar - curLine) + 1;
+  int startCol = static_cast<int>(CurLexeme - LexemeLine) + 1;
+  int endCol = static_cast<int>(CurChar - CurLine) + 1;
 
-  SrcLocation start{.path = path, .line = lineNum, .col = startCol};
-  SrcLocation end{.path = path, .line = lineNum, .col = endCol};
+  SrcLocation start{.path = Path, .line = LineNum, .col = startCol};
+  SrcLocation end{.path = Path, .line = LineNum, .col = endCol};
 
   return SrcSpan{start, end};
 }

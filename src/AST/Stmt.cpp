@@ -4,14 +4,15 @@
 #include <print>
 #include <string>
 
+#include "AST/ASTVisitor.hpp"
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 
 namespace {
 /// Generates indentation string for AST dumping
-/// @param level Current indentation level
+/// @param Level Current indentation Level
 /// @return String of spaces for indentation
-std::string indent(int level) { return std::string(level * 2, ' '); }
+std::string indent(int Level) { return std::string(Level * 2, ' '); }
 } // namespace
 
 namespace phi {
@@ -21,11 +22,12 @@ namespace phi {
 /**
  * @brief Constructs a return statement
  *
- * @param location Source location of return
+ * @param Location Source Location of return
  * @param expr Return value expression (optional)
  */
-ReturnStmt::ReturnStmt(SrcLocation location, std::unique_ptr<Expr> expr)
-    : Stmt(Kind::ReturnStmtKind, std::move(location)), expr(std::move(expr)) {}
+ReturnStmt::ReturnStmt(SrcLocation Location, std::unique_ptr<Expr> ReturnExpr)
+    : Stmt(Kind::ReturnStmtKind, std::move(Location)),
+      ReturnExpr(std::move(ReturnExpr)) {}
 
 ReturnStmt::~ReturnStmt() = default;
 
@@ -36,30 +38,35 @@ ReturnStmt::~ReturnStmt() = default;
  *   [indent]ReturnStmt
  *     [child expression dump] (if exists)
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void ReturnStmt::emit(int level) const {
-  std::println("{}ReturnStmt", indent(level));
-  if (expr) {
-    expr->emit(level + 1);
+void ReturnStmt::emit(int Level) const {
+  std::println("{}ReturnStmt", indent(Level));
+  if (ReturnExpr) {
+    ReturnExpr->emit(Level + 1);
   }
 }
+
+bool ReturnStmt::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void ReturnStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== IfStmt Implementation =========================//
 
 /**
  * @brief Constructs an if statement
  *
- * @param location Source location of if
+ * @param Location Source Location of if
  * @param cond condal expression
  * @param then_block Then clause block
  * @param else_block Else clause block (optional)
  */
-IfStmt::IfStmt(SrcLocation location, std::unique_ptr<Expr> cond,
-               std::unique_ptr<Block> then_block,
-               std::unique_ptr<Block> else_block)
-    : Stmt(Stmt::Kind::IfStmtKind, std::move(location)), cond(std::move(cond)),
-      thenBlock(std::move(then_block)), elseBlock(std::move(else_block)) {}
+IfStmt::IfStmt(SrcLocation Location, std::unique_ptr<Expr> Cond,
+               std::unique_ptr<Block> ThenBody, std::unique_ptr<Block> ElseBody)
+    : Stmt(Stmt::Kind::IfStmtKind, std::move(Location)), Cond(std::move(Cond)),
+      ThenBody(std::move(ThenBody)), ElseBody(std::move(ElseBody)) {}
 
 IfStmt::~IfStmt() = default;
 
@@ -72,34 +79,38 @@ IfStmt::~IfStmt() = default;
  *     [then block dump]
  *     [else block dump] (if exists)
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void IfStmt::emit(int level) const {
-  std::println("{}IfStmt", indent(level));
-  if (cond) {
-    cond->emit(level + 1);
+void IfStmt::emit(int Level) const {
+  std::println("{}IfStmt", indent(Level));
+  if (Cond) {
+    Cond->emit(Level + 1);
   }
-  if (thenBlock) {
-    thenBlock->emit(level + 1);
+  if (ThenBody) {
+    ThenBody->emit(Level + 1);
   }
-  if (elseBlock) {
-    elseBlock->emit(level + 1);
+  if (ElseBody) {
+    ElseBody->emit(Level + 1);
   }
 }
+
+void IfStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
+
+bool IfStmt::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
 
 //======================== WhileStmt Implementation =========================//
 
 /**
  * @brief Constructs a while loop statement
  *
- * @param location Source location of while
+ * @param Location Source Location of while
  * @param cond Loop cond expression
  * @param body Loop body block
  */
-WhileStmt::WhileStmt(SrcLocation location, std::unique_ptr<Expr> cond,
-                     std::unique_ptr<Block> body)
-    : Stmt(Stmt::Kind::WhileStmtKind, std::move(location)),
-      cond(std::move(cond)), body(std::move(body)) {}
+WhileStmt::WhileStmt(SrcLocation Location, std::unique_ptr<Expr> Cond,
+                     std::unique_ptr<Block> Body)
+    : Stmt(Stmt::Kind::WhileStmtKind, std::move(Location)),
+      Cond(std::move(Cond)), Body(std::move(Body)) {}
 
 WhileStmt::~WhileStmt() = default;
 
@@ -111,33 +122,39 @@ WhileStmt::~WhileStmt() = default;
  *     [cond dump]
  *     [body dump]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void WhileStmt::emit(int level) const {
-  std::println("{}WhileStmt", indent(level));
-  if (cond) {
-    cond->emit(level + 1);
+void WhileStmt::emit(int Level) const {
+  std::println("{}WhileStmt", indent(Level));
+  if (Cond) {
+    Cond->emit(Level + 1);
   }
-  if (body) {
-    body->emit(level + 1);
+  if (Body) {
+    Body->emit(Level + 1);
   }
 }
+
+bool WhileStmt::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void WhileStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== ForStmt Implementation =========================//
 
 /**
  * @brief Constructs a for loop statement
  *
- * @param location Source location of for
+ * @param Location Source Location of for
  * @param loop_var Loop variable declaration
  * @param range Range expression
  * @param body Loop body block
  */
-ForStmt::ForStmt(SrcLocation location, std::unique_ptr<VarDecl> loop_var,
-                 std::unique_ptr<Expr> range, std::unique_ptr<Block> body)
-    : Stmt(Stmt::Kind::ForStmtKind, std::move(location)),
-      loopVar(std::move(loop_var)), range(std::move(range)),
-      body(std::move(body)) {}
+ForStmt::ForStmt(SrcLocation Location, std::unique_ptr<VarDecl> LoopVar,
+                 std::unique_ptr<Expr> Range, std::unique_ptr<Block> Body)
+    : Stmt(Stmt::Kind::ForStmtKind, std::move(Location)),
+      LoopVar(std::move(LoopVar)), Range(std::move(Range)),
+      Body(std::move(Body)) {}
 
 ForStmt::~ForStmt() = default;
 
@@ -150,32 +167,36 @@ ForStmt::~ForStmt() = default;
  *     [range expression dump]
  *     [body dump]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void ForStmt::emit(int level) const {
-  std::println("{}ForStmt", indent(level));
-  if (loopVar) {
-    loopVar->emit(level + 1);
+void ForStmt::emit(int Level) const {
+  std::println("{}ForStmt", indent(Level));
+  if (LoopVar) {
+    LoopVar->emit(Level + 1);
   }
-  if (range) {
-    range->emit(level + 1);
+  if (Range) {
+    Range->emit(Level + 1);
   }
-  if (body) {
-    body->emit(level + 1);
+  if (Body) {
+    Body->emit(Level + 1);
   }
 }
+
+bool ForStmt::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
+
+void ForStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== LetStmt Implementation =========================//
 
 /**
  * @brief Constructs a variable declaration statement
  *
- * @param location Source location of declaration
+ * @param Location Source Location of declaration
  * @param decl Variable declaration
  */
-DeclStmt::DeclStmt(SrcLocation location, std::unique_ptr<VarDecl> decl)
-    : Stmt(Stmt::Kind::DeclStmtKind, std::move(location)),
-      decl(std::move(decl)) {}
+DeclStmt::DeclStmt(SrcLocation Location, std::unique_ptr<VarDecl> Var)
+    : Stmt(Stmt::Kind::DeclStmtKind, std::move(Location)), Var(std::move(Var)) {
+}
 
 DeclStmt::~DeclStmt() = default;
 
@@ -186,24 +207,30 @@ DeclStmt::~DeclStmt() = default;
  *   [indent]VarDeclStmt
  *     [variable declaration dump]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void DeclStmt::emit(int level) const {
-  std::println("{}VarDeclStmt", indent(level));
-  if (decl) {
-    decl->emit(level + 1);
+void DeclStmt::emit(int Level) const {
+  std::println("{}VarDeclStmt", indent(Level));
+  if (Var) {
+    Var->emit(Level + 1);
   }
 }
+
+bool DeclStmt::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void DeclStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== BreakStmt Implementation =========================//
 
 /**
  * @brief Constructs a break statement
  *
- * @param location Source location of break statement
+ * @param Location Source Location of break statement
  */
-BreakStmt::BreakStmt(SrcLocation location)
-    : Stmt(Stmt::Kind::BreakStmtKind, std::move(location)) {}
+BreakStmt::BreakStmt(SrcLocation Location)
+    : Stmt(Stmt::Kind::BreakStmtKind, std::move(Location)) {}
 
 BreakStmt::~BreakStmt() = default;
 
@@ -213,21 +240,27 @@ BreakStmt::~BreakStmt() = default;
  * Output format:
  *   [indent]BreakStmt
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void BreakStmt::emit(int level) const {
-  std::println("{}BreakStmt", indent(level));
+void BreakStmt::emit(int Level) const {
+  std::println("{}BreakStmt", indent(Level));
 }
+
+bool BreakStmt::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void BreakStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================= ContinueStmt Implementation ========================//
 
 /**
  * @brief Constructs a continue statement
  *
- * @param location Source location of continue statement
+ * @param Location Source Location of continue statement
  */
-ContinueStmt::ContinueStmt(SrcLocation location)
-    : Stmt(Stmt::Kind::ContinueStmtKind, std::move(location)) {}
+ContinueStmt::ContinueStmt(SrcLocation Location)
+    : Stmt(Stmt::Kind::ContinueStmtKind, std::move(Location)) {}
 
 ContinueStmt::~ContinueStmt() = default;
 
@@ -237,11 +270,17 @@ ContinueStmt::~ContinueStmt() = default;
  * Output format:
  *   [indent]ContinueStmt
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void ContinueStmt::emit(int level) const {
-  std::println("{}ContinueStmt", indent(level));
+void ContinueStmt::emit(int Level) const {
+  std::println("{}ContinueStmt", indent(Level));
 }
+
+bool ContinueStmt::accept(ASTVisitor<bool> &Visitor) {
+  return Visitor.visit(*this);
+}
+
+void ContinueStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== Block Implementation =========================//
 
@@ -252,12 +291,12 @@ void ContinueStmt::emit(int level) const {
  *   [indent]Block
  *     [statement dumps]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void Block::emit(int level) const {
-  std::println("{}Block", indent(level));
+void Block::emit(int Level) const {
+  std::println("{}Block", indent(Level));
   for (auto &s : this->stmts) {
-    s->emit(level + 1);
+    s->emit(Level + 1);
   }
 }
 

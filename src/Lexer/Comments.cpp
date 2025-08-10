@@ -26,35 +26,35 @@ void Lexer::skipComment() {
     }
   } else if (matchNext('*')) {
     // Track where the block comment started
-    auto startPos = curLexeme;
-    auto startLine = lexemeLine;
-    int startLineNum = lineNum;
+    auto StartPos = CurLexeme;
+    auto StartLine = LexemeLine;
+    int StartLineNum = LineNum;
 
-    int depth = 1; // depth for nested comments
+    int Depth = 1; // depth for nested comments
     // skip until we reach a depth of 0
-    while (!atEOF() && depth > 0) {
+    while (!atEOF() && Depth > 0) {
       if (peekChar() == '/' && peekNext() == '*') {
         // skip / and *
         advanceChar();
         advanceChar();
-        depth++;
+        Depth++;
       } else if (peekChar() == '*' && peekNext() == '/') {
         // skip * and /
         advanceChar();
         advanceChar();
-        depth--;
+        Depth--;
       } else {
         // increment line number if we see '\n'
         if (peekChar() == '\n') {
-          lineNum++;
-          curLine = curChar + 1; // Point to start of next line
+          LineNum++;
+          CurLine = CurChar + 1; // Point to start of next line
         }
         advanceChar();
       }
     }
 
-    if (depth > 0) {
-      emitUnclosedBlockCommentError(startPos, startLine, startLineNum);
+    if (Depth > 0) {
+      emitUnclosedBlockCommentError(StartPos, StartLine, StartLineNum);
     }
   }
 }

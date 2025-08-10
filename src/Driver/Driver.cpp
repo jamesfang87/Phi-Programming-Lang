@@ -1,52 +1,59 @@
 #include "Driver/Driver.hpp"
 
-#include "CodeGen/CodeGen.hpp"
+// #include "CodeGen/CodeGen.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
 #include "Sema/Sema.hpp"
 #include <cstdlib>
-#include <format>
+#include <print>
 
 namespace phi {
 
 PhiCompiler::PhiCompiler(std::string src, std::string path,
-                         std::shared_ptr<DiagnosticManager> diagnostic_manager)
-    : srcFile(std::move(src)), path(std::move(path)),
-      diagnosticManager(std::move(diagnostic_manager)) {}
+                         std::shared_ptr<DiagnosticManager> diagnosticsMan)
+    : SrcFile(std::move(src)), Path(std::move(path)),
+      DiagnosticMan(std::move(diagnosticsMan)) {}
 
 PhiCompiler::~PhiCompiler() = default;
 
 bool PhiCompiler::compile() {
-  auto tokens = Lexer(srcFile, path, diagnosticManager).scan();
-  if (diagnosticManager->error_count() > 0) {
+  auto Tokens = Lexer(SrcFile, Path, DiagnosticMan).scan();
+  if (DiagnosticMan->error_count() > 0) {
     return false;
   }
 
-  auto ast = Parser(srcFile, path, tokens, diagnosticManager).parse();
-  if (diagnosticManager->error_count() > 0) {
+  auto Ast = Parser(SrcFile, Path, Tokens, DiagnosticMan).parse();
+  if (DiagnosticMan->error_count() > 0) {
+    return false;
+  }
+  for (auto &expr : Ast) {
+    expr->emit(0);
+  }
+
+  auto [Success, ResolvedAst] = Sema(std::move(Ast)).resolveAST();
+  if (!Success) {
     return false;
   }
 
-  auto [success, resolved_ast] = Sema(std::move(ast)).resolveAST();
-  if (!success) {
-    return false;
+  for (auto &expr : ResolvedAst) {
+    expr->emit(0);
   }
 
-  // Code Generation
-  phi::CodeGen codegen(std::move(resolved_ast), path);
-  codegen.generate();
+  // // Code Generation
+  // phi::CodeGen codegen(std::move(resolved_ast), path);
+  // codegen.generate();
 
-  // Output IR to file
-  std::string ir_filename = path;
-  size_t dot_pos = ir_filename.find_last_of('.');
-  if (dot_pos != std::string::npos) {
-    ir_filename = ir_filename.substr(0, dot_pos);
-  }
-  ir_filename += ".ll";
+  // // Output IR to file
+  // std::string ir_filename = path;
+  // size_t dot_pos = ir_filename.find_last_of('.');
+  // if (dot_pos != std::string::npos) {
+  //   ir_filename = ir_filename.substr(0, dot_pos);
+  // }
+  // ir_filename += ".ll";
 
-  codegen.outputIR(ir_filename);
+  // codegen.outputIR(ir_filename);
 
-  system(std::format("clang {}", ir_filename).c_str());
+  // system(std::format("clang {}", ir_filename).c_str());
   return true;
 }
 

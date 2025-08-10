@@ -1,5 +1,6 @@
 #pragma once
 
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <print>
@@ -16,7 +17,7 @@
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Lexer/Token.hpp"
-#include "Lexer/TokenType.hpp"
+#include "Lexer/TokenKind.hpp"
 
 namespace phi {
 
@@ -42,7 +43,7 @@ public:
    */
   Parser(const std::string_view src, const std::string_view path,
          std::vector<Token> &tokens,
-         std::shared_ptr<DiagnosticManager> diagnosticManager);
+         std::shared_ptr<DiagnosticManager> DiagnosticManager);
 
   /**
    * @brief Main entry point for parsing
@@ -52,16 +53,18 @@ public:
    *         Second element: true if parsing completed without errors,
    *                        false if errors occurred
    */
-  std::vector<std::unique_ptr<FunDecl>> parse();
+  std::vector<std::unique_ptr<Decl>> parse();
 
 private:
   // PARSER STATE
-  std::string path;
-  std::vector<std::string_view> lines;
-  std::vector<Token> &tokens;
-  std::vector<Token>::iterator tokenIt;
-  std::vector<std::unique_ptr<FunDecl>> functions;
-  std::shared_ptr<DiagnosticManager> diagnosticManager;
+  std::string Path;
+  std::vector<std::string_view> Lines;
+  std::vector<Token> &Tokens;
+  std::vector<Token>::iterator TokenIt;
+  std::vector<std::unique_ptr<Decl>> TopLvlDecls;
+  std::shared_ptr<DiagnosticManager> DiagnosticsMan;
+
+  bool NoStructInit = false;
 
   // TOKEN NAVIGATION UTILITIES
   /// Checks if parser has reached end of token stream
@@ -93,11 +96,9 @@ private:
   bool matchToken(TokenKind type);
 
   // DIAGNOSTIC REPORTING
-  void emitError(Diagnostic &&diagnostic) {
-    diagnosticManager->emit(diagnostic);
-  }
+  void emitError(Diagnostic &&diagnostic) { DiagnosticsMan->emit(diagnostic); }
   void emitWarning(Diagnostic &&diagnostic) const {
-    diagnosticManager->emit(diagnostic);
+    DiagnosticsMan->emit(diagnostic);
   }
 
   /**
@@ -174,6 +175,17 @@ private:
    */
   std::optional<Type> parseType();
 
+  /**
+   * @brief Parses struct declaration
+   *
+   * @return std::unique_ptr<StructDecl>
+   *         Valid struct declaration if successful, nullptr on failure
+   *         Errors are reported through the DiagnosticManager
+   */
+  std::unique_ptr<StructDecl> parseStructDecl();
+  std::optional<FieldDecl> parseFieldDecl();
+  std::optional<FunDecl> parseStructMethodDecl();
+
   // FUNCTION DECLARATION PARSING
   std::unique_ptr<FunDecl> parseFunDecl();
   std::unique_ptr<ParamDecl> parseParamDecl();
@@ -192,6 +204,9 @@ private:
   // EXPRESSION PARSING
   std::unique_ptr<Expr> parseExpr();
 
+  std::unique_ptr<StructInitExpr> parseStructInit(std::unique_ptr<Expr> expr);
+  std::unique_ptr<FieldInitExpr> parseFieldInit();
+
   /**
    * @brief Pratt parser implementation for expressions
    *
@@ -200,19 +215,18 @@ private:
    *         Parsed expression or nullptr on failure
    *         Errors are emitted to DiagnosticManager
    */
-  std::unique_ptr<Expr> pratt(int min_bp);
+  std::unique_ptr<Expr> pratt(int min_bp,
+                              const std::vector<TokenKind> &Terminators);
 
-  std::unique_ptr<Expr> parsePrefix(const Token &tok);
+  std::unique_ptr<Expr> parseNud(const Token &tok);
+  std::unique_ptr<Expr> parsePrefixUnaryOp(const Token &tok);
+  std::unique_ptr<Expr> parseLiteralExpr(const Token &tok);
+  std::unique_ptr<Expr> parseGroupingExpr();
 
-  /**
-   * @brief Parses postfix operators for an expression
-   *
-   * @param expr The expression to apply postfix operators to
-   * @return std::unique_ptr<Expr>
-   *         Expression with postfix operators applied or nullptr on failure
-   *         Errors are emitted to DiagnosticManager
-   */
-  std::unique_ptr<Expr> parsePostfix(std::unique_ptr<Expr> expr);
+  std::unique_ptr<Expr> parsePostfix(const Token &op,
+                                     std::unique_ptr<Expr> expr);
+  std::unique_ptr<Expr> parseInfix(const Token &op, std::unique_ptr<Expr> expr,
+                                   int RBp);
 
   /**
    * @brief Parses function call expressions
@@ -254,7 +268,7 @@ private:
             const std::string &context = "list") {
     // Verify opening delimiter
     const Token OpeningToken = peekToken();
-    if (OpeningToken.getType() != opening) {
+    if (OpeningToken.getKind() != opening) {
       emitExpectedFoundError(tyToStr(opening), OpeningToken);
       return std::nullopt;
     }
@@ -262,22 +276,22 @@ private:
 
     // Parse list elements
     std::vector<std::unique_ptr<T>> content;
-    while (!atEOF() && peekToken().getType() != closing) {
+    while (!atEOF() && peekToken().getKind() != closing) {
       auto result = (this->*fun)();
       if (result) {
         content.push_back(std::move(result));
       } else {
         // Recover by syncing to comma or closing delimiter
-        syncTo({closing, TokenKind::tokComma});
+        syncTo({closing, TokenKind::CommaKind});
       }
 
       // Check for closing delimiter before comma
-      if (peekToken().getType() == closing) {
+      if (peekToken().getKind() == closing) {
         break;
       }
 
       // Handle comma separator
-      if (peekToken().getType() == TokenKind::tokComma) {
+      if (peekToken().getKind() == TokenKind::CommaKind) {
         advanceToken();
       } else {
         emitError(
@@ -291,7 +305,7 @@ private:
     }
 
     // Verify closing delimiter
-    if (atEOF() || peekToken().getType() != closing) {
+    if (atEOF() || peekToken().getKind() != closing) {
       emitUnclosedDelimiterError(OpeningToken, tyToStr(closing));
       return std::nullopt;
     }

@@ -1,205 +1,217 @@
 [
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/AST/Decl.cpp.o -c /Users/jamesfang/Phi/src/AST/Decl.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/AST/Decl.cpp.o -c /Users/jamesfang/Phi/src/AST/Decl.cpp",
   "file": "/Users/jamesfang/Phi/src/AST/Decl.cpp",
   "output": "CMakeFiles/phi.dir/src/AST/Decl.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/AST/Expr.cpp.o -c /Users/jamesfang/Phi/src/AST/Expr.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/AST/Expr.cpp.o -c /Users/jamesfang/Phi/src/AST/Expr.cpp",
   "file": "/Users/jamesfang/Phi/src/AST/Expr.cpp",
   "output": "CMakeFiles/phi.dir/src/AST/Expr.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/AST/Stmt.cpp.o -c /Users/jamesfang/Phi/src/AST/Stmt.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/AST/Stmt.cpp.o -c /Users/jamesfang/Phi/src/AST/Stmt.cpp",
   "file": "/Users/jamesfang/Phi/src/AST/Stmt.cpp",
   "output": "CMakeFiles/phi.dir/src/AST/Stmt.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/AST/Type.cpp.o -c /Users/jamesfang/Phi/src/AST/Type.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/AST/Type.cpp.o -c /Users/jamesfang/Phi/src/AST/Type.cpp",
   "file": "/Users/jamesfang/Phi/src/AST/Type.cpp",
   "output": "CMakeFiles/phi.dir/src/AST/Type.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/Calls.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Calls.cpp",
-  "file": "/Users/jamesfang/Phi/src/CodeGen/Calls.cpp",
-  "output": "CMakeFiles/phi.dir/src/CodeGen/Calls.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/CodeGen.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/CodeGen.cpp",
-  "file": "/Users/jamesfang/Phi/src/CodeGen/CodeGen.cpp",
-  "output": "CMakeFiles/phi.dir/src/CodeGen/CodeGen.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/Literals.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Literals.cpp",
-  "file": "/Users/jamesfang/Phi/src/CodeGen/Literals.cpp",
-  "output": "CMakeFiles/phi.dir/src/CodeGen/Literals.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/Ops.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Ops.cpp",
-  "file": "/Users/jamesfang/Phi/src/CodeGen/Ops.cpp",
-  "output": "CMakeFiles/phi.dir/src/CodeGen/Ops.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/CodeGen/Stmts.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Stmts.cpp",
-  "file": "/Users/jamesfang/Phi/src/CodeGen/Stmts.cpp",
-  "output": "CMakeFiles/phi.dir/src/CodeGen/Stmts.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Diagnostics/Diagnostic.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/Diagnostic.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Diagnostics/Diagnostic.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/Diagnostic.cpp",
   "file": "/Users/jamesfang/Phi/src/Diagnostics/Diagnostic.cpp",
   "output": "CMakeFiles/phi.dir/src/Diagnostics/Diagnostic.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Diagnostics/DiagnosticBuilder.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/DiagnosticBuilder.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Diagnostics/DiagnosticBuilder.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/DiagnosticBuilder.cpp",
   "file": "/Users/jamesfang/Phi/src/Diagnostics/DiagnosticBuilder.cpp",
   "output": "CMakeFiles/phi.dir/src/Diagnostics/DiagnosticBuilder.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Diagnostics/DiagnosticManager.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/DiagnosticManager.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Diagnostics/DiagnosticManager.cpp.o -c /Users/jamesfang/Phi/src/Diagnostics/DiagnosticManager.cpp",
   "file": "/Users/jamesfang/Phi/src/Diagnostics/DiagnosticManager.cpp",
   "output": "CMakeFiles/phi.dir/src/Diagnostics/DiagnosticManager.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Driver/Driver.cpp.o -c /Users/jamesfang/Phi/src/Driver/Driver.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Driver/Driver.cpp.o -c /Users/jamesfang/Phi/src/Driver/Driver.cpp",
   "file": "/Users/jamesfang/Phi/src/Driver/Driver.cpp",
   "output": "CMakeFiles/phi.dir/src/Driver/Driver.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Lexer/Comments.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Comments.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Lexer/Comments.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Comments.cpp",
   "file": "/Users/jamesfang/Phi/src/Lexer/Comments.cpp",
   "output": "CMakeFiles/phi.dir/src/Lexer/Comments.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Lexer/Lexer.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Lexer.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Lexer/Lexer.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Lexer.cpp",
   "file": "/Users/jamesfang/Phi/src/Lexer/Lexer.cpp",
   "output": "CMakeFiles/phi.dir/src/Lexer/Lexer.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Lexer/Literals.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Literals.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Lexer/Literals.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Literals.cpp",
   "file": "/Users/jamesfang/Phi/src/Lexer/Literals.cpp",
   "output": "CMakeFiles/phi.dir/src/Lexer/Literals.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Lexer/Token.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Token.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Lexer/Token.cpp.o -c /Users/jamesfang/Phi/src/Lexer/Token.cpp",
   "file": "/Users/jamesfang/Phi/src/Lexer/Token.cpp",
   "output": "CMakeFiles/phi.dir/src/Lexer/Token.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Lexer/TokenType.cpp.o -c /Users/jamesfang/Phi/src/Lexer/TokenType.cpp",
-  "file": "/Users/jamesfang/Phi/src/Lexer/TokenType.cpp",
-  "output": "CMakeFiles/phi.dir/src/Lexer/TokenType.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Lexer/TokenKind.cpp.o -c /Users/jamesfang/Phi/src/Lexer/TokenKind.cpp",
+  "file": "/Users/jamesfang/Phi/src/Lexer/TokenKind.cpp",
+  "output": "CMakeFiles/phi.dir/src/Lexer/TokenKind.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Parser/ParseBlock.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseBlock.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseBlock.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseBlock.cpp",
   "file": "/Users/jamesfang/Phi/src/Parser/ParseBlock.cpp",
   "output": "CMakeFiles/phi.dir/src/Parser/ParseBlock.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Parser/ParseDecl.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseDecl.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseDecl.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseDecl.cpp",
   "file": "/Users/jamesfang/Phi/src/Parser/ParseDecl.cpp",
   "output": "CMakeFiles/phi.dir/src/Parser/ParseDecl.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Parser/ParseError.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseError.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseError.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseError.cpp",
   "file": "/Users/jamesfang/Phi/src/Parser/ParseError.cpp",
   "output": "CMakeFiles/phi.dir/src/Parser/ParseError.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Parser/ParseExpr.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseExpr.cpp",
-  "file": "/Users/jamesfang/Phi/src/Parser/ParseExpr.cpp",
-  "output": "CMakeFiles/phi.dir/src/Parser/ParseExpr.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseExpr.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseExpr/ParseExpr.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseExpr/ParseExpr.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseExpr.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Parser/ParseStmt.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseStmt.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseLed/ParseFunCall.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseExpr/ParseLed/ParseFunCall.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseExpr/ParseLed/ParseFunCall.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseLed/ParseFunCall.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseLed/ParseLed.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseExpr/ParseLed/ParseLed.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseExpr/ParseLed/ParseLed.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseLed/ParseLed.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseLed/ParseStructExpr.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseExpr/ParseLed/ParseStructExpr.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseExpr/ParseLed/ParseStructExpr.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseLed/ParseStructExpr.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseNud.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseExpr/ParseNud.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseExpr/ParseNud.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseExpr/ParseNud.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseStmt.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseStmt.cpp",
   "file": "/Users/jamesfang/Phi/src/Parser/ParseStmt.cpp",
   "output": "CMakeFiles/phi.dir/src/Parser/ParseStmt.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Parser/ParseType.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseType.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseStruct.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseStruct.cpp",
+  "file": "/Users/jamesfang/Phi/src/Parser/ParseStruct.cpp",
+  "output": "CMakeFiles/phi.dir/src/Parser/ParseStruct.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/ParseType.cpp.o -c /Users/jamesfang/Phi/src/Parser/ParseType.cpp",
   "file": "/Users/jamesfang/Phi/src/Parser/ParseType.cpp",
   "output": "CMakeFiles/phi.dir/src/Parser/ParseType.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Parser/Parser.cpp.o -c /Users/jamesfang/Phi/src/Parser/Parser.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/Parser.cpp.o -c /Users/jamesfang/Phi/src/Parser/Parser.cpp",
   "file": "/Users/jamesfang/Phi/src/Parser/Parser.cpp",
   "output": "CMakeFiles/phi.dir/src/Parser/Parser.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Parser/TokenManip.cpp.o -c /Users/jamesfang/Phi/src/Parser/TokenManip.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Parser/TokenManip.cpp.o -c /Users/jamesfang/Phi/src/Parser/TokenManip.cpp",
   "file": "/Users/jamesfang/Phi/src/Parser/TokenManip.cpp",
   "output": "CMakeFiles/phi.dir/src/Parser/TokenManip.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Sema/Sema.cpp.o -c /Users/jamesfang/Phi/src/Sema/Sema.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/Sema.cpp.o -c /Users/jamesfang/Phi/src/Sema/Sema.cpp",
   "file": "/Users/jamesfang/Phi/src/Sema/Sema.cpp",
   "output": "CMakeFiles/phi.dir/src/Sema/Sema.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Sema/SemaDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaDecl.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/SemaDecl.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/SemaDecl.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SemaDecl/SemaFunDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaDecl/SemaFunDecl.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/SemaDecl/SemaFunDecl.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/SemaDecl/SemaFunDecl.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Sema/SemaExpr.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaExpr.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SemaDecl/SemaStructDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaDecl/SemaStructDecl.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/SemaDecl/SemaStructDecl.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/SemaDecl/SemaStructDecl.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SemaExpr.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaExpr.cpp",
   "file": "/Users/jamesfang/Phi/src/Sema/SemaExpr.cpp",
   "output": "CMakeFiles/phi.dir/src/Sema/SemaExpr.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Sema/SemaStmt.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaStmt.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SemaStmt.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaStmt.cpp",
   "file": "/Users/jamesfang/Phi/src/Sema/SemaStmt.cpp",
   "output": "CMakeFiles/phi.dir/src/Sema/SemaStmt.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Sema/SemaType.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaType.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SemaStruct.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaStruct.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/SemaStruct.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/SemaStruct.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SemaType.cpp.o -c /Users/jamesfang/Phi/src/Sema/SemaType.cpp",
   "file": "/Users/jamesfang/Phi/src/Sema/SemaType.cpp",
   "output": "CMakeFiles/phi.dir/src/Sema/SemaType.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/Sema/SymbolTable.cpp.o -c /Users/jamesfang/Phi/src/Sema/SymbolTable.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SymbolTable.cpp.o -c /Users/jamesfang/Phi/src/Sema/SymbolTable.cpp",
   "file": "/Users/jamesfang/Phi/src/Sema/SymbolTable.cpp",
   "output": "CMakeFiles/phi.dir/src/Sema/SymbolTable.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/SrcManager/SrcManager.cpp.o -c /Users/jamesfang/Phi/src/SrcManager/SrcManager.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/SrcManager/SrcManager.cpp.o -c /Users/jamesfang/Phi/src/SrcManager/SrcManager.cpp",
   "file": "/Users/jamesfang/Phi/src/SrcManager/SrcManager.cpp",
   "output": "CMakeFiles/phi.dir/src/SrcManager/SrcManager.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -O3 -DNDEBUG -std=c++2b -arch arm64 -O3 -o CMakeFiles/phi.dir/src/main.cpp.o -c /Users/jamesfang/Phi/src/main.cpp",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/main.cpp.o -c /Users/jamesfang/Phi/src/main.cpp",
   "file": "/Users/jamesfang/Phi/src/main.cpp",
   "output": "CMakeFiles/phi.dir/src/main.cpp.o"
 }

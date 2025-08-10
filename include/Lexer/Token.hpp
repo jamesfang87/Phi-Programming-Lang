@@ -9,7 +9,7 @@
 
 #include <string>
 
-#include "Lexer/TokenType.hpp"
+#include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
@@ -33,9 +33,9 @@ public:
    * @param type Token type classification
    * @param lexeme Original source text of token
    */
-  Token(SrcLocation start, SrcLocation end, const TokenKind type,
+  Token(SrcLocation Start, SrcLocation End, const TokenKind Kind,
         std::string lexeme)
-      : Start(std::move(start)), End(std::move(end)), Type(type),
+      : Start(std::move(Start)), End(std::move(End)), Kind(Kind),
         Lexeme(std::move(lexeme)) {}
 
   /**
@@ -54,13 +54,13 @@ public:
    * @brief Retrieves token type
    * @return TokenType enumeration value
    */
-  [[nodiscard]] TokenKind getType() const { return Type; }
+  [[nodiscard]] TokenKind getKind() const { return Kind; }
 
   /**
    * @brief Retrieves token type name
    * @return Human-readable type name string
    */
-  [[nodiscard]] std::string getName() const { return tyToStr(Type); }
+  [[nodiscard]] std::string getName() const { return tyToStr(Kind); }
 
   /**
    * @brief Retrieves original source text
@@ -79,7 +79,7 @@ public:
 
 private:
   SrcLocation Start, End; ///< Source position span (inclusive)
-  TokenKind Type;         ///< Token classification type
+  TokenKind Kind;         ///< Token classification type
   std::string Lexeme;     ///< Original source text content
 };
 
