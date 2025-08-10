@@ -1,23 +1,29 @@
-fun process_numbers(input: i64) -> i64 {
-    let result: i64 = input;
-    let counter: i64 = 0;
+struct Person {
+    const name: string;
+    var age: i64;
+    const pos: Pos;
 
-    // Apply processing loop
-    while (counter < 5) {
-        result = result + calculate_increment(counter);
-        counter = counter + 1;
+    fun age_gap(const other: i64) -> i64 {
+        return other - age;
     }
+}
 
-    // Apply conditional adjustments
-    if (result > 500) {
-        result = result / 2;
-    } else {
-        if (result < 100) {
-            result = result * 2;
-        } else {
-            result = result + 50;
+struct Pos {
+    const x: i64;
+    const y: i64;
+}
+
+fun main() {
+    var me: Person = Person {
+        name = "james",
+        age = 17,
+        pos = Pos {
+            x = 0,
+            y = 0
         }
-    }
+    };
 
-    return result;
+    me.name;
+    me.pos.x;
+    me.age_gap(16);
 }

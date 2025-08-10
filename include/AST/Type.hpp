@@ -19,7 +19,7 @@ public:
    * @return true if primitive, false if custom
    */
   [[nodiscard]] bool isPrimitive() const noexcept {
-    return primitiveType != Primitive::custom;
+    return PrimitiveType != Primitive::Custom;
   }
 
   /**
@@ -54,63 +54,63 @@ public:
 
     // SPECIAL TYPES
     null,
-    custom
+    Custom
   };
 
   /**
    * @brief Constructs primitive type
-   * @param primitive_type Primitive type value
+   * @param primitiveType
    */
-  explicit Type(const Primitive primitiveType) : primitiveType(primitiveType) {
-    assert(primitive_type != Primitive::custom &&
+  explicit Type(const Primitive PrimitiveType) : PrimitiveType(PrimitiveType) {
+    assert(PrimitiveType != Primitive::Custom &&
            "Use custom_type constructor for custom types");
   }
 
   /**
    * @brief Constructs custom type
-   * @param custom_type_name Name of custom type
+   * @param CustomTypeName Name of custom type
    */
-  explicit Type(std::string custom_type_name)
-      : primitiveType(Primitive::custom),
-        custom_type_name_(std::move(custom_type_name)) {}
+  explicit Type(std::string CustomTypeName)
+      : PrimitiveType(Primitive::Custom),
+        CustomTypeName(std::move(CustomTypeName)) {}
 
   /**
    * @brief Converts type to string representation
    * @return Type name string
    */
   [[nodiscard]] std::string toString() const {
-    if (primitiveType == Primitive::custom) {
-      return custom_type_name_;
+    if (PrimitiveType == Primitive::Custom) {
+      return CustomTypeName;
     }
-    return primitive_to_string(primitiveType);
+    return primitiveToString(PrimitiveType);
   }
 
   // ACCESSORS
-  [[nodiscard]] Primitive primitive_type() const noexcept {
-    return primitiveType;
+  [[nodiscard]] Primitive getPrimitiveType() const noexcept {
+    return PrimitiveType;
   }
 
   /**
    * @brief Retrieves custom type name
    * @return Custom type name string
    */
-  [[nodiscard]] const std::string &custom_type_name() const {
-    assert(primitive_type_ == Primitive::custom);
-    return custom_type_name_;
+  [[nodiscard]] const std::string &getCustomTypeName() const {
+    assert(PrimitiveType == Primitive::Custom);
+    return CustomTypeName;
   }
 
   // OPERATORS
-  bool operator==(const Type &other) const {
-    if (primitiveType != other.primitiveType) {
+  bool operator==(const Type &Other) const {
+    if (PrimitiveType != Other.PrimitiveType) {
       return false;
     }
-    if (primitiveType == Primitive::custom) {
-      return custom_type_name_ == other.custom_type_name_;
+    if (PrimitiveType == Primitive::Custom) {
+      return CustomTypeName == Other.CustomTypeName;
     }
     return true;
   }
 
-  bool operator!=(const Type &other) const { return !(*this == other); }
+  bool operator!=(const Type &Other) const { return !(*this == Other); }
 
 private:
   /**
@@ -118,8 +118,8 @@ private:
    * @param primitive Primitive type value
    * @return Primitive type name
    */
-  static std::string primitive_to_string(const Primitive &primitive) {
-    switch (primitive) {
+  static std::string primitiveToString(const Primitive &Prim) {
+    switch (Prim) {
     case Primitive::i8:
       return "i8";
     case Primitive::i16:
@@ -155,8 +155,8 @@ private:
     }
   }
 
-  Primitive primitiveType;       ///< Underlying primitive type
-  std::string custom_type_name_; ///< Name for custom types
+  Primitive PrimitiveType;    ///< Underlying primitive type
+  std::string CustomTypeName; ///< Name for custom types
 };
 
 bool isIntTy(const Type &type);

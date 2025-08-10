@@ -3,7 +3,6 @@
 #include <print>
 #include <string>
 
-#include "CodeGen/CodeGen.hpp"
 #include "Driver/Driver.hpp"
 
 std::string readFileToStr(const std::string &Path) {
@@ -25,11 +24,11 @@ int main(int argc, char *argv[]) {
 
   // Parse command line arguments
   for (int i = 1; i < argc; i++) {
-    std::string arg = argv[i];
+    std::string Arg = argv[i];
     if (Path.empty()) {
-      Path = arg;
+      Path = Arg;
     } else {
-      std::cerr << "Unknown argument: " << arg << "\n";
+      std::cerr << "Unknown argument: " << Arg << "\n";
       std::cerr << "Usage: " << argv[0] << " <filename>";
       return 1;
     }
@@ -41,20 +40,14 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  try {
-    std::string Src = readFileToStr(Path);
-    auto SrcMan = std::make_shared<phi::SrcManager>();
-    auto DiagMan = std::make_shared<phi::DiagnosticManager>(SrcMan);
+  std::string Src = readFileToStr(Path);
+  auto SrcMan = std::make_shared<phi::SrcManager>();
+  auto DiagMan = std::make_shared<phi::DiagnosticManager>(SrcMan);
 
-    // Register source content for diagnostic display
-    SrcMan->addSrcFile(Path, Src);
+  // Register source content for diagnostic display
+  SrcMan->addSrcFile(Path, Src);
 
-    phi::PhiCompiler driver(Src, Path, DiagMan);
-    driver.compile();
-
-  } catch (const std::exception &e) {
-    std::println(std::cerr, "Error: {}", e.what());
-    return 1;
-  }
+  phi::PhiCompiler Driver(Src, Path, DiagMan);
+  Driver.compile();
   return 0;
 }

@@ -11,28 +11,28 @@
 namespace phi {
 
 // Literal expression resolution
-bool Sema::visit(IntLiteral &expr) {
-  expr.setType(Type(Type::Primitive::i64));
+bool Sema::visit(IntLiteral &Expression) {
+  Expression.setType(Type(Type::Primitive::i64));
   return true;
 }
 
-bool Sema::visit(FloatLiteral &expr) {
-  expr.setType(Type(Type::Primitive::f64));
+bool Sema::visit(FloatLiteral &Expression) {
+  Expression.setType(Type(Type::Primitive::f64));
   return true;
 }
 
-bool Sema::visit(StrLiteral &expr) {
-  expr.setType(Type(Type::Primitive::str));
+bool Sema::visit(StrLiteral &Expression) {
+  Expression.setType(Type(Type::Primitive::str));
   return true;
 }
 
-bool Sema::visit(CharLiteral &expr) {
-  expr.setType(Type(Type::Primitive::character));
+bool Sema::visit(CharLiteral &Expression) {
+  Expression.setType(Type(Type::Primitive::character));
   return true;
 }
 
-bool Sema::visit(BoolLiteral &expr) {
-  expr.setType(Type(Type::Primitive::boolean));
+bool Sema::visit(BoolLiteral &Expression) {
+  Expression.setType(Type(Type::Primitive::boolean));
   return true;
 }
 
@@ -43,16 +43,16 @@ bool Sema::visit(BoolLiteral &expr) {
  * - Identifier exists in symbol table
  * - Not attempting to use function as value
  */
-bool Sema::visit(DeclRefExpr &expr) {
-  Decl *decl = symbolTable.lookup(expr);
+bool Sema::visit(DeclRefExpr &Expression) {
+  Decl *DeclPtr = SymbolTab.lookup(Expression);
 
-  if (!decl) {
-    std::println("error: undeclared identifier '{}'", expr.getID());
+  if (!DeclPtr) {
+    std::println("error: undeclared identifier '{}'", Expression.getId());
     return false;
   }
 
-  expr.setDecl(decl);
-  expr.setType(decl->getType());
+  Expression.setDecl(DeclPtr);
+  Expression.setType(DeclPtr->getType());
 
   return true;
 }
@@ -65,31 +65,31 @@ bool Sema::visit(DeclRefExpr &expr) {
  * - Argument count matches parameter count
  * - Argument types match parameter types
  */
-bool Sema::visit(FunCallExpr &expr) {
-  FunDecl *fun = symbolTable.lookup(expr);
+bool Sema::visit(FunCallExpr &Expression) {
+  FunDecl *FunPtr = SymbolTab.lookup(Expression);
 
   // Validate argument count
-  if (expr.getArgs().size() != fun->getParams().size()) {
+  if (Expression.getArgs().size() != FunPtr->getParams().size()) {
     std::println("error: parameter list length mismatch");
     return false;
   }
 
   // Resolve arguments and validate types
-  for (size_t i = 0; i < expr.getArgs().size(); i++) {
-    Expr *arg = expr.getArgs()[i].get();
-    if (!arg->accept(*this)) {
+  for (size_t i = 0; i < Expression.getArgs().size(); i++) {
+    Expr *Arg = Expression.getArgs()[i].get();
+    if (!Arg->accept(*this)) {
       std::println("error: could not resolve argument");
       return false;
     }
 
-    ParamDecl *param = fun->getParams().at(i).get();
-    if (arg->getType() != param->getType()) {
+    ParamDecl *Param = FunPtr->getParams().at(i).get();
+    if (Arg->getType() != Param->getType()) {
       std::println("error: argument type mismatch");
       return false;
     }
   }
 
-  expr.setType(fun->getReturnTy());
+  Expression.setType(FunPtr->getReturnTy());
   return true;
 }
 
@@ -101,32 +101,33 @@ bool Sema::visit(FunCallExpr &expr) {
  * - Both are integer types
  * - Both have same integer type
  */
-bool Sema::visit(RangeLiteral &expr) {
+bool Sema::visit(RangeLiteral &Expression) {
   // Resolve start and end expressions
-  if (!expr.getStart().accept(*this) || !expr.getEnd().accept(*this)) {
+  if (!Expression.getStart().accept(*this) ||
+      !Expression.getEnd().accept(*this)) {
     return false;
   }
 
-  const Type startTy = expr.getStart().getType();
-  const Type endTy = expr.getEnd().getType();
+  const Type StartTy = Expression.getStart().getType();
+  const Type EndTy = Expression.getEnd().getType();
 
   // Validate integer types
-  if (!startTy.isPrimitive() || !isIntTy(startTy)) {
+  if (!StartTy.isPrimitive() || !isIntTy(StartTy)) {
     std::println("Range start must be an integer type (i8, i16, i32, i64, u8, "
                  "u16, u32, u64)");
     return false;
   }
 
-  if (!endTy.isPrimitive() || !isIntTy(endTy)) {
+  if (!EndTy.isPrimitive() || !isIntTy(EndTy)) {
     std::println("Range end must be an integer type (i8, i16, i32, i64, u8, "
                  "u16, u32, u64)");
     return false;
   }
 
   // Set types
-  expr.getStart().setType(Type(Type::Primitive::i64));
-  expr.getEnd().setType(Type(Type::Primitive::i64));
-  expr.setType(Type(Type::Primitive::range));
+  Expression.getStart().setType(Type(Type::Primitive::i64));
+  Expression.getEnd().setType(Type(Type::Primitive::i64));
+  Expression.setType(Type(Type::Primitive::range));
   return true;
 }
 
@@ -138,95 +139,95 @@ bool Sema::visit(RangeLiteral &expr) {
  * - Operation is supported for operand types
  * - Type promotion rules are followed
  */
-bool Sema::visit(BinaryOp &expr) {
+bool Sema::visit(BinaryOp &Expression) {
   // Resolve operands
-  if (!expr.getLhs().accept(*this) || !expr.getRhs().accept(*this)) {
+  if (!Expression.getLhs().accept(*this) ||
+      !Expression.getRhs().accept(*this)) {
     return false;
   }
 
-  const Type lhs_type = expr.getLhs().getType();
-  const Type rhs_type = expr.getRhs().getType();
-  const TokenKind op = expr.getOp();
+  const Type LhsTy = Expression.getLhs().getType();
+  const Type RhsTy = Expression.getRhs().getType();
+  const TokenKind Op = Expression.getOp();
 
   // Only primitive types supported
-  if (!lhs_type.isPrimitive() || !rhs_type.isPrimitive()) {
+  if (!LhsTy.isPrimitive() || !RhsTy.isPrimitive()) {
     std::println("Binary operations not supported on custom types");
     return false;
   }
 
   // Operation-specific validation
-  switch (op) {
+  switch (Op) {
   // Arithmetic operations
-  case TokenKind::tokPlus:
-  case TokenKind::tokMinus:
-  case TokenKind::tokStar:
-  case TokenKind::tokSlash:
-  case TokenKind::tokPercent: {
-    if (!isNumTy(lhs_type) || !isNumTy(rhs_type)) {
+  case TokenKind::PlusKind:
+  case TokenKind::MinusKind:
+  case TokenKind::StarKind:
+  case TokenKind::SlashKind:
+  case TokenKind::PercentKind: {
+    if (!isNumTy(LhsTy) || !isNumTy(RhsTy)) {
       std::println("Arithmetic operations require numeric types");
       return false;
     }
-    if (op == TokenKind::tokPercent &&
-        (!isIntTy(lhs_type) || !isIntTy(rhs_type))) {
+    if (Op == TokenKind::PercentKind && (!isIntTy(LhsTy) || !isIntTy(RhsTy))) {
       std::println("Modulo operation requires integer types");
       return false;
     }
     // Apply type promotion
-    expr.setType(promoteNumTys(lhs_type, rhs_type));
+    Expression.setType(promoteNumTys(LhsTy, RhsTy));
     break;
   }
 
-  case TokenKind::tokEquals: {
-    if (!expr.getLhs().isAssignable()) {
+  case TokenKind::EqualsKind: {
+    if (!Expression.getLhs().isAssignable()) {
       std::println("Left-hand side of assignment must be assignable");
       return false;
     }
 
-    if (lhs_type != rhs_type) {
+    if (LhsTy != RhsTy) {
       std::println("Assignment requires same types");
       return false;
     }
 
-    auto DeclRef = llvm::dyn_cast<DeclRefExpr>(&expr.getLhs());
+    auto DeclRef = llvm::dyn_cast<DeclRefExpr>(&Expression.getLhs());
     if (DeclRef->getDecl()->isConst()) {
       std::println("Error: attempt to reassign value of constant variable");
       return false;
     }
 
-    expr.setType(lhs_type);
+    Expression.setType(LhsTy);
     break;
   }
 
   // Comparison operations
-  case TokenKind::tokDoubleEquals:
-  case TokenKind::tokBangEquals:
-    if (lhs_type != rhs_type) {
+  case TokenKind::DoubleEqualsKind:
+  case TokenKind::BangEqualsKind:
+    if (LhsTy != RhsTy) {
       std::println("Equality comparison requires same types");
       return false;
     }
-    expr.setType(Type(Type::Primitive::boolean));
+    Expression.setType(Type(Type::Primitive::boolean));
     break;
 
-  case TokenKind::tokLeftCaret:
-  case TokenKind::tokLessEqual:
-  case TokenKind::tokRightCaret:
-  case TokenKind::tokGreaterEqual:
-    if (!isNumTy(lhs_type) || !isNumTy(rhs_type) || lhs_type != rhs_type) {
+  case TokenKind::OpenCaretKind:
+  case TokenKind::LessEqualKind:
+  case TokenKind::CloseCaretKind:
+  case TokenKind::GreaterEqualKind:
+    if (!isNumTy(LhsTy) || !isNumTy(RhsTy) || LhsTy != RhsTy) {
       std::println("Ordering comparisons require same numeric types");
       return false;
     }
-    expr.setType(Type(Type::Primitive::boolean));
+    Expression.setType(Type(Type::Primitive::boolean));
     break;
 
   // Logical operations
-  case TokenKind::tokDoubleAmp:
-  case TokenKind::tokDoublePipe:
-    if (lhs_type.primitive_type() != Type::Primitive::boolean ||
-        rhs_type.primitive_type() != Type::Primitive::boolean) {
+  case TokenKind::DoubleAmpKind:
+  case TokenKind::DoublePipeKind:
+    if (LhsTy.getPrimitiveType() != Type::Primitive::boolean ||
+        RhsTy.getPrimitiveType() != Type::Primitive::boolean) {
       std::println("Logical operations require boolean types");
       return false;
     }
-    expr.setType(Type(Type::Primitive::boolean));
+    Expression.setType(Type(Type::Primitive::boolean));
     break;
 
   default:
@@ -245,18 +246,18 @@ bool Sema::visit(BinaryOp &expr) {
  * - Integer + float: promote to float
  * - Mixed integers: promote to larger type (placeholder)
  */
-Type Sema::promoteNumTys(const Type &lhs, const Type &rhs) {
-  if (lhs == rhs)
-    return lhs;
+Type Sema::promoteNumTys(const Type &Lhs, const Type &Rhs) {
+  if (Lhs == Rhs)
+    return Lhs;
 
-  if (isIntTy(lhs) && isFloat(rhs)) {
-    return rhs;
+  if (isIntTy(Lhs) && isFloat(Rhs)) {
+    return Rhs;
   }
-  if (isIntTy(rhs) && isFloat(lhs)) {
-    return lhs;
+  if (isIntTy(Rhs) && isFloat(Lhs)) {
+    return Lhs;
   }
 
-  return lhs; // Default to left type
+  return Lhs; // Default to left type
 }
 /**
  * Resolves a unary operation expression.
@@ -265,49 +266,49 @@ Type Sema::promoteNumTys(const Type &lhs, const Type &rhs) {
  * - Operand resolves successfully
  * - Operation is supported for operand type
  */
-bool Sema::visit(UnaryOp &expr) {
+bool Sema::visit(UnaryOp &Expression) {
   // Resolve operand
-  if (!expr.getOperand().accept(*this)) {
+  if (!Expression.getOperand().accept(*this)) {
     return false;
   }
 
-  const Type operand_type = expr.getOperand().getType();
-  const TokenKind op = expr.getOp();
+  const Type OperandTy = Expression.getOperand().getType();
+  const TokenKind Op = Expression.getOp();
 
   // Only primitive types supported
-  if (!operand_type.isPrimitive()) {
+  if (!OperandTy.isPrimitive()) {
     std::println("Unary operations not supported on custom types");
     return false;
   }
 
   // Operation-specific validation
-  switch (op) {
+  switch (Op) {
   // Arithmetic negation
-  case TokenKind::tokMinus:
-    if (!isNumTy(operand_type)) {
+  case TokenKind::MinusKind:
+    if (!isNumTy(OperandTy)) {
       std::println("Arithmetic negation requires numeric type");
       return false;
     }
-    expr.setType(operand_type);
+    Expression.setType(OperandTy);
     break;
 
   // Logical NOT
-  case TokenKind::tokBang:
-    if (operand_type.primitive_type() != Type::Primitive::boolean) {
+  case TokenKind::BangKind:
+    if (OperandTy.getPrimitiveType() != Type::Primitive::boolean) {
       std::println("Logical NOT requires boolean type");
       return false;
     }
-    expr.setType(Type(Type::Primitive::boolean));
+    Expression.setType(Type(Type::Primitive::boolean));
     break;
 
   // Increment/Decrement
-  case TokenKind::tokDoublePlus:
-  case TokenKind::tokDoubleMinus:
-    if (!isIntTy(operand_type)) {
+  case TokenKind::DoublePlusKind:
+  case TokenKind::DoubleMinusKind:
+    if (!isIntTy(OperandTy)) {
       std::println("Increment/decrement requires integer type");
       return false;
     }
-    expr.setType(operand_type);
+    Expression.setType(OperandTy);
     break;
 
   default:

@@ -1,4 +1,5 @@
 #include "Sema/Sema.hpp"
+#include <string>
 
 namespace phi {
 
@@ -13,12 +14,17 @@ namespace phi {
  * - Placeholder for future user-defined type support
  * - Returns false for unresolved types
  */
-bool Sema::resolveTy(std::optional<Type> type) {
-  if (!type.has_value()) {
+bool Sema::resolveTy(std::optional<Type> Type) {
+  if (!Type.has_value()) {
     return false;
   }
 
-  if (type.value().isPrimitive()) {
+  if (Type.value().isPrimitive()) {
+    return true;
+  }
+
+  std::string TypeName = Type.value().getCustomTypeName();
+  if (SymbolTab.lookup(TypeName)) {
     return true;
   }
 

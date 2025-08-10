@@ -20,23 +20,23 @@ namespace phi {
  */
 std::unique_ptr<Block> Parser::parseBlock() {
   // Validate opening brace
-  if (peekToken().getType() != TokenKind::tokLeftBrace) {
+  if (peekToken().getKind() != TokenKind::OpenBraceKind) {
     emitExpectedFoundError("{", peekToken());
   }
   advanceToken();
 
   // Parse statements until closing brace
-  std::vector<std::unique_ptr<Stmt>> stmts;
-  while (peekToken().getType() != TokenKind::tokRightBrace) {
-    if (peekToken().getType() == TokenKind::tokEOF) {
+  std::vector<std::unique_ptr<Stmt>> Stmts;
+  while (peekToken().getKind() != TokenKind::CloseBraceKind) {
+    if (peekToken().getKind() == TokenKind::EOFKind) {
       emitUnclosedDelimiterError(peekToken(), "}");
       return nullptr;
     }
 
     // Parse valid statements
-    auto res = parseStmt();
-    if (res) {
-      stmts.push_back(std::move(res));
+    auto Res = parseStmt();
+    if (Res) {
+      Stmts.push_back(std::move(Res));
       continue;
     }
 
@@ -45,7 +45,7 @@ std::unique_ptr<Block> Parser::parseBlock() {
 
   advanceToken(); // eat `}`
 
-  return std::make_unique<Block>(std::move(stmts));
+  return std::make_unique<Block>(std::move(Stmts));
 }
 
 } // namespace phi

@@ -7,9 +7,9 @@
 
 namespace {
 /// Generates indentation string for AST dumping
-/// @param level Current indentation level
+/// @param Level Current indentation Level
 /// @return String of spaces for indentation
-std::string indent(int level) { return std::string(level * 2, ' '); }
+std::string indent(int Level) { return std::string(Level * 2, ' '); }
 } // namespace
 
 namespace phi {
@@ -24,14 +24,15 @@ namespace phi {
  *   [indent]Initializer:
  *     [child expression dump]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void VarDecl::emit(int level) const {
-  std::println("{}VarDecl: {} (type: {})", indent(level), Id,
-               DeclType.value().toString());
+void VarDecl::emit(int Level) const {
+  std::string typeStr =
+      DeclType.has_value() ? DeclType.value().toString() : "<unresolved>";
+  std::println("{}VarDecl: {} (type: {})", indent(Level), Id, typeStr);
   if (Init) {
-    std::println("{}Initializer:", indent(level));
-    Init->emit(level + 1);
+    std::println("{}Initializer:", indent(Level));
+    Init->emit(Level + 1);
   }
 }
 
@@ -43,11 +44,12 @@ void VarDecl::emit(int level) const {
  * Output format:
  *   [indent]ParamDecl: name (type: type)
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void ParamDecl::emit(int level) const {
-  std::println("{}ParamDecl: {} (type: {})", indent(level), Id,
-               DeclType.value().toString());
+void ParamDecl::emit(int Level) const {
+  std::string typeStr =
+      DeclType.has_value() ? DeclType.value().toString() : "<unresolved>";
+  std::println("{}ParamDecl: {} (type: {})", indent(Level), Id, typeStr);
 }
 
 //======================== FunDecl Implementation ========================//
@@ -60,17 +62,41 @@ void ParamDecl::emit(int level) const {
  *   [param dumps]
  *   [block dump]
  *
- * @param level Current indentation level
+ * @param Level Current indentation Level
  */
-void FunDecl::emit(int level) const {
-  std::println("{}Function {} at {}:{}. Returns {}", indent(level), Id,
-               Location.line, Location.col, DeclType.value().toString());
+void FunDecl::emit(int Level) const {
+  std::string typeStr =
+      DeclType.has_value() ? DeclType.value().toString() : "<unresolved>";
+  std::println("{}Function {} at {}:{}. Returns {}", indent(Level), Id,
+               Location.line, Location.col, typeStr);
   // Dump parameters
   for (auto &p : Params) {
-    p->emit(level + 1);
+    p->emit(Level + 1);
   }
   // Dump function body
-  Block->emit(level + 1);
+  Block->emit(Level + 1);
+}
+
+void StructDecl::emit(int Level) const {
+  std::string typeStr =
+      DeclType.has_value() ? DeclType.value().toString() : "<unresolved>";
+  std::println("{}StructDecl: {} (type: {})", indent(Level), Id, typeStr);
+
+  std::println("{}Fields:", indent(Level));
+  for (auto &f : Fields) {
+    f.emit(Level + 1);
+  }
+
+  std::println("{}Methods:", indent(Level));
+  for (auto &m : Methods) {
+    m.emit(Level + 1);
+  }
+}
+
+void FieldDecl::emit(int Level) const {
+  std::string typeStr =
+      DeclType.has_value() ? DeclType.value().toString() : "<unresolved>";
+  std::println("{}FieldDecl: {} (type: {})", indent(Level), Id, typeStr);
 }
 
 } // namespace phi
