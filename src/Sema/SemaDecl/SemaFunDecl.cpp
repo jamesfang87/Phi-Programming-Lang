@@ -21,7 +21,7 @@ bool Sema::resolveFunDecl(FunDecl *Fun) {
 
   // Special handling for main function
   if (Fun->getId() == "main") {
-    if (Fun->getReturnTy() != Type(Type::Primitive::null)) {
+    if (Fun->getReturnTy() != Type(Type::PrimitiveKind::NullKind)) {
       std::println("main cannot return a non-null value");
       return false;
     }
@@ -57,7 +57,8 @@ bool Sema::resolveParamDecl(ParamDecl *Param) {
 
   // Parameters can't be null type
   const Type &T = Param->getType();
-  if (T.isPrimitive() && T.getPrimitiveType() == Type::Primitive::null) {
+  if (T.isPrimitive() &&
+      T.getPrimitiveType() == Type::PrimitiveKind::NullKind) {
     std::println("param type cannot be null for: {}", Param->getId());
     return false;
   }

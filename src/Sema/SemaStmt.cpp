@@ -47,7 +47,7 @@ bool Sema::resolveBlock(Block &Block, bool ScopeCreated = false) {
 bool Sema::visit(ReturnStmt &Statement) {
   // Void function return
   if (!Statement.hasExpr()) {
-    if (CurFun->getReturnTy() != Type(Type::Primitive::null)) {
+    if (CurFun->getReturnTy() != Type(Type::PrimitiveKind::NullKind)) {
       std::println("error: function '{}' should return a value",
                    CurFun->getId());
       return false;
@@ -86,7 +86,7 @@ bool Sema::visit(IfStmt &Statement) {
     return false;
 
   // Validate cond is boolean
-  if (Statement.getCond().getType() != Type(Type::Primitive::boolean)) {
+  if (Statement.getCond().getType() != Type(Type::PrimitiveKind::BoolKind)) {
     std::println("error: cond in if statement must have type bool");
     return false;
   }
@@ -115,7 +115,7 @@ bool Sema::visit(WhileStmt &Statement) {
     return false;
 
   // Validate cond is boolean
-  if (Statement.getCond().getType() != Type(Type::Primitive::boolean)) {
+  if (Statement.getCond().getType() != Type(Type::PrimitiveKind::BoolKind)) {
     std::println("error: cond in while statement must have type bool");
     return false;
   }

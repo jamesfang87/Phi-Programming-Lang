@@ -20,38 +20,38 @@ class StructDecl;
 template <typename T> class ASTVisitor;
 
 /**
- * @brief Base class for all expression nodes
+ * @brief Base class for all Otheression nodes
  */
 class Expr : public Stmt {
 public:
-  explicit Expr(Kind K, SrcLocation location,
-                std::optional<Type> type = std::nullopt)
-      : Stmt(K, std::move(location)), type(std::move(type)) {}
+  explicit Expr(Kind K, SrcLocation Location,
+                std::optional<Type> Ty = std::nullopt)
+      : Stmt(K, std::move(Location)), Ty(std::move(Ty)) {}
 
-  [[nodiscard]] Type getType() { return type.value(); }
-  [[nodiscard]] bool isResolved() const { return type.has_value(); }
-  void setType(Type t) { type = std::move(t); }
+  [[nodiscard]] Type getType() { return Ty.value(); }
+  [[nodiscard]] bool isResolved() const { return Ty.has_value(); }
+  void setType(Type t) { Ty = std::move(t); }
   [[nodiscard]] virtual bool isAssignable() const = 0;
 
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
 
   static bool classof(const Stmt *S) {
     return S->getKind() >= Kind::ExprFirst && S->getKind() <= Kind::ExprLast;
   }
 
 protected:
-  std::optional<Type> type;
+  std::optional<Type> Ty;
 };
 
 class IntLiteral final : public Expr {
 public:
-  IntLiteral(SrcLocation location, const int64_t value);
+  IntLiteral(SrcLocation Location, const int64_t Value);
   [[nodiscard]] int64_t getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::IntLiteralKind;
   }
@@ -62,12 +62,12 @@ private:
 
 class FloatLiteral final : public Expr {
 public:
-  FloatLiteral(SrcLocation location, const double value);
+  FloatLiteral(SrcLocation Location, const double Value);
   [[nodiscard]] double getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::FloatLiteralKind;
   }
@@ -78,12 +78,12 @@ private:
 
 class StrLiteral final : public Expr {
 public:
-  StrLiteral(SrcLocation location, std::string value);
+  StrLiteral(SrcLocation Location, std::string Value);
   [[nodiscard]] std::string getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::StrLiteralKind;
   }
@@ -94,12 +94,12 @@ private:
 
 class CharLiteral final : public Expr {
 public:
-  CharLiteral(SrcLocation location, const char value);
+  CharLiteral(SrcLocation Location, const char Value);
   [[nodiscard]] char getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::CharLiteralKind;
   }
@@ -110,12 +110,12 @@ private:
 
 class BoolLiteral final : public Expr {
 public:
-  BoolLiteral(SrcLocation location, bool value);
+  BoolLiteral(SrcLocation Location, bool Value);
   [[nodiscard]] bool getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::BoolLiteralKind;
   }
@@ -126,8 +126,8 @@ private:
 
 class RangeLiteral final : public Expr {
 public:
-  RangeLiteral(SrcLocation location, std::unique_ptr<Expr> start,
-               std::unique_ptr<Expr> end, const bool inclusive);
+  RangeLiteral(SrcLocation Location, std::unique_ptr<Expr> Start,
+               std::unique_ptr<Expr> End, const bool Inclusive);
   ~RangeLiteral() override; // Need destructor
 
   [[nodiscard]] Expr &getStart() { return *Start; }
@@ -135,8 +135,8 @@ public:
   [[nodiscard]] bool isInclusive() const { return Inclusive; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::RangeLiteralKind;
   }
@@ -148,27 +148,27 @@ private:
 
 class DeclRefExpr final : public Expr {
 public:
-  DeclRefExpr(SrcLocation location, std::string id);
+  DeclRefExpr(SrcLocation Location, std::string Id);
   [[nodiscard]] std::string getId() { return Id; }
-  [[nodiscard]] Decl *getDecl() const { return decl; }
-  void setDecl(Decl *d) { decl = d; }
+  [[nodiscard]] Decl *getDecl() const { return DeclPtr; }
+  void setDecl(Decl *d) { DeclPtr = d; }
   [[nodiscard]] bool isAssignable() const override { return true; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
-  static bool classof(const Expr *expr) {
-    return expr->getKind() == Stmt::Kind::DeclRefExprKind;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
+  static bool classof(const Expr *Other) {
+    return Other->getKind() == Stmt::Kind::DeclRefExprKind;
   }
 
 private:
   std::string Id;
-  Decl *decl = nullptr;
+  Decl *DeclPtr = nullptr;
 };
 
 class FunCallExpr final : public Expr {
 public:
-  FunCallExpr(SrcLocation location, std::unique_ptr<Expr> callee,
-              std::vector<std::unique_ptr<Expr>> args);
+  FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
+              std::vector<std::unique_ptr<Expr>> Args);
   ~FunCallExpr() override; // Need destructor
 
   [[nodiscard]] Expr &getCallee() const { return *Callee; }
@@ -177,10 +177,10 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
   void setDecl(FunDecl *f) { decl = f; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
-  static bool classof(const Expr *expr) {
-    return expr->getKind() == Stmt::Kind::FunCallExprKind;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
+  static bool classof(const Expr *Other) {
+    return Other->getKind() == Stmt::Kind::FunCallExprKind;
   }
 
 private:
@@ -191,8 +191,8 @@ private:
 
 class BinaryOp final : public Expr {
 public:
-  BinaryOp(std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs,
-           const Token &op);
+  BinaryOp(std::unique_ptr<Expr> Lhs, std::unique_ptr<Expr> Rhs,
+           const Token &Op);
   ~BinaryOp() override; // Need destructor
 
   [[nodiscard]] Expr &getLhs() const { return *Lhs; }
@@ -200,10 +200,10 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
   [[nodiscard]] TokenKind getOp() const { return Op; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
-  static bool classof(const Expr *expr) {
-    return expr->getKind() == Stmt::Kind::BinaryOpKind;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
+  static bool classof(const Expr *Other) {
+    return Other->getKind() == Stmt::Kind::BinaryOpKind;
   }
 
 private:
@@ -214,7 +214,7 @@ private:
 
 class UnaryOp final : public Expr {
 public:
-  UnaryOp(std::unique_ptr<Expr> operand, const Token &op, const bool isPrefix);
+  UnaryOp(std::unique_ptr<Expr> Operand, const Token &Op, const bool IsPrefix);
   ~UnaryOp() override; // Need destructor
 
   [[nodiscard]] Expr &getOperand() const { return *Operand; }
@@ -222,10 +222,10 @@ public:
   [[nodiscard]] bool isPrefixOp() const { return IsPrefix; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
-  static bool classof(const Expr *expr) {
-    return expr->getKind() == Stmt::Kind::UnaryOpKind;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
+  static bool classof(const Expr *Other) {
+    return Other->getKind() == Stmt::Kind::UnaryOpKind;
   }
 
 private:
@@ -247,10 +247,10 @@ public:
   [[nodiscard]] Expr *getValue() const { return Init.get(); }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
-  static bool classof(const Expr *expr) {
-    return expr->getKind() == Stmt::Kind::FieldInitKind;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
+  static bool classof(const Expr *Other) {
+    return Other->getKind() == Stmt::Kind::FieldInitKind;
   }
 
   void setFieldDecl(FieldDecl *decl) { FieldDecl = decl; }
@@ -274,10 +274,10 @@ public:
   }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
-  static bool classof(const Expr *expr) {
-    return expr->getKind() == Stmt::Kind::StructInitKind;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
+  static bool classof(const Expr *Other) {
+    return Other->getKind() == Stmt::Kind::StructInitKind;
   }
 
   void setStructDecl(StructDecl *decl) { StructDecl = decl; }
@@ -299,10 +299,10 @@ public:
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
-  static bool classof(const Expr *expr) {
-    return expr->getKind() == Stmt::Kind::MemberAccessKind;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
+  static bool classof(const Expr *Other) {
+    return Other->getKind() == Stmt::Kind::MemberAccessKind;
   }
 
 private:
@@ -321,10 +321,10 @@ public:
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &visitor) override;
-  void accept(ASTVisitor<void> &visitor) override;
-  static bool classof(const Expr *expr) {
-    return expr->getKind() == Stmt::Kind::MemberFunAccessKind;
+  bool accept(ASTVisitor<bool> &Visitor) override;
+  void accept(ASTVisitor<void> &Visitor) override;
+  static bool classof(const Expr *Other) {
+    return Other->getKind() == Stmt::Kind::MemberFunAccessKind;
   }
 
 private:

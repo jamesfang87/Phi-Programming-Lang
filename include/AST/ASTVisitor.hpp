@@ -37,30 +37,30 @@ public:
   virtual ~ASTVisitor() = default;
 
   // EXPRESSION VISITORS
-  virtual ReturnType visit(IntLiteral &expr) = 0;
-  virtual ReturnType visit(FloatLiteral &expr) = 0;
-  virtual ReturnType visit(StrLiteral &expr) = 0;
-  virtual ReturnType visit(CharLiteral &expr) = 0;
-  virtual ReturnType visit(BoolLiteral &expr) = 0;
-  virtual ReturnType visit(RangeLiteral &expr) = 0;
-  virtual ReturnType visit(DeclRefExpr &expr) = 0;
-  virtual ReturnType visit(FunCallExpr &expr) = 0;
-  virtual ReturnType visit(BinaryOp &expr) = 0;
-  virtual ReturnType visit(UnaryOp &expr) = 0;
-  virtual ReturnType visit(StructInitExpr &expr) = 0;
-  virtual ReturnType visit(FieldInitExpr &expr) = 0;
-  virtual ReturnType visit(MemberAccessExpr &expr) = 0;
-  virtual ReturnType visit(MemberFunCallExpr &expr) = 0;
+  virtual ReturnType visit(IntLiteral &Expression) = 0;
+  virtual ReturnType visit(FloatLiteral &Expression) = 0;
+  virtual ReturnType visit(StrLiteral &Expression) = 0;
+  virtual ReturnType visit(CharLiteral &Expression) = 0;
+  virtual ReturnType visit(BoolLiteral &Expression) = 0;
+  virtual ReturnType visit(RangeLiteral &Expression) = 0;
+  virtual ReturnType visit(DeclRefExpr &Expression) = 0;
+  virtual ReturnType visit(FunCallExpr &Expression) = 0;
+  virtual ReturnType visit(BinaryOp &Expression) = 0;
+  virtual ReturnType visit(UnaryOp &Expression) = 0;
+  virtual ReturnType visit(StructInitExpr &Expression) = 0;
+  virtual ReturnType visit(FieldInitExpr &Expression) = 0;
+  virtual ReturnType visit(MemberAccessExpr &Expression) = 0;
+  virtual ReturnType visit(MemberFunCallExpr &Expression) = 0;
 
   // STATEMENT VISITORS
-  virtual ReturnType visit(ReturnStmt &stmt) = 0;
-  virtual ReturnType visit(IfStmt &stmt) = 0;
-  virtual ReturnType visit(WhileStmt &stmt) = 0;
-  virtual ReturnType visit(ForStmt &stmt) = 0;
-  virtual ReturnType visit(DeclStmt &stmt) = 0;
-  virtual ReturnType visit(BreakStmt &stmt) = 0;
-  virtual ReturnType visit(ContinueStmt &stmt) = 0;
-  virtual ReturnType visit(Expr &stmt) = 0;
+  virtual ReturnType visit(ReturnStmt &Statement) = 0;
+  virtual ReturnType visit(IfStmt &Statement) = 0;
+  virtual ReturnType visit(WhileStmt &Statement) = 0;
+  virtual ReturnType visit(ForStmt &Statement) = 0;
+  virtual ReturnType visit(DeclStmt &Statement) = 0;
+  virtual ReturnType visit(BreakStmt &Statement) = 0;
+  virtual ReturnType visit(ContinueStmt &Statement) = 0;
+  virtual ReturnType visit(Expr &Statement) = 0;
 };
 
 } // namespace phi

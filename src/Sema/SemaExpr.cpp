@@ -12,27 +12,27 @@ namespace phi {
 
 // Literal expression resolution
 bool Sema::visit(IntLiteral &Expression) {
-  Expression.setType(Type(Type::Primitive::i64));
+  Expression.setType(Type(Type::PrimitiveKind::I64Kind));
   return true;
 }
 
 bool Sema::visit(FloatLiteral &Expression) {
-  Expression.setType(Type(Type::Primitive::f64));
+  Expression.setType(Type(Type::PrimitiveKind::F64Kind));
   return true;
 }
 
 bool Sema::visit(StrLiteral &Expression) {
-  Expression.setType(Type(Type::Primitive::str));
+  Expression.setType(Type(Type::PrimitiveKind::StringKind));
   return true;
 }
 
 bool Sema::visit(CharLiteral &Expression) {
-  Expression.setType(Type(Type::Primitive::character));
+  Expression.setType(Type(Type::PrimitiveKind::CharKind));
   return true;
 }
 
 bool Sema::visit(BoolLiteral &Expression) {
-  Expression.setType(Type(Type::Primitive::boolean));
+  Expression.setType(Type(Type::PrimitiveKind::BoolKind));
   return true;
 }
 
@@ -125,9 +125,9 @@ bool Sema::visit(RangeLiteral &Expression) {
   }
 
   // Set types
-  Expression.getStart().setType(Type(Type::Primitive::i64));
-  Expression.getEnd().setType(Type(Type::Primitive::i64));
-  Expression.setType(Type(Type::Primitive::range));
+  Expression.getStart().setType(Type(Type::PrimitiveKind::I64Kind));
+  Expression.getEnd().setType(Type(Type::PrimitiveKind::I64Kind));
+  Expression.setType(Type(Type::PrimitiveKind::RangeKind));
   return true;
 }
 
@@ -205,7 +205,7 @@ bool Sema::visit(BinaryOp &Expression) {
       std::println("Equality comparison requires same types");
       return false;
     }
-    Expression.setType(Type(Type::Primitive::boolean));
+    Expression.setType(Type(Type::PrimitiveKind::BoolKind));
     break;
 
   case TokenKind::OpenCaretKind:
@@ -216,18 +216,18 @@ bool Sema::visit(BinaryOp &Expression) {
       std::println("Ordering comparisons require same numeric types");
       return false;
     }
-    Expression.setType(Type(Type::Primitive::boolean));
+    Expression.setType(Type(Type::PrimitiveKind::BoolKind));
     break;
 
   // Logical operations
   case TokenKind::DoubleAmpKind:
   case TokenKind::DoublePipeKind:
-    if (LhsTy.getPrimitiveType() != Type::Primitive::boolean ||
-        RhsTy.getPrimitiveType() != Type::Primitive::boolean) {
+    if (LhsTy.getPrimitiveType() != Type::PrimitiveKind::BoolKind ||
+        RhsTy.getPrimitiveType() != Type::PrimitiveKind::BoolKind) {
       std::println("Logical operations require boolean types");
       return false;
     }
-    Expression.setType(Type(Type::Primitive::boolean));
+    Expression.setType(Type(Type::PrimitiveKind::BoolKind));
     break;
 
   default:
@@ -294,11 +294,11 @@ bool Sema::visit(UnaryOp &Expression) {
 
   // Logical NOT
   case TokenKind::BangKind:
-    if (OperandTy.getPrimitiveType() != Type::Primitive::boolean) {
+    if (OperandTy.getPrimitiveType() != Type::PrimitiveKind::BoolKind) {
       std::println("Logical NOT requires boolean type");
       return false;
     }
-    Expression.setType(Type(Type::Primitive::boolean));
+    Expression.setType(Type(Type::PrimitiveKind::BoolKind));
     break;
 
   // Increment/Decrement

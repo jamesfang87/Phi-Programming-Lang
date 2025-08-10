@@ -8,20 +8,26 @@ bool isIntTy(const Type &Ty) {
   if (!Ty.isPrimitive())
     return false;
 
-  const Type::Primitive prim = Ty.getPrimitiveType();
-  return prim == Type::Primitive::i8 || prim == Type::Primitive::i16 ||
-         prim == Type::Primitive::i32 || prim == Type::Primitive::i64 ||
-         prim == Type::Primitive::u8 || prim == Type::Primitive::u16 ||
-         prim == Type::Primitive::u32 || prim == Type::Primitive::u64;
+  const Type::PrimitiveKind prim = Ty.getPrimitiveType();
+  return prim == Type::PrimitiveKind::I8Kind ||
+         prim == Type::PrimitiveKind::I16Kind ||
+         prim == Type::PrimitiveKind::I32Kind ||
+         prim == Type::PrimitiveKind::I64Kind ||
+         prim == Type::PrimitiveKind::U8Kind ||
+         prim == Type::PrimitiveKind::U16Kind ||
+         prim == Type::PrimitiveKind::U32Kind ||
+         prim == Type::PrimitiveKind::U64Kind;
 }
 
 bool isSignedInt(const Type &Ty) {
   if (!Ty.isPrimitive())
     return false;
 
-  const Type::Primitive prim = Ty.getPrimitiveType();
-  return prim == Type::Primitive::i8 || prim == Type::Primitive::i16 ||
-         prim == Type::Primitive::i32 || prim == Type::Primitive::i64;
+  const Type::PrimitiveKind prim = Ty.getPrimitiveType();
+  return prim == Type::PrimitiveKind::I8Kind ||
+         prim == Type::PrimitiveKind::I16Kind ||
+         prim == Type::PrimitiveKind::I32Kind ||
+         prim == Type::PrimitiveKind::I64Kind;
 }
 
 bool isUnsignedInt(const Type &Ty) { return (isIntTy(Ty) && !isSignedInt(Ty)); }
@@ -30,8 +36,9 @@ bool isFloat(const Type &Ty) {
   if (!Ty.isPrimitive())
     return false;
 
-  const Type::Primitive prim = Ty.getPrimitiveType();
-  return prim == Type::Primitive::f32 || prim == Type::Primitive::f64;
+  const Type::PrimitiveKind prim = Ty.getPrimitiveType();
+  return prim == Type::PrimitiveKind::F32Kind ||
+         prim == Type::PrimitiveKind::F64Kind;
 }
 
 /**
