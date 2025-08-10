@@ -20,7 +20,7 @@ class StructDecl;
 template <typename T> class ASTVisitor;
 
 /**
- * @brief Base class for all Otheression nodes
+ * @brief Base class for all Eession nodes
  */
 class Expr : public Stmt {
 public:
@@ -156,8 +156,8 @@ public:
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
-  static bool classof(const Expr *Other) {
-    return Other->getKind() == Stmt::Kind::DeclRefExprKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Stmt::Kind::DeclRefExprKind;
   }
 
 private:
@@ -179,8 +179,8 @@ public:
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
-  static bool classof(const Expr *Other) {
-    return Other->getKind() == Stmt::Kind::FunCallExprKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Stmt::Kind::FunCallExprKind;
   }
 
 private:
@@ -202,8 +202,8 @@ public:
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
-  static bool classof(const Expr *Other) {
-    return Other->getKind() == Stmt::Kind::BinaryOpKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Stmt::Kind::BinaryOpKind;
   }
 
 private:
@@ -224,8 +224,8 @@ public:
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
-  static bool classof(const Expr *Other) {
-    return Other->getKind() == Stmt::Kind::UnaryOpKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Stmt::Kind::UnaryOpKind;
   }
 
 private:
@@ -249,8 +249,8 @@ public:
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
-  static bool classof(const Expr *Other) {
-    return Other->getKind() == Stmt::Kind::FieldInitKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Stmt::Kind::FieldInitKind;
   }
 
   void setFieldDecl(FieldDecl *decl) { FieldDecl = decl; }
@@ -276,8 +276,8 @@ public:
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
-  static bool classof(const Expr *Other) {
-    return Other->getKind() == Stmt::Kind::StructInitKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Stmt::Kind::StructInitKind;
   }
 
   void setStructDecl(StructDecl *decl) { StructDecl = decl; }
@@ -301,8 +301,8 @@ public:
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
-  static bool classof(const Expr *Other) {
-    return Other->getKind() == Stmt::Kind::MemberAccessKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Stmt::Kind::MemberAccessKind;
   }
 
 private:
@@ -323,8 +323,8 @@ public:
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
-  static bool classof(const Expr *Other) {
-    return Other->getKind() == Stmt::Kind::MemberFunAccessKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Stmt::Kind::MemberFunAccessKind;
   }
 
 private:

@@ -41,12 +41,14 @@ public:
   [[nodiscard]] Kind getKind() const { return Kind; }
   [[nodiscard]] SrcLocation getLocation() const { return Location; }
   [[nodiscard]] std::string getId() const { return Id; }
-  [[nodiscard]] Type getType() { 
+  [[nodiscard]] Type getType() {
     if (!DeclType.has_value()) {
-      std::println("ERROR: Attempting to get type of unresolved declaration '{}' (kind: {})", Id, static_cast<int>(Kind));
+      std::println("ERROR: Attempting to get type of unresolved declaration "
+                   "'{}' (kind: {})",
+                   Id, static_cast<int>(Kind));
       throw std::runtime_error("Unresolved declaration type");
     }
-    return *DeclType; 
+    return *DeclType;
   }
   [[nodiscard]] std::optional<Type> getOptionalType() const { return DeclType; }
   [[nodiscard]] virtual bool isConst() const = 0;
@@ -154,12 +156,14 @@ public:
         Params(std::move(Params)), Block(std::move(BlockPtr)) {}
 
   [[nodiscard]] bool isConst() const override { return false; }
-  [[nodiscard]] Type getReturnTy() const { 
+  [[nodiscard]] Type getReturnTy() const {
     if (!DeclType.has_value()) {
-      std::println("ERROR: Attempting to get return type of unresolved function '{}'", Id);
+      std::println(
+          "ERROR: Attempting to get return type of unresolved function '{}'",
+          Id);
       throw std::runtime_error("Unresolved function return type");
     }
-    return DeclType.value(); 
+    return DeclType.value();
   }
   [[nodiscard]] Block &getBlock() const { return *Block; }
   [[nodiscard]] std::vector<std::unique_ptr<ParamDecl>> &getParams() {
