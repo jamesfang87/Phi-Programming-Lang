@@ -33,7 +33,7 @@ public:
    *
    * @param ast The abstract syntax tree to analyze
    */
-  explicit Sema(std::vector<std::unique_ptr<Decl>> ast) : Ast(std::move(ast)) {}
+  explicit Sema(std::vector<std::unique_ptr<Decl>> Ast) : Ast(std::move(Ast)) {}
 
   /**
    * @brief Main entry point for semantic analysis

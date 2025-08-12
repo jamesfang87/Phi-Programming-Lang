@@ -23,19 +23,32 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
   std::vector<FunDecl> Methods;
   std::vector<FieldDecl> Fields;
   while (!atEOF() && peekToken().getKind() != TokenKind::CloseBraceKind) {
-    if (peekToken().getKind() == TokenKind::FunKwKind) {
-      auto res = parseStructMethodDecl();
-      if (res) {
-        Methods.push_back(std::move(*res));
+    Token Check = peekToken();
+    switch (Check.getKind()) {
+    case TokenKind::PublicKwKind:
+      Check = peekToken(1);
+      break;
+    case TokenKind::FunKwKind:
+    case TokenKind::IdentifierKind:
+      break; // we don't need to do anything here
+    default:
+      error("Unexpected token");
+      break;
+    }
+
+    if (Check.getKind() == TokenKind::FunKwKind) {
+      auto Res = parseStructMethodDecl();
+      if (Res) {
+        Methods.push_back(std::move(*Res));
       } else {
         syncTo({TokenKind::FunKwKind, TokenKind::VarKwKind,
                 TokenKind::ConstKwKind, TokenKind::OpenBraceKind});
       }
-    } else if (peekToken().getKind() == TokenKind::VarKwKind ||
-               peekToken().getKind() == TokenKind::ConstKwKind) {
-      auto res = parseFieldDecl();
-      if (res) {
-        Fields.push_back(std::move(*res));
+    } else if (Check.getKind() == TokenKind::IdentifierKind) {
+      auto Res = parseFieldDecl();
+      if (Res) {
+        std::println("{} {}", Res.value().isPrivate(), Res.value().getId());
+        Fields.push_back(std::move(*Res));
       } else {
         syncTo({TokenKind::FunKwKind, TokenKind::VarKwKind,
                 TokenKind::ConstKwKind, TokenKind::OpenBraceKind});
@@ -50,27 +63,20 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
 }
 
 std::optional<FieldDecl> Parser::parseFieldDecl() {
-  SrcLocation Loc = peekToken().getStart();
-  bool IsConst;
-  if (peekToken().getKind() == TokenKind::ConstKwKind) {
-    IsConst = true;
+  bool IsPrivate = true;
+  if (peekToken().getKind() == TokenKind::PublicKwKind) {
+    IsPrivate = false;
     advanceToken();
-  } else if (peekToken().getKind() == TokenKind::VarKwKind) {
-    IsConst = false;
-    advanceToken();
-  } else {
-    emitUnexpectedTokenError(peekToken(), {"var", "const"});
-    return std::nullopt;
   }
 
   auto Binding = parseTypedBinding();
   if (!Binding)
     return std::nullopt;
-  auto [VarLoc, Id, type] = *Binding;
+  auto [VarLoc, Id, Ty] = *Binding;
 
   // Validate assignment operator
   if (advanceToken().getKind() != TokenKind::EqualsKind) {
-    return FieldDecl{VarLoc, Id, type, IsConst, nullptr};
+    return FieldDecl{VarLoc, Id, Ty, nullptr, IsPrivate};
   }
 
   // Parse initializer expression
@@ -89,7 +95,7 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
     return std::nullopt;
   }
 
-  return FieldDecl{VarLoc, Id, type, IsConst, std::move(Init)};
+  return FieldDecl{VarLoc, Id, Ty, std::move(Init), IsPrivate};
 }
 
 std::optional<FunDecl> Parser::parseStructMethodDecl() {
