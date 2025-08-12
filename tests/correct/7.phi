@@ -1,7 +1,7 @@
 struct Person {
-    const name: string;
-    var age: i64;
-    const pos: Pos;
+    public name: string;
+    age: i64;
+    pos: Pos;
 
     fun age_gap(const other: i64) -> i64 {
         return other - age;
@@ -9,8 +9,8 @@ struct Person {
 }
 
 struct Pos {
-    const x: i64;
-    const y: i64;
+    x: i64;
+    y: i64;
 }
 
 fun main() {
@@ -24,6 +24,5 @@ fun main() {
     };
 
     me.name;
-    me.pos.x;
     me.age_gap(16);
 }

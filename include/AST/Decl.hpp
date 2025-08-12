@@ -189,13 +189,14 @@ public:
    * @param type Field type
    * @param isConst Whether the field is constant
    */
-  FieldDecl(SrcLocation Location, std::string Id, Type Type, bool IsConst,
-            std::unique_ptr<Expr> Init)
+  FieldDecl(SrcLocation Location, std::string Id, Type Type,
+            std::unique_ptr<Expr> Init, bool IsPrivate)
       : Decl(Kind::FieldDecl, std::move(Location), std::move(Id),
              std::move(Type)),
-        IsConst(IsConst), Init(std::move(Init)) {}
+        IsPrivate(IsPrivate), Init(std::move(Init)) {}
 
-  [[nodiscard]] bool isConst() const override { return IsConst; }
+  [[nodiscard]] bool isPrivate() const { return IsPrivate; }
+  [[nodiscard]] bool isConst() const override { return false; }
   [[nodiscard]] bool hasInit() const { return Init != nullptr; }
 
   [[nodiscard]] Expr &getInit() const { return *Init; }
@@ -205,7 +206,7 @@ public:
   void emit(int level) const override;
 
 private:
-  bool IsConst;
+  bool IsPrivate;
   std::unique_ptr<Expr> Init;
 };
 
