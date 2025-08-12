@@ -94,8 +94,8 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *Other) {
-    return Other->getKind() == Kind::ReturnStmtKind;
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::ReturnStmtKind;
   }
 
 private:
@@ -117,8 +117,8 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *Other) {
-    return Other->getKind() == Kind::IfStmtKind;
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::IfStmtKind;
   }
 
 private:
@@ -140,8 +140,8 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *Other) {
-    return Other->getKind() == Kind::WhileStmtKind;
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::WhileStmtKind;
   }
 
 private:
@@ -163,8 +163,8 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *Other) {
-    return Other->getKind() == Kind::ForStmtKind;
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::ForStmtKind;
   }
 
 private:
@@ -184,8 +184,8 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *Other) {
-    return Other->getKind() == Kind::DeclStmtKind;
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::DeclStmtKind;
   }
 
 private:
@@ -201,8 +201,8 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *Other) {
-    return Other->getKind() == Kind::BreakStmtKind;
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::BreakStmtKind;
   }
 };
 
@@ -215,8 +215,8 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
-  static bool classof(const Stmt *Other) {
-    return Other->getKind() == Kind::ContinueStmtKind;
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::ContinueStmtKind;
   }
 };
 

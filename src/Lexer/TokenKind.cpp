@@ -47,14 +47,16 @@ std::string tyToStr(const TokenKind Kind) {
     return "IMPORT";
   case TokenKind::InKwKind:
     return "IN";
-  case TokenKind::VarKwKind:
-    return "VAR";
+  case TokenKind::PublicKwKind:
+    return "PUBLIC";
   case TokenKind::ReturnKwKind:
     return "RETURN";
   case TokenKind::StructKwKind:
     return "STRUCT";
   case TokenKind::TrueKwKind:
     return "TRUE";
+  case TokenKind::VarKwKind:
+    return "VAR";
   case TokenKind::WhileKwKind:
     return "WHILE";
 

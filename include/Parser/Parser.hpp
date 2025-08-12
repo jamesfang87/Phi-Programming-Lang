@@ -73,6 +73,14 @@ private:
   /// Returns the current token without advancing
   [[nodiscard]] Token peekToken() const;
 
+  [[nodiscard]] Token peekToken(int offset) const {
+    const SrcLocation EofLoc{.path = "", .line = -1, .col = -1};
+    auto it = TokenIt + offset;
+    if (it >= Tokens.end())
+      return Token{EofLoc, EofLoc, TokenKind::EOFKind, ""};
+    return *it;
+  }
+
   /// Advances to next token and returns the previous one
   Token advanceToken();
 

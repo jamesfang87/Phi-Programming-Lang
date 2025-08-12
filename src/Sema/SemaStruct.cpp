@@ -11,30 +11,30 @@
 namespace phi {
 
 bool Sema::visit(StructInitExpr &Expression) {
-  auto *StructPtr = SymbolTab.lookup(Expression.getStructId());
-  if (!StructPtr) {
+  auto *Found = SymbolTab.lookup(Expression.getStructId());
+  if (!Found) {
     std::println("Could not find struct {}", Expression.getStructId());
     return false;
   }
-  Expression.setStructDecl(StructPtr);
+  Expression.setStructDecl(Found);
 
   std::unordered_set<std::string> AccountedFor;
-  for (auto &Field : StructPtr->getFields()) {
+  for (auto &Field : Found->getFields()) {
     std::println("Processing field {}", Field.getId());
-    if (Field.hasInit() || Field.isConst())
+    if (Field.hasInit())
       continue;
 
     AccountedFor.insert(Field.getId());
   }
 
   for (auto &FieldInit : Expression.getFields()) {
-    if (StructPtr->getField(FieldInit->getFieldId()) == nullptr) {
+    if (Found->getField(FieldInit->getFieldId()) == nullptr) {
       std::println("Could not find field {} in struct {}",
                    FieldInit->getFieldId(), Expression.getStructId());
       return false;
     }
 
-    FieldInit->setFieldDecl(StructPtr->getField(FieldInit->getFieldId()));
+    FieldInit->setFieldDecl(Found->getField(FieldInit->getFieldId()));
     assert(FieldInit->getDecl() != nullptr);
 
     if (!FieldInit->accept(*this)) {
@@ -50,7 +50,7 @@ bool Sema::visit(StructInitExpr &Expression) {
     return false;
   }
 
-  Expression.setType(StructPtr->getType());
+  Expression.setType(Found->getType());
 
   return true;
 }
@@ -80,6 +80,11 @@ bool Sema::visit(MemberAccessExpr &Expression) {
     return false;
   }
 
+  if (Base->getType().isPrimitive()) {
+    std::println("Cannot access member of primitive type");
+    return false;
+  }
+
   StructDecl *Struct = SymbolTab.lookup(Base->getType().getCustomTypeName());
   if (Struct == nullptr) {
     std::println("Could not find struct {} in symbol table",
@@ -87,8 +92,15 @@ bool Sema::visit(MemberAccessExpr &Expression) {
     return false;
   }
 
-  if (Struct->getField(Expression.getMemberId()) == nullptr) {
+  FieldDecl *Field = Struct->getField(Expression.getMemberId());
+  if (Field == nullptr) {
     std::println("Could not find field {} in struct {}",
+                 Expression.getMemberId(), Base->getType().getCustomTypeName());
+    return false;
+  }
+
+  if (Field->isPrivate()) {
+    std::println("Cannot access private field {} in struct {}",
                  Expression.getMemberId(), Base->getType().getCustomTypeName());
     return false;
   }
@@ -99,22 +111,17 @@ bool Sema::visit(MemberAccessExpr &Expression) {
 }
 
 bool Sema::visit(MemberFunCallExpr &Expression) {
-  const auto Base = llvm::dyn_cast<DeclRefExpr>(Expression.getBase());
-  if (!Base) {
-    std::println("this");
-    return false;
-  }
+  const auto Base = Expression.getBase();
 
   if (!Base->accept(*this)) {
     std::println("Base expression failed semantic analysis");
     return false;
   }
 
-  StructDecl *Struct =
-      SymbolTab.lookup(Base->getDecl()->getType().getCustomTypeName());
+  StructDecl *Struct = SymbolTab.lookup(Base->getType().getCustomTypeName());
   if (Struct == nullptr) {
     std::println("Could not find struct {} in symbol table",
-                 Base->getDecl()->getId());
+                 Base->getType().getCustomTypeName());
     return false;
   }
 
@@ -122,7 +129,7 @@ bool Sema::visit(MemberFunCallExpr &Expression) {
   auto Fun = Struct->getMethod(DeclRef->getId());
   if (Fun == nullptr) {
     std::println("Could not find method {} in struct {}", DeclRef->getId(),
-                 Base->getDecl()->getId());
+                 Fun->getId());
     return false;
   }
 
@@ -131,7 +138,6 @@ bool Sema::visit(MemberFunCallExpr &Expression) {
     std::println("error: parameter list length mismatch");
     return false;
   }
-
   // Resolve arguments and validate types
   for (size_t i = 0; i < Expression.getCall().getArgs().size(); i++) {
     Expr *Arg = Expression.getCall().getArgs()[i].get();

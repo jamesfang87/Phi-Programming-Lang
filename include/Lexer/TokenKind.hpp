@@ -34,10 +34,11 @@ enum class TokenKind : uint8_t {
   IfKwKind,     ///< `if` keyword
   ImportKwKind, ///< `import` keyword
   InKwKind,     ///< `in` keyword
-  VarKwKind,    ///< `let` keyword
+  PublicKwKind, ///< `public` keyword
   ReturnKwKind, ///< `return` keyword
   StructKwKind,
   TrueKwKind,  ///< `true` literal
+  VarKwKind,   ///< `let` keyword
   WhileKwKind, ///< `while` keyword
 
   // SIGNED INTEGER TYPES
@@ -82,7 +83,7 @@ enum class TokenKind : uint8_t {
   // COMPOUND ASSIGNMENT OPERATORS
   PlusEqualsKind, ///< `+=` add-assign
   SubEqualsKind,  ///< `-=` subtract-assign
-  MulEqualKind,  ///< `*=` multiply-assign
+  MulEqualKind,   ///< `*=` multiply-assign
   DivEqualsKind,  ///< `/=` divide-assign
   ModEqualsKind,  ///< `%=` modulo-assign
 

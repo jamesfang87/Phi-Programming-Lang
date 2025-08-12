@@ -188,10 +188,25 @@ bool Sema::visit(BinaryOp &Expression) {
       return false;
     }
 
-    auto DeclRef = llvm::dyn_cast<DeclRefExpr>(&Expression.getLhs());
-    if (DeclRef->getDecl()->isConst()) {
+    if (auto DeclRef = llvm::dyn_cast<DeclRefExpr>(&Expression.getLhs());
+        DeclRef && DeclRef->getDecl()->isConst()) {
       std::println("Error: attempt to reassign value of constant variable");
       return false;
+    }
+
+    if (auto MemberAccess =
+            llvm::dyn_cast<MemberAccessExpr>(&Expression.getLhs())) {
+      auto Base = MemberAccess->getBase();
+      while (auto MemberAccess = llvm::dyn_cast<MemberAccessExpr>(Base)) {
+        Base = MemberAccess->getBase();
+      }
+      auto DeclRef = llvm::dyn_cast<DeclRefExpr>(Base);
+      assert(DeclRef != nullptr);
+
+      if (DeclRef->getDecl()->isConst()) {
+        std::println("Error: attempt to reassign value of constant variable");
+        return false;
+      }
     }
 
     Expression.setType(LhsTy);
