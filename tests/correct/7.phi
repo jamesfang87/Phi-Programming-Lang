@@ -6,6 +6,10 @@ struct Person {
     fun age_gap(const other: i64) -> i64 {
         return other - age;
     }
+
+    public fun same_name(const other: Person) -> bool {
+        return name == other.name;
+    }
 }
 
 struct Pos {
@@ -23,6 +27,16 @@ fun main() {
         }
     };
 
+    var phiona: Person = Person {
+        name = "phiona",
+        age = 16,
+        pos = Pos {
+            x = 1,
+            y = 1
+        }
+    };
+
     me.name;
-    me.age_gap(16);
+    me.same_name(phiona);
+
 }

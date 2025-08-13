@@ -20,7 +20,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
   }
   advanceToken();
 
-  std::vector<FunDecl> Methods;
+  std::vector<MethodDecl> Methods;
   std::vector<FieldDecl> Fields;
   while (!atEOF() && peekToken().getKind() != TokenKind::CloseBraceKind) {
     Token Check = peekToken();
@@ -98,14 +98,21 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
   return FieldDecl{VarLoc, Id, Ty, std::move(Init), IsPrivate};
 }
 
-std::optional<FunDecl> Parser::parseStructMethodDecl() {
+std::optional<MethodDecl> Parser::parseStructMethodDecl() {
+  bool IsPrivate = true;
+  if (peekToken().getKind() == TokenKind::PublicKwKind) {
+    IsPrivate = false;
+    advanceToken();
+  }
+
   assert(peekToken().getKind() == TokenKind::FunKwKind);
   auto Res = parseFunDecl();
   if (!Res) {
     return std::nullopt;
   }
 
-  return std::optional<FunDecl>{std::move(*Res)};
-}
+  MethodDecl Method(std::move(*Res), IsPrivate);
 
+  return std::optional<MethodDecl>{std::move(Method)};
+}
 } // namespace phi

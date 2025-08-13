@@ -126,15 +126,20 @@ bool Sema::visit(MemberFunCallExpr &Expression) {
   }
 
   auto DeclRef = llvm::dyn_cast<DeclRefExpr>(&Expression.getCall().getCallee());
-  auto Fun = Struct->getMethod(DeclRef->getId());
-  if (Fun == nullptr) {
+  auto Method = Struct->getMethod(DeclRef->getId());
+  if (Method == nullptr) {
     std::println("Could not find method {} in struct {}", DeclRef->getId(),
-                 Fun->getId());
+                 Method->getId());
+    return false;
+  }
+
+  if (Method->isPrivate()) {
+    std::println("error: method {} is private", Method->getId());
     return false;
   }
 
   // Validate argument count
-  if (Expression.getCall().getArgs().size() != Fun->getParams().size()) {
+  if (Expression.getCall().getArgs().size() != Method->getParams().size()) {
     std::println("error: parameter list length mismatch");
     return false;
   }
@@ -146,14 +151,14 @@ bool Sema::visit(MemberFunCallExpr &Expression) {
       return false;
     }
 
-    ParamDecl *Param = Fun->getParams().at(i).get();
+    ParamDecl *Param = Method->getParams().at(i).get();
     if (Arg->getType() != Param->getType()) {
       std::println("error: argument type mismatch");
       return false;
     }
   }
 
-  Expression.setType(Fun->getReturnTy());
+  Expression.setType(Method->getReturnTy());
 
   return true;
 }
