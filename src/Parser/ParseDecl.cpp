@@ -67,8 +67,9 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   if (!Body)
     return nullptr;
 
-  return std::make_unique<FunDecl>(Loc, std::move(Id), ReturnType,
-                                   std::move(Params.value()), std::move(Body));
+  return std::make_unique<FunDecl>(Decl::Kind::FunDecl, Loc, std::move(Id),
+                                   ReturnType, std::move(Params.value()),
+                                   std::move(Body));
 }
 
 /**

@@ -192,7 +192,7 @@ private:
    */
   std::unique_ptr<StructDecl> parseStructDecl();
   std::optional<FieldDecl> parseFieldDecl();
-  std::optional<FunDecl> parseStructMethodDecl();
+  std::optional<MethodDecl> parseStructMethodDecl();
 
   // FUNCTION DECLARATION PARSING
   std::unique_ptr<FunDecl> parseFunDecl();

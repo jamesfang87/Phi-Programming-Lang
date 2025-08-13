@@ -19,7 +19,7 @@ public:
    * @return true if primitive, false if custom
    */
   [[nodiscard]] bool isPrimitive() const noexcept {
-    return PrimitiveType != PrimitiveKind::CustomKind;
+    return Kind != PrimitiveKind::CustomKind;
   }
 
   /**
@@ -61,8 +61,7 @@ public:
    * @brief Constructs primitive type
    * @param primitiveType
    */
-  explicit Type(const PrimitiveKind PrimitiveType)
-      : PrimitiveType(PrimitiveType) {
+  explicit Type(const PrimitiveKind PrimitiveType) : Kind(PrimitiveType) {
     assert(PrimitiveType != PrimitiveKind::CustomKind &&
            "Use custom_type constructor for custom types");
   }
@@ -72,7 +71,7 @@ public:
    * @param CustomTypeName Name of custom type
    */
   explicit Type(std::string CustomTypeName)
-      : PrimitiveType(PrimitiveKind::CustomKind),
+      : Kind(PrimitiveKind::CustomKind),
         CustomTypeName(std::move(CustomTypeName)) {}
 
   /**
@@ -80,34 +79,38 @@ public:
    * @return Type name string
    */
   [[nodiscard]] std::string toString() const {
-    if (PrimitiveType == PrimitiveKind::CustomKind) {
+    if (Kind == PrimitiveKind::CustomKind) {
       return CustomTypeName;
     }
-    return primitiveToString(PrimitiveType);
+    return primitiveToString(Kind);
   }
 
   // ACCESSORS
-  [[nodiscard]] PrimitiveKind getPrimitiveType() const noexcept {
-    return PrimitiveType;
-  }
+  [[nodiscard]] PrimitiveKind getPrimitiveType() const noexcept { return Kind; }
 
   /**
    * @brief Retrieves custom type name
    * @return Custom type name string
    */
   [[nodiscard]] const std::string &getCustomTypeName() const {
-    assert(PrimitiveType == PrimitiveKind::CustomKind);
+    assert(Kind == PrimitiveKind::CustomKind);
     return CustomTypeName;
   }
 
   // OPERATORS
   bool operator==(const Type &Other) const {
-    if (PrimitiveType != Other.PrimitiveType) {
+    if (isPrimitive() != Other.isPrimitive()) {
       return false;
     }
-    if (PrimitiveType == PrimitiveKind::CustomKind) {
+
+    if (!isPrimitive()) {
       return CustomTypeName == Other.CustomTypeName;
     }
+
+    if (Kind != Other.Kind) {
+      return false;
+    }
+
     return true;
   }
 
@@ -156,8 +159,8 @@ private:
     }
   }
 
-  PrimitiveKind PrimitiveType; ///< Underlying primitive type
-  std::string CustomTypeName;  ///< Name for custom types
+  PrimitiveKind Kind;         ///< Underlying primitive type
+  std::string CustomTypeName; ///< Name for custom types
 };
 
 bool isIntTy(const Type &Ty);

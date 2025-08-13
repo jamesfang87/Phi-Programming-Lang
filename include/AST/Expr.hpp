@@ -14,6 +14,7 @@ namespace phi {
 
 // Forward declarations
 class Decl;
+class ValueDecl;
 class FunDecl;
 class FieldDecl;
 class StructDecl;
@@ -150,8 +151,8 @@ class DeclRefExpr final : public Expr {
 public:
   DeclRefExpr(SrcLocation Location, std::string Id);
   [[nodiscard]] std::string getId() { return Id; }
-  [[nodiscard]] Decl *getDecl() const { return DeclPtr; }
-  void setDecl(Decl *d) { DeclPtr = d; }
+  [[nodiscard]] ValueDecl *getDecl() const { return DeclPtr; }
+  void setDecl(ValueDecl *d) { DeclPtr = d; }
   [[nodiscard]] bool isAssignable() const override { return true; }
   void emit(int level) const override;
   bool accept(ASTVisitor<bool> &Visitor) override;
@@ -162,7 +163,7 @@ public:
 
 private:
   std::string Id;
-  Decl *DeclPtr = nullptr;
+  ValueDecl *DeclPtr = nullptr;
 };
 
 class FunCallExpr final : public Expr {

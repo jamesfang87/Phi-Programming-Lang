@@ -65,22 +65,19 @@ void ParamDecl::emit(int Level) const {
  * @param Level Current indentation Level
  */
 void FunDecl::emit(int Level) const {
-  std::string typeStr =
-      DeclType.has_value() ? DeclType.value().toString() : "<unresolved>";
   std::println("{}Function {} at {}:{}. Returns {}", indent(Level), Id,
-               Location.line, Location.col, typeStr);
+               Location.line, Location.col, ReturnType.toString());
   // Dump parameters
   for (auto &p : Params) {
     p->emit(Level + 1);
   }
   // Dump function body
-  Block->emit(Level + 1);
+  Body->emit(Level + 1);
 }
 
 void StructDecl::emit(int Level) const {
-  std::string typeStr =
-      DeclType.has_value() ? DeclType.value().toString() : "<unresolved>";
-  std::println("{}StructDecl: {} (type: {})", indent(Level), Id, typeStr);
+  std::println("{}StructDecl: {} (type: {})", indent(Level), Id,
+               Ty.getCustomTypeName());
 
   std::println("{}Fields:", indent(Level));
   for (auto &f : Fields) {

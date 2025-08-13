@@ -169,7 +169,11 @@ bool Sema::visit(DeclStmt &Statement) {
   VarDecl &Var = Statement.getDecl();
 
   // Resolve variable type
-  const bool Success = resolveTy(Var.getOptionalType());
+  if (!Var.hasType()) {
+    std::println("invalid type for variable");
+    return false;
+  }
+  const bool Success = resolveTy(Var.getType());
   if (!Success) {
     std::println("invalid type for variable");
     return false;
@@ -184,14 +188,14 @@ bool Sema::visit(DeclStmt &Statement) {
     }
 
     // Check type compatibility
-    auto VarType = Var.getOptionalType();
-    if (!VarType.has_value()) {
+    if (!Var.hasType()) {
       std::println("variable '{}' has unresolved type", Var.getId());
       return false;
     }
-    if (Init.getType() != VarType.value()) {
+    auto VarType = Var.getType();
+    if (Init.getType() != VarType) {
       std::println("variable initializer type mismatch");
-      std::println("variable type: {}", VarType.value().toString());
+      std::println("variable type: {}", VarType.toString());
       std::println("initializer type: {}", Init.getType().toString());
       return false;
     }
