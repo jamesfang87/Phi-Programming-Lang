@@ -48,7 +48,7 @@ public:
   };
 
   struct Scope {
-    std::unordered_map<std::string, Decl *> Vars;
+    std::unordered_map<std::string, ValueDecl *> Vars;
     std::unordered_map<std::string, FunDecl *> Funs;
     std::unordered_map<std::string, StructDecl *> Structs;
   };
@@ -57,10 +57,11 @@ public:
   bool insert(StructDecl *Struct);
   bool insert(VarDecl *Var);
   bool insert(ParamDecl *Param);
+  bool insert(FieldDecl *Param);
 
   FunDecl *lookup(FunCallExpr &Fun);
   StructDecl *lookup(const std::string &Struct);
-  Decl *lookup(DeclRefExpr &Var);
+  ValueDecl *lookup(DeclRefExpr &Var);
 
 private:
   /// Stack of scopes, with the back being the innermost current scope

@@ -76,7 +76,7 @@ std::pair<bool, std::vector<std::unique_ptr<Decl>>> Sema::resolveAST() {
       }
 
       // Resolve function body
-      if (!resolveBlock(CurFun->getBlock(), true)) {
+      if (!resolveBlock(CurFun->getBody(), true)) {
         std::println("failed to resolve body of: {}", CurFun->getId());
         return {false, {}};
       }

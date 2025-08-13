@@ -41,7 +41,12 @@ bool SymbolTable::insert(ParamDecl *Param) {
   return true;
 }
 
-Decl *SymbolTable::lookup(DeclRefExpr &Var) {
+bool SymbolTable::insert(FieldDecl *Field) {
+  Scopes.back().Vars[Field->getId()] = Field;
+  return true;
+}
+
+ValueDecl *SymbolTable::lookup(DeclRefExpr &Var) {
   for (int i = Scopes.size() - 1; i >= 0; --i) {
     if (auto it = Scopes[i].Vars.find(Var.getId());
         it != Scopes[i].Vars.end()) {

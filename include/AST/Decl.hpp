@@ -3,7 +3,6 @@
 #include <memory>
 #include <optional>
 #include <print>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -15,79 +14,65 @@
 
 namespace phi {
 
-/**
- * @brief Base class for all declaration nodes in the AST
- *
- * Represents named entities in the source code like variables, parameters, and
- * functions. Contains common properties including source location, identifier,
- * and type information.
- */
+//===----------------------------------------------------------------------===//
+// Decl - Base class for all declarations
+//===----------------------------------------------------------------------===//
 class Decl {
 public:
   enum class Kind : uint8_t {
     VarDecl,
     ParamDecl,
+    FieldDecl,
     FunDecl,
-    StructDecl,
-    FieldDecl
+    MethodDecl,
+    StructDecl
   };
 
-  Decl(Kind K, SrcLocation Location, std::string Id, Type DeclType)
-      : Kind(K), Location(std::move(Location)), Id(std::move(Id)),
-        DeclType(std::move(DeclType)) {}
+  Decl(Kind K, SrcLocation Loc, std::string Id)
+      : DeclKind(K), Location(std::move(Loc)), Id(std::move(Id)) {}
 
   virtual ~Decl() = default;
 
-  [[nodiscard]] Kind getKind() const { return Kind; }
+  [[nodiscard]] Kind getKind() const { return DeclKind; }
   [[nodiscard]] SrcLocation getLocation() const { return Location; }
-  [[nodiscard]] std::string getId() const { return Id; }
-  [[nodiscard]] Type getType() {
-    if (!DeclType.has_value()) {
-      std::println("ERROR: Attempting to get type of unresolved declaration "
-                   "'{}' (kind: {})",
-                   Id, static_cast<int>(Kind));
-      throw std::runtime_error("Unresolved declaration type");
-    }
-    return *DeclType;
-  }
-  [[nodiscard]] std::optional<Type> getOptionalType() const { return DeclType; }
-  [[nodiscard]] virtual bool isConst() const = 0;
+  [[nodiscard]] const std::string &getId() const { return Id; }
 
   virtual void emit(int level) const = 0;
 
 protected:
-  Kind Kind;                    ///< Kind of declaration
-  SrcLocation Location;         ///< Source location of declaration
-  std::string Id;               ///< Name of declared entity
-  std::optional<Type> DeclType; ///< Type information (std::nullopt for
-                                ///< unresolved declarations)
+  Kind DeclKind;
+  SrcLocation Location;
+  std::string Id;
 };
 
-/**
- * @brief Variable declaration node
- *
- * Represents variable declarations including:
- * - Constant vs mutable status
- * - Optional initializer expression
- * - Type annotation
- */
-class VarDecl final : public Decl {
+//===----------------------------------------------------------------------===//
+// ValueDecl - Base for declarations that have a type and can appear in exprs
+//===----------------------------------------------------------------------===//
+class ValueDecl : public Decl {
 public:
-  /**
-   * @brief Constructs a VarDecl node
-   * @param Location Source location of declaration
-   * @param Id Variable name
-   * @param DeclType
-   * @param IsConst
-   * @param Init
-   */
-  VarDecl(SrcLocation Location, std::string Id, Type DeclType,
-          const bool IsConst, std::unique_ptr<Expr> Init)
-      : Decl(Kind::VarDecl, std::move(Location), std::move(Id),
-             std::move(DeclType)),
-        IsConst(IsConst), Init(std::move(Init)) {}
+  ValueDecl(Kind K, SrcLocation Loc, std::string Id, Type DeclType)
+      : Decl(K, std::move(Loc), std::move(Id)), DeclType(std::move(DeclType)) {}
 
-  [[nodiscard]] bool isConst() const override { return IsConst; }
+  [[nodiscard]] bool hasType() const { return DeclType.has_value(); }
+  [[nodiscard]] Type getType() const { return *DeclType; }
+  [[nodiscard]] virtual bool isConst() const = 0;
+
+protected:
+  std::optional<Type> DeclType;
+};
+
+//===----------------------------------------------------------------------===//
+// VarDecl - Variable declaration
+//===----------------------------------------------------------------------===//
+class VarDecl final : public ValueDecl {
+public:
+  VarDecl(SrcLocation Loc, std::string Id, Type DeclType, bool IsConst,
+          std::unique_ptr<Expr> Init)
+      : ValueDecl(Kind::VarDecl, std::move(Loc), std::move(Id),
+                  std::move(DeclType)),
+        IsConstFlag(IsConst), Init(std::move(Init)) {}
+
+  [[nodiscard]] bool isConst() const override { return IsConstFlag; }
   [[nodiscard]] bool hasInit() const { return Init != nullptr; }
   [[nodiscard]] Expr &getInit() const { return *Init; }
 
@@ -96,109 +81,44 @@ public:
   void emit(int level) const override;
 
 private:
-  const bool IsConst;         ///< Constant declaration flag
-  std::unique_ptr<Expr> Init; ///< Initial value expression
+  bool IsConstFlag;
+  std::unique_ptr<Expr> Init;
 };
 
-/**
- * @brief Function parameter declaration node
- *
- * Represents formal parameters in function declarations. Contains parameter
- * name and type information.
- */
-class ParamDecl final : public Decl {
+//===----------------------------------------------------------------------===//
+// ParamDecl - Function parameter
+//===----------------------------------------------------------------------===//
+class ParamDecl final : public ValueDecl {
 public:
-  /**
-   * @brief Constructs a ParamDecl node
-   * @param Location
-   * @param Id
-   * @param DeclType
-   * @param IsConst
-   */
-  ParamDecl(SrcLocation Location, std::string Id, Type DeclType, bool IsConst)
-      : Decl(Kind::ParamDecl, std::move(Location), std::move(Id),
-             std::move(DeclType)),
-        IsConst(IsConst) {}
+  ParamDecl(SrcLocation Loc, std::string Id, Type DeclType, bool IsConst)
+      : ValueDecl(Kind::ParamDecl, std::move(Loc), std::move(Id),
+                  std::move(DeclType)),
+        IsConstFlag(IsConst) {}
 
-  [[nodiscard]] bool isConst() const override { return IsConst; }
+  [[nodiscard]] bool isConst() const override { return IsConstFlag; }
 
   static bool classof(const Decl *D) { return D->getKind() == Kind::ParamDecl; }
 
   void emit(int level) const override;
 
 private:
-  const bool IsConst = false;
+  bool IsConstFlag;
 };
 
-/**
- * @brief Function declaration node
- *
- * Represents function definitions containing:
- * - Return type
- * - Parameter list
- * - Function body block
- */
-class FunDecl final : public Decl {
+//===----------------------------------------------------------------------===//
+// FieldDecl - Struct/Union field
+//===----------------------------------------------------------------------===//
+class FieldDecl final : public ValueDecl {
 public:
-  /**
-   * @brief Constructs a FunDecl node
-   * @param location Source location of function
-   * @param identifier Function name
-   * @param return_type Function return type
-   * @param params List of function parameters
-   * @param block_ptr Function body block
-   */
-  FunDecl(SrcLocation Location, std::string Id, Type ReturnType,
-          std::vector<std::unique_ptr<ParamDecl>> Params,
-          std::unique_ptr<Block> BlockPtr)
-      : Decl(Kind::FunDecl, std::move(Location), std::move(Id),
-             std::move(ReturnType)),
-        Params(std::move(Params)), Block(std::move(BlockPtr)) {}
-
-  [[nodiscard]] bool isConst() const override { return false; }
-  [[nodiscard]] Type getReturnTy() const {
-    if (!DeclType.has_value()) {
-      std::println(
-          "ERROR: Attempting to get return type of unresolved function '{}'",
-          Id);
-      throw std::runtime_error("Unresolved function return type");
-    }
-    return DeclType.value();
-  }
-  [[nodiscard]] Block &getBlock() const { return *Block; }
-  [[nodiscard]] std::vector<std::unique_ptr<ParamDecl>> &getParams() {
-    return Params;
-  }
-  void setBlock(std::unique_ptr<Block> BPtr) { Block = std::move(BPtr); }
-
-  static bool classof(const Decl *D) { return D->getKind() == Kind::FunDecl; }
-
-  void emit(int level) const override;
-
-private:
-  std::vector<std::unique_ptr<ParamDecl>> Params; ///< Function parameters
-  std::unique_ptr<Block> Block;                   ///< Function body statements
-};
-
-class FieldDecl final : public Decl {
-public:
-  /**
-   * @brief Constructs a FieldDecl node
-   * @param location Source location of field
-   * @param identifier Field name
-   * @param type Field type
-   * @param isConst Whether the field is constant
-   */
-  FieldDecl(SrcLocation Location, std::string Id, Type Type,
+  FieldDecl(SrcLocation Loc, std::string Id, Type DeclType,
             std::unique_ptr<Expr> Init, bool IsPrivate)
-      : Decl(Kind::FieldDecl, std::move(Location), std::move(Id),
-             std::move(Type)),
-        IsPrivate(IsPrivate), Init(std::move(Init)) {}
+      : ValueDecl(Kind::FieldDecl, std::move(Loc), std::move(Id),
+                  std::move(DeclType)),
+        IsPrivateFlag(IsPrivate), Init(std::move(Init)) {}
 
-  [[nodiscard]] bool isPrivate() const { return IsPrivate; }
   [[nodiscard]] bool isConst() const override { return false; }
+  [[nodiscard]] bool isPrivate() const { return IsPrivateFlag; }
   [[nodiscard]] bool hasInit() const { return Init != nullptr; }
-
   [[nodiscard]] Expr &getInit() const { return *Init; }
 
   static bool classof(const Decl *D) { return D->getKind() == Kind::FieldDecl; }
@@ -206,49 +126,100 @@ public:
   void emit(int level) const override;
 
 private:
-  bool IsPrivate;
+  bool IsPrivateFlag;
   std::unique_ptr<Expr> Init;
 };
 
+//===----------------------------------------------------------------------===//
+// FunDecl - Function declaration
+//===----------------------------------------------------------------------===//
+class FunDecl : public Decl {
+public:
+  FunDecl(Kind K, SrcLocation Loc, std::string Id, Type ReturnType,
+          std::vector<std::unique_ptr<ParamDecl>> Params,
+          std::unique_ptr<Block> Body)
+      : Decl(K, std::move(Loc), std::move(Id)),
+        ReturnType(std::move(ReturnType)), Params(std::move(Params)),
+        Body(std::move(Body)) {}
+
+  [[nodiscard]] const Type &getReturnTy() const { return ReturnType; }
+  [[nodiscard]] std::vector<std::unique_ptr<ParamDecl>> &getParams() {
+    return Params;
+  }
+  [[nodiscard]] Block &getBody() const { return *Body; }
+  [[nodiscard]] std::unique_ptr<Block> &getBodyPtr() { return Body; }
+
+  void setBody(std::unique_ptr<Block> NewBody) { Body = std::move(NewBody); }
+
+  static bool classof(const Decl *D) {
+    return D->getKind() == Kind::FunDecl || D->getKind() == Kind::MethodDecl;
+  }
+
+  void emit(int level) const override;
+
+protected:
+  Type ReturnType;
+  std::vector<std::unique_ptr<ParamDecl>> Params;
+  std::unique_ptr<Block> Body;
+};
+
+//===----------------------------------------------------------------------===//
+// MethodDecl - Struct/Enum member function
+//===----------------------------------------------------------------------===//
+class MethodDecl final : public FunDecl {
+public:
+  MethodDecl(SrcLocation Loc, std::string Id, Type ReturnType,
+             std::vector<std::unique_ptr<ParamDecl>> Params,
+             std::unique_ptr<Block> Body, bool IsPrivate)
+      : FunDecl(Kind::MethodDecl, std::move(Loc), std::move(Id),
+                std::move(ReturnType), std::move(Params), std::move(Body)),
+        IsPrivate(IsPrivate) {}
+
+  MethodDecl(FunDecl &&FD, bool IsConst)
+      : FunDecl(Kind::MethodDecl, FD.getLocation(), FD.getId(),
+                FD.getReturnTy(), std::move(FD.getParams()),
+                std::move(FD.getBodyPtr())),
+        IsPrivate(IsConst) {}
+
+  [[nodiscard]] bool isPrivate() const { return IsPrivate; }
+
+  static bool classof(const Decl *D) {
+    return D->getKind() == Kind::MethodDecl;
+  }
+
+private:
+  bool IsPrivate; // For "self const" methods
+};
+
+//===----------------------------------------------------------------------===//
+// StructDecl - Aggregate type
+//===----------------------------------------------------------------------===//
 class StructDecl final : public Decl {
 public:
-  /**
-   * @brief Constructs a StructDecl node
-   * @param Location Source location of struct
-   * @param Id Struct name
-   * @param Fields List of struct fields
-   */
-  StructDecl(SrcLocation Location, std::string Id,
-             std::vector<FieldDecl> Fields, std::vector<FunDecl> Methods)
-      : Decl(Kind::StructDecl, std::move(Location), Id, Type(std::move(Id))),
+  StructDecl(SrcLocation Loc, std::string Id, std::vector<FieldDecl> Fields,
+             std::vector<MethodDecl> Methods)
+      : Decl(Kind::StructDecl, std::move(Loc), Id), Ty(std::move(Id)),
         Fields(std::move(Fields)), Methods(std::move(Methods)) {
-    this->FieldMap.reserve(this->Fields.size());
-    this->MethodMap.reserve(this->Methods.size());
     for (auto &field : this->Fields) {
-      this->FieldMap[field.getId()] = &field;
+      FieldMap[field.getId()] = &field;
     }
     for (auto &method : this->Methods) {
-      this->MethodMap[method.getId()] = &method;
+      MethodMap[method.getId()] = &method;
     }
   }
 
-  [[nodiscard]] bool isConst() const override { return false; }
-
+  [[nodiscard]] Type getType() const { return Ty; }
   [[nodiscard]] std::vector<FieldDecl> &getFields() { return Fields; }
-  [[nodiscard]] std::vector<FunDecl> &getMethods() { return Methods; }
+  [[nodiscard]] std::vector<MethodDecl> &getMethods() { return Methods; }
 
   [[nodiscard]] FieldDecl *getField(const std::string &Id) {
-    if (!FieldMap.contains(Id))
-      return nullptr;
-
-    return FieldMap[Id];
+    auto it = FieldMap.find(Id);
+    return it != FieldMap.end() ? it->second : nullptr;
   }
 
-  [[nodiscard]] FunDecl *getMethod(const std::string &Id) {
-    if (!MethodMap.contains(Id))
-      return nullptr;
-
-    return MethodMap[Id];
+  [[nodiscard]] MethodDecl *getMethod(const std::string &Id) {
+    auto it = MethodMap.find(Id);
+    return it != MethodMap.end() ? it->second : nullptr;
   }
 
   static bool classof(const Decl *D) {
@@ -258,11 +229,12 @@ public:
   void emit(int level) const override;
 
 private:
-  std::vector<FieldDecl> Fields; ///< Struct fields
-  std::vector<FunDecl> Methods;  ///< Struct methods
+  Type Ty;
+  std::vector<FieldDecl> Fields;
+  std::vector<MethodDecl> Methods;
 
   std::unordered_map<std::string, FieldDecl *> FieldMap;
-  std::unordered_map<std::string, FunDecl *> MethodMap;
+  std::unordered_map<std::string, MethodDecl *> MethodMap;
 };
 
-}; // namespace phi
+} // namespace phi

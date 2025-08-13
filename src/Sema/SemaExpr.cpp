@@ -44,7 +44,7 @@ bool Sema::visit(BoolLiteral &Expression) {
  * - Not attempting to use function as value
  */
 bool Sema::visit(DeclRefExpr &Expression) {
-  Decl *DeclPtr = SymbolTab.lookup(Expression);
+  ValueDecl *DeclPtr = SymbolTab.lookup(Expression);
 
   if (!DeclPtr) {
     std::println("error: undeclared identifier '{}'", Expression.getId());
