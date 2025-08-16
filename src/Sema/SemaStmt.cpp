@@ -2,6 +2,7 @@
 #include "AST/Stmt.hpp"
 #include "Sema/Sema.hpp"
 
+#include <algorithm>
 #include <optional>
 #include <print>
 
@@ -28,12 +29,9 @@ bool Sema::resolveBlock(Block &Block, bool ScopeCreated = false) {
   }
 
   // Resolve all statements in the block
-  for (const auto &StmtPtr : Block.getStmts()) {
-    if (!StmtPtr->accept(*this))
-      return false;
-  }
-
-  return true;
+  return std::all_of(
+      Block.getStmts().begin(), Block.getStmts().end(),
+      [this](const auto &StmtPtr) { return StmtPtr->accept(*this); });
 }
 
 /**

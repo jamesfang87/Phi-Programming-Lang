@@ -28,7 +28,6 @@ bool Sema::resolveTy(std::optional<Type> Type) {
     return true;
   }
 
-  // TODO: support user-defined types
   return false;
 }
 
