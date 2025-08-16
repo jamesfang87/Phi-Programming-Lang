@@ -69,13 +69,13 @@ public:
    * @brief Retrieves source code being scanned
    * @return Copy of source code string
    */
-  [[nodiscard]] std::string getSrc() const { return Src; }
+  [[nodiscard]] const std::string &getSrc() const { return Src; }
 
   /**
    * @brief Retrieves source file path
    * @return Copy of file path string
    */
-  [[nodiscard]] std::string getPath() const { return Path; }
+  [[nodiscard]] const std::string &getPath() const { return Path; }
 
 private:
   std::string Src;  ///< Source code being scanned
