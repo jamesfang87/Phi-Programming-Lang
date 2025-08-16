@@ -2,9 +2,7 @@
 #include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
-#include <expected>
 #include <memory>
-#include <print>
 #include <utility>
 
 #include "AST/Decl.hpp"
@@ -67,9 +65,8 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   if (!Body)
     return nullptr;
 
-  return std::make_unique<FunDecl>(Decl::Kind::FunDecl, Loc, std::move(Id),
-                                   ReturnType, std::move(Params.value()),
-                                   std::move(Body));
+  return std::make_unique<FunDecl>(Loc, std::move(Id), ReturnType,
+                                   std::move(Params.value()), std::move(Body));
 }
 
 /**

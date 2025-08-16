@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <optional>
-#include <print>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -114,10 +113,10 @@ public:
             std::unique_ptr<Expr> Init, bool IsPrivate)
       : ValueDecl(Kind::FieldDecl, std::move(Loc), std::move(Id),
                   std::move(DeclType)),
-        IsPrivateFlag(IsPrivate), Init(std::move(Init)) {}
+        IsPrivate(IsPrivate), Init(std::move(Init)) {}
 
   [[nodiscard]] bool isConst() const override { return false; }
-  [[nodiscard]] bool isPrivate() const { return IsPrivateFlag; }
+  [[nodiscard]] bool isPrivate() const { return IsPrivate; }
   [[nodiscard]] bool hasInit() const { return Init != nullptr; }
   [[nodiscard]] Expr &getInit() const { return *Init; }
 
@@ -126,7 +125,7 @@ public:
   void emit(int level) const override;
 
 private:
-  bool IsPrivateFlag;
+  bool IsPrivate;
   std::unique_ptr<Expr> Init;
 };
 
@@ -134,13 +133,22 @@ private:
 // FunDecl - Function declaration
 //===----------------------------------------------------------------------===//
 class FunDecl : public Decl {
-public:
+protected:
+  // Protected constructor with Kind, used by subclasses like MethodDecl
   FunDecl(Kind K, SrcLocation Loc, std::string Id, Type ReturnType,
           std::vector<std::unique_ptr<ParamDecl>> Params,
           std::unique_ptr<Block> Body)
       : Decl(K, std::move(Loc), std::move(Id)),
         ReturnType(std::move(ReturnType)), Params(std::move(Params)),
         Body(std::move(Body)) {}
+
+public:
+  // Public constructor always uses Kind::FunDecl
+  FunDecl(SrcLocation Loc, std::string Id, Type ReturnType,
+          std::vector<std::unique_ptr<ParamDecl>> Params,
+          std::unique_ptr<Block> Body)
+      : FunDecl(Kind::FunDecl, std::move(Loc), std::move(Id),
+                std::move(ReturnType), std::move(Params), std::move(Body)) {}
 
   [[nodiscard]] const Type &getReturnTy() const { return ReturnType; }
   [[nodiscard]] std::vector<std::unique_ptr<ParamDecl>> &getParams() {
@@ -175,11 +183,11 @@ public:
                 std::move(ReturnType), std::move(Params), std::move(Body)),
         IsPrivate(IsPrivate) {}
 
-  MethodDecl(FunDecl &&FD, bool IsConst)
+  MethodDecl(FunDecl &&FD, bool IsPrivate)
       : FunDecl(Kind::MethodDecl, FD.getLocation(), FD.getId(),
                 FD.getReturnTy(), std::move(FD.getParams()),
                 std::move(FD.getBodyPtr())),
-        IsPrivate(IsConst) {}
+        IsPrivate(IsPrivate) {}
 
   [[nodiscard]] bool isPrivate() const { return IsPrivate; }
 
@@ -200,11 +208,11 @@ public:
              std::vector<MethodDecl> Methods)
       : Decl(Kind::StructDecl, std::move(Loc), Id), Ty(std::move(Id)),
         Fields(std::move(Fields)), Methods(std::move(Methods)) {
-    for (auto &field : this->Fields) {
-      FieldMap[field.getId()] = &field;
+    for (auto &Field : this->Fields) {
+      FieldMap[Field.getId()] = &Field;
     }
-    for (auto &method : this->Methods) {
-      MethodMap[method.getId()] = &method;
+    for (auto &Method : this->Methods) {
+      MethodMap[Method.getId()] = &Method;
     }
   }
 

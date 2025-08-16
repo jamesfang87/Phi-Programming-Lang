@@ -115,4 +115,5 @@ std::optional<MethodDecl> Parser::parseStructMethodDecl() {
 
   return std::optional<MethodDecl>{std::move(Method)};
 }
+
 } // namespace phi
