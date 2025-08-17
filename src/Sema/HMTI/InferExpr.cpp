@@ -136,12 +136,14 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
 
     // Check if either operand is from a float literal or is a concrete float
     // type
-    bool leftIsFloat = isFloatLiteralVar(tl) ||
-                       (tl->tag() == Monotype::Tag::Con &&
-                        (tl->conName() == "f32" || tl->conName() == "f64"));
-    bool rightIsFloat = isFloatLiteralVar(tr) ||
-                        (tr->tag() == Monotype::Tag::Con &&
-                         (tr->conName() == "f32" || tr->conName() == "f64"));
+    bool leftIsFloat =
+        isFloatLiteralVar(tl) ||
+        (tl->tag() == Monotype::Kind::Con &&
+         (tl->getConName() == "f32" || tl->getConName() == "f64"));
+    bool rightIsFloat =
+        isFloatLiteralVar(tr) ||
+        (tr->tag() == Monotype::Kind::Con &&
+         (tr->getConName() == "f32" || tr->getConName() == "f64"));
 
     if (leftIsFloat || rightIsFloat) {
       // If either is a float, promote both to f64
@@ -163,12 +165,14 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
 
     // Check if either operand is from a float literal or is a concrete float
     // type
-    bool leftIsFloat = isFloatLiteralVar(tl) ||
-                       (tl->tag() == Monotype::Tag::Con &&
-                        (tl->conName() == "f32" || tl->conName() == "f64"));
-    bool rightIsFloat = isFloatLiteralVar(tr) ||
-                        (tr->tag() == Monotype::Tag::Con &&
-                         (tr->conName() == "f32" || tr->conName() == "f64"));
+    bool leftIsFloat =
+        isFloatLiteralVar(tl) ||
+        (tl->tag() == Monotype::Kind::Con &&
+         (tl->getConName() == "f32" || tl->getConName() == "f64"));
+    bool rightIsFloat =
+        isFloatLiteralVar(tr) ||
+        (tr->tag() == Monotype::Kind::Con &&
+         (tr->getConName() == "f32" || tr->getConName() == "f64"));
 
     if (leftIsFloat || rightIsFloat) {
       // If either is a float, promote both to f64
@@ -220,9 +224,10 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   auto out = Monotype::var(Factory_.fresh());
   println("{}", monotypeToString(tBase));
 
-  auto it = Structs.find(tBase->conName());
+  auto it = Structs.find(tBase->getConName());
   if (it == Structs.end()) {
-    std::println("Could not find struct {} in symbol table", tBase->conName());
+    std::println("Could not find struct {} in symbol table",
+                 tBase->getConName());
     return {s1, out};
   }
   StructDecl *Struct = it->second;
@@ -230,7 +235,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   FieldDecl *Field = Struct->getField(E.getMemberId());
   if (Field == nullptr) {
     std::println("Could not find field {} in struct {}", E.getMemberId(),
-                 tBase->conName());
+                 tBase->getConName());
     return {s1, out};
   }
 
@@ -250,12 +255,12 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
   auto [sBase, tBase] = visit(*E.getBase());
 
   // Ensure base is a struct constructor type
-  if (tBase->tag() != Monotype::Tag::Con) {
+  if (tBase->tag() != Monotype::Kind::Con) {
     throw std::runtime_error("method call on non-struct type: " +
                              monotypeToString(tBase));
   }
 
-  const std::string StructName = tBase->conName();
+  const std::string StructName = tBase->getConName();
 
   // Lookup the struct in your symbol table
   auto it = Structs.find(StructName);

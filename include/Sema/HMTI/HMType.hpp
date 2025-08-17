@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -26,7 +27,7 @@ struct TypeVarHash {
 // Monotype: Var | Con(name, args...) | Fun(args..., ret)
 class Monotype {
 public:
-  enum class Tag { Var, Con, Fun };
+  enum class Kind : uint8_t { Var, Con, Fun };
 
   static std::shared_ptr<Monotype> var(TypeVar V);
   static std::shared_ptr<Monotype>
@@ -35,33 +36,33 @@ public:
   fun(std::vector<std::shared_ptr<Monotype>> Params,
       std::shared_ptr<Monotype> Ret);
 
-  Tag tag() const noexcept { return Tag_; }
-  const TypeVar &asVar() const { return V_; }
+  Kind tag() const noexcept { return K; }
+  const TypeVar &asVar() const { return V; }
   std::pair<std::vector<std::shared_ptr<Monotype>>, std::shared_ptr<Monotype>>
   asFun() const {
-    return make_pair(FunArgs_, FunRet_);
+    return make_pair(FunArgs, FunRet);
   }
 
-  const std::string &conName() const { return ConName_; }
-  const std::vector<std::shared_ptr<Monotype>> &conArgs() const {
-    return ConArgs_;
+  const std::string &getConName() const { return ConName; }
+  const std::vector<std::shared_ptr<Monotype>> &getConArgs() const {
+    return ConArgs;
   }
-  const std::vector<std::shared_ptr<Monotype>> &funArgs() const {
-    return FunArgs_;
+  const std::vector<std::shared_ptr<Monotype>> &getFunArgs() const {
+    return FunArgs;
   }
-  const std::shared_ptr<Monotype> &funRet() const { return FunRet_; }
+  const std::shared_ptr<Monotype> &getFunReturn() const { return FunRet; }
 
   void setFun(std::vector<std::shared_ptr<Monotype>> Params,
               std::shared_ptr<Monotype> Ret);
 
 private:
   Monotype() = default;
-  Tag Tag_ = Tag::Con;
-  TypeVar V_{-1};
-  std::string ConName_;
-  std::vector<std::shared_ptr<Monotype>> ConArgs_;
-  std::vector<std::shared_ptr<Monotype>> FunArgs_;
-  std::shared_ptr<Monotype> FunRet_;
+  Kind K = Kind::Con;
+  TypeVar V{-1};
+  std::string ConName;
+  std::vector<std::shared_ptr<Monotype>> ConArgs;
+  std::vector<std::shared_ptr<Monotype>> FunArgs;
+  std::shared_ptr<Monotype> FunRet;
 };
 
 // Polytype (Scheme): forall quant. body
@@ -69,15 +70,15 @@ class Polytype {
 public:
   Polytype() = default;
   Polytype(std::vector<TypeVar> Quant, std::shared_ptr<Monotype> Body)
-      : Quant_(std::move(Quant)), Body_(std::move(Body)) {}
-  const std::vector<TypeVar> &quant() const { return Quant_; }
-  const std::shared_ptr<Monotype> &body() const { return Body_; }
-  void setBody(std::shared_ptr<Monotype> B) { Body_ = std::move(B); }
-  void setQuant(std::vector<TypeVar> Q) { Quant_ = std::move(Q); }
+      : Quant(std::move(Quant)), Body(std::move(Body)) {}
+  const std::vector<TypeVar> &getQuant() const { return Quant; }
+  const std::shared_ptr<Monotype> &getBody() const { return Body; }
+  void setBody(std::shared_ptr<Monotype> B) { Body = std::move(B); }
+  void setQuant(std::vector<TypeVar> Q) { Quant = std::move(Q); }
 
 private:
-  std::vector<TypeVar> Quant_;
-  std::shared_ptr<Monotype> Body_;
+  std::vector<TypeVar> Quant;
+  std::shared_ptr<Monotype> Body;
 };
 
 // Substitution
