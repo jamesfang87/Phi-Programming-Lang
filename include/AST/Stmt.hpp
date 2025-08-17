@@ -8,6 +8,7 @@ namespace phi {
 
 // Forward declarations - no includes needed
 template <typename T> class ASTVisitor;
+class NameResolver;
 class Expr;
 class VarDecl;
 class Block;
@@ -56,6 +57,7 @@ public:
   [[nodiscard]] SrcLocation &getLocation() { return Location; }
 
   virtual void emit(int Level) const = 0;
+  virtual bool accept(NameResolver &R) = 0;
   virtual bool accept(ASTVisitor<bool> &Visitor) = 0;
   virtual void accept(ASTVisitor<void> &Visitor) = 0;
 
@@ -91,6 +93,7 @@ public:
   [[nodiscard]] Expr &getExpr() const { return *ReturnExpr; }
 
   void emit(int Level) const override;
+  bool accept(NameResolver &R) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -114,6 +117,7 @@ public:
   [[nodiscard]] bool hasElse() const { return ElseBody != nullptr; }
 
   void emit(int Level) const override;
+  bool accept(NameResolver &R) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -137,6 +141,7 @@ public:
   [[nodiscard]] Block &getBody() const { return *Body; }
 
   void emit(int Level) const override;
+  bool accept(NameResolver &R) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -160,6 +165,7 @@ public:
   [[nodiscard]] Block &getBody() const { return *Body; }
 
   void emit(int Level) const override;
+  bool accept(NameResolver &R) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -181,6 +187,7 @@ public:
   [[nodiscard]] VarDecl &getDecl() const { return *Var; }
 
   void emit(int Level) const override;
+  bool accept(NameResolver &R) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -198,6 +205,7 @@ public:
   ~BreakStmt() override;
 
   void emit(int Level) const override;
+  bool accept(NameResolver &R) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -212,6 +220,7 @@ public:
   ~ContinueStmt() override;
 
   void emit(int Level) const override;
+  bool accept(NameResolver &R) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
