@@ -13,7 +13,6 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
   SrcLocation Loc = advanceToken().getStart();
 
   std::string Id = advanceToken().getLexeme();
-  std::println("{}", Id);
 
   if (peekToken().getKind() != TokenKind::OpenBraceKind) {
     error("Expected '{' after struct identifier");
@@ -47,7 +46,6 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     } else if (Check.getKind() == TokenKind::IdentifierKind) {
       auto Res = parseFieldDecl();
       if (Res) {
-        std::println("{} {}", Res.value().isPrivate(), Res.value().getId());
         Fields.push_back(std::move(*Res));
       } else {
         syncTo({TokenKind::FunKwKind, TokenKind::VarKwKind,

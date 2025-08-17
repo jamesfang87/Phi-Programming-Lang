@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Sema/HMTI/Adapters/TypeAdapters.hpp"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -54,6 +55,29 @@ public:
 
   void setFun(std::vector<std::shared_ptr<Monotype>> Params,
               std::shared_ptr<Monotype> Ret);
+
+  [[nodiscard]] std::string toString() {
+    if (K == Monotype::Kind::Con)
+      return ConName;
+    if (K == Monotype::Kind::Var)
+      return "Type Var";
+    return "unknown_type";
+  }
+
+  [[nodiscard]] bool isIntType() const {
+    if (K != Monotype::Kind::Con)
+      return false;
+    std::string name = getConName();
+    return name == "i8" || name == "i16" || name == "i32" || name == "i64";
+  }
+
+  [[nodiscard]] bool isFloatType() const {
+    if (K != Monotype::Kind::Con)
+      return false;
+    return ConName == "f32" || ConName == "f64";
+  }
+
+  Type toAstType();
 
 private:
   Monotype() = default;

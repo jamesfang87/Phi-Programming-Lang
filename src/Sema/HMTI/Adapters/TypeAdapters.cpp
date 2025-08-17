@@ -1,4 +1,5 @@
 #include "Sema/HMTI/Adapters/TypeAdapters.hpp"
+
 #include "AST/Type.hpp"
 #include <stdexcept>
 

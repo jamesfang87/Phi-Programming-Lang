@@ -18,8 +18,9 @@ struct Pos {
 }
 
 fun main() {
+    const name = "james";
     var me = Person {
-        name = "james",
+        name = name,
         age = 17,
         pos = Pos {
             x = 0,

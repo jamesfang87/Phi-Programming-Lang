@@ -93,7 +93,9 @@ void StructDecl::emit(int Level) const {
 void FieldDecl::emit(int Level) const {
   std::string typeStr =
       DeclType.has_value() ? DeclType.value().toString() : "<unresolved>";
-  std::println("{}FieldDecl: {} (type: {})", indent(Level), Id, typeStr);
+  std::string visibility = isPrivate() ? "private" : "public";
+  std::println("{}{} FieldDecl: {} (type: {})", indent(Level), visibility, Id,
+               typeStr);
 }
 
 } // namespace phi
