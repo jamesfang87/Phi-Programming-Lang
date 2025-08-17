@@ -80,6 +80,10 @@ bool NameResolver::visit(MemberFunCallExpr &Expression) {
     return false;
   }
 
+  for (const auto &Args : Expression.getCall().getArgs()) {
+    Args->accept(*this);
+  }
+
   return true;
 }
 
