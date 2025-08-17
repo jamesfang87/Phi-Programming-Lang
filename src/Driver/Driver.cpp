@@ -1,11 +1,11 @@
 #include "Driver/Driver.hpp"
 
 // #include "CodeGen/CodeGen.hpp"
+#include "AST/Expr.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
-#include "Sema/Sema.hpp"
+#include "Sema/NameResolver.hpp"
 #include <cstdlib>
-#include <print>
 
 namespace phi {
 
@@ -26,17 +26,14 @@ bool PhiCompiler::compile() {
   if (DiagnosticMan->error_count() > 0) {
     return false;
   }
-  for (auto &expr : Ast) {
-    expr->emit(0);
-  }
 
-  auto [Success, ResolvedAst] = Sema(std::move(Ast)).resolveAST();
+  auto [Success, ResolvedNames] = NameResolver(std::move(Ast)).resolveNames();
   if (!Success) {
     return false;
   }
 
-  for (auto &expr : ResolvedAst) {
-    expr->emit(0);
+  for (auto &D : ResolvedNames) {
+    D->emit(0);
   }
 
   // // Code Generation

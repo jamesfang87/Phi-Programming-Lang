@@ -7,6 +7,7 @@
 #include "AST/ASTVisitor.hpp"
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
+#include "Sema/NameResolver.hpp"
 
 namespace {
 /// Generates indentation string for AST dumping
@@ -50,6 +51,8 @@ void ReturnStmt::emit(int Level) const {
 bool ReturnStmt::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+
+bool ReturnStmt::accept(NameResolver &R) { return R.visit(*this); };
 
 void ReturnStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -96,6 +99,7 @@ void IfStmt::emit(int Level) const {
 
 void IfStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
+bool IfStmt::accept(NameResolver &R) { return R.visit(*this); };
 bool IfStmt::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
 
 //======================== WhileStmt Implementation =========================//
@@ -138,6 +142,7 @@ bool WhileStmt::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 
+bool WhileStmt::accept(NameResolver &R) { return R.visit(*this); };
 void WhileStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== ForStmt Implementation =========================//
@@ -184,6 +189,7 @@ void ForStmt::emit(int Level) const {
 
 bool ForStmt::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
 
+bool ForStmt::accept(NameResolver &R) { return R.visit(*this); };
 void ForStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== LetStmt Implementation =========================//
@@ -220,6 +226,7 @@ bool DeclStmt::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 
+bool DeclStmt::accept(NameResolver &R) { return R.visit(*this); };
 void DeclStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== BreakStmt Implementation =========================//
@@ -250,6 +257,7 @@ bool BreakStmt::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 
+bool BreakStmt::accept(NameResolver &R) { return R.visit(*this); };
 void BreakStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================= ContinueStmt Implementation ========================//
@@ -280,6 +288,7 @@ bool ContinueStmt::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 
+bool ContinueStmt::accept(NameResolver &R) { return R.visit(*this); };
 void ContinueStmt::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //======================== Block Implementation =========================//

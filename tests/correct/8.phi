@@ -1,12 +1,10 @@
-fun println(var msg: string) {}
-
-fun foo(var a: i64, var b: i64) {
+fun foo(var a: i32, var b: i64) {
     a = 10;
     b = 20;
 }
 
 fun main() {
-    var x: i64 = 10;
-    x = 9;
-    println("Hello, World!");
+    var x = 10;
+    var y = 1 * 9 + 8;
+    foo(x, y);
 }

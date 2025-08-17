@@ -49,12 +49,15 @@ protected:
 //===----------------------------------------------------------------------===//
 class ValueDecl : public Decl {
 public:
-  ValueDecl(Kind K, SrcLocation Loc, std::string Id, Type DeclType)
+  ValueDecl(Kind K, SrcLocation Loc, std::string Id,
+            std::optional<Type> DeclType)
       : Decl(K, std::move(Loc), std::move(Id)), DeclType(std::move(DeclType)) {}
 
   [[nodiscard]] bool hasType() const { return DeclType.has_value(); }
   [[nodiscard]] Type getType() const { return *DeclType; }
   [[nodiscard]] virtual bool isConst() const = 0;
+
+  void setType(Type T) { DeclType = std::move(T); }
 
 protected:
   std::optional<Type> DeclType;
@@ -65,8 +68,8 @@ protected:
 //===----------------------------------------------------------------------===//
 class VarDecl final : public ValueDecl {
 public:
-  VarDecl(SrcLocation Loc, std::string Id, Type DeclType, bool IsConst,
-          std::unique_ptr<Expr> Init)
+  VarDecl(SrcLocation Loc, std::string Id, std::optional<Type> DeclType,
+          bool IsConst, std::unique_ptr<Expr> Init)
       : ValueDecl(Kind::VarDecl, std::move(Loc), std::move(Id),
                   std::move(DeclType)),
         IsConstFlag(IsConst), Init(std::move(Init)) {}
