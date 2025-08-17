@@ -60,11 +60,11 @@ std::shared_ptr<Monotype> fromAstType(const Type &T) {
 Type toAstType(const std::shared_ptr<Monotype> &T) {
   // AST.Type doesn't have function type; it's only primitive/custom.
   // For Var (still free) we default to i32 (safe conservative default).
-  if (T->tag() == Monotype::Tag::Var) {
+  if (T->tag() == Monotype::Kind::Var) {
     return Type(Type::PrimitiveKind::I32Kind);
   }
-  if (T->tag() == Monotype::Tag::Con) {
-    const auto &Name = T->conName();
+  if (T->tag() == Monotype::Kind::Con) {
+    const auto &Name = T->getConName();
     if (Name == "i8")
       return Type(Type::PrimitiveKind::I8Kind);
     if (Name == "i16")
@@ -100,8 +100,8 @@ Type toAstType(const std::shared_ptr<Monotype> &T) {
   }
   // Fun: map to return type only — callers (Infer::annotate) handle
   // params+return
-  if (T->tag() == Monotype::Tag::Fun) {
-    return toAstType(T->funRet());
+  if (T->tag() == Monotype::Kind::Fun) {
+    return toAstType(T->getFunReturn());
   }
   return Type(Type::PrimitiveKind::I32Kind);
 }
