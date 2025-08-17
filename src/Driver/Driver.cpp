@@ -33,10 +33,6 @@ bool PhiCompiler::compile() {
     return false;
   }
 
-  for (auto &D : ResolvedNames) {
-    D->emit(0);
-  }
-
   auto ResolvedTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
   for (auto &D : ResolvedTypes) {
     D->emit(0);

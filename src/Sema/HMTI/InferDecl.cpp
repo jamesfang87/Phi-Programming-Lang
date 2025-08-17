@@ -1,5 +1,4 @@
 #include "Sema/HMTI/Infer.hpp"
-#include <print>
 
 namespace phi {
 
@@ -20,14 +19,14 @@ void TypeInferencer::inferDecl(Decl &D) {
 // from passing them to functions) update the same monotype instance.
 void TypeInferencer::inferVarDecl(VarDecl &D) {
   // Was this predeclared (top-level)? If so, Env_.lookup(&D) returns a Scheme.
-  auto ScOpt = Env_.lookup(&D);
+  auto ScOpt = Env.lookup(&D);
   const bool WasPredeclared = static_cast<bool>(ScOpt);
 
   // Starting monotype: instantiate predeclared scheme, or create fresh var for
   // local.
   std::shared_ptr<Monotype> VarTy = WasPredeclared
-                                        ? instantiate(*ScOpt, Factory_)
-                                        : Monotype::var(Factory_.fresh());
+                                        ? instantiate(*ScOpt, Factory)
+                                        : Monotype::var(Factory.fresh());
 
   Substitution S;
   if (D.hasInit()) {
@@ -51,14 +50,13 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
   // Bind into the environment:
   if (WasPredeclared) {
     // Top-level/letrec: generalize as before.
-    auto Sc = generalize(Env_, VarTy);
-    Env_.bind(&D, Sc);
+    auto Sc = generalize(Env, VarTy);
+    Env.bind(&D, Sc);
   } else {
     // Local variable: bind a monomorphic scheme (no quantification).
     // This ensures the same Monotype instance stays associated with the VarDecl
     // for the remainder of the function, so later unifications update it.
-    Env_.bind(&D, Polytype{{}, VarTy});
-    std::println("binded {}", D.getId());
+    Env.bind(&D, Polytype{{}, VarTy});
   }
 
   // Side-table annotate (will be finalized later)
@@ -72,8 +70,8 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
   std::shared_ptr<Monotype> FnT;
 
   // Lookup by name
-  if (auto Sc = Env_.lookup(D.getId())) {
-    FnT = instantiate(*Sc, Factory_);
+  if (auto Sc = Env.lookup(D.getId())) {
+    FnT = instantiate(*Sc, Factory);
   } else {
     // Fallback: build from AST annotations (shouldn't normally happen)
     std::vector<std::shared_ptr<Monotype>> Args;
@@ -94,7 +92,7 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
     throw std::runtime_error("internal: function expected a function monotype");
 
   // Save environment (we will restore)
-  auto SavedEnv = Env_;
+  auto SavedEnv = Env;
 
   // Bind parameters (use user-declared types) for body inference
   for (size_t i = 0; i < D.getParams().size(); ++i) {
@@ -104,14 +102,14 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
                                "' must have a type annotation");
     }
     auto Pt = fromAstType(P->getType());
-    Env_.bind(P, Polytype{{}, Pt});
+    Env.bind(P, Polytype{{}, Pt});
     // record param monotype too so we can finalize param annotations if desired
-    DeclMonos_[P] = Pt;
+    ValDeclMonos[P] = Pt;
   }
 
   // Use declared return type as expected for body
   auto DeclaredRet = fromAstType(D.getReturnTy());
-  CurrentFnReturnTy_.push_back(DeclaredRet);
+  CurrentFnReturnTy.push_back(DeclaredRet);
 
   // Infer body
   auto [SBody, _] = inferBlock(D.getBody());
@@ -122,7 +120,7 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
   // Apply substitution to function type
   FnT = SBody.apply(FnT);
 
-  CurrentFnReturnTy_.pop_back();
+  CurrentFnReturnTy.pop_back();
 
   // Verify declared param/return types match inferred FnT (unify to find
   // errors)
@@ -148,10 +146,10 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
 
   // Optionally record function monotype in DeclMonos_ (we don't mutate AST
   // function signature)
-  FunMonos_[&D] = FnT;
+  FunDeclMonos[&D] = FnT;
 
   // Restore outer environment
-  Env_ = std::move(SavedEnv);
+  Env = std::move(SavedEnv);
 }
 
 } // namespace phi

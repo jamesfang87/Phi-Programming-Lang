@@ -1,4 +1,6 @@
 #include "AST/Type.hpp"
+#include "Sema/HMTI/HMType.hpp"
+#include <memory>
 
 namespace phi {
 /**
@@ -49,6 +51,46 @@ bool isNumTy(const Type &Ty) {
     return false;
 
   return isIntTy(Ty) || isFloat(Ty);
+}
+
+std::shared_ptr<Monotype> Type::toMonotype() {
+  // Map AST::Type::PrimitiveKind -> Monotype constructor names
+  switch (Kind) {
+  case Type::PrimitiveKind::I8Kind:
+    return Monotype::con("i8");
+  case Type::PrimitiveKind::I16Kind:
+    return Monotype::con("i16");
+  case Type::PrimitiveKind::I32Kind:
+    return Monotype::con("i32");
+  case Type::PrimitiveKind::I64Kind:
+    return Monotype::con("i64");
+  case Type::PrimitiveKind::U8Kind:
+    return Monotype::con("u8");
+  case Type::PrimitiveKind::U16Kind:
+    return Monotype::con("u16");
+  case Type::PrimitiveKind::U32Kind:
+    return Monotype::con("u32");
+  case Type::PrimitiveKind::U64Kind:
+    return Monotype::con("u64");
+  case Type::PrimitiveKind::F32Kind:
+    return Monotype::con("f32");
+  case Type::PrimitiveKind::F64Kind:
+    return Monotype::con("f64");
+  case Type::PrimitiveKind::StringKind:
+    return Monotype::con("string");
+  case Type::PrimitiveKind::CharKind:
+    return Monotype::con("char");
+  case Type::PrimitiveKind::BoolKind:
+    return Monotype::con("bool");
+  case Type::PrimitiveKind::RangeKind:
+    return Monotype::con("range");
+  case Type::PrimitiveKind::NullKind:
+    return Monotype::con("null");
+  case Type::PrimitiveKind::CustomKind:
+  default:
+    throw std::runtime_error(
+        "fromBuiltin: unexpected mapping; use fromAstType for custom types");
+  }
 }
 
 } // namespace phi

@@ -258,7 +258,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
     return nullptr;
   }
 
-  // Create loop variable declaration (implicit i64 type)
+  // Create loop variable declaration (no type until inference)
   auto LoopVarDecl = std::make_unique<VarDecl>(
       LoopVar.getStart(), LoopVar.getLexeme(), std::nullopt, false, nullptr);
 
