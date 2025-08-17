@@ -1,4 +1,5 @@
 #include "Sema/HMTI/Infer.hpp"
+#include <print>
 
 namespace phi {
 
@@ -57,6 +58,7 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
     // This ensures the same Monotype instance stays associated with the VarDecl
     // for the remainder of the function, so later unifications update it.
     Env_.bind(&D, Polytype{{}, VarTy});
+    std::println("binded {}", D.getId());
   }
 
   // Side-table annotate (will be finalized later)

@@ -243,14 +243,120 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   return {s1, out};
 }
 
+// Replace your existing MemberFunCallExpr handler with this:
+
 TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
-  auto [sB, tB] = visit(*E.getBase());
-  auto [sC, tC] = visit(E.getCall());
-  Substitution s = sC;
-  s.compose(sB);
-  recordSubst(s);
-  annotateExpr(E, tC);
-  return {s, tC};
+  // 1) Infer base expression (the receiver)
+  auto [sBase, tBase] = visit(*E.getBase());
+
+  // Ensure base is a struct constructor type
+  if (tBase->tag() != Monotype::Tag::Con) {
+    throw std::runtime_error("method call on non-struct type: " +
+                             monotypeToString(tBase));
+  }
+
+  const std::string StructName = tBase->conName();
+
+  // Lookup the struct in your symbol table
+  auto it = Structs.find(StructName);
+  if (it == Structs.end()) {
+    throw std::runtime_error("unknown struct type: " + StructName);
+  }
+  StructDecl *Struct = it->second;
+
+  // The callee inside MemberFunCallExpr is expected to be a DeclRefExpr naming
+  // the method. If it's not, that's an unsupported form for now.
+  auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&E.getCall().getCallee());
+  if (!DeclRef) {
+    throw std::runtime_error(
+        "unsupported method call syntax (expected identifier)");
+  }
+
+  const std::string MethodName = DeclRef->getId();
+
+  // Find the method declaration inside the struct
+  FunDecl *Method = Struct->getMethod(MethodName);
+  if (!Method) {
+    throw std::runtime_error("struct '" + StructName + "' has no method '" +
+                             MethodName + "'");
+  }
+
+  // 2) Build the method's Monotype from its AST param types and return type
+  std::vector<std::shared_ptr<Monotype>> MethodParams;
+  MethodParams.reserve(Method->getParams().size());
+
+  for (auto &ParamUP : Method->getParams()) {
+    ParamDecl *P = ParamUP.get();
+    if (!P->hasType()) {
+      throw std::runtime_error("method parameter '" + P->getId() +
+                               "' missing type annotation");
+    }
+    auto PTy = fromAstType(P->getType());
+    if (!PTy) {
+      throw std::runtime_error(
+          "internal error: fromAstType returned null for parameter of method " +
+          MethodName);
+    }
+    MethodParams.push_back(PTy);
+  }
+
+  // Return type must be present (your FunDecl stores return type)
+  auto RetTy = fromAstType(Method->getReturnTy());
+  if (!RetTy) {
+    throw std::runtime_error(
+        "internal error: fromAstType returned null for return type of method " +
+        MethodName);
+  }
+
+  // 3) Prepend the receiver type to the parameter list to form full function
+  // type
+  //    Here the receiver type is tBase (the concrete struct monotype).
+  std::vector<std::shared_ptr<Monotype>> FullParams;
+  FullParams.reserve(1 + MethodParams.size());
+  FullParams.push_back(
+      sBase.apply(tBase)); // apply substitution so receiver is up-to-date
+  for (auto &p : MethodParams)
+    FullParams.push_back(p);
+
+  auto MethodMonotype = Monotype::fun(std::move(FullParams), RetTy);
+  if (!MethodMonotype) {
+    throw std::runtime_error(
+        "internal error: failed to construct method monotype for " +
+        StructName + "::" + MethodName);
+  }
+
+  // 4) Now infer the call: first collect argument types (receiver + explicit
+  // args) Start with the base substitution sBase
+  Substitution S = sBase;
+
+  // receiver arg type (we already have it): use s-applied version
+  std::vector<std::shared_ptr<Monotype>> CallArgTys;
+  CallArgTys.reserve(1 + E.getCall().getArgs().size());
+  CallArgTys.push_back(S.apply(tBase)); // receiver goes first
+
+  // Infer each explicit argument, composing substitutions as we go
+  for (auto &ArgUP : E.getCall().getArgs()) {
+    auto [si, ti] = visit(*ArgUP);
+    S.compose(si);
+    // make sure to apply the current substitution to argument type
+    CallArgTys.push_back(S.apply(ti));
+  }
+
+  // 5) Make a fresh result type for the call
+  auto ResultTy = Monotype::var(Factory_.fresh());
+
+  // Expected function shape from the call site: (arg types...) -> ResultTy
+  auto FnExpect = Monotype::fun(CallArgTys, ResultTy);
+
+  // 6) Unify the declared method monotype with the expected call shape.
+  //    This will unify receiver and arguments and produce substitutions.
+  unifyInto(S, MethodMonotype, FnExpect);
+
+  // 7) Record the substitution so the environment sees it and annotate the call
+  recordSubst(S);
+  annotateExpr(E, S.apply(ResultTy));
+
+  return {S, S.apply(ResultTy)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(Expr &E) {

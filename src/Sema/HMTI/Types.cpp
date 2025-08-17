@@ -75,11 +75,15 @@ std::unordered_set<TypeVar, TypeVarHash> freeTypeVars(const Polytype &S) {
   return F;
 }
 
-// apply substitution
 static std::shared_ptr<Monotype> applyOne(
     const std::unordered_map<TypeVar, std::shared_ptr<Monotype>, TypeVarHash>
         &M,
     const std::shared_ptr<Monotype> &T) {
+  if (!T) {
+    throw std::runtime_error(
+        "internal error: applying substitution to null Monotype");
+  }
+
   switch (T->tag()) {
   case Monotype::Tag::Var: {
     auto It = M.find(T->asVar());
