@@ -4,6 +4,7 @@
 #include "AST/Expr.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
+#include "Sema/HMTI/Infer.hpp"
 #include "Sema/NameResolver.hpp"
 #include <cstdlib>
 
@@ -33,6 +34,11 @@ bool PhiCompiler::compile() {
   }
 
   for (auto &D : ResolvedNames) {
+    D->emit(0);
+  }
+
+  auto ResolvedTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
+  for (auto &D : ResolvedTypes) {
     D->emit(0);
   }
 
