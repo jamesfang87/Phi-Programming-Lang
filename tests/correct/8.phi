@@ -1,10 +1,19 @@
 fun foo(var a: i32, var b: i64) {
-    a = 10;
-    b = 20;
+    a + 10;
+    b + 20;
 }
 
 fun main() {
     var x = 10;
     var y = 1 * 9 + 8;
+
+    const a: f64 = 1.2;
+    const b = a;
+    const c = 1.6;
+
+    for i in 1..10 {
+        const t: i64 = i;
+    }
+
     foo(x, y);
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Sema/HMTI/HMType.hpp"
 #include "SrcManager/SrcLocation.hpp"
 #include <memory>
 #include <vector>
@@ -9,6 +10,10 @@ namespace phi {
 // Forward declarations - no includes needed
 template <typename T> class ASTVisitor;
 class NameResolver;
+class TypeInferencer;
+
+using InferRes = std::pair<Substitution, std::shared_ptr<Monotype>>;
+
 class Expr;
 class VarDecl;
 class Block;
@@ -58,6 +63,7 @@ public:
 
   virtual void emit(int Level) const = 0;
   virtual bool accept(NameResolver &R) = 0;
+  virtual InferRes accept(TypeInferencer &I) = 0;
   virtual bool accept(ASTVisitor<bool> &Visitor) = 0;
   virtual void accept(ASTVisitor<void> &Visitor) = 0;
 
@@ -94,6 +100,7 @@ public:
 
   void emit(int Level) const override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -118,6 +125,7 @@ public:
 
   void emit(int Level) const override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -142,6 +150,7 @@ public:
 
   void emit(int Level) const override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -166,6 +175,7 @@ public:
 
   void emit(int Level) const override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -188,6 +198,7 @@ public:
 
   void emit(int Level) const override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -206,6 +217,7 @@ public:
 
   void emit(int Level) const override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
@@ -221,6 +233,7 @@ public:
 
   void emit(int Level) const override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
 

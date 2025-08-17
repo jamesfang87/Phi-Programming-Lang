@@ -4,10 +4,12 @@
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
+#include "Sema/HMTI/HMType.hpp"
 #include "SrcManager/SrcLocation.hpp"
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace phi {
@@ -20,6 +22,9 @@ class FieldDecl;
 class StructDecl;
 template <typename T> class ASTVisitor;
 class NameResolver;
+class TypeInferencer;
+
+using InferRes = std::pair<Substitution, std::shared_ptr<Monotype>>;
 
 /**
  * @brief Base class for all Eession nodes
@@ -37,6 +42,7 @@ public:
 
   bool accept(ASTVisitor<bool> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   void accept(ASTVisitor<void> &Visitor) override;
 
   static bool classof(const Stmt *S) {
@@ -56,6 +62,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::IntLiteralKind;
   }
@@ -73,6 +80,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::FloatLiteralKind;
   }
@@ -90,6 +98,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::StrLiteralKind;
   }
@@ -107,6 +116,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::CharLiteralKind;
   }
@@ -124,6 +134,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::BoolLiteralKind;
   }
@@ -146,6 +157,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::RangeLiteralKind;
   }
@@ -166,6 +178,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::DeclRefExprKind;
   }
@@ -190,6 +203,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::FunCallExprKind;
   }
@@ -214,6 +228,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::BinaryOpKind;
   }
@@ -237,6 +252,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::UnaryOpKind;
   }
@@ -263,6 +279,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::FieldInitKind;
   }
@@ -291,6 +308,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::StructInitKind;
   }
@@ -317,6 +335,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::MemberAccessKind;
   }
@@ -340,6 +359,7 @@ public:
   bool accept(ASTVisitor<bool> &Visitor) override;
   void accept(ASTVisitor<void> &Visitor) override;
   bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::MemberFunAccessKind;
   }
