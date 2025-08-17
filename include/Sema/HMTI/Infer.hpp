@@ -7,9 +7,11 @@
 #include "Sema/HMTI/HMType.hpp"
 #include "Sema/HMTI/TypeEnv.hpp"
 #include "SrcManager/SrcLocation.hpp"
+#include "llvm/Support/Casting.h"
 
 #include <format>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -18,7 +20,13 @@ namespace phi {
 class TypeInferencer {
 public:
   explicit TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast)
-      : Ast_(std::move(Ast)) {}
+      : Ast_(std::move(Ast)) {
+    for (const auto &D : Ast_) { // Note: using Ast_ since Ast was moved
+      if (auto S = llvm::dyn_cast<StructDecl>(D.get())) {
+        Structs[S->getId()] = S;
+      }
+    }
+  }
 
   std::vector<std::unique_ptr<Decl>> inferProgram();
 
@@ -51,6 +59,8 @@ private:
   std::vector<std::unique_ptr<Decl>> Ast_;
   TypeEnv Env_;
   TypeVarFactory Factory_;
+
+  std::unordered_map<std::string, StructDecl *> Structs;
 
   // Accumulate all substitutions produced during inference so we can finalize.
   Substitution GlobalSubst_;
