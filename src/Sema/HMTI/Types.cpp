@@ -11,17 +11,17 @@ std::shared_ptr<Monotype> Monotype::var(TypeVar V) {
   // Use direct new here because std::make_shared requires accessible
   // constructor
   std::shared_ptr<Monotype> P(new Monotype());
-  P->Tag_ = Tag::Var;
-  P->V_ = V;
+  P->K = Kind::Var;
+  P->V = V;
   return P;
 }
 
 std::shared_ptr<Monotype>
 Monotype::con(std::string Name, std::vector<std::shared_ptr<Monotype>> Args) {
   std::shared_ptr<Monotype> P(new Monotype());
-  P->Tag_ = Tag::Con;
-  P->ConName_ = std::move(Name);
-  P->ConArgs_ = std::move(Args);
+  P->K = Kind::Con;
+  P->ConName = std::move(Name);
+  P->ConArgs = std::move(Args);
   return P;
 }
 
@@ -29,34 +29,34 @@ std::shared_ptr<Monotype>
 Monotype::fun(std::vector<std::shared_ptr<Monotype>> Params,
               std::shared_ptr<Monotype> Ret) {
   std::shared_ptr<Monotype> P(new Monotype());
-  P->Tag_ = Tag::Fun;
-  P->FunArgs_ = std::move(Params);
-  P->FunRet_ = std::move(Ret);
+  P->K = Kind::Fun;
+  P->FunArgs = std::move(Params);
+  P->FunRet = std::move(Ret);
   return P;
 }
 
 void Monotype::setFun(std::vector<std::shared_ptr<Monotype>> Params,
                       std::shared_ptr<Monotype> Ret) {
-  Tag_ = Tag::Fun;
-  FunArgs_ = std::move(Params);
-  FunRet_ = std::move(Ret);
+  K = Kind::Fun;
+  FunArgs = std::move(Params);
+  FunRet = std::move(Ret);
 }
 
 // free type vars
 static void collectFv(const std::shared_ptr<Monotype> &T,
                       std::unordered_set<TypeVar, TypeVarHash> &Out) {
   switch (T->tag()) {
-  case Monotype::Tag::Var:
+  case Monotype::Kind::Var:
     Out.insert(T->asVar());
     break;
-  case Monotype::Tag::Con:
-    for (auto &A : T->conArgs())
+  case Monotype::Kind::Con:
+    for (auto &A : T->getConArgs())
       collectFv(A, Out);
     break;
-  case Monotype::Tag::Fun:
-    for (auto &A : T->funArgs())
+  case Monotype::Kind::Fun:
+    for (auto &A : T->getFunArgs())
       collectFv(A, Out);
-    collectFv(T->funRet(), Out);
+    collectFv(T->getFunReturn(), Out);
     break;
   }
 }
@@ -69,8 +69,8 @@ freeTypeVars(const std::shared_ptr<Monotype> &T) {
 }
 
 std::unordered_set<TypeVar, TypeVarHash> freeTypeVars(const Polytype &S) {
-  auto F = freeTypeVars(S.body());
-  for (auto &q : S.quant())
+  auto F = freeTypeVars(S.getBody());
+  for (auto &q : S.getQuant())
     F.erase(q);
   return F;
 }
@@ -85,23 +85,23 @@ static std::shared_ptr<Monotype> applyOne(
   }
 
   switch (T->tag()) {
-  case Monotype::Tag::Var: {
+  case Monotype::Kind::Var: {
     auto It = M.find(T->asVar());
     return It == M.end() ? T : It->second;
   }
-  case Monotype::Tag::Con: {
+  case Monotype::Kind::Con: {
     std::vector<std::shared_ptr<Monotype>> Args;
-    Args.reserve(T->conArgs().size());
-    for (auto &A : T->conArgs())
+    Args.reserve(T->getConArgs().size());
+    for (auto &A : T->getConArgs())
       Args.push_back(applyOne(M, A));
-    return Monotype::con(T->conName(), std::move(Args));
+    return Monotype::con(T->getConName(), std::move(Args));
   }
-  case Monotype::Tag::Fun: {
+  case Monotype::Kind::Fun: {
     std::vector<std::shared_ptr<Monotype>> Args;
-    Args.reserve(T->funArgs().size());
-    for (auto &A : T->funArgs())
+    Args.reserve(T->getFunArgs().size());
+    for (auto &A : T->getFunArgs())
       Args.push_back(applyOne(M, A));
-    return Monotype::fun(std::move(Args), applyOne(M, T->funRet()));
+    return Monotype::fun(std::move(Args), applyOne(M, T->getFunReturn()));
   }
   }
   return T;
@@ -116,7 +116,7 @@ Polytype Substitution::apply(const Polytype &S) const {
   Substitution Filtered;
   for (auto &KV : Map) {
     bool Quantified = false;
-    for (auto &Q : S.quant())
+    for (auto &Q : S.getQuant())
       if (Q == KV.first) {
         Quantified = true;
         break;
@@ -124,7 +124,7 @@ Polytype Substitution::apply(const Polytype &S) const {
     if (!Quantified)
       Filtered.Map.emplace(KV.first, KV.second);
   }
-  return Polytype{S.quant(), Filtered.apply(S.body())};
+  return Polytype{S.getQuant(), Filtered.apply(S.getBody())};
 }
 
 void Substitution::compose(const Substitution &S2) {
@@ -138,34 +138,34 @@ void Substitution::compose(const Substitution &S2) {
 // instantiate
 std::shared_ptr<Monotype> instantiate(const Polytype &S, TypeVarFactory &F) {
   std::unordered_map<int, std::shared_ptr<Monotype>> VMap;
-  for (auto &q : S.quant())
+  for (auto &q : S.getQuant())
     VMap.emplace(q.Id, Monotype::var(F.fresh()));
   std::function<std::shared_ptr<Monotype>(const std::shared_ptr<Monotype> &)>
       go =
           [&](const std::shared_ptr<Monotype> &T) -> std::shared_ptr<Monotype> {
     switch (T->tag()) {
-    case Monotype::Tag::Var: {
+    case Monotype::Kind::Var: {
       auto it = VMap.find(T->asVar().Id);
       return it == VMap.end() ? T : it->second;
     }
-    case Monotype::Tag::Con: {
+    case Monotype::Kind::Con: {
       std::vector<std::shared_ptr<Monotype>> Args;
-      Args.reserve(T->conArgs().size());
-      for (auto &A : T->conArgs())
+      Args.reserve(T->getConArgs().size());
+      for (auto &A : T->getConArgs())
         Args.push_back(go(A));
-      return Monotype::con(T->conName(), std::move(Args));
+      return Monotype::con(T->getConName(), std::move(Args));
     }
-    case Monotype::Tag::Fun: {
+    case Monotype::Kind::Fun: {
       std::vector<std::shared_ptr<Monotype>> Args;
-      Args.reserve(T->funArgs().size());
-      for (auto &A : T->funArgs())
+      Args.reserve(T->getFunArgs().size());
+      for (auto &A : T->getFunArgs())
         Args.push_back(go(A));
-      return Monotype::fun(std::move(Args), go(T->funRet()));
+      return Monotype::fun(std::move(Args), go(T->getFunReturn()));
     }
     }
     return T;
   };
-  return go(S.body());
+  return go(S.getBody());
 }
 
 // generalize
@@ -186,7 +186,7 @@ static bool occurs(const TypeVar &V, const std::shared_ptr<Monotype> &T) {
 
 static Substitution bindVar(const TypeVar &V,
                             const std::shared_ptr<Monotype> &T) {
-  if (T->tag() == Monotype::Tag::Var && T->asVar().Id == V.Id)
+  if (T->tag() == Monotype::Kind::Var && T->asVar().Id == V.Id)
     return {};
   if (occurs(V, T))
     throw UnifyError("occurs check failed");
@@ -197,36 +197,37 @@ static Substitution bindVar(const TypeVar &V,
 
 Substitution unify(const std::shared_ptr<Monotype> &A,
                    const std::shared_ptr<Monotype> &B) {
-  if (A->tag() == Monotype::Tag::Var)
+  if (A->tag() == Monotype::Kind::Var)
     return bindVar(A->asVar(), B);
-  if (B->tag() == Monotype::Tag::Var)
+  if (B->tag() == Monotype::Kind::Var)
     return bindVar(B->asVar(), A);
 
-  if (A->tag() == Monotype::Tag::Con && B->tag() == Monotype::Tag::Con) {
-    if (A->conName() != B->conName() ||
-        A->conArgs().size() != B->conArgs().size()) {
-      throw UnifyError("constructor mismatch: " + A->conName() + " vs " +
-                       B->conName());
+  if (A->tag() == Monotype::Kind::Con && B->tag() == Monotype::Kind::Con) {
+    if (A->getConName() != B->getConName() ||
+        A->getConArgs().size() != B->getConArgs().size()) {
+      throw UnifyError("constructor mismatch: " + A->getConName() + " vs " +
+                       B->getConName());
     }
     Substitution S;
-    for (size_t i = 0; i < A->conArgs().size(); ++i) {
+    for (size_t i = 0; i < A->getConArgs().size(); ++i) {
       Substitution Si =
-          unify(S.apply(A->conArgs()[i]), S.apply(B->conArgs()[i]));
+          unify(S.apply(A->getConArgs()[i]), S.apply(B->getConArgs()[i]));
       S.compose(Si);
     }
     return S;
   }
 
-  if (A->tag() == Monotype::Tag::Fun && B->tag() == Monotype::Tag::Fun) {
-    if (A->funArgs().size() != B->funArgs().size())
+  if (A->tag() == Monotype::Kind::Fun && B->tag() == Monotype::Kind::Fun) {
+    if (A->getFunArgs().size() != B->getFunArgs().size())
       throw UnifyError("arity mismatch");
     Substitution S;
-    for (size_t i = 0; i < A->funArgs().size(); ++i) {
+    for (size_t i = 0; i < A->getFunArgs().size(); ++i) {
       Substitution Si =
-          unify(S.apply(A->funArgs()[i]), S.apply(B->funArgs()[i]));
+          unify(S.apply(A->getFunArgs()[i]), S.apply(B->getFunArgs()[i]));
       S.compose(Si);
     }
-    Substitution Sr = unify(S.apply(A->funRet()), S.apply(B->funRet()));
+    Substitution Sr =
+        unify(S.apply(A->getFunReturn()), S.apply(B->getFunReturn()));
     S.compose(Sr);
     return S;
   }

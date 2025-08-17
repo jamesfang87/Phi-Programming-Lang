@@ -141,15 +141,15 @@ private:
   std::vector<IntConstraint> IntRangeVars_;
 
   bool isIntegerType(const std::shared_ptr<Monotype> &T) const {
-    if (T->tag() != Monotype::Tag::Con)
+    if (T->tag() != Monotype::Kind::Con)
       return false;
-    auto name = T->conName();
+    auto name = T->getConName();
     return name == "i8" || name == "i16" || name == "i32" || name == "i64";
   }
 
   // Helper function to check if a type variable comes from a float literal
   bool isFloatLiteralVar(const std::shared_ptr<Monotype> &t) const {
-    if (t->tag() != Monotype::Tag::Var)
+    if (t->tag() != Monotype::Kind::Var)
       return false;
     auto var = t->asVar();
     return std::find(FloatLiteralVars_.begin(), FloatLiteralVars_.end(), var) !=
@@ -158,7 +158,7 @@ private:
 
   // Helper function to check if a type variable comes from an int literal
   bool isIntLiteralVar(const std::shared_ptr<Monotype> &t) const {
-    if (t->tag() != Monotype::Tag::Var)
+    if (t->tag() != Monotype::Kind::Var)
       return false;
     auto var = t->asVar();
     return std::find(IntLiteralVars_.begin(), IntLiteralVars_.end(), var) !=
@@ -167,9 +167,9 @@ private:
 
   std::string monotypeToString(const std::shared_ptr<Monotype> &T) const {
     // Simple monotype to string conversion
-    if (T->tag() == Monotype::Tag::Con)
-      return T->conName();
-    if (T->tag() == Monotype::Tag::Var)
+    if (T->tag() == Monotype::Kind::Con)
+      return T->getConName();
+    if (T->tag() == Monotype::Kind::Var)
       return "type_var";
     return "unknown_type";
   }
@@ -189,10 +189,10 @@ private:
   }
 
   // token-kind helpers (same as before)
-  bool isArithmetic(TokenKind K) const noexcept;
-  bool isLogical(TokenKind K) const noexcept;
-  bool isComparison(TokenKind K) const noexcept;
-  bool isEquality(TokenKind K) const noexcept;
+  [[nodiscard]] bool isArithmetic(TokenKind K) const noexcept;
+  [[nodiscard]] bool isLogical(TokenKind K) const noexcept;
+  [[nodiscard]] bool isComparison(TokenKind K) const noexcept;
+  [[nodiscard]] bool isEquality(TokenKind K) const noexcept;
 };
 
 } // namespace phi
