@@ -18,7 +18,7 @@ struct Pos {
 }
 
 fun main() {
-    var me: Person = Person {
+    var me = Person {
         name = "james",
         age = 17,
         pos = Pos {
@@ -27,7 +27,7 @@ fun main() {
         }
     };
 
-    var phiona: Person = Person {
+    var phiona = Person {
         name = "phiona",
         age = 16,
         pos = Pos {
@@ -38,5 +38,4 @@ fun main() {
 
     me.name;
     me.same_name(phiona);
-
 }

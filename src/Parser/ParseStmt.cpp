@@ -2,6 +2,9 @@
 
 #include <cassert>
 #include <memory>
+#include <optional>
+#include <print>
+#include <string>
 #include <vector>
 
 #include "AST/Stmt.hpp"
@@ -286,10 +289,31 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
     return nullptr;
   }
 
-  auto Binding = parseTypedBinding();
-  if (!Binding)
-    return nullptr;
-  auto [VarLoc, Id, DeclType] = *Binding;
+  SrcLocation VarLoc;
+  std::string Id;
+  std::optional<Type> DeclType = std::nullopt; // initialize to nullptr
+
+  if (peekToken(1).getKind() != TokenKind::ColonKind) {
+    // just parse the name and leave DeclType as nullptr
+    if (peekToken().getKind() != TokenKind::IdentifierKind) {
+      error("expected identifier")
+          .with_primary_label(spanFromToken(peekToken()),
+                              "expected identifier here")
+          .emit(*DiagnosticsMan);
+      return nullptr;
+    }
+    VarLoc = peekToken().getStart();
+    Id = advanceToken().getLexeme();
+  } else {
+    auto Binding = parseTypedBinding();
+    if (!Binding)
+      return nullptr;
+
+    // Assign to outer variables instead of redeclaring
+    VarLoc = Binding->loc;
+    Id = Binding->name;
+    DeclType = Binding->type;
+  }
 
   // Validate assignment operator
   if (advanceToken().getKind() != TokenKind::EqualsKind) {

@@ -2,7 +2,9 @@
 #include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
+#include <cassert>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "AST/Decl.hpp"
@@ -49,6 +51,10 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
                            &Parser::parseParamDecl);
   if (!Params)
     return nullptr;
+
+  for (auto &Param : *Params) {
+    assert(Param->hasType());
+  }
 
   // Handle optional return type
   auto ReturnType = Type(Type::PrimitiveKind::NullKind);

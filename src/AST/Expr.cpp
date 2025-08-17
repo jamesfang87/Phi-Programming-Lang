@@ -6,8 +6,10 @@
 
 #include "AST/ASTVisitor.hpp"
 
+#include "AST/Decl.hpp"
 #include "AST/Stmt.hpp"
 #include "Lexer/TokenKind.hpp"
+#include "Sema/NameResolver.hpp"
 
 namespace {
 /// Generates indentation string for AST dumping
@@ -33,6 +35,7 @@ MemberFunCallExpr::~MemberFunCallExpr() = default;
 bool Expr::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
 
 void Expr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
+bool Expr::accept(NameResolver &R) { return R.visit(*this); }
 /**
  * @brief Constructs an integer literal expression
  *
@@ -62,6 +65,7 @@ void IntLiteral::emit(int Level) const {
 bool IntLiteral::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+bool IntLiteral::accept(NameResolver &R) { return R.visit(*this); }
 
 void IntLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -97,6 +101,8 @@ bool FloatLiteral::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 
+bool FloatLiteral::accept(NameResolver &R) { return R.visit(*this); }
+
 void FloatLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== StrLiteral Implementation ========================//
@@ -125,6 +131,8 @@ StrLiteral::StrLiteral(SrcLocation Location, std::string Value)
 void StrLiteral::emit(int Level) const {
   std::println("{}StrLiteral: {}", indent(Level), Value);
 }
+
+bool StrLiteral::accept(NameResolver &R) { return R.visit(*this); }
 
 bool StrLiteral::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
@@ -163,6 +171,8 @@ bool CharLiteral::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 
+bool CharLiteral::accept(NameResolver &R) { return R.visit(*this); }
+
 void CharLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== BoolLiteral Implementation ========================//
@@ -195,6 +205,8 @@ void BoolLiteral::emit(int Level) const {
 bool BoolLiteral::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+
+bool BoolLiteral::accept(NameResolver &R) { return R.visit(*this); }
 
 void BoolLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -241,6 +253,8 @@ bool RangeLiteral::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 
+bool RangeLiteral::accept(NameResolver &R) { return R.visit(*this); }
+
 void RangeLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== DeclRefExpr Implementation ========================//
@@ -267,12 +281,22 @@ DeclRefExpr::DeclRefExpr(SrcLocation Location, std::string Id)
  * @param Level Current indentation Level
  */
 void DeclRefExpr::emit(int Level) const {
-  std::println("{}DeclRefExpr: {}", indent(Level), Id);
+  if (DeclPtr == nullptr) {
+    std::println("{}DeclRefExpr: {} ", indent(Level), Id);
+  } else {
+    std::string typeStr =
+        DeclPtr->hasType() ? DeclPtr->getType().toString() : "<unresolved>";
+
+    std::println("{}DeclRefExpr: {}; referring to: {} of type {}",
+                 indent(Level), Id, DeclPtr->getId(), typeStr);
+  }
 }
 
 bool DeclRefExpr::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+
+bool DeclRefExpr::accept(NameResolver &R) { return R.visit(*this); }
 
 void DeclRefExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -304,6 +328,8 @@ FunCallExpr::FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
  */
 void FunCallExpr::emit(int Level) const {
   std::println("{}FunCallExpr", indent(Level));
+  if (getDecl() != nullptr)
+    std::println("{}  calling: {}", indent(Level), getDecl()->getId());
   std::println("{}  callee:", indent(Level));
   Callee->emit(Level + 2);
   std::println("{}  args:", indent(Level));
@@ -315,6 +341,8 @@ void FunCallExpr::emit(int Level) const {
 bool FunCallExpr::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+
+bool FunCallExpr::accept(NameResolver &R) { return R.visit(*this); }
 
 void FunCallExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -360,6 +388,8 @@ bool BinaryOp::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 
+bool BinaryOp::accept(NameResolver &R) { return R.visit(*this); }
+
 void BinaryOp::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 //====================== UnaryOp Implementation ========================//
@@ -394,6 +424,7 @@ void UnaryOp::emit(int Level) const {
 
 bool UnaryOp::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
 
+bool UnaryOp::accept(NameResolver &R) { return R.visit(*this); }
 void UnaryOp::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 FieldInitExpr::FieldInitExpr(SrcLocation Location, std::string FieldId,
@@ -411,6 +442,8 @@ void FieldInitExpr::emit(int Level) const {
 bool FieldInitExpr::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+
+bool FieldInitExpr::accept(NameResolver &R) { return R.visit(*this); }
 
 void FieldInitExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -432,6 +465,8 @@ void StructInitExpr::emit(int Level) const {
 bool StructInitExpr::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+
+bool StructInitExpr::accept(NameResolver &R) { return R.visit(*this); }
 
 void StructInitExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -474,6 +509,8 @@ void MemberAccessExpr::emit(int Level) const {
 bool MemberAccessExpr::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+
+bool MemberAccessExpr::accept(NameResolver &R) { return R.visit(*this); }
 
 void MemberAccessExpr::accept(ASTVisitor<void> &Visitor) {
   Visitor.visit(*this);
@@ -520,6 +557,8 @@ void MemberFunCallExpr::emit(int Level) const {
 bool MemberFunCallExpr::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
+
+bool MemberFunCallExpr::accept(NameResolver &R) { return R.visit(*this); }
 
 void MemberFunCallExpr::accept(ASTVisitor<void> &Visitor) {
   Visitor.visit(*this);
