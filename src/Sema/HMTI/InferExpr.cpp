@@ -1,5 +1,7 @@
 #include "Sema/HMTI/Infer.hpp"
 
+#include <print>
+
 namespace phi {
 
 // ---------------- Expr inference ----------------
@@ -62,6 +64,7 @@ TypeInferencer::InferRes TypeInferencer::visit(DeclRefExpr &E) {
       throw std::runtime_error("unbound declaration: " + E.getId());
     auto T = instantiate(*Sc, Factory_);
     annotateExpr(E, T);
+    std::println("this ran for: {}", VD->getId());
     return {Substitution{}, T};
   }
   // fallback by name (could be a function or var)
@@ -215,9 +218,26 @@ TypeInferencer::InferRes TypeInferencer::visit(FieldInitExpr &E) {
 TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   auto [s1, tBase] = visit(*E.getBase());
   auto out = Monotype::var(Factory_.fresh());
-  // If you have resolved FieldDecl on this node, unify here:
-  // if (auto *FD = E.getResolvedFieldDecl()) unifyInto(s1, out,
-  // fromAstType(FD->getType()));
+  println("{}", monotypeToString(tBase));
+
+  auto it = Structs.find(tBase->conName());
+  if (it == Structs.end()) {
+    std::println("Could not find struct {} in symbol table", tBase->conName());
+    return {s1, out};
+  }
+  StructDecl *Struct = it->second;
+
+  FieldDecl *Field = Struct->getField(E.getMemberId());
+  if (Field == nullptr) {
+    std::println("Could not find field {} in struct {}", E.getMemberId(),
+                 tBase->conName());
+    return {s1, out};
+  }
+
+  // Convert the field's AST type to a Monotype and unify with our output
+  auto fieldType = fromAstType(Field->getType());
+  unifyInto(s1, out, fieldType);
+
   recordSubst(s1);
   annotateExpr(E, out);
   return {s1, out};
