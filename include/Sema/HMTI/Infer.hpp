@@ -7,7 +7,6 @@
 #include "Sema/HMTI/HMType.hpp"
 #include "Sema/HMTI/TypeEnv.hpp"
 #include "SrcManager/SrcLocation.hpp"
-#include "llvm/Support/Casting.h"
 
 #include <format>
 #include <memory>
@@ -19,14 +18,7 @@ namespace phi {
 
 class TypeInferencer {
 public:
-  explicit TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast)
-      : Ast_(std::move(Ast)) {
-    for (const auto &D : Ast_) { // Note: using Ast_ since Ast was moved
-      if (auto S = llvm::dyn_cast<StructDecl>(D.get())) {
-        Structs[S->getId()] = S;
-      }
-    }
-  }
+  explicit TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast);
 
   std::vector<std::unique_ptr<Decl>> inferProgram();
 
@@ -56,26 +48,26 @@ public:
   InferRes visit(MemberFunCallExpr &E);
 
 private:
-  std::vector<std::unique_ptr<Decl>> Ast_;
-  TypeEnv Env_;
-  TypeVarFactory Factory_;
+  std::vector<std::unique_ptr<Decl>> Ast;
+  TypeEnv Env;
+  TypeVarFactory Factory;
 
   std::unordered_map<std::string, StructDecl *> Structs;
 
   // Accumulate all substitutions produced during inference so we can finalize.
-  Substitution GlobalSubst_;
+  Substitution GlobalSubst;
 
   // Side tables: store the HM monotypes for nodes until finalization.
-  std::unordered_map<const Expr *, std::shared_ptr<Monotype>> ExprMonos_;
-  std::unordered_map<const ValueDecl *, std::shared_ptr<Monotype>> DeclMonos_;
-  std::unordered_map<const FunDecl *, std::shared_ptr<Monotype>> FunMonos_;
+  std::unordered_map<Expr *, std::shared_ptr<Monotype>> ExprMonos;
+  std::unordered_map<ValueDecl *, std::shared_ptr<Monotype>> ValDeclMonos;
+  std::unordered_map<FunDecl *, std::shared_ptr<Monotype>> FunDeclMonos;
 
   // track integer-literal-origin type variables (so we can default them later)
-  std::vector<TypeVar> IntLiteralVars_;
-  std::vector<TypeVar> FloatLiteralVars_;
+  std::vector<TypeVar> IntLiteralVars;
+  std::vector<TypeVar> FloatLiteralVars;
 
   // expected return type stack
-  std::vector<std::shared_ptr<Monotype>> CurrentFnReturnTy_;
+  std::vector<std::shared_ptr<Monotype>> CurrentFnReturnTy;
 
   using InferRes = std::pair<Substitution, std::shared_ptr<Monotype>>;
 
@@ -84,24 +76,6 @@ private:
   void inferDecl(Decl &D);
   void inferVarDecl(VarDecl &D);
   void inferFunDecl(FunDecl &D);
-
-  // expr inference (same declarations as before) ...
-  // expr inference (same declarations as before) ...
-  InferRes inferExpr(Expr &E);
-  InferRes inferIntLiteral(IntLiteral &E);
-  InferRes inferFloatLiteral(FloatLiteral &E);
-  InferRes inferBoolLiteral(BoolLiteral &E);
-  InferRes inferCharLiteral(CharLiteral &E);
-  InferRes inferStrLiteral(StrLiteral &E);
-  InferRes inferRangeLiteral(RangeLiteral &E);
-  InferRes inferDeclRef(DeclRefExpr &E);
-  InferRes inferCall(FunCallExpr &E);
-  InferRes inferBinary(BinaryOp &E);
-  InferRes inferUnary(UnaryOp &E);
-  InferRes inferStructInit(StructInitExpr &E);
-  InferRes inferFieldInit(FieldInitExpr &E);
-  InferRes inferMemberAccess(MemberAccessExpr &E);
-  InferRes inferMemberFunCall(MemberFunCallExpr &E);
 
   // statements / blocks
 
@@ -122,14 +96,12 @@ private:
 
   // *** annotation helpers (now side-table based) ***
   void annotate(ValueDecl &D, const std::shared_ptr<Monotype> &T);
-  void annotateExpr(Expr &E, const std::shared_ptr<Monotype> &T);
+  void annotate(Expr &E, const std::shared_ptr<Monotype> &T);
 
   // record and propagate substitutions into global state + env
   void recordSubst(const Substitution &S);
 
-  // integer defaulting (must compose into GlobalSubst_ and env)
-  void defaultIntegerLiterals();
-  void defaultFloatLiterals();
+  void defaultNums();
 
   // After inference & defaulting, finalize by applying GlobalSubst_
   // to stored Monotypes and writing concrete phi::Type back into AST.
@@ -138,22 +110,15 @@ private:
     TypeVar Var;
     SrcLocation Loc;
   };
-  std::vector<IntConstraint> IntRangeVars_;
-
-  bool isIntegerType(const std::shared_ptr<Monotype> &T) const {
-    if (T->tag() != Monotype::Kind::Con)
-      return false;
-    auto name = T->getConName();
-    return name == "i8" || name == "i16" || name == "i32" || name == "i64";
-  }
+  std::vector<IntConstraint> IntRangeVars;
 
   // Helper function to check if a type variable comes from a float literal
   bool isFloatLiteralVar(const std::shared_ptr<Monotype> &t) const {
     if (t->tag() != Monotype::Kind::Var)
       return false;
     auto var = t->asVar();
-    return std::find(FloatLiteralVars_.begin(), FloatLiteralVars_.end(), var) !=
-           FloatLiteralVars_.end();
+    return std::find(FloatLiteralVars.begin(), FloatLiteralVars.end(), var) !=
+           FloatLiteralVars.end();
   }
 
   // Helper function to check if a type variable comes from an int literal
@@ -161,29 +126,21 @@ private:
     if (t->tag() != Monotype::Kind::Var)
       return false;
     auto var = t->asVar();
-    return std::find(IntLiteralVars_.begin(), IntLiteralVars_.end(), var) !=
-           IntLiteralVars_.end();
-  }
-
-  std::string monotypeToString(const std::shared_ptr<Monotype> &T) const {
-    // Simple monotype to string conversion
-    if (T->tag() == Monotype::Kind::Con)
-      return T->getConName();
-    if (T->tag() == Monotype::Kind::Var)
-      return "type_var";
-    return "unknown_type";
+    return std::find(IntLiteralVars.begin(), IntLiteralVars.end(), var) !=
+           IntLiteralVars.end();
   }
 
   // Add new method:
   void checkIntegerConstraints() {
-    for (const auto &constraint : IntRangeVars_) {
-      auto T = GlobalSubst_.apply(Monotype::var(constraint.Var));
-      if (!isIntegerType(T)) {
-        std::string msg = std::format(
+    for (const auto &Constraint : IntRangeVars) {
+      auto T = GlobalSubst.apply(Monotype::var(Constraint.Var));
+      if (!T->isIntType()) {
+        auto [ignore, Line, Col] = Constraint.Loc;
+        std::string Msg = std::format(
             "Loop variable must be integer type, got: {} at location {}:{}",
-            monotypeToString(T), constraint.Loc.line, constraint.Loc.col);
+            T->toString(), Line, Col);
 
-        throw std::runtime_error(msg);
+        throw std::runtime_error(Msg);
       }
     }
   }

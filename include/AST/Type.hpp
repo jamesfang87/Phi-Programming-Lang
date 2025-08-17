@@ -1,9 +1,13 @@
 #pragma once
 
 #include <cassert>
+#include <memory>
 #include <string>
 
 namespace phi {
+
+// forward declare
+class Monotype;
 
 /**
  * @brief Represents a type in the Phi type system
@@ -115,6 +119,8 @@ public:
   }
 
   bool operator!=(const Type &Other) const { return !(*this == Other); }
+
+  std::shared_ptr<Monotype> toMonotype();
 
 private:
   /**

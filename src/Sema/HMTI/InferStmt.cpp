@@ -14,8 +14,8 @@ TypeInferencer::InferRes TypeInferencer::inferBlock(Block &B) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
-  auto Expected = CurrentFnReturnTy_.empty() ? Monotype::con("unit")
-                                             : CurrentFnReturnTy_.back();
+  auto Expected = CurrentFnReturnTy.empty() ? Monotype::con("unit")
+                                            : CurrentFnReturnTy.back();
   if (S.hasExpr()) {
     auto [si, t] = visit(S.getExpr());
     unifyInto(si, t, Expected);
@@ -35,7 +35,7 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
   Substitution s = sRange;
 
   // 2) Create a fresh element type variable for the loop variable
-  auto ElemTy = Monotype::var(Factory_.fresh());
+  auto ElemTy = Monotype::var(Factory.fresh());
 
   // 3) Expect the range to be 'range<ElemTy>'
   auto expectedRange = Monotype::con("range", {ElemTy});
@@ -48,28 +48,16 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
 
   std::shared_ptr<Monotype> LoopVarTy;
 
-  if (LoopVar->hasType()) {
-    auto AnnTy = fromAstType(LoopVar->getType());
-    // Check if annotated type is integer
-    if (!isIntegerType(AnnTy)) {
-      throw std::runtime_error(
-          "Loop variable '" + LoopVar->getId() +
-          "' must have integer type, got: " + monotypeToString(AnnTy));
-    }
-    LoopVarTy = AnnTy;
-    unifyInto(s, ElemTy, LoopVarTy);
-  } else {
-    // Create fresh type variable constrained to integer types
-    LoopVarTy = Monotype::var(Factory_.fresh());
-    // Record for integer constraint checking
-    IntRangeVars_.push_back({LoopVarTy->asVar(), S.getLocation()});
-    unifyInto(s, ElemTy, LoopVarTy);
-  }
+  // Create fresh type variable constrained to integer types
+  LoopVarTy = Monotype::var(Factory.fresh());
+  // Record for integer constraint checking
+  IntRangeVars.push_back({LoopVarTy->asVar(), S.getLocation()});
+  unifyInto(s, ElemTy, LoopVarTy);
 
   // 6) Bind loop variable in environment
   recordSubst(s);
   auto BoundTy = s.apply(LoopVarTy);
-  Env_.bind(LoopVar, Polytype{{}, BoundTy});
+  Env.bind(LoopVar, Polytype{{}, BoundTy});
   annotate(*LoopVar, BoundTy);
 
   // 7) Infer body with loop variable in environment
