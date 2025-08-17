@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace phi {
@@ -36,6 +37,11 @@ public:
 
   Tag tag() const noexcept { return Tag_; }
   const TypeVar &asVar() const { return V_; }
+  std::pair<std::vector<std::shared_ptr<Monotype>>, std::shared_ptr<Monotype>>
+  asFun() const {
+    return make_pair(FunArgs_, FunRet_);
+  }
+
   const std::string &conName() const { return ConName_; }
   const std::vector<std::shared_ptr<Monotype>> &conArgs() const {
     return ConArgs_;
