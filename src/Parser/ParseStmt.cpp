@@ -212,6 +212,7 @@ std::unique_ptr<WhileStmt> Parser::parseWhile() {
  * Validates loop variable and 'in' keyword syntax.
  */
 std::unique_ptr<ForStmt> Parser::parseFor() {
+  NoStructInit = true;
   SrcLocation Loc = peekToken().getStart();
   advanceToken(); // eat 'for'
 
@@ -225,6 +226,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
             "the loop variable will be assigned each value from the iterable")
         .with_code("E0014")
         .emit(*DiagnosticsMan);
+    NoStructInit = false;
     return nullptr;
   }
 
@@ -238,24 +240,29 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
         .with_suggestion(spanFromToken(InKw), "in", "add `in` keyword")
         .with_code("E0015")
         .emit(*DiagnosticsMan);
+    NoStructInit = false;
     return nullptr;
   }
 
   // Parse range expression
   auto Range = parseExpr();
-  if (!Range)
+  if (!Range) {
+    NoStructInit = false;
     return nullptr;
+  }
 
   // Parse loop body
   auto Body = parseBlock();
-  if (!Body)
+  if (!Body) {
+    NoStructInit = false;
     return nullptr;
+  }
 
   // Create loop variable declaration (implicit i64 type)
   auto LoopVarDecl = std::make_unique<VarDecl>(
-      LoopVar.getStart(), LoopVar.getLexeme(),
-      Type(Type::PrimitiveKind::I64Kind), false, nullptr);
+      LoopVar.getStart(), LoopVar.getLexeme(), std::nullopt, false, nullptr);
 
+  NoStructInit = false;
   return std::make_unique<ForStmt>(Loc, std::move(LoopVarDecl),
                                    std::move(Range), std::move(Body));
 }

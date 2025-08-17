@@ -9,6 +9,7 @@
 #include "AST/Decl.hpp"
 #include "AST/Stmt.hpp"
 #include "Lexer/TokenKind.hpp"
+#include "Sema/HMTI/Infer.hpp"
 #include "Sema/NameResolver.hpp"
 
 namespace {
@@ -36,6 +37,7 @@ bool Expr::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
 
 void Expr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 bool Expr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes Expr::accept(TypeInferencer &I) { return I.visit(*this); }
 /**
  * @brief Constructs an integer literal expression
  *
@@ -66,7 +68,7 @@ bool IntLiteral::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
 }
 bool IntLiteral::accept(NameResolver &R) { return R.visit(*this); }
-
+InferRes IntLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
 void IntLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== FloatLiteral Implementation ========================//
@@ -102,7 +104,7 @@ bool FloatLiteral::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool FloatLiteral::accept(NameResolver &R) { return R.visit(*this); }
-
+InferRes FloatLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
 void FloatLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 // ====================== StrLiteral Implementation ========================//
@@ -133,6 +135,7 @@ void StrLiteral::emit(int Level) const {
 }
 
 bool StrLiteral::accept(NameResolver &R) { return R.visit(*this); }
+InferRes StrLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
 
 bool StrLiteral::accept(ASTVisitor<bool> &Visitor) {
   return Visitor.visit(*this);
@@ -172,6 +175,7 @@ bool CharLiteral::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool CharLiteral::accept(NameResolver &R) { return R.visit(*this); }
+InferRes CharLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void CharLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -207,6 +211,7 @@ bool BoolLiteral::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool BoolLiteral::accept(NameResolver &R) { return R.visit(*this); }
+InferRes BoolLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void BoolLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -254,6 +259,7 @@ bool RangeLiteral::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool RangeLiteral::accept(NameResolver &R) { return R.visit(*this); }
+InferRes RangeLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void RangeLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -297,6 +303,7 @@ bool DeclRefExpr::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool DeclRefExpr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes DeclRefExpr::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void DeclRefExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -343,6 +350,7 @@ bool FunCallExpr::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool FunCallExpr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes FunCallExpr::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void FunCallExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -389,6 +397,7 @@ bool BinaryOp::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool BinaryOp::accept(NameResolver &R) { return R.visit(*this); }
+InferRes BinaryOp::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void BinaryOp::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -425,6 +434,7 @@ void UnaryOp::emit(int Level) const {
 bool UnaryOp::accept(ASTVisitor<bool> &Visitor) { return Visitor.visit(*this); }
 
 bool UnaryOp::accept(NameResolver &R) { return R.visit(*this); }
+InferRes UnaryOp::accept(TypeInferencer &I) { return I.visit(*this); }
 void UnaryOp::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
 FieldInitExpr::FieldInitExpr(SrcLocation Location, std::string FieldId,
@@ -444,6 +454,7 @@ bool FieldInitExpr::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool FieldInitExpr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes FieldInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void FieldInitExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -467,6 +478,7 @@ bool StructInitExpr::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool StructInitExpr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes StructInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void StructInitExpr::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
 
@@ -511,6 +523,7 @@ bool MemberAccessExpr::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool MemberAccessExpr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes MemberAccessExpr::accept(TypeInferencer &I) { return I.visit(*this); }
 
 void MemberAccessExpr::accept(ASTVisitor<void> &Visitor) {
   Visitor.visit(*this);
@@ -559,7 +572,7 @@ bool MemberFunCallExpr::accept(ASTVisitor<bool> &Visitor) {
 }
 
 bool MemberFunCallExpr::accept(NameResolver &R) { return R.visit(*this); }
-
+InferRes MemberFunCallExpr::accept(TypeInferencer &I) { return I.visit(*this); }
 void MemberFunCallExpr::accept(ASTVisitor<void> &Visitor) {
   Visitor.visit(*this);
 }
