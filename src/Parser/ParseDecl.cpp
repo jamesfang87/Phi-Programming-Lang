@@ -93,8 +93,8 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
         .emit(*DiagnosticsMan);
     return std::nullopt;
   }
-  SrcLocation start = peekToken().getStart();
-  std::string name = advanceToken().getLexeme();
+  SrcLocation Start = peekToken().getStart();
+  std::string Name = advanceToken().getLexeme();
 
   // Parse colon separator
   if (peekToken().getKind() != TokenKind::ColonKind) {
@@ -108,12 +108,12 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   advanceToken();
 
   // Parse type
-  auto type = parseType();
-  if (!type.has_value())
+  auto DeclType = parseType();
+  if (!DeclType.has_value())
     return std::nullopt;
 
   return TypedBinding{
-      .loc = start, .name = name, .type = std::move(type.value())};
+      .loc = Start, .name = Name, .type = std::move(DeclType.value())};
 }
 
 /**
@@ -141,8 +141,8 @@ std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
   if (!binding)
     return nullptr;
 
-  auto [loc, id, type] = *binding;
-  return std::make_unique<ParamDecl>(loc, id, type, IsConst);
+  auto [Loc, Id, DeclType] = *binding;
+  return std::make_unique<ParamDecl>(Loc, Id, DeclType, IsConst);
 }
 
 } // namespace phi

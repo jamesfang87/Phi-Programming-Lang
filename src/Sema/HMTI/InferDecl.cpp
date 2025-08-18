@@ -37,7 +37,7 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
   }
 
   if (D.hasType()) {
-    auto Ann = fromAstType(D.getType());
+    auto Ann = D.getType().toMonotype();
     unifyInto(S, VarTy, Ann);
     VarTy = S.apply(Ann);
   } else {
@@ -82,9 +82,9 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
         throw std::runtime_error("Missing parameter type annotation for '" +
                                  P->getId() + "'");
       }
-      Args.push_back(fromAstType(P->getType()));
+      Args.push_back(P->getType().toMonotype());
     }
-    auto Ret = fromAstType(D.getReturnTy());
+    auto Ret = D.getReturnTy().toMonotype();
     FnT = Monotype::fun(std::move(Args), Ret);
   }
 
@@ -101,14 +101,14 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
       throw std::runtime_error("Parameter '" + P->getId() +
                                "' must have a type annotation");
     }
-    auto Pt = fromAstType(P->getType());
+    auto Pt = P->getType().toMonotype();
     Env.bind(P, Polytype{{}, Pt});
     // record param monotype too so we can finalize param annotations if desired
     ValDeclMonos[P] = Pt;
   }
 
   // Use declared return type as expected for body
-  auto DeclaredRet = fromAstType(D.getReturnTy());
+  auto DeclaredRet = D.getReturnTy().toMonotype();
   CurrentFnReturnTy.push_back(DeclaredRet);
 
   // Infer body
@@ -127,10 +127,10 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
   try {
     for (size_t i = 0; i < D.getParams().size(); ++i) {
       ParamDecl *P = D.getParams()[i].get();
-      auto DeclParamTy = fromAstType(P->getType());
+      auto DeclParamTy = P->getType().toMonotype();
       unifyInto(SBody, DeclParamTy, FnT->getFunArgs()[i]);
     }
-    auto DeclRetTy = fromAstType(D.getReturnTy());
+    auto DeclRetTy = D.getReturnTy().toMonotype();
     unifyInto(SBody, DeclRetTy, FnT->getFunReturn());
   } catch (const UnifyError &E) {
     throw std::runtime_error(std::string("Type error in function '") +

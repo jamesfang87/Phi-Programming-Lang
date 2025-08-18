@@ -1,13 +1,15 @@
 #pragma once
 
-#include "Sema/HMTI/Adapters/TypeAdapters.hpp"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include "AST/Type.hpp"
 
 namespace phi {
 
@@ -17,8 +19,11 @@ class TypeEnv;
 // Type variable
 struct TypeVar {
   int Id;
+  std::optional<std::vector<std::string>> Constraints;
+
   bool operator==(const TypeVar &O) const { return Id == O.Id; }
 };
+
 struct TypeVarHash {
   size_t operator()(const TypeVar &V) const noexcept {
     return std::hash<int>{}(V.Id);
@@ -38,7 +43,7 @@ public:
       std::shared_ptr<Monotype> Ret);
 
   Kind tag() const noexcept { return K; }
-  const TypeVar &asVar() const { return V; }
+  TypeVar &asVar() { return V; }
   std::pair<std::vector<std::shared_ptr<Monotype>>, std::shared_ptr<Monotype>>
   asFun() const {
     return make_pair(FunArgs, FunRet);
@@ -77,12 +82,12 @@ public:
     return ConName == "f32" || ConName == "f64";
   }
 
-  Type toAstType();
+  [[nodiscard]] Type toAstType() const;
 
 private:
   Monotype() = default;
   Kind K = Kind::Con;
-  TypeVar V{-1};
+  TypeVar V = {.Id = -1, .Constraints = std::nullopt};
   std::string ConName;
   std::vector<std::shared_ptr<Monotype>> ConArgs;
   std::vector<std::shared_ptr<Monotype>> FunArgs;

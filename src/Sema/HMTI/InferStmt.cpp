@@ -5,67 +5,60 @@ namespace phi {
 
 // ---------------- Block / Stmt ----------------
 TypeInferencer::InferRes TypeInferencer::inferBlock(Block &B) {
-  Substitution S;
-  for (auto &Up : B.getStmts()) {
-    auto [Si, _] = Up->accept(*this);
-    S.compose(Si);
+  Substitution AllSubsts;
+  for (auto &Stmt : B.getStmts()) {
+    auto [StmtSubst, _] = Stmt->accept(*this);
+    AllSubsts.compose(StmtSubst);
   }
-  return {S, Monotype::con("unit")};
+  return {AllSubsts, Monotype::con("unit")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
-  auto Expected = CurrentFnReturnTy.empty() ? Monotype::con("unit")
-                                            : CurrentFnReturnTy.back();
+  auto ExpectedType = CurrentFnReturnTy.empty() ? Monotype::con("unit")
+                                                : CurrentFnReturnTy.back();
   if (S.hasExpr()) {
-    auto [si, t] = visit(S.getExpr());
-    unifyInto(si, t, Expected);
-    recordSubst(si);
-    return {si, Monotype::con("unit")};
+    auto [Subst, ActualType] = visit(S.getExpr());
+    unifyInto(Subst, ActualType, ExpectedType);
+    recordSubst(Subst);
+    return {Subst, Monotype::con("unit")};
   } else {
-    Substitution s0;
-    unifyInto(s0, Monotype::con("unit"), Expected);
-    recordSubst(s0);
-    return {s0, Monotype::con("unit")};
+    Substitution Subst;
+    unifyInto(Subst, Monotype::con("unit"), ExpectedType);
+    recordSubst(Subst);
+    return {Subst, Monotype::con("unit")};
   }
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
-  // 1) Infer the range expression
-  auto [sRange, tRange] = visit(S.getRange());
-  Substitution s = sRange;
+  // 1) Infer the range expression (we don’t constrain its type here)
+  auto [RangeSubst, RangeType] = visit(S.getRange());
+  Substitution AllSubsts = RangeSubst;
 
-  // 2) Create a fresh element type variable for the loop variable
-  auto ElemTy = Monotype::var(Factory.fresh());
-
-  // 3) Expect the range to be 'range<ElemTy>'
-  auto expectedRange = Monotype::con("range", {ElemTy});
-  unifyInto(s, tRange, expectedRange);
-
-  // 4) Get the loop variable
+  // 2) Get the loop variable
   VarDecl *LoopVar = &S.getLoopVar();
   if (!LoopVar)
     throw std::runtime_error("internal: ForStmt missing loop variable");
 
-  std::shared_ptr<Monotype> LoopVarTy;
+  // 3) Create fresh type variable for loop variable, restricted to integer
+  // types
+  std::vector<std::string> IntConstraints = {"i8", "i16", "i32", "i64",
+                                             "u8", "u16", "u32", "u64"};
+  auto LoopVarTy = Monotype::var(Factory.fresh());
+  LoopVarTy->asVar().Constraints = IntConstraints;
+  IntTypeVars.push_back(LoopVarTy->asVar());
 
-  // Create fresh type variable constrained to integer types
-  LoopVarTy = Monotype::var(Factory.fresh());
-  // Record for integer constraint checking
-  IntRangeVars.push_back({LoopVarTy->asVar(), S.getLocation()});
-  unifyInto(s, ElemTy, LoopVarTy);
-
-  // 6) Bind loop variable in environment
-  recordSubst(s);
-  auto BoundTy = s.apply(LoopVarTy);
+  // 4) Bind loop variable in environment
+  recordSubst(AllSubsts);
+  auto BoundTy = AllSubsts.apply(LoopVarTy);
   Env.bind(LoopVar, Polytype{{}, BoundTy});
   annotate(*LoopVar, BoundTy);
 
-  // 7) Infer body with loop variable in environment
-  auto [sBody, _] = inferBlock(S.getBody());
-  s.compose(sBody);
-  recordSubst(sBody);
+  // 5) Infer the loop body
+  auto [BlockSubst, _] = inferBlock(S.getBody());
+  AllSubsts.compose(BlockSubst);
+  recordSubst(BlockSubst);
 
-  return {s, Monotype::con("unit")};
+  return {AllSubsts, Monotype::con("unit")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(DeclStmt &S) {
@@ -74,29 +67,30 @@ TypeInferencer::InferRes TypeInferencer::visit(DeclStmt &S) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(WhileStmt &S) {
-  auto [sc, tc] = visit(S.getCond());
-  Substitution sacc = sc;
-  unifyInto(sacc, tc, Monotype::con("bool"));
-  recordSubst(sacc);
-  auto [sb, _] = inferBlock(S.getBody());
-  sacc.compose(sb);
-  recordSubst(sacc);
-  return {sacc, Monotype::con("unit")};
+  auto [CondSubst, CondType] = visit(S.getCond());
+  Substitution AllSubsts = CondSubst;
+
+  auto [BlockSubst, _] = inferBlock(S.getBody());
+  AllSubsts.compose(BlockSubst);
+
+  recordSubst(AllSubsts);
+  return {AllSubsts, Monotype::con("unit")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(IfStmt &S) {
-  auto [sc, tc] = visit(S.getCond());
-  Substitution sacc = sc;
-  unifyInto(sacc, tc, Monotype::con("bool"));
-  recordSubst(sacc);
-  auto [st, _] = inferBlock(S.getThen());
-  sacc.compose(st);
+  auto [CondSubst, CondType] = visit(S.getCond());
+  Substitution AllSubsts = CondSubst;
+
+  auto [ThenBlockSubst, _] = inferBlock(S.getThen());
+  AllSubsts.compose(ThenBlockSubst);
+
   if (S.hasElse()) {
-    auto [se, __] = inferBlock(S.getElse());
-    sacc.compose(se);
+    auto [ElseBlockSubst, __] = inferBlock(S.getElse());
+    AllSubsts.compose(ElseBlockSubst);
   }
-  recordSubst(sacc);
-  return {sacc, Monotype::con("unit")};
+
+  recordSubst(AllSubsts);
+  return {AllSubsts, Monotype::con("unit")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(BreakStmt &S) {

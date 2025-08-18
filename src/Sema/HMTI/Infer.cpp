@@ -1,11 +1,11 @@
 // src/Sema/HMTI/Infer.cpp
 #include "Sema/HMTI/Infer.hpp"
 #include "AST/Decl.hpp"
-#include "Sema/HMTI/Adapters/TypeAdapters.hpp"
 #include "Sema/HMTI/TypeEnv.hpp"
 
 #include <llvm/Support/Casting.h>
 
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -58,10 +58,10 @@ void TypeInferencer::predeclare() {
           throw std::runtime_error("Function parameter '" + P->getId() +
                                    "' must have a type annotation");
         }
-        ArgTys.push_back(::phi::fromAstType(P->getType()));
+        ArgTys.push_back(P->getType().toMonotype());
       }
       // return type must be provided by user
-      auto Ret = ::phi::fromAstType(F->getReturnTy());
+      auto Ret = F->getReturnTy().toMonotype();
       auto FnT = Monotype::fun(std::move(ArgTys), Ret);
 
       // Bind function by name (string) in the environment
@@ -82,22 +82,7 @@ void TypeInferencer::recordSubst(const Substitution &S) {
   Env.applySubstitution(S);
 }
 
-// ---------------- adapters / annotation side-table ----------------
-std::shared_ptr<Monotype>
-TypeInferencer::typeFromAstOrFresh(std::optional<Type> AstTyOpt) {
-  if (!AstTyOpt.has_value())
-    return Monotype::var(Factory.fresh());
-  return ::phi::fromAstType(*AstTyOpt);
-}
-
-std::shared_ptr<Monotype> TypeInferencer::fromAstType(const Type &T) {
-  return ::phi::fromAstType(T);
-}
-
-Type TypeInferencer::toAstType(const std::shared_ptr<Monotype> &T) {
-  return ::phi::toAstType(T);
-}
-
+// ---------------- annotation side-table ----------------
 void TypeInferencer::annotate(ValueDecl &D,
                               const std::shared_ptr<Monotype> &T) {
   ValDeclMonos[&D] = T;
@@ -109,18 +94,32 @@ void TypeInferencer::annotate(Expr &E, const std::shared_ptr<Monotype> &T) {
 
 // ---------------- integer defaulting ----------------
 void TypeInferencer::defaultNums() {
-  auto Nums = {std::pair{std::cref(FloatLiteralVars), "f32"},
-               std::pair{std::cref(IntLiteralVars), "i32"}};
-
-  // Loop through both floats and ints
-  for (auto &[Vars, TypeName] : Nums) {
-    Substitution S;
-    for (auto &V : Vars.get()) {
-      // Replace if it is not in the GlobalSubst
-      if (!GlobalSubst.Map.contains(V)) {
-        S.Map.emplace(V, Monotype::con(TypeName));
-      }
+  for (auto &V : IntTypeVars) {
+    if (GlobalSubst.Map.contains(V)) {
+      continue;
     }
+
+    if (V.Constraints && !std::ranges::contains(*V.Constraints, "i32")) {
+      continue;
+    }
+
+    Substitution S;
+    S.Map.emplace(V, Monotype::con("i32"));
+    recordSubst(S);
+  }
+
+  // Similar logic for floats
+  for (auto &V : FloatTypeVars) {
+    if (GlobalSubst.Map.contains(V)) {
+      continue;
+    }
+
+    if (V.Constraints && !std::ranges::contains(*V.Constraints, "f32")) {
+      continue;
+    }
+
+    Substitution S;
+    S.Map.emplace(V, Monotype::con("f32"));
     recordSubst(S);
   }
 }
@@ -128,19 +127,18 @@ void TypeInferencer::defaultNums() {
 // ---------------- finalize annotations ----------------
 // Apply GlobalSubst_ to stored monotypes and write back into AST nodes.
 void TypeInferencer::finalizeAnnotations() {
-  defaultNums();             // default floats and ints to f32, i32
-  checkIntegerConstraints(); // check integer constraints
+  defaultNums(); // default floats and ints to f32, i32
 
   // Finalize ValueDecls
   for (auto &D : ValDeclMonos) {
     auto Mono = GlobalSubst.apply(D.second);
-    D.first->setType(toAstType(Mono));
+    D.first->setType(Mono->toAstType());
   }
 
   // Finalize Exprs
   for (auto &E : ExprMonos) {
     auto Mono = GlobalSubst.apply(E.second);
-    E.first->setType(toAstType(Mono));
+    E.first->setType(Mono->toAstType());
   }
 
   // Optionally clear side tables

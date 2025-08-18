@@ -120,7 +120,7 @@ public:
 
   bool operator!=(const Type &Other) const { return !(*this == Other); }
 
-  std::shared_ptr<Monotype> toMonotype();
+  std::shared_ptr<Monotype> toMonotype() const;
 
 private:
   /**

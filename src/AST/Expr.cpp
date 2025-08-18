@@ -61,7 +61,8 @@ IntLiteral::IntLiteral(SrcLocation Location, const int64_t Value)
  * @param Level Current indentation Level
  */
 void IntLiteral::emit(int Level) const {
-  std::println("{}IntLiteral: {}", indent(Level), Value);
+  std::string typeStr = Ty.has_value() ? Ty.value().toString() : "<unresolved>";
+  std::println("{}IntLiteral: {} (type: {})", indent(Level), Value, typeStr);
 }
 
 bool IntLiteral::accept(ASTVisitor<bool> &Visitor) {
@@ -96,7 +97,8 @@ FloatLiteral::FloatLiteral(SrcLocation Location, const double Value)
  * @param Level Current indentation Level
  */
 void FloatLiteral::emit(int Level) const {
-  std::println("{}FloatLiteral: {}", indent(Level), Value);
+  std::string typeStr = Ty.has_value() ? Ty.value().toString() : "<unresolved>";
+  std::println("{}FloatLiteral: {} (type: {})", indent(Level), Value, typeStr);
 }
 
 bool FloatLiteral::accept(ASTVisitor<bool> &Visitor) {
