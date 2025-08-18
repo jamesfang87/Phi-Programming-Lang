@@ -199,8 +199,10 @@ static Substitution bindVar(const TypeVar &V,
     if (T->tag() == Monotype::Kind::Con) {
       const std::string &name = T->getConName();
       if (V.Constraints && !std::ranges::contains(*V.Constraints, name)) {
-        std::string Msg = std::format(
-            "type constraint violation: {} cannot be unified with ", name);
+        std::string Msg =
+            std::format("type constraint violation: found type {} cannot be "
+                        "unified with expected types of:",
+                        name);
         for (const auto &Possible : *V.Constraints) {
           Msg += Possible + ", ";
         }
