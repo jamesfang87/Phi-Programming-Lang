@@ -12,7 +12,7 @@ fun main() {
     const c = 1.6;
 
     for i in 1..10 {
-        const t: i64 = i;
+        const t: i8 = i;
     }
 
     foo(x, y);

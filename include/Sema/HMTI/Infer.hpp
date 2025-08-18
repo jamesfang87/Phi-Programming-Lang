@@ -8,7 +8,7 @@
 #include "Sema/HMTI/TypeEnv.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
-#include <format>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -63,8 +63,8 @@ private:
   std::unordered_map<FunDecl *, std::shared_ptr<Monotype>> FunDeclMonos;
 
   // track integer-literal-origin type variables (so we can default them later)
-  std::vector<TypeVar> IntLiteralVars;
-  std::vector<TypeVar> FloatLiteralVars;
+  std::vector<TypeVar> IntTypeVars;
+  std::vector<TypeVar> FloatTypeVars;
 
   // expected return type stack
   std::vector<std::shared_ptr<Monotype>> CurrentFnReturnTy;
@@ -88,12 +88,6 @@ private:
     S.compose(U);
   }
 
-  std::shared_ptr<Monotype> typeFromAstOrFresh(std::optional<Type> AstTyOpt);
-
-  // adapters
-  std::shared_ptr<Monotype> fromAstType(const Type &T);
-  Type toAstType(const std::shared_ptr<Monotype> &T);
-
   // *** annotation helpers (now side-table based) ***
   void annotate(ValueDecl &D, const std::shared_ptr<Monotype> &T);
   void annotate(Expr &E, const std::shared_ptr<Monotype> &T);
@@ -113,36 +107,17 @@ private:
   std::vector<IntConstraint> IntRangeVars;
 
   // Helper function to check if a type variable comes from a float literal
-  bool isFloatLiteralVar(const std::shared_ptr<Monotype> &t) const {
-    if (t->tag() != Monotype::Kind::Var)
+  bool isFloatLiteralVar(const std::shared_ptr<Monotype> &T) const {
+    if (T->tag() != Monotype::Kind::Var)
       return false;
-    auto var = t->asVar();
-    return std::find(FloatLiteralVars.begin(), FloatLiteralVars.end(), var) !=
-           FloatLiteralVars.end();
+    return std::ranges::contains(FloatTypeVars, T->asVar());
   }
 
   // Helper function to check if a type variable comes from an int literal
-  bool isIntLiteralVar(const std::shared_ptr<Monotype> &t) const {
-    if (t->tag() != Monotype::Kind::Var)
+  bool isIntLiteralVar(const std::shared_ptr<Monotype> &T) const {
+    if (T->tag() != Monotype::Kind::Var)
       return false;
-    auto var = t->asVar();
-    return std::find(IntLiteralVars.begin(), IntLiteralVars.end(), var) !=
-           IntLiteralVars.end();
-  }
-
-  // Add new method:
-  void checkIntegerConstraints() {
-    for (const auto &Constraint : IntRangeVars) {
-      auto T = GlobalSubst.apply(Monotype::var(Constraint.Var));
-      if (!T->isIntType()) {
-        auto [ignore, Line, Col] = Constraint.Loc;
-        std::string Msg = std::format(
-            "Loop variable must be integer type, got: {} at location {}:{}",
-            T->toString(), Line, Col);
-
-        throw std::runtime_error(Msg);
-      }
-    }
+    return std::ranges::contains(IntTypeVars, T->asVar());
   }
 
   // token-kind helpers (same as before)

@@ -3,6 +3,8 @@
 #include <llvm/Support/Casting.h>
 
 #include <print>
+#include <string>
+#include <vector>
 
 namespace phi {
 
@@ -11,19 +13,20 @@ namespace phi {
 // Substitution.
 
 TypeInferencer::InferRes TypeInferencer::visit(IntLiteral &E) {
-  // create fresh type variable for integer literal (polymorphic int)
+  std::vector<std::string> IntConstraints = {"i8", "i16", "i32", "i64",
+                                             "u8", "u16", "u32", "u64"};
   auto Tv = Monotype::var(Factory.fresh());
-  IntLiteralVars.push_back(Tv->asVar());
-  // store monotype in side table (do not set AST::Type yet)
+  Tv->asVar().Constraints = IntConstraints;
+  IntTypeVars.push_back(Tv->asVar());
   annotate(E, Tv);
   return {Substitution{}, Tv};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(FloatLiteral &E) {
-  // create fresh type variable for integer literal (polymorphic int)
   auto Tv = Monotype::var(Factory.fresh());
-  FloatLiteralVars.push_back(Tv->asVar());
-  // store monotype in side table (do not set AST::Type yet)
+  // Add float type constraints
+  Tv->asVar().Constraints = {"f32", "f64"};
+  FloatTypeVars.push_back(Tv->asVar());
   annotate(E, Tv);
   return {Substitution{}, Tv};
 }
@@ -135,25 +138,7 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     auto tl = s.apply(tL);
     auto tr = s.apply(tR);
 
-    // Check if either operand is from a float literal or is a concrete float
-    // type
-    bool leftIsFloat =
-        isFloatLiteralVar(tl) ||
-        (tl->tag() == Monotype::Kind::Con &&
-         (tl->getConName() == "f32" || tl->getConName() == "f64"));
-    bool rightIsFloat =
-        isFloatLiteralVar(tr) ||
-        (tr->tag() == Monotype::Kind::Con &&
-         (tr->getConName() == "f32" || tr->getConName() == "f64"));
-
-    if (leftIsFloat || rightIsFloat) {
-      // If either is a float, promote both to f64
-      unifyInto(s, tl, Monotype::con("f64"));
-      unifyInto(s, tr, Monotype::con("f64"));
-    } else {
-      // Otherwise, they must be the same type
-      unifyInto(s, tl, tr);
-    }
+    unifyInto(s, tl, tr);
 
     recordSubst(s);
     annotate(E, Monotype::con("bool"));
@@ -164,35 +149,15 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     auto tl = s.apply(tL);
     auto tr = s.apply(tR);
 
-    // Check if either operand is from a float literal or is a concrete float
-    // type
-    bool leftIsFloat =
-        isFloatLiteralVar(tl) ||
-        (tl->tag() == Monotype::Kind::Con &&
-         (tl->getConName() == "f32" || tl->getConName() == "f64"));
-    bool rightIsFloat =
-        isFloatLiteralVar(tr) ||
-        (tr->tag() == Monotype::Kind::Con &&
-         (tr->getConName() == "f32" || tr->getConName() == "f64"));
-
-    if (leftIsFloat || rightIsFloat) {
-      // If either is a float, promote both to f64
-      unifyInto(s, tl, Monotype::con("f64"));
-      unifyInto(s, tr, Monotype::con("f64"));
-      recordSubst(s);
-      annotate(E, Monotype::con("f64"));
-      return {s, Monotype::con("f64")};
-    } else {
-      // Standard arithmetic unification for non-float cases
-      auto a = Monotype::var(Factory.fresh());
-      auto opTy = Monotype::fun({a, a}, a);
-      auto callTy = Monotype::fun({tl, tr}, Monotype::var(Factory.fresh()));
-      unifyInto(s, opTy, callTy);
-      recordSubst(s);
-      auto res = s.apply(a);
-      annotate(E, res);
-      return {s, res};
-    }
+    // Standard arithmetic unification for non-float cases
+    auto a = Monotype::var(Factory.fresh());
+    auto opTy = Monotype::fun({a, a}, a);
+    auto callTy = Monotype::fun({tl, tr}, Monotype::var(Factory.fresh()));
+    unifyInto(s, opTy, callTy);
+    recordSubst(s);
+    auto res = s.apply(a);
+    annotate(E, res);
+    return {s, res};
   }
 
   if (K == TokenKind::EqualsKind) {
@@ -219,7 +184,7 @@ TypeInferencer::InferRes TypeInferencer::visit(StructInitExpr &E) {
     auto [si, tv] = visit(*f->getValue());
     s.compose(si);
     if (auto *FD = f->getDecl()) {
-      auto fieldTy = fromAstType(FD->getType());
+      auto fieldTy = FD->getType().toMonotype();
       unifyInto(s, fieldTy, tv);
     }
   }
@@ -255,7 +220,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   }
 
   // Convert the field's AST type to a Monotype and unify with our output
-  auto fieldType = fromAstType(Field->getType());
+  auto fieldType = Field->getType().toMonotype();
   unifyInto(s1, out, fieldType);
 
   recordSubst(s1);
@@ -311,7 +276,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
       throw std::runtime_error("method parameter '" + P->getId() +
                                "' missing type annotation");
     }
-    auto PTy = fromAstType(P->getType());
+    auto PTy = P->getType().toMonotype();
     if (!PTy) {
       throw std::runtime_error(
           "internal error: fromAstType returned null for parameter of method " +
@@ -321,7 +286,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
   }
 
   // Return type must be present (your FunDecl stores return type)
-  auto RetTy = fromAstType(Method->getReturnTy());
+  auto RetTy = Method->getReturnTy().toMonotype();
   if (!RetTy) {
     throw std::runtime_error(
         "internal error: fromAstType returned null for return type of method " +

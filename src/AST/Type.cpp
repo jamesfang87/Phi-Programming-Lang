@@ -53,7 +53,7 @@ bool isNumTy(const Type &Ty) {
   return isIntTy(Ty) || isFloat(Ty);
 }
 
-std::shared_ptr<Monotype> Type::toMonotype() {
+std::shared_ptr<Monotype> Type::toMonotype() const {
   // Map AST::Type::PrimitiveKind -> Monotype constructor names
   switch (Kind) {
   case Type::PrimitiveKind::I8Kind:
@@ -87,9 +87,7 @@ std::shared_ptr<Monotype> Type::toMonotype() {
   case Type::PrimitiveKind::NullKind:
     return Monotype::con("null");
   case Type::PrimitiveKind::CustomKind:
-  default:
-    throw std::runtime_error(
-        "fromBuiltin: unexpected mapping; use fromAstType for custom types");
+    return Monotype::con(getCustomTypeName());
   }
 }
 
