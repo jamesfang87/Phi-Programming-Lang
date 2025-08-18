@@ -13,15 +13,15 @@ namespace phi {
  * @param tokens Token stream from lexer
  * @param diagnostic_manager Shared diagnostic manager
  */
-Parser::Parser(const std::string_view src, const std::string_view path,
-               std::vector<Token> &tokens,
+Parser::Parser(const std::string_view Src, const std::string_view Path,
+               std::vector<Token> &Tokens,
                std::shared_ptr<DiagnosticManager> DiagnosticMan)
-    : Path(path), Tokens(tokens), TokenIt(tokens.begin()),
+    : Path(Path), Tokens(Tokens), TokenIt(Tokens.begin()),
       DiagnosticsMan(std::move(DiagnosticMan)) {
 
   // Register source file with diagnostic manager
   if (this->DiagnosticsMan->source_manager()) {
-    this->DiagnosticsMan->source_manager()->addSrcFile(std::string(path), src);
+    this->DiagnosticsMan->source_manager()->addSrcFile(std::string(Path), Src);
   }
 }
 

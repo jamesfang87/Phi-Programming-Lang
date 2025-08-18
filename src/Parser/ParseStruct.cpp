@@ -70,11 +70,11 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
   auto Binding = parseTypedBinding();
   if (!Binding)
     return std::nullopt;
-  auto [VarLoc, Id, Ty] = *Binding;
+  auto [VarLoc, Id, DeclType] = *Binding;
 
   // Validate assignment operator
   if (advanceToken().getKind() != TokenKind::EqualsKind) {
-    return FieldDecl{VarLoc, Id, Ty, nullptr, IsPrivate};
+    return FieldDecl{VarLoc, Id, DeclType, nullptr, IsPrivate};
   }
 
   // Parse initializer expression
@@ -93,7 +93,7 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
     return std::nullopt;
   }
 
-  return FieldDecl{VarLoc, Id, Ty, std::move(Init), IsPrivate};
+  return FieldDecl{VarLoc, Id, DeclType, std::move(Init), IsPrivate};
 }
 
 std::optional<MethodDecl> Parser::parseStructMethodDecl() {

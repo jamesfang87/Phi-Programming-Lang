@@ -2,7 +2,10 @@
 #include "Sema/HMTI/HMType.hpp"
 #include "Sema/HMTI/TypeEnv.hpp"
 
+#include <algorithm>
+#include <format>
 #include <functional>
+#include <string>
 
 namespace phi {
 
@@ -12,7 +15,7 @@ std::shared_ptr<Monotype> Monotype::var(TypeVar V) {
   // constructor
   std::shared_ptr<Monotype> P(new Monotype());
   P->K = Kind::Var;
-  P->V = V;
+  P->V = std::move(V);
   return P;
 }
 
@@ -190,6 +193,32 @@ static Substitution bindVar(const TypeVar &V,
     return {};
   if (occurs(V, T))
     throw UnifyError("occurs check failed");
+
+  // Check constraints
+  if (V.Constraints) {
+    if (T->tag() == Monotype::Kind::Con) {
+      const std::string &name = T->getConName();
+      if (V.Constraints && !std::ranges::contains(*V.Constraints, name)) {
+        std::string Msg = std::format(
+            "type constraint violation: {} cannot be unified with ", name);
+        for (const auto &Possible : *V.Constraints) {
+          Msg += Possible + ", ";
+        }
+        throw UnifyError(Msg);
+      }
+    } else if (T->tag() == Monotype::Kind::Var && T->asVar().Constraints) {
+      // Check if constraints are compatible
+      std::vector<std::string> common;
+      std::set_intersection(V.Constraints->begin(), V.Constraints->end(),
+                            T->asVar().Constraints->begin(),
+                            T->asVar().Constraints->end(),
+                            std::back_inserter(common));
+      if (common.empty()) {
+        throw UnifyError("incompatible type constraints");
+      }
+    }
+  }
+
   Substitution S;
   S.Map.emplace(V, T);
   return S;
@@ -233,6 +262,55 @@ Substitution unify(const std::shared_ptr<Monotype> &A,
   }
 
   throw UnifyError("cannot unify given types");
+}
+
+Type Monotype::toAstType() const {
+  // AST.Type doesn't have function type; it's only primitive/custom.
+  if (K == Monotype::Kind::Var) {
+    return Type("");
+  }
+
+  if (K == Monotype::Kind::Con) {
+    const auto &Name = ConName;
+    if (Name == "i8")
+      return Type(Type::PrimitiveKind::I8Kind);
+    if (Name == "i16")
+      return Type(Type::PrimitiveKind::I16Kind);
+    if (Name == "i32")
+      return Type(Type::PrimitiveKind::I32Kind);
+    if (Name == "i64")
+      return Type(Type::PrimitiveKind::I64Kind);
+    if (Name == "u8")
+      return Type(Type::PrimitiveKind::U8Kind);
+    if (Name == "u16")
+      return Type(Type::PrimitiveKind::U16Kind);
+    if (Name == "u32")
+      return Type(Type::PrimitiveKind::U32Kind);
+    if (Name == "u64")
+      return Type(Type::PrimitiveKind::U64Kind);
+    if (Name == "f32")
+      return Type(Type::PrimitiveKind::F32Kind);
+    if (Name == "f64")
+      return Type(Type::PrimitiveKind::F64Kind);
+    if (Name == "string")
+      return Type(Type::PrimitiveKind::StringKind);
+    if (Name == "char")
+      return Type(Type::PrimitiveKind::CharKind);
+    if (Name == "bool")
+      return Type(Type::PrimitiveKind::BoolKind);
+    if (Name == "range")
+      return Type(Type::PrimitiveKind::RangeKind);
+    if (Name == "null")
+      return Type(Type::PrimitiveKind::NullKind);
+    // otherwise treat as custom/struct name
+    return Type(Name);
+  }
+  // Fun: map to return type only — callers (Infer::annotate) handle
+  // params+return
+  if (K == Monotype::Kind::Fun) {
+    return FunRet->toAstType();
+  }
+  return Type(Type::PrimitiveKind::I32Kind);
 }
 
 } // namespace phi
