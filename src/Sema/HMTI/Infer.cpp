@@ -1,13 +1,11 @@
-// src/Sema/HMTI/Infer.cpp
 #include "Sema/HMTI/Infer.hpp"
 #include "AST/Decl.hpp"
+#include "Sema/HMTI/Algorithms.hpp"
 #include "Sema/HMTI/TypeEnv.hpp"
 
 #include <llvm/Support/Casting.h>
 
-#include <algorithm>
 #include <memory>
-#include <stdexcept>
 #include <vector>
 
 namespace phi {
@@ -43,30 +41,27 @@ void TypeInferencer::predeclare() {
   for (auto &Up : Ast) {
     if (auto V = llvm::dyn_cast<VarDecl>(Up.get())) {
       // give letrec a fresh variable
-      auto Tv = Monotype::var(Factory.fresh());
+      auto Tv = Monotype::makeVar(Factory.fresh());
       Env.bind(V, Polytype{{}, Tv});
       continue;
     }
 
     if (auto F = llvm::dyn_cast<FunDecl>(Up.get())) {
-      // Functions require parameter and return annotations by design.
-      std::vector<std::shared_ptr<Monotype>> ArgTys;
+      std::vector<Monotype> ArgTys;
       ArgTys.reserve(F->getParams().size());
-      for (auto &Pup : F->getParams()) {
-        ParamDecl *P = Pup.get();
-        if (!P->hasType()) {
-          throw std::runtime_error("Function parameter '" + P->getId() +
+
+      for (auto &Param : F->getParams()) {
+        if (!Param->hasType()) {
+          throw std::runtime_error("Function parameter '" + Param->getId() +
                                    "' must have a type annotation");
         }
-        ArgTys.push_back(P->getType().toMonotype());
+        ArgTys.push_back(Param->getType().toMonotype());
       }
-      // return type must be provided by user
-      auto Ret = F->getReturnTy().toMonotype();
-      auto FnT = Monotype::fun(std::move(ArgTys), Ret);
 
-      // Bind function by name (string) in the environment
+      auto Ret = F->getReturnTy().toMonotype();
+      auto FnT = Monotype::makeFun(std::move(ArgTys), Ret);
+
       Env.bind(F->getId(), generalize(Env, FnT));
-      continue;
     }
   }
 }
@@ -83,14 +78,11 @@ void TypeInferencer::recordSubst(const Substitution &S) {
 }
 
 // ---------------- annotation side-table ----------------
-void TypeInferencer::annotate(ValueDecl &D,
-                              const std::shared_ptr<Monotype> &T) {
+void TypeInferencer::annotate(ValueDecl &D, const Monotype &T) {
   ValDeclMonos[&D] = T;
 }
 
-void TypeInferencer::annotate(Expr &E, const std::shared_ptr<Monotype> &T) {
-  ExprMonos[&E] = T;
-}
+void TypeInferencer::annotate(Expr &E, const Monotype &T) { ExprMonos[&E] = T; }
 
 // ---------------- integer defaulting ----------------
 void TypeInferencer::defaultNums() {
@@ -104,7 +96,7 @@ void TypeInferencer::defaultNums() {
     }
 
     Substitution S;
-    S.Map.emplace(V, Monotype::con("i32"));
+    S.Map.emplace(V, Monotype::makeCon("i32"));
     recordSubst(S);
   }
 
@@ -119,7 +111,7 @@ void TypeInferencer::defaultNums() {
     }
 
     Substitution S;
-    S.Map.emplace(V, Monotype::con("f32"));
+    S.Map.emplace(V, Monotype::makeCon("f32"));
     recordSubst(S);
   }
 }
@@ -132,13 +124,13 @@ void TypeInferencer::finalizeAnnotations() {
   // Finalize ValueDecls
   for (auto &D : ValDeclMonos) {
     auto Mono = GlobalSubst.apply(D.second);
-    D.first->setType(Mono->toAstType());
+    D.first->setType(Mono.toAstType());
   }
 
   // Finalize Exprs
   for (auto &E : ExprMonos) {
     auto Mono = GlobalSubst.apply(E.second);
-    E.first->setType(Mono->toAstType());
+    E.first->setType(Mono.toAstType());
   }
 
   // Optionally clear side tables
