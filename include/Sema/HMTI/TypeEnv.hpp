@@ -1,10 +1,12 @@
 #pragma once
 
-#include "Sema/HMTI/HMType.hpp"
-
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+
+#include "Sema/HMTI/Substitution.hpp"
+#include "Sema/HMTI/Types/Polytype.hpp"
 
 namespace phi {
 
@@ -19,7 +21,9 @@ class TypeEnv {
 public:
   // Bind by declaration pointer (preferred: your DeclRefExpr should carry a
   // decl*)
-  void bind(const ValueDecl *D, Polytype Sc) { DeclMap[D] = std::move(Sc); }
+  void bind(const ValueDecl *D, Polytype Sc) {
+    DeclMap.emplace(D, std::move(Sc));
+  }
 
   // Rare fallback by name (if a DeclRefExpr hasn't been resolved)
   void bind(std::string Name, Polytype Sc) {
@@ -49,23 +53,17 @@ public:
   }
 
   // Free vars in env (for generalization)
-  std::unordered_set<TypeVar, TypeVarHash> freeTypeVars() const {
-    std::unordered_set<TypeVar, TypeVarHash> Acc;
+  std::unordered_set<TypeVar> freeTypeVars() const {
+    std::unordered_set<TypeVar> Acc;
     for (const auto &KV : DeclMap) {
-      auto F = phi::freeTypeVars(KV.second);
+      auto F = KV.second.freeTypeVars();
       Acc.insert(F.begin(), F.end());
     }
     for (const auto &KV : NameMap) {
-      auto F = phi::freeTypeVars(KV.second);
+      auto F = KV.second.freeTypeVars();
       Acc.insert(F.begin(), F.end());
     }
     return Acc;
-  }
-
-  // ADL shim for generalize(...) call
-  friend std::unordered_set<TypeVar, TypeVarHash>
-  freeTypeVars(const TypeEnv &E) {
-    return E.freeTypeVars();
   }
 
 private:
