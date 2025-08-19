@@ -1,12 +1,13 @@
 #pragma once
-
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
-#include "Sema/HMTI/HMType.hpp"
 #include "Sema/HMTI/TypeEnv.hpp"
-#include "SrcManager/SrcLocation.hpp"
+#include "Sema/HMTI/TypeVarFactory.hpp"
+#include "Sema/HMTI/Types/Monotype.hpp"
+#include "Sema/HMTI/Types/MonotypeAtoms.hpp"
+#include "Sema/HMTI/Unify.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -22,6 +23,7 @@ public:
 
   std::vector<std::unique_ptr<Decl>> inferProgram();
 
+  using InferRes = std::pair<Substitution, Monotype>;
   InferRes visit(Stmt &S);
   InferRes visit(ReturnStmt &S);
   InferRes visit(ForStmt &S);
@@ -58,18 +60,16 @@ private:
   Substitution GlobalSubst;
 
   // Side tables: store the HM monotypes for nodes until finalization.
-  std::unordered_map<Expr *, std::shared_ptr<Monotype>> ExprMonos;
-  std::unordered_map<ValueDecl *, std::shared_ptr<Monotype>> ValDeclMonos;
-  std::unordered_map<FunDecl *, std::shared_ptr<Monotype>> FunDeclMonos;
+  std::unordered_map<Expr *, Monotype> ExprMonos;
+  std::unordered_map<ValueDecl *, Monotype> ValDeclMonos;
+  std::unordered_map<FunDecl *, Monotype> FunDeclMonos;
 
   // track integer-literal-origin type variables (so we can default them later)
   std::vector<TypeVar> IntTypeVars;
   std::vector<TypeVar> FloatTypeVars;
 
   // expected return type stack
-  std::vector<std::shared_ptr<Monotype>> CurrentFnReturnTy;
-
-  using InferRes = std::pair<Substitution, std::shared_ptr<Monotype>>;
+  std::vector<Monotype> CurrentFnReturnTy;
 
   // main passes
   void predeclare();
@@ -78,46 +78,41 @@ private:
   void inferFunDecl(FunDecl &D);
 
   // statements / blocks
-
   InferRes inferBlock(Block &B);
 
   // helpers
-  static void unifyInto(Substitution &S, const std::shared_ptr<Monotype> &A,
-                        const std::shared_ptr<Monotype> &B) {
+  static void unifyInto(Substitution &S, const Monotype &A, const Monotype &B) {
     Substitution U = unify(S.apply(A), S.apply(B));
     S.compose(U);
   }
 
   // *** annotation helpers (now side-table based) ***
-  void annotate(ValueDecl &D, const std::shared_ptr<Monotype> &T);
-  void annotate(Expr &E, const std::shared_ptr<Monotype> &T);
+  void annotate(ValueDecl &D, const Monotype &T);
+  void annotate(Expr &E, const Monotype &T);
 
   // record and propagate substitutions into global state + env
   void recordSubst(const Substitution &S);
 
   void defaultNums();
 
-  // After inference & defaulting, finalize by applying GlobalSubst_
+  // After inference & defaulting, finalize by applying GlobalSubst
   // to stored Monotypes and writing concrete phi::Type back into AST.
   void finalizeAnnotations();
-  struct IntConstraint {
-    TypeVar Var;
-    SrcLocation Loc;
-  };
-  std::vector<IntConstraint> IntRangeVars;
 
   // Helper function to check if a type variable comes from a float literal
-  bool isFloatLiteralVar(const std::shared_ptr<Monotype> &T) const {
-    if (T->tag() != Monotype::Kind::Var)
+  bool isFloatLiteralVar(const Monotype &T) const {
+    if (!T.isVar())
       return false;
-    return std::ranges::contains(FloatTypeVars, T->asVar());
+    return std::find(FloatTypeVars.begin(), FloatTypeVars.end(), T.asVar()) !=
+           FloatTypeVars.end();
   }
 
   // Helper function to check if a type variable comes from an int literal
-  bool isIntLiteralVar(const std::shared_ptr<Monotype> &T) const {
-    if (T->tag() != Monotype::Kind::Var)
+  bool isIntLiteralVar(const Monotype &T) const {
+    if (!T.isVar())
       return false;
-    return std::ranges::contains(IntTypeVars, T->asVar());
+    return std::find(IntTypeVars.begin(), IntTypeVars.end(), T.asVar()) !=
+           IntTypeVars.end();
   }
 
   // token-kind helpers (same as before)

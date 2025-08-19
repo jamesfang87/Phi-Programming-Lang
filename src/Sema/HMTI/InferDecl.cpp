@@ -1,4 +1,8 @@
+#include "AST/Decl.hpp"
+#include "Sema/HMTI/Algorithms.hpp"
 #include "Sema/HMTI/Infer.hpp"
+#include "Sema/HMTI/Types/Monotype.hpp"
+#include <optional>
 
 namespace phi {
 
@@ -24,9 +28,8 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
 
   // Starting monotype: instantiate predeclared scheme, or create fresh var for
   // local.
-  std::shared_ptr<Monotype> VarTy = WasPredeclared
-                                        ? instantiate(*ScOpt, Factory)
-                                        : Monotype::var(Factory.fresh());
+  Monotype VarTy = WasPredeclared ? instantiate(*ScOpt, Factory)
+                                  : Monotype::makeVar(Factory.fresh());
 
   Substitution S;
   if (D.hasInit()) {
@@ -67,14 +70,14 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
 // annotated by the user (we only verify consistency). We bind params
 // temporarily for body inference and discard them afterwards.
 void TypeInferencer::inferFunDecl(FunDecl &D) {
-  std::shared_ptr<Monotype> FnT;
+  std::optional<Monotype> FnT;
 
   // Lookup by name
   if (auto Sc = Env.lookup(D.getId())) {
     FnT = instantiate(*Sc, Factory);
   } else {
     // Fallback: build from AST annotations (shouldn't normally happen)
-    std::vector<std::shared_ptr<Monotype>> Args;
+    std::vector<Monotype> Args;
     Args.reserve(D.getParams().size());
     for (auto &Pup : D.getParams()) {
       ParamDecl *P = Pup.get();
@@ -85,10 +88,10 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
       Args.push_back(P->getType().toMonotype());
     }
     auto Ret = D.getReturnTy().toMonotype();
-    FnT = Monotype::fun(std::move(Args), Ret);
+    FnT = Monotype::makeFun(std::move(Args), Ret);
   }
 
-  if (FnT->tag() != Monotype::Kind::Fun)
+  if (!FnT->isFun())
     throw std::runtime_error("internal: function expected a function monotype");
 
   // Save environment (we will restore)
@@ -118,7 +121,7 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
   recordSubst(SBody);
 
   // Apply substitution to function type
-  FnT = SBody.apply(FnT);
+  FnT = SBody.apply(*FnT);
 
   CurrentFnReturnTy.pop_back();
 
@@ -128,10 +131,10 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
     for (size_t i = 0; i < D.getParams().size(); ++i) {
       ParamDecl *P = D.getParams()[i].get();
       auto DeclParamTy = P->getType().toMonotype();
-      unifyInto(SBody, DeclParamTy, FnT->getFunArgs()[i]);
+      unifyInto(SBody, DeclParamTy, FnT->asFun().params[i]);
     }
     auto DeclRetTy = D.getReturnTy().toMonotype();
-    unifyInto(SBody, DeclRetTy, FnT->getFunReturn());
+    unifyInto(SBody, DeclRetTy, *FnT->asFun().ret);
   } catch (const UnifyError &E) {
     throw std::runtime_error(std::string("Type error in function '") +
                              D.getId() + "': " + E.what());
@@ -141,12 +144,12 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
   recordSubst(SBody);
 
   // Re-generalize in outer environment and rebind function name
-  auto Sc = generalize(SavedEnv, FnT);
+  auto Sc = generalize(SavedEnv, *FnT);
   SavedEnv.bind(D.getId(), Sc);
 
   // Optionally record function monotype in DeclMonos_ (we don't mutate AST
   // function signature)
-  FunDeclMonos[&D] = FnT;
+  FunDeclMonos[&D] = *FnT;
 
   // Restore outer environment
   Env = std::move(SavedEnv);

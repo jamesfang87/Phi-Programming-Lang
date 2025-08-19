@@ -4,7 +4,7 @@
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
-#include "Sema/HMTI/HMType.hpp"
+#include "Sema/HMTI/Substitution.hpp"
 #include "SrcManager/SrcLocation.hpp"
 #include <memory>
 #include <optional>
@@ -24,7 +24,7 @@ template <typename T> class ASTVisitor;
 class NameResolver;
 class TypeInferencer;
 
-using InferRes = std::pair<Substitution, std::shared_ptr<Monotype>>;
+using InferRes = std::pair<Substitution, Monotype>;
 
 /**
  * @brief Base class for all Eession nodes
