@@ -11,7 +11,7 @@ Type Monotype::toAstType() const {
   }
 
   if (isCon()) {
-    const auto &Name = asCon().name;
+    const auto &Name = asCon().Name;
     if (Name == "i8")
       return Type(Type::PrimitiveKind::I8Kind);
     if (Name == "i16")
@@ -48,7 +48,7 @@ Type Monotype::toAstType() const {
   // Fun: map to return type only — callers (Infer::annotate) handle
   // params+return
   if (isFun()) {
-    return asFun().ret->toAstType();
+    return asFun().Ret->toAstType();
   }
   return Type(Type::PrimitiveKind::I32Kind);
 }

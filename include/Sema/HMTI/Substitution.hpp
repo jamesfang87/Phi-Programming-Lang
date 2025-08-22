@@ -24,20 +24,20 @@ struct Substitution {
           return (it != Map.end()) ? apply(it->second) : t;
         },
         [&](const TypeCon &c) -> Monotype {
-          if (c.args.empty())
+          if (c.Args.empty())
             return t;
           std::vector<Monotype> args;
-          args.reserve(c.args.size());
-          for (auto &a : c.args)
+          args.reserve(c.Args.size());
+          for (auto &a : c.Args)
             args.push_back(apply(a));
-          return Monotype::makeCon(c.name, std::move(args));
+          return Monotype::makeCon(c.Name, std::move(args));
         },
         [&](const TypeFun &f) -> Monotype {
           std::vector<Monotype> ps;
-          ps.reserve(f.params.size());
-          for (auto &p : f.params)
+          ps.reserve(f.Params.size());
+          for (auto &p : f.Params)
             ps.push_back(apply(p));
-          return Monotype::makeFun(std::move(ps), apply(*f.ret));
+          return Monotype::makeFun(std::move(ps), apply(*f.Ret));
         });
   }
 

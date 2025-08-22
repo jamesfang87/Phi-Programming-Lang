@@ -6,22 +6,22 @@ namespace phi {
 
 class Polytype {
 public:
-  Polytype(std::vector<TypeVar> quant, Monotype body)
-      : quant(std::move(quant)), body(std::move(body)) {}
+  Polytype(std::vector<TypeVar> Quant, Monotype Body)
+      : Quant(std::move(Quant)), Body(std::move(Body)) {}
 
-  [[nodiscard]] const std::vector<TypeVar> &getQuant() const { return quant; }
-  [[nodiscard]] const Monotype &getBody() const { return body; }
+  [[nodiscard]] const std::vector<TypeVar> &getQuant() const { return Quant; }
+  [[nodiscard]] const Monotype &getBody() const { return Body; }
 
   const std::unordered_set<TypeVar> freeTypeVars() const {
-    auto sftv = body.freeTypeVars();
-    for (auto &q : quant)
-      sftv.erase(q);
-    return sftv;
+    auto FreeTypeVars = Body.freeTypeVars();
+    for (auto &Q : Quant)
+      FreeTypeVars.erase(Q);
+    return FreeTypeVars;
   }
 
 private:
-  std::vector<TypeVar> quant;
-  Monotype body;
+  std::vector<TypeVar> Quant;
+  Monotype Body;
 };
 
 } // namespace phi

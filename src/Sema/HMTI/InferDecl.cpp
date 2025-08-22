@@ -131,10 +131,10 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
     for (size_t i = 0; i < D.getParams().size(); ++i) {
       ParamDecl *P = D.getParams()[i].get();
       auto DeclParamTy = P->getType().toMonotype();
-      unifyInto(SBody, DeclParamTy, FnT->asFun().params[i]);
+      unifyInto(SBody, DeclParamTy, FnT->asFun().Params[i]);
     }
     auto DeclRetTy = D.getReturnTy().toMonotype();
-    unifyInto(SBody, DeclRetTy, *FnT->asFun().ret);
+    unifyInto(SBody, DeclRetTy, *FnT->asFun().Ret);
   } catch (const UnifyError &E) {
     throw std::runtime_error(std::string("Type error in function '") +
                              D.getId() + "': " + E.what());
