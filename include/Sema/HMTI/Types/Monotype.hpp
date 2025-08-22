@@ -20,14 +20,14 @@ namespace phi {
 class Monotype {
 private:
   using Variant = std::variant<TypeVar, TypeCon, TypeFun>;
-  std::shared_ptr<Variant> ptr;
+  std::shared_ptr<Variant> Ptr;
 
 public:
   // Ctors
   Monotype() = default;
-  explicit Monotype(TypeVar v) : ptr(std::make_shared<Variant>(std::move(v))) {}
-  explicit Monotype(TypeCon c) : ptr(std::make_shared<Variant>(std::move(c))) {}
-  explicit Monotype(TypeFun f) : ptr(std::make_shared<Variant>(std::move(f))) {}
+  explicit Monotype(TypeVar v) : Ptr(std::make_shared<Variant>(std::move(v))) {}
+  explicit Monotype(TypeCon c) : Ptr(std::make_shared<Variant>(std::move(c))) {}
+  explicit Monotype(TypeFun f) : Ptr(std::make_shared<Variant>(std::move(f))) {}
 
   // Factories
   static Monotype makeVar(int Id) {
@@ -37,35 +37,35 @@ public:
     return Monotype(TypeVar{.Id = Id, .Constraints = Constraints});
   }
 
-  static Monotype makeCon(std::string name, std::vector<Monotype> args = {}) {
-    return Monotype(TypeCon{.name = std::move(name), .args = std::move(args)});
+  static Monotype makeCon(std::string Name, std::vector<Monotype> Args = {}) {
+    return Monotype(TypeCon{.Name = std::move(Name), .Args = std::move(Args)});
   }
   // Accepts a Monotype ret (by value) and wraps it in a shared_ptr internally.
-  static Monotype makeFun(std::vector<Monotype> params, Monotype ret) {
-    TypeFun f;
-    f.params = std::move(params);
+  static Monotype makeFun(std::vector<Monotype> Params, Monotype Ret) {
+    TypeFun F;
+    F.Params = std::move(Params);
     // wrap the provided Monotype into a shared_ptr
-    f.ret = std::make_shared<Monotype>(std::move(ret));
-    return Monotype(std::move(f));
+    F.Ret = std::make_shared<Monotype>(std::move(Ret));
+    return Monotype(std::move(F));
   }
 
   static Monotype makeFun(std::vector<Monotype> params,
-                          std::shared_ptr<Monotype> ret) {
-    return Monotype(TypeFun({std::move(params), std::move(ret)}));
+                          const std::shared_ptr<Monotype> &ret) {
+    return makeFun(std::move(params), *ret);
   }
 
   // Kind checks
-  bool isVar() const { return std::holds_alternative<TypeVar>(*ptr); }
-  bool isCon() const { return std::holds_alternative<TypeCon>(*ptr); }
-  bool isFun() const { return std::holds_alternative<TypeFun>(*ptr); }
+  bool isVar() const { return std::holds_alternative<TypeVar>(*Ptr); }
+  bool isCon() const { return std::holds_alternative<TypeCon>(*Ptr); }
+  bool isFun() const { return std::holds_alternative<TypeFun>(*Ptr); }
 
   // Accessors
-  TypeVar &asVar() { return std::get<TypeVar>(*ptr); }
-  const TypeVar &asVar() const { return std::get<TypeVar>(*ptr); }
-  TypeCon &asCon() { return std::get<TypeCon>(*ptr); }
-  const TypeCon &asCon() const { return std::get<TypeCon>(*ptr); }
-  TypeFun &asFun() { return std::get<TypeFun>(*ptr); }
-  const TypeFun &asFun() const { return std::get<TypeFun>(*ptr); }
+  TypeVar &asVar() { return std::get<TypeVar>(*Ptr); }
+  const TypeVar &asVar() const { return std::get<TypeVar>(*Ptr); }
+  TypeCon &asCon() { return std::get<TypeCon>(*Ptr); }
+  const TypeCon &asCon() const { return std::get<TypeCon>(*Ptr); }
+  TypeFun &asFun() { return std::get<TypeFun>(*Ptr); }
+  const TypeFun &asFun() const { return std::get<TypeFun>(*Ptr); }
 
   // Visitor helper
   template <typename VarF, typename ConF, typename FunF>
@@ -80,42 +80,42 @@ public:
           else
             return ff(val);
         },
-        *ptr);
+        *Ptr);
   }
 
   template <typename VarF, typename ConF, typename FunF>
-  auto visit(VarF &&vf, ConF &&cf, FunF &&ff) const {
+  auto visit(VarF &&Var, ConF &&Con, FunF &&Fun) const {
     return std::visit(
-        [&](auto &&val) -> decltype(auto) {
-          using T = std::decay_t<decltype(val)>;
+        [&](auto &&Val) -> decltype(auto) {
+          using T = std::decay_t<decltype(Val)>;
           if constexpr (std::is_same_v<T, TypeVar>)
-            return vf(val);
+            return Var(Val);
           else if constexpr (std::is_same_v<T, TypeCon>)
-            return cf(val);
+            return Con(Val);
           else
-            return ff(val);
+            return Fun(Val);
         },
-        *ptr);
+        *Ptr);
   }
 
   std::unordered_set<TypeVar> freeTypeVars() const {
     return this->visit(
-        [](const TypeVar &v) { return std::unordered_set<TypeVar>{v}; },
-        [](const TypeCon &c) {
+        [](const TypeVar &Var) { return std::unordered_set<TypeVar>{Var}; },
+        [](const TypeCon &Con) {
           std::unordered_set<TypeVar> acc;
-          for (auto &a : c.args) {
+          for (auto &a : Con.Args) {
             auto s = a.freeTypeVars();
             acc.insert(s.begin(), s.end());
           }
           return acc;
         },
-        [](const TypeFun &f) {
+        [](const TypeFun &Fun) {
           std::unordered_set<TypeVar> acc;
-          for (auto &p : f.params) {
+          for (auto &p : Fun.Params) {
             auto s = p.freeTypeVars();
             acc.insert(s.begin(), s.end());
           }
-          auto r = f.ret->freeTypeVars();
+          auto r = Fun.Ret->freeTypeVars();
           acc.insert(r.begin(), r.end());
           return acc;
         });
@@ -123,40 +123,40 @@ public:
 
   // Pretty
   std::string toString() const {
-    return visit([](const TypeVar &v) { return std::to_string(v.Id); },
-                 [](const TypeCon &c) {
-                   if (c.args.empty())
-                     return c.name;
+    return visit([](const TypeVar &Var) { return std::to_string(Var.Id); },
+                 [](const TypeCon &Con) {
+                   if (Con.Args.empty())
+                     return Con.Name;
                    std::ostringstream os;
-                   os << c.name << "<";
-                   for (size_t i = 0; i < c.args.size(); ++i) {
-                     os << c.args[i].toString();
-                     if (i + 1 < c.args.size())
+                   os << Con.Name << "<";
+                   for (size_t i = 0; i < Con.Args.size(); ++i) {
+                     os << Con.Args[i].toString();
+                     if (i + 1 < Con.Args.size())
                        os << ", ";
                    }
                    os << ">";
                    return os.str();
                  },
-                 [](const TypeFun &f) {
+                 [](const TypeFun &Fun) {
                    std::ostringstream os;
                    os << "(";
-                   for (size_t i = 0; i < f.params.size(); ++i) {
-                     os << f.params[i].toString();
-                     if (i + 1 < f.params.size())
+                   for (size_t i = 0; i < Fun.Params.size(); ++i) {
+                     os << Fun.Params[i].toString();
+                     if (i + 1 < Fun.Params.size())
                        os << ", ";
                    }
-                   os << ") -> " << f.ret->toString();
+                   os << ") -> " << Fun.Ret->toString();
                    return os.str();
                  });
   }
 
   // Helpers (simple predicates)
-  bool isIntType() const {
-    return isCon() && (asCon().name == "i8" || asCon().name == "i16" ||
-                       asCon().name == "i32" || asCon().name == "i64");
+  [[nodiscard]] bool isIntType() const {
+    return isCon() && (asCon().Name == "i8" || asCon().Name == "i16" ||
+                       asCon().Name == "i32" || asCon().Name == "i64");
   }
-  bool isFloatType() const {
-    return isCon() && (asCon().name == "f32" || asCon().name == "f64");
+  [[nodiscard]] bool isFloatType() const {
+    return isCon() && (asCon().Name == "f32" || asCon().Name == "f64");
   }
 
   [[nodiscard]] Type toAstType() const;

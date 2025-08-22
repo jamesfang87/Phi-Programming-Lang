@@ -20,38 +20,38 @@ struct UnifyError : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
-inline bool occurs(const TypeVar &x, const Monotype &t) {
-  if (t.isVar())
-    return t.asVar() == x;
-  return t.freeTypeVars().count(x) != 0;
+inline bool occurs(const TypeVar &X, const Monotype &T) {
+  if (T.isVar())
+    return T.asVar() == X;
+  return T.freeTypeVars().count(X) != 0;
 }
 
-inline Substitution bindVar(const TypeVar &v, const Monotype &t) {
-  if (t.isVar() && t.asVar() == v)
+inline Substitution bindVar(const TypeVar &X, const Monotype &T) {
+  if (T.isVar() && T.asVar() == X)
     return {};
-  if (occurs(v, t))
-    throw UnifyError("occurs check failed: " + std::to_string(v.Id) + " in " +
-                     t.toString());
+  if (occurs(X, T))
+    throw UnifyError("occurs check failed: " + std::to_string(X.Id) + " in " +
+                     T.toString());
 
   // Check constraints
-  if (v.Constraints) {
-    if (t.isCon()) {
-      const std::string &name = t.asCon().name;
-      if (v.Constraints && !std::ranges::contains(*v.Constraints, name)) {
+  if (X.Constraints) {
+    if (T.isCon()) {
+      const std::string &name = T.asCon().Name;
+      if (X.Constraints && !std::ranges::contains(*X.Constraints, name)) {
         std::string Msg =
             std::format("type constraint violation: found type {} cannot be "
                         "unified with expected types of:",
                         name);
-        for (const auto &Possible : *v.Constraints) {
+        for (const auto &Possible : *X.Constraints) {
           Msg += Possible + ", ";
         }
         throw UnifyError(Msg);
       }
-    } else if (t.isVar() && t.asVar().Constraints) {
-      const TypeVar &Var = t.asVar();
+    } else if (T.isVar() && T.asVar().Constraints) {
+      const TypeVar &Var = T.asVar();
       // Check if constraints are compatible
       std::vector<std::string> common;
-      std::set_intersection(v.Constraints->begin(), v.Constraints->end(),
+      std::set_intersection(X.Constraints->begin(), X.Constraints->end(),
                             Var.Constraints->begin(), Var.Constraints->end(),
                             std::back_inserter(common));
       if (common.empty()) {
@@ -61,7 +61,7 @@ inline Substitution bindVar(const TypeVar &v, const Monotype &t) {
   }
 
   Substitution s;
-  s.Map.emplace(v, t);
+  s.Map.emplace(X, T);
   return s;
 }
 
@@ -76,12 +76,12 @@ inline Substitution unify(const Monotype &a0, const Monotype &b0) {
 
   if (a.isCon() && b.isCon()) {
     const auto &ac = a.asCon(), &bc = b.asCon();
-    if (ac.name != bc.name || ac.args.size() != bc.args.size())
+    if (ac.Name != bc.Name || ac.Args.size() != bc.Args.size())
       throw UnifyError("cannot unify " + a.toString() + " with " +
                        b.toString());
     Substitution s;
-    for (size_t i = 0; i < ac.args.size(); ++i) {
-      auto si = unify(s.apply(ac.args[i]), s.apply(bc.args[i]));
+    for (size_t i = 0; i < ac.Args.size(); ++i) {
+      auto si = unify(s.apply(ac.Args[i]), s.apply(bc.Args[i]));
       s.compose(si);
     }
     return s;
@@ -89,15 +89,15 @@ inline Substitution unify(const Monotype &a0, const Monotype &b0) {
 
   if (a.isFun() && b.isFun()) {
     const auto &af = a.asFun(), &bf = b.asFun();
-    if (af.params.size() != bf.params.size())
+    if (af.Params.size() != bf.Params.size())
       throw UnifyError("arity mismatch: " + a.toString() + " vs " +
                        b.toString());
     Substitution s;
-    for (size_t i = 0; i < af.params.size(); ++i) {
-      auto si = unify(s.apply(af.params[i]), s.apply(bf.params[i]));
+    for (size_t i = 0; i < af.Params.size(); ++i) {
+      auto si = unify(s.apply(af.Params[i]), s.apply(bf.Params[i]));
       s.compose(si);
     }
-    auto sr = unify(s.apply(*af.ret), s.apply(*bf.ret));
+    auto sr = unify(s.apply(*af.Ret), s.apply(*bf.Ret));
     s.compose(sr);
     return s;
   }
