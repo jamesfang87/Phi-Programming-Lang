@@ -208,9 +208,9 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
 
   TypeCon StructType = BaseType.asCon();
 
-  auto it = Structs.find(StructType.name);
+  auto it = Structs.find(StructType.Name);
   if (it == Structs.end()) {
-    std::println("Could not find struct {} in symbol table", StructType.name);
+    std::println("Could not find struct {} in symbol table", StructType.Name);
     return {s1, out};
   }
   StructDecl *Struct = it->second;
@@ -218,7 +218,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   FieldDecl *Field = Struct->getField(E.getMemberId());
   if (Field == nullptr) {
     std::println("Could not find field {} in struct {}", E.getMemberId(),
-                 StructType.name);
+                 StructType.Name);
     return {s1, out};
   }
 
@@ -243,7 +243,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
                              tBase.toString());
   }
 
-  const std::string StructName = tBase.asCon().name;
+  const std::string StructName = tBase.asCon().Name;
 
   // Lookup the struct in your symbol table
   auto it = Structs.find(StructName);

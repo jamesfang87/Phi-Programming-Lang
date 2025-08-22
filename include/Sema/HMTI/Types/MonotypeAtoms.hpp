@@ -15,13 +15,13 @@ struct TypeVar {
 };
 
 struct TypeCon {
-  std::string name;
-  std::vector<Monotype> args;
+  std::string Name;
+  std::vector<Monotype> Args;
 };
 
 struct TypeFun {
-  std::vector<Monotype> params;
-  std::shared_ptr<Monotype> ret;
+  std::vector<Monotype> Params;
+  std::shared_ptr<Monotype> Ret;
 };
 
 } // namespace phi
