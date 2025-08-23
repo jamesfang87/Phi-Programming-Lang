@@ -36,8 +36,7 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
 
   // 2) Get the loop variable
   VarDecl *LoopVar = &S.getLoopVar();
-  if (!LoopVar)
-    throw std::runtime_error("internal: ForStmt missing loop variable");
+  assert(LoopVar);
 
   // 3) Create fresh type variable for loop variable, restricted to integer
   // types

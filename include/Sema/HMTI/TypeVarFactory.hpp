@@ -6,8 +6,8 @@ namespace phi {
 // TypeVar generator
 // ---------------------------
 struct TypeVarFactory {
-  int next = 0;
-  int fresh() { return next++; }
+  int Next = 0;
+  int fresh() { return Next++; }
 };
 
 } // namespace phi

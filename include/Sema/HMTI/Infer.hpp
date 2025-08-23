@@ -100,19 +100,17 @@ private:
   void finalizeAnnotations();
 
   // Helper function to check if a type variable comes from a float literal
-  bool isFloatLiteralVar(const Monotype &T) const {
+  [[nodiscard]] bool isFloatLiteralVar(const Monotype &T) const {
     if (!T.isVar())
       return false;
-    return std::find(FloatTypeVars.begin(), FloatTypeVars.end(), T.asVar()) !=
-           FloatTypeVars.end();
+    return std::ranges::contains(FloatTypeVars, T.asVar());
   }
 
   // Helper function to check if a type variable comes from an int literal
-  bool isIntLiteralVar(const Monotype &T) const {
+  [[nodiscard]] bool isIntLiteralVar(const Monotype &T) const {
     if (!T.isVar())
       return false;
-    return std::find(IntTypeVars.begin(), IntTypeVars.end(), T.asVar()) !=
-           IntTypeVars.end();
+    return std::ranges::contains(IntTypeVars, T.asVar());
   }
 
   // token-kind helpers (same as before)
