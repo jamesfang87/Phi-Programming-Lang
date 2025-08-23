@@ -21,17 +21,17 @@ class TypeEnv {
 public:
   // Bind by declaration pointer (preferred: your DeclRefExpr should carry a
   // decl*)
-  void bind(const ValueDecl *D, Polytype Sc) {
-    DeclMap.emplace(D, std::move(Sc));
+  void bind(const ValueDecl *D, Polytype P) {
+    DeclMap.emplace(D, std::move(P));
   }
 
   // Rare fallback by name (if a DeclRefExpr hasn't been resolved)
-  void bind(std::string Name, Polytype Sc) {
-    NameMap.emplace(std::move(Name), std::move(Sc));
+  void bind(std::string Name, Polytype P) {
+    NameMap.emplace(std::move(Name), std::move(P));
   }
 
-  std::optional<Polytype> lookup(const ValueDecl *D) const {
-    auto It = DeclMap.find(D);
+  std::optional<Polytype> lookup(const ValueDecl *Decl) const {
+    auto It = DeclMap.find(Decl);
     if (It != DeclMap.end())
       return It->second;
     return std::nullopt;
