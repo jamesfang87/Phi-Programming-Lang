@@ -69,7 +69,7 @@ private:
   std::vector<TypeVar> FloatTypeVars;
 
   // expected return type stack
-  std::vector<Monotype> CurrentFnReturnTy;
+  std::vector<Monotype> CurFunRetType;
 
   // main passes
   void predeclare();

@@ -14,8 +14,8 @@ TypeInferencer::InferRes TypeInferencer::inferBlock(Block &B) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
-  auto ExpectedType = CurrentFnReturnTy.empty() ? Monotype::makeCon("unit")
-                                                : CurrentFnReturnTy.back();
+  auto ExpectedType =
+      CurFunRetType.empty() ? Monotype::makeCon("unit") : CurFunRetType.back();
   if (S.hasExpr()) {
     auto [Subst, ActualType] = visit(S.getExpr());
     unifyInto(Subst, ActualType, ExpectedType);

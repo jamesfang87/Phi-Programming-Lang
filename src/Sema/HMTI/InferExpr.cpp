@@ -165,7 +165,6 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     LhsType = AllSubst.apply(LhsType);
     RhsType = AllSubst.apply(RhsType);
 
-    // In Rust: lhs and rhs must have the same type
     unifyInto(AllSubst, LhsType, RhsType);
     recordSubst(AllSubst);
 
@@ -207,12 +206,12 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
 
   TypeCon StructType = BaseType.asCon();
 
-  auto it = Structs.find(StructType.Name);
-  if (it == Structs.end()) {
+  auto It = Structs.find(StructType.Name);
+  if (It == Structs.end()) {
     std::println("Could not find struct {} in symbol table", StructType.Name);
     return {BaseSubst, FieldType};
   }
-  StructDecl *Struct = it->second;
+  StructDecl *Struct = It->second;
 
   FieldDecl *FieldDecl = Struct->getField(E.getMemberId());
   if (FieldDecl == nullptr) {
