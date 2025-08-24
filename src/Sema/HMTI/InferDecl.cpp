@@ -1,4 +1,10 @@
+#include "AST/Decl.hpp"
+#include "Sema/HMTI/Algorithms.hpp"
 #include "Sema/HMTI/Infer.hpp"
+#include "Sema/HMTI/Types/Monotype.hpp"
+#include "Sema/HMTI/Types/Polytype.hpp"
+#include <cassert>
+#include <optional>
 
 namespace phi {
 
@@ -18,135 +24,118 @@ void TypeInferencer::inferDecl(Decl &D) {
 // Local variables must be kept monomorphic so that later unifications (e.g.
 // from passing them to functions) update the same monotype instance.
 void TypeInferencer::inferVarDecl(VarDecl &D) {
-  // Was this predeclared (top-level)? If so, Env_.lookup(&D) returns a Scheme.
-  auto ScOpt = Env.lookup(&D);
-  const bool WasPredeclared = static_cast<bool>(ScOpt);
+  std::optional<Polytype> P = Env.lookup(&D);
+  const bool TopLevel = static_cast<bool>(P);
 
   // Starting monotype: instantiate predeclared scheme, or create fresh var for
   // local.
-  std::shared_ptr<Monotype> VarTy = WasPredeclared
-                                        ? instantiate(*ScOpt, Factory)
-                                        : Monotype::var(Factory.fresh());
+  Monotype VarType =
+      TopLevel ? instantiate(*P, Factory) : Monotype::makeVar(Factory.fresh());
 
-  Substitution S;
+  Substitution Subst;
   if (D.hasInit()) {
-    auto [Si, Ti] = visit(D.getInit());
-    S = std::move(Si);
-    VarTy = S.apply(VarTy);
-    unifyInto(S, VarTy, Ti);
+    auto [InitSubst, InitType] = visit(D.getInit());
+    Subst = std::move(InitSubst);
+    VarType = Subst.apply(VarType);
+    unifyInto(Subst, VarType, InitType);
   }
 
   if (D.hasType()) {
-    auto Ann = D.getType().toMonotype();
-    unifyInto(S, VarTy, Ann);
-    VarTy = S.apply(Ann);
+    auto DeclaredAs = D.getType().toMonotype();
+    unifyInto(Subst, VarType, DeclaredAs);
+    VarType = Subst.apply(DeclaredAs);
   } else {
-    VarTy = S.apply(VarTy);
+    VarType = Subst.apply(VarType);
   }
 
   // Propagate substitutions globally (so subsequent lookups see effects).
-  recordSubst(S);
+  recordSubst(Subst);
 
   // Bind into the environment:
-  if (WasPredeclared) {
-    // Top-level/letrec: generalize as before.
-    auto Sc = generalize(Env, VarTy);
-    Env.bind(&D, Sc);
+  if (TopLevel) {
+    // Top-level/letrec: generalize as
+    Env.bind(&D, generalize(Env, VarType));
   } else {
     // Local variable: bind a monomorphic scheme (no quantification).
     // This ensures the same Monotype instance stays associated with the VarDecl
     // for the remainder of the function, so later unifications update it.
-    Env.bind(&D, Polytype{{}, VarTy});
+    Env.bind(&D, Polytype{{}, VarType});
   }
 
   // Side-table annotate (will be finalized later)
-  annotate(D, VarTy);
+  annotate(D, VarType);
 }
 
 // FunDecl: functions are looked up by name; param/return types MUST be
 // annotated by the user (we only verify consistency). We bind params
 // temporarily for body inference and discard them afterwards.
 void TypeInferencer::inferFunDecl(FunDecl &D) {
-  std::shared_ptr<Monotype> FnT;
+  std::optional<Monotype> FunType;
 
   // Lookup by name
-  if (auto Sc = Env.lookup(D.getId())) {
-    FnT = instantiate(*Sc, Factory);
+  if (auto Polytype = Env.lookup(D.getId())) {
+    FunType = instantiate(*Polytype, Factory);
   } else {
-    // Fallback: build from AST annotations (shouldn't normally happen)
-    std::vector<std::shared_ptr<Monotype>> Args;
-    Args.reserve(D.getParams().size());
-    for (auto &Pup : D.getParams()) {
-      ParamDecl *P = Pup.get();
-      if (!P->hasType()) {
-        throw std::runtime_error("Missing parameter type annotation for '" +
-                                 P->getId() + "'");
-      }
-      Args.push_back(P->getType().toMonotype());
+    std::vector<Monotype> Params;
+    Params.reserve(D.getParams().size());
+    for (auto &Param : D.getParams()) {
+      assert(Param->hasType());
+      Params.push_back(Param->getType().toMonotype());
     }
+
     auto Ret = D.getReturnTy().toMonotype();
-    FnT = Monotype::fun(std::move(Args), Ret);
+    FunType = Monotype::makeFun(std::move(Params), Ret);
   }
 
-  if (FnT->tag() != Monotype::Kind::Fun)
+  if (!FunType->isFun())
     throw std::runtime_error("internal: function expected a function monotype");
 
   // Save environment (we will restore)
   auto SavedEnv = Env;
 
   // Bind parameters (use user-declared types) for body inference
-  for (size_t i = 0; i < D.getParams().size(); ++i) {
-    ParamDecl *P = D.getParams()[i].get();
-    if (!P->hasType()) {
-      throw std::runtime_error("Parameter '" + P->getId() +
-                               "' must have a type annotation");
-    }
-    auto Pt = P->getType().toMonotype();
-    Env.bind(P, Polytype{{}, Pt});
+  for (auto &Param : D.getParams()) {
+    assert(Param->hasType());
+
+    auto T = Param->getType().toMonotype();
+    Env.bind(Param.get(), Polytype{{}, T});
     // record param monotype too so we can finalize param annotations if desired
-    ValDeclMonos[P] = Pt;
+    ValDeclMonos[Param.get()] = T;
   }
 
   // Use declared return type as expected for body
   auto DeclaredRet = D.getReturnTy().toMonotype();
-  CurrentFnReturnTy.push_back(DeclaredRet);
+  CurFunRetType.push_back(DeclaredRet);
 
   // Infer body
-  auto [SBody, _] = inferBlock(D.getBody());
+  auto [BodySubst, _] = inferBlock(D.getBody());
 
   // Propagate body substitution globally (important so call-sites see effects)
-  recordSubst(SBody);
+  recordSubst(BodySubst);
 
   // Apply substitution to function type
-  FnT = SBody.apply(FnT);
+  FunType = BodySubst.apply(*FunType);
 
-  CurrentFnReturnTy.pop_back();
+  CurFunRetType.pop_back();
 
   // Verify declared param/return types match inferred FnT (unify to find
   // errors)
-  try {
-    for (size_t i = 0; i < D.getParams().size(); ++i) {
-      ParamDecl *P = D.getParams()[i].get();
-      auto DeclParamTy = P->getType().toMonotype();
-      unifyInto(SBody, DeclParamTy, FnT->getFunArgs()[i]);
-    }
-    auto DeclRetTy = D.getReturnTy().toMonotype();
-    unifyInto(SBody, DeclRetTy, FnT->getFunReturn());
-  } catch (const UnifyError &E) {
-    throw std::runtime_error(std::string("Type error in function '") +
-                             D.getId() + "': " + E.what());
-  }
-
   // Record substitutions generated by those checks too
-  recordSubst(SBody);
+  for (size_t i = 0; i < D.getParams().size(); ++i) {
+    ParamDecl *P = D.getParams()[i].get();
+    auto DeclParamTy = P->getType().toMonotype();
+    unifyInto(BodySubst, DeclParamTy, FunType->asFun().Params[i]);
+  }
+  auto DeclaredRetType = D.getReturnTy().toMonotype();
+  unifyInto(BodySubst, DeclaredRetType, *FunType->asFun().Ret);
+  recordSubst(BodySubst);
 
   // Re-generalize in outer environment and rebind function name
-  auto Sc = generalize(SavedEnv, FnT);
-  SavedEnv.bind(D.getId(), Sc);
+  SavedEnv.bind(D.getId(), generalize(SavedEnv, *FunType));
 
-  // Optionally record function monotype in DeclMonos_ (we don't mutate AST
+  // Optionally record function monotype in DeclMonos (we don't mutate AST
   // function signature)
-  FunDeclMonos[&D] = FnT;
+  FunDeclMonos[&D] = *FunType;
 
   // Restore outer environment
   Env = std::move(SavedEnv);

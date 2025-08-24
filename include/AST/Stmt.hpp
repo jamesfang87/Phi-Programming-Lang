@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Sema/HMTI/HMType.hpp"
+#include "Sema/HMTI/Substitution.hpp"
 #include "SrcManager/SrcLocation.hpp"
 #include <memory>
 #include <vector>
@@ -12,7 +12,7 @@ template <typename T> class ASTVisitor;
 class NameResolver;
 class TypeInferencer;
 
-using InferRes = std::pair<Substitution, std::shared_ptr<Monotype>>;
+using InferRes = std::pair<Substitution, Monotype>;
 
 class Expr;
 class VarDecl;

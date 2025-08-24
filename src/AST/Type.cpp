@@ -1,6 +1,5 @@
 #include "AST/Type.hpp"
-#include "Sema/HMTI/HMType.hpp"
-#include <memory>
+#include "Sema/HMTI/Types/Monotype.hpp"
 
 namespace phi {
 /**
@@ -53,41 +52,41 @@ bool isNumTy(const Type &Ty) {
   return isIntTy(Ty) || isFloat(Ty);
 }
 
-std::shared_ptr<Monotype> Type::toMonotype() const {
+Monotype Type::toMonotype() const {
   // Map AST::Type::PrimitiveKind -> Monotype constructor names
   switch (Kind) {
   case Type::PrimitiveKind::I8Kind:
-    return Monotype::con("i8");
+    return Monotype::makeCon("i8");
   case Type::PrimitiveKind::I16Kind:
-    return Monotype::con("i16");
+    return Monotype::makeCon("i16");
   case Type::PrimitiveKind::I32Kind:
-    return Monotype::con("i32");
+    return Monotype::makeCon("i32");
   case Type::PrimitiveKind::I64Kind:
-    return Monotype::con("i64");
+    return Monotype::makeCon("i64");
   case Type::PrimitiveKind::U8Kind:
-    return Monotype::con("u8");
+    return Monotype::makeCon("u8");
   case Type::PrimitiveKind::U16Kind:
-    return Monotype::con("u16");
+    return Monotype::makeCon("u16");
   case Type::PrimitiveKind::U32Kind:
-    return Monotype::con("u32");
+    return Monotype::makeCon("u32");
   case Type::PrimitiveKind::U64Kind:
-    return Monotype::con("u64");
+    return Monotype::makeCon("u64");
   case Type::PrimitiveKind::F32Kind:
-    return Monotype::con("f32");
+    return Monotype::makeCon("f32");
   case Type::PrimitiveKind::F64Kind:
-    return Monotype::con("f64");
+    return Monotype::makeCon("f64");
   case Type::PrimitiveKind::StringKind:
-    return Monotype::con("string");
+    return Monotype::makeCon("string");
   case Type::PrimitiveKind::CharKind:
-    return Monotype::con("char");
+    return Monotype::makeCon("char");
   case Type::PrimitiveKind::BoolKind:
-    return Monotype::con("bool");
+    return Monotype::makeCon("bool");
   case Type::PrimitiveKind::RangeKind:
-    return Monotype::con("range");
+    return Monotype::makeCon("range");
   case Type::PrimitiveKind::NullKind:
-    return Monotype::con("null");
+    return Monotype::makeCon("null");
   case Type::PrimitiveKind::CustomKind:
-    return Monotype::con(getCustomTypeName());
+    return Monotype::makeCon(getCustomTypeName());
   }
 }
 

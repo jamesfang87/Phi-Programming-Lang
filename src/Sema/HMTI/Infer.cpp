@@ -1,13 +1,11 @@
-// src/Sema/HMTI/Infer.cpp
 #include "Sema/HMTI/Infer.hpp"
 #include "AST/Decl.hpp"
+#include "Sema/HMTI/Algorithms.hpp"
 #include "Sema/HMTI/TypeEnv.hpp"
 
 #include <llvm/Support/Casting.h>
 
-#include <algorithm>
 #include <memory>
-#include <stdexcept>
 #include <vector>
 
 namespace phi {
@@ -16,9 +14,6 @@ namespace phi {
 TypeInferencer::TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast)
     : Ast(std::move(Ast)) {
   for (const auto &D : this->Ast) {
-    if (auto S = llvm::dyn_cast<StructDecl>(D.get())) {
-      Structs[S->getId()] = S;
-    }
   }
 }
 
@@ -28,8 +23,8 @@ std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
   predeclare();
 
   // Infer each top-level declaration
-  for (auto &Up : Ast)
-    inferDecl(*Up);
+  for (auto &Decl : Ast)
+    inferDecl(*Decl);
 
   // Finalize annotations: apply global substitution and write back to AST
   finalizeAnnotations();
@@ -40,33 +35,29 @@ std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
 // Binds top-level VarDecl by ValueDecl pointer and FunDecl by name with their
 // user-provided annotations (functions must be annotated).
 void TypeInferencer::predeclare() {
-  for (auto &Up : Ast) {
-    if (auto V = llvm::dyn_cast<VarDecl>(Up.get())) {
-      // give letrec a fresh variable
-      auto Tv = Monotype::var(Factory.fresh());
-      Env.bind(V, Polytype{{}, Tv});
+  for (auto &Decl : Ast) {
+    if (auto Var = llvm::dyn_cast<VarDecl>(Decl.get())) {
+      auto NewTypeVar = Monotype::makeVar(Factory.fresh());
+      Env.bind(Var, Polytype{{}, NewTypeVar});
       continue;
     }
 
-    if (auto F = llvm::dyn_cast<FunDecl>(Up.get())) {
-      // Functions require parameter and return annotations by design.
-      std::vector<std::shared_ptr<Monotype>> ArgTys;
-      ArgTys.reserve(F->getParams().size());
-      for (auto &Pup : F->getParams()) {
-        ParamDecl *P = Pup.get();
-        if (!P->hasType()) {
-          throw std::runtime_error("Function parameter '" + P->getId() +
-                                   "' must have a type annotation");
-        }
-        ArgTys.push_back(P->getType().toMonotype());
-      }
-      // return type must be provided by user
-      auto Ret = F->getReturnTy().toMonotype();
-      auto FnT = Monotype::fun(std::move(ArgTys), Ret);
+    if (auto Fun = llvm::dyn_cast<FunDecl>(Decl.get())) {
+      std::vector<Monotype> ParamTypes;
+      ParamTypes.reserve(Fun->getParams().size());
 
-      // Bind function by name (string) in the environment
-      Env.bind(F->getId(), generalize(Env, FnT));
-      continue;
+      for (auto &Param : Fun->getParams()) {
+        assert(Param->hasType());
+        ParamTypes.push_back(Param->getType().toMonotype());
+      }
+
+      auto Ret = Fun->getReturnTy().toMonotype();
+      auto FunType = Monotype::makeFun(std::move(ParamTypes), Ret);
+      Env.bind(Fun->getId(), generalize(Env, FunType));
+    }
+
+    if (auto Struct = llvm::dyn_cast<StructDecl>(Decl.get())) {
+      Structs[Struct->getId()] = Struct;
     }
   }
 }
@@ -83,14 +74,11 @@ void TypeInferencer::recordSubst(const Substitution &S) {
 }
 
 // ---------------- annotation side-table ----------------
-void TypeInferencer::annotate(ValueDecl &D,
-                              const std::shared_ptr<Monotype> &T) {
+void TypeInferencer::annotate(ValueDecl &D, const Monotype &T) {
   ValDeclMonos[&D] = T;
 }
 
-void TypeInferencer::annotate(Expr &E, const std::shared_ptr<Monotype> &T) {
-  ExprMonos[&E] = T;
-}
+void TypeInferencer::annotate(Expr &E, const Monotype &T) { ExprMonos[&E] = T; }
 
 // ---------------- integer defaulting ----------------
 void TypeInferencer::defaultNums() {
@@ -104,7 +92,7 @@ void TypeInferencer::defaultNums() {
     }
 
     Substitution S;
-    S.Map.emplace(V, Monotype::con("i32"));
+    S.Map.emplace(V, Monotype::makeCon("i32"));
     recordSubst(S);
   }
 
@@ -119,7 +107,7 @@ void TypeInferencer::defaultNums() {
     }
 
     Substitution S;
-    S.Map.emplace(V, Monotype::con("f32"));
+    S.Map.emplace(V, Monotype::makeCon("f32"));
     recordSubst(S);
   }
 }
@@ -130,15 +118,15 @@ void TypeInferencer::finalizeAnnotations() {
   defaultNums(); // default floats and ints to f32, i32
 
   // Finalize ValueDecls
-  for (auto &D : ValDeclMonos) {
-    auto Mono = GlobalSubst.apply(D.second);
-    D.first->setType(Mono->toAstType());
+  for (auto &Decl : ValDeclMonos) {
+    Monotype T = GlobalSubst.apply(Decl.second);
+    Decl.first->setType(T.toAstType());
   }
 
   // Finalize Exprs
-  for (auto &E : ExprMonos) {
-    auto Mono = GlobalSubst.apply(E.second);
-    E.first->setType(Mono->toAstType());
+  for (auto &Expr : ExprMonos) {
+    Monotype T = GlobalSubst.apply(Expr.second);
+    Expr.first->setType(T.toAstType());
   }
 
   // Optionally clear side tables
