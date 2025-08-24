@@ -12,6 +12,7 @@ fun main() {
     const c = 1.6;
 
     for i in 1..10 {
+        const t: u64 = i;
     }
 
     foo(x, y);

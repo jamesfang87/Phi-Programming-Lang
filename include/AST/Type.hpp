@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cassert>
-#include <memory>
 #include <string>
 
 namespace phi {
@@ -120,7 +119,7 @@ public:
 
   bool operator!=(const Type &Other) const { return !(*this == Other); }
 
-  std::shared_ptr<Monotype> toMonotype() const;
+  Monotype toMonotype() const;
 
 private:
   /**

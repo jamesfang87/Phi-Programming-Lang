@@ -1,5 +1,5 @@
+#include "Sema/HMTI/Algorithms.hpp"
 #include "Sema/HMTI/Infer.hpp"
-
 #include <llvm/Support/Casting.h>
 
 #include <print>
@@ -15,232 +15,231 @@ namespace phi {
 TypeInferencer::InferRes TypeInferencer::visit(IntLiteral &E) {
   std::vector<std::string> IntConstraints = {"i8", "i16", "i32", "i64",
                                              "u8", "u16", "u32", "u64"};
-  auto Tv = Monotype::var(Factory.fresh());
-  Tv->asVar().Constraints = IntConstraints;
-  IntTypeVars.push_back(Tv->asVar());
-  annotate(E, Tv);
-  return {Substitution{}, Tv};
+  auto T = Monotype::makeVar(Factory.fresh(), IntConstraints);
+  IntTypeVars.push_back(T.asVar());
+  annotate(E, T);
+  return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(FloatLiteral &E) {
-  auto Tv = Monotype::var(Factory.fresh());
-  // Add float type constraints
-  Tv->asVar().Constraints = {"f32", "f64"};
-  FloatTypeVars.push_back(Tv->asVar());
-  annotate(E, Tv);
-  return {Substitution{}, Tv};
+  auto T = Monotype::makeVar(Factory.fresh(), {"f32", "f64"});
+  FloatTypeVars.push_back(T.asVar());
+  annotate(E, T);
+  return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(BoolLiteral &E) {
-  auto T = Monotype::con("bool");
+  auto T = Monotype::makeCon("bool");
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(CharLiteral &E) {
-  auto T = Monotype::con("char");
+  auto T = Monotype::makeCon("char");
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(StrLiteral &E) {
-  auto T = Monotype::con("string");
+  auto T = Monotype::makeCon("string");
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(RangeLiteral &E) {
-  auto [s1, tStart] = visit(E.getStart());
-  auto [s2, tEnd] = visit(E.getEnd());
-  Substitution S = s2;
-  S.compose(s1);
-  unifyInto(S, tStart, tEnd);
-  recordSubst(S);
-  auto TT = S.apply(tStart);
-  auto RangeT = Monotype::con("range", {TT});
-  annotate(E, RangeT);
-  return {S, RangeT};
+  auto [StartSubst, StartType] = visit(E.getStart());
+  auto [EndSubst, EndType] = visit(E.getEnd());
+  Substitution AllSubsts = EndSubst;
+  AllSubsts.compose(StartSubst);
+
+  unifyInto(AllSubsts, StartType, EndType);
+  recordSubst(AllSubsts);
+  auto EndPointType = AllSubsts.apply(StartType);
+  auto RangeType = Monotype::makeCon("range", {EndPointType});
+  annotate(E, RangeType);
+  return {AllSubsts, RangeType};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(DeclRefExpr &E) {
-  if (auto *VD = E.getDecl()) {
-    auto Sc = Env.lookup(VD);
-    if (!Sc)
-      throw std::runtime_error("unbound declaration: " + E.getId());
-    auto T = instantiate(*Sc, Factory);
-    annotate(E, T);
-    return {Substitution{}, T};
+  std::optional<Polytype> DeclaredAs;
+
+  if (auto *Decl = E.getDecl()) {
+    DeclaredAs = Env.lookup(Decl);
+  } else {
+    // fallback by name (could be a function or var)
+    DeclaredAs = Env.lookup(E.getId());
   }
-  // fallback by name (could be a function or var)
-  auto Scn = Env.lookup(E.getId());
-  if (!Scn)
-    throw std::runtime_error("unbound identifier: " + E.getId());
-  auto T = instantiate(*Scn, Factory);
+
+  assert(DeclaredAs);
+  Monotype T = instantiate(*DeclaredAs, Factory);
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(FunCallExpr &E) {
-  auto [sC, tCallee] = visit(E.getCallee());
-  Substitution s = sC;
-  std::vector<std::shared_ptr<Monotype>> ArgTys;
-  ArgTys.reserve(E.getArgs().size());
-  for (auto &ArgUP : E.getArgs()) {
-    auto [si, ti] = visit(*ArgUP);
-    s.compose(si);
-    tCallee = s.apply(tCallee);
-    ArgTys.push_back(s.apply(ti));
+  auto [CalleeSubst, CalleeType] = visit(E.getCallee());
+  Substitution AllSubst = CalleeSubst;
+
+  std::vector<Monotype> ArgTypes;
+  ArgTypes.reserve(E.getArgs().size());
+  for (auto &Arg : E.getArgs()) {
+    auto [ArgSubst, ArgType] = visit(*Arg);
+    AllSubst.compose(ArgSubst);
+    CalleeType = AllSubst.apply(CalleeType);
+    ArgTypes.push_back(AllSubst.apply(ArgType));
   }
-  auto tRes = Monotype::var(Factory.fresh());
-  auto fnExpect = Monotype::fun(ArgTys, tRes);
-  unifyInto(s, tCallee, fnExpect);
-  recordSubst(s);
-  annotate(E, s.apply(tRes));
-  return {s, s.apply(tRes)};
+
+  auto RetType = Monotype::makeVar(Factory.fresh());
+  auto ExpectedFunType = Monotype::makeFun(ArgTypes, RetType);
+  unifyInto(AllSubst, CalleeType, ExpectedFunType);
+  recordSubst(AllSubst);
+  annotate(E, AllSubst.apply(RetType));
+  return {AllSubst, AllSubst.apply(RetType)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
-  auto [s1, tO] = visit(E.getOperand());
-  Substitution s = s1;
+  auto [OperandSubst, OperandType] = visit(E.getOperand());
+  Substitution AllSubst = OperandSubst;
   if (E.getOp() == TokenKind::BangKind) {
-    unifyInto(s, tO, Monotype::con("bool"));
-    recordSubst(s);
-    annotate(E, Monotype::con("bool"));
-    return {s, Monotype::con("bool")};
+    unifyInto(AllSubst, OperandType, Monotype::makeCon("bool"));
+    recordSubst(AllSubst);
+    annotate(E, Monotype::makeCon("bool"));
+    return {AllSubst, Monotype::makeCon("bool")};
   }
-  // numeric unary -
-  auto a = Monotype::var(Factory.fresh());
-  auto opTy = Monotype::fun({a}, a);
-  auto callTy = Monotype::fun({s.apply(tO)}, Monotype::var(Factory.fresh()));
-  unifyInto(s, opTy, callTy);
-  recordSubst(s);
-  annotate(E, s.apply(a));
-  return {s, s.apply(a)};
+
+  // Numeric UnaryOp
+  auto NewTypeVar = Monotype::makeVar(Factory.fresh());
+  auto OpType = Monotype::makeFun({NewTypeVar}, NewTypeVar);
+  auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
+                                      Monotype::makeVar(Factory.fresh()));
+  unifyInto(AllSubst, OpType, TypeOfCall);
+  recordSubst(AllSubst);
+  annotate(E, AllSubst.apply(NewTypeVar));
+  return {AllSubst, AllSubst.apply(NewTypeVar)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
-  auto [sL, tL] = visit(E.getLhs());
-  auto [sR, tR] = visit(E.getRhs());
-  Substitution s = sR;
-  s.compose(sL);
+  auto [LhsSubst, LhsType] = visit(E.getLhs());
+  auto [RhsSubst, RhsType] = visit(E.getRhs());
+  Substitution AllSubst = RhsSubst;
+  AllSubst.compose(LhsSubst);
 
   TokenKind K = E.getOp();
 
   if (isLogical(K)) {
-    unifyInto(s, tL, Monotype::con("bool"));
-    unifyInto(s, tR, Monotype::con("bool"));
-    recordSubst(s);
-    annotate(E, Monotype::con("bool"));
-    return {s, Monotype::con("bool")};
+    unifyInto(AllSubst, LhsType, Monotype::makeCon("bool"));
+    unifyInto(AllSubst, RhsType, Monotype::makeCon("bool"));
+    recordSubst(AllSubst);
+    annotate(E, Monotype::makeCon("bool"));
+    return {AllSubst, Monotype::makeCon("bool")};
   }
 
   if (isComparison(K) || isEquality(K)) {
-    auto tl = s.apply(tL);
-    auto tr = s.apply(tR);
+    LhsType = AllSubst.apply(LhsType);
+    RhsType = AllSubst.apply(RhsType);
 
-    unifyInto(s, tl, tr);
+    unifyInto(AllSubst, LhsType, RhsType);
 
-    recordSubst(s);
-    annotate(E, Monotype::con("bool"));
-    return {s, Monotype::con("bool")};
+    recordSubst(AllSubst);
+    annotate(E, Monotype::makeCon("bool"));
+    return {AllSubst, Monotype::makeCon("bool")};
   }
 
   if (isArithmetic(K)) {
-    auto tl = s.apply(tL);
-    auto tr = s.apply(tR);
+    LhsType = AllSubst.apply(LhsType);
+    RhsType = AllSubst.apply(RhsType);
 
     // Standard arithmetic unification for non-float cases
-    auto a = Monotype::var(Factory.fresh());
-    auto opTy = Monotype::fun({a, a}, a);
-    auto callTy = Monotype::fun({tl, tr}, Monotype::var(Factory.fresh()));
-    unifyInto(s, opTy, callTy);
-    recordSubst(s);
-    auto res = s.apply(a);
-    annotate(E, res);
-    return {s, res};
+    auto NewTypeVar = Monotype::makeVar(Factory.fresh());
+    auto OpType = Monotype::makeFun({NewTypeVar, NewTypeVar}, NewTypeVar);
+    auto TypeOfCall = Monotype::makeFun({LhsType, RhsType},
+                                        Monotype::makeVar(Factory.fresh()));
+    unifyInto(AllSubst, OpType, TypeOfCall);
+    recordSubst(AllSubst);
+    auto ResultingType = AllSubst.apply(NewTypeVar);
+    annotate(E, ResultingType);
+    return {AllSubst, ResultingType};
   }
 
   if (K == TokenKind::EqualsKind) {
-    auto tl = s.apply(tL);
-    auto tr = s.apply(tR);
+    LhsType = AllSubst.apply(LhsType);
+    RhsType = AllSubst.apply(RhsType);
 
-    // In Rust: lhs and rhs must have the same type
-    unifyInto(s, tl, tr);
-
-    recordSubst(s);
+    unifyInto(AllSubst, LhsType, RhsType);
+    recordSubst(AllSubst);
 
     // Assignment expressions evaluate to unit
-    auto res = Monotype::con("unit");
-    annotate(E, res);
-    return {s, res};
+    auto ResultingType = Monotype::makeCon("unit");
+    annotate(E, ResultingType);
+    return {AllSubst, ResultingType};
   }
 
   throw std::runtime_error("inferBinary: unsupported operator token kind");
 }
+
 TypeInferencer::InferRes TypeInferencer::visit(StructInitExpr &E) {
-  auto st = Monotype::con(E.getStructId());
-  Substitution s;
-  for (auto &f : E.getFields()) {
-    auto [si, tv] = visit(*f->getValue());
-    s.compose(si);
-    if (auto *FD = f->getDecl()) {
-      auto fieldTy = FD->getType().toMonotype();
-      unifyInto(s, fieldTy, tv);
+  auto Struct = Monotype::makeCon(E.getStructId());
+  Substitution AllSubsts;
+  for (auto &Field : E.getFields()) {
+    auto [FieldSubst, FieldType] = visit(*Field->getValue());
+    AllSubsts.compose(FieldSubst);
+    if (auto *FieldDecl = Field->getDecl()) {
+      auto DeclaredAs = FieldDecl->getType().toMonotype();
+      unifyInto(AllSubsts, DeclaredAs, FieldType);
     }
   }
-  recordSubst(s);
-  annotate(E, st);
-  return {s, st};
+  recordSubst(AllSubsts);
+  annotate(E, Struct);
+  return {AllSubsts, Struct};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(FieldInitExpr &E) {
-  auto [s, tv] = visit(*E.getValue());
-  recordSubst(s);
-  annotate(E, tv);
-  return {s, tv};
+  auto [Subst, Type] = visit(*E.getValue());
+  recordSubst(Subst);
+  annotate(E, Type);
+  return {Subst, Type};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
-  auto [s1, tBase] = visit(*E.getBase());
-  auto out = Monotype::var(Factory.fresh());
+  auto [BaseSubst, BaseType] = visit(*E.getBase());
+  auto FieldType = Monotype::makeVar(Factory.fresh());
 
-  auto it = Structs.find(tBase->getConName());
-  if (it == Structs.end()) {
-    std::println("Could not find struct {} in symbol table",
-                 tBase->getConName());
-    return {s1, out};
+  TypeCon StructType = BaseType.asCon();
+
+  auto It = Structs.find(StructType.Name);
+  if (It == Structs.end()) {
+    std::println("Could not find struct {} in symbol table", StructType.Name);
+    return {BaseSubst, FieldType};
   }
-  StructDecl *Struct = it->second;
+  StructDecl *Struct = It->second;
 
-  FieldDecl *Field = Struct->getField(E.getMemberId());
-  if (Field == nullptr) {
+  FieldDecl *FieldDecl = Struct->getField(E.getMemberId());
+  if (FieldDecl == nullptr) {
     std::println("Could not find field {} in struct {}", E.getMemberId(),
-                 tBase->getConName());
-    return {s1, out};
+                 StructType.Name);
+    return {BaseSubst, FieldType};
   }
 
   // Convert the field's AST type to a Monotype and unify with our output
-  auto fieldType = Field->getType().toMonotype();
-  unifyInto(s1, out, fieldType);
+  auto DeclaredAs = FieldDecl->getType().toMonotype();
+  unifyInto(BaseSubst, FieldType, DeclaredAs);
 
-  recordSubst(s1);
-  annotate(E, out);
-  return {s1, out};
+  recordSubst(BaseSubst);
+  annotate(E, FieldType);
+  return {BaseSubst, FieldType};
 }
-
-// Replace your existing MemberFunCallExpr handler with this:
 
 TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
   // 1) Infer base expression (the receiver)
   auto [sBase, tBase] = visit(*E.getBase());
 
   // Ensure base is a struct constructor type
-  if (tBase->tag() != Monotype::Kind::Con) {
+  if (!tBase.isCon()) {
     throw std::runtime_error("method call on non-struct type: " +
-                             tBase->toString());
+                             tBase.toString());
   }
 
-  const std::string StructName = tBase->getConName();
+  const std::string StructName = tBase.asCon().Name;
 
   // Lookup the struct in your symbol table
   auto it = Structs.find(StructName);
@@ -261,13 +260,14 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
 
   // Find the method declaration inside the struct
   FunDecl *Method = Struct->getMethod(MethodName);
+  E.getCall().setDecl(Method);
   if (!Method) {
     throw std::runtime_error("struct '" + StructName + "' has no method '" +
                              MethodName + "'");
   }
 
   // 2) Build the method's Monotype from its AST param types and return type
-  std::vector<std::shared_ptr<Monotype>> MethodParams;
+  std::vector<Monotype> MethodParams;
   MethodParams.reserve(Method->getParams().size());
 
   for (auto &ParamUP : Method->getParams()) {
@@ -277,45 +277,28 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
                                "' missing type annotation");
     }
     auto PTy = P->getType().toMonotype();
-    if (!PTy) {
-      throw std::runtime_error(
-          "internal error: fromAstType returned null for parameter of method " +
-          MethodName);
-    }
     MethodParams.push_back(PTy);
   }
 
   // Return type must be present (your FunDecl stores return type)
   auto RetTy = Method->getReturnTy().toMonotype();
-  if (!RetTy) {
-    throw std::runtime_error(
-        "internal error: fromAstType returned null for return type of method " +
-        MethodName);
-  }
-
   // 3) Prepend the receiver type to the parameter list to form full function
   // type
   //    Here the receiver type is tBase (the concrete struct monotype).
-  std::vector<std::shared_ptr<Monotype>> FullParams;
+  std::vector<Monotype> FullParams;
   FullParams.reserve(1 + MethodParams.size());
   FullParams.push_back(
       sBase.apply(tBase)); // apply substitution so receiver is up-to-date
   for (auto &p : MethodParams)
     FullParams.push_back(p);
 
-  auto MethodMonotype = Monotype::fun(std::move(FullParams), RetTy);
-  if (!MethodMonotype) {
-    throw std::runtime_error(
-        "internal error: failed to construct method monotype for " +
-        StructName + "::" + MethodName);
-  }
-
+  auto MethodMonotype = Monotype::makeFun(std::move(FullParams), RetTy);
   // 4) Now infer the call: first collect argument types (receiver + explicit
   // args) Start with the base substitution sBase
   Substitution S = sBase;
 
   // receiver arg type (we already have it): use s-applied version
-  std::vector<std::shared_ptr<Monotype>> CallArgTys;
+  std::vector<Monotype> CallArgTys;
   CallArgTys.reserve(1 + E.getCall().getArgs().size());
   CallArgTys.push_back(S.apply(tBase)); // receiver goes first
 
@@ -328,10 +311,10 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
   }
 
   // 5) Make a fresh result type for the call
-  auto ResultTy = Monotype::var(Factory.fresh());
+  auto ResultTy = Monotype::makeVar(Factory.fresh());
 
   // Expected function shape from the call site: (arg types...) -> ResultTy
-  auto FnExpect = Monotype::fun(CallArgTys, ResultTy);
+  auto FnExpect = Monotype::makeFun(CallArgTys, ResultTy);
 
   // 6) Unify the declared method monotype with the expected call shape.
   //    This will unify receiver and arguments and produce substitutions.
