@@ -1,10 +1,10 @@
 #pragma once
 
-#include "Sema/HMTI/Substitution.hpp"
-#include "Sema/HMTI/TypeEnv.hpp"
-#include "Sema/HMTI/TypeVarFactory.hpp"
-#include "Sema/HMTI/Types/Monotype.hpp"
-#include "Sema/HMTI/Types/Polytype.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
+#include "Sema/TypeInference/TypeEnv.hpp"
+#include "Sema/TypeInference/TypeVarFactory.hpp"
+#include "Sema/TypeInference/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/Polytype.hpp"
 
 namespace phi {
 
@@ -23,13 +23,13 @@ inline Monotype instantiate(const Polytype &P, TypeVarFactory &Factory) {
 }
 
 inline Polytype generalize(const TypeEnv &Env, const Monotype &t) {
-  auto MonotypeFTVs = t.freeTypeVars();
-  auto EnvFTVs = Env.freeTypeVars();
+  const auto MonotypeFTVs = t.freeTypeVars();
+  const auto EnvFTVs = Env.freeTypeVars();
 
   // Quant = ftv(t) \ ftv(env)
   std::vector<TypeVar> Quant;
   for (auto &v : MonotypeFTVs)
-    if (!EnvFTVs.count(v))
+    if (!EnvFTVs.contains(v))
       Quant.push_back(v);
 
   return {std::move(Quant), t};

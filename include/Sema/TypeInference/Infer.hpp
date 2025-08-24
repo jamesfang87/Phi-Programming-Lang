@@ -2,12 +2,11 @@
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
-#include "AST/Type.hpp"
-#include "Sema/HMTI/TypeEnv.hpp"
-#include "Sema/HMTI/TypeVarFactory.hpp"
-#include "Sema/HMTI/Types/Monotype.hpp"
-#include "Sema/HMTI/Types/MonotypeAtoms.hpp"
-#include "Sema/HMTI/Unify.hpp"
+#include "Sema/TypeInference/TypeEnv.hpp"
+#include "Sema/TypeInference/TypeVarFactory.hpp"
+#include "Sema/TypeInference/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/MonotypeAtoms.hpp"
+#include "Sema/TypeInference/Unify.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -24,7 +23,7 @@ public:
   std::vector<std::unique_ptr<Decl>> inferProgram();
 
   using InferRes = std::pair<Substitution, Monotype>;
-  InferRes visit(Stmt &S);
+
   InferRes visit(ReturnStmt &S);
   InferRes visit(ForStmt &S);
   InferRes visit(WhileStmt &S);
@@ -114,10 +113,10 @@ private:
   }
 
   // token-kind helpers (same as before)
-  [[nodiscard]] bool isArithmetic(TokenKind K) const noexcept;
-  [[nodiscard]] bool isLogical(TokenKind K) const noexcept;
-  [[nodiscard]] bool isComparison(TokenKind K) const noexcept;
-  [[nodiscard]] bool isEquality(TokenKind K) const noexcept;
+  [[nodiscard]] static bool isArithmetic(TokenKind K) noexcept;
+  [[nodiscard]] static bool isLogical(TokenKind K) noexcept;
+  [[nodiscard]] static bool isComparison(TokenKind K) noexcept;
+  [[nodiscard]] static bool isEquality(TokenKind K) noexcept;
 };
 
 } // namespace phi

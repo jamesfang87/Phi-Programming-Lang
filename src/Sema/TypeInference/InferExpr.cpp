@@ -1,5 +1,5 @@
-#include "Sema/HMTI/Algorithms.hpp"
-#include "Sema/HMTI/Infer.hpp"
+#include "Sema/TypeInference/Algorithms.hpp"
+#include "Sema/TypeInference/Infer.hpp"
 #include <llvm/Support/Casting.h>
 
 #include <print>
@@ -13,8 +13,8 @@ namespace phi {
 // Substitution.
 
 TypeInferencer::InferRes TypeInferencer::visit(IntLiteral &E) {
-  std::vector<std::string> IntConstraints = {"i8", "i16", "i32", "i64",
-                                             "u8", "u16", "u32", "u64"};
+  const std::vector<std::string> IntConstraints = {"i8", "i16", "i32", "i64",
+                                                   "u8", "u16", "u32", "u64"};
   auto T = Monotype::makeVar(Factory.fresh(), IntConstraints);
   IntTypeVars.push_back(T.asVar());
   annotate(E, T);
@@ -63,7 +63,7 @@ TypeInferencer::InferRes TypeInferencer::visit(RangeLiteral &E) {
 TypeInferencer::InferRes TypeInferencer::visit(DeclRefExpr &E) {
   std::optional<Polytype> DeclaredAs;
 
-  if (auto *Decl = E.getDecl()) {
+  if (const auto *Decl = E.getDecl()) {
     DeclaredAs = Env.lookup(Decl);
   } else {
     // fallback by name (could be a function or var)
@@ -89,8 +89,8 @@ TypeInferencer::InferRes TypeInferencer::visit(FunCallExpr &E) {
     ArgTypes.push_back(AllSubst.apply(ArgType));
   }
 
-  auto RetType = Monotype::makeVar(Factory.fresh());
-  auto ExpectedFunType = Monotype::makeFun(ArgTypes, RetType);
+  const auto RetType = Monotype::makeVar(Factory.fresh());
+  const auto ExpectedFunType = Monotype::makeFun(ArgTypes, RetType);
   unifyInto(AllSubst, CalleeType, ExpectedFunType);
   recordSubst(AllSubst);
   annotate(E, AllSubst.apply(RetType));
@@ -109,8 +109,8 @@ TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
 
   // Numeric UnaryOp
   auto NewTypeVar = Monotype::makeVar(Factory.fresh());
-  auto OpType = Monotype::makeFun({NewTypeVar}, NewTypeVar);
-  auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
+  const auto OpType = Monotype::makeFun({NewTypeVar}, NewTypeVar);
+  const auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
                                       Monotype::makeVar(Factory.fresh()));
   unifyInto(AllSubst, OpType, TypeOfCall);
   recordSubst(AllSubst);
@@ -124,7 +124,7 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
   Substitution AllSubst = RhsSubst;
   AllSubst.compose(LhsSubst);
 
-  TokenKind K = E.getOp();
+  const TokenKind K = E.getOp();
 
   if (isLogical(K)) {
     unifyInto(AllSubst, LhsType, Monotype::makeCon("bool"));
@@ -151,9 +151,9 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
 
     // Standard arithmetic unification for non-float cases
     auto NewTypeVar = Monotype::makeVar(Factory.fresh());
-    auto OpType = Monotype::makeFun({NewTypeVar, NewTypeVar}, NewTypeVar);
-    auto TypeOfCall = Monotype::makeFun({LhsType, RhsType},
-                                        Monotype::makeVar(Factory.fresh()));
+    const auto OpType = Monotype::makeFun({NewTypeVar, NewTypeVar}, NewTypeVar);
+    const auto TypeOfCall = Monotype::makeFun({LhsType, RhsType},
+                                          Monotype::makeVar(Factory.fresh()));
     unifyInto(AllSubst, OpType, TypeOfCall);
     recordSubst(AllSubst);
     auto ResultingType = AllSubst.apply(NewTypeVar);
@@ -183,7 +183,7 @@ TypeInferencer::InferRes TypeInferencer::visit(StructInitExpr &E) {
   for (auto &Field : E.getFields()) {
     auto [FieldSubst, FieldType] = visit(*Field->getValue());
     AllSubsts.compose(FieldSubst);
-    if (auto *FieldDecl = Field->getDecl()) {
+    if (const auto *FieldDecl = Field->getDecl()) {
       auto DeclaredAs = FieldDecl->getType().toMonotype();
       unifyInto(AllSubsts, DeclaredAs, FieldType);
     }
@@ -204,24 +204,24 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   auto [BaseSubst, BaseType] = visit(*E.getBase());
   auto FieldType = Monotype::makeVar(Factory.fresh());
 
-  TypeCon StructType = BaseType.asCon();
+  auto [TypeName, Args] = BaseType.asCon();
 
-  auto It = Structs.find(StructType.Name);
+  const auto It = Structs.find(TypeName);
   if (It == Structs.end()) {
-    std::println("Could not find struct {} in symbol table", StructType.Name);
+    std::println("Could not find struct {} in symbol table", TypeName);
     return {BaseSubst, FieldType};
   }
   StructDecl *Struct = It->second;
 
-  FieldDecl *FieldDecl = Struct->getField(E.getMemberId());
+  const FieldDecl *FieldDecl = Struct->getField(E.getMemberId());
   if (FieldDecl == nullptr) {
     std::println("Could not find field {} in struct {}", E.getMemberId(),
-                 StructType.Name);
+                 TypeName);
     return {BaseSubst, FieldType};
   }
 
   // Convert the field's AST type to a Monotype and unify with our output
-  auto DeclaredAs = FieldDecl->getType().toMonotype();
+  const auto DeclaredAs = FieldDecl->getType().toMonotype();
   unifyInto(BaseSubst, FieldType, DeclaredAs);
 
   recordSubst(BaseSubst);
