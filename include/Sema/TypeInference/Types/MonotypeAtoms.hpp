@@ -26,10 +26,8 @@ struct TypeFun {
 
 } // namespace phi
 
-namespace std {
-template <> struct hash<phi::TypeVar> {
+template <> struct std::hash<phi::TypeVar> {
   size_t operator()(const phi::TypeVar &V) const noexcept {
     return std::hash<int>{}(V.Id);
   }
-};
-} // namespace std
+}; // namespace std

@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "AST/Type.hpp"
-#include "Sema/HMTI/Types/MonotypeAtoms.hpp"
+#include "Sema/TypeInference/Types/MonotypeAtoms.hpp"
 
 namespace phi {
 
@@ -30,10 +30,10 @@ public:
   explicit Monotype(TypeFun f) : Ptr(std::make_shared<Variant>(std::move(f))) {}
 
   // Factories
-  static Monotype makeVar(int Id) {
+  static Monotype makeVar(const int Id) {
     return Monotype(TypeVar{.Id = Id, .Constraints = std::nullopt});
   }
-  static Monotype makeVar(int Id, std::vector<std::string> Constraints) {
+  static Monotype makeVar(const int Id, std::vector<std::string> Constraints) {
     return Monotype(TypeVar{.Id = Id, .Constraints = Constraints});
   }
 
@@ -55,24 +55,25 @@ public:
   }
 
   // Kind checks
-  bool isVar() const { return std::holds_alternative<TypeVar>(*Ptr); }
-  bool isCon() const { return std::holds_alternative<TypeCon>(*Ptr); }
-  bool isFun() const { return std::holds_alternative<TypeFun>(*Ptr); }
+  [[nodiscard]] bool isVar() const { return std::holds_alternative<TypeVar>(*Ptr); }
+  [[nodiscard]] bool isCon() const { return std::holds_alternative<TypeCon>(*Ptr); }
+  [[nodiscard]] bool isFun() const { return std::holds_alternative<TypeFun>(*Ptr); }
 
   // Accessors
   TypeVar &asVar() { return std::get<TypeVar>(*Ptr); }
-  const TypeVar &asVar() const { return std::get<TypeVar>(*Ptr); }
   TypeCon &asCon() { return std::get<TypeCon>(*Ptr); }
-  const TypeCon &asCon() const { return std::get<TypeCon>(*Ptr); }
   TypeFun &asFun() { return std::get<TypeFun>(*Ptr); }
-  const TypeFun &asFun() const { return std::get<TypeFun>(*Ptr); }
+
+  [[nodiscard]] const TypeVar &asVar() const { return std::get<TypeVar>(*Ptr); }
+  [[nodiscard]] const TypeCon &asCon() const { return std::get<TypeCon>(*Ptr); }
+  [[nodiscard]] const TypeFun &asFun() const { return std::get<TypeFun>(*Ptr); }
 
   // Visitor helper
   template <typename VarF, typename ConF, typename FunF>
   auto visit(VarF &&vf, ConF &&cf, FunF &&ff) {
     return std::visit(
-        [&](auto &&val) -> decltype(auto) {
-          using T = std::decay_t<decltype(val)>;
+        [&]<typename Input>(Input &&val) -> decltype(auto) {
+          using T = std::decay_t<Input>;
           if constexpr (std::is_same_v<T, TypeVar>)
             return vf(val);
           else if constexpr (std::is_same_v<T, TypeCon>)
@@ -86,8 +87,8 @@ public:
   template <typename VarF, typename ConF, typename FunF>
   auto visit(VarF &&Var, ConF &&Con, FunF &&Fun) const {
     return std::visit(
-        [&](auto &&Val) -> decltype(auto) {
-          using T = std::decay_t<decltype(Val)>;
+        [&]<typename Input>(Input &&Val) -> decltype(auto) {
+          using T = std::decay_t<Input>;
           if constexpr (std::is_same_v<T, TypeVar>)
             return Var(Val);
           else if constexpr (std::is_same_v<T, TypeCon>)
@@ -98,7 +99,7 @@ public:
         *Ptr);
   }
 
-  std::unordered_set<TypeVar> freeTypeVars() const {
+  [[nodiscard]] std::unordered_set<TypeVar> freeTypeVars() const {
     return this->visit(
         [](const TypeVar &Var) { return std::unordered_set<TypeVar>{Var}; },
         [](const TypeCon &Con) {
@@ -122,7 +123,7 @@ public:
   }
 
   // Pretty
-  std::string toString() const {
+  [[nodiscard]] std::string toString() const {
     return visit([](const TypeVar &Var) { return std::to_string(Var.Id); },
                  [](const TypeCon &Con) {
                    if (Con.Args.empty())

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Sema/HMTI/Substitution.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
 #include "SrcManager/SrcLocation.hpp"
 #include <memory>
 #include <vector>
