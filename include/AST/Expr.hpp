@@ -4,7 +4,7 @@
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
-#include "Sema/HMTI/Substitution.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
 #include "SrcManager/SrcLocation.hpp"
 #include <memory>
 #include <optional>

@@ -1,8 +1,8 @@
 #include "AST/Decl.hpp"
-#include "Sema/HMTI/Algorithms.hpp"
-#include "Sema/HMTI/Infer.hpp"
-#include "Sema/HMTI/Types/Monotype.hpp"
-#include "Sema/HMTI/Types/Polytype.hpp"
+#include "Sema/TypeInference/Algorithms.hpp"
+#include "Sema/TypeInference/Infer.hpp"
+#include "Sema/TypeInference/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/Polytype.hpp"
 #include <cassert>
 #include <optional>
 
@@ -24,7 +24,7 @@ void TypeInferencer::inferDecl(Decl &D) {
 // Local variables must be kept monomorphic so that later unifications (e.g.
 // from passing them to functions) update the same monotype instance.
 void TypeInferencer::inferVarDecl(VarDecl &D) {
-  std::optional<Polytype> P = Env.lookup(&D);
+  const std::optional<Polytype> P = Env.lookup(&D);
   const bool TopLevel = static_cast<bool>(P);
 
   // Starting monotype: instantiate predeclared scheme, or create fresh var for
@@ -41,7 +41,7 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
   }
 
   if (D.hasType()) {
-    auto DeclaredAs = D.getType().toMonotype();
+    const auto DeclaredAs = D.getType().toMonotype();
     unifyInto(Subst, VarType, DeclaredAs);
     VarType = Subst.apply(DeclaredAs);
   } else {

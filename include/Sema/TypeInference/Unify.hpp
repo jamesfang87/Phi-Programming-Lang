@@ -8,8 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Sema/HMTI/Substitution.hpp"
-#include "Sema/HMTI/Types/Monotype.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
+#include "Sema/TypeInference/Types/Monotype.hpp"
 
 namespace phi {
 
@@ -23,7 +23,7 @@ struct UnifyError : std::runtime_error {
 inline bool occurs(const TypeVar &X, const Monotype &M) {
   if (M.isVar())
     return M.asVar() == X;
-  return M.freeTypeVars().count(X) != 0;
+  return M.freeTypeVars().contains(X);
 }
 
 inline Substitution bindVar(const TypeVar &X, const Monotype &M) {
@@ -48,12 +48,11 @@ inline Substitution bindVar(const TypeVar &X, const Monotype &M) {
         throw UnifyError(Msg);
       }
     } else if (M.isVar() && M.asVar().Constraints) {
-      const TypeVar &Var = M.asVar();
+      const auto &[Id, Constraints] = M.asVar();
       // Check if constraints are compatible
       std::vector<std::string> Intersect;
-      std::set_intersection(X.Constraints->begin(), X.Constraints->end(),
-                            Var.Constraints->begin(), Var.Constraints->end(),
-                            std::back_inserter(Intersect));
+      std::ranges::set_intersection(*X.Constraints, *Constraints,
+                                    std::back_inserter(Intersect));
       if (Intersect.empty()) {
         throw UnifyError("incompatible type constraints");
       }

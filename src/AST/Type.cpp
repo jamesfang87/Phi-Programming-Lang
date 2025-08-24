@@ -1,5 +1,5 @@
 #include "AST/Type.hpp"
-#include "Sema/HMTI/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/Monotype.hpp"
 
 namespace phi {
 /**
