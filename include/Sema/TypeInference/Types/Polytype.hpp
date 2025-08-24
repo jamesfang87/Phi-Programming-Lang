@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Sema/HMTI/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/Monotype.hpp"
 
 namespace phi {
 
@@ -12,7 +12,7 @@ public:
   [[nodiscard]] const std::vector<TypeVar> &getQuant() const { return Quant; }
   [[nodiscard]] const Monotype &getBody() const { return Body; }
 
-  const std::unordered_set<TypeVar> freeTypeVars() const {
+  [[nodiscard]] std::unordered_set<TypeVar> freeTypeVars() const {
     auto FreeTypeVars = Body.freeTypeVars();
     for (auto &Q : Quant)
       FreeTypeVars.erase(Q);

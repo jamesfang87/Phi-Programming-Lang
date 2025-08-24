@@ -9,7 +9,7 @@
 #include "AST/Decl.hpp"
 #include "AST/Stmt.hpp"
 #include "Lexer/TokenKind.hpp"
-#include "Sema/HMTI/Infer.hpp"
+#include "Sema/TypeInference/Infer.hpp"
 #include "Sema/NameResolver.hpp"
 
 namespace {
