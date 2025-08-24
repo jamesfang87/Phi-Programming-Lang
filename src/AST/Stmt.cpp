@@ -7,7 +7,7 @@
 #include "AST/ASTVisitor.hpp"
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
-#include "Sema/HMTI/Infer.hpp"
+#include "Sema/TypeInference/Infer.hpp"
 #include "Sema/NameResolver.hpp"
 
 namespace {

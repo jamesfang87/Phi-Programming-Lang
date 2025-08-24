@@ -1,7 +1,7 @@
-#include "Sema/HMTI/Infer.hpp"
+#include "Sema/TypeInference/Infer.hpp"
 #include "AST/Decl.hpp"
-#include "Sema/HMTI/Algorithms.hpp"
-#include "Sema/HMTI/TypeEnv.hpp"
+#include "Sema/TypeInference/Algorithms.hpp"
+#include "Sema/TypeInference/TypeEnv.hpp"
 
 #include <llvm/Support/Casting.h>
 
@@ -13,8 +13,6 @@ namespace phi {
 // ---------------- constructor ----------------
 TypeInferencer::TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast)
     : Ast(std::move(Ast)) {
-  for (const auto &D : this->Ast) {
-  }
 }
 
 // ---------------- top-level driver ----------------
@@ -36,27 +34,27 @@ std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
 // user-provided annotations (functions must be annotated).
 void TypeInferencer::predeclare() {
   for (auto &Decl : Ast) {
-    if (auto Var = llvm::dyn_cast<VarDecl>(Decl.get())) {
-      auto NewTypeVar = Monotype::makeVar(Factory.fresh());
+    if (const auto Var = llvm::dyn_cast<VarDecl>(Decl.get())) {
+      const auto NewTypeVar = Monotype::makeVar(Factory.fresh());
       Env.bind(Var, Polytype{{}, NewTypeVar});
       continue;
     }
 
-    if (auto Fun = llvm::dyn_cast<FunDecl>(Decl.get())) {
+    if (const auto Fun = llvm::dyn_cast<FunDecl>(Decl.get())) {
       std::vector<Monotype> ParamTypes;
       ParamTypes.reserve(Fun->getParams().size());
 
-      for (auto &Param : Fun->getParams()) {
+      for (const auto &Param : Fun->getParams()) {
         assert(Param->hasType());
         ParamTypes.push_back(Param->getType().toMonotype());
       }
 
-      auto Ret = Fun->getReturnTy().toMonotype();
+      const auto Ret = Fun->getReturnTy().toMonotype();
       auto FunType = Monotype::makeFun(std::move(ParamTypes), Ret);
       Env.bind(Fun->getId(), generalize(Env, FunType));
     }
 
-    if (auto Struct = llvm::dyn_cast<StructDecl>(Decl.get())) {
+    if (const auto Struct = llvm::dyn_cast<StructDecl>(Decl.get())) {
       Structs[Struct->getId()] = Struct;
     }
   }
@@ -118,15 +116,15 @@ void TypeInferencer::finalizeAnnotations() {
   defaultNums(); // default floats and ints to f32, i32
 
   // Finalize ValueDecls
-  for (auto &Decl : ValDeclMonos) {
-    Monotype T = GlobalSubst.apply(Decl.second);
-    Decl.first->setType(T.toAstType());
+  for (auto &[Decl, Mono] : ValDeclMonos) {
+    Monotype T = GlobalSubst.apply(Mono);
+    Decl->setType(T.toAstType());
   }
 
   // Finalize Exprs
-  for (auto &Expr : ExprMonos) {
-    Monotype T = GlobalSubst.apply(Expr.second);
-    Expr.first->setType(T.toAstType());
+  for (auto &[Expr, Mono] : ExprMonos) {
+    Monotype T = GlobalSubst.apply(Mono);
+    Expr->setType(T.toAstType());
   }
 
   // Optionally clear side tables
@@ -135,7 +133,7 @@ void TypeInferencer::finalizeAnnotations() {
 }
 
 // ----- token-kind helpers -----
-bool TypeInferencer::isArithmetic(TokenKind K) const noexcept {
+bool TypeInferencer::isArithmetic(const TokenKind K) noexcept {
   switch (K) {
   case TokenKind::PlusKind:
   case TokenKind::MinusKind:
@@ -147,7 +145,7 @@ bool TypeInferencer::isArithmetic(TokenKind K) const noexcept {
   }
 }
 
-bool TypeInferencer::isLogical(TokenKind K) const noexcept {
+bool TypeInferencer::isLogical(const TokenKind K) noexcept {
   switch (K) {
   case TokenKind::DoubleAmpKind:
   case TokenKind::DoublePipeKind:
@@ -157,7 +155,7 @@ bool TypeInferencer::isLogical(TokenKind K) const noexcept {
   }
 }
 
-bool TypeInferencer::isComparison(TokenKind K) const noexcept {
+bool TypeInferencer::isComparison(const TokenKind K) noexcept {
   switch (K) {
   case TokenKind::OpenCaretKind:
   case TokenKind::LessEqualKind:
@@ -169,7 +167,7 @@ bool TypeInferencer::isComparison(TokenKind K) const noexcept {
   }
 }
 
-bool TypeInferencer::isEquality(TokenKind K) const noexcept {
+bool TypeInferencer::isEquality(const TokenKind K) noexcept {
   switch (K) {
   case TokenKind::DoubleEqualsKind:
   case TokenKind::BangEqualsKind:

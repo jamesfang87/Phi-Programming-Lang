@@ -4,7 +4,7 @@
 #include "AST/Expr.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
-#include "Sema/HMTI/Infer.hpp"
+#include "Sema/TypeInference/Infer.hpp"
 #include "Sema/NameResolver.hpp"
 #include <cstdlib>
 

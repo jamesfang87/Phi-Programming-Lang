@@ -1,12 +1,13 @@
 #pragma once
 
 #include <optional>
+#include <ranges>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 
-#include "Sema/HMTI/Substitution.hpp"
-#include "Sema/HMTI/Types/Polytype.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
+#include "Sema/TypeInference/Types/Polytype.hpp"
 
 namespace phi {
 
@@ -31,36 +32,35 @@ public:
   }
 
   std::optional<Polytype> lookup(const ValueDecl *Decl) const {
-    auto It = DeclMap.find(Decl);
+    const auto It = DeclMap.find(Decl);
     if (It != DeclMap.end())
       return It->second;
     return std::nullopt;
   }
 
-  std::optional<Polytype> lookup(const std::string &Name) const {
-    auto It = NameMap.find(Name);
-    if (It != NameMap.end())
+  [[nodiscard]] std::optional<Polytype> lookup(const std::string &Name) const {
+    if (const auto It = NameMap.find(Name); It != NameMap.end())
       return It->second;
     return std::nullopt;
   }
 
   // Apply substitution to the whole env (used after unify steps)
   void applySubstitution(const Substitution &S) {
-    for (auto &KV : DeclMap)
-      KV.second = S.apply(KV.second);
-    for (auto &KV : NameMap)
-      KV.second = S.apply(KV.second);
+    for (auto &Decl: DeclMap | std::views::values)
+      Decl = S.apply(Decl);
+    for (auto &Name: NameMap | std::views::values)
+      Name = S.apply(Name);
   }
 
   // Free vars in env (for generalization)
-  std::unordered_set<TypeVar> freeTypeVars() const {
+  [[nodiscard]] std::unordered_set<TypeVar> freeTypeVars() const {
     std::unordered_set<TypeVar> Acc;
-    for (const auto &KV : DeclMap) {
-      auto F = KV.second.freeTypeVars();
+    for (const auto &Decl: DeclMap | std::views::values) {
+      auto F = Decl.freeTypeVars();
       Acc.insert(F.begin(), F.end());
     }
-    for (const auto &KV : NameMap) {
-      auto F = KV.second.freeTypeVars();
+    for (const auto &Name: NameMap | std::views::values) {
+      auto F = Name.freeTypeVars();
       Acc.insert(F.begin(), F.end());
     }
     return Acc;

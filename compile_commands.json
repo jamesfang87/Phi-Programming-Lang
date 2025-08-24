@@ -157,75 +157,45 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/HMTI/Infer.cpp.o -c /Users/jamesfang/Phi/src/Sema/HMTI/Infer.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/HMTI/Infer.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/HMTI/Infer.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/NameResolver.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/NameResolver.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/NameResolver.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/NameResolver.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/HMTI/InferDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/HMTI/InferDecl.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/HMTI/InferDecl.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/HMTI/InferDecl.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveDecl/ResolveFunDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/ResolveDecl/ResolveFunDecl.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/ResolveDecl/ResolveFunDecl.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveDecl/ResolveFunDecl.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/HMTI/InferExpr.cpp.o -c /Users/jamesfang/Phi/src/Sema/HMTI/InferExpr.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/HMTI/InferExpr.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/HMTI/InferExpr.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveDecl/ResolveStructDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/ResolveDecl/ResolveStructDecl.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/ResolveDecl/ResolveStructDecl.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveDecl/ResolveStructDecl.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/HMTI/InferStmt.cpp.o -c /Users/jamesfang/Phi/src/Sema/HMTI/InferStmt.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/HMTI/InferStmt.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/HMTI/InferStmt.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveExpr.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/ResolveExpr.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/ResolveExpr.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveExpr.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/HMTI/Types.cpp.o -c /Users/jamesfang/Phi/src/Sema/HMTI/Types.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/HMTI/Types.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/HMTI/Types.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveStmt.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/ResolveStmt.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/ResolveStmt.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveStmt.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolver/NameResolver.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolver/NameResolver.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/NameResolver/NameResolver.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/NameResolver/NameResolver.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveStruct.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/ResolveStruct.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/ResolveStruct.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveStruct.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveDecl/ResolveFunDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolver/ResolveDecl/ResolveFunDecl.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/NameResolver/ResolveDecl/ResolveFunDecl.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveDecl/ResolveFunDecl.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveDecl/ResolveStructDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolver/ResolveDecl/ResolveStructDecl.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/NameResolver/ResolveDecl/ResolveStructDecl.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveDecl/ResolveStructDecl.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveExpr.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolver/ResolveExpr.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/NameResolver/ResolveExpr.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveExpr.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveStmt.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolver/ResolveStmt.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/NameResolver/ResolveStmt.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveStmt.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveStruct.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolver/ResolveStruct.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/NameResolver/ResolveStruct.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveStruct.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveType.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolver/ResolveType.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/NameResolver/ResolveType.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/NameResolver/ResolveType.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveType.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/ResolveType.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/ResolveType.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/ResolveType.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
@@ -274,6 +244,36 @@
   "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SymbolTable.cpp.o -c /Users/jamesfang/Phi/src/Sema/SymbolTable.cpp",
   "file": "/Users/jamesfang/Phi/src/Sema/SymbolTable.cpp",
   "output": "CMakeFiles/phi.dir/src/Sema/SymbolTable.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeInference/Infer.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeInference/Infer.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeInference/Infer.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeInference/Infer.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeInference/InferDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeInference/InferDecl.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeInference/InferDecl.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeInference/InferDecl.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeInference/InferExpr.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeInference/InferExpr.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeInference/InferExpr.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeInference/InferExpr.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeInference/InferStmt.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeInference/InferStmt.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeInference/InferStmt.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeInference/InferStmt.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeInference/Types.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeInference/Types.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeInference/Types.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeInference/Types.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",

@@ -1,7 +1,9 @@
 #pragma once
 
-#include "Sema/HMTI/Types/Monotype.hpp"
-#include "Sema/HMTI/Types/Polytype.hpp"
+#include <ranges>
+
+#include "Sema/TypeInference/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/Polytype.hpp"
 
 #include <unordered_map>
 
@@ -20,7 +22,7 @@ struct Substitution {
   [[nodiscard]] Monotype apply(const Monotype &M) const {
     return M.visit(
         [&](const TypeVar &Var) -> Monotype {
-          auto It = Map.find(Var);
+          const auto It = Map.find(Var);
           return (It != Map.end()) ? apply(It->second) : M;
         },
         [&](const TypeCon &Con) -> Monotype {
@@ -47,15 +49,15 @@ struct Substitution {
       return {P.getQuant(), apply(P.getBody())};
 
     Substitution Filtered;
-    for (auto &KV : Map) {
+    for (const auto &[TypeVar, Monotype] : Map) {
       bool Quantified = false;
       for (auto &Q : P.getQuant())
-        if (Q == KV.first) {
+        if (Q == TypeVar) {
           Quantified = true;
           break;
         }
       if (!Quantified)
-        Filtered.Map.emplace(KV.first, KV.second);
+        Filtered.Map.emplace(TypeVar, Monotype);
     }
     return Polytype{P.getQuant(), Filtered.apply(P.getBody())};
   }
@@ -66,10 +68,10 @@ struct Substitution {
       return;
 
     // this := S2 ∘ this
-    for (auto &KV : Map)
-      KV.second = Other.apply(KV.second);
-    for (auto &KV : Other.Map)
-      Map.insert_or_assign(KV.first, KV.second);
+    for (auto &T: Map | std::views::values)
+      T = Other.apply(T);
+    for (const auto &[TypeVar, Monotype] : Other.Map)
+      Map.insert_or_assign(TypeVar, Monotype);
   }
 };
 
