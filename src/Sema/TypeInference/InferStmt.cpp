@@ -1,12 +1,12 @@
 #include "AST/Stmt.hpp"
-#include "Sema/HMTI/Infer.hpp"
+#include "Sema/TypeInference/Infer.hpp"
 
 namespace phi {
 
 // ---------------- Block / Stmt ----------------
 TypeInferencer::InferRes TypeInferencer::inferBlock(Block &B) {
   Substitution AllSubsts;
-  for (auto &Stmt : B.getStmts()) {
+  for (const auto &Stmt : B.getStmts()) {
     auto [StmtSubst, _] = Stmt->accept(*this);
     AllSubsts.compose(StmtSubst);
   }
@@ -14,7 +14,7 @@ TypeInferencer::InferRes TypeInferencer::inferBlock(Block &B) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
-  auto ExpectedType =
+  const auto ExpectedType =
       CurFunRetType.empty() ? Monotype::makeCon("unit") : CurFunRetType.back();
   if (S.hasExpr()) {
     auto [Subst, ActualType] = visit(S.getExpr());
@@ -48,7 +48,7 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
 
   // 4) Bind loop variable in environment
   recordSubst(AllSubsts);
-  auto BoundTy = AllSubsts.apply(LoopVarTy);
+  const auto BoundTy = AllSubsts.apply(LoopVarTy);
   Env.bind(LoopVar, Polytype{{}, BoundTy});
   annotate(*LoopVar, BoundTy);
 

@@ -1,4 +1,4 @@
-#include "Sema/HMTI/TypeEnv.hpp"
+#include "Sema/TypeInference/TypeEnv.hpp"
 
 #include <string>
 
