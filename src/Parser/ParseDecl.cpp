@@ -57,7 +57,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   }
 
   // Handle optional return type
-  auto ReturnType = Type(Type::PrimitiveKind::NullKind);
+  auto ReturnType = Type::makePrimitive(PrimitiveKind::Null, SrcLocation{});
   if (peekToken().getKind() == TokenKind::ArrowKind) {
     advanceToken(); // eat '->'
     auto Res = parseType();

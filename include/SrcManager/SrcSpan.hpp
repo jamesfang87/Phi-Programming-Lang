@@ -56,8 +56,8 @@ struct SrcSpan {
  * @param end Last token
  * @return Span covering token range
  */
-[[nodiscard]] inline SrcSpan span_from_tokens(const Token &start,
-                                              const Token &end) {
+[[nodiscard]] inline SrcSpan spanFromTokens(const Token &start,
+                                            const Token &end) {
   return SrcSpan{start.getStart(), end.getEnd()};
 }
 

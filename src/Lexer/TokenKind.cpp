@@ -125,6 +125,8 @@ std::string tyToStr(const TokenKind Kind) {
     return "MOD";
   case TokenKind::BangKind:
     return "BANG";
+  case TokenKind::AmpKind:
+    return "AMP";
 
   // Assignment operators
   case TokenKind::PlusEqualsKind:
