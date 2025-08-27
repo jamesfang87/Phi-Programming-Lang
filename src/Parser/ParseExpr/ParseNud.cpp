@@ -12,6 +12,8 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   case TokenKind::BangKind:        // !
   case TokenKind::DoublePlusKind:  // ++
   case TokenKind::DoubleMinusKind: // --
+  case TokenKind::AmpKind:
+  case TokenKind::StarKind:
     return parsePrefixUnaryOp(Tok);
 
   // Identifiers

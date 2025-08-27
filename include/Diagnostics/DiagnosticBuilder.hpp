@@ -67,6 +67,9 @@ public:
                                        const int end_col,
                                        std::string message = "");
 
+  DiagnosticBuilder &with_primary_label(const SrcLocation &Location,
+                                        std::string message);
+
   /**
    * @brief Adds secondary source marker with style
    * @param span Source location range

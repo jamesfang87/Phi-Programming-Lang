@@ -40,7 +40,7 @@ NameResolver::resolveNames() {
       continue;
     }
 
-    if (!resolveFunDecl(Fun)) {
+    if (!visit(Fun)) {
       std::println("failed to resolve declaration: {}", DeclPtr->getId());
       return {false, {}};
     }
@@ -52,8 +52,8 @@ NameResolver::resolveNames() {
   }
 
   // Phase 2: Resolve function bodies
-  for (auto &decl : Ast) {
-    CurFun = llvm::dyn_cast<FunDecl>(decl.get());
+  for (auto &Decl : Ast) {
+    CurFun = llvm::dyn_cast<FunDecl>(Decl.get());
     if (CurFun) {
       // Create function scope
       SymbolTable::ScopeGuard FunctionScope(SymbolTab);
@@ -74,10 +74,10 @@ NameResolver::resolveNames() {
       }
     }
 
-    auto Struct = llvm::dyn_cast<StructDecl>(decl.get());
+    auto Struct = llvm::dyn_cast<StructDecl>(Decl.get());
     if (Struct) {
-      if (!resolveStructDecl(Struct)) {
-        std::println("failed to resolve declaration: {}", decl->getId());
+      if (!visit(Struct)) {
+        std::println("failed to resolve declaration: {}", Decl->getId());
         return {false, {}};
       }
     }

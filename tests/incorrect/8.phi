@@ -1,1 +1,9 @@
-let x = "hello
+fun foo() {
+
+}
+
+fun main() {
+    var test = 12;
+    var a: i8 = 11;
+    a = foa();
+}

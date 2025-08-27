@@ -6,7 +6,7 @@
 
 namespace phi {
 
-bool NameResolver::resolveStructDecl(StructDecl *Struct) {
+bool NameResolver::visit(StructDecl *Struct) {
   SymbolTable::ScopeGuard StructScope(SymbolTab);
   if (!Struct) {
     std::println("failed to resolve declaration: {}", Struct->getId());
@@ -14,7 +14,7 @@ bool NameResolver::resolveStructDecl(StructDecl *Struct) {
   }
 
   for (auto &Field : Struct->getFields()) {
-    if (!resolveFieldDecl(&Field)) {
+    if (!visit(&Field)) {
       std::println("failed to resolve field: {}", Field.getId());
       return false;
     }
@@ -23,7 +23,7 @@ bool NameResolver::resolveStructDecl(StructDecl *Struct) {
   }
 
   for (auto &Method : Struct->getMethods()) {
-    if (!resolveFunDecl(&Method)) {
+    if (!visit(&Method)) {
       std::println("failed to resolve method: {}", Method.getId());
       return false;
     }
@@ -55,8 +55,8 @@ bool NameResolver::resolveStructDecl(StructDecl *Struct) {
   return true;
 }
 
-bool NameResolver::resolveFieldDecl(FieldDecl *Field) {
-  if (!resolveTy(Field->getType())) {
+bool NameResolver::visit(FieldDecl *Field) {
+  if (!resolveType(Field->getType())) {
     std::println("Undefined type for parameter: {}", Field->getId());
     return false;
   }

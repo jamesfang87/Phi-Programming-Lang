@@ -17,6 +17,12 @@ DiagnosticBuilder::with_primary_label(const std::string &path, const int line,
   return with_primary_label(SrcSpan(loc), std::move(message));
 }
 
+DiagnosticBuilder &
+DiagnosticBuilder::with_primary_label(const SrcLocation &Location,
+                                      std::string message) {
+  return with_primary_label(SrcSpan(Location), std::move(message));
+}
+
 /// Add a primary label spanning multiple positions
 DiagnosticBuilder &DiagnosticBuilder::with_primary_span(
     const std::string &path, const int start_line, const int start_col,

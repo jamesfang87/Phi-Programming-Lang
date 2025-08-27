@@ -22,6 +22,7 @@
 
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/Token.hpp"
+#include "Lexer/TokenKind.hpp"
 
 namespace phi {
 
@@ -173,12 +174,7 @@ Token Lexer::scanToken() {
     if (matchNext('&')) {
       return makeToken(TokenKind::DoubleAmpKind);
     } else {
-      error("unexpected character '&'")
-          .with_primary_label(getCurSpan(), "unexpected character")
-          .with_help("use '&&' for logical AND operation")
-          .with_note("single '&' is not supported in this language")
-          .emit(*DiagnosticsMan);
-      return makeToken(TokenKind::ErrorKind);
+      return makeToken(TokenKind::AmpKind);
     }
   // Handle single | as error or bitwise operator
   case '|':

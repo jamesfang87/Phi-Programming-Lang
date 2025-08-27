@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <format>
 #include <memory>
+#include <print>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -42,8 +43,8 @@ inline Substitution bindVar(const TypeVar &X, const Monotype &M) {
                                       "found type {} cannot be "
                                       "unified with expected types of: ",
                                       Name);
-        for (const auto &Possible : *X.Constraints) {
-          Msg += Possible + ", ";
+        for (const auto &C : *X.Constraints) {
+          Msg += C + ", ";
         }
         throw UnifyError(Msg);
       }
@@ -71,6 +72,9 @@ inline Substitution unify(const Monotype &T1, const Monotype &T2) {
     return bindVar(T2.asVar(), T1);
 
   if (T1.isCon() && T2.isCon()) {
+    std::println("This runs for types {} {}", T1.toString(), T2.toString());
+    std::println("Locations: {} {}", T1.getLocation().toString(),
+                 T2.getLocation().toString());
     const auto &Con1 = T1.asCon(), &Con2 = T2.asCon();
     if (Con1.Name != Con2.Name || Con1.Args.size() != Con2.Args.size())
       throw UnifyError("cannot unify " + T1.toString() + " with " +
@@ -78,6 +82,22 @@ inline Substitution unify(const Monotype &T1, const Monotype &T2) {
     Substitution Subst;
     for (size_t I = 0; I < Con1.Args.size(); ++I) {
       auto Arg1 = Con1.Args[I], Arg2 = Con2.Args[I];
+      auto ArgTypeSubst = unify(Subst.apply(Arg1), Subst.apply(Arg2));
+      Subst.compose(ArgTypeSubst);
+    }
+    return Subst;
+  }
+
+  if (T1.isApp() && T2.isApp()) {
+    std::println("this happens at some point in time: {} {}", T1.toString(),
+                 T2.toString());
+    const auto &App1 = T1.asApp(), &App2 = T2.asApp();
+    if (App1.Name != App2.Name || App1.Args.size() != App2.Args.size())
+      throw UnifyError("cannot unify " + T1.toString() + " with " +
+                       T2.toString());
+    Substitution Subst;
+    for (size_t I = 0; I < App1.Args.size(); ++I) {
+      auto Arg1 = App1.Args[I], Arg2 = App2.Args[I];
       auto ArgTypeSubst = unify(Subst.apply(Arg1), Subst.apply(Arg2));
       Subst.compose(ArgTypeSubst);
     }

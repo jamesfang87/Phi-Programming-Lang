@@ -63,6 +63,13 @@ public:
   StructDecl *lookup(const std::string &Struct);
   ValueDecl *lookup(DeclRefExpr &Var);
 
+  FunDecl *getClosestFun(const std::string &Undeclared) const;
+  StructDecl *getClosestStruct(const std::string &Undeclared) const;
+  ValueDecl *getClosestVar(const std::string &Undeclared) const;
+
+  std::optional<std::string>
+  getClosestType(const std::string &Undeclared) const;
+
 private:
   /// Stack of scopes, with the back being the innermost current scope
   std::vector<Scope> Scopes;
@@ -80,7 +87,8 @@ private:
    * @brief Exits the current innermost scope
    *
    * Pops the current scope from the scope stack, effectively ending the
-   * current lexical scope. All declarations in this scope become inaccessible.
+   * current lexical scope. All declarations in this scope become
+   * inaccessible.
    */
   void exitScope();
 };

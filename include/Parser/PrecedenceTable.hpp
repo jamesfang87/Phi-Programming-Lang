@@ -86,6 +86,8 @@ inline std::optional<int> prefixBP(const TokenKind &type) {
   case TokenKind::BangKind:        // Logical NOT
   case TokenKind::DoublePlusKind:  // Pre-increment
   case TokenKind::DoubleMinusKind: // Pre-decrement
+  case TokenKind::AmpKind:
+  case TokenKind::StarKind:
     return 17;
   default:
     return std::nullopt;
