@@ -3,7 +3,6 @@
 #include <cassert>
 #include <memory>
 #include <optional>
-#include <print>
 #include <string>
 #include <vector>
 
@@ -323,7 +322,7 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
   }
 
   // Validate assignment operator
-  if (advanceToken().getKind() != TokenKind::EqualsKind) {
+  if (peekToken().getKind() != TokenKind::EqualsKind) {
     error("missing assignment in variable declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `=` here")
         .with_help("variables must be initialized with a value")
@@ -332,6 +331,7 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
         .emit(*DiagnosticsMan);
     return nullptr;
   }
+  advanceToken();
 
   // Parse initializer expression
   auto Init = parseExpr();

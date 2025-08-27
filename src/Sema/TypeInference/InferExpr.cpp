@@ -1,5 +1,7 @@
+#include "Lexer/TokenKind.hpp"
 #include "Sema/TypeInference/Algorithms.hpp"
 #include "Sema/TypeInference/Infer.hpp"
+#include <cassert>
 #include <llvm/Support/Casting.h>
 
 #include <print>
@@ -109,10 +111,34 @@ TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
 
   // Numeric UnaryOp
   auto NewTypeVar = Monotype::makeVar(Factory.fresh());
-  const auto OpType = Monotype::makeFun({NewTypeVar}, NewTypeVar);
-  const auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
+
+  auto OpType = Monotype::makeFun({NewTypeVar}, NewTypeVar);
+  auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
                                       Monotype::makeVar(Factory.fresh()));
+  if (E.getOp() == TokenKind::AmpKind) {
+    std::println("here for amp");
+    OpType =
+        Monotype::makeFun({NewTypeVar}, Monotype::makeApp("Ref", {NewTypeVar}));
+    assert(OpType.isFun());
+    assert(OpType.asFun().Ret->isApp());
+    TypeOfCall = Monotype::makeFun(
+        {AllSubst.apply(OperandType)},
+        Monotype::makeApp("Ref", {AllSubst.apply(OperandType)}));
+    assert(TypeOfCall.isFun());
+    assert(TypeOfCall.asFun().Ret->isApp());
+    unifyInto(AllSubst, OpType, TypeOfCall);
+    auto T = TypeOfCall.asFun().Ret;
+    std::println("OpType: {} | TypeOfCall: {}", OpType.toString(),
+                 TypeOfCall.toString());
+    recordSubst(AllSubst);
+    annotate(E, *T);
+    assert(T->isApp());
+    return {AllSubst, *T};
+  }
+
   unifyInto(AllSubst, OpType, TypeOfCall);
+  std::println("OpType: {} | TypeOfCall: {}", OpType.toString(),
+               TypeOfCall.toString());
   recordSubst(AllSubst);
   annotate(E, AllSubst.apply(NewTypeVar));
   return {AllSubst, AllSubst.apply(NewTypeVar)};
@@ -152,8 +178,8 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     // Standard arithmetic unification for non-float cases
     auto NewTypeVar = Monotype::makeVar(Factory.fresh());
     const auto OpType = Monotype::makeFun({NewTypeVar, NewTypeVar}, NewTypeVar);
-    const auto TypeOfCall = Monotype::makeFun({LhsType, RhsType},
-                                          Monotype::makeVar(Factory.fresh()));
+    const auto TypeOfCall = Monotype::makeFun(
+        {LhsType, RhsType}, Monotype::makeVar(Factory.fresh()));
     unifyInto(AllSubst, OpType, TypeOfCall);
     recordSubst(AllSubst);
     auto ResultingType = AllSubst.apply(NewTypeVar);

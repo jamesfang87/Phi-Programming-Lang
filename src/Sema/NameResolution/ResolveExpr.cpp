@@ -1,12 +1,15 @@
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/NameResolver.hpp"
 
+#include <format>
 #include <llvm/Support/Casting.h>
 
 #include <cassert>
 #include <cstddef>
 #include <print>
+#include <string>
 
 namespace phi {
 
@@ -55,9 +58,19 @@ bool NameResolver::visit(RangeLiteral &Expression) {
  */
 bool NameResolver::visit(DeclRefExpr &Expression) {
   ValueDecl *DeclPtr = SymbolTab.lookup(Expression);
-  assert(DeclPtr != nullptr);
   if (!DeclPtr) {
-    std::println("error: undeclared identifier '{}'", Expression.getId());
+    auto BestMatch = SymbolTab.getClosestVar(Expression.getId());
+    std::string Hint;
+    if (BestMatch) {
+      Hint = std::format("Did you mean `{}`?", BestMatch->getId());
+    }
+
+    error(std::format("use of undeclared variable `{}`", Expression.getId()))
+        .with_primary_label(
+            Expression.getLocation(),
+            std::format("Declaration for `{}` could not be found. {}",
+                        Expression.getId(), Hint))
+        .emit(*DiagnosticsMan);
     return false;
   }
   Expression.setDecl(DeclPtr);
@@ -71,7 +84,19 @@ bool NameResolver::visit(FunCallExpr &Expression) {
   FunDecl *FunPtr = SymbolTab.lookup(Expression);
   if (!FunPtr) {
     auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&Expression.getCallee());
-    std::println("error: undeclared fun identifier '{}'", DeclRef->getId());
+    auto BestMatch = SymbolTab.getClosestFun(DeclRef->getId());
+    std::string Hint;
+    if (BestMatch) {
+      Hint = std::format("Did you mean `{}`?", BestMatch->getId());
+    }
+
+    error(std::format("attempt to call undeclared function `{}`",
+                      DeclRef->getId()))
+        .with_primary_label(
+            Expression.getLocation(),
+            std::format("Declaration for `{}` could not be found. {}",
+                        DeclRef->getId(), Hint))
+        .emit(*DiagnosticsMan);
     return false;
   }
 

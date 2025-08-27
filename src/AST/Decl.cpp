@@ -77,7 +77,7 @@ void FunDecl::emit(int Level) const {
 
 void StructDecl::emit(int Level) const {
   std::println("{}StructDecl: {} (type: {})", indent(Level), Id,
-               Ty.getCustomTypeName());
+               DeclType.toString());
 
   std::println("{}Fields:", indent(Level));
   for (auto &f : Fields) {

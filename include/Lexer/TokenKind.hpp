@@ -79,6 +79,7 @@ enum class TokenKind : uint8_t {
   SlashKind,   ///< `/` division
   PercentKind, ///< `%` modulo
   BangKind,    ///< `!` logical NOT
+  AmpKind,
 
   // COMPOUND ASSIGNMENT OPERATORS
   PlusEqualsKind, ///< `+=` add-assign

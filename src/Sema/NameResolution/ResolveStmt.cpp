@@ -137,8 +137,7 @@ bool NameResolver::visit(DeclStmt &Statement) {
   VarDecl &Var = Statement.getDecl();
 
   // Resolve variable type
-  if (Var.hasType() && !resolveTy(Var.getType())) {
-    std::println("invalid type for variable");
+  if (Var.hasType() && !resolveType(Var.getType())) {
     return false;
   }
 

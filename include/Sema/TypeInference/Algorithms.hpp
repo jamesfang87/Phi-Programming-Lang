@@ -16,8 +16,8 @@ inline Monotype instantiate(const Polytype &P, TypeVarFactory &Factory) {
     return P.getBody();
   // Make fresh vars for each.getQuant() and substitute
   Substitution Subst;
-  for (auto &q : P.getQuant()) {
-    Subst.Map.emplace(q, Monotype::makeVar(Factory.fresh()));
+  for (auto &Q : P.getQuant()) {
+    Subst.Map.emplace(Q, Monotype::makeVar(Factory.fresh()));
   }
   return Subst.apply(P.getBody());
 }

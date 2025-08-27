@@ -1,16 +1,19 @@
 #include "AST/Expr.hpp"
 
 #include <cassert>
+#include <optional>
 #include <print>
 #include <string>
+#include <utility>
 
 #include "AST/ASTVisitor.hpp"
 
 #include "AST/Decl.hpp"
 #include "AST/Stmt.hpp"
+#include "AST/Type.hpp"
 #include "Lexer/TokenKind.hpp"
-#include "Sema/TypeInference/Infer.hpp"
 #include "Sema/NameResolver.hpp"
+#include "Sema/TypeInference/Infer.hpp"
 
 namespace {
 /// Generates indentation string for AST dumping
@@ -48,8 +51,7 @@ InferRes Expr::accept(TypeInferencer &I) { return I.visit(*this); }
  * @param value Integer value
  */
 IntLiteral::IntLiteral(SrcLocation Location, const int64_t Value)
-    : Expr(Stmt::Kind::IntLiteralKind, std::move(Location),
-           Type(Type::PrimitiveKind::I64Kind)),
+    : Expr(Stmt::Kind::IntLiteralKind, std::move(Location), std::nullopt),
       Value(Value) {}
 
 /**
@@ -84,8 +86,7 @@ void IntLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  * @param value Floating-point value
  */
 FloatLiteral::FloatLiteral(SrcLocation Location, const double Value)
-    : Expr(Stmt::Kind::FloatLiteralKind, std::move(Location),
-           Type(Type::PrimitiveKind::F64Kind)),
+    : Expr(Stmt::Kind::FloatLiteralKind, std::move(Location), std::nullopt),
       Value(Value) {}
 
 /**
@@ -120,8 +121,8 @@ void FloatLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  * @param value String content
  */
 StrLiteral::StrLiteral(SrcLocation Location, std::string Value)
-    : Expr(Stmt::Kind::StrLiteralKind, std::move(Location),
-           Type(Type::PrimitiveKind::StringKind)),
+    : Expr(Stmt::Kind::StrLiteralKind, Location,
+           Type::makePrimitive(PrimitiveKind::String, std::move(Location))),
       Value(std::move(Value)) {}
 
 /**
@@ -156,10 +157,9 @@ void StrLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  * @param value Character value
  */
 CharLiteral::CharLiteral(SrcLocation Location, char Value)
-    : Expr(Stmt::Kind::CharLiteralKind, std::move(Location),
-           Type(Type::PrimitiveKind::CharKind)),
+    : Expr(Stmt::Kind::CharLiteralKind, Location,
+           Type::makePrimitive(PrimitiveKind::Char, std::move(Location))),
       Value(Value) {}
-
 /**
  * @brief Dumps character literal information
  *
@@ -192,8 +192,8 @@ void CharLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  * @param value Boolean value
  */
 BoolLiteral::BoolLiteral(SrcLocation Location, bool Value)
-    : Expr(Stmt::Kind::BoolLiteralKind, std::move(Location),
-           Type(Type::PrimitiveKind::BoolKind)),
+    : Expr(Stmt::Kind::BoolLiteralKind, Location,
+           Type::makePrimitive(PrimitiveKind::Bool, std::move(Location))),
       Value(Value) {}
 
 /**
@@ -232,8 +232,8 @@ void BoolLiteral::accept(ASTVisitor<void> &Visitor) { Visitor.visit(*this); }
  */
 RangeLiteral::RangeLiteral(SrcLocation Location, std::unique_ptr<Expr> Start,
                            std::unique_ptr<Expr> End, const bool Inclusive)
-    : Expr(Stmt::Kind::RangeLiteralKind, std::move(Location),
-           Type(Type::PrimitiveKind::RangeKind)),
+    : Expr(Stmt::Kind::RangeLiteralKind, Location,
+           Type::makePrimitive(PrimitiveKind::Range, std::move(Location))),
       Start(std::move(Start)), End(std::move(End)), Inclusive(Inclusive) {}
 
 /**
