@@ -228,6 +228,11 @@ public:
     return *this;
   }
 
+  Diagnostic &with_extra_snippet(const SrcSpan &span, std::string message) {
+    extra_snippets.emplace_back(span, std::move(message));
+    return *this;
+  }
+
   /**
    * @brief Sets reference code for documentation
    *
@@ -273,6 +278,11 @@ public:
   /// Gets reference code
   [[nodiscard]] const std::optional<std::string> &get_code() const {
     return code;
+  }
+
+  [[nodiscard]] const std::vector<std::pair<SrcSpan, std::string>> &
+  get_extra_snippets() const {
+    return extra_snippets;
   }
 
   /// Checks if diagnostic has any primary source markers
@@ -325,6 +335,7 @@ private:
   std::vector<std::string> help_messages;        ///< Resolution advice
   std::vector<DiagnosticSuggestion> suggestions; ///< Code modifications
   std::optional<std::string> code;               ///< Reference code
+  std::vector<std::pair<SrcSpan, std::string>> extra_snippets;
 
   /// Gets default style based on severity level
   static DiagnosticStyle get_style_for_level(const DiagnosticLevel level) {

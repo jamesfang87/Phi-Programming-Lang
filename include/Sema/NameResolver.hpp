@@ -2,10 +2,11 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "AST/ASTVisitor.hpp"
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Type.hpp"
@@ -62,6 +63,8 @@ private:
   std::shared_ptr<DiagnosticManager> DiagnosticsMan;
 
   void emitError(Diagnostic &&diagnostic) { DiagnosticsMan->emit(diagnostic); }
+  void emitRedefinitionError(std::string_view SymbolKind, Decl *FirstDecl,
+                             Decl *Redecl);
 
   /**
    * @brief Resolves a block statement

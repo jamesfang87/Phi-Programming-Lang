@@ -143,7 +143,6 @@ bool NameResolver::visit(DeclStmt &Statement) {
 
   // Resolve initializer if present
   if (Var.hasInit() && !Var.getInit().accept(*this)) {
-    std::println("failed to resolve variable initializer");
     return false;
   }
 
