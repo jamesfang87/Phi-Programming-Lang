@@ -8,7 +8,6 @@
 
 #include <cassert>
 #include <cstddef>
-#include <print>
 #include <string>
 
 namespace phi {

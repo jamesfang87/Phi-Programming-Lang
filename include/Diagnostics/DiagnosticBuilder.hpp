@@ -81,6 +81,10 @@ public:
   with_secondary_label(const SrcSpan &span, std::string message,
                        const DiagnosticStyle style = DiagnosticStyle());
 
+  DiagnosticBuilder &
+  with_secondary_label(const SrcLocation &location, std::string message,
+                       const DiagnosticStyle style = DiagnosticStyle());
+
   /**
    * @brief Adds secondary marker with discrete location
    * @param path Source file path
@@ -94,6 +98,15 @@ public:
   with_secondary_label(const std::string &path, const int line, const int col,
                        std::string message,
                        const DiagnosticStyle style = DiagnosticStyle());
+
+  DiagnosticBuilder &with_code_snippet(const SrcLocation &location,
+                                       const std::string &label);
+
+  DiagnosticBuilder &with_extra_snippet(const SrcSpan &span,
+                                        std::string message) {
+    diagnostic.with_extra_snippet(span, std::move(message));
+    return *this;
+  }
 
   /**
    * @brief Adds supplementary note
