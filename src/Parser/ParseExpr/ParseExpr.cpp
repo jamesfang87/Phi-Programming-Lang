@@ -9,7 +9,6 @@
 
 #include <llvm/Support/Casting.h>
 
-#include "AST/ASTVisitor.hpp"
 #include "AST/Expr.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"

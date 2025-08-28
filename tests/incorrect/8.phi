@@ -2,6 +2,21 @@ fun foo() {
 
 }
 
+// a bunch of code
+// a bunch of code
+// a bunch of code
+// a bunch of code
+// a bunch of code
+// a bunch of code
+// a bunch of code
+// a bunch of code
+// a bunch of code
+// a bunch of code
+
+fun foo(var a: i32) {
+
+}
+
 fun main() {
     var test = 12;
     var a: i8 = 11;

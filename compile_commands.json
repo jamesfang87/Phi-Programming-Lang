@@ -157,6 +157,12 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/NameResolutionErrors.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/NameResolutionErrors.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/NameResolutionErrors.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/NameResolutionErrors.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
   "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/NameResolution/NameResolver.cpp.o -c /Users/jamesfang/Phi/src/Sema/NameResolution/NameResolver.cpp",
   "file": "/Users/jamesfang/Phi/src/Sema/NameResolution/NameResolver.cpp",
   "output": "CMakeFiles/phi.dir/src/Sema/NameResolution/NameResolver.cpp.o"
@@ -199,15 +205,15 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SymbolTable.cpp.o -c /Users/jamesfang/Phi/src/Sema/SymbolTable.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/SymbolTable.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/SymbolTable.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SymbolTable/FindClosestSymbol.cpp.o -c /Users/jamesfang/Phi/src/Sema/SymbolTable/FindClosestSymbol.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/SymbolTable/FindClosestSymbol.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/SymbolTable/FindClosestSymbol.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SymbolTable/FindClosest.cpp.o -c /Users/jamesfang/Phi/src/Sema/SymbolTable/FindClosest.cpp",
-  "file": "/Users/jamesfang/Phi/src/Sema/SymbolTable/FindClosest.cpp",
-  "output": "CMakeFiles/phi.dir/src/Sema/SymbolTable/FindClosest.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/SymbolTable/SymbolTable.cpp.o -c /Users/jamesfang/Phi/src/Sema/SymbolTable/SymbolTable.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/SymbolTable/SymbolTable.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/SymbolTable/SymbolTable.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",

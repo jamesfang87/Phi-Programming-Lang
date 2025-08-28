@@ -39,6 +39,14 @@ DiagnosticBuilder &DiagnosticBuilder::with_secondary_label(
   return *this;
 }
 
+DiagnosticBuilder &
+DiagnosticBuilder::with_secondary_label(const SrcLocation &location,
+                                        std::string message,
+                                        const DiagnosticStyle style) {
+  diagnostic.with_secondary_label(SrcSpan{location}, std::move(message), style);
+  return *this;
+}
+
 /// Add a secondary label using individual location components
 DiagnosticBuilder &
 DiagnosticBuilder::with_secondary_label(const std::string &path, const int line,
@@ -46,6 +54,22 @@ DiagnosticBuilder::with_secondary_label(const std::string &path, const int line,
                                         const DiagnosticStyle style) {
   const SrcLocation loc{path, line, col};
   return with_secondary_label(SrcSpan(loc), std::move(message), style);
+}
+
+DiagnosticBuilder &
+DiagnosticBuilder::with_code_snippet(const SrcLocation &location,
+                                     const std::string &label) {
+  // Store the snippet as a "note" with location info
+  // so DiagnosticManager can render it consistently.
+
+  // Build a simple span that points just at the given location
+  SrcSpan span(location);
+
+  // We encode this as a *secondary label* with the label as its message.
+  // That way, it prints under the main error, with the code context.
+  diagnostic.with_extra_snippet(span, label);
+
+  return *this;
 }
 
 /// Add a note (additional information)

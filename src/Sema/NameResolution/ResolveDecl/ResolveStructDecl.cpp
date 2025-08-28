@@ -2,20 +2,17 @@
 
 #include "AST/Decl.hpp"
 #include "llvm/Support/Casting.h"
+#include <cassert>
 #include <print>
 
 namespace phi {
 
 bool NameResolver::visit(StructDecl *Struct) {
   SymbolTable::ScopeGuard StructScope(SymbolTab);
-  if (!Struct) {
-    std::println("failed to resolve declaration: {}", Struct->getId());
-    return false;
-  }
+  assert(Struct);
 
   for (auto &Field : Struct->getFields()) {
     if (!visit(&Field)) {
-      std::println("failed to resolve field: {}", Field.getId());
       return false;
     }
 
@@ -24,7 +21,6 @@ bool NameResolver::visit(StructDecl *Struct) {
 
   for (auto &Method : Struct->getMethods()) {
     if (!visit(&Method)) {
-      std::println("failed to resolve method: {}", Method.getId());
       return false;
     }
 
@@ -40,14 +36,12 @@ bool NameResolver::visit(StructDecl *Struct) {
     // Add parameters to function scope
     for (const std::unique_ptr<ParamDecl> &param : Method.getParams()) {
       if (!SymbolTab.insert(param.get())) {
-        std::println("parameter redefinition in {}: {}", Method.getId(),
-                     param->getId());
-        return false;
+        emitRedefinitionError("Parameter", SymbolTab.lookup(*param),
+                              param.get());
       }
     }
 
     if (!resolveBlock(Method.getBody(), true)) {
-      std::println("method body failed: {}", Method.getId());
       return false;
     }
   }
@@ -57,7 +51,6 @@ bool NameResolver::visit(StructDecl *Struct) {
 
 bool NameResolver::visit(FieldDecl *Field) {
   if (!resolveType(Field->getType())) {
-    std::println("Undefined type for parameter: {}", Field->getId());
     return false;
   }
 
