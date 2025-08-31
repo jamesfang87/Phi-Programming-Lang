@@ -34,14 +34,10 @@ NameResolver::resolveNames() {
   // Phase 1: Resolve function signatures
   for (auto &DeclPtr : Ast) {
     auto Fun = llvm::dyn_cast<FunDecl>(DeclPtr.get());
-    if (!Fun) {
+    if (!Fun)
       continue;
-    }
 
-    if (!visit(Fun)) {
-      return {false, {}};
-    }
-
+    visit(Fun);
     if (!SymbolTab.insert(Fun)) {
       emitRedefinitionError("Function", SymbolTab.lookup(*Fun), Fun);
     }
@@ -63,20 +59,16 @@ NameResolver::resolveNames() {
       }
 
       // Resolve function body
-      if (!resolveBlock(CurFun->getBody(), true)) {
-        return {false, {}};
-      }
+      resolveBlock(CurFun->getBody(), true);
     }
 
     auto Struct = llvm::dyn_cast<StructDecl>(Decl.get());
     if (Struct) {
-      if (!visit(Struct)) {
-        return {false, {}};
-      }
+      visit(Struct);
     }
   }
 
-  return {true, std::move(Ast)};
+  return {!DiagnosticsMan->has_errors(), std::move(Ast)};
 }
 
 } // namespace phi
