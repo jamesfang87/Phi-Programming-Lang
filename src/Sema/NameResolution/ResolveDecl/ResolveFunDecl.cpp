@@ -11,19 +11,14 @@ namespace phi {
  * - Special rules for main() function
  */
 bool NameResolver::visit(FunDecl *Fun) {
-  // Resolve return type
-  if (!resolveType(Fun->getReturnTy())) {
-    return false;
-  }
+  bool Success = resolveType(Fun->getReturnTy());
 
   // Resolve parameters
   for (const auto &Param : Fun->getParams()) {
-    if (!visit(Param.get())) {
-      return false;
-    }
+    Success = visit(Param.get()) && Success;
   }
 
-  return true;
+  return Success;
 }
 
 /**
@@ -34,12 +29,7 @@ bool NameResolver::visit(FunDecl *Fun) {
  * - Type is not null
  */
 bool NameResolver::visit(ParamDecl *Param) {
-  // Resolve parameter type
-  if (!resolveType(Param->getType())) {
-    return false;
-  }
-
-  return true;
+  return resolveType(Param->getType());
 }
 
 } // namespace phi
