@@ -8,6 +8,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <print>
 #include <string>
 
 namespace phi {
@@ -41,11 +42,7 @@ bool NameResolver::visit(BoolLiteral &Expression) {
 
 bool NameResolver::visit(RangeLiteral &Expression) {
   // Resolve start and end expressions
-  if (!Expression.getStart().accept(*this) ||
-      !Expression.getEnd().accept(*this)) {
-    return false;
-  }
-  return true;
+  return visit(Expression.getStart()) && visit(Expression.getEnd());
 }
 
 /**
@@ -80,6 +77,7 @@ bool NameResolver::visit(DeclRefExpr &Expression) {
  * Resolves a function call expression.
  */
 bool NameResolver::visit(FunCallExpr &Expression) {
+  bool Success = true;
   FunDecl *FunPtr = SymbolTab.lookup(Expression);
   if (!FunPtr) {
     auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&Expression.getCallee());
@@ -96,17 +94,15 @@ bool NameResolver::visit(FunCallExpr &Expression) {
             std::format("Declaration for `{}` could not be found. {}",
                         DeclRef->getId(), Hint))
         .emit(*DiagnosticsMan);
-    return false;
+    Success = false;
   }
 
   for (auto &Arg : Expression.getArgs()) {
-    if (!Arg->accept(*this)) {
-      return false;
-    }
+    Success = Arg->accept(*this) && Success;
   }
 
   Expression.setDecl(FunPtr);
-  return true;
+  return Success;
 }
 
 /**
@@ -119,11 +115,7 @@ bool NameResolver::visit(FunCallExpr &Expression) {
  */
 bool NameResolver::visit(BinaryOp &Expression) {
   // Resolve operands
-  if (!Expression.getLhs().accept(*this) ||
-      !Expression.getRhs().accept(*this)) {
-    return false;
-  }
-  return true;
+  return visit(Expression.getLhs()) && visit(Expression.getRhs());
 }
 
 /**
@@ -134,11 +126,7 @@ bool NameResolver::visit(BinaryOp &Expression) {
  * - Operation is supported for operand type
  */
 bool NameResolver::visit(UnaryOp &Expression) {
-  // Resolve operand
-  if (!Expression.getOperand().accept(*this)) {
-    return false;
-  }
-  return true;
+  return visit(Expression.getOperand());
 }
 
 } // namespace phi

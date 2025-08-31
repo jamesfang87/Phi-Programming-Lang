@@ -31,15 +31,11 @@ bool PhiCompiler::compile() {
 
   auto [Success, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
-  if (!Success) {
-    return false;
+  for (auto &D : ResolvedNames) {
+    D->emit(0);
   }
 
   auto ResolvedTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
-
-  for (auto &D : ResolvedTypes) {
-    D->emit(0);
-  }
 
   // // Code Generation
   // phi::CodeGen codegen(std::move(resolved_ast), path);

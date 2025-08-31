@@ -55,36 +55,22 @@ bool NameResolver::visit(StructInitExpr &Expression) {
 bool NameResolver::visit(FieldInitExpr &Expression) {
   assert(Expression.getValue() != nullptr);
   assert(Expression.getDecl() != nullptr);
-  if (!Expression.getValue()->accept(*this)) {
-    return false;
-  }
-  return true;
+
+  return visit(*Expression.getValue());
 }
 
 bool NameResolver::visit(MemberAccessExpr &Expression) {
-  const auto Base = Expression.getBase();
-
-  if (!Base->accept(*this)) {
-    std::println("Base expression failed semantic analysis");
-    return false;
-  }
-
-  return true;
+  return visit(*Expression.getBase());
 }
 
 bool NameResolver::visit(MemberFunCallExpr &Expression) {
-  const auto Base = Expression.getBase();
-
-  if (!Base->accept(*this)) {
-    std::println("Base expression failed semantic analysis");
-    return false;
-  }
+  bool Success = visit(*Expression.getBase());
 
   for (const auto &Args : Expression.getCall().getArgs()) {
-    Args->accept(*this);
+    Success = visit(*Args) && Success;
   }
 
-  return true;
+  return Success;
 }
 
 } // namespace phi

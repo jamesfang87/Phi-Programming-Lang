@@ -3,7 +3,6 @@
 #include "AST/Decl.hpp"
 #include "llvm/Support/Casting.h"
 #include <cassert>
-#include <print>
 
 namespace phi {
 
@@ -11,19 +10,15 @@ bool NameResolver::visit(StructDecl *Struct) {
   SymbolTable::ScopeGuard StructScope(SymbolTab);
   assert(Struct);
 
-  for (auto &Field : Struct->getFields()) {
-    if (!visit(&Field)) {
-      return false;
-    }
+  bool Success = true;
 
+  for (auto &Field : Struct->getFields()) {
+    Success = visit(&Field) && Success;
     SymbolTab.insert(&Field);
   }
 
   for (auto &Method : Struct->getMethods()) {
-    if (!visit(&Method)) {
-      return false;
-    }
-
+    Success = visit(&Method) && Success;
     SymbolTab.insert(&Method);
   }
 
@@ -41,26 +36,21 @@ bool NameResolver::visit(StructDecl *Struct) {
       }
     }
 
-    if (!resolveBlock(Method.getBody(), true)) {
-      return false;
-    }
+    Success = resolveBlock(Method.getBody(), true) && Success;
   }
 
-  return true;
+  return Success;
 }
 
 bool NameResolver::visit(FieldDecl *Field) {
-  if (!resolveType(Field->getType())) {
-    return false;
-  }
+  bool Success = resolveType(Field->getType());
 
   // Handle initializer if present
-  if (Field->hasInit() && !Field->getInit().accept(*this)) {
-    std::println("failed to resolve field initializer");
-    return false;
+  if (Field->hasInit()) {
+    Success = visit(Field->getInit()) && Success;
   }
 
-  return true;
+  return Success;
 }
 
 } // namespace phi
