@@ -13,7 +13,8 @@ namespace phi {
 bool NameResolver::visit(StructInitExpr &Expression) {
   auto *Found = SymbolTab.lookup(Expression.getStructId());
   if (!Found) {
-    std::println("Could not find struct {}", Expression.getStructId());
+    emitNotFoundError(NotFoundErrorKind::Struct, Expression.getStructId(),
+                      Expression.getLocation());
     return false;
   }
   Expression.setStructDecl(Found);
@@ -26,21 +27,18 @@ bool NameResolver::visit(StructInitExpr &Expression) {
     AccountedFor.insert(Field.getId());
   }
 
+  bool Success = true;
   for (auto &FieldInit : Expression.getFields()) {
     if (Found->getField(FieldInit->getFieldId()) == nullptr) {
-      std::println("Could not find field {} in struct {}",
-                   FieldInit->getFieldId(), Expression.getStructId());
-      return false;
+      emitNotFoundError(NotFoundErrorKind::Field, FieldInit->getFieldId(),
+                        FieldInit->getLocation());
+    } else {
+      FieldInit->setFieldDecl(Found->getField(FieldInit->getFieldId()));
+      assert(FieldInit->getDecl() != nullptr);
+      AccountedFor.erase(FieldInit->getFieldId());
     }
 
-    FieldInit->setFieldDecl(Found->getField(FieldInit->getFieldId()));
-    assert(FieldInit->getDecl() != nullptr);
-
-    if (!FieldInit->accept(*this)) {
-      return false;
-    }
-
-    AccountedFor.erase(FieldInit->getFieldId());
+    Success = visit(*FieldInit) && Success;
   }
 
   if (!AccountedFor.empty()) {
@@ -49,12 +47,11 @@ bool NameResolver::visit(StructInitExpr &Expression) {
     return false;
   }
 
-  return true;
+  return Success;
 }
 
 bool NameResolver::visit(FieldInitExpr &Expression) {
   assert(Expression.getValue() != nullptr);
-  assert(Expression.getDecl() != nullptr);
 
   return visit(*Expression.getValue());
 }
