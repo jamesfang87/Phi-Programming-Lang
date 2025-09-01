@@ -116,7 +116,6 @@ TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
   auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
                                       Monotype::makeVar(Factory.fresh()));
   if (E.getOp() == TokenKind::AmpKind) {
-    std::println("here for amp");
     OpType =
         Monotype::makeFun({NewTypeVar}, Monotype::makeApp("Ref", {NewTypeVar}));
     assert(OpType.isFun());
@@ -128,8 +127,6 @@ TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
     assert(TypeOfCall.asFun().Ret->isApp());
     unifyInto(AllSubst, OpType, TypeOfCall);
     auto T = TypeOfCall.asFun().Ret;
-    std::println("OpType: {} | TypeOfCall: {}", OpType.toString(),
-                 TypeOfCall.toString());
     recordSubst(AllSubst);
     annotate(E, *T);
     assert(T->isApp());
@@ -137,8 +134,6 @@ TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
   }
 
   unifyInto(AllSubst, OpType, TypeOfCall);
-  std::println("OpType: {} | TypeOfCall: {}", OpType.toString(),
-               TypeOfCall.toString());
   recordSubst(AllSubst);
   annotate(E, AllSubst.apply(NewTypeVar));
   return {AllSubst, AllSubst.apply(NewTypeVar)};

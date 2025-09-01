@@ -288,7 +288,7 @@ public:
   [[nodiscard]] const std::string &getStructId() const { return StructId; }
   [[nodiscard]] const std::vector<std::unique_ptr<FieldInitExpr>> &
   getFields() const {
-    return Fields;
+    return FieldInits;
   }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
@@ -303,7 +303,7 @@ public:
 
 private:
   std::string StructId;
-  std::vector<std::unique_ptr<FieldInitExpr>> Fields;
+  std::vector<std::unique_ptr<FieldInitExpr>> FieldInits;
   StructDecl *StructDecl = nullptr;
 };
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,6 +13,7 @@
 #include "AST/Type.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Sema/SymbolTable.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
@@ -66,6 +68,43 @@ private:
   void emitRedefinitionError(std::string_view SymbolKind, Decl *FirstDecl,
                              Decl *Redecl);
 
+  enum class NotFoundErrorKind : uint8_t {
+    Variable,
+    Function,
+    Type,
+    Struct,
+    Field,
+  };
+
+  template <typename SrcLocation>
+  void emitNotFoundError(NotFoundErrorKind Kind, std::string_view PrimaryId,
+                         const SrcLocation &PrimaryLoc,
+                         std::optional<std::string> ContextId = std::nullopt) {
+    switch (Kind) {
+    case NotFoundErrorKind::Variable:
+      emitVariableNotFound(PrimaryId, PrimaryLoc);
+      break;
+    case NotFoundErrorKind::Function:
+      emitFunctionNotFound(PrimaryId, PrimaryLoc);
+      break;
+    case NotFoundErrorKind::Type:
+      emitTypeNotFound(PrimaryId, PrimaryLoc);
+      break;
+    case NotFoundErrorKind::Struct:
+      emitStructNotFound(PrimaryId, PrimaryLoc);
+      break;
+    case NotFoundErrorKind::Field:
+      emitFieldNotFound(PrimaryId, PrimaryLoc, ContextId);
+      break;
+    }
+  }
+
+  void emitVariableNotFound(std::string_view VarId, const SrcLocation &Loc);
+  void emitFunctionNotFound(std::string_view FunId, const SrcLocation &Loc);
+  void emitTypeNotFound(std::string_view TypeName, const SrcLocation &Loc);
+  void emitStructNotFound(std::string_view StructId, const SrcLocation &Loc);
+  void emitFieldNotFound(std::string_view FieldId, const SrcLocation &RefLoc,
+                         const std::optional<std::string> &StructId);
   /**
    * @brief Resolves a block statement
    *
