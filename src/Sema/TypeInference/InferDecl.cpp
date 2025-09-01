@@ -36,27 +36,15 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
   Substitution Subst;
   if (D.hasInit()) {
     auto [InitSubst, InitType] = visit(D.getInit());
-    std::println("Right now for variable {} vartype: {} init as: {}", D.getId(),
-                 VarType.toString(), InitType.toString());
     Subst = std::move(InitSubst);
     VarType = Subst.apply(VarType);
-    std::println("Right now for variable {} vartype: {} init as: {}", D.getId(),
-                 VarType.toString(), InitType.toString());
     unifyInto(Subst, VarType, InitType);
-    std::println("Right now for variable {} vartype: {} init as: {}", D.getId(),
-                 VarType.toString(), InitType.toString());
   }
 
   if (D.hasType()) {
     const auto DeclaredAs = D.getType().toMonotype();
-    std::println("variable {} is declared as {}", D.getId(),
-                 DeclaredAs.toString());
     unifyInto(Subst, VarType, DeclaredAs);
-    std::println("Right now vartype: {} declared as: {}", VarType.toString(),
-                 DeclaredAs.toString());
     VarType = Subst.apply(DeclaredAs);
-    std::println("Right now vartype: {} declared as: {}", VarType.toString(),
-                 DeclaredAs.toString());
 
   } else {
     VarType = Subst.apply(VarType);

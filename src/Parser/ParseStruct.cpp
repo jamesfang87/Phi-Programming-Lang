@@ -32,6 +32,8 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
       break; // we don't need to do anything here
     default:
       error("Unexpected token");
+      syncTo({TokenKind::PublicKwKind, TokenKind::FunKwKind,
+              TokenKind::IdentifierKind, TokenKind::CloseBraceKind});
       break;
     }
 

@@ -400,13 +400,13 @@ StructInitExpr::StructInitExpr(
     SrcLocation Location, std::string StructId,
     std::vector<std::unique_ptr<FieldInitExpr>> Fields)
     : Expr(Stmt::Kind::StructInitKind, std::move(Location)),
-      StructId(std::move(StructId)), Fields(std::move(Fields)) {}
+      StructId(std::move(StructId)), FieldInits(std::move(Fields)) {}
 
 void StructInitExpr::emit(int Level) const {
   std::println("{}StructInitExpr:", indent(Level));
   std::println("{}  struct: {}", indent(Level), StructId);
   std::println("{}  fields:", indent(Level));
-  for (const auto &Field : Fields) {
+  for (const auto &Field : FieldInits) {
     Field->emit(Level + 2);
   }
 }

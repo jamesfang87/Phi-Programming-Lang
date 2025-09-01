@@ -8,7 +8,6 @@
 
 #include <cassert>
 #include <cstddef>
-#include <print>
 #include <string>
 
 namespace phi {
@@ -55,18 +54,9 @@ bool NameResolver::visit(RangeLiteral &Expression) {
 bool NameResolver::visit(DeclRefExpr &Expression) {
   ValueDecl *DeclPtr = SymbolTab.lookup(Expression);
   if (!DeclPtr) {
-    auto BestMatch = SymbolTab.getClosestVar(Expression.getId());
-    std::string Hint;
-    if (BestMatch) {
-      Hint = std::format("Did you mean `{}`?", BestMatch->getId());
-    }
+    emitNotFoundError(NotFoundErrorKind::Variable, Expression.getId(),
+                      Expression.getLocation());
 
-    error(std::format("use of undeclared variable `{}`", Expression.getId()))
-        .with_primary_label(
-            Expression.getLocation(),
-            std::format("Declaration for `{}` could not be found. {}",
-                        Expression.getId(), Hint))
-        .emit(*DiagnosticsMan);
     return false;
   }
   Expression.setDecl(DeclPtr);
@@ -81,19 +71,8 @@ bool NameResolver::visit(FunCallExpr &Expression) {
   FunDecl *FunPtr = SymbolTab.lookup(Expression);
   if (!FunPtr) {
     auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&Expression.getCallee());
-    auto BestMatch = SymbolTab.getClosestFun(DeclRef->getId());
-    std::string Hint;
-    if (BestMatch) {
-      Hint = std::format("Did you mean `{}`?", BestMatch->getId());
-    }
-
-    error(std::format("attempt to call undeclared function `{}`",
-                      DeclRef->getId()))
-        .with_primary_label(
-            Expression.getLocation(),
-            std::format("Declaration for `{}` could not be found. {}",
-                        DeclRef->getId(), Hint))
-        .emit(*DiagnosticsMan);
+    emitNotFoundError(NotFoundErrorKind::Function, DeclRef->getId(),
+                      Expression.getLocation());
     Success = false;
   }
 

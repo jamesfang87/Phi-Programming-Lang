@@ -46,13 +46,7 @@ bool NameResolver::resolveType(std::optional<Type> Type) {
     Hint = std::format("Did you mean `{}`?", *BestMatch);
   }
 
-  error(std::format(
-            "Could not match type `{}` with any primitive type or a struct",
-            TypeName))
-      .with_primary_label(
-          T.getLocation(),
-          std::format("Expected this to be a valid type. {}", Hint))
-      .emit(*DiagnosticsMan);
+  emitNotFoundError(NotFoundErrorKind::Type, TypeName, T.getLocation());
   return false;
 }
 
