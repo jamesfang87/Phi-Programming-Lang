@@ -4,7 +4,6 @@
 #include "SrcManager/SrcLocation.hpp"
 #include <cassert>
 #include <memory>
-#include <print>
 #include <string>
 
 namespace phi {
@@ -15,7 +14,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
   std::string Id = advanceToken().getLexeme();
 
   if (peekToken().getKind() != TokenKind::OpenBraceKind) {
-    error("Expected '{' after struct identifier");
+    emitUnexpectedTokenError(peekToken(), {"{"});
   }
   advanceToken();
 
@@ -31,7 +30,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     case TokenKind::IdentifierKind:
       break; // we don't need to do anything here
     default:
-      error("Unexpected token");
+      emitUnexpectedTokenError(peekToken());
       syncTo({TokenKind::PublicKwKind, TokenKind::FunKwKind,
               TokenKind::IdentifierKind, TokenKind::CloseBraceKind});
       break;
