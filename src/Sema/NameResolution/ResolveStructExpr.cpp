@@ -1,6 +1,8 @@
 #include "AST/Expr.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/NameResolver.hpp"
 
+#include <format>
 #include <llvm/Support/Casting.h>
 
 #include <cassert>
@@ -42,8 +44,16 @@ bool NameResolver::visit(StructInitExpr &Expression) {
   }
 
   if (!AccountedFor.empty()) {
-    std::println("No matching construtor for struct {} found",
-                 Expression.getStructId());
+    std::string Error =
+        std::format("Struct `{}` is missing inits for fields ", Found->getId());
+    for (const std::string &Field : AccountedFor) {
+      Error += Field + ", ";
+    }
+    Error = Error.substr(0, Error.size() - 2); //  remove trailing comma
+    emitError(error(Error)
+                  .with_primary_label(Expression.getLocation(), "For this init")
+                  .build());
+
     return false;
   }
 
