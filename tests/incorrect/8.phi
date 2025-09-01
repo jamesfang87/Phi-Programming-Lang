@@ -4,7 +4,7 @@ fun foo() {
 
 
 struct Person {
-    var name: string;
+    name: string;
     public age: u8;
 }
 
@@ -15,7 +15,7 @@ fun main() {
     }
 
     var aa = Person {
-        nam = "a", age = "11"
+        nam = "a", 
     };
 
     foa();
