@@ -22,8 +22,8 @@ inline Monotype instantiate(const Polytype &P, TypeVarFactory &Factory) {
   return Subst.apply(P.getBody());
 }
 
-inline Polytype generalize(const TypeEnv &Env, const Monotype &t) {
-  const auto MonotypeFTVs = t.freeTypeVars();
+inline Polytype generalize(const TypeEnv &Env, const Monotype &T) {
+  const auto MonotypeFTVs = T.freeTypeVars();
   const auto EnvFTVs = Env.freeTypeVars();
 
   // Quant = ftv(t) \ ftv(env)
@@ -32,7 +32,7 @@ inline Polytype generalize(const TypeEnv &Env, const Monotype &t) {
     if (!EnvFTVs.contains(v))
       Quant.push_back(v);
 
-  return {std::move(Quant), t};
+  return {std::move(Quant), T};
 }
 
 } // namespace phi
