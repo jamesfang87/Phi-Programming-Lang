@@ -1,5 +1,6 @@
-#include "AST/Stmt.hpp"
 #include "Sema/TypeInference/Infer.hpp"
+
+#include "AST/Stmt.hpp"
 
 namespace phi {
 

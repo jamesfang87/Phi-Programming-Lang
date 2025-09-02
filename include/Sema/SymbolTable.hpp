@@ -57,11 +57,24 @@ public:
   bool insert(StructDecl *Struct);
   bool insert(VarDecl *Var);
   bool insert(ParamDecl *Param);
-  bool insert(FieldDecl *Param);
+  bool insert(FieldDecl *Field);
 
   FunDecl *lookup(FunCallExpr &Fun);
   StructDecl *lookup(const std::string &Struct);
   ValueDecl *lookup(DeclRefExpr &Var);
+
+  FunDecl *lookup(FunDecl &Fun);
+  StructDecl *lookup(StructDecl &Struct);
+  VarDecl *lookup(VarDecl &Var);
+  ParamDecl *lookup(ParamDecl &Param);
+  FieldDecl *lookup(FieldDecl &Field);
+
+  FunDecl *getClosestFun(const std::string &Undeclared) const;
+  StructDecl *getClosestStruct(const std::string &Undeclared) const;
+  ValueDecl *getClosestVar(const std::string &Undeclared) const;
+
+  std::optional<std::string>
+  getClosestType(const std::string &Undeclared) const;
 
 private:
   /// Stack of scopes, with the back being the innermost current scope
@@ -80,7 +93,8 @@ private:
    * @brief Exits the current innermost scope
    *
    * Pops the current scope from the scope stack, effectively ending the
-   * current lexical scope. All declarations in this scope become inaccessible.
+   * current lexical scope. All declarations in this scope become
+   * inaccessible.
    */
   void exitScope();
 };

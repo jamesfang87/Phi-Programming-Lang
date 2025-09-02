@@ -1,16 +1,17 @@
 #pragma once
 
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "Sema/TypeInference/Substitution.hpp"
 #include "SrcManager/SrcLocation.hpp"
-#include <memory>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
 
 namespace phi {
 
@@ -20,7 +21,7 @@ class ValueDecl;
 class FunDecl;
 class FieldDecl;
 class StructDecl;
-template <typename T> class ASTVisitor;
+
 class NameResolver;
 class TypeInferencer;
 
@@ -40,10 +41,8 @@ public:
   void setType(Type t) { Ty = std::move(t); }
   [[nodiscard]] virtual bool isAssignable() const = 0;
 
-  bool accept(ASTVisitor<bool> &Visitor) override;
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(ASTVisitor<void> &Visitor) override;
 
   static bool classof(const Stmt *S) {
     return S->getKind() >= Kind::ExprFirst && S->getKind() <= Kind::ExprLast;
@@ -59,8 +58,7 @@ public:
   [[nodiscard]] int64_t getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
@@ -77,8 +75,7 @@ public:
   [[nodiscard]] double getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
@@ -95,8 +92,7 @@ public:
   [[nodiscard]] std::string getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
@@ -113,8 +109,7 @@ public:
   [[nodiscard]] char getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
@@ -131,8 +126,7 @@ public:
   [[nodiscard]] bool getValue() const { return Value; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
@@ -154,8 +148,7 @@ public:
   [[nodiscard]] bool isInclusive() const { return Inclusive; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Stmt *S) {
@@ -175,8 +168,7 @@ public:
   void setDecl(ValueDecl *d) { DeclPtr = d; }
   [[nodiscard]] bool isAssignable() const override { return true; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
@@ -200,8 +192,7 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
   void setDecl(FunDecl *f) { Decl = f; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
@@ -225,8 +216,7 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
   [[nodiscard]] TokenKind getOp() const { return Op; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
@@ -249,8 +239,7 @@ public:
   [[nodiscard]] bool isPrefixOp() const { return IsPrefix; }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
@@ -276,8 +265,7 @@ public:
   [[nodiscard]] Expr *getValue() const { return Init.get(); }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
@@ -301,12 +289,11 @@ public:
   [[nodiscard]] const std::string &getStructId() const { return StructId; }
   [[nodiscard]] const std::vector<std::unique_ptr<FieldInitExpr>> &
   getFields() const {
-    return Fields;
+    return FieldInits;
   }
   [[nodiscard]] bool isAssignable() const override { return false; }
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
@@ -317,7 +304,7 @@ public:
 
 private:
   std::string StructId;
-  std::vector<std::unique_ptr<FieldInitExpr>> Fields;
+  std::vector<std::unique_ptr<FieldInitExpr>> FieldInits;
   StructDecl *StructDecl = nullptr;
 };
 
@@ -332,8 +319,7 @@ public:
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
   static bool classof(const Expr *E) {
@@ -356,10 +342,10 @@ public:
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   void emit(int level) const override;
-  bool accept(ASTVisitor<bool> &Visitor) override;
-  void accept(ASTVisitor<void> &Visitor) override;
+
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
+
   static bool classof(const Expr *E) {
     return E->getKind() == Stmt::Kind::MemberFunAccessKind;
   }

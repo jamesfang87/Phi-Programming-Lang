@@ -1,93 +1,46 @@
 #include "AST/Type.hpp"
+
 #include "Sema/TypeInference/Types/Monotype.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
-/**
- * Checks if type is an integer primitive.
- */
-bool isIntTy(const Type &Ty) {
-  if (!Ty.isPrimitive())
-    return false;
 
-  const Type::PrimitiveKind prim = Ty.getPrimitiveType();
-  return prim == Type::PrimitiveKind::I8Kind ||
-         prim == Type::PrimitiveKind::I16Kind ||
-         prim == Type::PrimitiveKind::I32Kind ||
-         prim == Type::PrimitiveKind::I64Kind ||
-         prim == Type::PrimitiveKind::U8Kind ||
-         prim == Type::PrimitiveKind::U16Kind ||
-         prim == Type::PrimitiveKind::U32Kind ||
-         prim == Type::PrimitiveKind::U64Kind;
-}
-
-bool isSignedInt(const Type &Ty) {
-  if (!Ty.isPrimitive())
-    return false;
-
-  const Type::PrimitiveKind prim = Ty.getPrimitiveType();
-  return prim == Type::PrimitiveKind::I8Kind ||
-         prim == Type::PrimitiveKind::I16Kind ||
-         prim == Type::PrimitiveKind::I32Kind ||
-         prim == Type::PrimitiveKind::I64Kind;
-}
-
-bool isUnsignedInt(const Type &Ty) { return (isIntTy(Ty) && !isSignedInt(Ty)); }
-
-bool isFloat(const Type &Ty) {
-  if (!Ty.isPrimitive())
-    return false;
-
-  const Type::PrimitiveKind prim = Ty.getPrimitiveType();
-  return prim == Type::PrimitiveKind::F32Kind ||
-         prim == Type::PrimitiveKind::F64Kind;
-}
-
-/**
- * Checks if type is numeric (integer or float).
- */
-bool isNumTy(const Type &Ty) {
-  if (!Ty.isPrimitive())
-    return false;
-
-  return isIntTy(Ty) || isFloat(Ty);
-}
+class Monotype; // forward declare your Monotype class
 
 Monotype Type::toMonotype() const {
-  // Map AST::Type::PrimitiveKind -> Monotype constructor names
-  switch (Kind) {
-  case Type::PrimitiveKind::I8Kind:
-    return Monotype::makeCon("i8");
-  case Type::PrimitiveKind::I16Kind:
-    return Monotype::makeCon("i16");
-  case Type::PrimitiveKind::I32Kind:
-    return Monotype::makeCon("i32");
-  case Type::PrimitiveKind::I64Kind:
-    return Monotype::makeCon("i64");
-  case Type::PrimitiveKind::U8Kind:
-    return Monotype::makeCon("u8");
-  case Type::PrimitiveKind::U16Kind:
-    return Monotype::makeCon("u16");
-  case Type::PrimitiveKind::U32Kind:
-    return Monotype::makeCon("u32");
-  case Type::PrimitiveKind::U64Kind:
-    return Monotype::makeCon("u64");
-  case Type::PrimitiveKind::F32Kind:
-    return Monotype::makeCon("f32");
-  case Type::PrimitiveKind::F64Kind:
-    return Monotype::makeCon("f64");
-  case Type::PrimitiveKind::StringKind:
-    return Monotype::makeCon("string");
-  case Type::PrimitiveKind::CharKind:
-    return Monotype::makeCon("char");
-  case Type::PrimitiveKind::BoolKind:
-    return Monotype::makeCon("bool");
-  case Type::PrimitiveKind::RangeKind:
-    return Monotype::makeCon("range");
-  case Type::PrimitiveKind::NullKind:
-    return Monotype::makeCon("null");
-  case Type::PrimitiveKind::CustomKind:
-    return Monotype::makeCon(getCustomTypeName());
-  }
+  SrcLocation L = this->Location;
+  struct Visitor {
+    SrcLocation L;
+    Monotype operator()(PrimitiveKind K) const {
+      return Monotype::makeCon(primitiveKindToString(K), {}, L);
+    }
+    Monotype operator()(const CustomType &C) const {
+      return Monotype::makeCon(C.Name, {}, L);
+    }
+    Monotype operator()(const ReferenceType &R) const {
+      return Monotype::makeApp("Ref", {R.Pointee->toMonotype()}, L);
+    }
+    Monotype operator()(const PointerType &P) const {
+      return Monotype::makeApp("Ptr", {P.Pointee->toMonotype()}, L);
+    }
+    Monotype operator()(const GenericType &G) const {
+      std::vector<Monotype> Args;
+      Args.reserve(G.TypeArguments.size());
+      for (const auto &Arg : G.TypeArguments) {
+        Args.push_back(Arg.toMonotype());
+      }
+      return Monotype::makeApp(G.Name, Args, L);
+    }
+    Monotype operator()(const FunctionType &F) const {
+      std::vector<Monotype> Params;
+      Params.reserve(F.Parameters.size());
+      for (const auto &Param : F.Parameters)
+        Params.push_back(Param.toMonotype());
+      Monotype ret = F.ReturnType->toMonotype();
+      return Monotype::makeFun(Params, ret, L);
+    }
+  };
+  return std::visit(Visitor{L}, Data);
 }
 
 } // namespace phi

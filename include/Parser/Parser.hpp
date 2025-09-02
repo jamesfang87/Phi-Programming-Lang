@@ -289,7 +289,7 @@ private:
         content.push_back(std::move(result));
       } else {
         // Recover by syncing to comma or closing delimiter
-        syncTo({closing, TokenKind::CommaKind});
+        syncTo({closing, TokenKind::Comma});
       }
 
       // Check for closing delimiter before comma
@@ -298,7 +298,7 @@ private:
       }
 
       // Handle comma separator
-      if (peekToken().getKind() == TokenKind::CommaKind) {
+      if (peekToken().getKind() == TokenKind::Comma) {
         advanceToken();
       } else {
         emitError(

@@ -1,4 +1,11 @@
 #pragma once
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
@@ -7,12 +14,6 @@
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "Sema/TypeInference/Types/MonotypeAtoms.hpp"
 #include "Sema/TypeInference/Unify.hpp"
-
-#include <algorithm>
-#include <memory>
-#include <string>
-#include <unordered_map>
-#include <vector>
 
 namespace phi {
 

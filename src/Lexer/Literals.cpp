@@ -34,11 +34,11 @@ Token Lexer::parseNumber() {
       advanceChar();
     }
   } else {
-    return makeToken(TokenKind::IntLiteralKind);
+    return makeToken(TokenKind::IntLiteral);
   }
 
   // TODO: implement exponents
-  return makeToken(TokenKind::FloatLiteralKind);
+  return makeToken(TokenKind::FloatLiteral);
 }
 
 /**
@@ -64,41 +64,26 @@ Token Lexer::parseIdentifierOrKw() {
   const std::string Id(CurLexeme, CurChar);
 
   static const std::unordered_map<std::string, TokenKind> Kws = {
-      {"bool", TokenKind::BoolKwKind},
-      {"break", TokenKind::BreakKwKind},
-      {"const", TokenKind::ConstKwKind},
-      {"continue", TokenKind::ContinueKwKind},
-      {"else", TokenKind::ElseKwKind},
-      {"enum", TokenKind::EnumKwKind},
-      {"false", TokenKind::FalseKwKind},
-      {"for", TokenKind::ForKwKind},
-      {"fun", TokenKind::FunKwKind},
-      {"if", TokenKind::IfKwKind},
-      {"import", TokenKind::ImportKwKind},
-      {"in", TokenKind::InKwKind},
-      {"public", TokenKind::PublicKwKind},
-      {"return", TokenKind::ReturnKwKind},
-      {"struct", TokenKind::StructKwKind},
-      {"true", TokenKind::TrueKwKind},
-      {"var", TokenKind::VarKwKind},
-      {"while", TokenKind::WhileKwKind},
-      {"i8", TokenKind::I8Kind},
-      {"i16", TokenKind::I16Kind},
-      {"i32", TokenKind::I32Kind},
-      {"i64", TokenKind::I64Kind},
-      {"u8", TokenKind::U8Kind},
-      {"u16", TokenKind::U16Kind},
-      {"u32", TokenKind::U32Kind},
-      {"u64", TokenKind::U64Kind},
-      {"f32", TokenKind::F32Kind},
-      {"f64", TokenKind::F64Kind},
-      {"string", TokenKind::StringKind},
-      {"char", TokenKind::CharKind},
+      {"bool", TokenKind::BoolKw},     {"break", TokenKind::BreakKw},
+      {"const", TokenKind::ConstKw},   {"continue", TokenKind::ContinueKw},
+      {"else", TokenKind::ElseKwKind}, {"enum", TokenKind::EnumKw},
+      {"false", TokenKind::FalseKw},   {"for", TokenKind::ForKw},
+      {"fun", TokenKind::FunKw},       {"if", TokenKind::IfKw},
+      {"import", TokenKind::ImportKw}, {"in", TokenKind::InKwKind},
+      {"public", TokenKind::PublicKw}, {"return", TokenKind::ReturnKw},
+      {"struct", TokenKind::StructKw}, {"true", TokenKind::TrueKw},
+      {"var", TokenKind::VarKw},       {"while", TokenKind::WhileKw},
+      {"i8", TokenKind::I8},           {"i16", TokenKind::I16},
+      {"i32", TokenKind::I32},         {"i64", TokenKind::I64},
+      {"u8", TokenKind::U8},           {"u16", TokenKind::U16},
+      {"u32", TokenKind::U32},         {"u64", TokenKind::U64},
+      {"f32", TokenKind::F32},         {"f64", TokenKind::F64},
+      {"string", TokenKind::String},   {"char", TokenKind::Char},
   };
 
   const auto It = Kws.find(Id);
   return It != Kws.end() ? makeToken(It->second)
-                         : makeToken(TokenKind::IdentifierKind);
+                         : makeToken(TokenKind::Identifier);
 }
 
 /**
@@ -150,7 +135,7 @@ Token Lexer::parseString() {
         .with_primary_label(span, "string starts here")
         .with_help("add a closing double quote (\") to terminate the string")
         .emit(*DiagnosticsMan);
-    return makeToken(TokenKind::ErrorKind);
+    return makeToken(TokenKind::Error);
   }
   advanceChar();     // consume closing quote
   InsideStr = false; // we are no longer inside str
@@ -163,7 +148,7 @@ Token Lexer::parseString() {
                      .line = LineNum,
                      .col = static_cast<int>(CurChar - CurLine) + 1};
 
-  return {start, end, TokenKind::StrLiteralKind, str};
+  return {start, end, TokenKind::StrLiteral, str};
 }
 
 /**
@@ -193,7 +178,7 @@ Token Lexer::parseChar() {
         .with_note(
             "try using a space character: ' ' or an escape sequence like '\\n'")
         .emit(*DiagnosticsMan);
-    return makeToken(TokenKind::ErrorKind);
+    return makeToken(TokenKind::Error);
   }
 
   char c;
@@ -222,7 +207,7 @@ Token Lexer::parseChar() {
           .with_note("use a string literal (\"\") for multiple characters")
           .emit(*DiagnosticsMan);
     }
-    return makeToken(TokenKind::ErrorKind);
+    return makeToken(TokenKind::Error);
   }
 
   advanceChar(); // consume closing quote
@@ -235,7 +220,7 @@ Token Lexer::parseChar() {
                      .line = LineNum,
                      .col = static_cast<int>(CurChar - CurLine) + 1};
 
-  return {start, end, TokenKind::CharLiteralKind, std::string(1, c)};
+  return {start, end, TokenKind::CharLiteral, std::string(1, c)};
 }
 
 /**

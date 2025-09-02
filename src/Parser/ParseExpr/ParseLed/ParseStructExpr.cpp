@@ -11,9 +11,8 @@ Parser::parseStructInit(std::unique_ptr<Expr> InitExpr) {
   const auto DeclRef = llvm::dyn_cast<DeclRefExpr>(InitExpr.get());
   std::string StructId = DeclRef->getId();
 
-  auto FieldInits = parseList<FieldInitExpr>(TokenKind::OpenBraceKind,
-                                             TokenKind::CloseBraceKind,
-                                             &Parser::parseFieldInit);
+  auto FieldInits = parseList<FieldInitExpr>(
+      TokenKind::OpenBrace, TokenKind::CloseBrace, &Parser::parseFieldInit);
   if (!FieldInits) {
     return nullptr;
   }
@@ -23,14 +22,14 @@ Parser::parseStructInit(std::unique_ptr<Expr> InitExpr) {
 }
 
 std::unique_ptr<FieldInitExpr> Parser::parseFieldInit() {
-  if (peekToken().getKind() != TokenKind::IdentifierKind) {
+  if (peekToken().getKind() != TokenKind::Identifier) {
     emitUnexpectedTokenError(peekToken(), {"Identifier"});
     return nullptr;
   }
   SrcLocation Loc = peekToken().getStart();
   std::string FieldId = advanceToken().getLexeme();
 
-  if (peekToken().getKind() != TokenKind::EqualsKind) {
+  if (peekToken().getKind() != TokenKind::Equals) {
     emitUnexpectedTokenError(peekToken(), {"="});
     return nullptr;
   }

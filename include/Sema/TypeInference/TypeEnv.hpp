@@ -46,20 +46,20 @@ public:
 
   // Apply substitution to the whole env (used after unify steps)
   void applySubstitution(const Substitution &S) {
-    for (auto &Decl: DeclMap | std::views::values)
+    for (auto &Decl : DeclMap | std::views::values)
       Decl = S.apply(Decl);
-    for (auto &Name: NameMap | std::views::values)
+    for (auto &Name : NameMap | std::views::values)
       Name = S.apply(Name);
   }
 
   // Free vars in env (for generalization)
   [[nodiscard]] std::unordered_set<TypeVar> freeTypeVars() const {
     std::unordered_set<TypeVar> Acc;
-    for (const auto &Decl: DeclMap | std::views::values) {
+    for (const auto &Decl : DeclMap | std::views::values) {
       auto F = Decl.freeTypeVars();
       Acc.insert(F.begin(), F.end());
     }
-    for (const auto &Name: NameMap | std::views::values) {
+    for (const auto &Name : NameMap | std::views::values) {
       auto F = Name.freeTypeVars();
       Acc.insert(F.begin(), F.end());
     }

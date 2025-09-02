@@ -1,5 +1,6 @@
 #pragma once
 
+#include <format>
 #include <string>
 
 namespace phi {
@@ -13,6 +14,8 @@ namespace phi {
 struct SrcLocation {
   std::string path; ///< Source file path
   int line, col;    ///< Line and column numbers (1-indexed)
+                    ///
+  std::string toString() const { return std::format("{}:{}", line, col); }
 };
 
 } // namespace phi
