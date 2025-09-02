@@ -2,12 +2,13 @@
 
 #include <cassert>
 #include <cstdint>
-#include <format>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Type.h>
 
 #include "SrcManager/SrcLocation.hpp"
 
@@ -184,6 +185,10 @@ public:
     return std::holds_alternative<FunctionType>(Data);
   }
 
+  [[nodiscard]] PrimitiveKind asPrimitive() const {
+    return std::get<PrimitiveKind>(Data);
+  }
+
   [[nodiscard]] PointerType asPtr() const {
     return std::get<PointerType>(Data);
   }
@@ -200,53 +205,19 @@ public:
   }
 
   // Rendering for debugging/diagnostics.
-  std::string toString() const {
-    SrcLocation L = this->Location;
-    struct V {
-      SrcLocation L;
-      std::string operator()(PrimitiveKind K) const {
-        return std::format("{}", primitiveKindToString(K));
-      }
-      std::string operator()(const CustomType &C) const { return C.Name; }
-      std::string operator()(const ReferenceType &R) const {
-        return "&" + R.Pointee->toString();
-      }
-      std::string operator()(const PointerType &P) const {
-        return "*" + P.Pointee->toString();
-      }
-      std::string operator()(const GenericType &G) const {
-        std::ostringstream Oss;
-        Oss << G.Name << "<";
-        for (size_t I = 0; I < G.TypeArguments.size(); ++I) {
-          Oss << G.TypeArguments[I].toString();
-          if (I + 1 < G.TypeArguments.size())
-            Oss << ",";
-        }
-        Oss << ">";
-        return Oss.str();
-      }
-      std::string operator()(const FunctionType &F) const {
-        std::ostringstream Oss;
-        Oss << "fn(";
-        for (size_t I = 0; I < F.Parameters.size(); ++I) {
-          Oss << F.Parameters[I].toString();
-          if (I + 1 < F.Parameters.size())
-            Oss << ",";
-        }
-        Oss << ") -> " << F.ReturnType->toString();
-        return Oss.str();
-      }
-    };
-    return std::visit(V{L}, Data);
-  }
-
+  [[nodiscard]] std::string toString() const;
   [[nodiscard]] class Monotype toMonotype() const;
+  [[nodiscard]] llvm::Type *toLLVM(llvm::LLVMContext &Ctx) const;
 
   SrcLocation getLocation() { return Location; };
 
   // Simple classification helpers
-  static bool isInteger(PrimitiveKind K) {
-    switch (K) {
+  bool isInteger() {
+    if (!isPrimitive()) {
+      return false;
+    }
+
+    switch (asPrimitive()) {
     case PrimitiveKind::I8:
     case PrimitiveKind::I16:
     case PrimitiveKind::I32:
@@ -260,8 +231,12 @@ public:
       return false;
     }
   }
-  static bool isSignedInteger(PrimitiveKind K) {
-    switch (K) {
+  bool isSignedInteger() {
+    if (!isPrimitive()) {
+      return false;
+    }
+
+    switch (asPrimitive()) {
     case PrimitiveKind::I8:
     case PrimitiveKind::I16:
     case PrimitiveKind::I32:
@@ -271,8 +246,12 @@ public:
       return false;
     }
   }
-  static bool isUnsignedInteger(PrimitiveKind K) {
-    switch (K) {
+  bool isUnsignedInteger() {
+    if (!isPrimitive()) {
+      return false;
+    }
+
+    switch (asPrimitive()) {
     case PrimitiveKind::U8:
     case PrimitiveKind::U16:
     case PrimitiveKind::U32:
@@ -282,7 +261,13 @@ public:
       return false;
     }
   }
-  static bool isFloat(PrimitiveKind K) {
+
+  bool isFloat() {
+    if (!isPrimitive()) {
+      return false;
+    }
+
+    auto K = asPrimitive();
     return K == PrimitiveKind::F32 || K == PrimitiveKind::F64;
   }
 
