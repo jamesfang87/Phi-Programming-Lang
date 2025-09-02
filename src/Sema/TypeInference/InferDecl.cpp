@@ -1,10 +1,12 @@
-#include "AST/Decl.hpp"
-#include "Sema/TypeInference/Algorithms.hpp"
 #include "Sema/TypeInference/Infer.hpp"
-#include "Sema/TypeInference/Types/Monotype.hpp"
-#include "Sema/TypeInference/Types/Polytype.hpp"
+
 #include <cassert>
 #include <optional>
+
+#include "AST/Decl.hpp"
+#include "Sema/TypeInference/Algorithms.hpp"
+#include "Sema/TypeInference/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/Polytype.hpp"
 
 namespace phi {
 
@@ -44,6 +46,7 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
     const auto DeclaredAs = D.getType().toMonotype();
     unifyInto(Subst, VarType, DeclaredAs);
     VarType = Subst.apply(DeclaredAs);
+
   } else {
     VarType = Subst.apply(VarType);
   }

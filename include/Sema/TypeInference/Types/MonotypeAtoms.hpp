@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace phi {
@@ -15,6 +16,11 @@ struct TypeVar {
 };
 
 struct TypeCon {
+  std::string Name;
+  std::vector<Monotype> Args;
+};
+
+struct TypeApp {
   std::string Name;
   std::vector<Monotype> Args;
 };

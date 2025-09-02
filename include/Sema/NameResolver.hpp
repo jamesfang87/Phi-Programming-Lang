@@ -3,59 +3,108 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "AST/ASTVisitor.hpp"
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Type.hpp"
+#include "Diagnostics/DiagnosticManager.hpp"
 #include "Sema/SymbolTable.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
-class NameResolver final : public ASTVisitor<bool> {
+class NameResolver {
 public:
-  explicit NameResolver(std::vector<std::unique_ptr<Decl>> Ast)
-      : Ast(std::move(Ast)) {}
+  explicit NameResolver(std::vector<std::unique_ptr<Decl>> Ast,
+                        std::shared_ptr<DiagnosticManager> DiagnosticsMan)
+      : Ast(std::move(Ast)), DiagnosticsMan(std::move(DiagnosticsMan)) {}
 
   std::pair<bool, std::vector<std::unique_ptr<Decl>>> resolveNames();
 
-  // EXPRESSION VISITORS
-  bool visit(IntLiteral &Expression) override;
-  bool visit(FloatLiteral &Expression) override;
-  bool visit(StrLiteral &Expression) override;
-  bool visit(CharLiteral &Expression) override;
-  bool visit(BoolLiteral &Expression) override;
-  bool visit(RangeLiteral &Expression) override;
-  bool visit(DeclRefExpr &Expression) override;
-  bool visit(FunCallExpr &Expression) override;
-  bool visit(BinaryOp &Expression) override;
-  bool visit(UnaryOp &Expression) override;
-  bool visit(StructInitExpr &Expression) override;
-  bool visit(FieldInitExpr &Expression) override;
-  bool visit(MemberAccessExpr &Expression) override;
-  bool visit(MemberFunCallExpr &Expression) override;
+  // DECLARATION VISITORS
+  bool visit(FunDecl *Fun);
+  bool visit(ParamDecl *Param);
+  bool visit(StructDecl *Struct);
+  bool visit(FieldDecl *Field);
 
-  bool visit(ReturnStmt &Statement) override;
-  bool visit(IfStmt &Statement) override;
-  bool visit(WhileStmt &Statement) override;
-  bool visit(ForStmt &Statement) override;
-  bool visit(DeclStmt &Statement) override;
-  bool visit(BreakStmt &Statement) override;
-  bool visit(ContinueStmt &Statement) override;
-  bool visit(Expr &Statement) override;
+  // EXPRESSION VISITORS
+  bool visit(IntLiteral &Expression);
+  bool visit(FloatLiteral &Expression);
+  bool visit(StrLiteral &Expression);
+  bool visit(CharLiteral &Expression);
+  bool visit(BoolLiteral &Expression);
+  bool visit(RangeLiteral &Expression);
+  bool visit(DeclRefExpr &Expression);
+  bool visit(FunCallExpr &Expression);
+  bool visit(BinaryOp &Expression);
+  bool visit(UnaryOp &Expression);
+  bool visit(StructInitExpr &Expression);
+  bool visit(FieldInitExpr &Expression);
+  bool visit(MemberAccessExpr &Expression);
+  bool visit(MemberFunCallExpr &Expression);
+
+  // STATEMENT VISITORS
+  bool visit(ReturnStmt &Statement);
+  bool visit(IfStmt &Statement);
+  bool visit(WhileStmt &Statement);
+  bool visit(ForStmt &Statement);
+  bool visit(DeclStmt &Statement);
+  bool visit(BreakStmt &Statement);
+  bool visit(ContinueStmt &Statement);
+  bool visit(Expr &Statement);
 
 private:
   /// The AST being analyzed (function declarations)
   std::vector<std::unique_ptr<Decl>> Ast;
-
-  /// Symbol table for identifier resolution
   SymbolTable SymbolTab;
-
-  /// Pointer to the function currently being analyzed
   FunDecl *CurFun = nullptr;
+  std::shared_ptr<DiagnosticManager> DiagnosticsMan;
 
+  void emitError(Diagnostic &&diagnostic) { DiagnosticsMan->emit(diagnostic); }
+  void emitRedefinitionError(std::string_view SymbolKind, Decl *FirstDecl,
+                             Decl *Redecl);
+
+  enum class NotFoundErrorKind : uint8_t {
+    Variable,
+    Function,
+    Type,
+    Struct,
+    Field,
+  };
+
+  template <typename SrcLocation>
+  void emitNotFoundError(NotFoundErrorKind Kind, std::string_view PrimaryId,
+                         const SrcLocation &PrimaryLoc,
+                         std::optional<std::string> ContextId = std::nullopt) {
+    switch (Kind) {
+    case NotFoundErrorKind::Variable:
+      emitVariableNotFound(PrimaryId, PrimaryLoc);
+      break;
+    case NotFoundErrorKind::Function:
+      emitFunctionNotFound(PrimaryId, PrimaryLoc);
+      break;
+    case NotFoundErrorKind::Type:
+      emitTypeNotFound(PrimaryId, PrimaryLoc);
+      break;
+    case NotFoundErrorKind::Struct:
+      emitStructNotFound(PrimaryId, PrimaryLoc);
+      break;
+    case NotFoundErrorKind::Field:
+      emitFieldNotFound(PrimaryId, PrimaryLoc, ContextId);
+      break;
+    }
+  }
+
+  void emitVariableNotFound(std::string_view VarId, const SrcLocation &Loc);
+  void emitFunctionNotFound(std::string_view FunId, const SrcLocation &Loc);
+  void emitTypeNotFound(std::string_view TypeName, const SrcLocation &Loc);
+  void emitStructNotFound(std::string_view StructId, const SrcLocation &Loc);
+  void emitFieldNotFound(std::string_view FieldId, const SrcLocation &RefLoc,
+                         const std::optional<std::string> &StructId);
   /**
    * @brief Resolves a block statement
    *
@@ -74,14 +123,8 @@ private:
    * @param fun The function declaration
    * @return true if resolution succeeded, false otherwise
    */
-  bool resolveFunDecl(FunDecl *Fun);
-  bool resolveParamDecl(ParamDecl *Param);
-
-  bool resolveStructDecl(StructDecl *Struct);
-  bool resolveFieldDecl(FieldDecl *Field);
-
   // Check if the type has been defined yet
-  bool resolveTy(std::optional<Type> Type);
+  bool resolveType(std::optional<Type> Type);
 };
 
 } // namespace phi

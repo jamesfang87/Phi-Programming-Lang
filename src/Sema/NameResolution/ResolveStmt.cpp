@@ -1,12 +1,10 @@
-#include "AST/Expr.hpp"
-#include "AST/Stmt.hpp"
 #include "Sema/NameResolver.hpp"
 
-#include <algorithm>
 #include <optional>
-#include <print>
 
 #include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
+#include "AST/Stmt.hpp"
 #include "Sema/SymbolTable.hpp"
 
 namespace phi {
@@ -29,9 +27,11 @@ bool NameResolver::resolveBlock(Block &Block, bool ScopeCreated = false) {
   }
 
   // Resolve all statements in the block
-  return std::all_of(
-      Block.getStmts().begin(), Block.getStmts().end(),
-      [this](const auto &StmtPtr) { return StmtPtr->accept(*this); });
+  bool Success = true;
+  for (const auto &StmtPtr : Block.getStmts()) {
+    Success = StmtPtr->accept(*this) && Success;
+  }
+  return Success;
 }
 
 /**
@@ -49,10 +49,7 @@ bool NameResolver::visit(ReturnStmt &Statement) {
   }
 
   // Resolve return expression
-  bool Success = Statement.getExpr().accept(*this);
-  if (!Success)
-    return false;
-  return true;
+  return visit(Statement.getExpr());
 }
 
 /**
@@ -63,18 +60,17 @@ bool NameResolver::visit(ReturnStmt &Statement) {
  * - Then/else blocks resolve successfully
  */
 bool NameResolver::visit(IfStmt &Statement) {
+  bool Success = true;
   // Resolve cond
-  bool Success = Statement.getCond().accept(*this);
-  if (!Success)
-    return false;
+  Success = visit(Statement.getCond()) && Success;
 
   // Resolve then and else blocks
-  if (!resolveBlock(Statement.getThen()))
-    return false;
-  if (Statement.hasElse() && !resolveBlock(Statement.getElse()))
-    return false;
+  Success = resolveBlock(Statement.getThen()) && Success;
+  if (Statement.hasElse()) {
+    Success = resolveBlock(Statement.getElse()) && Success;
+  }
 
-  return true;
+  return Success;
 }
 
 /**
@@ -86,14 +82,10 @@ bool NameResolver::visit(IfStmt &Statement) {
  */
 bool NameResolver::visit(WhileStmt &Statement) {
   bool Success = Statement.getCond().accept(*this);
-  if (!Success)
-    return false;
 
   // Resolve loop body
-  if (!resolveBlock(Statement.getBody()))
-    return false;
-
-  return true;
+  Success = resolveBlock(Statement.getBody()) && Success;
+  return Success;
 }
 
 /**
@@ -108,18 +100,14 @@ bool NameResolver::visit(WhileStmt &Statement) {
 bool NameResolver::visit(ForStmt &Statement) {
   // Resolve range expression
   bool Success = Statement.getRange().accept(*this);
-  if (!Success)
-    return false;
 
   // Create scope for loop variable
   SymbolTable::ScopeGuard BlockScope(SymbolTab);
   SymbolTab.insert(&Statement.getLoopVar());
 
   // Resolve loop body (scope already created)
-  if (!resolveBlock(Statement.getBody(), true))
-    return false;
-
-  return true;
+  Success = resolveBlock(Statement.getBody(), true) && Success;
+  return Success;
 }
 
 /**
@@ -135,23 +123,22 @@ bool NameResolver::visit(ForStmt &Statement) {
  */
 bool NameResolver::visit(DeclStmt &Statement) {
   VarDecl &Var = Statement.getDecl();
+  bool Success = true;
 
   // Resolve variable type
-  if (Var.hasType() && !resolveTy(Var.getType())) {
-    std::println("invalid type for variable");
-    return false;
+  if (Var.hasType()) {
+    Success = resolveType(Var.getType()) && Success;
   }
 
   // Resolve initializer if present
-  if (Var.hasInit() && !Var.getInit().accept(*this)) {
-    std::println("failed to resolve variable initializer");
-    return false;
+  if (Var.hasInit()) {
+    Success = visit(Var.getInit()) && Success;
   }
 
   // Add to symbol table
   SymbolTab.insert(&Var);
 
-  return true;
+  return Success;
 }
 
 bool NameResolver::visit(BreakStmt &Statement) {

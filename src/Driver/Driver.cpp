@@ -4,8 +4,8 @@
 #include "AST/Expr.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
-#include "Sema/TypeInference/Infer.hpp"
 #include "Sema/NameResolver.hpp"
+#include "Sema/TypeInference/Infer.hpp"
 #include <cstdlib>
 
 namespace phi {
@@ -28,15 +28,13 @@ bool PhiCompiler::compile() {
     return false;
   }
 
-  auto [Success, ResolvedNames] = NameResolver(std::move(Ast)).resolveNames();
-  if (!Success) {
-    return false;
+  auto [Success, ResolvedNames] =
+      NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
+  for (auto &D : ResolvedNames) {
+    D->emit(0);
   }
 
   auto ResolvedTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
-  for (auto &D : ResolvedTypes) {
-    D->emit(0);
-  }
 
   // // Code Generation
   // phi::CodeGen codegen(std::move(resolved_ast), path);

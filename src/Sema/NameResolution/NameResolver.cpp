@@ -2,11 +2,11 @@
 
 #include <cassert>
 #include <memory>
-#include <print>
 #include <vector>
 
+#include <llvm/Support/Casting.h>
+
 #include "AST/Decl.hpp"
-#include "llvm/Support/Casting.h"
 
 namespace phi {
 
@@ -28,62 +28,48 @@ NameResolver::resolveNames() {
 
     // now insert into symbol table
     if (!SymbolTab.insert(Struct)) {
-      std::println("struct redefinition: {}", DeclPtr->getId());
-      return {false, {}};
+      emitRedefinitionError("Function", SymbolTab.lookup(*Struct), Struct);
     }
   }
 
   // Phase 1: Resolve function signatures
   for (auto &DeclPtr : Ast) {
     auto Fun = llvm::dyn_cast<FunDecl>(DeclPtr.get());
-    if (!Fun) {
+    if (!Fun)
       continue;
-    }
 
-    if (!resolveFunDecl(Fun)) {
-      std::println("failed to resolve declaration: {}", DeclPtr->getId());
-      return {false, {}};
-    }
-
+    visit(Fun);
     if (!SymbolTab.insert(Fun)) {
-      std::println("function redefinition: {}", DeclPtr->getId());
-      return {false, {}};
+      emitRedefinitionError("Function", SymbolTab.lookup(*Fun), Fun);
     }
   }
 
   // Phase 2: Resolve function bodies
-  for (auto &decl : Ast) {
-    CurFun = llvm::dyn_cast<FunDecl>(decl.get());
+  for (auto &Decl : Ast) {
+    CurFun = llvm::dyn_cast<FunDecl>(Decl.get());
     if (CurFun) {
       // Create function scope
       SymbolTable::ScopeGuard FunctionScope(SymbolTab);
 
       // Add parameters to function scope
-      for (const std::unique_ptr<ParamDecl> &param : CurFun->getParams()) {
-        if (!SymbolTab.insert(param.get())) {
-          std::println("parameter redefinition in {}: {}", CurFun->getId(),
-                       param->getId());
-          return {false, {}};
+      for (const std::unique_ptr<ParamDecl> &Param : CurFun->getParams()) {
+        if (!SymbolTab.insert(Param.get())) {
+          emitRedefinitionError("Parameter", SymbolTab.lookup(*Param),
+                                Param.get());
         }
       }
 
       // Resolve function body
-      if (!resolveBlock(CurFun->getBody(), true)) {
-        std::println("failed to resolve body of: {}", CurFun->getId());
-        return {false, {}};
-      }
+      resolveBlock(CurFun->getBody(), true);
     }
 
-    auto Struct = llvm::dyn_cast<StructDecl>(decl.get());
+    auto Struct = llvm::dyn_cast<StructDecl>(Decl.get());
     if (Struct) {
-      if (!resolveStructDecl(Struct)) {
-        std::println("failed to resolve declaration: {}", decl->getId());
-        return {false, {}};
-      }
+      visit(Struct);
     }
   }
 
-  return {true, std::move(Ast)};
+  return {!DiagnosticsMan->has_errors(), std::move(Ast)};
 }
 
 } // namespace phi

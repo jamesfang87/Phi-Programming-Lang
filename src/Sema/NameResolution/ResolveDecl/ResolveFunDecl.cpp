@@ -1,7 +1,5 @@
 #include "Sema/NameResolver.hpp"
 
-#include <print>
-
 namespace phi {
 
 /**
@@ -12,21 +10,15 @@ namespace phi {
  * - Parameters are valid
  * - Special rules for main() function
  */
-bool NameResolver::resolveFunDecl(FunDecl *Fun) {
-  // Resolve return type
-  if (!resolveTy(Fun->getReturnTy())) {
-    std::println("invalid type for return in function: {}", Fun->getId());
-    return false;
-  }
+bool NameResolver::visit(FunDecl *Fun) {
+  bool Success = resolveType(Fun->getReturnTy());
 
   // Resolve parameters
   for (const auto &Param : Fun->getParams()) {
-    if (!resolveParamDecl(Param.get())) {
-      return false;
-    }
+    Success = visit(Param.get()) && Success;
   }
 
-  return true;
+  return Success;
 }
 
 /**
@@ -36,14 +28,8 @@ bool NameResolver::resolveFunDecl(FunDecl *Fun) {
  * - Type is valid
  * - Type is not null
  */
-bool NameResolver::resolveParamDecl(ParamDecl *Param) {
-  // Resolve parameter type
-  if (!resolveTy(Param->getType())) {
-    std::println("invalid type for parameter: {}", Param->getId());
-    return false;
-  }
-
-  return true;
+bool NameResolver::visit(ParamDecl *Param) {
+  return resolveType(Param->getType());
 }
 
 } // namespace phi

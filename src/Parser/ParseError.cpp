@@ -89,8 +89,7 @@ void Parser::emitUnclosedDelimiterError(const Token &OpeningToken,
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
 bool Parser::SyncToTopLvl() {
-  return syncTo(
-      {TokenKind::FunKwKind, TokenKind::StructKwKind, TokenKind::EnumKwKind});
+  return syncTo({TokenKind::FunKw, TokenKind::StructKw, TokenKind::EnumKw});
 }
 
 /**
@@ -106,9 +105,8 @@ bool Parser::SyncToTopLvl() {
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
 bool Parser::SyncToStmt() {
-  return syncTo({TokenKind::CloseBraceKind, TokenKind::ReturnKwKind,
-                 TokenKind::IfKwKind, TokenKind::WhileKwKind,
-                 TokenKind::ForKwKind, TokenKind::VarKwKind});
+  return syncTo({TokenKind::CloseBrace, TokenKind::ReturnKw, TokenKind::IfKw,
+                 TokenKind::WhileKw, TokenKind::ForKw, TokenKind::VarKw});
 }
 
 /**

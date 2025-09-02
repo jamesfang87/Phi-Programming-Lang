@@ -23,50 +23,50 @@ namespace phi {
 inline std::optional<std::pair<int, int>> infixBP(const TokenKind &type) {
   switch (type) {
   // Assignment (right-associative, lowest precedence)
-  case TokenKind::EqualsKind:
-  case TokenKind::PlusEqualsKind:
-  case TokenKind::SubEqualsKind:
-  case TokenKind::MulEqualKind:
-  case TokenKind::DivEqualsKind:
-  case TokenKind::ModEqualsKind:
+  case TokenKind::Equals:
+  case TokenKind::PlusEquals:
+  case TokenKind::SubEquals:
+  case TokenKind::MulEqual:
+  case TokenKind::DivEquals:
+  case TokenKind::ModEquals:
     return std::make_pair(2, 1);
 
   // Logical OR
-  case TokenKind::DoublePipeKind:
+  case TokenKind::DoublePipe:
     return std::make_pair(3, 4);
 
   // Logical AND
-  case TokenKind::DoubleAmpKind:
+  case TokenKind::DoubleAmp:
     return std::make_pair(5, 6);
 
   // Equality
-  case TokenKind::DoubleEqualsKind:
-  case TokenKind::BangEqualsKind:
+  case TokenKind::DoubleEquals:
+  case TokenKind::BangEquals:
     return std::make_pair(7, 8);
 
   // Relational
-  case TokenKind::OpenCaretKind:
-  case TokenKind::LessEqualKind:
-  case TokenKind::CloseCaretKind:
-  case TokenKind::GreaterEqualKind:
+  case TokenKind::OpenCaret:
+  case TokenKind::LessEqual:
+  case TokenKind::CloseCaret:
+  case TokenKind::GreaterEqual:
     return std::make_pair(9, 10);
 
   // Range operators
-  case TokenKind::InclRangeKind:
-  case TokenKind::ExclRangeKind:
+  case TokenKind::InclRange:
+  case TokenKind::ExclRange:
     return std::make_pair(11, 12);
 
   // Additive
-  case TokenKind::PlusKind:
-  case TokenKind::MinusKind:
+  case TokenKind::Plus:
+  case TokenKind::Minus:
     return std::make_pair(13, 14);
 
   // Multiplicative
-  case TokenKind::StarKind:
-  case TokenKind::SlashKind:
-  case TokenKind::PercentKind:
+  case TokenKind::Star:
+  case TokenKind::Slash:
+  case TokenKind::Percent:
     return std::make_pair(15, 16);
-  case TokenKind::PeriodKind:
+  case TokenKind::Period:
     return std::make_pair(17, 18);
 
   default:
@@ -82,10 +82,12 @@ inline std::optional<std::pair<int, int>> infixBP(const TokenKind &type) {
  */
 inline std::optional<int> prefixBP(const TokenKind &type) {
   switch (type) {
-  case TokenKind::MinusKind:       // Unary minus
-  case TokenKind::BangKind:        // Logical NOT
-  case TokenKind::DoublePlusKind:  // Pre-increment
-  case TokenKind::DoubleMinusKind: // Pre-decrement
+  case TokenKind::Minus:       // Unary minus
+  case TokenKind::Bang:        // Logical NOT
+  case TokenKind::DoublePlus:  // Pre-increment
+  case TokenKind::DoubleMinus: // Pre-decrement
+  case TokenKind::Amp:
+  case TokenKind::Star:
     return 17;
   default:
     return std::nullopt;
@@ -101,10 +103,10 @@ inline std::optional<int> prefixBP(const TokenKind &type) {
  */
 inline std::optional<std::pair<int, int>> postfixBP(const TokenKind &type) {
   switch (type) {
-  case TokenKind::DoublePlusKind:  // Post-increment
-  case TokenKind::DoubleMinusKind: // Post-decrement
-  case TokenKind::OpenParenKind:   // Function call
-  case TokenKind::OpenBraceKind:   // Struct initializer
+  case TokenKind::DoublePlus:  // Post-increment
+  case TokenKind::DoubleMinus: // Post-decrement
+  case TokenKind::OpenParen:   // Function call
+  case TokenKind::OpenBrace:   // Struct initializer
     return std::make_pair(19, 0);
 
   default:

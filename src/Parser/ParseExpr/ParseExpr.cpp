@@ -9,7 +9,6 @@
 
 #include <llvm/Support/Casting.h>
 
-#include "AST/ASTVisitor.hpp"
 #include "AST/Expr.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
@@ -27,10 +26,10 @@ namespace phi {
  */
 std::unique_ptr<Expr> Parser::parseExpr() {
   std::vector<TokenKind> Terminators = {
-      TokenKind::EOFKind, TokenKind::SemicolonKind, TokenKind::CommaKind,
-      TokenKind::CloseParenKind, TokenKind::CloseBracketKind};
+      TokenKind::EOFKind, TokenKind::Semicolon, TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket};
   if (NoStructInit) {
-    Terminators.push_back(TokenKind::OpenBraceKind);
+    Terminators.push_back(TokenKind::OpenBrace);
   }
 
   auto Res = pratt(0, Terminators);
