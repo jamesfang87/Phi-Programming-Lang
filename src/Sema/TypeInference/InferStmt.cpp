@@ -1,6 +1,7 @@
 #include "Sema/TypeInference/Infer.hpp"
 
 #include "AST/Stmt.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
 
 namespace phi {
 
@@ -28,6 +29,16 @@ TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
     recordSubst(Subst);
     return {Subst, Monotype::makeCon("unit")};
   }
+}
+
+TypeInferencer::InferRes TypeInferencer::visit(DeferStmt &S) {
+  Substitution Subst;
+  auto [DeferredSubst, _] = visit(S.getDeferred());
+  Subst.compose(DeferredSubst);
+
+  recordSubst(Subst);
+
+  return {Subst, Monotype::makeCon("unit")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {

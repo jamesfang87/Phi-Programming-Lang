@@ -124,6 +124,22 @@ bool ReturnStmt::accept(NameResolver &R) { return R.visit(*this); }
 InferRes ReturnStmt::accept(TypeInferencer &I) { return I.visit(*this); }
 void ReturnStmt::accept(CodeGen &G) { return G.visit(*this); }
 
+// DeferStmt
+DeferStmt::DeferStmt(SrcLocation Location, std::unique_ptr<Expr> DeferredExpr)
+    : Stmt(Kind::DeferStmtKind, std::move(Location)),
+      DeferredExpr(std::move(DeferredExpr)) {}
+DeferStmt::~DeferStmt() = default;
+
+void DeferStmt::emit(int Level) const {
+  std::println("{}DeferStmt", indent(Level));
+  if (DeferredExpr)
+    DeferredExpr->emit(Level + 1);
+}
+
+bool DeferStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes DeferStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+void DeferStmt::accept(CodeGen &G) { return G.visit(*this); }
+
 // DeclStmt
 DeclStmt::DeclStmt(SrcLocation Location, std::unique_ptr<VarDecl> Var)
     : Stmt(Stmt::Kind::DeclStmtKind, std::move(Location)), Var(std::move(Var)) {

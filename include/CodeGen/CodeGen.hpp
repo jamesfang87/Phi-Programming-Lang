@@ -14,6 +14,7 @@
 #include <llvm/TargetParser/Triple.h>
 
 #include "AST/Decl.hpp"
+#include "AST/Stmt.hpp"
 
 namespace phi {
 
@@ -48,6 +49,7 @@ public:
 
   // Visitor methods for statements
   void visit(phi::ReturnStmt &S);
+  void visit(phi::DeferStmt &S);
   void visit(phi::IfStmt &S);
   void visit(phi::WhileStmt &S);
   void visit(phi::ForStmt &S);

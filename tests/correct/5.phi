@@ -1,5 +1,7 @@
 fun println(const message: string) {}
 
 fun main() {
+    var a = 1;
     println("hello world");
+    defer a = 1;
 }
