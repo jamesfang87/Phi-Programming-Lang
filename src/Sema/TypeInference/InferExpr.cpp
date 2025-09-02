@@ -1,10 +1,14 @@
-#include "Sema/TypeInference/Algorithms.hpp"
 #include "Sema/TypeInference/Infer.hpp"
-#include <llvm/Support/Casting.h>
 
+#include <cassert>
 #include <print>
 #include <string>
 #include <vector>
+
+#include <llvm/Support/Casting.h>
+
+#include "Lexer/TokenKind.hpp"
+#include "Sema/TypeInference/Algorithms.hpp"
 
 namespace phi {
 
@@ -100,7 +104,7 @@ TypeInferencer::InferRes TypeInferencer::visit(FunCallExpr &E) {
 TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
   auto [OperandSubst, OperandType] = visit(E.getOperand());
   Substitution AllSubst = OperandSubst;
-  if (E.getOp() == TokenKind::BangKind) {
+  if (E.getOp() == TokenKind::Bang) {
     unifyInto(AllSubst, OperandType, Monotype::makeCon("bool"));
     recordSubst(AllSubst);
     annotate(E, Monotype::makeCon("bool"));
@@ -109,9 +113,28 @@ TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
 
   // Numeric UnaryOp
   auto NewTypeVar = Monotype::makeVar(Factory.fresh());
-  const auto OpType = Monotype::makeFun({NewTypeVar}, NewTypeVar);
-  const auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
+
+  auto OpType = Monotype::makeFun({NewTypeVar}, NewTypeVar);
+  auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
                                       Monotype::makeVar(Factory.fresh()));
+  if (E.getOp() == TokenKind::Amp) {
+    OpType =
+        Monotype::makeFun({NewTypeVar}, Monotype::makeApp("Ref", {NewTypeVar}));
+    assert(OpType.isFun());
+    assert(OpType.asFun().Ret->isApp());
+    TypeOfCall = Monotype::makeFun(
+        {AllSubst.apply(OperandType)},
+        Monotype::makeApp("Ref", {AllSubst.apply(OperandType)}));
+    assert(TypeOfCall.isFun());
+    assert(TypeOfCall.asFun().Ret->isApp());
+    unifyInto(AllSubst, OpType, TypeOfCall);
+    auto T = TypeOfCall.asFun().Ret;
+    recordSubst(AllSubst);
+    annotate(E, *T);
+    assert(T->isApp());
+    return {AllSubst, *T};
+  }
+
   unifyInto(AllSubst, OpType, TypeOfCall);
   recordSubst(AllSubst);
   annotate(E, AllSubst.apply(NewTypeVar));
@@ -152,8 +175,8 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     // Standard arithmetic unification for non-float cases
     auto NewTypeVar = Monotype::makeVar(Factory.fresh());
     const auto OpType = Monotype::makeFun({NewTypeVar, NewTypeVar}, NewTypeVar);
-    const auto TypeOfCall = Monotype::makeFun({LhsType, RhsType},
-                                          Monotype::makeVar(Factory.fresh()));
+    const auto TypeOfCall = Monotype::makeFun(
+        {LhsType, RhsType}, Monotype::makeVar(Factory.fresh()));
     unifyInto(AllSubst, OpType, TypeOfCall);
     recordSubst(AllSubst);
     auto ResultingType = AllSubst.apply(NewTypeVar);
@@ -161,7 +184,7 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     return {AllSubst, ResultingType};
   }
 
-  if (K == TokenKind::EqualsKind) {
+  if (K == TokenKind::Equals) {
     LhsType = AllSubst.apply(LhsType);
     RhsType = AllSubst.apply(RhsType);
 

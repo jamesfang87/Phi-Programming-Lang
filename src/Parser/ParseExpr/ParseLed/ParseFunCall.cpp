@@ -11,8 +11,8 @@ namespace phi {
  */
 std::unique_ptr<FunCallExpr>
 Parser::parseFunCall(std::unique_ptr<Expr> Callee) {
-  auto Args = parseList<Expr>(TokenKind::OpenParenKind,
-                              TokenKind::CloseParenKind, &Parser::parseExpr);
+  auto Args = parseList<Expr>(TokenKind::OpenParen, TokenKind::CloseParen,
+                              &Parser::parseExpr);
 
   // Check if there were errors during argument parsing
   if (!Args)

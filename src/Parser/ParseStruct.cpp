@@ -1,55 +1,58 @@
-#include "AST/Decl.hpp"
-#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
-#include "SrcManager/SrcLocation.hpp"
+
 #include <cassert>
 #include <memory>
-#include <print>
 #include <string>
+
+#include "AST/Decl.hpp"
+#include "Lexer/TokenKind.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 std::unique_ptr<StructDecl> Parser::parseStructDecl() {
-  assert(peekToken().getKind() == TokenKind::StructKwKind);
+  assert(peekToken().getKind() == TokenKind::StructKw);
   SrcLocation Loc = advanceToken().getStart();
 
   std::string Id = advanceToken().getLexeme();
 
-  if (peekToken().getKind() != TokenKind::OpenBraceKind) {
-    error("Expected '{' after struct identifier");
+  if (peekToken().getKind() != TokenKind::OpenBrace) {
+    emitUnexpectedTokenError(peekToken(), {"{"});
   }
   advanceToken();
 
   std::vector<MethodDecl> Methods;
   std::vector<FieldDecl> Fields;
-  while (!atEOF() && peekToken().getKind() != TokenKind::CloseBraceKind) {
+  while (!atEOF() && peekToken().getKind() != TokenKind::CloseBrace) {
     Token Check = peekToken();
     switch (Check.getKind()) {
-    case TokenKind::PublicKwKind:
+    case TokenKind::PublicKw:
       Check = peekToken(1);
       break;
-    case TokenKind::FunKwKind:
-    case TokenKind::IdentifierKind:
+    case TokenKind::FunKw:
+    case TokenKind::Identifier:
       break; // we don't need to do anything here
     default:
-      error("Unexpected token");
+      emitUnexpectedTokenError(peekToken());
+      syncTo({TokenKind::PublicKw, TokenKind::FunKw, TokenKind::Identifier,
+              TokenKind::CloseBrace});
       break;
     }
 
-    if (Check.getKind() == TokenKind::FunKwKind) {
+    if (Check.getKind() == TokenKind::FunKw) {
       auto Res = parseStructMethodDecl();
       if (Res) {
         Methods.push_back(std::move(*Res));
       } else {
-        syncTo({TokenKind::FunKwKind, TokenKind::VarKwKind,
-                TokenKind::ConstKwKind, TokenKind::OpenBraceKind});
+        syncTo({TokenKind::FunKw, TokenKind::VarKw, TokenKind::ConstKw,
+                TokenKind::OpenBrace});
       }
-    } else if (Check.getKind() == TokenKind::IdentifierKind) {
+    } else if (Check.getKind() == TokenKind::Identifier) {
       auto Res = parseFieldDecl();
       if (Res) {
         Fields.push_back(std::move(*Res));
       } else {
-        syncTo({TokenKind::FunKwKind, TokenKind::VarKwKind,
-                TokenKind::ConstKwKind, TokenKind::OpenBraceKind});
+        syncTo({TokenKind::FunKw, TokenKind::VarKw, TokenKind::ConstKw,
+                TokenKind::OpenBrace});
       }
     }
   }
@@ -62,7 +65,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
 
 std::optional<FieldDecl> Parser::parseFieldDecl() {
   bool IsPrivate = true;
-  if (peekToken().getKind() == TokenKind::PublicKwKind) {
+  if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
     advanceToken();
   }
@@ -73,7 +76,7 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
   auto [VarLoc, Id, DeclType] = *Binding;
 
   // Validate assignment operator
-  if (advanceToken().getKind() != TokenKind::EqualsKind) {
+  if (advanceToken().getKind() != TokenKind::Equals) {
     return FieldDecl{VarLoc, Id, DeclType, nullptr, IsPrivate};
   }
 
@@ -83,7 +86,7 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
     return std::nullopt;
 
   // Validate semicolon terminator
-  if (advanceToken().getKind() != TokenKind::SemicolonKind) {
+  if (advanceToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after variable declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("variable declarations must end with a semicolon")
@@ -98,12 +101,12 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
 
 std::optional<MethodDecl> Parser::parseStructMethodDecl() {
   bool IsPrivate = true;
-  if (peekToken().getKind() == TokenKind::PublicKwKind) {
+  if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
     advanceToken();
   }
 
-  assert(peekToken().getKind() == TokenKind::FunKwKind);
+  assert(peekToken().getKind() == TokenKind::FunKw);
   auto Res = parseFunDecl();
   if (!Res) {
     return std::nullopt;

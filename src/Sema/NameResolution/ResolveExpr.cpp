@@ -1,12 +1,12 @@
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
 #include "Sema/NameResolver.hpp"
-
-#include <llvm/Support/Casting.h>
 
 #include <cassert>
 #include <cstddef>
-#include <print>
+
+#include <llvm/Support/Casting.h>
+
+#include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
 
 namespace phi {
 
@@ -39,11 +39,7 @@ bool NameResolver::visit(BoolLiteral &Expression) {
 
 bool NameResolver::visit(RangeLiteral &Expression) {
   // Resolve start and end expressions
-  if (!Expression.getStart().accept(*this) ||
-      !Expression.getEnd().accept(*this)) {
-    return false;
-  }
-  return true;
+  return visit(Expression.getStart()) && visit(Expression.getEnd());
 }
 
 /**
@@ -55,9 +51,10 @@ bool NameResolver::visit(RangeLiteral &Expression) {
  */
 bool NameResolver::visit(DeclRefExpr &Expression) {
   ValueDecl *DeclPtr = SymbolTab.lookup(Expression);
-  assert(DeclPtr != nullptr);
   if (!DeclPtr) {
-    std::println("error: undeclared identifier '{}'", Expression.getId());
+    emitNotFoundError(NotFoundErrorKind::Variable, Expression.getId(),
+                      Expression.getLocation());
+
     return false;
   }
   Expression.setDecl(DeclPtr);
@@ -68,21 +65,21 @@ bool NameResolver::visit(DeclRefExpr &Expression) {
  * Resolves a function call expression.
  */
 bool NameResolver::visit(FunCallExpr &Expression) {
+  bool Success = true;
   FunDecl *FunPtr = SymbolTab.lookup(Expression);
   if (!FunPtr) {
     auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&Expression.getCallee());
-    std::println("error: undeclared fun identifier '{}'", DeclRef->getId());
-    return false;
+    emitNotFoundError(NotFoundErrorKind::Function, DeclRef->getId(),
+                      Expression.getLocation());
+    Success = false;
   }
 
   for (auto &Arg : Expression.getArgs()) {
-    if (!Arg->accept(*this)) {
-      return false;
-    }
+    Success = Arg->accept(*this) && Success;
   }
 
   Expression.setDecl(FunPtr);
-  return true;
+  return Success;
 }
 
 /**
@@ -95,11 +92,7 @@ bool NameResolver::visit(FunCallExpr &Expression) {
  */
 bool NameResolver::visit(BinaryOp &Expression) {
   // Resolve operands
-  if (!Expression.getLhs().accept(*this) ||
-      !Expression.getRhs().accept(*this)) {
-    return false;
-  }
-  return true;
+  return visit(Expression.getLhs()) && visit(Expression.getRhs());
 }
 
 /**
@@ -110,11 +103,7 @@ bool NameResolver::visit(BinaryOp &Expression) {
  * - Operation is supported for operand type
  */
 bool NameResolver::visit(UnaryOp &Expression) {
-  // Resolve operand
-  if (!Expression.getOperand().accept(*this)) {
-    return false;
-  }
-  return true;
+  return visit(Expression.getOperand());
 }
 
 } // namespace phi

@@ -65,6 +65,25 @@ void DiagnosticManager::render_diagnostic(const Diagnostic &diagnostic,
   for (const auto &suggestion : diagnostic.get_suggestions()) {
     render_suggestion(suggestion, out);
   }
+
+  // New line for separation
+  out << "\n";
+
+  for (auto &snippet : diagnostic.get_extra_snippets()) {
+    // Wrap snippet in a temporary DiagnosticLabel
+    DiagnosticLabel temp_label(snippet.first, "");
+    // Trick: make the span zero-length so no arrow shows
+    temp_label.span.end = temp_label.span.start;
+
+    std::vector<const DiagnosticLabel *> labels = {&temp_label};
+
+    // Render a separate snippet block
+    out << snippet.second << '\n';
+    out << " --> " << snippet.first.start.path << ":"
+        << snippet.first.start.line << ":" << snippet.first.start.col << "\n";
+
+    render_file_snippet(snippet.first.start.path, labels, out);
+  }
 }
 
 /**
@@ -187,6 +206,10 @@ void DiagnosticManager::render_labels_for_line(
 
   // Render each label
   for (const auto *label : line_labels) {
+    if (label->message.empty()) {
+      continue;
+    }
+
     out << gutter;
 
     int start_col =

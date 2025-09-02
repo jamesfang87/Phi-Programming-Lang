@@ -209,7 +209,8 @@ class StructDecl final : public Decl {
 public:
   StructDecl(SrcLocation Loc, std::string Id, std::vector<FieldDecl> Fields,
              std::vector<MethodDecl> Methods)
-      : Decl(Kind::StructDecl, std::move(Loc), Id), Ty(std::move(Id)),
+      : Decl(Kind::StructDecl, Loc, Id),
+        DeclType(Type::makeCustom(std::move(Id), std::move(Loc))),
         Fields(std::move(Fields)), Methods(std::move(Methods)) {
     for (auto &Field : this->Fields) {
       FieldMap[Field.getId()] = &Field;
@@ -219,7 +220,7 @@ public:
     }
   }
 
-  [[nodiscard]] Type getType() const { return Ty; }
+  [[nodiscard]] Type getType() const { return DeclType; }
   [[nodiscard]] std::vector<FieldDecl> &getFields() { return Fields; }
   [[nodiscard]] std::vector<MethodDecl> &getMethods() { return Methods; }
 
@@ -240,7 +241,7 @@ public:
   void emit(int level) const override;
 
 private:
-  Type Ty;
+  Type DeclType;
   std::vector<FieldDecl> Fields;
   std::vector<MethodDecl> Methods;
 

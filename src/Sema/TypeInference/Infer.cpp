@@ -1,19 +1,19 @@
 #include "Sema/TypeInference/Infer.hpp"
-#include "AST/Decl.hpp"
-#include "Sema/TypeInference/Algorithms.hpp"
-#include "Sema/TypeInference/TypeEnv.hpp"
-
-#include <llvm/Support/Casting.h>
 
 #include <memory>
 #include <vector>
+
+#include <llvm/Support/Casting.h>
+
+#include "AST/Decl.hpp"
+#include "Sema/TypeInference/Algorithms.hpp"
+#include "Sema/TypeInference/TypeEnv.hpp"
 
 namespace phi {
 
 // ---------------- constructor ----------------
 TypeInferencer::TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast)
-    : Ast(std::move(Ast)) {
-}
+    : Ast(std::move(Ast)) {}
 
 // ---------------- top-level driver ----------------
 std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
@@ -135,10 +135,10 @@ void TypeInferencer::finalizeAnnotations() {
 // ----- token-kind helpers -----
 bool TypeInferencer::isArithmetic(const TokenKind K) noexcept {
   switch (K) {
-  case TokenKind::PlusKind:
-  case TokenKind::MinusKind:
-  case TokenKind::StarKind:
-  case TokenKind::SlashKind:
+  case TokenKind::Plus:
+  case TokenKind::Minus:
+  case TokenKind::Star:
+  case TokenKind::Slash:
     return true;
   default:
     return false;
@@ -147,8 +147,8 @@ bool TypeInferencer::isArithmetic(const TokenKind K) noexcept {
 
 bool TypeInferencer::isLogical(const TokenKind K) noexcept {
   switch (K) {
-  case TokenKind::DoubleAmpKind:
-  case TokenKind::DoublePipeKind:
+  case TokenKind::DoubleAmp:
+  case TokenKind::DoublePipe:
     return true;
   default:
     return false;
@@ -157,10 +157,10 @@ bool TypeInferencer::isLogical(const TokenKind K) noexcept {
 
 bool TypeInferencer::isComparison(const TokenKind K) noexcept {
   switch (K) {
-  case TokenKind::OpenCaretKind:
-  case TokenKind::LessEqualKind:
-  case TokenKind::CloseCaretKind:
-  case TokenKind::GreaterEqualKind:
+  case TokenKind::OpenCaret:
+  case TokenKind::LessEqual:
+  case TokenKind::CloseCaret:
+  case TokenKind::GreaterEqual:
     return true;
   default:
     return false;
@@ -169,8 +169,8 @@ bool TypeInferencer::isComparison(const TokenKind K) noexcept {
 
 bool TypeInferencer::isEquality(const TokenKind K) noexcept {
   switch (K) {
-  case TokenKind::DoubleEqualsKind:
-  case TokenKind::BangEqualsKind:
+  case TokenKind::DoubleEquals:
+  case TokenKind::BangEquals:
     return true;
   default:
     return false;

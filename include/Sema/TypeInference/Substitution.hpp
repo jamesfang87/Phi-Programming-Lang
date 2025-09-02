@@ -1,11 +1,10 @@
 #pragma once
 
 #include <ranges>
+#include <unordered_map>
 
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "Sema/TypeInference/Types/Polytype.hpp"
-
-#include <unordered_map>
 
 namespace phi {
 
@@ -33,6 +32,15 @@ struct Substitution {
           for (auto &Arg : Con.Args)
             Args.push_back(apply(Arg));
           return Monotype::makeCon(Con.Name, std::move(Args));
+        },
+        [&](const TypeApp &App) -> Monotype {
+          if (App.Args.empty())
+            return M;
+          std::vector<Monotype> Args;
+          Args.reserve(App.Args.size());
+          for (auto &Arg : App.Args)
+            Args.push_back(apply(Arg));
+          return Monotype::makeApp(App.Name, std::move(Args));
         },
         [&](const TypeFun &Fun) -> Monotype {
           std::vector<Monotype> Params;
@@ -68,7 +76,7 @@ struct Substitution {
       return;
 
     // this := S2 ∘ this
-    for (auto &T: Map | std::views::values)
+    for (auto &T : Map | std::views::values)
       T = Other.apply(T);
     for (const auto &[TypeVar, Monotype] : Other.Map)
       Map.insert_or_assign(TypeVar, Monotype);

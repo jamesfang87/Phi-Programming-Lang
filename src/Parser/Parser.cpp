@@ -1,7 +1,6 @@
 #include "Parser/Parser.hpp"
 
 #include "Lexer/TokenKind.hpp"
-#include <print>
 
 namespace phi {
 
@@ -37,7 +36,7 @@ Parser::Parser(const std::string_view Src, const std::string_view Path,
 std::vector<std::unique_ptr<Decl>> Parser::parse() {
   while (!atEOF()) {
     switch (peekToken().getKind()) {
-    case TokenKind::FunKwKind: {
+    case TokenKind::FunKw: {
       if (auto Res = parseFunDecl()) {
         TopLvlDecls.push_back(std::move(Res));
       } else {
@@ -45,7 +44,7 @@ std::vector<std::unique_ptr<Decl>> Parser::parse() {
       }
       break;
     }
-    case TokenKind::StructKwKind: {
+    case TokenKind::StructKw: {
       if (auto Res = parseStructDecl()) {
         TopLvlDecls.push_back(std::move(Res));
       } else {
