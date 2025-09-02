@@ -316,9 +316,9 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
       return nullptr;
 
     // Assign to outer variables instead of redeclaring
-    VarLoc = Binding->loc;
-    Id = Binding->name;
-    DeclType = Binding->type;
+    VarLoc = Binding->Loc;
+    Id = Binding->Name;
+    DeclType = Binding->Type;
   }
 
   // Validate assignment operator
