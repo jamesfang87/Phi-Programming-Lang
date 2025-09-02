@@ -1,11 +1,12 @@
-#include "Lexer/Token.hpp"
 #include "Parser/Parser.hpp"
-#include "SrcManager/SrcLocation.hpp"
 
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+
+#include "Lexer/Token.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
@@ -37,17 +38,17 @@ std::optional<Type> Parser::parseType() {
   Indirection Kind;
   SrcLocation IndrectionLocation;
   switch (peekToken().getKind()) {
-  case TokenKind::AmpKind:
+  case TokenKind::Amp:
     Kind = Indirection::Ref;
     IndrectionLocation = peekToken().getStart();
     advanceToken();
     break;
-  case TokenKind::StarKind:
+  case TokenKind::Star:
     Kind = Indirection::Ptr;
     IndrectionLocation = peekToken().getStart();
     advanceToken();
     break;
-  case TokenKind::IdentifierKind:
+  case TokenKind::Identifier:
     Kind = Indirection::None;
     break;
   default:

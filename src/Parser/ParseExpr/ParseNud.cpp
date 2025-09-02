@@ -8,20 +8,20 @@ namespace phi {
 std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   switch (Tok.getKind()) {
   // Prefix operators: -a, !b, ++c
-  case TokenKind::MinusKind:       // -
-  case TokenKind::BangKind:        // !
-  case TokenKind::DoublePlusKind:  // ++
-  case TokenKind::DoubleMinusKind: // --
-  case TokenKind::AmpKind:
-  case TokenKind::StarKind:
+  case TokenKind::Minus:       // -
+  case TokenKind::Bang:        // !
+  case TokenKind::DoublePlus:  // ++
+  case TokenKind::DoubleMinus: // --
+  case TokenKind::Amp:
+  case TokenKind::Star:
     return parsePrefixUnaryOp(Tok);
 
   // Identifiers
-  case TokenKind::IdentifierKind:
+  case TokenKind::Identifier:
     return std::make_unique<DeclRefExpr>(Tok.getStart(), Tok.getLexeme());
 
   // Grouping: ( expr )
-  case TokenKind::OpenParenKind:
+  case TokenKind::OpenParen:
     return parseGroupingExpr();
 
   // Literals
@@ -34,17 +34,17 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
 std::unique_ptr<Expr> Parser::parseGroupingExpr() {
   std::unique_ptr<Expr> Lhs;
   std::vector<TokenKind> Terminators = {
-      TokenKind::EOFKind, TokenKind::SemicolonKind, TokenKind::CommaKind,
-      TokenKind::CloseParenKind, TokenKind::CloseBracketKind};
+      TokenKind::EOFKind, TokenKind::Semicolon, TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket};
   if (!NoStructInit) {
-    Terminators.push_back(TokenKind::OpenBraceKind);
+    Terminators.push_back(TokenKind::OpenBrace);
   }
   auto Res = pratt(0, Terminators);
   if (!Res)
     return nullptr;
   Lhs = std::move(Res);
 
-  if (peekToken().getKind() != TokenKind::CloseParenKind) {
+  if (peekToken().getKind() != TokenKind::CloseParen) {
     error("missing closing parenthesis")
         .with_primary_label(spanFromToken(peekToken()), "expected `)` here")
         .with_help("parentheses must be properly matched")
@@ -59,10 +59,10 @@ std::unique_ptr<Expr> Parser::parseGroupingExpr() {
 std::unique_ptr<Expr> Parser::parsePrefixUnaryOp(const Token &Tok) {
   int R = prefixBP(Tok.getKind()).value();
   std::vector<TokenKind> Terminators = {
-      TokenKind::EOFKind, TokenKind::SemicolonKind, TokenKind::CommaKind,
-      TokenKind::CloseParenKind, TokenKind::CloseBracketKind};
+      TokenKind::EOFKind, TokenKind::Semicolon, TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket};
   if (!NoStructInit) {
-    Terminators.push_back(TokenKind::OpenBraceKind);
+    Terminators.push_back(TokenKind::OpenBrace);
   }
 
   auto rhs = pratt(R, Terminators);
@@ -74,19 +74,19 @@ std::unique_ptr<Expr> Parser::parsePrefixUnaryOp(const Token &Tok) {
 
 std::unique_ptr<Expr> Parser::parseLiteralExpr(const Token &Tok) {
   switch (Tok.getKind()) {
-  case TokenKind::IntLiteralKind:
+  case TokenKind::IntLiteral:
     return std::make_unique<IntLiteral>(Tok.getStart(),
                                         std::stoll(Tok.getLexeme()));
-  case TokenKind::FloatLiteralKind:
+  case TokenKind::FloatLiteral:
     return std::make_unique<FloatLiteral>(Tok.getStart(),
                                           std::stod(Tok.getLexeme()));
-  case TokenKind::StrLiteralKind:
+  case TokenKind::StrLiteral:
     return std::make_unique<StrLiteral>(Tok.getStart(), Tok.getLexeme());
-  case TokenKind::CharLiteralKind:
+  case TokenKind::CharLiteral:
     return std::make_unique<CharLiteral>(Tok.getStart(), Tok.getLexeme()[0]);
-  case TokenKind::TrueKwKind:
+  case TokenKind::TrueKw:
     return std::make_unique<BoolLiteral>(Tok.getStart(), true);
-  case TokenKind::FalseKwKind:
+  case TokenKind::FalseKw:
     return std::make_unique<BoolLiteral>(Tok.getStart(), false);
   default:
     return nullptr;

@@ -4,8 +4,9 @@
 #include <memory>
 #include <vector>
 
+#include <llvm/Support/Casting.h>
+
 #include "AST/Decl.hpp"
-#include "llvm/Support/Casting.h"
 
 namespace phi {
 

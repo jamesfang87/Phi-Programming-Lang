@@ -1,7 +1,9 @@
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/NameResolver.hpp"
+
 #include <format>
 #include <string>
+
+#include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
 

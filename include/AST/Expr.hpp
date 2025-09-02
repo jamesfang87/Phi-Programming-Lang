@@ -1,16 +1,17 @@
 #pragma once
 
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "Sema/TypeInference/Substitution.hpp"
 #include "SrcManager/SrcLocation.hpp"
-#include <memory>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
 
 namespace phi {
 

@@ -1,4 +1,5 @@
 #include "AST/Type.hpp"
+
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
