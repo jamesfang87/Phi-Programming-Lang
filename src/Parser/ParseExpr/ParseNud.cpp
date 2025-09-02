@@ -33,9 +33,9 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
 
 std::unique_ptr<Expr> Parser::parseGroupingExpr() {
   std::unique_ptr<Expr> Lhs;
-  std::vector<TokenKind> Terminators = {
-      TokenKind::EOFKind, TokenKind::Semicolon, TokenKind::Comma,
-      TokenKind::CloseParen, TokenKind::CloseBracket};
+  std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
+                                        TokenKind::Comma, TokenKind::CloseParen,
+                                        TokenKind::CloseBracket};
   if (!NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
@@ -58,9 +58,9 @@ std::unique_ptr<Expr> Parser::parseGroupingExpr() {
 
 std::unique_ptr<Expr> Parser::parsePrefixUnaryOp(const Token &Tok) {
   int R = prefixBP(Tok.getKind()).value();
-  std::vector<TokenKind> Terminators = {
-      TokenKind::EOFKind, TokenKind::Semicolon, TokenKind::Comma,
-      TokenKind::CloseParen, TokenKind::CloseBracket};
+  std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
+                                        TokenKind::Comma, TokenKind::CloseParen,
+                                        TokenKind::CloseBracket};
   if (!NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }

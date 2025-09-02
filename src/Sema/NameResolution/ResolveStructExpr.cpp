@@ -12,14 +12,14 @@
 
 namespace phi {
 
-bool NameResolver::visit(StructInitExpr &Expression) {
-  auto *Found = SymbolTab.lookup(Expression.getStructId());
+bool NameResolver::visit(StructInitExpr &E) {
+  auto *Found = SymbolTab.lookup(E.getStructId());
   if (!Found) {
-    emitNotFoundError(NotFoundErrorKind::Struct, Expression.getStructId(),
-                      Expression.getLocation());
+    emitNotFoundError(NotFoundErrorKind::Struct, E.getStructId(),
+                      E.getLocation());
     return false;
   }
-  Expression.setStructDecl(Found);
+  E.setStructDecl(Found);
 
   std::unordered_set<std::string> AccountedFor;
   for (auto &Field : Found->getFields()) {
@@ -30,7 +30,7 @@ bool NameResolver::visit(StructInitExpr &Expression) {
   }
 
   bool Success = true;
-  for (auto &FieldInit : Expression.getFields()) {
+  for (auto &FieldInit : E.getFields()) {
     if (Found->getField(FieldInit->getFieldId()) == nullptr) {
       emitNotFoundError(NotFoundErrorKind::Field, FieldInit->getFieldId(),
                         FieldInit->getLocation());
@@ -51,7 +51,7 @@ bool NameResolver::visit(StructInitExpr &Expression) {
     }
     Error = Error.substr(0, Error.size() - 2); //  remove trailing comma
     emitError(error(Error)
-                  .with_primary_label(Expression.getLocation(), "For this init")
+                  .with_primary_label(E.getLocation(), "For this init")
                   .build());
 
     return false;
@@ -60,20 +60,18 @@ bool NameResolver::visit(StructInitExpr &Expression) {
   return Success;
 }
 
-bool NameResolver::visit(FieldInitExpr &Expression) {
-  assert(Expression.getValue() != nullptr);
+bool NameResolver::visit(FieldInitExpr &E) {
+  assert(E.getValue() != nullptr);
 
-  return visit(*Expression.getValue());
+  return visit(*E.getValue());
 }
 
-bool NameResolver::visit(MemberAccessExpr &Expression) {
-  return visit(*Expression.getBase());
-}
+bool NameResolver::visit(MemberAccessExpr &E) { return visit(*E.getBase()); }
 
-bool NameResolver::visit(MemberFunCallExpr &Expression) {
-  bool Success = visit(*Expression.getBase());
+bool NameResolver::visit(MemberFunCallExpr &E) {
+  bool Success = visit(*E.getBase());
 
-  for (const auto &Args : Expression.getCall().getArgs()) {
+  for (const auto &Args : E.getCall().getArgs()) {
     Success = visit(*Args) && Success;
   }
 

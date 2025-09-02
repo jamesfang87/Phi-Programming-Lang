@@ -17,7 +17,7 @@ namespace phi {
 std::string tyToStr(const TokenKind Kind) {
   switch (Kind) {
   // Special tokens
-  case TokenKind::EOFKind:
+  case TokenKind::Eof:
     return "EOF";
   case TokenKind::Error:
     return "ERROR";

@@ -42,14 +42,14 @@ bool NameResolver::resolveBlock(Block &Block, bool ScopeCreated = false) {
  * - Non-void functions return correct type
  * - Return expression resolves successfully
  */
-bool NameResolver::visit(ReturnStmt &Statement) {
+bool NameResolver::visit(ReturnStmt &S) {
   // Void function return
-  if (!Statement.hasExpr()) {
+  if (!S.hasExpr()) {
     return true;
   }
 
   // Resolve return expression
-  return visit(Statement.getExpr());
+  return visit(S.getExpr());
 }
 
 /**
@@ -59,15 +59,15 @@ bool NameResolver::visit(ReturnStmt &Statement) {
  * - cond is boolean type
  * - Then/else blocks resolve successfully
  */
-bool NameResolver::visit(IfStmt &Statement) {
+bool NameResolver::visit(IfStmt &S) {
   bool Success = true;
   // Resolve cond
-  Success = visit(Statement.getCond()) && Success;
+  Success = visit(S.getCond()) && Success;
 
   // Resolve then and else blocks
-  Success = resolveBlock(Statement.getThen()) && Success;
-  if (Statement.hasElse()) {
-    Success = resolveBlock(Statement.getElse()) && Success;
+  Success = resolveBlock(S.getThen()) && Success;
+  if (S.hasElse()) {
+    Success = resolveBlock(S.getElse()) && Success;
   }
 
   return Success;
@@ -80,11 +80,11 @@ bool NameResolver::visit(IfStmt &Statement) {
  * - cond is boolean type
  * - Loop body resolves successfully
  */
-bool NameResolver::visit(WhileStmt &Statement) {
-  bool Success = Statement.getCond().accept(*this);
+bool NameResolver::visit(WhileStmt &S) {
+  bool Success = S.getCond().accept(*this);
 
   // Resolve loop body
-  Success = resolveBlock(Statement.getBody()) && Success;
+  Success = resolveBlock(S.getBody()) && Success;
   return Success;
 }
 
@@ -97,16 +97,16 @@ bool NameResolver::visit(WhileStmt &Statement) {
  *
  * Creates new scope for loop variable.
  */
-bool NameResolver::visit(ForStmt &Statement) {
+bool NameResolver::visit(ForStmt &S) {
   // Resolve range expression
-  bool Success = Statement.getRange().accept(*this);
+  bool Success = S.getRange().accept(*this);
 
   // Create scope for loop variable
   SymbolTable::ScopeGuard BlockScope(SymbolTab);
-  SymbolTab.insert(&Statement.getLoopVar());
+  SymbolTab.insert(&S.getLoopVar());
 
   // Resolve loop body (scope already created)
-  Success = resolveBlock(Statement.getBody(), true) && Success;
+  Success = resolveBlock(S.getBody(), true) && Success;
   return Success;
 }
 
@@ -121,8 +121,8 @@ bool NameResolver::visit(ForStmt &Statement) {
  *
  * Adds variable to current symbol table.
  */
-bool NameResolver::visit(DeclStmt &Statement) {
-  VarDecl &Var = Statement.getDecl();
+bool NameResolver::visit(DeclStmt &S) {
+  VarDecl &Var = S.getDecl();
   bool Success = true;
 
   // Resolve variable type
@@ -141,16 +141,16 @@ bool NameResolver::visit(DeclStmt &Statement) {
   return Success;
 }
 
-bool NameResolver::visit(BreakStmt &Statement) {
-  (void)Statement;
+bool NameResolver::visit(BreakStmt &S) {
+  (void)S;
   return true;
 }
 
-bool NameResolver::visit(ContinueStmt &Statement) {
-  (void)Statement;
+bool NameResolver::visit(ContinueStmt &S) {
+  (void)S;
   return true;
 }
 
-bool NameResolver::visit(Expr &Statement) { return Statement.accept(*this); }
+bool NameResolver::visit(Expr &S) { return S.accept(*this); }
 
 } // namespace phi
