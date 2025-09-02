@@ -31,6 +31,8 @@ std::string tyToStr(const TokenKind Kind) {
     return "CONST";
   case TokenKind::ContinueKw:
     return "CONTINUE";
+  case TokenKind::DeferKw:
+    return "DEFER";
   case TokenKind::ElseKwKind:
     return "ELSE";
   case TokenKind::EnumKw:

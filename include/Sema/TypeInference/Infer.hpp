@@ -26,6 +26,7 @@ public:
   using InferRes = std::pair<Substitution, Monotype>;
 
   InferRes visit(ReturnStmt &S);
+  InferRes visit(DeferStmt &S);
   InferRes visit(ForStmt &S);
   InferRes visit(WhileStmt &S);
   InferRes visit(IfStmt &S);

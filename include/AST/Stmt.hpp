@@ -28,6 +28,7 @@ public:
   enum class Kind : uint8_t {
     // Statements
     ReturnStmtKind,
+    DeferStmtKind,
     IfStmtKind,
     WhileStmtKind,
     ForStmtKind,
@@ -92,7 +93,7 @@ private:
 // Statement class declarations
 class ReturnStmt final : public Stmt {
 public:
-  ReturnStmt(SrcLocation Location, std::unique_ptr<Expr> expr);
+  ReturnStmt(SrcLocation Location, std::unique_ptr<Expr> Expr);
   ~ReturnStmt() override;
 
   [[nodiscard]] bool hasExpr() const { return ReturnExpr != nullptr; }
@@ -109,6 +110,27 @@ public:
 
 private:
   std::unique_ptr<Expr> ReturnExpr;
+};
+
+class DeferStmt final : public Stmt {
+public:
+  DeferStmt(SrcLocation Location, std::unique_ptr<Expr> Expr);
+  ~DeferStmt() override;
+
+  [[nodiscard]] Expr &getDeferred() const { return *DeferredExpr; }
+
+  void emit(int Level) const override;
+
+  bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
+  void accept(CodeGen &G) override;
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::DeferStmtKind;
+  }
+
+private:
+  std::unique_ptr<Expr> DeferredExpr;
 };
 
 class IfStmt final : public Stmt {

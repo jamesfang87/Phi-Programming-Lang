@@ -26,6 +26,7 @@ enum class TokenKind : uint8_t {
   BreakKw,    ///< `break` keyword
   ConstKw,    ///< `const` keyword
   ContinueKw, ///< `continue` keyword
+  DeferKw,
   ElseKwKind, ///< `else` keyword
   EnumKw,
   FalseKw,  ///< `false` literal

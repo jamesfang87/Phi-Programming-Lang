@@ -49,6 +49,7 @@ public:
 
   // STATEMENT VISITORS
   bool visit(ReturnStmt &S);
+  bool visit(DeferStmt &S);
   bool visit(IfStmt &S);
   bool visit(WhileStmt &S);
   bool visit(ForStmt &S);

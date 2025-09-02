@@ -200,6 +200,7 @@ private:
   // STATEMENT PARSING
   std::unique_ptr<Stmt> parseStmt();
   std::unique_ptr<ReturnStmt> parseReturn();
+  std::unique_ptr<DeferStmt> parseDefer();
   std::unique_ptr<IfStmt> parseIf();
   std::unique_ptr<WhileStmt> parseWhile();
   std::unique_ptr<ForStmt> parseFor();
