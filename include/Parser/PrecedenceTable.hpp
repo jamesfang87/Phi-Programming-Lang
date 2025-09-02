@@ -20,8 +20,8 @@ namespace phi {
  * Left-associative: (left_bp, right_bp) where right_bp = left_bp + 1
  * Right-associative: (left_bp, right_bp) where right_bp = left_bp
  */
-inline std::optional<std::pair<int, int>> infixBP(const TokenKind &type) {
-  switch (type) {
+inline std::optional<std::pair<int, int>> infixBP(const TokenKind &Kind) {
+  switch (Kind) {
   // Assignment (right-associative, lowest precedence)
   case TokenKind::Equals:
   case TokenKind::PlusEquals:
@@ -80,8 +80,8 @@ inline std::optional<std::pair<int, int>> infixBP(const TokenKind &type) {
  * @param type Token type to check
  * @return Optional pair of (ignored, right_bp) if operator is prefix
  */
-inline std::optional<int> prefixBP(const TokenKind &type) {
-  switch (type) {
+inline std::optional<int> prefixBP(const TokenKind &Kind) {
+  switch (Kind) {
   case TokenKind::Minus:       // Unary minus
   case TokenKind::Bang:        // Logical NOT
   case TokenKind::DoublePlus:  // Pre-increment
@@ -101,8 +101,8 @@ inline std::optional<int> prefixBP(const TokenKind &type) {
  * @param NoStructInit
  * @return Optional pair of (left_bp, ignored) if operator is postfix
  */
-inline std::optional<std::pair<int, int>> postfixBP(const TokenKind &type) {
-  switch (type) {
+inline std::optional<std::pair<int, int>> postfixBP(const TokenKind &Kind) {
+  switch (Kind) {
   case TokenKind::DoublePlus:  // Post-increment
   case TokenKind::DoubleMinus: // Post-decrement
   case TokenKind::OpenParen:   // Function call

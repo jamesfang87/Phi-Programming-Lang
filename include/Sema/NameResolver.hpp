@@ -26,36 +26,36 @@ public:
   std::pair<bool, std::vector<std::unique_ptr<Decl>>> resolveNames();
 
   // DECLARATION VISITORS
-  bool visit(FunDecl *Fun);
-  bool visit(ParamDecl *Param);
-  bool visit(StructDecl *Struct);
-  bool visit(FieldDecl *Field);
+  bool visit(FunDecl *F);
+  bool visit(ParamDecl *P);
+  bool visit(StructDecl *S);
+  bool visit(FieldDecl *F);
 
   // EXPRESSION VISITORS
-  bool visit(IntLiteral &Expression);
-  bool visit(FloatLiteral &Expression);
-  bool visit(StrLiteral &Expression);
-  bool visit(CharLiteral &Expression);
-  bool visit(BoolLiteral &Expression);
-  bool visit(RangeLiteral &Expression);
-  bool visit(DeclRefExpr &Expression);
-  bool visit(FunCallExpr &Expression);
-  bool visit(BinaryOp &Expression);
-  bool visit(UnaryOp &Expression);
-  bool visit(StructInitExpr &Expression);
-  bool visit(FieldInitExpr &Expression);
-  bool visit(MemberAccessExpr &Expression);
-  bool visit(MemberFunCallExpr &Expression);
+  bool visit(IntLiteral &E);
+  bool visit(FloatLiteral &E);
+  bool visit(StrLiteral &E);
+  bool visit(CharLiteral &E);
+  bool visit(BoolLiteral &E);
+  bool visit(RangeLiteral &E);
+  bool visit(DeclRefExpr &E);
+  bool visit(FunCallExpr &E);
+  bool visit(BinaryOp &E);
+  bool visit(UnaryOp &E);
+  bool visit(StructInitExpr &E);
+  bool visit(FieldInitExpr &E);
+  bool visit(MemberAccessExpr &E);
+  bool visit(MemberFunCallExpr &E);
 
   // STATEMENT VISITORS
-  bool visit(ReturnStmt &Statement);
-  bool visit(IfStmt &Statement);
-  bool visit(WhileStmt &Statement);
-  bool visit(ForStmt &Statement);
-  bool visit(DeclStmt &Statement);
-  bool visit(BreakStmt &Statement);
-  bool visit(ContinueStmt &Statement);
-  bool visit(Expr &Statement);
+  bool visit(ReturnStmt &S);
+  bool visit(IfStmt &S);
+  bool visit(WhileStmt &S);
+  bool visit(ForStmt &S);
+  bool visit(DeclStmt &S);
+  bool visit(BreakStmt &S);
+  bool visit(ContinueStmt &S);
+  bool visit(Expr &S);
 
 private:
   /// The AST being analyzed (function declarations)

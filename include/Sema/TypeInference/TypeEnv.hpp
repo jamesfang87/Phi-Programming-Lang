@@ -11,7 +11,7 @@
 
 namespace phi {
 
-class ValueDecl; // from your AST
+class ValueDecl;
 class Type;
 
 //------------------------------------------------------------------------------
