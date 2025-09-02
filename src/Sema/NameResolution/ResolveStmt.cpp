@@ -52,6 +52,8 @@ bool NameResolver::visit(ReturnStmt &S) {
   return visit(S.getExpr());
 }
 
+bool NameResolver::visit(DeferStmt &S) { return visit(S.getDeferred()); }
+
 /**
  * Resolves an if statement.
  *

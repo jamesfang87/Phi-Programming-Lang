@@ -29,6 +29,8 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
   switch (peekToken().getKind()) {
   case TokenKind::ReturnKw:
     return parseReturn();
+  case TokenKind::DeferKw:
+    return parseDefer();
   case TokenKind::IfKw:
     return parseIf();
   case TokenKind::WhileKw:
@@ -90,6 +92,31 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   advanceToken();
 
   return std::make_unique<ReturnStmt>(Loc, std::move(ReturnExpr));
+}
+
+std::unique_ptr<DeferStmt> Parser::parseDefer() {
+  SrcLocation Loc = peekToken().getStart();
+  advanceToken(); // eat 'return'
+
+  // Value return: return expr;
+  auto DeferredExpr = parseExpr();
+  if (!DeferredExpr) {
+    return nullptr;
+  }
+
+  // Validate semicolon terminator
+  if (peekToken().getKind() != TokenKind::Semicolon) {
+    error("missing semicolon after return statement")
+        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_help("return statements must end with a semicolon")
+        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_code("E0012")
+        .emit(*DiagnosticsMan);
+    return nullptr;
+  }
+  advanceToken();
+
+  return std::make_unique<DeferStmt>(Loc, std::move(DeferredExpr));
 }
 
 /**

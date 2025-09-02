@@ -30,11 +30,10 @@ bool PhiCompiler::compile() {
 
   auto [Success, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
-  for (auto &D : ResolvedNames) {
+  auto ResolvedTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
+  for (auto &D : ResolvedTypes) {
     D->emit(0);
   }
-
-  auto ResolvedTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
 
   // Code Generation
   phi::CodeGen codegen(std::move(ResolvedTypes), Path);

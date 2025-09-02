@@ -1,4 +1,5 @@
 #include "AST/Expr.hpp"
+#include "AST/Stmt.hpp"
 #include "CodeGen/CodeGen.hpp"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Function.h"
@@ -12,6 +13,8 @@ void phi::CodeGen::visit(phi::ReturnStmt &stmt) {
     Builder.CreateRetVoid();
   }
 }
+
+void phi::CodeGen::visit(phi::DeferStmt &S) {}
 
 void phi::CodeGen::visit(phi::IfStmt &stmt) {
   llvm::Function *function = Builder.GetInsertBlock()->getParent();
