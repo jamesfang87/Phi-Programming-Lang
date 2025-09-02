@@ -179,46 +179,48 @@ public:
                  [](const TypeCon &Con) {
                    if (Con.Args.empty())
                      return Con.Name;
-                   std::ostringstream os;
-                   os << Con.Name << "<";
-                   for (size_t i = 0; i < Con.Args.size(); ++i) {
-                     os << Con.Args[i].toString();
-                     if (i + 1 < Con.Args.size())
-                       os << ", ";
+                   std::ostringstream Os;
+                   Os << Con.Name << "<";
+                   for (size_t I = 0; I < Con.Args.size(); ++I) {
+                     Os << Con.Args[I].toString();
+                     if (I + 1 < Con.Args.size())
+                       Os << ", ";
                    }
-                   os << ">";
-                   return os.str();
+                   Os << ">";
+                   return Os.str();
                  },
                  [](const TypeApp &App) {
                    if (App.Args.empty())
                      return App.Name;
-                   std::ostringstream os;
-                   os << App.Name << "<";
-                   for (size_t i = 0; i < App.Args.size(); ++i) {
-                     os << App.Args[i].toString();
-                     if (i + 1 < App.Args.size())
-                       os << ", ";
+                   std::ostringstream Os;
+                   Os << App.Name << "<";
+                   for (size_t I = 0; I < App.Args.size(); ++I) {
+                     Os << App.Args[I].toString();
+                     if (I + 1 < App.Args.size())
+                       Os << ", ";
                    }
-                   os << ">";
-                   return os.str();
+                   Os << ">";
+                   return Os.str();
                  },
                  [](const TypeFun &Fun) {
-                   std::ostringstream os;
-                   os << "(";
-                   for (size_t i = 0; i < Fun.Params.size(); ++i) {
-                     os << Fun.Params[i].toString();
-                     if (i + 1 < Fun.Params.size())
-                       os << ", ";
+                   std::ostringstream Os;
+                   Os << "(";
+                   for (size_t I = 0; I < Fun.Params.size(); ++I) {
+                     Os << Fun.Params[I].toString();
+                     if (I + 1 < Fun.Params.size())
+                       Os << ", ";
                    }
-                   os << ") -> " << Fun.Ret->toString();
-                   return os.str();
+                   Os << ") -> " << Fun.Ret->toString();
+                   return Os.str();
                  });
   }
 
   // Helpers (simple predicates)
   [[nodiscard]] bool isIntType() const {
     return isCon() && (asCon().Name == "i8" || asCon().Name == "i16" ||
-                       asCon().Name == "i32" || asCon().Name == "i64");
+                       asCon().Name == "i32" || asCon().Name == "i64" ||
+                       asCon().Name == "u8" || asCon().Name == "u16" ||
+                       asCon().Name == "u32" || asCon().Name == "u64");
   }
   [[nodiscard]] bool isFloatType() const {
     return isCon() && (asCon().Name == "f32" || asCon().Name == "f64");

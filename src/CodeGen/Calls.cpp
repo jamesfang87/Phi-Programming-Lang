@@ -1,43 +1,43 @@
 #include "CodeGen/CodeGen.hpp"
 
-void phi::CodeGen::visit(phi::DeclRefExpr &expr) {
+void phi::CodeGen::visit(phi::DeclRefExpr &E) {
   // Look up the declaration in our declarations map
-  auto it = decls.find(expr.getDecl());
-  if (it == decls.end()) {
-    curValue = nullptr;
+  auto It = Decls.find(E.getDecl());
+  if (It == Decls.end()) {
+    CurValue = nullptr;
   }
 
-  llvm::Value *val = it->second;
+  llvm::Value *Val = It->second;
   // Check if this is a local variable (AllocaInst) that needs to be loaded
-  if (auto *alloca = llvm::dyn_cast<llvm::AllocaInst>(val)) {
+  if (auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(Val)) {
     // Load the value from the allocated memory
-    curValue =
-        builder.CreateLoad(alloca->getAllocatedType(), alloca, expr.getID());
+    CurValue =
+        Builder.CreateLoad(Alloca->getAllocatedType(), Alloca, E.getId());
   } else {
     // This is a function parameter or other value - use directly
-    curValue = val;
+    CurValue = Val;
   }
 }
 
-void phi::CodeGen::visit(phi::FunCallExpr &expr) {
-  auto decl_ref = llvm::dyn_cast<phi::DeclRefExpr>(&expr.getCallee());
+void phi::CodeGen::visit(phi::FunCallExpr &E) {
+  auto DeclRef = llvm::dyn_cast<phi::DeclRefExpr>(&E.getCallee());
 
   // Temp linking to printf
-  if (decl_ref->getID() == "println") {
-    generatePrintlnCall(expr);
+  if (DeclRef->getId() == "println") {
+    generatePrintlnCall(E);
     return;
   }
 
   // Generate arguments
-  std::vector<llvm::Value *> args;
-  for (auto &arg : expr.getArgs()) {
-    arg->accept(*this);
-    args.push_back(curValue);
+  std::vector<llvm::Value *> Args;
+  for (auto &Arg : E.getArgs()) {
+    Arg->accept(*this);
+    Args.push_back(CurValue);
   }
 
   // Find the function to call
-  llvm::Function *func = module.getFunction(decl_ref->getID());
-  if (func) {
-    curValue = builder.CreateCall(func, args);
+  llvm::Function *Fun = Module.getFunction(DeclRef->getId());
+  if (Fun) {
+    CurValue = Builder.CreateCall(Fun, Args);
   }
 }
