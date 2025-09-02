@@ -10,7 +10,7 @@ namespace phi {
  * Handles edge cases where token iterator might be out of bounds.
  */
 bool Parser::atEOF() const {
-  return TokenIt >= Tokens.end() || peekToken().getKind() == TokenKind::EOFKind;
+  return TokenIt >= Tokens.end() || peekToken().getKind() == TokenKind::Eof;
 }
 
 /**
@@ -23,7 +23,7 @@ bool Parser::atEOF() const {
 Token Parser::peekToken() const {
   if (TokenIt >= Tokens.end()) {
     const SrcLocation EofLoc{.path = "", .line = -1, .col = -1};
-    return Token{EofLoc, EofLoc, TokenKind::EOFKind, ""};
+    return Token{EofLoc, EofLoc, TokenKind::Eof, ""};
   }
   return *TokenIt;
 }
@@ -50,15 +50,14 @@ Token Parser::advanceToken() {
  *
  * Automatically advances on match. Emits detailed error on mismatch.
  */
-bool Parser::expectToken(const TokenKind ExpectedTy,
-                         const std::string &Context) {
-  if (peekToken().getKind() == ExpectedTy) {
+bool Parser::expectToken(const TokenKind Expected, const std::string &Context) {
+  if (peekToken().getKind() == Expected) {
     advanceToken();
     return true;
   }
 
   const std::string Msg = Context.empty() ? "" : " in " + Context;
-  emitExpectedFoundError(tyToStr(ExpectedTy) + Msg, peekToken());
+  emitExpectedFoundError(tyToStr(Expected) + Msg, peekToken());
   return false;
 }
 

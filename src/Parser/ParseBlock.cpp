@@ -28,7 +28,7 @@ std::unique_ptr<Block> Parser::parseBlock() {
   // Parse statements until closing brace
   std::vector<std::unique_ptr<Stmt>> Stmts;
   while (peekToken().getKind() != TokenKind::CloseBrace) {
-    if (peekToken().getKind() == TokenKind::EOFKind) {
+    if (peekToken().getKind() == TokenKind::Eof) {
       emitUnclosedDelimiterError(peekToken(), "}");
       return nullptr;
     }
