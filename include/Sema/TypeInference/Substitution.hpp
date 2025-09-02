@@ -1,11 +1,10 @@
 #pragma once
 
 #include <ranges>
+#include <unordered_map>
 
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "Sema/TypeInference/Types/Polytype.hpp"
-
-#include <unordered_map>
 
 namespace phi {
 

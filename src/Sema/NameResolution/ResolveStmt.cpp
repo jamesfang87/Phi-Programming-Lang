@@ -1,11 +1,10 @@
-#include "AST/Expr.hpp"
-#include "AST/Stmt.hpp"
 #include "Sema/NameResolver.hpp"
 
 #include <optional>
-#include <print>
 
 #include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
+#include "AST/Stmt.hpp"
 #include "Sema/SymbolTable.hpp"
 
 namespace phi {

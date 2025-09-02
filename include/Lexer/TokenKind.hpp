@@ -19,111 +19,111 @@ enum class TokenKind : uint8_t {
   /// End of file marker
   EOFKind,
   /// Error token for invalid inputs
-  ErrorKind,
+  Error,
 
   // KEYWORDS
-  BoolKwKind,     ///< `bool` keyword
-  BreakKwKind,    ///< `break` keyword
-  ConstKwKind,    ///< `const` keyword
-  ContinueKwKind, ///< `continue` keyword
-  ElseKwKind,     ///< `else` keyword
-  EnumKwKind,
-  FalseKwKind,  ///< `false` literal
-  ForKwKind,    ///< `for` keyword
-  FunKwKind,    ///< `fun` keyword
-  IfKwKind,     ///< `if` keyword
-  ImportKwKind, ///< `import` keyword
-  InKwKind,     ///< `in` keyword
-  PublicKwKind, ///< `public` keyword
-  ReturnKwKind, ///< `return` keyword
-  StructKwKind,
-  TrueKwKind,  ///< `true` literal
-  VarKwKind,   ///< `let` keyword
-  WhileKwKind, ///< `while` keyword
+  BoolKw,     ///< `bool` keyword
+  BreakKw,    ///< `break` keyword
+  ConstKw,    ///< `const` keyword
+  ContinueKw, ///< `continue` keyword
+  ElseKwKind, ///< `else` keyword
+  EnumKw,
+  FalseKw,  ///< `false` literal
+  ForKw,    ///< `for` keyword
+  FunKw,    ///< `fun` keyword
+  IfKw,     ///< `if` keyword
+  ImportKw, ///< `import` keyword
+  InKwKind, ///< `in` keyword
+  PublicKw, ///< `public` keyword
+  ReturnKw, ///< `return` keyword
+  StructKw,
+  TrueKw,  ///< `true` literal
+  VarKw,   ///< `let` keyword
+  WhileKw, ///< `while` keyword
 
   // SIGNED INTEGER TYPES
-  I8Kind,  ///< `i8` type (8-bit signed)
-  I16Kind, ///< `i16` type (16-bit signed)
-  I32Kind, ///< `i32` type (32-bit signed)
-  I64Kind, ///< `i64` type (64-bit signed)
+  I8,  ///< `i8` type (8-bit signed)
+  I16, ///< `i16` type (16-bit signed)
+  I32, ///< `i32` type (32-bit signed)
+  I64, ///< `i64` type (64-bit signed)
 
   // UNSIGNED INTEGER TYPES
-  U8Kind,  ///< `u8` type (8-bit unsigned)
-  U16Kind, ///< `u16` type (16-bit unsigned)
-  U32Kind, ///< `u32` type (32-bit unsigned)
-  U64Kind, ///< `u64` type (64-bit unsigned)
+  U8,  ///< `u8` type (8-bit unsigned)
+  U16, ///< `u16` type (16-bit unsigned)
+  U32, ///< `u32` type (32-bit unsigned)
+  U64, ///< `u64` type (64-bit unsigned)
 
   // FLOATING-POINT TYPES
-  F32Kind, ///< `f32` type (32-bit float)
-  F64Kind, ///< `f64` type (64-bit float)
+  F32, ///< `f32` type (32-bit float)
+  F64, ///< `f64` type (64-bit float)
 
   // TEXT TYPES
-  StringKind, ///< `str` type keyword
-  CharKind,   ///< `char` type keyword
+  String, ///< `str` type keyword
+  Char,   ///< `char` type keyword
 
   // SYNTAX DELIMITERS
-  OpenParenKind,    ///< `(` parenthesis
-  CloseParenKind,   ///< `)` parenthesis
-  OpenBraceKind,    ///< `{` brace
-  CloseBraceKind,   ///< `}` brace
-  OpenBracketKind,  ///< `[` bracket
-  CloseBracketKind, ///< `]` bracket
-  ArrowKind,        ///< `->` function return
-  CommaKind,        ///< `,` separator
-  SemicolonKind,    ///< `;` statement terminator
+  OpenParen,    ///< `(` parenthesis
+  CloseParen,   ///< `)` parenthesis
+  OpenBrace,    ///< `{` brace
+  CloseBrace,   ///< `}` brace
+  OpenBracket,  ///< `[` bracket
+  CloseBracket, ///< `]` bracket
+  Arrow,        ///< `->` function return
+  Comma,        ///< `,` separator
+  Semicolon,    ///< `;` statement terminator
 
   // OPERATORS
-  PlusKind,    ///< `+` addition
-  MinusKind,   ///< `-` subtraction/negation
-  StarKind,    ///< `*` multiplication
-  SlashKind,   ///< `/` division
-  PercentKind, ///< `%` modulo
-  BangKind,    ///< `!` logical NOT
-  AmpKind,
+  Plus,    ///< `+` addition
+  Minus,   ///< `-` subtraction/negation
+  Star,    ///< `*` multiplication
+  Slash,   ///< `/` division
+  Percent, ///< `%` modulo
+  Bang,    ///< `!` logical NOT
+  Amp,
 
   // COMPOUND ASSIGNMENT OPERATORS
-  PlusEqualsKind, ///< `+=` add-assign
-  SubEqualsKind,  ///< `-=` subtract-assign
-  MulEqualKind,   ///< `*=` multiply-assign
-  DivEqualsKind,  ///< `/=` divide-assign
-  ModEqualsKind,  ///< `%=` modulo-assign
+  PlusEquals, ///< `+=` add-assign
+  SubEquals,  ///< `-=` subtract-assign
+  MulEqual,   ///< `*=` multiply-assign
+  DivEquals,  ///< `/=` divide-assign
+  ModEquals,  ///< `%=` modulo-assign
 
   // MEMBER ACCESS
-  PeriodKind,      ///< `.` member access
-  DoubleColonKind, ///< `::` namespace access
+  Period,      ///< `.` member access
+  DoubleColon, ///< `::` namespace access
 
   // INCREMENT/DECREMENT
-  DoublePlusKind,  ///< `++` increment
-  DoubleMinusKind, ///< `--` decrement
+  DoublePlus,  ///< `++` increment
+  DoubleMinus, ///< `--` decrement
 
   // EQUALITY
-  DoubleEqualsKind, ///< `==` equality
-  BangEqualsKind,   ///< `!=` inequality
+  DoubleEquals, ///< `==` equality
+  BangEquals,   ///< `!=` inequality
 
   // LOGICAL
-  DoubleAmpKind,  ///< `&&` logical AND
-  DoublePipeKind, ///< `||` logical OR
+  DoubleAmp,  ///< `&&` logical AND
+  DoublePipe, ///< `||` logical OR
 
   // RELATIONAL
-  OpenCaretKind,    ///< `<` less than
-  LessEqualKind,    ///< `<=` less than or equal
-  CloseCaretKind,   ///< `>` greater than
-  GreaterEqualKind, ///< `>=` greater than or equal
+  OpenCaret,    ///< `<` less than
+  LessEqual,    ///< `<=` less than or equal
+  CloseCaret,   ///< `>` greater than
+  GreaterEqual, ///< `>=` greater than or equal
 
   // ASSIGNMENT AND TYPE
-  EqualsKind, ///< `=` assignment
-  ColonKind,  ///< `:` type annotation
+  Equals, ///< `=` assignment
+  Colon,  ///< `:` type annotation
 
   // RANGE OPERATORS
-  ExclRangeKind, ///< `..` exclusive range
-  InclRangeKind, ///< `..=` inclusive range
+  ExclRange, ///< `..` exclusive range
+  InclRange, ///< `..=` inclusive range
 
   // LITERALS
-  IntLiteralKind,   ///< Integer literal (e.g., 42)
-  FloatLiteralKind, ///< Float literal (e.g., 3.14)
-  StrLiteralKind,   ///< String literal (e.g., "text")
-  CharLiteralKind,  ///< Char literal (e.g., 'a')
-  IdentifierKind,   ///< Identifier (user-defined names)
+  IntLiteral,   ///< Integer literal (e.g., 42)
+  FloatLiteral, ///< Float literal (e.g., 3.14)
+  StrLiteral,   ///< String literal (e.g., "text")
+  CharLiteral,  ///< Char literal (e.g., 'a')
+  Identifier,   ///< Identifier (user-defined names)
 };
 
 /**

@@ -1,7 +1,8 @@
 #include "Parser/Parser.hpp"
 
-#include <llvm/Support/Casting.h>
 #include <memory>
+
+#include <llvm/Support/Casting.h>
 
 #include "AST/Expr.hpp"
 
@@ -22,17 +23,17 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
                                            std::unique_ptr<Expr> Lhs) {
   switch (Op.getKind()) {
   // Unary ops
-  case TokenKind::DoublePlusKind:
-  case TokenKind::DoubleMinusKind:
+  case TokenKind::DoublePlus:
+  case TokenKind::DoubleMinus:
     advanceToken();
     return std::make_unique<UnaryOp>(std::move(Lhs), Op, false); // postfix
 
   // Function call
-  case TokenKind::OpenParenKind:
+  case TokenKind::OpenParen:
     return parseFunCall(std::move(Lhs));
 
   // Struct init
-  case TokenKind::OpenBraceKind:
+  case TokenKind::OpenBrace:
     if (!NoStructInit)
       return parseStructInit(std::move(Lhs));
 
@@ -51,19 +52,19 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
 std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
                                          std::unique_ptr<Expr> Lhs, int RBp) {
   std::vector<TokenKind> Terminators = {
-      TokenKind::EOFKind, TokenKind::SemicolonKind, TokenKind::CommaKind,
-      TokenKind::CloseParenKind, TokenKind::CloseBracketKind};
+      TokenKind::EOFKind, TokenKind::Semicolon, TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket};
   if (NoStructInit) {
-    Terminators.push_back(TokenKind::OpenBraceKind);
+    Terminators.push_back(TokenKind::OpenBrace);
   }
 
   advanceToken(); // consume operator
 
   // Special handling for range operators
-  if (Op.getKind() == TokenKind::ExclRangeKind ||
-      Op.getKind() == TokenKind::InclRangeKind) {
+  if (Op.getKind() == TokenKind::ExclRange ||
+      Op.getKind() == TokenKind::InclRange) {
 
-    bool Inclusive = Op.getKind() == TokenKind::InclRangeKind;
+    bool Inclusive = Op.getKind() == TokenKind::InclRange;
     auto Rhs = pratt(RBp, Terminators); // this is the end of the range
     if (!Rhs)
       return nullptr;
@@ -72,7 +73,7 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
                                           std::move(Rhs), Inclusive);
   }
 
-  if (Op.getKind() == TokenKind::PeriodKind) {
+  if (Op.getKind() == TokenKind::Period) {
     auto Rhs = pratt(RBp, Terminators);
     if (!Rhs)
       return nullptr;

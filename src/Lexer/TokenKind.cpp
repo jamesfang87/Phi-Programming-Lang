@@ -19,184 +19,184 @@ std::string tyToStr(const TokenKind Kind) {
   // Special tokens
   case TokenKind::EOFKind:
     return "EOF";
-  case TokenKind::ErrorKind:
+  case TokenKind::Error:
     return "ERROR";
 
   // Keywords
-  case TokenKind::BoolKwKind:
+  case TokenKind::BoolKw:
     return "BOOL";
-  case TokenKind::BreakKwKind:
+  case TokenKind::BreakKw:
     return "BREAK";
-  case TokenKind::ConstKwKind:
+  case TokenKind::ConstKw:
     return "CONST";
-  case TokenKind::ContinueKwKind:
+  case TokenKind::ContinueKw:
     return "CONTINUE";
   case TokenKind::ElseKwKind:
     return "ELSE";
-  case TokenKind::EnumKwKind:
+  case TokenKind::EnumKw:
     return "ENUM";
-  case TokenKind::FalseKwKind:
+  case TokenKind::FalseKw:
     return "FALSE";
-  case TokenKind::ForKwKind:
+  case TokenKind::ForKw:
     return "FOR";
-  case TokenKind::FunKwKind:
+  case TokenKind::FunKw:
     return "FUN";
-  case TokenKind::IfKwKind:
+  case TokenKind::IfKw:
     return "IF";
-  case TokenKind::ImportKwKind:
+  case TokenKind::ImportKw:
     return "IMPORT";
   case TokenKind::InKwKind:
     return "IN";
-  case TokenKind::PublicKwKind:
+  case TokenKind::PublicKw:
     return "PUBLIC";
-  case TokenKind::ReturnKwKind:
+  case TokenKind::ReturnKw:
     return "RETURN";
-  case TokenKind::StructKwKind:
+  case TokenKind::StructKw:
     return "STRUCT";
-  case TokenKind::TrueKwKind:
+  case TokenKind::TrueKw:
     return "TRUE";
-  case TokenKind::VarKwKind:
+  case TokenKind::VarKw:
     return "VAR";
-  case TokenKind::WhileKwKind:
+  case TokenKind::WhileKw:
     return "WHILE";
 
   // Signed integer types
-  case TokenKind::I8Kind:
+  case TokenKind::I8:
     return "I8";
-  case TokenKind::I16Kind:
+  case TokenKind::I16:
     return "I16";
-  case TokenKind::I32Kind:
+  case TokenKind::I32:
     return "I32";
-  case TokenKind::I64Kind:
+  case TokenKind::I64:
     return "I64";
 
   // Unsigned integer types
-  case TokenKind::U8Kind:
+  case TokenKind::U8:
     return "U8";
-  case TokenKind::U16Kind:
+  case TokenKind::U16:
     return "U16";
-  case TokenKind::U32Kind:
+  case TokenKind::U32:
     return "U32";
-  case TokenKind::U64Kind:
+  case TokenKind::U64:
     return "U64";
 
   // Floating point types
-  case TokenKind::F32Kind:
+  case TokenKind::F32:
     return "F32";
-  case TokenKind::F64Kind:
+  case TokenKind::F64:
     return "F64";
 
   // Text types
-  case TokenKind::StringKind:
+  case TokenKind::String:
     return "STRING";
-  case TokenKind::CharKind:
+  case TokenKind::Char:
     return "CHAR";
 
   // Syntax elements
-  case TokenKind::OpenParenKind:
+  case TokenKind::OpenParen:
     return "OPEN_PAREN";
-  case TokenKind::CloseParenKind:
+  case TokenKind::CloseParen:
     return "CLOSE_PAREN";
-  case TokenKind::OpenBraceKind:
+  case TokenKind::OpenBrace:
     return "OPEN_BRACE";
-  case TokenKind::CloseBraceKind:
+  case TokenKind::CloseBrace:
     return "CLOSE_BRACE";
-  case TokenKind::OpenBracketKind:
+  case TokenKind::OpenBracket:
     return "OPEN_BRACKET";
-  case TokenKind::CloseBracketKind:
+  case TokenKind::CloseBracket:
     return "CLOSE_BRACKET";
-  case TokenKind::ArrowKind:
+  case TokenKind::Arrow:
     return "FUN_RETURN";
-  case TokenKind::CommaKind:
+  case TokenKind::Comma:
     return "COMMA";
-  case TokenKind::SemicolonKind:
+  case TokenKind::Semicolon:
     return "SEMICOLON";
 
   // Basic operators
-  case TokenKind::PlusKind:
+  case TokenKind::Plus:
     return "ADD";
-  case TokenKind::MinusKind:
+  case TokenKind::Minus:
     return "SUB";
-  case TokenKind::StarKind:
+  case TokenKind::Star:
     return "MUL";
-  case TokenKind::SlashKind:
+  case TokenKind::Slash:
     return "DIV";
-  case TokenKind::PercentKind:
+  case TokenKind::Percent:
     return "MOD";
-  case TokenKind::BangKind:
+  case TokenKind::Bang:
     return "BANG";
-  case TokenKind::AmpKind:
+  case TokenKind::Amp:
     return "AMP";
 
   // Assignment operators
-  case TokenKind::PlusEqualsKind:
+  case TokenKind::PlusEquals:
     return "PLUS_EQUALS";
-  case TokenKind::SubEqualsKind:
+  case TokenKind::SubEquals:
     return "SUB_EQUALS";
-  case TokenKind::MulEqualKind:
+  case TokenKind::MulEqual:
     return "MUL_EQUALS";
-  case TokenKind::DivEqualsKind:
+  case TokenKind::DivEquals:
     return "DIV_EQUALS";
-  case TokenKind::ModEqualsKind:
+  case TokenKind::ModEquals:
     return "MOD_EQUALS";
 
   // Member access
-  case TokenKind::PeriodKind:
+  case TokenKind::Period:
     return "MEMBER";
-  case TokenKind::DoubleColonKind:
+  case TokenKind::DoubleColon:
     return "NAMESPACE_MEMBER";
 
   // Increment/decrement
-  case TokenKind::DoublePlusKind:
+  case TokenKind::DoublePlus:
     return "INCREMENT";
-  case TokenKind::DoubleMinusKind:
+  case TokenKind::DoubleMinus:
     return "DECREMENT";
 
   // Comparison
-  case TokenKind::DoubleEqualsKind:
+  case TokenKind::DoubleEquals:
     return "EQUAL";
-  case TokenKind::BangEqualsKind:
+  case TokenKind::BangEquals:
     return "NOT_EQUAL";
 
   // Logical
-  case TokenKind::DoubleAmpKind:
+  case TokenKind::DoubleAmp:
     return "AND";
-  case TokenKind::DoublePipeKind:
+  case TokenKind::DoublePipe:
     return "OR";
 
   // Relational
-  case TokenKind::OpenCaretKind:
+  case TokenKind::OpenCaret:
     return "LESS";
-  case TokenKind::LessEqualKind:
+  case TokenKind::LessEqual:
     return "LESS_EQUAL";
-  case TokenKind::CloseCaretKind:
+  case TokenKind::CloseCaret:
     return "GREATER";
-  case TokenKind::GreaterEqualKind:
+  case TokenKind::GreaterEqual:
     return "GREATER_EQUAL";
 
   // Other operators
-  case TokenKind::EqualsKind:
+  case TokenKind::Equals:
     return "ASSIGN";
-  case TokenKind::ColonKind:
+  case TokenKind::Colon:
     return "COLON";
 
-  case TokenKind::ExclRangeKind:
+  case TokenKind::ExclRange:
     return "EXCLUSIVE_RANGE";
-  case TokenKind::InclRangeKind:
+  case TokenKind::InclRange:
     return "INCLUSIVE_RANGE";
 
   // Literals
-  case TokenKind::IntLiteralKind:
+  case TokenKind::IntLiteral:
     return "INT_LITERAL";
-  case TokenKind::FloatLiteralKind:
+  case TokenKind::FloatLiteral:
     return "FLOAT_LITERAL";
-  case TokenKind::StrLiteralKind:
+  case TokenKind::StrLiteral:
     return "STRING_LITERAL";
-  case TokenKind::CharLiteralKind:
+  case TokenKind::CharLiteral:
     return "CHAR_LITERAL";
 
   // Identifier
-  case TokenKind::IdentifierKind:
+  case TokenKind::Identifier:
     return "IDENTIFIER";
 
   default:
