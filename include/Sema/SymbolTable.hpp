@@ -69,11 +69,12 @@ public:
   ParamDecl *lookup(ParamDecl &Param);
   FieldDecl *lookup(FieldDecl &Field);
 
-  FunDecl *getClosestFun(const std::string &Undeclared) const;
-  StructDecl *getClosestStruct(const std::string &Undeclared) const;
-  ValueDecl *getClosestVar(const std::string &Undeclared) const;
+  [[nodiscard]] FunDecl *getClosestFun(const std::string &Undeclared) const;
+  [[nodiscard]] StructDecl *
+  getClosestStruct(const std::string &Undeclared) const;
+  [[nodiscard]] ValueDecl *getClosestVar(const std::string &Undeclared) const;
 
-  std::optional<std::string>
+  [[nodiscard]] std::optional<std::string>
   getClosestType(const std::string &Undeclared) const;
 
 private:

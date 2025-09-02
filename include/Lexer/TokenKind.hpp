@@ -17,7 +17,7 @@ namespace phi {
  */
 enum class TokenKind : uint8_t {
   /// End of file marker
-  EOFKind,
+  Eof,
   /// Error token for invalid inputs
   Error,
 

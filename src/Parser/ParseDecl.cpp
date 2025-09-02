@@ -112,7 +112,7 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
     return std::nullopt;
 
   return TypedBinding{
-      .loc = Start, .name = Name, .type = std::move(DeclType.value())};
+      .Loc = Start, .Name = Name, .Type = std::move(DeclType.value())};
 }
 
 /**

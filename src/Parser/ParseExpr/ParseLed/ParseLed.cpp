@@ -51,9 +51,9 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
  */
 std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
                                          std::unique_ptr<Expr> Lhs, int RBp) {
-  std::vector<TokenKind> Terminators = {
-      TokenKind::EOFKind, TokenKind::Semicolon, TokenKind::Comma,
-      TokenKind::CloseParen, TokenKind::CloseBracket};
+  std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
+                                        TokenKind::Comma, TokenKind::CloseParen,
+                                        TokenKind::CloseBracket};
   if (NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
