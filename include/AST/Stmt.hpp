@@ -1,9 +1,10 @@
 #pragma once
 
-#include "Sema/TypeInference/Substitution.hpp"
-#include "SrcManager/SrcLocation.hpp"
 #include <memory>
 #include <vector>
+
+#include "Sema/TypeInference/Substitution.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 

@@ -1,5 +1,3 @@
-#include "Diagnostics/DiagnosticBuilder.hpp"
-#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
@@ -8,6 +6,8 @@
 #include <utility>
 
 #include "AST/Decl.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
+#include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
@@ -32,7 +32,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   SrcLocation Loc = Tok.getStart();
 
   // Validate function name
-  if (peekToken().getKind() != TokenKind::IdentifierKind) {
+  if (peekToken().getKind() != TokenKind::Identifier) {
     error("invalid function name")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected function name here")
@@ -46,9 +46,8 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   std::string Id = advanceToken().getLexeme();
 
   // Parse parameter list
-  auto Params =
-      parseList<ParamDecl>(TokenKind::OpenParenKind, TokenKind::CloseParenKind,
-                           &Parser::parseParamDecl);
+  auto Params = parseList<ParamDecl>(
+      TokenKind::OpenParen, TokenKind::CloseParen, &Parser::parseParamDecl);
   if (!Params)
     return nullptr;
 
@@ -58,7 +57,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
 
   // Handle optional return type
   auto ReturnType = Type::makePrimitive(PrimitiveKind::Null, SrcLocation{});
-  if (peekToken().getKind() == TokenKind::ArrowKind) {
+  if (peekToken().getKind() == TokenKind::Arrow) {
     advanceToken(); // eat '->'
     auto Res = parseType();
     if (!Res.has_value())
@@ -86,7 +85,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
  */
 std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   // Parse identifier
-  if (peekToken().getKind() != TokenKind::IdentifierKind) {
+  if (peekToken().getKind() != TokenKind::Identifier) {
     error("expected identifier")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected identifier here")
@@ -97,7 +96,7 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   std::string Name = advanceToken().getLexeme();
 
   // Parse colon separator
-  if (peekToken().getKind() != TokenKind::ColonKind) {
+  if (peekToken().getKind() != TokenKind::Colon) {
     error("expected colon")
         .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
         .with_suggestion(spanFromToken(peekToken()), ":",
@@ -126,10 +125,10 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
  */
 std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
   bool IsConst;
-  if (peekToken().getKind() == TokenKind::ConstKwKind) {
+  if (peekToken().getKind() == TokenKind::ConstKw) {
     IsConst = true;
     advanceToken();
-  } else if (peekToken().getKind() == TokenKind::VarKwKind) {
+  } else if (peekToken().getKind() == TokenKind::VarKw) {
     IsConst = false;
     advanceToken();
   } else {

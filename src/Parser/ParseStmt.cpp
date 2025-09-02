@@ -27,20 +27,20 @@ namespace phi {
  */
 std::unique_ptr<Stmt> Parser::parseStmt() {
   switch (peekToken().getKind()) {
-  case TokenKind::ReturnKwKind:
+  case TokenKind::ReturnKw:
     return parseReturn();
-  case TokenKind::IfKwKind:
+  case TokenKind::IfKw:
     return parseIf();
-  case TokenKind::WhileKwKind:
+  case TokenKind::WhileKw:
     return parseWhile();
-  case TokenKind::ForKwKind:
+  case TokenKind::ForKw:
     return parseFor();
-  case TokenKind::VarKwKind:
-  case TokenKind::ConstKwKind:
+  case TokenKind::VarKw:
+  case TokenKind::ConstKw:
     return parseDecl();
-  case TokenKind::BreakKwKind:
+  case TokenKind::BreakKw:
     return parseBreak();
-  case TokenKind::ContinueKwKind:
+  case TokenKind::ContinueKw:
     return parseContinue();
   default:
     auto Res = parseExpr();
@@ -66,7 +66,7 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   advanceToken(); // eat 'return'
 
   // Null return: return;
-  if (peekToken().getKind() == TokenKind::SemicolonKind) {
+  if (peekToken().getKind() == TokenKind::Semicolon) {
     advanceToken(); // eat ';'
     return std::make_unique<ReturnStmt>(Loc, nullptr);
   }
@@ -78,7 +78,7 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   }
 
   // Validate semicolon terminator
-  if (peekToken().getKind() != TokenKind::SemicolonKind) {
+  if (peekToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after return statement")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("return statements must end with a semicolon")
@@ -131,7 +131,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
   advanceToken(); // eat 'else'
 
   // Else block: else { ... }
-  if (peekToken().getKind() == TokenKind::OpenBraceKind) {
+  if (peekToken().getKind() == TokenKind::OpenBrace) {
     auto ElseBody = parseBlock();
     if (!ElseBody) {
       NoStructInit = false;
@@ -143,7 +143,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
                                     std::move(ElseBody));
   }
   // Else if: else if ...
-  if (peekToken().getKind() == TokenKind::IfKwKind) {
+  if (peekToken().getKind() == TokenKind::IfKw) {
     std::vector<std::unique_ptr<Stmt>> ElifStmt;
 
     auto Res = parseIf();
@@ -217,7 +217,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
 
   // Parse loop variable
   Token LoopVar = advanceToken();
-  if (LoopVar.getKind() != TokenKind::IdentifierKind) {
+  if (LoopVar.getKind() != TokenKind::Identifier) {
     error("for loop must have a loop variable")
         .with_primary_label(spanFromToken(LoopVar), "expected identifier here")
         .with_help("for loops have the form: `for variable in iterable`")
@@ -284,10 +284,10 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
 std::unique_ptr<DeclStmt> Parser::parseDecl() {
   SrcLocation letLoc = peekToken().getStart();
   bool IsConst;
-  if (peekToken().getKind() == TokenKind::ConstKwKind) {
+  if (peekToken().getKind() == TokenKind::ConstKw) {
     IsConst = true;
     advanceToken();
-  } else if (peekToken().getKind() == TokenKind::VarKwKind) {
+  } else if (peekToken().getKind() == TokenKind::VarKw) {
     IsConst = false;
     advanceToken();
   } else {
@@ -299,9 +299,9 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
   std::string Id;
   std::optional<Type> DeclType = std::nullopt; // initialize to nullptr
 
-  if (peekToken(1).getKind() != TokenKind::ColonKind) {
+  if (peekToken(1).getKind() != TokenKind::Colon) {
     // just parse the name and leave DeclType as nullptr
-    if (peekToken().getKind() != TokenKind::IdentifierKind) {
+    if (peekToken().getKind() != TokenKind::Identifier) {
       error("expected identifier")
           .with_primary_label(spanFromToken(peekToken()),
                               "expected identifier here")
@@ -322,7 +322,7 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
   }
 
   // Validate assignment operator
-  if (peekToken().getKind() != TokenKind::EqualsKind) {
+  if (peekToken().getKind() != TokenKind::Equals) {
     error("missing assignment in variable declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `=` here")
         .with_help("variables must be initialized with a value")
@@ -339,7 +339,7 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
     return nullptr;
 
   // Validate semicolon terminator
-  if (advanceToken().getKind() != TokenKind::SemicolonKind) {
+  if (advanceToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after variable declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("variable declarations must end with a semicolon")
@@ -356,7 +356,7 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
 
 std::unique_ptr<BreakStmt> Parser::parseBreak() {
   SrcLocation Loc = peekToken().getStart();
-  if (advanceToken().getKind() != TokenKind::BreakKwKind) {
+  if (advanceToken().getKind() != TokenKind::BreakKw) {
     error("missing break keyword")
         .with_primary_label(spanFromToken(peekToken()), "expected `break` here")
         .with_help("break statements must be preceded by a loop")
@@ -366,7 +366,7 @@ std::unique_ptr<BreakStmt> Parser::parseBreak() {
   }
 
   // Validate semicolon terminator
-  if (advanceToken().getKind() != TokenKind::SemicolonKind) {
+  if (advanceToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after break statement")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("break statements must end with a semicolon")
@@ -381,7 +381,7 @@ std::unique_ptr<BreakStmt> Parser::parseBreak() {
 
 std::unique_ptr<ContinueStmt> Parser::parseContinue() {
   SrcLocation Loc = peekToken().getStart();
-  if (advanceToken().getKind() != TokenKind::ContinueKwKind) {
+  if (advanceToken().getKind() != TokenKind::ContinueKw) {
     error("missing continue keyword")
         .with_primary_label(spanFromToken(peekToken()),
                             "expected `continue` here")
@@ -392,7 +392,7 @@ std::unique_ptr<ContinueStmt> Parser::parseContinue() {
   }
 
   // Validate semicolon terminator
-  if (advanceToken().getKind() != TokenKind::SemicolonKind) {
+  if (advanceToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after continue statement")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("continue statements must end with a semicolon")

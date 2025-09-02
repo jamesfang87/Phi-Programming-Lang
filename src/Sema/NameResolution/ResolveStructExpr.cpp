@@ -1,14 +1,14 @@
-#include "AST/Expr.hpp"
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/NameResolver.hpp"
 
-#include <format>
-#include <llvm/Support/Casting.h>
-
 #include <cassert>
-#include <print>
+#include <format>
 #include <string>
 #include <unordered_set>
+
+#include <llvm/Support/Casting.h>
+
+#include "AST/Expr.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
 

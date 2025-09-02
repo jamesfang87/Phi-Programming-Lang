@@ -1,5 +1,8 @@
-#include "Diagnostics/DiagnosticManager.hpp"
+#pragma once
+
 #include <string>
+
+#include "Diagnostics/DiagnosticManager.hpp"
 
 namespace phi {
 

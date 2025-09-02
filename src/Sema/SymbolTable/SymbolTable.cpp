@@ -1,8 +1,11 @@
 #include "Sema/SymbolTable.hpp"
+
+#include <string>
+
+#include <llvm/Support/Casting.h>
+
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
-#include "llvm/Support/Casting.h"
-#include <string>
 
 namespace phi {
 

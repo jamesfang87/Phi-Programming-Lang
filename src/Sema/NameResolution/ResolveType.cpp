@@ -1,8 +1,9 @@
-#include "AST/Type.hpp"
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/NameResolver.hpp"
+
 #include <format>
 #include <string>
+
+#include "AST/Type.hpp"
 
 namespace phi {
 

@@ -1,11 +1,12 @@
-#include "AST/Decl.hpp"
-#include "Sema/TypeInference/Algorithms.hpp"
 #include "Sema/TypeInference/Infer.hpp"
-#include "Sema/TypeInference/Types/Monotype.hpp"
-#include "Sema/TypeInference/Types/Polytype.hpp"
+
 #include <cassert>
 #include <optional>
-#include <print>
+
+#include "AST/Decl.hpp"
+#include "Sema/TypeInference/Algorithms.hpp"
+#include "Sema/TypeInference/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/Polytype.hpp"
 
 namespace phi {
 

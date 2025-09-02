@@ -1,16 +1,15 @@
 #pragma once
 
-#include "SrcManager/SrcLocation.hpp"
-#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <format>
-#include <print>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 

@@ -1,10 +1,11 @@
-#include "AST/Type.hpp"
 #include "Sema/TypeInference/TypeEnv.hpp"
 
 #include <cassert>
 #include <print>
 #include <string>
 #include <vector>
+
+#include "AST/Type.hpp"
 
 namespace phi {
 
