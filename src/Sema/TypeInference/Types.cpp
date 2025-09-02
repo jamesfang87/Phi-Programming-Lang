@@ -47,7 +47,7 @@ Type Monotype::toAstType() const {
           return Type::makePrimitive(PrimitiveKind::Bool, this->Location);
         if (Name == "range")
           return Type::makePrimitive(PrimitiveKind::Range, this->Location);
-        if (Name == "null")
+        if (Name == "null" || Name == "unit")
           return Type::makePrimitive(PrimitiveKind::Null, this->Location);
 
         // Otherwise treat as custom/struct name
