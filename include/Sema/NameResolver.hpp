@@ -56,6 +56,7 @@ public:
   bool visit(DeclStmt &S);
   bool visit(BreakStmt &S);
   bool visit(ContinueStmt &S);
+  bool visit(ExprStmt &S);
   bool visit(Expr &S);
 
 private:

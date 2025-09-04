@@ -153,6 +153,8 @@ bool NameResolver::visit(ContinueStmt &S) {
   return true;
 }
 
+bool NameResolver::visit(ExprStmt &S) { return visit(S.getExpr()); }
+
 bool NameResolver::visit(Expr &S) { return S.accept(*this); }
 
 } // namespace phi

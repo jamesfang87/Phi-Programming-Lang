@@ -2,6 +2,7 @@
 
 #include "AST/Stmt.hpp"
 #include "Sema/TypeInference/Substitution.hpp"
+#include <cassert>
 
 namespace phi {
 
@@ -52,11 +53,9 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
 
   // 3) Create fresh type variable for loop variable, restricted to integer
   // types
-  std::vector<std::string> IntConstraints = {"i8", "i16", "i32", "i64",
-                                             "u8", "u16", "u32", "u64"};
-  auto LoopVarTy = Monotype::makeVar(Factory.fresh());
-  LoopVarTy.asVar().Constraints = IntConstraints;
-  IntTypeVars.push_back(LoopVarTy.asVar());
+  assert(RangeType.asCon().Args.size() == 1);
+  auto LoopVarTy = RangeType.asCon().Args[0];
+  // IntTypeVars.push_back(LoopVarTy.asVar());
 
   // 4) Bind loop variable in environment
   recordSubst(AllSubsts);
@@ -112,6 +111,10 @@ TypeInferencer::InferRes TypeInferencer::visit(BreakStmt &S) {
 TypeInferencer::InferRes TypeInferencer::visit(ContinueStmt &S) {
   (void)S;
   return {Substitution{}, Monotype::makeCon("unit")};
+}
+
+TypeInferencer::InferRes TypeInferencer::visit(ExprStmt &S) {
+  return visit(S.getExpr());
 }
 
 } // namespace phi

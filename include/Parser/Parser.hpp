@@ -189,7 +189,7 @@ private:
    *         Errors are reported through the DiagnosticManager
    */
   std::unique_ptr<StructDecl> parseStructDecl();
-  std::optional<FieldDecl> parseFieldDecl();
+  std::unique_ptr<FieldDecl> parseFieldDecl();
   std::optional<MethodDecl> parseStructMethodDecl();
 
   // FUNCTION DECLARATION PARSING

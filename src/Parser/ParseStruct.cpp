@@ -21,7 +21,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
   advanceToken();
 
   std::vector<MethodDecl> Methods;
-  std::vector<FieldDecl> Fields;
+  std::vector<std::unique_ptr<FieldDecl>> Fields;
   while (!atEOF() && peekToken().getKind() != TokenKind::CloseBrace) {
     Token Check = peekToken();
     switch (Check.getKind()) {
@@ -49,7 +49,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     } else if (Check.getKind() == TokenKind::Identifier) {
       auto Res = parseFieldDecl();
       if (Res) {
-        Fields.push_back(std::move(*Res));
+        Fields.push_back(std::move(Res));
       } else {
         syncTo({TokenKind::FunKw, TokenKind::VarKw, TokenKind::ConstKw,
                 TokenKind::OpenBrace});
@@ -63,7 +63,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
                                       std::move(Methods));
 }
 
-std::optional<FieldDecl> Parser::parseFieldDecl() {
+std::unique_ptr<FieldDecl> Parser::parseFieldDecl() {
   bool IsPrivate = true;
   if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
@@ -72,18 +72,19 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
 
   auto Binding = parseTypedBinding();
   if (!Binding)
-    return std::nullopt;
+    return nullptr;
   auto [VarLoc, Id, DeclType] = *Binding;
 
   // Validate assignment operator
   if (advanceToken().getKind() != TokenKind::Equals) {
-    return FieldDecl{VarLoc, Id, DeclType, nullptr, IsPrivate};
+    return std::make_unique<FieldDecl>(VarLoc, Id, DeclType, nullptr,
+                                       IsPrivate);
   }
 
   // Parse initializer expression
   auto Init = parseExpr();
   if (!Init)
-    return std::nullopt;
+    return nullptr;
 
   // Validate semicolon terminator
   if (advanceToken().getKind() != TokenKind::Semicolon) {
@@ -93,10 +94,11 @@ std::optional<FieldDecl> Parser::parseFieldDecl() {
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
         .with_code("E0025")
         .emit(*DiagnosticsMan);
-    return std::nullopt;
+    return nullptr;
   }
 
-  return FieldDecl{VarLoc, Id, DeclType, std::move(Init), IsPrivate};
+  return std::make_unique<FieldDecl>(VarLoc, Id, DeclType, std::move(Init),
+                                     IsPrivate);
 }
 
 std::optional<MethodDecl> Parser::parseStructMethodDecl() {

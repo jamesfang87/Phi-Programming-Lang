@@ -1,3 +1,6 @@
+fun println(var a: f64) {
+}
+
 fun foo(var a: i32, var b: i64) {
     a + 10;
     b + 20;
@@ -11,8 +14,10 @@ fun main() {
     const b = a;
     const c = 1.6;
 
+    println(a);
+
     for i in 1..10 {
-        const t: u64 = i;
+        const t: u64  = i;
     }
 
     foo(x, y);

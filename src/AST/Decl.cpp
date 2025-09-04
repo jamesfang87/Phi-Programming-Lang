@@ -16,6 +16,35 @@ namespace phi {
 
 //======================== VarDecl Implementation ========================//
 
+VarDecl::VarDecl(SrcLocation Loc, std::string Id, std::optional<Type> DeclType,
+                 bool IsConst, std::unique_ptr<Expr> Init)
+    : ValueDecl(Kind::VarDecl, std::move(Loc), std::move(Id),
+                std::move(DeclType)),
+      IsConst(IsConst), Init(std::move(Init)) {}
+
+FieldDecl::FieldDecl(SrcLocation Loc, std::string Id, Type DeclType,
+                     std::unique_ptr<Expr> Init, bool IsPrivate)
+    : ValueDecl(Kind::FieldDecl, std::move(Loc), std::move(Id),
+                std::move(DeclType)),
+      IsPrivate(IsPrivate), Init(std::move(Init)) {}
+
+StructDecl::StructDecl(SrcLocation Loc, std::string Id,
+                       std::vector<std::unique_ptr<FieldDecl>> Fields,
+                       std::vector<MethodDecl> Methods)
+    : Decl(Kind::StructDecl, Loc, Id),
+      DeclType(Type::makeCustom(std::move(Id), std::move(Loc))),
+      Fields(std::move(Fields)), Methods(std::move(Methods)) {
+  for (auto &Field : this->Fields) {
+    FieldMap[Field->getId()] = Field.get();
+  }
+  for (auto &Method : this->Methods) {
+    MethodMap[Method.getId()] = &Method;
+  }
+}
+
+VarDecl::~VarDecl() = default;
+FieldDecl::~FieldDecl() = default;
+
 /**
  * @brief Dumps variable declaration information for debugging
  *
@@ -81,7 +110,7 @@ void StructDecl::emit(int Level) const {
 
   std::println("{}Fields:", indent(Level));
   for (auto &f : Fields) {
-    f.emit(Level + 1);
+    f->emit(Level + 1);
   }
 
   std::println("{}Methods:", indent(Level));

@@ -15,8 +15,8 @@ bool NameResolver::visit(StructDecl *S) {
   bool Success = true;
 
   for (auto &Field : S->getFields()) {
-    Success = visit(&Field) && Success;
-    SymbolTab.insert(&Field);
+    Success = visit(Field.get()) && Success;
+    SymbolTab.insert(Field.get());
   }
 
   for (auto &Method : S->getMethods()) {
