@@ -35,24 +35,7 @@ public:
     DeclStmtKind,
     ContinueStmtKind,
     BreakStmtKind,
-
-    // Expressions (ranges for easier checking)
-    ExprFirst,
-    IntLiteralKind = ExprFirst,
-    FloatLiteralKind,
-    StrLiteralKind,
-    CharLiteralKind,
-    BoolLiteralKind,
-    RangeLiteralKind,
-    DeclRefExprKind,
-    FunCallExprKind,
-    BinaryOpKind,
-    UnaryOpKind,
-    StructInitKind,
-    FieldInitKind,
-    MemberAccessKind,
-    MemberFunAccessKind,
-    ExprLast = MemberFunAccessKind
+    ExprStmtKind
   };
 
   explicit Stmt(Kind K, SrcLocation Location)
@@ -255,6 +238,26 @@ public:
   static bool classof(const Stmt *S) {
     return S->getKind() == Kind::ContinueStmtKind;
   }
+};
+
+class ExprStmt final : public Stmt {
+public:
+  ExprStmt(SrcLocation Location, std::unique_ptr<Expr> Expression);
+  ~ExprStmt() override;
+
+  [[nodiscard]] Expr &getExpr() const { return *Expression; }
+
+  void emit(int Level) const override;
+  bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
+  void accept(CodeGen &G) override;
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::ExprStmtKind;
+  }
+
+private:
+  std::unique_ptr<Expr> Expression;
 };
 
 } // namespace phi

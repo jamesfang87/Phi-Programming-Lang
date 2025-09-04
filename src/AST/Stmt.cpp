@@ -156,6 +156,22 @@ bool DeclStmt::accept(NameResolver &R) { return R.visit(*this); }
 InferRes DeclStmt::accept(TypeInferencer &I) { return I.visit(*this); }
 void DeclStmt::accept(CodeGen &G) { return G.visit(*this); }
 
+// ExprStmt
+ExprStmt::ExprStmt(SrcLocation Location, std::unique_ptr<Expr> Expression)
+    : Stmt(Stmt::Kind::ExprStmtKind, std::move(Location)),
+      Expression(std::move(Expression)) {}
+ExprStmt::~ExprStmt() = default;
+
+void ExprStmt::emit(int Level) const {
+  std::println("{}ExprStmt", indent(Level));
+  if (Expression)
+    Expression->emit(Level + 1);
+}
+
+bool ExprStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes ExprStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+void ExprStmt::accept(CodeGen &G) { return G.visit(*this); }
+
 //======================== Block Implementation =========================//
 void Block::emit(int Level) const {
   std::println("{}Block", indent(Level));

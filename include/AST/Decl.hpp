@@ -6,12 +6,14 @@
 #include <unordered_map>
 #include <vector>
 
-#include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
+
+// Forward declarations
+class Expr;
 
 //===----------------------------------------------------------------------===//
 // Decl - Base class for all declarations
@@ -69,12 +71,10 @@ protected:
 class VarDecl final : public ValueDecl {
 public:
   VarDecl(SrcLocation Loc, std::string Id, std::optional<Type> DeclType,
-          bool IsConst, std::unique_ptr<Expr> Init)
-      : ValueDecl(Kind::VarDecl, std::move(Loc), std::move(Id),
-                  std::move(DeclType)),
-        IsConstFlag(IsConst), Init(std::move(Init)) {}
+          bool IsConst, std::unique_ptr<Expr> Init);
+  ~VarDecl() override;
 
-  [[nodiscard]] bool isConst() const override { return IsConstFlag; }
+  [[nodiscard]] bool isConst() const override { return IsConst; }
   [[nodiscard]] bool hasInit() const { return Init != nullptr; }
   [[nodiscard]] Expr &getInit() const { return *Init; }
 
@@ -83,7 +83,7 @@ public:
   void emit(int level) const override;
 
 private:
-  bool IsConstFlag;
+  bool IsConst;
   std::unique_ptr<Expr> Init;
 };
 
@@ -95,16 +95,16 @@ public:
   ParamDecl(SrcLocation Loc, std::string Id, Type DeclType, bool IsConst)
       : ValueDecl(Kind::ParamDecl, std::move(Loc), std::move(Id),
                   std::move(DeclType)),
-        IsConstFlag(IsConst) {}
+        IsConst(IsConst) {}
 
-  [[nodiscard]] bool isConst() const override { return IsConstFlag; }
+  [[nodiscard]] bool isConst() const override { return IsConst; }
 
   static bool classof(const Decl *D) { return D->getKind() == Kind::ParamDecl; }
 
   void emit(int level) const override;
 
 private:
-  bool IsConstFlag;
+  bool IsConst;
 };
 
 //===----------------------------------------------------------------------===//
@@ -113,10 +113,8 @@ private:
 class FieldDecl final : public ValueDecl {
 public:
   FieldDecl(SrcLocation Loc, std::string Id, Type DeclType,
-            std::unique_ptr<Expr> Init, bool IsPrivate)
-      : ValueDecl(Kind::FieldDecl, std::move(Loc), std::move(Id),
-                  std::move(DeclType)),
-        IsPrivate(IsPrivate), Init(std::move(Init)) {}
+            std::unique_ptr<Expr> Init, bool IsPrivate);
+  ~FieldDecl() override;
 
   [[nodiscard]] bool isConst() const override { return false; }
   [[nodiscard]] bool isPrivate() const { return IsPrivate; }
@@ -151,12 +149,18 @@ public:
           std::vector<std::unique_ptr<ParamDecl>> Params,
           std::unique_ptr<Block> Body)
       : FunDecl(Kind::FunDecl, std::move(Loc), std::move(Id),
-                std::move(ReturnType), std::move(Params), std::move(Body)) {}
-
-  [[nodiscard]] const Type &getReturnTy() const { return ReturnType; }
-  [[nodiscard]] std::vector<std::unique_ptr<ParamDecl>> &getParams() {
-    return Params;
+                std::move(ReturnType), std::move(Params), std::move(Body)) {
+    std::vector<Type> ParamTypes;
+    ParamTypes.reserve(Params.size());
+    for (auto &Param : Params) {
+      ParamTypes.push_back(Param->getType());
+    }
+    FunType = Type::makeFunction(ParamTypes, ReturnType, Loc);
   }
+
+  [[nodiscard]] const Type &getFunType() const { return FunType; }
+  [[nodiscard]] const Type &getReturnTy() const { return ReturnType; }
+  [[nodiscard]] auto &getParams() { return Params; }
   [[nodiscard]] Block &getBody() const { return *Body; }
   [[nodiscard]] std::unique_ptr<Block> &getBodyPtr() { return Body; }
 
@@ -169,6 +173,7 @@ public:
   void emit(int level) const override;
 
 protected:
+  Type FunType;
   Type ReturnType;
   std::vector<std::unique_ptr<ParamDecl>> Params;
   std::unique_ptr<Block> Body;
@@ -199,7 +204,7 @@ public:
   }
 
 private:
-  bool IsPrivate; // For "self const" methods
+  bool IsPrivate;
 };
 
 //===----------------------------------------------------------------------===//
@@ -207,21 +212,14 @@ private:
 //===----------------------------------------------------------------------===//
 class StructDecl final : public Decl {
 public:
-  StructDecl(SrcLocation Loc, std::string Id, std::vector<FieldDecl> Fields,
-             std::vector<MethodDecl> Methods)
-      : Decl(Kind::StructDecl, Loc, Id),
-        DeclType(Type::makeCustom(std::move(Id), std::move(Loc))),
-        Fields(std::move(Fields)), Methods(std::move(Methods)) {
-    for (auto &Field : this->Fields) {
-      FieldMap[Field.getId()] = &Field;
-    }
-    for (auto &Method : this->Methods) {
-      MethodMap[Method.getId()] = &Method;
-    }
-  }
+  StructDecl(SrcLocation Loc, std::string Id,
+             std::vector<std::unique_ptr<FieldDecl>> Fields,
+             std::vector<MethodDecl> Methods);
 
   [[nodiscard]] Type getType() const { return DeclType; }
-  [[nodiscard]] std::vector<FieldDecl> &getFields() { return Fields; }
+  [[nodiscard]] std::vector<std::unique_ptr<FieldDecl>> &getFields() {
+    return Fields;
+  }
   [[nodiscard]] std::vector<MethodDecl> &getMethods() { return Methods; }
 
   [[nodiscard]] FieldDecl *getField(const std::string &Id) {
@@ -242,7 +240,7 @@ public:
 
 private:
   Type DeclType;
-  std::vector<FieldDecl> Fields;
+  std::vector<std::unique_ptr<FieldDecl>> Fields;
   std::vector<MethodDecl> Methods;
 
   std::unordered_map<std::string, FieldDecl *> FieldMap;

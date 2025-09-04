@@ -7,12 +7,12 @@
 #include <utility>
 
 #include "AST/Decl.hpp"
-#include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "CodeGen/CodeGen.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "Sema/NameResolver.hpp"
 #include "Sema/TypeInference/Infer.hpp"
+#include "llvm/IR/Value.h"
 
 namespace {
 /// Generates indentation string for AST dumping
@@ -34,11 +34,11 @@ MemberFunCallExpr::~MemberFunCallExpr() = default;
 //======================== Base Expr Implementation ========================//
 bool Expr::accept(NameResolver &R) { return R.visit(*this); }
 InferRes Expr::accept(TypeInferencer &I) { return I.visit(*this); }
-void Expr::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *Expr::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== IntLiteral Implementation ========================//
 IntLiteral::IntLiteral(SrcLocation Location, const int64_t Value)
-    : Expr(Stmt::Kind::IntLiteralKind, std::move(Location), std::nullopt),
+    : Expr(Expr::Kind::IntLiteralKind, std::move(Location), std::nullopt),
       Value(Value) {}
 
 void IntLiteral::emit(int Level) const {
@@ -48,12 +48,12 @@ void IntLiteral::emit(int Level) const {
 
 bool IntLiteral::accept(NameResolver &R) { return R.visit(*this); }
 InferRes IntLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-void IntLiteral::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *IntLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== FloatLiteral Implementation
 //========================//
 FloatLiteral::FloatLiteral(SrcLocation Location, const double Value)
-    : Expr(Stmt::Kind::FloatLiteralKind, std::move(Location), std::nullopt),
+    : Expr(Expr::Kind::FloatLiteralKind, std::move(Location), std::nullopt),
       Value(Value) {}
 
 void FloatLiteral::emit(int Level) const {
@@ -63,11 +63,11 @@ void FloatLiteral::emit(int Level) const {
 
 bool FloatLiteral::accept(NameResolver &R) { return R.visit(*this); }
 InferRes FloatLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-void FloatLiteral::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *FloatLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== StrLiteral Implementation ========================//
 StrLiteral::StrLiteral(SrcLocation Location, std::string Value)
-    : Expr(Stmt::Kind::StrLiteralKind, Location,
+    : Expr(Expr::Kind::StrLiteralKind, Location,
            Type::makePrimitive(PrimitiveKind::String, std::move(Location))),
       Value(std::move(Value)) {}
 
@@ -77,11 +77,11 @@ void StrLiteral::emit(int Level) const {
 
 bool StrLiteral::accept(NameResolver &R) { return R.visit(*this); }
 InferRes StrLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-void StrLiteral::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *StrLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== CharLiteral Implementation ========================//
 CharLiteral::CharLiteral(SrcLocation Location, char Value)
-    : Expr(Stmt::Kind::CharLiteralKind, Location,
+    : Expr(Expr::Kind::CharLiteralKind, Location,
            Type::makePrimitive(PrimitiveKind::Char, std::move(Location))),
       Value(Value) {}
 
@@ -91,11 +91,11 @@ void CharLiteral::emit(int Level) const {
 
 bool CharLiteral::accept(NameResolver &R) { return R.visit(*this); }
 InferRes CharLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-void CharLiteral::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *CharLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== BoolLiteral Implementation ========================//
 BoolLiteral::BoolLiteral(SrcLocation Location, bool Value)
-    : Expr(Stmt::Kind::BoolLiteralKind, Location,
+    : Expr(Expr::Kind::BoolLiteralKind, Location,
            Type::makePrimitive(PrimitiveKind::Bool, std::move(Location))),
       Value(Value) {}
 
@@ -105,13 +105,13 @@ void BoolLiteral::emit(int Level) const {
 
 bool BoolLiteral::accept(NameResolver &R) { return R.visit(*this); }
 InferRes BoolLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-void BoolLiteral::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *BoolLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== RangeLiteral Implementation
 //========================//
 RangeLiteral::RangeLiteral(SrcLocation Location, std::unique_ptr<Expr> Start,
                            std::unique_ptr<Expr> End, const bool Inclusive)
-    : Expr(Stmt::Kind::RangeLiteralKind, Location,
+    : Expr(Expr::Kind::RangeLiteralKind, Location,
            Type::makePrimitive(PrimitiveKind::Range, std::move(Location))),
       Start(std::move(Start)), End(std::move(End)), Inclusive(Inclusive) {}
 
@@ -125,11 +125,11 @@ void RangeLiteral::emit(int Level) const {
 
 bool RangeLiteral::accept(NameResolver &R) { return R.visit(*this); }
 InferRes RangeLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-void RangeLiteral::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *RangeLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== DeclRefExpr Implementation ========================//
 DeclRefExpr::DeclRefExpr(SrcLocation Location, std::string Id)
-    : Expr(Stmt::Kind::DeclRefExprKind, std::move(Location)),
+    : Expr(Expr::Kind::DeclRefExprKind, std::move(Location)),
       Id(std::move(Id)) {}
 
 void DeclRefExpr::emit(int Level) const {
@@ -146,12 +146,12 @@ void DeclRefExpr::emit(int Level) const {
 
 bool DeclRefExpr::accept(NameResolver &R) { return R.visit(*this); }
 InferRes DeclRefExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-void DeclRefExpr::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *DeclRefExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== FunCallExpr Implementation ========================//
 FunCallExpr::FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
                          std::vector<std::unique_ptr<Expr>> Args)
-    : Expr(Stmt::Kind::FunCallExprKind, std::move(Location)),
+    : Expr(Expr::Kind::FunCallExprKind, std::move(Location)),
       Callee(std::move(Callee)), Args(std::move(Args)) {}
 
 void FunCallExpr::emit(int Level) const {
@@ -168,12 +168,12 @@ void FunCallExpr::emit(int Level) const {
 
 bool FunCallExpr::accept(NameResolver &R) { return R.visit(*this); }
 InferRes FunCallExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-void FunCallExpr::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *FunCallExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== BinaryOp Implementation ========================//
 BinaryOp::BinaryOp(std::unique_ptr<Expr> Lhs, std::unique_ptr<Expr> Rhs,
                    const Token &Op)
-    : Expr(Stmt::Kind::BinaryOpKind, Op.getStart()), Lhs(std::move(Lhs)),
+    : Expr(Expr::Kind::BinaryOpKind, Op.getStart()), Lhs(std::move(Lhs)),
       Rhs(std::move(Rhs)), Op(Op.getKind()) {}
 
 void BinaryOp::emit(int Level) const {
@@ -189,12 +189,12 @@ void BinaryOp::emit(int Level) const {
 
 bool BinaryOp::accept(NameResolver &R) { return R.visit(*this); }
 InferRes BinaryOp::accept(TypeInferencer &I) { return I.visit(*this); }
-void BinaryOp::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *BinaryOp::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== UnaryOp Implementation ========================//
 UnaryOp::UnaryOp(std::unique_ptr<Expr> Operand, const Token &Op,
                  const bool IsPrefix)
-    : Expr(Stmt::Kind::UnaryOpKind, Op.getStart()), Operand(std::move(Operand)),
+    : Expr(Expr::Kind::UnaryOpKind, Op.getStart()), Operand(std::move(Operand)),
       Op(Op.getKind()), IsPrefix(IsPrefix) {}
 
 void UnaryOp::emit(int Level) const {
@@ -205,12 +205,12 @@ void UnaryOp::emit(int Level) const {
 
 bool UnaryOp::accept(NameResolver &R) { return R.visit(*this); }
 InferRes UnaryOp::accept(TypeInferencer &I) { return I.visit(*this); }
-void UnaryOp::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *UnaryOp::accept(CodeGen &G) { return G.visit(*this); }
 
 //====================== FieldInitExpr Implementation //======================//
 FieldInitExpr::FieldInitExpr(SrcLocation Location, std::string FieldId,
                              std::unique_ptr<Expr> Init)
-    : Expr(Stmt::Kind::FieldInitKind, std::move(Location)),
+    : Expr(Expr::Kind::FieldInitKind, std::move(Location)),
       FieldId(std::move(FieldId)), Init(std::move(Init)) {}
 
 void FieldInitExpr::emit(int Level) const {
@@ -222,13 +222,13 @@ void FieldInitExpr::emit(int Level) const {
 
 bool FieldInitExpr::accept(NameResolver &R) { return R.visit(*this); }
 InferRes FieldInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-void FieldInitExpr::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *FieldInitExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 //===================== StructInitExpr Implementation //=====================//
 StructInitExpr::StructInitExpr(
     SrcLocation Location, std::string StructId,
     std::vector<std::unique_ptr<FieldInitExpr>> Fields)
-    : Expr(Stmt::Kind::StructInitKind, std::move(Location)),
+    : Expr(Expr::Kind::StructInitKind, std::move(Location)),
       StructId(std::move(StructId)), FieldInits(std::move(Fields)) {}
 
 void StructInitExpr::emit(int Level) const {
@@ -242,14 +242,14 @@ void StructInitExpr::emit(int Level) const {
 
 bool StructInitExpr::accept(NameResolver &R) { return R.visit(*this); }
 InferRes StructInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-void StructInitExpr::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *StructInitExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 //======================== MemberAccessExpr Implementation
 //========================//
 MemberAccessExpr::MemberAccessExpr(SrcLocation Location,
                                    std::unique_ptr<Expr> Base,
                                    std::string MemberId)
-    : Expr(Stmt::Kind::MemberAccessKind, std::move(Location)),
+    : Expr(Expr::Kind::MemberAccessKind, std::move(Location)),
       Base(std::move(Base)), MemberId(std::move(MemberId)) {}
 
 void MemberAccessExpr::emit(int Level) const {
@@ -261,13 +261,13 @@ void MemberAccessExpr::emit(int Level) const {
 
 bool MemberAccessExpr::accept(NameResolver &R) { return R.visit(*this); }
 InferRes MemberAccessExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-void MemberAccessExpr::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *MemberAccessExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 //=================== MemberFunCallExpr Implementation //=====================//
 MemberFunCallExpr::MemberFunCallExpr(SrcLocation Location,
                                      std::unique_ptr<Expr> Base,
                                      std::unique_ptr<FunCallExpr> FunCall)
-    : Expr(Stmt::Kind::MemberFunAccessKind, std::move(Location)),
+    : Expr(Expr::Kind::MemberFunAccessKind, std::move(Location)),
       Base(std::move(Base)), FunCall(std::move(FunCall)) {}
 
 void MemberFunCallExpr::emit(int Level) const {
@@ -280,6 +280,6 @@ void MemberFunCallExpr::emit(int Level) const {
 
 bool MemberFunCallExpr::accept(NameResolver &R) { return R.visit(*this); }
 InferRes MemberFunCallExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-void MemberFunCallExpr::accept(CodeGen &G) { return G.visit(*this); }
+llvm::Value *MemberFunCallExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 } // namespace phi

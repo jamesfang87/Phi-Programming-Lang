@@ -54,7 +54,6 @@ Type Monotype::toAstType() const {
         return Type::makeCustom(Name, this->Location);
       },
       [&](const TypeApp &App) {
-        std::println("Here");
         if (App.Name == "Ptr") {
           // arity should be 1 exactly
           assert(App.Args.size() == 1);

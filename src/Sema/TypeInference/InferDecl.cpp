@@ -16,6 +16,8 @@ void TypeInferencer::inferDecl(Decl &D) {
     inferVarDecl(*V);
   else if (auto *F = dynamic_cast<FunDecl *>(&D))
     inferFunDecl(*F);
+  else if (auto *S = dynamic_cast<StructDecl *>(&D))
+    inferStructDecl(*S);
   else {
     // StructDecl, FieldDecl, MethodDecl not handled here.
   }
@@ -142,6 +144,69 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
 
   // Restore outer environment
   Env = std::move(SavedEnv);
+}
+
+void TypeInferencer::inferStructDecl(StructDecl &D) {
+  // Create struct monotype and bind the struct name (so fields/methods can
+  // reference it)
+  Monotype StructMono = Monotype::makeVar(Factory.fresh());
+  Env.bind(D.getId(), Polytype{{}, StructMono});
+
+  // Bind fields into Env and annotate
+  for (auto &Fptr : D.getFields()) {
+    FieldDecl *FD = Fptr.get();
+    assert(FD->hasType() && "struct fields must have type annotations");
+    Monotype FT = FD->getType().toMonotype();
+    Env.bind(FD, Polytype{{}, FT}); // <-- bind field decl into Env
+    ValDeclMonos[FD] = FT;
+    annotate(*FD, FT);
+  }
+
+  // Methods: same approach as functions but prepend self (StructMono).
+  for (auto &Mptr : D.getMethods()) {
+    MethodDecl *M = &Mptr;
+
+    // Build method monotype
+    std::vector<Monotype> ParamMonos;
+    ParamMonos.reserve(1 + M->getParams().size());
+    ParamMonos.push_back(StructMono); // self
+    for (auto &P : M->getParams())
+      ParamMonos.push_back(P->getType().toMonotype());
+    Monotype RetMono = M->getReturnTy().toMonotype();
+    Monotype MethodMono = Monotype::makeFun(std::move(ParamMonos), RetMono);
+
+    auto SavedEnv = Env;
+
+    // Bind AST-visible params (do not bind 'self' as an AST param)
+    for (auto &P : M->getParams()) {
+      Monotype PT = P->getType().toMonotype();
+      Env.bind(P.get(), Polytype{{}, PT});
+      ValDeclMonos[P.get()] = PT;
+    }
+
+    CurFunRetType.push_back(RetMono);
+    auto [BodySubst, _] = inferBlock(M->getBody());
+    recordSubst(BodySubst);
+    MethodMono = BodySubst.apply(MethodMono);
+    CurFunRetType.pop_back();
+
+    // Unify declared param/return types with inferred
+    auto &Mf = MethodMono.asFun();
+    for (size_t i = 0; i < M->getParams().size(); ++i) {
+      ParamDecl *P = M->getParams()[i].get();
+      Monotype DeclParamTy = P->getType().toMonotype();
+      unifyInto(BodySubst, DeclParamTy, Mf.Params[i + 1]); // skip self
+    }
+    unifyInto(BodySubst, RetMono, *Mf.Ret);
+    recordSubst(BodySubst);
+
+    // Re-generalize and bind method under dotted name
+    std::string Qualified = D.getId() + "." + M->getId();
+    SavedEnv.bind(Qualified, generalize(SavedEnv, MethodMono));
+    FunDeclMonos[M] = MethodMono;
+
+    Env = std::move(SavedEnv);
+  }
 }
 
 } // namespace phi

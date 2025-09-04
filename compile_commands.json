@@ -25,27 +25,51 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Calls.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Calls.cpp",
-  "file": "/Users/jamesfang/Phi/src/CodeGen/Calls.cpp",
-  "output": "CMakeFiles/phi.dir/src/CodeGen/Calls.cpp.o"
-},
-{
-  "directory": "/Users/jamesfang/Phi/build",
   "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/CodeGen.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/CodeGen.cpp",
   "file": "/Users/jamesfang/Phi/src/CodeGen/CodeGen.cpp",
   "output": "CMakeFiles/phi.dir/src/CodeGen/CodeGen.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Literals.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Literals.cpp",
-  "file": "/Users/jamesfang/Phi/src/CodeGen/Literals.cpp",
-  "output": "CMakeFiles/phi.dir/src/CodeGen/Literals.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Decls.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Decls.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Decls.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Decls.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
-  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Ops.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Ops.cpp",
-  "file": "/Users/jamesfang/Phi/src/CodeGen/Ops.cpp",
-  "output": "CMakeFiles/phi.dir/src/CodeGen/Ops.cpp.o"
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Expr/Calls.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Expr/Calls.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Expr/Calls.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Expr/Calls.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Expr/Literals.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Expr/Literals.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Expr/Literals.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Expr/Literals.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Expr/Ops.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Expr/Ops.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Expr/Ops.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Expr/Ops.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Expr/StructInit.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Expr/StructInit.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Expr/StructInit.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Expr/StructInit.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Expr/StructMemberExpr.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Expr/StructMemberExpr.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Expr/StructMemberExpr.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Expr/StructMemberExpr.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/CodeGen/Println.cpp.o -c /Users/jamesfang/Phi/src/CodeGen/Println.cpp",
+  "file": "/Users/jamesfang/Phi/src/CodeGen/Println.cpp",
+  "output": "CMakeFiles/phi.dir/src/CodeGen/Println.cpp.o"
 },
 {
   "directory": "/Users/jamesfang/Phi/build",

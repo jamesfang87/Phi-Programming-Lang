@@ -1,3 +1,5 @@
+#pragma once
+
 #include <memory>
 #include <string>
 #include <string_view>
@@ -9,81 +11,109 @@
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/TargetParser/Host.h>
-#include <llvm/TargetParser/Triple.h>
 
 #include "AST/Decl.hpp"
+#include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
 
 namespace phi {
 
 class CodeGen {
 public:
-  CodeGen(std::vector<std::unique_ptr<Decl>> Ast, std::string_view Path,
-          std::string_view TargetTriple = "")
-      : Ast(std::move(Ast)), Context(), Builder(Context),
-        Module(Path, Context) {
-    Module.setSourceFileName(Path);
-    if (TargetTriple.empty()) {
-      Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
-    } else {
-      Module.setTargetTriple(llvm::Triple(std::string(TargetTriple)));
-    }
-  }
+  CodeGen(std::vector<std::unique_ptr<Decl>> Ast, std::string_view SourcePath,
+          std::string_view TargetTriple = "");
 
+  // pipeline
   void generate();
   void outputIR(const std::string &Filename);
 
-  // Visitor methods for expressions
-  void visit(phi::IntLiteral &E);
-  void visit(phi::FloatLiteral &E);
-  void visit(phi::StrLiteral &E);
-  void visit(phi::CharLiteral &E);
-  void visit(phi::BoolLiteral &E);
-  void visit(phi::RangeLiteral &E);
-  void visit(phi::DeclRefExpr &E);
-  void visit(phi::FunCallExpr &E);
-  void visit(phi::BinaryOp &E);
-  void visit(phi::UnaryOp &E);
+  // Expression visitors -> return llvm::Value*
+  llvm::Value *visit(Expr &E);
+  llvm::Value *visit(IntLiteral &E);
+  llvm::Value *visit(FloatLiteral &E);
+  llvm::Value *visit(StrLiteral &E);
+  llvm::Value *visit(CharLiteral &E);
+  llvm::Value *visit(BoolLiteral &E);
+  llvm::Value *visit(RangeLiteral &E);
+  llvm::Value *visit(DeclRefExpr &E);
+  llvm::Value *visit(FunCallExpr &E);
+  llvm::Value *visit(BinaryOp &E);
+  llvm::Value *visit(UnaryOp &E);
+  llvm::Value *visit(StructInitExpr &E);
+  llvm::Value *visit(FieldInitExpr &E);
+  llvm::Value *visit(MemberAccessExpr &E);
+  llvm::Value *visit(MemberFunCallExpr &E);
 
-  // Visitor methods for statements
-  void visit(phi::ReturnStmt &S);
-  void visit(phi::DeferStmt &S);
-  void visit(phi::IfStmt &S);
-  void visit(phi::WhileStmt &S);
-  void visit(phi::ForStmt &S);
-  void visit(phi::DeclStmt &S);
-  void visit(phi::BreakStmt &S);
-  void visit(phi::ContinueStmt &S);
-  void visit(phi::Expr &S);
+  // Statement visitors -> emit code, return void
+  void visit(ReturnStmt &S);
+  void visit(DeferStmt &S);
+  void visit(IfStmt &S);
+  void visit(WhileStmt &S);
+  void visit(ForStmt &S);
+  void visit(DeclStmt &S);
+  void visit(BreakStmt &S);
+  void visit(ContinueStmt &S);
+  void visit(ExprStmt &S);
+
+  // Declaration visitors
+  void visit(FunDecl &D);
+  void visit(ParamDecl &D);
+  void visit(StructDecl &D);
+  void visit(FieldDecl &D);
+  void visit(VarDecl &D);
 
 private:
-  std::vector<std::unique_ptr<Decl>> Ast;
+  // AST + LLVM
+  std::vector<std::unique_ptr<Decl>> AstList;
 
   llvm::LLVMContext Context;
   llvm::IRBuilder<> Builder;
   llvm::Module Module;
 
-  std::unordered_map<Decl *, llvm::Value *> Decls;
-  llvm::Value *CurValue = nullptr;
-  llvm::Value *CurFun = nullptr;
-  llvm::Function *PrintFun = nullptr;
+  // Decl -> alloca / global / function
+  std::unordered_map<Decl *, llvm::Value *> DeclMap;
 
+  // Printf bridging
+  llvm::Function *PrintfFn = nullptr;
+
+  // Defer support
+  llvm::Function *CurrentFunction = nullptr;
+  std::unordered_map<llvm::Function *, llvm::BasicBlock *> CleanupBlockMap;
+  std::unordered_map<llvm::Function *, llvm::AllocaInst *> ReturnAllocaMap;
+  std::unordered_map<llvm::Function *, std::vector<Stmt *>> DeferMap;
+
+  // Loop context
   struct LoopContext {
     llvm::BasicBlock *BreakTarget;
-    llvm::BasicBlock *ContinueTarget; // for `continue`, optional
+    llvm::BasicBlock *ContinueTarget;
   };
+  std::vector<LoopContext> LoopStack;
 
-  std::vector<LoopContext> LoopStack; // member of CodeGen
+  // Structs
+  std::unordered_map<StructDecl *, llvm::StructType *> StructTypeMap;
+  std::unordered_map<const FieldDecl *, unsigned> FieldIndexMap;
 
-  void generateFun(phi::FunDecl &Fun);
-  void generateMain(phi::FunDecl &MainFun);
-  void generatePrintlnCall(phi::FunCallExpr &Call);
+  // helpers
+  void ensurePrintfDeclared();
+  llvm::Value *generatePrintlnBridge(FunCallExpr &Call);
+  llvm::Value *getAllocaForDecl(Decl *D);
+  void createStructLayout(StructDecl *S);
+  StructDecl *findContainingStruct(const FieldDecl *F);
+  llvm::Value *computeMemberPointer(llvm::Value *BasePtr,
+                                    const FieldDecl *Field);
+  llvm::Value *getAddressOf(Expr *E);
 
-  void generateSintOp(llvm::Value *Lhs, llvm::Value *Rhs, phi::BinaryOp &E);
-  void generateUintOp(llvm::Value *Lhs, llvm::Value *Rhs, phi::BinaryOp &E);
-  void generateFloatOp(llvm::Value *Lhs, llvm::Value *Rhs, phi::BinaryOp &E);
+  // defer helpers
+  llvm::AllocaInst *ensureReturnAllocaForCurrentFunction(llvm::Type *RetTy);
+  void recordDeferForCurrentFunction(Stmt *S);
+  void emitDeferredForFunction(llvm::Function *F);
+
+  // convenience wrapper used only in generate() to evaluate a top-level
+  // initializer
+  llvm::Value *evaluateExprUsingVisit(Expr &E) {
+    // AST expression accept implementations must return llvm::Value*
+    return E.accept(*this);
+  }
 };
 
 } // namespace phi

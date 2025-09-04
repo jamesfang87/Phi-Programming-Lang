@@ -23,10 +23,10 @@ bool NameResolver::visit(StructInitExpr &E) {
 
   std::unordered_set<std::string> AccountedFor;
   for (auto &Field : Found->getFields()) {
-    if (Field.hasInit())
+    if (Field->hasInit())
       continue;
 
-    AccountedFor.insert(Field.getId());
+    AccountedFor.insert(Field->getId());
   }
 
   bool Success = true;
