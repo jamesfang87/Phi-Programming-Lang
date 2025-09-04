@@ -3,12 +3,8 @@ struct Person {
     age: i64;
     pos: Pos;
 
-    fun age_gap(const other: i64) -> i64 {
+    public fun age_gap(const other: i64) -> i64 {
         return other - age;
-    }
-
-    public fun same_name(const other: Person) -> bool {
-        return name == other.name;
     }
 }
 
@@ -38,5 +34,5 @@ fun main() {
     };
 
     const str = me.name;
-    const res = me.same_name(phiona);
+    const res = me.age_gap(17);
 }

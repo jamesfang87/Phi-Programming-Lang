@@ -74,7 +74,11 @@ TypeInferencer::InferRes TypeInferencer::visit(DeclRefExpr &E) {
     DeclaredAs = Env.lookup(E.getId());
   }
 
-  assert(DeclaredAs);
+  if (!DeclaredAs) {
+    std::println("{}", E.getId());
+    assert(DeclaredAs);
+  }
+
   Monotype T = instantiate(*DeclaredAs, Factory);
   annotate(E, T);
   return {Substitution{}, T};
@@ -243,6 +247,9 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
     return {BaseSubst, FieldType};
   }
 
+  // Set the member field for code generation
+  E.setMember(const_cast<::phi::FieldDecl *>(FieldDecl));
+
   // Convert the field's AST type to a Monotype and unify with our output
   const auto DeclaredAs = FieldDecl->getType().toMonotype();
   unifyInto(BaseSubst, FieldType, DeclaredAs);
@@ -282,8 +289,9 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
   const std::string MethodName = DeclRef->getId();
 
   // Find the method declaration inside the struct
-  FunDecl *Method = Struct->getMethod(MethodName);
+  MethodDecl *Method = Struct->getMethod(MethodName);
   E.getCall().setDecl(Method);
+  E.setMethod(Method);
   if (!Method) {
     throw std::runtime_error("struct '" + StructName + "' has no method '" +
                              MethodName + "'");

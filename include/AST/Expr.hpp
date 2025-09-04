@@ -6,7 +6,9 @@
 #include <utility>
 #include <vector>
 
-#include "AST/Stmt.hpp"
+#include <llvm/IR/Value.h>
+
+#include "AST/Decl.hpp"
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
@@ -21,20 +23,45 @@ class ValueDecl;
 class FunDecl;
 class FieldDecl;
 class StructDecl;
+class MethodDecl;
 
 class NameResolver;
 class TypeInferencer;
+class CodeGen;
 
 using InferRes = std::pair<Substitution, Monotype>;
 
 /**
- * @brief Base class for all Eession nodes
+ * @brief Base class for all Expression nodes
  */
-class Expr : public Stmt {
+class Expr {
 public:
+  /// @brief Kind enumeration for LLVM RTTI
+  enum class Kind : uint8_t {
+    IntLiteralKind,
+    FloatLiteralKind,
+    StrLiteralKind,
+    CharLiteralKind,
+    BoolLiteralKind,
+    RangeLiteralKind,
+    DeclRefExprKind,
+    FunCallExprKind,
+    BinaryOpKind,
+    UnaryOpKind,
+    StructInitKind,
+    FieldInitKind,
+    MemberAccessKind,
+    MemberFunAccessKind
+  };
+
   explicit Expr(Kind K, SrcLocation Location,
                 std::optional<Type> Ty = std::nullopt)
-      : Stmt(K, std::move(Location)), Ty(std::move(Ty)) {}
+      : ExprKind(K), Location(std::move(Location)), Ty(std::move(Ty)) {}
+
+  virtual ~Expr() = default;
+
+  [[nodiscard]] Kind getKind() const { return ExprKind; }
+  [[nodiscard]] SrcLocation &getLocation() { return Location; }
 
   [[nodiscard]] Type getType() { return Ty.value(); }
   [[nodiscard]] bool isResolved() const { return Ty.has_value(); }
@@ -42,15 +69,18 @@ public:
 
   void setType(Type T) { Ty = std::move(T); }
 
-  bool accept(NameResolver &R) override;
-  InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  virtual void emit(int Level) const = 0;
+  virtual bool accept(NameResolver &R) = 0;
+  virtual InferRes accept(TypeInferencer &I) = 0;
+  virtual llvm::Value *accept(CodeGen &G) = 0;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() >= Kind::ExprFirst && S->getKind() <= Kind::ExprLast;
-  }
+  static bool classof(const Expr *E) { return true; }
+
+private:
+  const Kind ExprKind;
 
 protected:
+  SrcLocation Location;
   std::optional<Type> Ty;
 };
 
@@ -65,10 +95,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::IntLiteralKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::IntLiteralKind;
   }
 
 private:
@@ -86,10 +116,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::FloatLiteralKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::FloatLiteralKind;
   }
 
 private:
@@ -107,10 +137,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::StrLiteralKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::StrLiteralKind;
   }
 
 private:
@@ -128,10 +158,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::CharLiteralKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::CharLiteralKind;
   }
 
 private:
@@ -149,10 +179,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::BoolLiteralKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::BoolLiteralKind;
   }
 
 private:
@@ -174,10 +204,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
-  static bool classof(const Stmt *S) {
-    return S->getKind() == Kind::RangeLiteralKind;
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::RangeLiteralKind;
   }
 
 private:
@@ -199,10 +229,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Stmt::Kind::DeclRefExprKind;
+    return E->getKind() == Kind::DeclRefExprKind;
   }
 
 private:
@@ -227,10 +257,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Stmt::Kind::FunCallExprKind;
+    return E->getKind() == Kind::FunCallExprKind;
   }
 
 private:
@@ -254,10 +284,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Stmt::Kind::BinaryOpKind;
+    return E->getKind() == Kind::BinaryOpKind;
   }
 
 private:
@@ -280,10 +310,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Stmt::Kind::UnaryOpKind;
+    return E->getKind() == Kind::UnaryOpKind;
   }
 
 private:
@@ -307,10 +337,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Stmt::Kind::FieldInitKind;
+    return E->getKind() == Kind::FieldInitKind;
   }
 
   void setFieldDecl(FieldDecl *decl) { FieldDecl = decl; }
@@ -327,6 +357,7 @@ public:
                  std::vector<std::unique_ptr<FieldInitExpr>> Fields);
   ~StructInitExpr() override; // Need destructor
 
+  [[nodiscard]] StructDecl *getStructDecl() const { return StructDecl; }
   [[nodiscard]] const std::string &getStructId() const { return StructId; }
   [[nodiscard]] const std::vector<std::unique_ptr<FieldInitExpr>> &
   getFields() const {
@@ -338,10 +369,10 @@ public:
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Stmt::Kind::StructInitKind;
+    return E->getKind() == Kind::StructInitKind;
   }
 
   void setStructDecl(StructDecl *decl) { StructDecl = decl; }
@@ -358,23 +389,27 @@ public:
                    std::string MemberId);
   ~MemberAccessExpr() override;
 
+  [[nodiscard]] const FieldDecl &getField() const { return *Member; }
   [[nodiscard]] Expr *getBase() const { return Base.get(); }
   [[nodiscard]] const std::string &getMemberId() const { return MemberId; }
   [[nodiscard]] bool isAssignable() const override { return true; }
+
+  void setMember(FieldDecl *Field) { Member = Field; }
 
   void emit(int level) const override;
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Stmt::Kind::MemberAccessKind;
+    return E->getKind() == Kind::MemberAccessKind;
   }
 
 private:
   std::unique_ptr<Expr> Base;
   std::string MemberId;
+  FieldDecl *Member = nullptr;
 };
 
 class MemberFunCallExpr final : public Expr {
@@ -383,23 +418,27 @@ public:
                     std::unique_ptr<FunCallExpr> FunCall);
   ~MemberFunCallExpr() override;
 
+  [[nodiscard]] const MethodDecl &getMethod() const { return *Method; }
   [[nodiscard]] Expr *getBase() const { return Base.get(); }
   [[nodiscard]] FunCallExpr &getCall() const { return *FunCall; }
   [[nodiscard]] bool isAssignable() const override { return true; }
+
+  void setMethod(MethodDecl *M) { Method = M; }
 
   void emit(int level) const override;
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
-  void accept(CodeGen &G) override;
+  llvm::Value *accept(CodeGen &G) override;
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Stmt::Kind::MemberFunAccessKind;
+    return E->getKind() == Kind::MemberFunAccessKind;
   }
 
 private:
   std::unique_ptr<Expr> Base;
   std::unique_ptr<FunCallExpr> FunCall;
+  MethodDecl *Method;
 };
 
 } // namespace phi

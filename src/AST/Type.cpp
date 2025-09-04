@@ -3,6 +3,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Type.h>
+#include <print>
 
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "SrcManager/SrcLocation.hpp"

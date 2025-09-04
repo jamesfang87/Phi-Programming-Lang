@@ -46,8 +46,11 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return parseContinue();
   default:
     auto Res = parseExpr();
+    if (!Res)
+      return nullptr;
+    SrcLocation Loc = Res->getLocation();
     advanceToken(); // this is for the semicolon
-    return Res;
+    return std::make_unique<ExprStmt>(Loc, std::move(Res));
   }
 }
 

@@ -271,6 +271,15 @@ public:
     return K == PrimitiveKind::F32 || K == PrimitiveKind::F64;
   }
 
+  bool isStruct() { return isCustom(); }
+
+  std::string getStructName() {
+    if (!isCustom()) {
+      return "";
+    }
+    return std::get<CustomType>(Data).Name;
+  }
+
 private:
   Node Data;
   SrcLocation Location{"", -1, -1};

@@ -33,6 +33,7 @@ public:
   InferRes visit(DeclStmt &S);
   InferRes visit(BreakStmt &S);
   InferRes visit(ContinueStmt &S);
+  InferRes visit(ExprStmt &S);
 
   InferRes visit(Expr &E);
   InferRes visit(IntLiteral &E);
@@ -77,6 +78,7 @@ private:
   void inferDecl(Decl &D);
   void inferVarDecl(VarDecl &D);
   void inferFunDecl(FunDecl &D);
+  void inferStructDecl(StructDecl &D);
 
   // statements / blocks
   InferRes inferBlock(Block &B);

@@ -1,245 +1,238 @@
-#include "AST/Expr.hpp"
-#include "AST/Stmt.hpp"
 #include "CodeGen/CodeGen.hpp"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Function.h"
-#include <cassert>
 
-void phi::CodeGen::visit(phi::ReturnStmt &stmt) {
-  if (stmt.hasExpr()) {
-    stmt.getExpr().accept(*this);
-    Builder.CreateRet(CurValue);
-  } else {
-    Builder.CreateRetVoid();
-  }
+#include <llvm/Support/Casting.h>
+
+using namespace phi;
+
+llvm::AllocaInst *
+CodeGen::ensureReturnAllocaForCurrentFunction(llvm::Type *RetTy) {
+  if (!CurrentFunction)
+    return nullptr;
+  auto It = ReturnAllocaMap.find(CurrentFunction);
+  if (It != ReturnAllocaMap.end())
+    return It->second;
+
+  llvm::BasicBlock &Entry = CurrentFunction->getEntryBlock();
+  llvm::IRBuilder<> TmpBuilder(&Entry, Entry.begin());
+  llvm::AllocaInst *Alloca =
+      TmpBuilder.CreateAlloca(RetTy, nullptr, "ret.addr");
+  ReturnAllocaMap[CurrentFunction] = Alloca;
+  return Alloca;
 }
 
-void phi::CodeGen::visit(phi::DeferStmt &S) {}
-
-void phi::CodeGen::visit(phi::IfStmt &stmt) {
-  llvm::Function *function = Builder.GetInsertBlock()->getParent();
-
-  // Evaluate condition
-  stmt.getCond().accept(*this);
-  llvm::Value *cond = CurValue;
-
-  bool hasElse = stmt.hasElse();
-  bool hasThenBody = !stmt.getThen().getStmts().empty();
-  bool hasElseBody = hasElse && !stmt.getElse().getStmts().empty();
-
-  llvm::BasicBlock *then_block = nullptr;
-  llvm::BasicBlock *else_block = nullptr;
-  llvm::BasicBlock *merge_block = nullptr;
-
-  if (hasThenBody) {
-    then_block = llvm::BasicBlock::Create(Context, "if.then", function);
-  }
-  if (hasElseBody) {
-    else_block = llvm::BasicBlock::Create(Context, "if.else", function);
-  }
-
-  // Need merge block if both branches are non-terminal
-  bool needMerge = hasThenBody || hasElseBody;
-  if (needMerge) {
-    merge_block = llvm::BasicBlock::Create(Context, "if.end", function);
-  }
-
-  // Choose targets for condition
-  if (hasThenBody && hasElseBody) {
-    Builder.CreateCondBr(cond, then_block, else_block);
-  } else if (hasThenBody) {
-    Builder.CreateCondBr(cond, then_block, merge_block);
-  } else if (hasElseBody) {
-    Builder.CreateCondBr(cond, merge_block, else_block);
-  } else {
-    // both branches are empty; conditionally jump to merge
-    Builder.CreateBr(merge_block);
-  }
-
-  // THEN block
-  if (hasThenBody) {
-    Builder.SetInsertPoint(then_block);
-    for (auto &s : stmt.getThen().getStmts()) {
-      s->accept(*this);
-    }
-    if (!Builder.GetInsertBlock()->getTerminator()) {
-      Builder.CreateBr(merge_block);
-    }
-  }
-
-  // ELSE block
-  if (hasElseBody) {
-    Builder.SetInsertPoint(else_block);
-    for (auto &s : stmt.getElse().getStmts()) {
-      s->accept(*this);
-    }
-    if (!Builder.GetInsertBlock()->getTerminator()) {
-      Builder.CreateBr(merge_block);
-    }
-  }
-
-  // Merge
-  if (merge_block) {
-    Builder.SetInsertPoint(merge_block);
-  }
+void CodeGen::recordDeferForCurrentFunction(Stmt *S) {
+  if (!CurrentFunction)
+    throw std::runtime_error("defer used outside function");
+  DeferMap[CurrentFunction].push_back(S);
 }
 
-void phi::CodeGen::visit(phi::WhileStmt &stmt) {
-  // Get current function
-  llvm::Function *function = Builder.GetInsertBlock()->getParent();
-
-  // Create basic blocks
-  auto CondBlock = llvm::BasicBlock::Create(Context, "while.cond", function);
-  auto BodyBlock = llvm::BasicBlock::Create(Context, "while.body", function);
-  auto ExitBlock = llvm::BasicBlock::Create(Context, "while.exit", function);
-
-  // Enter loop Context
-  LoopStack.push_back({ExitBlock, CondBlock});
-
-  // Generate cond block
-  Builder.CreateBr(CondBlock);
-  Builder.SetInsertPoint(CondBlock);
-  stmt.getCond().accept(*this);
-  llvm::Value *cond = CurValue;
-  Builder.CreateCondBr(cond, BodyBlock, ExitBlock);
-
-  // Generate body block
-  Builder.SetInsertPoint(BodyBlock);
-  for (auto &body_stmt : stmt.getBody().getStmts()) {
-    body_stmt->accept(*this);
+void CodeGen::emitDeferredForFunction(llvm::Function *F) {
+  auto It = DeferMap.find(F);
+  if (It == DeferMap.end())
+    return;
+  auto &Vec = It->second;
+  for (auto Rit = Vec.rbegin(); Rit != Vec.rend(); ++Rit) {
+    Stmt *DS = *Rit;
+    if (DS) {
+      // Cast back to DeferStmt and execute the deferred expression
+      if (auto *DeferS = llvm::dyn_cast<DeferStmt>(DS)) {
+        DeferS->getDeferred().accept(*this);
+      }
+    }
   }
-  // Branch back to cond if no terminator was created
-  if (!Builder.GetInsertBlock()->getTerminator()) {
-    Builder.CreateBr(CondBlock);
+  Vec.clear();
+}
+
+void CodeGen::visit(ReturnStmt &S) {
+  llvm::Type *RTy = CurrentFunction->getReturnType();
+  if (S.hasExpr()) {
+    llvm::Value *Rv = S.getExpr().accept(*this);
+    if (!RTy->isVoidTy()) {
+      llvm::AllocaInst *RA = ensureReturnAllocaForCurrentFunction(RTy);
+      Builder.CreateStore(Rv, RA);
+    }
   }
+
+  // branch to cleanup block
+  llvm::BasicBlock *Cleanup = nullptr;
+  auto CI = CleanupBlockMap.find(CurrentFunction);
+  if (CI == CleanupBlockMap.end()) {
+    Cleanup =
+        llvm::BasicBlock::Create(Context, "func.cleanup", CurrentFunction);
+    CleanupBlockMap[CurrentFunction] = Cleanup;
+  } else
+    Cleanup = CI->second;
+
+  Builder.CreateBr(Cleanup);
+
+  // continue code generation safely
+  llvm::BasicBlock *Dummy =
+      llvm::BasicBlock::Create(Context, "after_return", CurrentFunction);
+  Builder.SetInsertPoint(Dummy);
+}
+
+void CodeGen::visit(DeferStmt &S) { recordDeferForCurrentFunction(&S); }
+
+void CodeGen::visit(IfStmt &S) {
+  llvm::Function *F = Builder.GetInsertBlock()->getParent();
+  llvm::Value *CondV = S.getCond().accept(*this);
+  if (!CondV->getType()->isIntegerTy(1))
+    CondV = Builder.CreateICmpNE(CondV,
+                                 llvm::ConstantInt::get(CondV->getType(), 0));
+
+  bool HasElse = S.hasElse();
+  bool HasThen = !S.getThen().getStmts().empty();
+  bool HasElseBody = HasElse && !S.getElse().getStmts().empty();
+
+  llvm::BasicBlock *ThenBB =
+      HasThen ? llvm::BasicBlock::Create(Context, "if.then", F) : nullptr;
+  llvm::BasicBlock *ElseBB =
+      HasElseBody ? llvm::BasicBlock::Create(Context, "if.else", F) : nullptr;
+  llvm::BasicBlock *MergeBB =
+      (HasThen || HasElseBody) ? llvm::BasicBlock::Create(Context, "if.end", F)
+                               : nullptr;
+
+  if (ThenBB && ElseBB)
+    Builder.CreateCondBr(CondV, ThenBB, ElseBB);
+  else if (ThenBB)
+    Builder.CreateCondBr(CondV, ThenBB, MergeBB);
+  else if (ElseBB)
+    Builder.CreateCondBr(CondV, MergeBB, ElseBB);
+  else
+    Builder.CreateBr(MergeBB);
+
+  if (ThenBB) {
+    Builder.SetInsertPoint(ThenBB);
+    for (auto &St : S.getThen().getStmts())
+      St->accept(*this);
+    if (!Builder.GetInsertBlock()->getTerminator())
+      Builder.CreateBr(MergeBB);
+  }
+  if (ElseBB) {
+    Builder.SetInsertPoint(ElseBB);
+    for (auto &St : S.getElse().getStmts())
+      St->accept(*this);
+    if (!Builder.GetInsertBlock()->getTerminator())
+      Builder.CreateBr(MergeBB);
+  }
+  if (MergeBB)
+    Builder.SetInsertPoint(MergeBB);
+}
+
+void CodeGen::visit(WhileStmt &S) {
+  llvm::Function *F = Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *CondBB = llvm::BasicBlock::Create(Context, "while.cond", F);
+  llvm::BasicBlock *BodyBB = llvm::BasicBlock::Create(Context, "while.body", F);
+  llvm::BasicBlock *ExitBB = llvm::BasicBlock::Create(Context, "while.exit", F);
+
+  LoopStack.push_back({ExitBB, CondBB});
+  Builder.CreateBr(CondBB);
+  Builder.SetInsertPoint(CondBB);
+
+  llvm::Value *CondV = S.getCond().accept(*this);
+  if (!CondV->getType()->isIntegerTy(1))
+    CondV = Builder.CreateICmpNE(CondV,
+                                 llvm::ConstantInt::get(CondV->getType(), 0));
+
+  Builder.CreateCondBr(CondV, BodyBB, ExitBB);
+
+  Builder.SetInsertPoint(BodyBB);
+  for (auto &St : S.getBody().getStmts())
+    St->accept(*this);
+  if (!Builder.GetInsertBlock()->getTerminator())
+    Builder.CreateBr(CondBB);
+
   LoopStack.pop_back();
-
-  // Continue with exit block
-  Builder.SetInsertPoint(ExitBlock);
+  Builder.SetInsertPoint(ExitBB);
 }
 
-void phi::CodeGen::visit(phi::ForStmt &stmt) {
-  // Get current function
-  llvm::Function *function = Builder.GetInsertBlock()->getParent();
+void CodeGen::visit(ForStmt &S) {
+  llvm::Function *F = Builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock *InitBB = llvm::BasicBlock::Create(Context, "for.init", F);
+  llvm::BasicBlock *CondBB = llvm::BasicBlock::Create(Context, "for.cond", F);
+  llvm::BasicBlock *BodyBB = llvm::BasicBlock::Create(Context, "for.body", F);
+  llvm::BasicBlock *IncBB = llvm::BasicBlock::Create(Context, "for.inc", F);
+  llvm::BasicBlock *ExitBB = llvm::BasicBlock::Create(Context, "for.exit", F);
 
-  // Create basic blocks
-  auto InitBlock = llvm::BasicBlock::Create(Context, "for.init", function);
-  auto CondBlock = llvm::BasicBlock::Create(Context, "for.cond", function);
-  auto BodyBlock = llvm::BasicBlock::Create(Context, "for.body", function);
-  auto IncBlock = llvm::BasicBlock::Create(Context, "for.inc", function);
-  auto ExitBlock = llvm::BasicBlock::Create(Context, "for.exit", function);
+  Builder.CreateBr(InitBB);
+  Builder.SetInsertPoint(InitBB);
 
-  // Jump to initialization block
-  Builder.CreateBr(InitBlock);
+  VarDecl &LV = S.getLoopVar();
+  llvm::Type *VT = LV.getType().toLLVM(Context);
+  llvm::AllocaInst *Alloc = Builder.CreateAlloca(VT, nullptr, LV.getId());
+  DeclMap[&LV] = Alloc;
 
-  // Generate initialization block
-  Builder.SetInsertPoint(InitBlock);
+  auto *Range = llvm::dyn_cast<RangeLiteral>(&S.getRange());
+  if (!Range)
+    throw std::runtime_error("for supports only range literal");
 
-  // Create allocation for loop variable
-  VarDecl &loop_var = stmt.getLoopVar();
-  llvm::Type *var_type = loop_var.getType().toLLVM(Context);
-  llvm::AllocaInst *alloca =
-      Builder.CreateAlloca(var_type, nullptr, loop_var.getId());
-  Decls[&loop_var] = alloca;
+  llvm::Value *StartV = Range->getStart().accept(*this);
+  Builder.CreateStore(StartV, Alloc);
+  Builder.CreateBr(CondBB);
 
-  // Handle range literals properly
-  auto range_literal = llvm::dyn_cast<RangeLiteral>(&stmt.getRange());
-  if (!range_literal) {
-    throw std::runtime_error("For loops currently only support range literals");
-  }
+  Builder.SetInsertPoint(CondBB);
+  llvm::Value *CurrV = Builder.CreateLoad(VT, Alloc, "loop.var");
+  llvm::Value *EndV = Range->getEnd().accept(*this);
 
-  // Evaluate and store the start value
-  range_literal->getStart().accept(*this);
-  llvm::Value *start_val = CurValue;
-  Builder.CreateStore(start_val, alloca);
+  llvm::Value *Cmp = Range->isInclusive() ? Builder.CreateICmpSLE(CurrV, EndV)
+                                          : Builder.CreateICmpSLT(CurrV, EndV);
+  if (!Cmp->getType()->isIntegerTy(1))
+    Cmp = Builder.CreateICmpNE(Cmp, llvm::ConstantInt::get(Cmp->getType(), 0));
+  Builder.CreateCondBr(Cmp, BodyBB, ExitBB);
 
-  // Jump to cond block
-  Builder.CreateBr(CondBlock);
+  LoopStack.push_back({ExitBB, IncBB});
+  Builder.SetInsertPoint(BodyBB);
+  for (auto &St : S.getBody().getStmts())
+    St->accept(*this);
+  if (!Builder.GetInsertBlock()->getTerminator())
+    Builder.CreateBr(IncBB);
 
-  // Generate cond block
-  Builder.SetInsertPoint(CondBlock);
-  llvm::Value *current_val = Builder.CreateLoad(var_type, alloca, "loop_var");
+  Builder.SetInsertPoint(IncBB);
+  llvm::Value *IncV = Builder.CreateAdd(CurrV, llvm::ConstantInt::get(VT, 1));
+  Builder.CreateStore(IncV, Alloc);
+  Builder.CreateBr(CondBB);
 
-  // Evaluate the end value for comparison
-  range_literal->getEnd().accept(*this);
-  llvm::Value *end_val = CurValue;
-
-  // Create cond: current < end (for exclusive range) or current <= end
-  // (for inclusive)
-  llvm::Value *cond;
-  if (range_literal->isInclusive()) {
-    cond = Builder.CreateICmpSLE(current_val, end_val, "loopcond");
-  } else {
-    cond = Builder.CreateICmpSLT(current_val, end_val, "loopcond");
-  }
-
-  cond = Builder.CreateICmpNE(cond, llvm::ConstantInt::get(cond->getType(), 0),
-                              "tobool");
-
-  Builder.CreateCondBr(cond, BodyBlock, ExitBlock);
-  // Generate body block
-  LoopStack.emplace_back(ExitBlock, IncBlock);
-  Builder.SetInsertPoint(BodyBlock);
-  for (auto &body_stmt : stmt.getBody().getStmts()) {
-    body_stmt->accept(*this);
-  }
-  // Branch to increment if no terminator was created
-  if (!Builder.GetInsertBlock()->getTerminator()) {
-    Builder.CreateBr(IncBlock);
-  }
-
-  // Generate increment block
-  Builder.SetInsertPoint(IncBlock);
-  llvm::Value *incremented = Builder.CreateAdd(
-      current_val, llvm::ConstantInt::get(var_type, 1), "inc");
-  Builder.CreateStore(incremented, alloca);
-  Builder.CreateBr(CondBlock);
-
-  // Pop loop Context before setting exit block
   LoopStack.pop_back();
-
-  // Continue with exit block
-  Builder.SetInsertPoint(ExitBlock);
+  Builder.SetInsertPoint(ExitBB);
 }
 
-void phi::CodeGen::visit(phi::DeclStmt &stmt) {
-  VarDecl &Decl = stmt.getDecl();
-
-  // Create allocation for the variable
-  llvm::Type *Ty = Decl.getType().toLLVM(Context);
-  llvm::AllocaInst *Alloca = Builder.CreateAlloca(Ty, nullptr, Decl.getId());
-
-  // Store in declarations map
-  Decls[&Decl] = Alloca;
-
-  // If there's an initializer, evaluate it and store
-  if (Decl.hasInit()) {
-    Decl.getInit().accept(*this);
-    Builder.CreateStore(CurValue, Alloca);
+void CodeGen::visit(DeclStmt &S) {
+  VarDecl &VD = S.getDecl();
+  llvm::Type *T = VD.getType().toLLVM(Context);
+  llvm::AllocaInst *A = Builder.CreateAlloca(T, nullptr, VD.getId());
+  DeclMap[&VD] = A;
+  if (VD.hasInit()) {
+    llvm::Value *InitV = VD.getInit().accept(*this);
+    Builder.CreateStore(InitV, A);
   }
 }
 
-void phi::CodeGen::visit(phi::BreakStmt &stmt) {
-  (void)stmt;
-  assert(!LoopStack.empty() && "Break statement used outside of loop. "
-                               "LoopStack should also not be empty");
-
+void CodeGen::visit(BreakStmt &S) {
+  (void)S;
+  if (LoopStack.empty())
+    throw std::runtime_error("break used outside loop");
   Builder.CreateBr(LoopStack.back().BreakTarget);
-
-  // Create a dummy block and set insert point to it to avoid invalid IR
-  llvm::BasicBlock *dummy = llvm::BasicBlock::Create(
+  llvm::BasicBlock *Dummy = llvm::BasicBlock::Create(
       Context, "after_break", Builder.GetInsertBlock()->getParent());
-  Builder.SetInsertPoint(dummy);
+  Builder.SetInsertPoint(Dummy);
 }
 
-void phi::CodeGen::visit(phi::ContinueStmt &stmt) {
-  (void)stmt;
-  assert(!LoopStack.empty() && "Continuestatement used outside of loop. "
-                               "LoopStack should also not be empty");
-
+void CodeGen::visit(ContinueStmt &S) {
+  (void)S;
+  if (LoopStack.empty())
+    throw std::runtime_error("continue used outside loop");
   Builder.CreateBr(LoopStack.back().ContinueTarget);
-
-  llvm::BasicBlock *dummy = llvm::BasicBlock::Create(
+  llvm::BasicBlock *Dummy = llvm::BasicBlock::Create(
       Context, "after_continue", Builder.GetInsertBlock()->getParent());
-  Builder.SetInsertPoint(dummy);
+  Builder.SetInsertPoint(Dummy);
+}
+
+void CodeGen::visit(ExprStmt &S) {
+  // Evaluate the expression but ignore the result
+  S.getExpr().accept(*this);
+}
+
+llvm::Value *CodeGen::visit(Expr &S) {
+  // evaluate and ignore result
+  return S.accept(*this);
 }
