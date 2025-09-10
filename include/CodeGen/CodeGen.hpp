@@ -41,8 +41,8 @@ public:
   llvm::Value *visit(UnaryOp &E);
   llvm::Value *visit(StructInitExpr &E);
   llvm::Value *visit(FieldInitExpr &E);
-  llvm::Value *visit(MemberAccessExpr &E);
-  llvm::Value *visit(MemberFunCallExpr &E);
+  llvm::Value *visit(FieldAccessExpr &E);
+  llvm::Value *visit(MethodCallExpr &E);
 
   // Statement visitors -> emit code, return void
   void visit(ReturnStmt &S);
@@ -63,7 +63,6 @@ public:
   void visit(VarDecl &D);
 
 private:
-  // AST + LLVM
   std::vector<std::unique_ptr<Decl>> AstList;
 
   llvm::LLVMContext Context;
@@ -90,15 +89,17 @@ private:
   std::vector<LoopContext> LoopStack;
 
   // Structs
-  std::unordered_map<StructDecl *, llvm::StructType *> StructTypeMap;
+  std::unordered_map<const StructDecl *, llvm::StructType *> StructTypeMap;
   std::unordered_map<const FieldDecl *, unsigned> FieldIndexMap;
+
+  void declareStructs();
+  void defineStructBodies();
 
   // helpers
   void ensurePrintfDeclared();
   llvm::Value *generatePrintlnBridge(FunCallExpr &Call);
   llvm::Value *getAllocaForDecl(Decl *D);
   void createStructLayout(StructDecl *S);
-  StructDecl *findContainingStruct(const FieldDecl *F);
   llvm::Value *computeMemberPointer(llvm::Value *BasePtr,
                                     const FieldDecl *Field);
   llvm::Value *getAddressOf(Expr *E);
@@ -107,13 +108,6 @@ private:
   llvm::AllocaInst *ensureReturnAllocaForCurrentFunction(llvm::Type *RetTy);
   void recordDeferForCurrentFunction(Stmt *S);
   void emitDeferredForFunction(llvm::Function *F);
-
-  // convenience wrapper used only in generate() to evaluate a top-level
-  // initializer
-  llvm::Value *evaluateExprUsingVisit(Expr &E) {
-    // AST expression accept implementations must return llvm::Value*
-    return E.accept(*this);
-  }
 };
 
 } // namespace phi

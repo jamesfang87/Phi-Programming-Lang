@@ -14,10 +14,13 @@ namespace phi {
 
 // Forward declarations
 class Expr;
+class TypeInferencer;
+class TypeChecker;
 
 //===----------------------------------------------------------------------===//
 // Decl - Base class for all declarations
 //===----------------------------------------------------------------------===//
+
 class Decl {
 public:
   enum class Kind : uint8_t {
@@ -29,14 +32,33 @@ public:
     StructDecl
   };
 
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   Decl(Kind K, SrcLocation Loc, std::string Id)
       : DeclKind(K), Location(std::move(Loc)), Id(std::move(Id)) {}
 
   virtual ~Decl() = default;
 
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] Kind getKind() const { return DeclKind; }
   [[nodiscard]] SrcLocation getLocation() const { return Location; }
   [[nodiscard]] const std::string &getId() const { return Id; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  virtual void accept(TypeInferencer &I) = 0;
+  virtual bool accept(TypeChecker &C) = 0;
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
 
   virtual void emit(int level) const = 0;
 
@@ -49,17 +71,35 @@ protected:
 //===----------------------------------------------------------------------===//
 // ValueDecl - Base for declarations that have a type and can appear in exprs
 //===----------------------------------------------------------------------===//
+
 class ValueDecl : public Decl {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   ValueDecl(Kind K, SrcLocation Loc, std::string Id,
             std::optional<Type> DeclType)
       : Decl(K, std::move(Loc), std::move(Id)), DeclType(std::move(DeclType)) {}
 
-  [[nodiscard]] bool hasType() const { return DeclType.has_value(); }
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] Type getType() const { return *DeclType; }
-  [[nodiscard]] virtual bool isConst() const = 0;
+
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===--------------------------------------------------------------------===//
 
   void setType(Type T) { DeclType = std::move(T); }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] bool hasType() const { return DeclType.has_value(); }
+  [[nodiscard]] virtual bool isConst() const = 0;
 
 protected:
   std::optional<Type> DeclType;
@@ -68,17 +108,46 @@ protected:
 //===----------------------------------------------------------------------===//
 // VarDecl - Variable declaration
 //===----------------------------------------------------------------------===//
+
 class VarDecl final : public ValueDecl {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   VarDecl(SrcLocation Loc, std::string Id, std::optional<Type> DeclType,
           bool IsConst, std::unique_ptr<Expr> Init);
   ~VarDecl() override;
 
-  [[nodiscard]] bool isConst() const override { return IsConst; }
-  [[nodiscard]] bool hasInit() const { return Init != nullptr; }
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] Expr &getInit() const { return *Init; }
 
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] bool isConst() const override { return IsConst; }
+  [[nodiscard]] bool hasInit() const { return Init != nullptr; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  void accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &I) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
   static bool classof(const Decl *D) { return D->getKind() == Kind::VarDecl; }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
 
   void emit(int level) const override;
 
@@ -90,16 +159,40 @@ private:
 //===----------------------------------------------------------------------===//
 // ParamDecl - Function parameter
 //===----------------------------------------------------------------------===//
+
 class ParamDecl final : public ValueDecl {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   ParamDecl(SrcLocation Loc, std::string Id, Type DeclType, bool IsConst)
       : ValueDecl(Kind::ParamDecl, std::move(Loc), std::move(Id),
                   std::move(DeclType)),
         IsConst(IsConst) {}
 
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] bool isConst() const override { return IsConst; }
 
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  void accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &I) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
   static bool classof(const Decl *D) { return D->getKind() == Kind::ParamDecl; }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
 
   void emit(int level) const override;
 
@@ -110,32 +203,73 @@ private:
 //===----------------------------------------------------------------------===//
 // FieldDecl - Struct/Union field
 //===----------------------------------------------------------------------===//
+
 class FieldDecl final : public ValueDecl {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   FieldDecl(SrcLocation Loc, std::string Id, Type DeclType,
             std::unique_ptr<Expr> Init, bool IsPrivate);
   ~FieldDecl() override;
 
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] Expr &getInit() const { return *Init; }
+  [[nodiscard]] const class StructDecl *getParent() const { return Parent; }
+
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===--------------------------------------------------------------------===//
+
+  void setParent(StructDecl *P) { Parent = P; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] bool isConst() const override { return false; }
   [[nodiscard]] bool isPrivate() const { return IsPrivate; }
   [[nodiscard]] bool hasInit() const { return Init != nullptr; }
-  [[nodiscard]] Expr &getInit() const { return *Init; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  void accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &I) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
 
   static bool classof(const Decl *D) { return D->getKind() == Kind::FieldDecl; }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
 
   void emit(int level) const override;
 
 private:
   bool IsPrivate;
   std::unique_ptr<Expr> Init;
+  class StructDecl *Parent = nullptr;
 };
 
 //===----------------------------------------------------------------------===//
 // FunDecl - Function declaration
 //===----------------------------------------------------------------------===//
+
 class FunDecl : public Decl {
 protected:
-  // Protected constructor with Kind, used by subclasses like MethodDecl
+  //===--------------------------------------------------------------------===//
+  // Protected Constructor (for subclasses)
+  //===--------------------------------------------------------------------===//
+
   FunDecl(Kind K, SrcLocation Loc, std::string Id, Type ReturnType,
           std::vector<std::unique_ptr<ParamDecl>> Params,
           std::unique_ptr<Block> Body)
@@ -144,7 +278,10 @@ protected:
         Body(std::move(Body)) {}
 
 public:
-  // Public constructor always uses Kind::FunDecl
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   FunDecl(SrcLocation Loc, std::string Id, Type ReturnType,
           std::vector<std::unique_ptr<ParamDecl>> Params,
           std::unique_ptr<Block> Body)
@@ -158,17 +295,40 @@ public:
     FunType = Type::makeFunction(ParamTypes, ReturnType, Loc);
   }
 
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] const Type &getFunType() const { return FunType; }
   [[nodiscard]] const Type &getReturnTy() const { return ReturnType; }
   [[nodiscard]] auto &getParams() { return Params; }
   [[nodiscard]] Block &getBody() const { return *Body; }
   [[nodiscard]] std::unique_ptr<Block> &getBodyPtr() { return Body; }
 
-  void setBody(std::unique_ptr<Block> NewBody) { Body = std::move(NewBody); }
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===--------------------------------------------------------------------===//
+
+  void setBody(std::unique_ptr<Block> B) { Body = std::move(B); }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  void accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &I) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
 
   static bool classof(const Decl *D) {
     return D->getKind() == Kind::FunDecl || D->getKind() == Kind::MethodDecl;
   }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
 
   void emit(int level) const override;
 
@@ -182,8 +342,13 @@ protected:
 //===----------------------------------------------------------------------===//
 // MethodDecl - Struct/Enum member function
 //===----------------------------------------------------------------------===//
+
 class MethodDecl final : public FunDecl {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   MethodDecl(SrcLocation Loc, std::string Id, Type ReturnType,
              std::vector<std::unique_ptr<ParamDecl>> Params,
              std::unique_ptr<Block> Body, bool IsPrivate)
@@ -197,24 +362,61 @@ public:
                 std::move(FD.getBodyPtr())),
         IsPrivate(IsPrivate) {}
 
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] const class StructDecl *getParent() const { return Parent; }
+
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===--------------------------------------------------------------------===//
+
+  void setParent(StructDecl *P) { Parent = P; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] bool isPrivate() const { return IsPrivate; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  void accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &I) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
 
   static bool classof(const Decl *D) {
     return D->getKind() == Kind::MethodDecl;
   }
 
 private:
+  class StructDecl *Parent = nullptr;
   bool IsPrivate;
 };
 
 //===----------------------------------------------------------------------===//
 // StructDecl - Aggregate type
 //===----------------------------------------------------------------------===//
+
 class StructDecl final : public Decl {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   StructDecl(SrcLocation Loc, std::string Id,
              std::vector<std::unique_ptr<FieldDecl>> Fields,
              std::vector<MethodDecl> Methods);
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
 
   [[nodiscard]] Type getType() const { return DeclType; }
   [[nodiscard]] std::vector<std::unique_ptr<FieldDecl>> &getFields() {
@@ -232,9 +434,24 @@ public:
     return it != MethodMap.end() ? it->second : nullptr;
   }
 
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  void accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &I) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
   static bool classof(const Decl *D) {
     return D->getKind() == Kind::StructDecl;
   }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
 
   void emit(int level) const override;
 

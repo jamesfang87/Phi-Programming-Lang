@@ -218,3 +218,45 @@ void CodeGen::visit(StructDecl &D) {
 
 void CodeGen::visit(FieldDecl &D) { (void)D; }
 void CodeGen::visit(VarDecl &D) { (void)D; }
+
+void CodeGen::declareStructs() {
+  // Create named (possibly opaque) struct types for every StructDecl so
+  // forwards work.
+  for (auto &D : AstList) {
+    if (!D)
+      continue;
+    if (auto *SD = llvm::dyn_cast<StructDecl>(D.get())) {
+      if (StructTypeMap.count(SD))
+        continue;
+      // Create a named struct *without* body yet (opaque).
+      llvm::StructType *Named = llvm::StructType::create(Context, SD->getId());
+      StructTypeMap[SD] = Named;
+    }
+  }
+}
+
+void CodeGen::defineStructBodies() {
+  // Now set bodies for those structs using field types.
+  for (auto &D : AstList) {
+    if (!D)
+      continue;
+    if (auto *SD = llvm::dyn_cast<StructDecl>(D.get())) {
+      llvm::StructType *ST = StructTypeMap.at(SD); // declared above
+      // If body is already set (non-opaque), skip
+      if (!ST->isOpaque())
+        continue;
+
+      std::vector<llvm::Type *> FieldTypes;
+      unsigned Idx = 0;
+      for (auto &Fptr : SD->getFields()) {
+        FieldDecl *F = Fptr.get();
+        // Resolve field type now — this may reference other struct types that
+        // were declared
+        llvm::Type *FTy = F->getType().toLLVM(Context);
+        FieldTypes.push_back(FTy);
+        FieldIndexMap[F] = Idx++;
+      }
+      ST->setBody(FieldTypes, /*isPacked=*/false);
+    }
+  }
+}

@@ -10,6 +10,8 @@
 
 namespace phi {
 
+bool NameResolver::visit(Expr &E) { return E.accept(*this); }
+
 // Literal expression resolution
 // trivial: we don't need any name resolution
 bool NameResolver::visit(IntLiteral &E) {
@@ -74,7 +76,7 @@ bool NameResolver::visit(FunCallExpr &E) {
   }
 
   for (auto &Arg : E.getArgs()) {
-    Success = Arg->accept(*this) && Success;
+    Success = visit(*Arg) && Success;
   }
 
   E.setDecl(FunPtr);

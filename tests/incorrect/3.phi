@@ -1,1 +1,1 @@
-let s = "hello \Q world";
+const s = "hello \Q world";

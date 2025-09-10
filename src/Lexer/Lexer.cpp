@@ -1,21 +1,3 @@
-/**
- * @file Lexer.cpp
- * @brief Implementation of the Scanner class for lexical analysis
- *
- * This file contains the complete implementation of the Scanner class,
- * including all token parsing methods, error handling, and helper functions.
- * The scanner processes Phi source code character by character, producing a
- * stream of tokens that can be consumed by the parser.
- *
- * Key features implemented:
- * - Multi-character operator recognition (e.g., ==, +=, ->)
- * - String literal parsing with full escape sequence support
- * - Numeric literal parsing (integers and floats)
- * - Keyword vs identifier distinction
- * - Comment handling (line and block comments)
- * - Comprehensive error reporting using diagnostic system
- */
-
 #include "Lexer/Lexer.hpp"
 
 #include <cstring>

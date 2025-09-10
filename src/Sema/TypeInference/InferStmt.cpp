@@ -10,10 +10,14 @@ namespace phi {
 TypeInferencer::InferRes TypeInferencer::inferBlock(Block &B) {
   Substitution AllSubsts;
   for (const auto &Stmt : B.getStmts()) {
-    auto [StmtSubst, _] = Stmt->accept(*this);
+    auto [StmtSubst, _] = visit(*Stmt);
     AllSubsts.compose(StmtSubst);
   }
   return {AllSubsts, Monotype::makeCon("unit")};
+}
+
+TypeInferencer::InferRes TypeInferencer::visit(Stmt &S) {
+  return S.accept(*this);
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
@@ -72,7 +76,7 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(DeclStmt &S) {
-  inferDecl(S.getDecl());
+  visit(S.getDecl());
   return {Substitution{}, Monotype::makeCon("unit")};
 }
 

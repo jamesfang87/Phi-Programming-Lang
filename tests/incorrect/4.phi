@@ -1,1 +1,1 @@
-fun main() { let s = "hello\Q world"; }
+fun main() { const s = "hello\Q world"; }

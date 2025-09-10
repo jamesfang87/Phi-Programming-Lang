@@ -1,5 +1,5 @@
 fun main() {
-    let s = "this is a multi-line
+    var s = "this is a multi-line
     string that is never closed
-    let x = 42;
+    var x = 42;
 }

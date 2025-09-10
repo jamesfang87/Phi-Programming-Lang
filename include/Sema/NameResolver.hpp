@@ -32,6 +32,7 @@ public:
   bool visit(FieldDecl *F);
 
   // EXPRESSION VISITORS
+  bool visit(Expr &E);
   bool visit(IntLiteral &E);
   bool visit(FloatLiteral &E);
   bool visit(StrLiteral &E);
@@ -44,10 +45,11 @@ public:
   bool visit(UnaryOp &E);
   bool visit(StructInitExpr &E);
   bool visit(FieldInitExpr &E);
-  bool visit(MemberAccessExpr &E);
-  bool visit(MemberFunCallExpr &E);
+  bool visit(FieldAccessExpr &E);
+  bool visit(MethodCallExpr &E);
 
   // STATEMENT VISITORS
+  bool visit(Stmt &S);
   bool visit(ReturnStmt &S);
   bool visit(DeferStmt &S);
   bool visit(IfStmt &S);
@@ -57,7 +59,6 @@ public:
   bool visit(BreakStmt &S);
   bool visit(ContinueStmt &S);
   bool visit(ExprStmt &S);
-  bool visit(Expr &S);
 
 private:
   /// The AST being analyzed (function declarations)

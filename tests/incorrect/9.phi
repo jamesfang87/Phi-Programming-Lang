@@ -1,1 +1,1 @@
-fun main() { let x = "hello"; }
+fun main() { const x = "hello"; }

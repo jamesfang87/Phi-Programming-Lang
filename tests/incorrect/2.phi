@@ -1,2 +1,2 @@
-let c = '';
-let c = ';
+const c = '';
+const c = ';
