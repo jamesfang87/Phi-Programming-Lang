@@ -210,7 +210,6 @@ private:
 
   // EXPRESSION PARSING
   std::unique_ptr<Expr> parseExpr();
-
   std::unique_ptr<StructInitExpr> parseStructInit(std::unique_ptr<Expr> expr);
   std::unique_ptr<FieldInitExpr> parseFieldInit();
 

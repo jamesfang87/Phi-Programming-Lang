@@ -66,12 +66,12 @@ bool NameResolver::visit(FieldInitExpr &E) {
   return visit(*E.getValue());
 }
 
-bool NameResolver::visit(MemberAccessExpr &E) { return visit(*E.getBase()); }
+bool NameResolver::visit(FieldAccessExpr &E) { return visit(*E.getBase()); }
 
-bool NameResolver::visit(MemberFunCallExpr &E) {
+bool NameResolver::visit(MethodCallExpr &E) {
   bool Success = visit(*E.getBase());
 
-  for (const auto &Args : E.getCall().getArgs()) {
+  for (const auto &Args : E.getArgs()) {
     Success = visit(*Args) && Success;
   }
 

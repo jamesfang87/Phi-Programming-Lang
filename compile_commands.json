@@ -271,6 +271,48 @@
 },
 {
   "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeCheck/Check.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeCheck/Check.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeCheck/Check.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeCheck/Check.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckDecl.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeCheck/CheckDecl.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeCheck/CheckDecl.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckDecl.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckExpr/CheckCalls.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeCheck/CheckExpr/CheckCalls.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeCheck/CheckExpr/CheckCalls.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckExpr/CheckCalls.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckExpr/CheckLiterals.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeCheck/CheckExpr/CheckLiterals.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeCheck/CheckExpr/CheckLiterals.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckExpr/CheckLiterals.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckExpr/CheckOps.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeCheck/CheckExpr/CheckOps.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeCheck/CheckExpr/CheckOps.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckExpr/CheckOps.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckExpr/CheckStructInit.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeCheck/CheckExpr/CheckStructInit.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeCheck/CheckExpr/CheckStructInit.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckExpr/CheckStructInit.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
+  "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckStmt.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeCheck/CheckStmt.cpp",
+  "file": "/Users/jamesfang/Phi/src/Sema/TypeCheck/CheckStmt.cpp",
+  "output": "CMakeFiles/phi.dir/src/Sema/TypeCheck/CheckStmt.cpp.o"
+},
+{
+  "directory": "/Users/jamesfang/Phi/build",
   "command": "/usr/bin/c++ -DEXPERIMENTAL_KEY_INSTRUCTIONS -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -I/Users/jamesfang/llvm-project/llvm/include -I/Users/jamesfang/llvm-project/build/include -I/Users/jamesfang/Phi/include -isystem /opt/homebrew/include -g -g -std=c++2b -arch arm64 -g -O0 -o CMakeFiles/phi.dir/src/Sema/TypeInference/Infer.cpp.o -c /Users/jamesfang/Phi/src/Sema/TypeInference/Infer.cpp",
   "file": "/Users/jamesfang/Phi/src/Sema/TypeInference/Infer.cpp",
   "output": "CMakeFiles/phi.dir/src/Sema/TypeInference/Infer.cpp.o"

@@ -3,27 +3,35 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Type.h>
-#include <print>
 
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// String Conversion Methods
+//===----------------------------------------------------------------------===//
+
 std::string Type::toString() const {
   SrcLocation L = this->Location;
-  struct V {
+  struct Visitor {
     SrcLocation L;
+
     std::string operator()(PrimitiveKind K) const {
       return std::format("{}", primitiveKindToString(K));
     }
+
     std::string operator()(const CustomType &C) const { return C.Name; }
+
     std::string operator()(const ReferenceType &R) const {
       return "&" + R.Pointee->toString();
     }
+
     std::string operator()(const PointerType &P) const {
       return "*" + P.Pointee->toString();
     }
+
     std::string operator()(const GenericType &G) const {
       std::ostringstream Oss;
       Oss << G.Name << "<";
@@ -35,6 +43,7 @@ std::string Type::toString() const {
       Oss << ">";
       return Oss.str();
     }
+
     std::string operator()(const FunctionType &F) const {
       std::ostringstream Oss;
       Oss << "fn(";
@@ -47,25 +56,34 @@ std::string Type::toString() const {
       return Oss.str();
     }
   };
-  return std::visit(V{L}, Data);
+  return std::visit(Visitor{L}, Data);
 }
+
+//===----------------------------------------------------------------------===//
+// Monotype Conversion Methods
+//===----------------------------------------------------------------------===//
 
 class Monotype Type::toMonotype() const {
   SrcLocation L = this->Location;
   struct Visitor {
     SrcLocation L;
+
     Monotype operator()(PrimitiveKind K) const {
       return Monotype::makeCon(primitiveKindToString(K), {}, L);
     }
+
     Monotype operator()(const CustomType &C) const {
       return Monotype::makeCon(C.Name, {}, L);
     }
+
     Monotype operator()(const ReferenceType &R) const {
       return Monotype::makeApp("Ref", {R.Pointee->toMonotype()}, L);
     }
+
     Monotype operator()(const PointerType &P) const {
       return Monotype::makeApp("Ptr", {P.Pointee->toMonotype()}, L);
     }
+
     Monotype operator()(const GenericType &G) const {
       std::vector<Monotype> Args;
       Args.reserve(G.TypeArguments.size());
@@ -74,6 +92,7 @@ class Monotype Type::toMonotype() const {
       }
       return Monotype::makeApp(G.Name, Args, L);
     }
+
     Monotype operator()(const FunctionType &F) const {
       std::vector<Monotype> Params;
       Params.reserve(F.Parameters.size());
@@ -85,6 +104,10 @@ class Monotype Type::toMonotype() const {
   };
   return std::visit(Visitor{L}, Data);
 }
+
+//===----------------------------------------------------------------------===//
+// LLVM Type Conversion Methods
+//===----------------------------------------------------------------------===//
 
 llvm::Type *Type::toLLVM(llvm::LLVMContext &Ctx) const {
   struct Visitor {
@@ -150,24 +173,7 @@ llvm::Type *Type::toLLVM(llvm::LLVMContext &Ctx) const {
     }
 
     llvm::Type *operator()(const GenericType &G) const {
-      // Define a simple lowering policy. Adjust as your runtime dictates.
-
-      // Vector<T> → { i64 len, T* data }
-      if (G.Name == "Vector" && G.TypeArguments.size() == 1) {
-        llvm::Type *ElemTy = G.TypeArguments[0].toLLVM(Ctx);
-        auto *LenTy = llvm::Type::getInt64Ty(Ctx);
-        return llvm::StructType::get(Ctx, {LenTy, ElemTy->getPointerTo()});
-      }
-
-      // Map<K,V> → opaque named struct "Map" (shared across instantiations).
-      // If you need K/V-specific layouts, you’ll want a mangled unique name.
-      if (G.Name == "Map" && G.TypeArguments.size() == 2) {
-        if (auto *T = llvm::StructType::getTypeByName(Ctx, "Map"))
-          return T;
-        return llvm::StructType::create(Ctx, "Map");
-      }
-
-      // Fallback: opaque named struct with the generic’s base name.
+      // Fallback: opaque named struct with the generic's base name.
       if (auto *T = llvm::StructType::getTypeByName(Ctx, G.Name))
         return T;
       return llvm::StructType::create(Ctx, G.Name);

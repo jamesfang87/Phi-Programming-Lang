@@ -11,30 +11,14 @@
 namespace phi {
 
 // ---------------- declarations ----------------
-void TypeInferencer::inferDecl(Decl &D) {
-  if (auto *V = dynamic_cast<VarDecl *>(&D))
-    inferVarDecl(*V);
-  else if (auto *F = dynamic_cast<FunDecl *>(&D))
-    inferFunDecl(*F);
-  else if (auto *S = dynamic_cast<StructDecl *>(&D))
-    inferStructDecl(*S);
-  else {
-    // StructDecl, FieldDecl, MethodDecl not handled here.
-  }
-}
+void TypeInferencer::visit(Decl &D) { D.accept(*this); }
 
 // VarDecl: infer initializer, unify with annotation (if present), then bind.
 // IMPORTANT: only generalize if this VarDecl was predeclared (i.e. top-level).
 // Local variables must be kept monomorphic so that later unifications (e.g.
 // from passing them to functions) update the same monotype instance.
-void TypeInferencer::inferVarDecl(VarDecl &D) {
-  const std::optional<Polytype> P = Env.lookup(&D);
-  const bool TopLevel = static_cast<bool>(P);
-
-  // Starting monotype: instantiate predeclared scheme, or create fresh var for
-  // local.
-  Monotype VarType =
-      TopLevel ? instantiate(*P, Factory) : Monotype::makeVar(Factory.fresh());
+void TypeInferencer::visit(VarDecl &D) {
+  Monotype VarType = Monotype::makeVar(Factory.fresh());
 
   Substitution Subst;
   if (D.hasInit()) {
@@ -48,7 +32,6 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
     const auto DeclaredAs = D.getType().toMonotype();
     unifyInto(Subst, VarType, DeclaredAs);
     VarType = Subst.apply(DeclaredAs);
-
   } else {
     VarType = Subst.apply(VarType);
   }
@@ -56,16 +39,10 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
   // Propagate substitutions globally (so subsequent lookups see effects).
   recordSubst(Subst);
 
-  // Bind into the environment:
-  if (TopLevel) {
-    // Top-level/letrec: generalize as
-    Env.bind(&D, generalize(Env, VarType));
-  } else {
-    // Local variable: bind a monomorphic scheme (no quantification).
-    // This ensures the same Monotype instance stays associated with the VarDecl
-    // for the remainder of the function, so later unifications update it.
-    Env.bind(&D, Polytype{{}, VarType});
-  }
+  // Local variable: bind a monomorphic scheme (no quantification).
+  // This ensures the same Monotype instance stays associated with the VarDecl
+  // for the remainder of the function, so later unifications update it.
+  Env.bind(&D, Polytype{{}, VarType});
 
   // Side-table annotate (will be finalized later)
   annotate(D, VarType);
@@ -74,7 +51,7 @@ void TypeInferencer::inferVarDecl(VarDecl &D) {
 // FunDecl: functions are looked up by name; param/return types MUST be
 // annotated by the user (we only verify consistency). We bind params
 // temporarily for body inference and discard them afterwards.
-void TypeInferencer::inferFunDecl(FunDecl &D) {
+void TypeInferencer::visit(FunDecl &D) {
   std::optional<Monotype> FunType;
 
   // Lookup by name
@@ -146,7 +123,7 @@ void TypeInferencer::inferFunDecl(FunDecl &D) {
   Env = std::move(SavedEnv);
 }
 
-void TypeInferencer::inferStructDecl(StructDecl &D) {
+void TypeInferencer::visit(StructDecl &D) {
   // Create struct monotype and bind the struct name (so fields/methods can
   // reference it)
   Monotype StructMono = Monotype::makeVar(Factory.fresh());

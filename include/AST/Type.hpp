@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -15,14 +16,15 @@
 namespace phi {
 
 //===----------------------------------------------------------------------===//
-// Type Algebra
-//   - PrimitiveKind
-//   - TypeVariable (e.g., T, U)
-//   - CustomType (nominal)
-//   - ReferenceType (&T), PointerType (*T)
-//   - GenericType  (Vector<T>, Map<K,V>)
-//   - FunctionType (fn(A,B)->C)
-//   - Type: variant wrapper + helpers/unification
+// Forward Declarations and Type Aliases
+//===----------------------------------------------------------------------===//
+
+class Type;
+class Monotype;
+using TypePtr = std::shared_ptr<Type>;
+
+//===----------------------------------------------------------------------===//
+// Primitive Type Enumeration
 //===----------------------------------------------------------------------===//
 
 enum class PrimitiveKind : uint8_t {
@@ -79,22 +81,16 @@ inline std::string primitiveKindToString(PrimitiveKind Kind) {
   return "unknown";
 }
 
+//===----------------------------------------------------------------------===//
+// Composite Type Structures
+//===----------------------------------------------------------------------===//
+
 struct CustomType {
   std::string Name;
   bool operator==(const CustomType &Other) const noexcept {
     return Name == Other.Name;
   }
 };
-
-struct ReferenceType; // fwd
-struct PointerType;   // fwd
-struct GenericType;   // fwd
-struct FunctionType;  // fwd
-
-// Wrapper Type forward-declared so inner nodes can use shared_ptr<Type>.
-class Type;
-
-using TypePtr = std::shared_ptr<Type>;
 
 struct ReferenceType {
   TypePtr Pointee;
@@ -118,14 +114,25 @@ struct FunctionType {
   bool operator==(const FunctionType &Other) const noexcept;
 };
 
+//===----------------------------------------------------------------------===//
+// Type - Main type representation class
+//===----------------------------------------------------------------------===//
+
 class Type {
 public:
   using Node = std::variant<PrimitiveKind, CustomType, ReferenceType,
                             PointerType, GenericType, FunctionType>;
 
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   Type() = default;
 
-  // Constructors (factories to keep usage clear)
+  //===--------------------------------------------------------------------===//
+  // Static Factory Methods
+  //===--------------------------------------------------------------------===//
+
   static Type makePrimitive(PrimitiveKind K, SrcLocation L) {
     return Type{K, std::move(L)};
   }
@@ -159,12 +166,33 @@ public:
         std::move(L));
   }
 
-  const Node &node() const noexcept { return Data; }
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
 
-  // Kind checks
+  const Node &node() const noexcept { return Data; }
+  SrcLocation getLocation() { return Location; }
+
+  [[nodiscard]] PrimitiveKind asPrimitive() const {
+    return std::get<PrimitiveKind>(Data);
+  }
+
+  [[nodiscard]] PointerType asPtr() const {
+    return std::get<PointerType>(Data);
+  }
+
+  [[nodiscard]] ReferenceType asRef() const {
+    return std::get<ReferenceType>(Data);
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Type Classification Methods
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] bool isPrimitive() const {
     return std::holds_alternative<PrimitiveKind>(Data);
   }
+
   [[nodiscard]] bool isCustom() const {
     return std::holds_alternative<CustomType>(Data);
   }
@@ -185,33 +213,10 @@ public:
     return std::holds_alternative<FunctionType>(Data);
   }
 
-  [[nodiscard]] PrimitiveKind asPrimitive() const {
-    return std::get<PrimitiveKind>(Data);
-  }
+  //===--------------------------------------------------------------------===//
+  // Semantic Type Queries
+  //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] PointerType asPtr() const {
-    return std::get<PointerType>(Data);
-  }
-
-  [[nodiscard]] ReferenceType asRef() const {
-    return std::get<ReferenceType>(Data);
-  }
-
-  bool operator==(const Type &Other) const noexcept {
-    return Data == Other.Data;
-  }
-  bool operator!=(const Type &Other) const noexcept {
-    return !(*this == Other);
-  }
-
-  // Rendering for debugging/diagnostics.
-  [[nodiscard]] std::string toString() const;
-  [[nodiscard]] class Monotype toMonotype() const;
-  [[nodiscard]] llvm::Type *toLLVM(llvm::LLVMContext &Ctx) const;
-
-  SrcLocation getLocation() { return Location; };
-
-  // Simple classification helpers
   bool isInteger() {
     if (!isPrimitive()) {
       return false;
@@ -231,6 +236,7 @@ public:
       return false;
     }
   }
+
   bool isSignedInteger() {
     if (!isPrimitive()) {
       return false;
@@ -246,6 +252,7 @@ public:
       return false;
     }
   }
+
   bool isUnsignedInteger() {
     if (!isPrimitive()) {
       return false;
@@ -273,32 +280,67 @@ public:
 
   bool isStruct() { return isCustom(); }
 
-  std::string getStructName() {
+  std::optional<std::string> getStructName() {
     if (!isCustom()) {
-      return "";
+      return std::nullopt;
     }
     return std::get<CustomType>(Data).Name;
   }
 
+  //===--------------------------------------------------------------------===//
+  // Comparison Operators
+  //===--------------------------------------------------------------------===//
+
+  bool operator==(const Type &Other) const noexcept {
+    return Data == Other.Data;
+  }
+
+  bool operator!=(const Type &Other) const noexcept {
+    return !(*this == Other);
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Conversion Methods
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] std::string toString() const;
+  [[nodiscard]] class Monotype toMonotype() const;
+  [[nodiscard]] llvm::Type *toLLVM(llvm::LLVMContext &Ctx) const;
+
 private:
+  //===--------------------------------------------------------------------===//
+  // Private Members
+  //===--------------------------------------------------------------------===//
+
   Node Data;
   SrcLocation Location{"", -1, -1};
+
+  //===--------------------------------------------------------------------===//
+  // Private Constructors
+  //===--------------------------------------------------------------------===//
 
   explicit Type(Node N) : Data(std::move(N)) {}
   Type(Node N, SrcLocation Location)
       : Data(std::move(N)), Location(std::move(Location)) {}
 };
 
+//===----------------------------------------------------------------------===//
+// Inline Implementations for Composite Type Comparisons
+//===----------------------------------------------------------------------===//
+
 inline bool
 ReferenceType::operator==(const ReferenceType &Other) const noexcept {
   return *Pointee == *Other.Pointee;
 }
+
 inline bool PointerType::operator==(const PointerType &Other) const noexcept {
   return *Pointee == *Other.Pointee;
 }
+
 inline bool GenericType::operator==(const GenericType &Other) const noexcept {
   return Name == Other.Name && TypeArguments == Other.TypeArguments;
 }
+
 inline bool FunctionType::operator==(const FunctionType &Other) const noexcept {
   if (Parameters != Other.Parameters)
     return false;
