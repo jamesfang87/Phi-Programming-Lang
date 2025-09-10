@@ -22,7 +22,7 @@ std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
 
   // Infer each top-level declaration
   for (auto &Decl : Ast)
-    inferDecl(*Decl);
+    visit(*Decl);
 
   // Finalize annotations: apply global substitution and write back to AST
   finalizeAnnotations();

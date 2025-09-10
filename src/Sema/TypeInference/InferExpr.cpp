@@ -227,7 +227,7 @@ TypeInferencer::InferRes TypeInferencer::visit(FieldInitExpr &E) {
   return {Subst, Type};
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
+TypeInferencer::InferRes TypeInferencer::visit(FieldAccessExpr &E) {
   auto [BaseSubst, BaseType] = visit(*E.getBase());
   auto FieldType = Monotype::makeVar(Factory.fresh());
 
@@ -240,9 +240,9 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   }
   StructDecl *Struct = It->second;
 
-  const FieldDecl *FieldDecl = Struct->getField(E.getMemberId());
+  const FieldDecl *FieldDecl = Struct->getField(E.getFieldId());
   if (FieldDecl == nullptr) {
-    std::println("Could not find field {} in struct {}", E.getMemberId(),
+    std::println("Could not find field {} in struct {}", E.getFieldId(),
                  TypeName);
     return {BaseSubst, FieldType};
   }
@@ -259,7 +259,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberAccessExpr &E) {
   return {BaseSubst, FieldType};
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
+TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   // 1) Infer base expression (the receiver)
   auto [sBase, tBase] = visit(*E.getBase());
 
@@ -280,7 +280,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
 
   // The callee inside MemberFunCallExpr is expected to be a DeclRefExpr naming
   // the method. If it's not, that's an unsupported form for now.
-  auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&E.getCall().getCallee());
+  auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&E.getCallee());
   if (!DeclRef) {
     throw std::runtime_error(
         "unsupported method call syntax (expected identifier)");
@@ -290,7 +290,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
 
   // Find the method declaration inside the struct
   MethodDecl *Method = Struct->getMethod(MethodName);
-  E.getCall().setDecl(Method);
+  E.setDecl(Method);
   E.setMethod(Method);
   if (!Method) {
     throw std::runtime_error("struct '" + StructName + "' has no method '" +
@@ -330,11 +330,11 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberFunCallExpr &E) {
 
   // receiver arg type (we already have it): use s-applied version
   std::vector<Monotype> CallArgTys;
-  CallArgTys.reserve(1 + E.getCall().getArgs().size());
+  CallArgTys.reserve(1 + E.getArgs().size());
   CallArgTys.push_back(S.apply(tBase)); // receiver goes first
 
   // Infer each explicit argument, composing substitutions as we go
-  for (auto &ArgUP : E.getCall().getArgs()) {
+  for (auto &ArgUP : E.getArgs()) {
     auto [si, ti] = visit(*ArgUP);
     S.compose(si);
     // make sure to apply the current substitution to argument type

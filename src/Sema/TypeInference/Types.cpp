@@ -86,4 +86,76 @@ Type Monotype::toAstType() const {
       });
 }
 
+std::string Monotype::toString() const {
+  return visit([](const TypeVar &Var) { return std::to_string(Var.Id); },
+               [](const TypeCon &Con) {
+                 if (Con.Args.empty())
+                   return Con.Name;
+                 std::ostringstream Os;
+                 Os << Con.Name << "<";
+                 for (size_t I = 0; I < Con.Args.size(); ++I) {
+                   Os << Con.Args[I].toString();
+                   if (I + 1 < Con.Args.size())
+                     Os << ", ";
+                 }
+                 Os << ">";
+                 return Os.str();
+               },
+               [](const TypeApp &App) {
+                 if (App.Args.empty())
+                   return App.Name;
+                 std::ostringstream Os;
+                 Os << App.Name << "<";
+                 for (size_t I = 0; I < App.Args.size(); ++I) {
+                   Os << App.Args[I].toString();
+                   if (I + 1 < App.Args.size())
+                     Os << ", ";
+                 }
+                 Os << ">";
+                 return Os.str();
+               },
+               [](const TypeFun &Fun) {
+                 std::ostringstream Os;
+                 Os << "(";
+                 for (size_t I = 0; I < Fun.Params.size(); ++I) {
+                   Os << Fun.Params[I].toString();
+                   if (I + 1 < Fun.Params.size())
+                     Os << ", ";
+                 }
+                 Os << ") -> " << Fun.Ret->toString();
+                 return Os.str();
+               });
+}
+
+std::unordered_set<TypeVar> Monotype::freeTypeVars() const {
+  return this->visit(
+      [](const TypeVar &Var) { return std::unordered_set<TypeVar>{Var}; },
+      [](const TypeCon &Con) {
+        std::unordered_set<TypeVar> AllFTVs;
+        for (auto &Arg : Con.Args) {
+          auto FTV = Arg.freeTypeVars();
+          AllFTVs.insert(FTV.begin(), FTV.end());
+        }
+        return AllFTVs;
+      },
+      [](const TypeApp &App) {
+        std::unordered_set<TypeVar> AllFTVs;
+        for (auto &Arg : App.Args) {
+          auto FTV = Arg.freeTypeVars();
+          AllFTVs.insert(FTV.begin(), FTV.end());
+        }
+        return AllFTVs;
+      },
+      [](const TypeFun &Fun) {
+        std::unordered_set<TypeVar> AllFTVs;
+        for (auto &Params : Fun.Params) {
+          auto FTV = Params.freeTypeVars();
+          AllFTVs.insert(FTV.begin(), FTV.end());
+        }
+        auto Ret = Fun.Ret->freeTypeVars();
+        AllFTVs.insert(Ret.begin(), Ret.end());
+        return AllFTVs;
+      });
+}
+
 } // namespace phi

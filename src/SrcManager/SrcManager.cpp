@@ -24,7 +24,7 @@ void SrcManager::addSrcFile(const std::string &path,
       it++; // skip '\n'
     }
   }
-  srcFiles[path] = std::move(lines);
+  SrcFiles[path] = std::move(lines);
 }
 
 /**
@@ -38,8 +38,8 @@ void SrcManager::addSrcFile(const std::string &path,
  */
 std::optional<std::string_view> SrcManager::getLine(const std::string &path,
                                                     const int lineNum) const {
-  const auto fileIt = srcFiles.find(path);
-  if (fileIt == srcFiles.end()) {
+  const auto fileIt = SrcFiles.find(path);
+  if (fileIt == SrcFiles.end()) {
     return std::nullopt;
   }
 
@@ -80,8 +80,8 @@ std::vector<std::string_view> SrcManager::getLines(const std::string &path,
  * @return Line count, or 0 if file not found
  */
 int SrcManager::getLineCount(const std::string &path) const {
-  const auto fileIt = srcFiles.find(path);
-  if (fileIt == srcFiles.end()) {
+  const auto fileIt = SrcFiles.find(path);
+  if (fileIt == SrcFiles.end()) {
     return 0;
   }
   return static_cast<int>(fileIt->second.size());

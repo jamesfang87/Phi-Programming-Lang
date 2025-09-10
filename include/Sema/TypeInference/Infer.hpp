@@ -23,8 +23,14 @@ public:
 
   std::vector<std::unique_ptr<Decl>> inferProgram();
 
+  void visit(Decl &D);
+  void visit(VarDecl &D);
+  void visit(FunDecl &D);
+  void visit(StructDecl &D);
+
   using InferRes = std::pair<Substitution, Monotype>;
 
+  InferRes visit(Stmt &S);
   InferRes visit(ReturnStmt &S);
   InferRes visit(DeferStmt &S);
   InferRes visit(ForStmt &S);
@@ -48,8 +54,8 @@ public:
   InferRes visit(UnaryOp &E);
   InferRes visit(StructInitExpr &E);
   InferRes visit(FieldInitExpr &E);
-  InferRes visit(MemberAccessExpr &E);
-  InferRes visit(MemberFunCallExpr &E);
+  InferRes visit(FieldAccessExpr &E);
+  InferRes visit(MethodCallExpr &E);
 
 private:
   std::vector<std::unique_ptr<Decl>> Ast;
@@ -75,10 +81,6 @@ private:
 
   // main passes
   void predeclare();
-  void inferDecl(Decl &D);
-  void inferVarDecl(VarDecl &D);
-  void inferFunDecl(FunDecl &D);
-  void inferStructDecl(StructDecl &D);
 
   // statements / blocks
   InferRes inferBlock(Block &B);

@@ -1,12 +1,15 @@
 #include "Driver/Driver.hpp"
 
+#include <cstdlib>
+
+#include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "CodeGen/CodeGen.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
 #include "Sema/NameResolver.hpp"
+#include "Sema/TypeChecker.hpp"
 #include "Sema/TypeInference/Infer.hpp"
-#include <cstdlib>
 
 namespace phi {
 
@@ -31,12 +34,14 @@ bool PhiCompiler::compile() {
   auto [Success, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
   auto ResolvedTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
-  for (auto &D : ResolvedTypes) {
+  auto [S, A] = TypeChecker(std::move(ResolvedTypes)).check();
+
+  for (auto &D : A) {
     D->emit(0);
   }
 
   // Code Generation
-  phi::CodeGen codegen(std::move(ResolvedTypes), Path);
+  phi::CodeGen codegen(std::move(A), Path);
   codegen.generate();
 
   // Output IR to file

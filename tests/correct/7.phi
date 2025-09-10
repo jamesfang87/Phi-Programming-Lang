@@ -1,3 +1,5 @@
+fun println(const msg: i64) {}
+
 struct Person {
     public name: string;
     age: i64;
@@ -35,4 +37,5 @@ fun main() {
 
     const str = me.name;
     const res = me.age_gap(17);
+    println(res);
 }

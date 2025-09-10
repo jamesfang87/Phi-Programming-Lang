@@ -32,10 +32,8 @@ void CodeGen::ensurePrintfDeclared() {
 }
 
 void CodeGen::generate() {
-  // Precreate struct layouts so functions can reference them
-  for (auto &D : AstList)
-    if (auto *SD = llvm::dyn_cast<StructDecl>(D.get()))
-      createStructLayout(SD);
+  declareStructs();
+  defineStructBodies();
 
   ensurePrintfDeclared();
 
@@ -43,25 +41,13 @@ void CodeGen::generate() {
   for (auto &D : AstList) {
     if (!D)
       continue;
+
     if (auto *FD = llvm::dyn_cast<FunDecl>(D.get())) {
       if (FD->getId() == "println")
         continue;
       visit(*FD);
-    } else if (auto *VD = llvm::dyn_cast<VarDecl>(D.get())) {
-      llvm::Type *GTy = VD->getType().toLLVM(Context);
-      auto *Gv = new llvm::GlobalVariable(Module, GTy, false,
-                                          llvm::GlobalValue::ExternalLinkage,
-                                          nullptr, VD->getId());
-      if (VD->hasInit()) {
-        llvm::Value *Init = evaluateExprUsingVisit(VD->getInit());
-        if (Init && llvm::isa<llvm::Constant>(Init))
-          Gv->setInitializer(llvm::cast<llvm::Constant>(Init));
-      }
-      DeclMap[VD] = Gv;
     } else if (auto *SD = llvm::dyn_cast<StructDecl>(D.get())) {
       visit(*SD);
-    } else {
-      // struct layouts already created above
     }
   }
 }
@@ -95,21 +81,13 @@ void CodeGen::createStructLayout(StructDecl *S) {
   StructTypeMap[S] = ST;
 }
 
-StructDecl *CodeGen::findContainingStruct(const FieldDecl *F) {
-  for (auto &D : AstList)
-    if (auto *SD = llvm::dyn_cast<StructDecl>(D.get()))
-      for (auto &Fp : SD->getFields())
-        if (Fp.get() == F)
-          return SD;
-  return nullptr;
-}
-
 llvm::Value *CodeGen::computeMemberPointer(llvm::Value *BasePtr,
                                            const FieldDecl *Field) {
   if (!BasePtr)
     throw std::runtime_error("member base is null");
 
-  StructDecl *Parent = findContainingStruct(Field);
+  const StructDecl *Parent = Field->getParent();
+
   if (!Parent)
     throw std::runtime_error("member parent not found");
 
@@ -142,11 +120,11 @@ llvm::Value *CodeGen::getAddressOf(Expr *E) {
   }
 
   // For member access, recursively get the address and compute member pointer
-  if (auto *MemberAccess = llvm::dyn_cast<MemberAccessExpr>(E)) {
+  if (auto *MemberAccess = llvm::dyn_cast<FieldAccessExpr>(E)) {
     llvm::Value *BasePtr = getAddressOf(MemberAccess->getBase());
     if (!BasePtr)
       return nullptr;
-    return computeMemberPointer(BasePtr, &MemberAccess->getField());
+    return computeMemberPointer(BasePtr, MemberAccess->getField());
   }
 
   // For other expressions, fall back to normal evaluation

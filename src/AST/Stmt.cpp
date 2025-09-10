@@ -8,23 +8,142 @@
 #include "AST/Expr.hpp"
 #include "CodeGen/CodeGen.hpp"
 #include "Sema/NameResolver.hpp"
+#include "Sema/TypeChecker.hpp"
 #include "Sema/TypeInference/Infer.hpp"
 
 namespace {
+
+//===----------------------------------------------------------------------===//
+// Utility Functions
+//===----------------------------------------------------------------------===//
+
+/// Generates indentation string for AST dumping
 std::string indent(int Level) { return std::string(Level * 2, ' '); }
-} // namespace
+
+} // anonymous namespace
 
 namespace phi {
 
-//======================== Control Flow Statements =========================//
+//===----------------------------------------------------------------------===//
+// Block Implementation
+//===----------------------------------------------------------------------===//
 
-// IfStmt
+// Utility Methods
+void Block::emit(int Level) const {
+  std::println("{}Block", indent(Level));
+  for (auto &s : Stmts)
+    s->emit(Level + 1);
+}
+
+//===----------------------------------------------------------------------===//
+// ReturnStmt Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
+ReturnStmt::ReturnStmt(SrcLocation Location, std::unique_ptr<Expr> ReturnExpr)
+    : Stmt(Kind::ReturnStmtKind, std::move(Location)),
+      ReturnExpr(std::move(ReturnExpr)) {}
+
+ReturnStmt::~ReturnStmt() = default;
+
+// Visitor Methods
+bool ReturnStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes ReturnStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool ReturnStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void ReturnStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
+void ReturnStmt::emit(int Level) const {
+  std::println("{}ReturnStmt", indent(Level));
+  if (ReturnExpr)
+    ReturnExpr->emit(Level + 1);
+}
+
+//===----------------------------------------------------------------------===//
+// DeferStmt Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
+DeferStmt::DeferStmt(SrcLocation Location, std::unique_ptr<Expr> DeferredExpr)
+    : Stmt(Kind::DeferStmtKind, std::move(Location)),
+      DeferredExpr(std::move(DeferredExpr)) {}
+
+DeferStmt::~DeferStmt() = default;
+
+// Visitor Methods
+bool DeferStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes DeferStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool DeferStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void DeferStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
+void DeferStmt::emit(int Level) const {
+  std::println("{}DeferStmt", indent(Level));
+  if (DeferredExpr)
+    DeferredExpr->emit(Level + 1);
+}
+
+//===----------------------------------------------------------------------===//
+// BreakStmt Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
+BreakStmt::BreakStmt(SrcLocation Location)
+    : Stmt(Stmt::Kind::BreakStmtKind, std::move(Location)) {}
+
+BreakStmt::~BreakStmt() = default;
+
+// Visitor Methods
+bool BreakStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes BreakStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool BreakStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void BreakStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
+void BreakStmt::emit(int Level) const {
+  std::println("{}BreakStmt", indent(Level));
+}
+
+//===----------------------------------------------------------------------===//
+// ContinueStmt Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
+ContinueStmt::ContinueStmt(SrcLocation Location)
+    : Stmt(Stmt::Kind::ContinueStmtKind, std::move(Location)) {}
+
+ContinueStmt::~ContinueStmt() = default;
+
+// Visitor Methods
+bool ContinueStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes ContinueStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool ContinueStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void ContinueStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
+void ContinueStmt::emit(int Level) const {
+  std::println("{}ContinueStmt", indent(Level));
+}
+
+//===----------------------------------------------------------------------===//
+// IfStmt Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
 IfStmt::IfStmt(SrcLocation Location, std::unique_ptr<Expr> Cond,
                std::unique_ptr<Block> ThenBody, std::unique_ptr<Block> ElseBody)
     : Stmt(Stmt::Kind::IfStmtKind, std::move(Location)), Cond(std::move(Cond)),
       ThenBody(std::move(ThenBody)), ElseBody(std::move(ElseBody)) {}
+
 IfStmt::~IfStmt() = default;
 
+// Visitor Methods
+bool IfStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes IfStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool IfStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void IfStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
 void IfStmt::emit(int Level) const {
   std::println("{}IfStmt", indent(Level));
   if (Cond)
@@ -35,17 +154,25 @@ void IfStmt::emit(int Level) const {
     ElseBody->emit(Level + 1);
 }
 
-bool IfStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes IfStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void IfStmt::accept(CodeGen &G) { return G.visit(*this); }
+//===----------------------------------------------------------------------===//
+// WhileStmt Implementation
+//===----------------------------------------------------------------------===//
 
-// WhileStmt
+// Constructors & Destructors
 WhileStmt::WhileStmt(SrcLocation Location, std::unique_ptr<Expr> Cond,
                      std::unique_ptr<Block> Body)
     : Stmt(Stmt::Kind::WhileStmtKind, std::move(Location)),
       Cond(std::move(Cond)), Body(std::move(Body)) {}
+
 WhileStmt::~WhileStmt() = default;
 
+// Visitor Methods
+bool WhileStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes WhileStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool WhileStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void WhileStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
 void WhileStmt::emit(int Level) const {
   std::println("{}WhileStmt", indent(Level));
   if (Cond)
@@ -54,18 +181,26 @@ void WhileStmt::emit(int Level) const {
     Body->emit(Level + 1);
 }
 
-bool WhileStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes WhileStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void WhileStmt::accept(CodeGen &G) { return G.visit(*this); }
+//===----------------------------------------------------------------------===//
+// ForStmt Implementation
+//===----------------------------------------------------------------------===//
 
-// ForStmt
+// Constructors & Destructors
 ForStmt::ForStmt(SrcLocation Location, std::unique_ptr<VarDecl> LoopVar,
                  std::unique_ptr<Expr> Range, std::unique_ptr<Block> Body)
     : Stmt(Stmt::Kind::ForStmtKind, std::move(Location)),
       LoopVar(std::move(LoopVar)), Range(std::move(Range)),
       Body(std::move(Body)) {}
+
 ForStmt::~ForStmt() = default;
 
+// Visitor Methods
+bool ForStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes ForStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool ForStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void ForStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
 void ForStmt::emit(int Level) const {
   std::println("{}ForStmt", indent(Level));
   if (LoopVar)
@@ -76,107 +211,52 @@ void ForStmt::emit(int Level) const {
     Body->emit(Level + 1);
 }
 
-bool ForStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes ForStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void ForStmt::accept(CodeGen &G) { return G.visit(*this); }
+//===----------------------------------------------------------------------===//
+// DeclStmt Implementation
+//===----------------------------------------------------------------------===//
 
-// BreakStmt
-BreakStmt::BreakStmt(SrcLocation Location)
-    : Stmt(Stmt::Kind::BreakStmtKind, std::move(Location)) {}
-BreakStmt::~BreakStmt() = default;
-
-void BreakStmt::emit(int Level) const {
-  std::println("{}BreakStmt", indent(Level));
-}
-
-bool BreakStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes BreakStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void BreakStmt::accept(CodeGen &G) { return G.visit(*this); }
-
-// ContinueStmt
-ContinueStmt::ContinueStmt(SrcLocation Location)
-    : Stmt(Stmt::Kind::ContinueStmtKind, std::move(Location)) {}
-ContinueStmt::~ContinueStmt() = default;
-
-void ContinueStmt::emit(int Level) const {
-  std::println("{}ContinueStmt", indent(Level));
-}
-
-bool ContinueStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes ContinueStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void ContinueStmt::accept(CodeGen &G) { return G.visit(*this); }
-
-//======================== Declarations and Return =========================//
-
-// ReturnStmt
-ReturnStmt::ReturnStmt(SrcLocation Location, std::unique_ptr<Expr> ReturnExpr)
-    : Stmt(Kind::ReturnStmtKind, std::move(Location)),
-      ReturnExpr(std::move(ReturnExpr)) {}
-ReturnStmt::~ReturnStmt() = default;
-
-void ReturnStmt::emit(int Level) const {
-  std::println("{}ReturnStmt", indent(Level));
-  if (ReturnExpr)
-    ReturnExpr->emit(Level + 1);
-}
-
-bool ReturnStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes ReturnStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void ReturnStmt::accept(CodeGen &G) { return G.visit(*this); }
-
-// DeferStmt
-DeferStmt::DeferStmt(SrcLocation Location, std::unique_ptr<Expr> DeferredExpr)
-    : Stmt(Kind::DeferStmtKind, std::move(Location)),
-      DeferredExpr(std::move(DeferredExpr)) {}
-DeferStmt::~DeferStmt() = default;
-
-void DeferStmt::emit(int Level) const {
-  std::println("{}DeferStmt", indent(Level));
-  if (DeferredExpr)
-    DeferredExpr->emit(Level + 1);
-}
-
-bool DeferStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes DeferStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void DeferStmt::accept(CodeGen &G) { return G.visit(*this); }
-
-// DeclStmt
+// Constructors & Destructors
 DeclStmt::DeclStmt(SrcLocation Location, std::unique_ptr<VarDecl> Var)
     : Stmt(Stmt::Kind::DeclStmtKind, std::move(Location)), Var(std::move(Var)) {
 }
+
 DeclStmt::~DeclStmt() = default;
 
+// Visitor Methods
+bool DeclStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes DeclStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool DeclStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void DeclStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
 void DeclStmt::emit(int Level) const {
   std::println("{}VarDeclStmt", indent(Level));
   if (Var)
     Var->emit(Level + 1);
 }
 
-bool DeclStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes DeclStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void DeclStmt::accept(CodeGen &G) { return G.visit(*this); }
+//===----------------------------------------------------------------------===//
+// ExprStmt Implementation
+//===----------------------------------------------------------------------===//
 
-// ExprStmt
+// Constructors & Destructors
 ExprStmt::ExprStmt(SrcLocation Location, std::unique_ptr<Expr> Expression)
     : Stmt(Stmt::Kind::ExprStmtKind, std::move(Location)),
       Expression(std::move(Expression)) {}
+
 ExprStmt::~ExprStmt() = default;
 
+// Visitor Methods
+bool ExprStmt::accept(NameResolver &R) { return R.visit(*this); }
+InferRes ExprStmt::accept(TypeInferencer &I) { return I.visit(*this); }
+bool ExprStmt::accept(TypeChecker &C) { return C.visit(*this); }
+void ExprStmt::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
 void ExprStmt::emit(int Level) const {
   std::println("{}ExprStmt", indent(Level));
   if (Expression)
     Expression->emit(Level + 1);
-}
-
-bool ExprStmt::accept(NameResolver &R) { return R.visit(*this); }
-InferRes ExprStmt::accept(TypeInferencer &I) { return I.visit(*this); }
-void ExprStmt::accept(CodeGen &G) { return G.visit(*this); }
-
-//======================== Block Implementation =========================//
-void Block::emit(int Level) const {
-  std::println("{}Block", indent(Level));
-  for (auto &s : Stmts)
-    s->emit(Level + 1);
 }
 
 } // namespace phi

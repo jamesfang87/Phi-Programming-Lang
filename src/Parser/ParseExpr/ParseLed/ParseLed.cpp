@@ -79,16 +79,39 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
       return nullptr;
 
     if (auto Member = llvm::dyn_cast<DeclRefExpr>(Rhs.get())) {
-      return std::make_unique<MemberAccessExpr>(
-          Member->getLocation(), std::move(Lhs), Member->getId());
+      return std::make_unique<FieldAccessExpr>(Member->getLocation(),
+                                               std::move(Lhs), Member->getId());
     }
 
     if (auto FunCall = llvm::dyn_cast<FunCallExpr>(Rhs.get())) {
-      // Transfer ownership of the FunCallExpr from rhs to the MemberFunCallExpr
-      auto Temp = std::unique_ptr<FunCallExpr>(
-          static_cast<FunCallExpr *>(Rhs.release()));
-      return std::make_unique<MemberFunCallExpr>(
-          FunCall->getLocation(), std::move(Lhs), std::move(Temp));
+      // Extract components from the FunCallExpr
+      auto Location = FunCall->getLocation();
+
+      // Release the FunCallExpr and extract its components
+      auto *RawFunCall = static_cast<FunCallExpr *>(Rhs.release());
+
+      // Move the args out of the FunCallExpr
+      auto Args = std::move(RawFunCall->getArgs());
+
+      // Create a new DeclRefExpr for the callee (method name)
+      // The callee should be a DeclRefExpr for the method name
+      std::unique_ptr<Expr> CalleePtr;
+      if (auto *DeclRef =
+              llvm::dyn_cast<DeclRefExpr>(&RawFunCall->getCallee())) {
+        CalleePtr = std::make_unique<DeclRefExpr>(DeclRef->getLocation(),
+                                                  DeclRef->getId());
+      } else {
+        // If callee is not a simple DeclRefExpr, we need to handle it
+        // differently For now, create a copy - this might need refinement based
+        // on actual usage
+        delete RawFunCall;
+        return nullptr;
+      }
+
+      delete RawFunCall;
+
+      return std::make_unique<MethodCallExpr>(
+          Location, std::move(Lhs), std::move(CalleePtr), std::move(Args));
     }
 
     return std::make_unique<BinaryOp>(std::move(Lhs), std::move(Rhs), Op);
