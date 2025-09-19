@@ -2,8 +2,18 @@
 
 using namespace phi;
 
+void CodeGen::declarePrint() {
+  if (PrintFun)
+    return;
+  llvm::Type *I8Ptr = llvm::PointerType::get(Builder.getInt8Ty(), 0);
+  llvm::FunctionType *FT =
+      llvm::FunctionType::get(Builder.getInt32Ty(), {I8Ptr}, true);
+  PrintFun = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                    "printf", &Module);
+}
+
 llvm::Value *CodeGen::generatePrintlnBridge(FunCallExpr &Call) {
-  ensurePrintfDeclared();
+  declarePrint();
 
   std::vector<llvm::Value *> Args;
   if (Call.getArgs().empty()) {
@@ -37,5 +47,5 @@ llvm::Value *CodeGen::generatePrintlnBridge(FunCallExpr &Call) {
       Args.push_back(Call.getArgs()[I]->accept(*this));
   }
 
-  return Builder.CreateCall(PrintfFn, Args);
+  return Builder.CreateCall(PrintFun, Args);
 }

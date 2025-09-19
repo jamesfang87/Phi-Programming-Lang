@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,6 +17,7 @@ namespace phi {
 class Expr;
 class TypeInferencer;
 class TypeChecker;
+class CodeGen;
 
 //===----------------------------------------------------------------------===//
 // Decl - Base class for all declarations
@@ -48,6 +50,7 @@ public:
   [[nodiscard]] Kind getKind() const { return DeclKind; }
   [[nodiscard]] SrcLocation getLocation() const { return Location; }
   [[nodiscard]] const std::string &getId() const { return Id; }
+  [[nodiscard]] virtual Type getType() const = 0;
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
@@ -55,6 +58,7 @@ public:
 
   virtual void accept(TypeInferencer &I) = 0;
   virtual bool accept(TypeChecker &C) = 0;
+  virtual void accept(CodeGen &G) = 0;
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
@@ -86,7 +90,7 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] Type getType() const { return *DeclType; }
+  [[nodiscard]] Type getType() const override { return *DeclType; }
 
   //===--------------------------------------------------------------------===//
   // Setters
@@ -137,7 +141,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   void accept(TypeInferencer &I) override;
-  bool accept(TypeChecker &I) override;
+  bool accept(TypeChecker &C) override;
+  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -182,7 +187,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   void accept(TypeInferencer &I) override;
-  bool accept(TypeChecker &I) override;
+  bool accept(TypeChecker &C) override;
+  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -211,7 +217,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   FieldDecl(SrcLocation Loc, std::string Id, Type DeclType,
-            std::unique_ptr<Expr> Init, bool IsPrivate);
+            std::unique_ptr<Expr> Init, bool IsPrivate, uint32_t Index);
   ~FieldDecl() override;
 
   //===--------------------------------------------------------------------===//
@@ -220,6 +226,7 @@ public:
 
   [[nodiscard]] Expr &getInit() const { return *Init; }
   [[nodiscard]] const class StructDecl *getParent() const { return Parent; }
+  [[nodiscard]] uint32_t getIndex() const { return Index; }
 
   //===--------------------------------------------------------------------===//
   // Setters
@@ -240,7 +247,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   void accept(TypeInferencer &I) override;
-  bool accept(TypeChecker &I) override;
+  bool accept(TypeChecker &C) override;
+  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -258,6 +266,7 @@ private:
   bool IsPrivate;
   std::unique_ptr<Expr> Init;
   class StructDecl *Parent = nullptr;
+  uint32_t Index;
 };
 
 //===----------------------------------------------------------------------===//
@@ -298,7 +307,7 @@ public:
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
-
+  [[nodiscard]] Type getType() const override { return FunType; }
   [[nodiscard]] const Type &getFunType() const { return FunType; }
   [[nodiscard]] const Type &getReturnTy() const { return ReturnType; }
   [[nodiscard]] auto &getParams() { return Params; }
@@ -316,7 +325,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   void accept(TypeInferencer &I) override;
-  bool accept(TypeChecker &I) override;
+  bool accept(TypeChecker &C) override;
+  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -385,7 +395,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   void accept(TypeInferencer &I) override;
-  bool accept(TypeChecker &I) override;
+  bool accept(TypeChecker &C) override;
+  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -418,10 +429,8 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] Type getType() const { return DeclType; }
-  [[nodiscard]] std::vector<std::unique_ptr<FieldDecl>> &getFields() {
-    return Fields;
-  }
+  [[nodiscard]] Type getType() const override { return DeclType; }
+  [[nodiscard]] auto &getFields() { return Fields; }
   [[nodiscard]] std::vector<MethodDecl> &getMethods() { return Methods; }
 
   [[nodiscard]] FieldDecl *getField(const std::string &Id) {
@@ -439,7 +448,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   void accept(TypeInferencer &I) override;
-  bool accept(TypeChecker &I) override;
+  bool accept(TypeChecker &C) override;
+  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI

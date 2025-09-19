@@ -1,9 +1,12 @@
 #include "AST/Decl.hpp"
 
+#include <cstdint>
 #include <print>
 #include <string>
+#include <vector>
 
 #include "AST/Expr.hpp"
+#include "CodeGen/CodeGen.hpp"
 #include "Sema/TypeChecker.hpp"
 #include "Sema/TypeInference/Infer.hpp"
 
@@ -38,6 +41,7 @@ VarDecl::~VarDecl() = default;
 // Visitor Methods
 void VarDecl::accept(TypeInferencer &I) { I.visit(*this); }
 bool VarDecl::accept(TypeChecker &C) { return C.visit(*this); }
+void VarDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void VarDecl::emit(int Level) const {
@@ -57,6 +61,7 @@ void VarDecl::emit(int Level) const {
 // Visitor Methods
 void ParamDecl::accept(TypeInferencer &I) { I.visit(*this); }
 bool ParamDecl::accept(TypeChecker &C) { return C.visit(*this); }
+void ParamDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void ParamDecl::emit(int Level) const {
@@ -71,16 +76,17 @@ void ParamDecl::emit(int Level) const {
 
 // Constructors & Destructors
 FieldDecl::FieldDecl(SrcLocation Loc, std::string Id, Type DeclType,
-                     std::unique_ptr<Expr> Init, bool IsPrivate)
+                     std::unique_ptr<Expr> Init, bool IsPrivate, uint32_t Index)
     : ValueDecl(Kind::FieldDecl, std::move(Loc), std::move(Id),
                 std::move(DeclType)),
-      IsPrivate(IsPrivate), Init(std::move(Init)) {}
+      IsPrivate(IsPrivate), Init(std::move(Init)), Index(Index) {}
 
 FieldDecl::~FieldDecl() = default;
 
 // Visitor Methods
 void FieldDecl::accept(TypeInferencer &I) { I.visit(*this); }
 bool FieldDecl::accept(TypeChecker &C) { return C.visit(*this); }
+void FieldDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void FieldDecl::emit(int Level) const {
@@ -98,6 +104,7 @@ void FieldDecl::emit(int Level) const {
 // Visitor Methods
 void FunDecl::accept(TypeInferencer &I) { I.visit(*this); }
 bool FunDecl::accept(TypeChecker &C) { return C.visit(*this); }
+void FunDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void FunDecl::emit(int Level) const {
@@ -118,6 +125,7 @@ void FunDecl::emit(int Level) const {
 // Visitor Methods
 void MethodDecl::accept(TypeInferencer &I) { I.visit(*this); }
 bool MethodDecl::accept(TypeChecker &C) { return C.visit(*this); }
+void MethodDecl::accept(CodeGen &G) { G.visit(*this); }
 
 //===----------------------------------------------------------------------===//
 // StructDecl Implementation
@@ -130,9 +138,11 @@ StructDecl::StructDecl(SrcLocation Loc, std::string Id,
     : Decl(Kind::StructDecl, Loc, Id),
       DeclType(Type::makeCustom(std::move(Id), std::move(Loc))),
       Fields(std::move(Fields)), Methods(std::move(Methods)) {
+  std::vector<Type> ContainedTypes;
   for (auto &Field : this->Fields) {
     FieldMap[Field->getId()] = Field.get();
     Field->setParent(this);
+    ContainedTypes.push_back(Field->getType());
   }
 
   for (auto &Method : this->Methods) {
@@ -144,6 +154,7 @@ StructDecl::StructDecl(SrcLocation Loc, std::string Id,
 // Visitor Methods
 void StructDecl::accept(TypeInferencer &I) { I.visit(*this); }
 bool StructDecl::accept(TypeChecker &C) { return C.visit(*this); }
+void StructDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void StructDecl::emit(int Level) const {

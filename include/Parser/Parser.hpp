@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -60,7 +61,7 @@ private:
   std::vector<std::string_view> Lines;
   std::vector<Token> &Tokens;
   std::vector<Token>::iterator TokenIt;
-  std::vector<std::unique_ptr<Decl>> TopLvlDecls;
+  std::vector<std::unique_ptr<Decl>> Ast;
   std::shared_ptr<DiagnosticManager> DiagnosticsMan;
 
   bool NoStructInit = false;
@@ -189,7 +190,7 @@ private:
    *         Errors are reported through the DiagnosticManager
    */
   std::unique_ptr<StructDecl> parseStructDecl();
-  std::unique_ptr<FieldDecl> parseFieldDecl();
+  std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
   std::optional<MethodDecl> parseStructMethodDecl();
 
   // FUNCTION DECLARATION PARSING

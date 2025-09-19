@@ -25,7 +25,7 @@ bool NameResolver::visit(StructDecl *S) {
   }
 
   for (auto &Method : S->getMethods()) {
-    CurFun = llvm::dyn_cast<FunDecl>(&Method);
+    CurrentFun = llvm::dyn_cast<FunDecl>(&Method);
 
     // Create function scope
     SymbolTable::ScopeGuard FunctionScope(SymbolTab);

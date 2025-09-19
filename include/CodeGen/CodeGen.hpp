@@ -15,13 +15,13 @@
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
+#include "llvm/IR/BasicBlock.h"
 
 namespace phi {
 
 class CodeGen {
 public:
-  CodeGen(std::vector<std::unique_ptr<Decl>> Ast, std::string_view SourcePath,
-          std::string_view TargetTriple = "");
+  CodeGen(std::vector<std::unique_ptr<Decl>> Ast, std::string_view SourcePath);
 
   // pipeline
   void generate();
@@ -45,6 +45,7 @@ public:
   llvm::Value *visit(MethodCallExpr &E);
 
   // Statement visitors -> emit code, return void
+  void visit(Stmt &S);
   void visit(ReturnStmt &S);
   void visit(DeferStmt &S);
   void visit(IfStmt &S);
@@ -54,8 +55,10 @@ public:
   void visit(BreakStmt &S);
   void visit(ContinueStmt &S);
   void visit(ExprStmt &S);
+  void visit(Block &B);
 
   // Declaration visitors
+  void visit(Decl &D);
   void visit(FunDecl &D);
   void visit(ParamDecl &D);
   void visit(StructDecl &D);
@@ -63,23 +66,32 @@ public:
   void visit(VarDecl &D);
 
 private:
-  std::vector<std::unique_ptr<Decl>> AstList;
+  std::vector<std::unique_ptr<Decl>> Ast;
 
   llvm::LLVMContext Context;
   llvm::IRBuilder<> Builder;
   llvm::Module Module;
 
-  // Decl -> alloca / global / function
+  llvm::Function *CurrentFun = nullptr;
+  llvm::Instruction *AllocaInsertPoint;
   std::unordered_map<Decl *, llvm::Value *> DeclMap;
 
-  // Printf bridging
-  llvm::Function *PrintfFn = nullptr;
+  void declareHeader(StructDecl &D);
+  void declareHeader(FunDecl &D);
 
-  // Defer support
-  llvm::Function *CurrentFunction = nullptr;
-  std::unordered_map<llvm::Function *, llvm::BasicBlock *> CleanupBlockMap;
-  std::unordered_map<llvm::Function *, llvm::AllocaInst *> ReturnAllocaMap;
-  std::unordered_map<llvm::Function *, std::vector<Stmt *>> DeferMap;
+  /* ------- Allocate, Load, and Store operations ------- */
+  llvm::AllocaInst *stackAlloca(Decl &D);
+  llvm::Value *load(llvm::Value *Val, const Type &T);
+  llvm::Value *store(llvm::Value *Val, llvm::Value *Destination, const Type &T);
+  /* ---------------------------------------------------- */
+
+  llvm::Function *PrintFun = nullptr;
+  void declarePrint();
+  llvm::Value *generatePrintlnBridge(FunCallExpr &Call);
+
+  void generateMainWrapper();
+
+  void breakIntoBB(llvm::BasicBlock *Target);
 
   // Loop context
   struct LoopContext {
@@ -87,27 +99,6 @@ private:
     llvm::BasicBlock *ContinueTarget;
   };
   std::vector<LoopContext> LoopStack;
-
-  // Structs
-  std::unordered_map<const StructDecl *, llvm::StructType *> StructTypeMap;
-  std::unordered_map<const FieldDecl *, unsigned> FieldIndexMap;
-
-  void declareStructs();
-  void defineStructBodies();
-
-  // helpers
-  void ensurePrintfDeclared();
-  llvm::Value *generatePrintlnBridge(FunCallExpr &Call);
-  llvm::Value *getAllocaForDecl(Decl *D);
-  void createStructLayout(StructDecl *S);
-  llvm::Value *computeMemberPointer(llvm::Value *BasePtr,
-                                    const FieldDecl *Field);
-  llvm::Value *getAddressOf(Expr *E);
-
-  // defer helpers
-  llvm::AllocaInst *ensureReturnAllocaForCurrentFunction(llvm::Type *RetTy);
-  void recordDeferForCurrentFunction(Stmt *S);
-  void emitDeferredForFunction(llvm::Function *F);
 };
 
 } // namespace phi
