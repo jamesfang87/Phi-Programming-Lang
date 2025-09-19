@@ -28,7 +28,7 @@ bool NameResolver::resolveHeader(StructDecl &D) {
 }
 
 bool NameResolver::resolveHeader(FunDecl &D) {
-  bool Success = resolveType(D.getReturnTy());
+  bool Success = visit(D.getReturnTy());
 
   // Resolve parameters
   for (const auto &Param : D.getParams()) {

@@ -19,15 +19,32 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// CodeGen - LLVM IR code generation for Phi AST
+//===----------------------------------------------------------------------===//
+
 class CodeGen {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   CodeGen(std::vector<std::unique_ptr<Decl>> Ast, std::string_view SourcePath);
 
-  // pipeline
+  //===--------------------------------------------------------------------===//
+  // Main Pipeline Methods
+  //===--------------------------------------------------------------------===//
+
+  /// Generate LLVM IR from the AST
   void generate();
+
+  /// Output the generated IR to a file
   void outputIR(const std::string &Filename);
 
-  // Expression visitors -> return llvm::Value*
+  //===--------------------------------------------------------------------===//
+  // Expression Visitor Methods -> return llvm::Value*
+  //===--------------------------------------------------------------------===//
+
   llvm::Value *visit(Expr &E);
   llvm::Value *visit(IntLiteral &E);
   llvm::Value *visit(FloatLiteral &E);
@@ -44,7 +61,10 @@ public:
   llvm::Value *visit(FieldAccessExpr &E);
   llvm::Value *visit(MethodCallExpr &E);
 
-  // Statement visitors -> emit code, return void
+  //===--------------------------------------------------------------------===//
+  // Statement Visitor Methods -> emit code, return void
+  //===--------------------------------------------------------------------===//
+
   void visit(Stmt &S);
   void visit(ReturnStmt &S);
   void visit(DeferStmt &S);
@@ -57,7 +77,10 @@ public:
   void visit(ExprStmt &S);
   void visit(Block &B);
 
-  // Declaration visitors
+  //===--------------------------------------------------------------------===//
+  // Declaration Visitor Methods
+  //===--------------------------------------------------------------------===//
+
   void visit(Decl &D);
   void visit(FunDecl &D);
   void visit(ParamDecl &D);
@@ -66,6 +89,10 @@ public:
   void visit(VarDecl &D);
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   std::vector<std::unique_ptr<Decl>> Ast;
 
   llvm::LLVMContext Context;
@@ -76,24 +103,40 @@ private:
   llvm::Instruction *AllocaInsertPoint;
   std::unordered_map<Decl *, llvm::Value *> DeclMap;
 
+  //===--------------------------------------------------------------------===//
+  // Declaration Helper Methods
+  //===--------------------------------------------------------------------===//
+
   void declareHeader(StructDecl &D);
   void declareHeader(FunDecl &D);
 
-  /* ------- Allocate, Load, and Store operations ------- */
+  //===--------------------------------------------------------------------===//
+  // Memory Management Operations
+  //===--------------------------------------------------------------------===//
+
   llvm::AllocaInst *stackAlloca(Decl &D);
   llvm::Value *load(llvm::Value *Val, const Type &T);
   llvm::Value *store(llvm::Value *Val, llvm::Value *Destination, const Type &T);
-  /* ---------------------------------------------------- */
+
+  //===--------------------------------------------------------------------===//
+  // Built-in Function Support
+  //===--------------------------------------------------------------------===//
 
   llvm::Function *PrintFun = nullptr;
   void declarePrint();
   llvm::Value *generatePrintlnBridge(FunCallExpr &Call);
 
-  void generateMainWrapper();
+  //===--------------------------------------------------------------------===//
+  // Code Generation Utilities
+  //===--------------------------------------------------------------------===//
 
+  void generateMainWrapper();
   void breakIntoBB(llvm::BasicBlock *Target);
 
-  // Loop context
+  //===--------------------------------------------------------------------===//
+  // Loop Context Management
+  //===--------------------------------------------------------------------===//
+
   struct LoopContext {
     llvm::BasicBlock *BreakTarget;
     llvm::BasicBlock *ContinueTarget;

@@ -9,6 +9,10 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// SymbolTable - Symbol table implementation for semantic analysis
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Symbol table implementation for semantic analysis
  *
@@ -20,6 +24,10 @@ namespace phi {
  */
 class SymbolTable {
 public:
+  //===--------------------------------------------------------------------===//
+  // ScopeGuard - RAII scope management helper
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief RAII scope management helper for automatic scope handling
    *
@@ -29,8 +37,6 @@ public:
    * resource management and prevents scope leaks.
    */
   class ScopeGuard {
-    SymbolTable &SymbolTab; ///< Reference to the parent symbol table
-
   public:
     /**
      * @brief Constructs a ScopeGuard and enters a new scope
@@ -45,7 +51,14 @@ public:
     ScopeGuard &operator=(const ScopeGuard &) = delete;
     ScopeGuard(ScopeGuard &&) = delete;
     ScopeGuard &operator=(ScopeGuard &&) = delete;
+
+  private:
+    SymbolTable &SymbolTab; ///< Reference to the parent symbol table
   };
+
+  //===--------------------------------------------------------------------===//
+  // Scope Structure Definition
+  //===--------------------------------------------------------------------===//
 
   struct Scope {
     std::unordered_map<std::string, ValueDecl *> Vars;
@@ -53,11 +66,19 @@ public:
     std::unordered_map<std::string, StructDecl *> Structs;
   };
 
+  //===--------------------------------------------------------------------===//
+  // Declaration Insertion Methods
+  //===--------------------------------------------------------------------===//
+
   bool insert(FunDecl *Fun);
   bool insert(StructDecl *Struct);
   bool insert(VarDecl *Var);
   bool insert(ParamDecl *Param);
   bool insert(FieldDecl *Field);
+
+  //===--------------------------------------------------------------------===//
+  // Symbol Lookup Methods
+  //===--------------------------------------------------------------------===//
 
   FunDecl *lookup(FunCallExpr &Fun);
   StructDecl *lookup(const std::string &Struct);
@@ -69,6 +90,10 @@ public:
   ParamDecl *lookup(ParamDecl &Param);
   FieldDecl *lookup(FieldDecl &Field);
 
+  //===--------------------------------------------------------------------===//
+  // Error Recovery & Suggestion Methods
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] FunDecl *getClosestFun(const std::string &Undeclared) const;
   [[nodiscard]] StructDecl *
   getClosestStruct(const std::string &Undeclared) const;
@@ -78,8 +103,16 @@ public:
   getClosestType(const std::string &Undeclared) const;
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   /// Stack of scopes, with the back being the innermost current scope
   std::vector<Scope> Scopes;
+
+  //===--------------------------------------------------------------------===//
+  // Scope Management Methods
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Enters a new scope

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <memory>
 #include <utility>
 #include <vector>
@@ -8,11 +10,27 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// TypeChecker - Semantic analysis and type checking for Phi AST
+//===----------------------------------------------------------------------===//
+
 class TypeChecker {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   TypeChecker(std::vector<std::unique_ptr<Decl>> Ast) : Ast(std::move(Ast)) {}
 
+  //===--------------------------------------------------------------------===//
+  // Main Entry Point
+  //===--------------------------------------------------------------------===//
+
   std::pair<bool, std::vector<std::unique_ptr<Decl>>> check();
+
+  //===--------------------------------------------------------------------===//
+  // Expression Visitor Methods -> return bool (success/failure)
+  //===--------------------------------------------------------------------===//
 
   bool visit(Expr &E);
   bool visit(IntLiteral &E);
@@ -30,6 +48,10 @@ public:
   bool visit(FieldAccessExpr &E);
   bool visit(MethodCallExpr &E);
 
+  //===--------------------------------------------------------------------===//
+  // Statement Visitor Methods -> return bool (success/failure)
+  //===--------------------------------------------------------------------===//
+
   bool visit(Stmt &S);
   bool visit(ReturnStmt &S);
   bool visit(DeferStmt &S);
@@ -42,6 +64,10 @@ public:
   bool visit(ExprStmt &S);
   bool visit(Block &B);
 
+  //===--------------------------------------------------------------------===//
+  // Declaration Visitor Methods -> return bool (success/failure)
+  //===--------------------------------------------------------------------===//
+
   bool visit(Decl &D);
   bool visit(FunDecl &D);
   bool visit(ParamDecl &D);
@@ -51,8 +77,13 @@ public:
   bool visit(VarDecl &D);
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   std::vector<std::unique_ptr<Decl>> Ast;
   std::shared_ptr<DiagnosticManager> Diag;
   FunDecl *CurrentFun = nullptr;
 };
+
 } // namespace phi

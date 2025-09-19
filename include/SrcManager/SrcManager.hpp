@@ -7,6 +7,10 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// SrcManager - Source code manager for diagnostics
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Source code manager for diagnostics
  *
@@ -15,12 +19,20 @@ namespace phi {
  */
 class SrcManager {
 public:
+  //===--------------------------------------------------------------------===//
+  // Source File Management
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Registers source file content
    * @param path File path identifier
    * @param content Source code content
    */
   void addSrcFile(const std::string &Path, std::string_view Content);
+
+  //===--------------------------------------------------------------------===//
+  // Line Access Methods
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Retrieves specific source line
@@ -41,6 +53,10 @@ public:
   [[nodiscard]] std::vector<std::string_view>
   getLines(const std::string &Path, int StartLine, int EndLine) const;
 
+  //===--------------------------------------------------------------------===//
+  // File Statistics
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Gets total lines in file
    * @param path File path
@@ -49,6 +65,11 @@ public:
   [[nodiscard]] int getLineCount(const std::string &Path) const;
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   std::map<std::string, std::vector<std::string_view>> SrcFiles;
 };
+
 } // namespace phi

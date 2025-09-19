@@ -28,9 +28,9 @@ inline Polytype generalize(const TypeEnv &Env, const Monotype &T) {
 
   // Quant = ftv(t) \ ftv(env)
   std::vector<TypeVar> Quant;
-  for (auto &v : MonotypeFTVs)
-    if (!EnvFTVs.contains(v))
-      Quant.push_back(v);
+  for (auto &TypeVar : MonotypeFTVs)
+    if (!EnvFTVs.contains(TypeVar))
+      Quant.push_back(TypeVar);
 
   return {std::move(Quant), T};
 }
