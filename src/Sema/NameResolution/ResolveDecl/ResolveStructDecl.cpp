@@ -8,23 +8,23 @@
 
 namespace phi {
 
-bool NameResolver::visit(StructDecl *S) {
+bool NameResolver::visit(StructDecl *D) {
   SymbolTable::ScopeGuard StructScope(SymbolTab);
-  assert(S);
+  assert(D);
 
   bool Success = true;
 
-  for (auto &Field : S->getFields()) {
+  for (auto &Field : D->getFields()) {
     Success = visit(Field.get()) && Success;
     SymbolTab.insert(Field.get());
   }
 
-  for (auto &Method : S->getMethods()) {
+  for (auto &Method : D->getMethods()) {
     Success = visit(&Method) && Success;
     SymbolTab.insert(&Method);
   }
 
-  for (auto &Method : S->getMethods()) {
+  for (auto &Method : D->getMethods()) {
     CurrentFun = llvm::dyn_cast<FunDecl>(&Method);
 
     // Create function scope
@@ -38,18 +38,18 @@ bool NameResolver::visit(StructDecl *S) {
       }
     }
 
-    Success = resolveBlock(Method.getBody(), true) && Success;
+    Success = visit(Method.getBody(), true) && Success;
   }
 
   return Success;
 }
 
-bool NameResolver::visit(FieldDecl *F) {
-  bool Success = resolveType(F->getType());
+bool NameResolver::visit(FieldDecl *D) {
+  bool Success = visit(D->getType());
 
   // Handle initializer if present
-  if (F->hasInit()) {
-    Success = visit(F->getInit()) && Success;
+  if (D->hasInit()) {
+    Success = visit(D->getInit()) && Success;
   }
 
   return Success;

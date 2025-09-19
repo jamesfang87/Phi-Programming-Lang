@@ -9,6 +9,10 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// DiagnosticConfig - Configuration for diagnostic rendering
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Configuration for diagnostic rendering
  *
@@ -28,6 +32,10 @@ struct DiagnosticConfig {
   std::string tab_replacement = "    "; ///< Tab expansion string
 };
 
+//===----------------------------------------------------------------------===//
+// DiagnosticManager - Diagnostic rendering and management system
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Diagnostic rendering and management system
  *
@@ -42,6 +50,10 @@ struct DiagnosticConfig {
  */
 class DiagnosticManager {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Constructs diagnostic manager
    * @param source_manager Source code access system
@@ -49,6 +61,10 @@ public:
    */
   explicit DiagnosticManager(std::shared_ptr<SrcManager> source_manager,
                              DiagnosticConfig config = DiagnosticConfig());
+
+  //===--------------------------------------------------------------------===//
+  // Main Emission Methods
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Renders and outputs a single diagnostic
@@ -65,6 +81,10 @@ public:
   void emit_all(const std::vector<Diagnostic> &diagnostics,
                 std::ostream &out = std::cerr) const;
 
+  //===--------------------------------------------------------------------===//
+  // Status & Statistics
+  //===--------------------------------------------------------------------===//
+
   /// Gets total error count
   int error_count() const;
 
@@ -77,6 +97,10 @@ public:
   /// Resets error/warning counters
   void reset_counts() const;
 
+  //===--------------------------------------------------------------------===//
+  // Configuration Management
+  //===--------------------------------------------------------------------===//
+
   /// Updates visual configuration
   void set_config(const DiagnosticConfig &config);
 
@@ -84,10 +108,18 @@ public:
   std::shared_ptr<SrcManager> source_manager() const;
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   std::shared_ptr<SrcManager> source_manager_; ///< Source code access
   DiagnosticConfig config_;                    ///< Visual settings
   mutable int error_count_ = 0;                ///< Total errors emitted
   mutable int warning_count_ = 0;              ///< Total warnings emitted
+
+  //===--------------------------------------------------------------------===//
+  // Main Rendering Methods
+  //===--------------------------------------------------------------------===//
 
   /// Main rendering entry point
   void render_diagnostic(const Diagnostic &diagnostic, std::ostream &out) const;
@@ -99,6 +131,10 @@ private:
   /// Renders source code snippets with annotations
   void render_source_snippets(const Diagnostic &diagnostic,
                               std::ostream &out) const;
+
+  //===--------------------------------------------------------------------===//
+  // Source Code Rendering
+  //===--------------------------------------------------------------------===//
 
   /// Renders source file snippet with markers
   void render_file_snippet(const std::string &file_path,
@@ -122,6 +158,10 @@ private:
                                    const DiagnosticLabel &label,
                                    std::ostream &out) const;
 
+  //===--------------------------------------------------------------------===//
+  // Supplementary Information Rendering
+  //===--------------------------------------------------------------------===//
+
   /// Renders supplementary note
   void render_note(const std::string &note, std::ostream &out) const;
 
@@ -131,6 +171,10 @@ private:
   /// Renders code suggestion
   void render_suggestion(const DiagnosticSuggestion &suggestion,
                          std::ostream &out) const;
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
 
   /// Converts diagnostic level to string ("error", "warning", etc.)
   static std::string diagnostic_level_to_string(DiagnosticLevel level);

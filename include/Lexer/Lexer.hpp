@@ -21,6 +21,10 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// Lexer - Lexical analyzer for the Phi programming language
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Lexical analyzer for the Phi programming language
  *
@@ -37,6 +41,10 @@ namespace phi {
  */
 class Lexer {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Constructs a Lexer for given source code
    * @param src Source code string to scan
@@ -53,6 +61,10 @@ public:
     LexemeLine = this->Src.begin();
   }
 
+  //===--------------------------------------------------------------------===//
+  // Main Entry Point
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Scans source code to generate tokens
    *
@@ -64,6 +76,10 @@ public:
    *         - Boolean indicating scanning success (false if errors occurred)
    */
   std::vector<Token> scan();
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Retrieves source code being scanned
@@ -78,6 +94,10 @@ public:
   [[nodiscard]] const std::string &getPath() const { return Path; }
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   std::string Src;  ///< Source code being scanned
   std::string Path; ///< File path for error reporting
   std::shared_ptr<DiagnosticManager> DiagnosticsMan; ///< Diagnostic system
@@ -90,7 +110,9 @@ private:
 
   bool InsideStr = false; ///< Inside string literal state
 
-  // MAIN SCANNING LOGIC
+  //===--------------------------------------------------------------------===//
+  // Main Scanning Logic
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Scans next token from current position
@@ -98,7 +120,9 @@ private:
    */
   Token scanToken();
 
-  // TOKEN PARSING METHODS
+  //===--------------------------------------------------------------------===//
+  // Token Parsing Methods
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Parses numeric literal (integer/float)
@@ -124,7 +148,9 @@ private:
    */
   Token parseIdentifierOrKw();
 
-  // UTILITY FUNCTIONS
+  //===--------------------------------------------------------------------===//
+  // Utility Functions
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Skips comment content
@@ -231,6 +257,10 @@ private:
             Kind, std::string(CurLexeme, CurChar)};
   }
 
+  //===--------------------------------------------------------------------===//
+  // Escape Sequence Processing
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Parses escape sequence in literals
    * @return Actual character value of escape sequence
@@ -243,7 +273,9 @@ private:
    */
   char parseHexEscape();
 
-  // ERROR HANDLING
+  //===--------------------------------------------------------------------===//
+  // Error Handling
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Reports scanning error using diagnostic system

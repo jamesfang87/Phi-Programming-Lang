@@ -10,8 +10,8 @@ namespace phi {
  * - Parameters are valid
  * - Special rules for main() function
  */
-bool NameResolver::visit(FunDecl *F) {
-  CurrentFun = F;
+bool NameResolver::visit(FunDecl *D) {
+  CurrentFun = D;
   if (!CurrentFun) {
     return false;
   }
@@ -29,7 +29,7 @@ bool NameResolver::visit(FunDecl *F) {
   }
 
   // Resolve function body
-  return resolveBlock(CurrentFun->getBody(), true) && Success;
+  return visit(CurrentFun->getBody(), true) && Success;
 }
 
 /**
@@ -39,6 +39,6 @@ bool NameResolver::visit(FunDecl *F) {
  * - Type is valid
  * - Type is not null
  */
-bool NameResolver::visit(ParamDecl *P) { return resolveType(P->getType()); }
+bool NameResolver::visit(ParamDecl *D) { return visit(D->getType()); }
 
 } // namespace phi

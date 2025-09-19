@@ -15,23 +15,37 @@
 
 namespace phi {
 
-// ---------------------------
-// Monotype (shared variant)
-// ---------------------------
-class Monotype {
-private:
-  using Variant = std::variant<TypeVar, TypeCon, TypeApp, TypeFun>;
-  std::shared_ptr<Variant> Ptr;
-  SrcLocation Location{"", -1, -1};
+//===----------------------------------------------------------------------===//
+// Monotype - Shared variant representing monomorphic types in HM system
+//===----------------------------------------------------------------------===//
 
+/**
+ * @brief Monomorphic type representation for Hindley-Milner type inference
+ *
+ * A monotype is a type without universal quantifiers (no type variables
+ * that are polymorphic). This class provides a shared variant container
+ * for the four fundamental monotype constructs:
+ * - TypeVar: Type variables (e.g., 'a, 'b)
+ * - TypeCon: Type constructors (e.g., Int, Bool)
+ * - TypeApp: Type applications (e.g., List[Int])
+ * - TypeFun: Function types (e.g., Int -> Bool)
+ */
+class Monotype {
 public:
-  // Ctors
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
+  // Default constructor
   Monotype() = default;
+
+  // Basic variant constructors
   explicit Monotype(TypeVar V) : Ptr(std::make_shared<Variant>(std::move(V))) {}
   explicit Monotype(TypeCon C) : Ptr(std::make_shared<Variant>(std::move(C))) {}
   explicit Monotype(TypeApp A) : Ptr(std::make_shared<Variant>(std::move(A))) {}
   explicit Monotype(TypeFun F) : Ptr(std::make_shared<Variant>(std::move(F))) {}
 
+  // Constructors with source location
   Monotype(TypeVar V, SrcLocation L)
       : Ptr(std::make_shared<Variant>(std::move(V))), Location(std::move(L)) {}
   Monotype(TypeCon C, SrcLocation L)
@@ -41,32 +55,44 @@ public:
   Monotype(TypeFun F, SrcLocation L)
       : Ptr(std::make_shared<Variant>(std::move(F))), Location(std::move(L)) {}
 
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] SrcLocation getLocation() const { return Location; }
 
-  // Factories
+  //===--------------------------------------------------------------------===//
+  // Factory Methods
+  //===--------------------------------------------------------------------===//
+
+  /// Creates a type variable monotype
   static Monotype makeVar(const int Id, SrcLocation L = {"", -1, -1}) {
     return Monotype(TypeVar{.Id = Id, .Constraints = std::nullopt},
                     std::move(L));
   }
 
+  /// Creates a constrained type variable monotype
   static Monotype makeVar(const int Id, std::vector<std::string> Constraints,
                           SrcLocation L = {"", -1, -1}) {
     return Monotype(TypeVar{.Id = Id, .Constraints = std::move(Constraints)},
                     std::move(L));
   }
 
+  /// Creates a type application monotype
   static Monotype makeApp(std::string Name, std::vector<Monotype> Args = {},
                           SrcLocation L = {"", -1, -1}) {
     return Monotype(TypeApp{.Name = std::move(Name), .Args = std::move(Args)},
                     std::move(L));
   }
 
+  /// Creates a type constructor monotype
   static Monotype makeCon(std::string Name, std::vector<Monotype> Args = {},
                           SrcLocation L = {"", -1, -1}) {
     return Monotype(TypeCon{.Name = std::move(Name), .Args = std::move(Args)},
                     std::move(L));
   }
 
+  /// Creates a function type monotype
   static Monotype makeFun(std::vector<Monotype> Params, Monotype Ret,
                           SrcLocation L = {"", -1, -1}) {
     TypeFun F;
@@ -76,13 +102,17 @@ public:
     return Monotype(std::move(F), std::move(L));
   }
 
+  /// Creates a function type monotype from shared pointer
   static Monotype makeFun(std::vector<Monotype> params,
                           const std::shared_ptr<Monotype> &ret,
                           SrcLocation L = {"", -1, -1}) {
     return makeFun(std::move(params), *ret, std::move(L));
   }
 
-  // Kind checks
+  //===--------------------------------------------------------------------===//
+  // Type Kind Predicates
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] bool isVar() const {
     return std::holds_alternative<TypeVar>(*Ptr);
   }
@@ -96,7 +126,10 @@ public:
     return std::holds_alternative<TypeFun>(*Ptr);
   }
 
-  // Accessors
+  //===--------------------------------------------------------------------===//
+  // Variant Accessors
+  //===--------------------------------------------------------------------===//
+
   TypeVar &asVar() { return std::get<TypeVar>(*Ptr); }
   TypeCon &asCon() { return std::get<TypeCon>(*Ptr); }
   TypeApp &asApp() { return std::get<TypeApp>(*Ptr); }
@@ -107,7 +140,10 @@ public:
   [[nodiscard]] const TypeApp &asApp() const { return std::get<TypeApp>(*Ptr); }
   [[nodiscard]] const TypeFun &asFun() const { return std::get<TypeFun>(*Ptr); }
 
-  // Visitor helper
+  //===--------------------------------------------------------------------===//
+  // Visitor Pattern Support
+  //===--------------------------------------------------------------------===//
+
   template <typename VarT, typename ConT, typename AppT, typename FunT>
   auto visit(VarT &&Var, ConT &&Con, AppT App, FunT &&Fun) {
     return std::visit(
@@ -142,11 +178,24 @@ public:
         *Ptr);
   }
 
+  //===--------------------------------------------------------------------===//
+  // Conversion & Analysis Methods
+  //===--------------------------------------------------------------------===//
+
+  /// Converts HM monotype to AST type representation
   [[nodiscard]] Type toAstType() const;
+
+  /// Extracts all free type variables in this monotype
   [[nodiscard]] std::unordered_set<TypeVar> freeTypeVars() const;
+
+  /// Generates string representation for debugging/display
   [[nodiscard]] std::string toString() const;
 
-  // Helpers (simple predicates)
+  //===--------------------------------------------------------------------===//
+  // Type Classification Helpers
+  //===--------------------------------------------------------------------===//
+
+  /// Checks if this monotype represents an integer type
   [[nodiscard]] bool isIntType() const {
     return isCon() && (asCon().Name == "i8" || asCon().Name == "i16" ||
                        asCon().Name == "i32" || asCon().Name == "i64" ||
@@ -154,9 +203,19 @@ public:
                        asCon().Name == "u32" || asCon().Name == "u64");
   }
 
+  /// Checks if this monotype represents a floating-point type
   [[nodiscard]] bool isFloatType() const {
     return isCon() && (asCon().Name == "f32" || asCon().Name == "f64");
   }
+
+private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
+  using Variant = std::variant<TypeVar, TypeCon, TypeApp, TypeFun>;
+  std::shared_ptr<Variant> Ptr;
+  SrcLocation Location{"", -1, -1};
 };
 
 } // namespace phi

@@ -18,7 +18,7 @@ namespace phi {
  * - Placeholder for future user-defined type support
  * - Returns false for unresolved types
  */
-bool NameResolver::resolveType(std::optional<Type> Type) {
+bool NameResolver::visit(std::optional<Type> Type) {
   if (!Type.has_value()) {
     return false;
   }

@@ -14,6 +14,10 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// Token - Represents a lexical token in Phi language
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Represents a lexical token in Phi language
  *
@@ -26,6 +30,10 @@ namespace phi {
  */
 class Token {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Constructs a Token
    * @param start Starting source position of token
@@ -37,6 +45,10 @@ public:
         std::string lexeme)
       : Start(std::move(Start)), End(std::move(End)), Kind(Kind),
         Lexeme(std::move(lexeme)) {}
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Retrieves token's start position
@@ -68,6 +80,10 @@ public:
    */
   [[nodiscard]] std::string getLexeme() const { return Lexeme; }
 
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Generates human-readable token representation
    * @return Formatted string containing:
@@ -78,6 +94,10 @@ public:
   [[nodiscard]] std::string toString() const;
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   SrcLocation Start, End; ///< Source position span (inclusive)
   TokenKind Kind;         ///< Token classification type
   std::string Lexeme;     ///< Original source text content

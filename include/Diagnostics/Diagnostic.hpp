@@ -11,6 +11,10 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// DiagnosticLevel - Enumeration of diagnostic severity levels
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Enumeration of diagnostic severity levels
  *
@@ -31,6 +35,10 @@ enum class DiagnosticLevel : uint8_t {
   Help     ///< Fix suggestions (bold green)
 };
 
+//===----------------------------------------------------------------------===//
+// DiagnosticStyle - Visual styling configuration for diagnostic elements
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Visual styling configuration for diagnostic elements
  *
@@ -40,6 +48,10 @@ enum class DiagnosticLevel : uint8_t {
  * styling is omitted.
  */
 struct DiagnosticStyle {
+  //===--------------------------------------------------------------------===//
+  // Color Enumeration
+  //===--------------------------------------------------------------------===//
+
   /// Available text colors for terminal output
   enum class Color : uint8_t {
     Red,     ///< Error highlights
@@ -52,9 +64,17 @@ struct DiagnosticStyle {
     Default  ///< Terminal default
   };
 
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   Color color = Color::Default; ///< Text color
   bool bold = false;            ///< Bold attribute
   bool underline = false;       ///< Underline attribute
+
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
 
   /// Default constructor creates unstyled text
   DiagnosticStyle() = default;
@@ -70,6 +90,10 @@ struct DiagnosticStyle {
       : color(c), bold(bold), underline(underline) {}
 };
 
+//===----------------------------------------------------------------------===//
+// DiagnosticLabel - Source-linked annotation for diagnostics
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Source-linked annotation for diagnostics
  *
@@ -79,10 +103,18 @@ struct DiagnosticStyle {
  * additional context and are underlined.
  */
 struct DiagnosticLabel {
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   SrcSpan span;          ///< Source code region (start to end)
   std::string message;   ///< Annotation text (1-2 sentences)
   DiagnosticStyle style; ///< Visual rendering style
   bool is_primary;       ///< True for primary focus, false for context
+
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Constructs a source code annotation
@@ -98,6 +130,10 @@ struct DiagnosticLabel {
         is_primary(is_primary) {}
 };
 
+//===----------------------------------------------------------------------===//
+// DiagnosticSuggestion - Automated code modification suggestion
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Automated code modification suggestion
  *
@@ -106,9 +142,17 @@ struct DiagnosticLabel {
  * a description of why the change is recommended.
  */
 struct DiagnosticSuggestion {
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   SrcSpan span;                 ///< Source region to replace
   std::string replacement_text; ///< Recommended code
   std::string description;      ///< Rationale for change
+
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Constructs a code modification suggestion
@@ -120,6 +164,10 @@ struct DiagnosticSuggestion {
       : span(std::move(span)), replacement_text(std::move(replacement)),
         description(std::move(desc)) {}
 };
+
+//===----------------------------------------------------------------------===//
+// Diagnostic - Comprehensive compiler diagnostic container
+//===----------------------------------------------------------------------===//
 
 /**
  * @brief Comprehensive compiler diagnostic container
@@ -136,6 +184,10 @@ struct DiagnosticSuggestion {
  */
 class Diagnostic {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Base diagnostic constructor
    * @param level Severity/importance level
@@ -143,6 +195,10 @@ public:
    */
   Diagnostic(const DiagnosticLevel level, std::string message)
       : level(level), message(std::move(message)) {}
+
+  //===--------------------------------------------------------------------===//
+  // Builder Methods for Source Code Markers
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Adds primary source code marker
@@ -182,6 +238,10 @@ public:
     return *this;
   }
 
+  //===--------------------------------------------------------------------===//
+  // Builder Methods for Supplementary Information
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Adds supplementary note
    *
@@ -209,6 +269,10 @@ public:
     help_messages.emplace_back(std::move(help));
     return *this;
   }
+
+  //===--------------------------------------------------------------------===//
+  // Builder Methods for Code Suggestions & Metadata
+  //===--------------------------------------------------------------------===//
 
   /**
    * @brief Adds automated code fix suggestion
@@ -247,7 +311,10 @@ public:
     return *this;
   }
 
-  // ACCESSORS
+  //===--------------------------------------------------------------------===//
+  // Accessors
+  //===--------------------------------------------------------------------===//
+
   /// Gets diagnostic severity level
   [[nodiscard]] DiagnosticLevel get_level() const { return level; }
 
@@ -285,6 +352,10 @@ public:
     return extra_snippets;
   }
 
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+
   /// Checks if diagnostic has any primary source markers
   [[nodiscard]] bool has_primary_labels() const {
     return std::ranges::any_of(
@@ -306,7 +377,10 @@ public:
     return std::nullopt;
   }
 
-  // FACTORY METHODS
+  //===--------------------------------------------------------------------===//
+  // Factory Methods
+  //===--------------------------------------------------------------------===//
+
   /// Creates error-level diagnostic
   static Diagnostic error(std::string message) {
     return {DiagnosticLevel::Error, std::move(message)};
@@ -328,6 +402,10 @@ public:
   }
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Member Variables
+  //===--------------------------------------------------------------------===//
+
   DiagnosticLevel level;                         ///< Severity classification
   std::string message;                           ///< Primary description
   std::vector<DiagnosticLabel> labels;           ///< Source location markers
@@ -336,6 +414,10 @@ private:
   std::vector<DiagnosticSuggestion> suggestions; ///< Code modifications
   std::optional<std::string> code;               ///< Reference code
   std::vector<std::pair<SrcSpan, std::string>> extra_snippets;
+
+  //===--------------------------------------------------------------------===//
+  // Style Helper Methods
+  //===--------------------------------------------------------------------===//
 
   /// Gets default style based on severity level
   static DiagnosticStyle get_style_for_level(const DiagnosticLevel level) {

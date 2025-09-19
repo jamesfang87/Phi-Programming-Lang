@@ -9,7 +9,7 @@
 
 namespace phi {
 
-bool NameResolver::resolveBlock(Block &Block, bool ScopeCreated = false) {
+bool NameResolver::visit(Block &Block, bool ScopeCreated = false) {
   // Create new scope unless parent already created one
   std::optional<SymbolTable::ScopeGuard> BlockScope;
   if (!ScopeCreated) {
@@ -44,9 +44,9 @@ bool NameResolver::visit(IfStmt &S) {
   Success = visit(S.getCond()) && Success;
 
   // Resolve then and else blocks
-  Success = resolveBlock(S.getThen()) && Success;
+  Success = visit(S.getThen()) && Success;
   if (S.hasElse()) {
-    Success = resolveBlock(S.getElse()) && Success;
+    Success = visit(S.getElse()) && Success;
   }
 
   return Success;
@@ -56,7 +56,7 @@ bool NameResolver::visit(WhileStmt &S) {
   bool Success = S.getCond().accept(*this);
 
   // Resolve loop body
-  Success = resolveBlock(S.getBody()) && Success;
+  Success = visit(S.getBody()) && Success;
   return Success;
 }
 
@@ -69,7 +69,7 @@ bool NameResolver::visit(ForStmt &S) {
   SymbolTab.insert(&S.getLoopVar());
 
   // Resolve loop body (scope already created)
-  Success = resolveBlock(S.getBody(), true) && Success;
+  Success = visit(S.getBody(), true) && Success;
   return Success;
 }
 
@@ -79,7 +79,7 @@ bool NameResolver::visit(DeclStmt &S) {
 
   // Resolve variable type
   if (Var.hasType()) {
-    Success = resolveType(Var.getType()) && Success;
+    Success = visit(Var.getType()) && Success;
   }
 
   // Resolve initializer if present
