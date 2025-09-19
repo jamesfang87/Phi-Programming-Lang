@@ -21,6 +21,10 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// Parser - Recursive descent parser for the Phi programming language
+//===----------------------------------------------------------------------===//
+
 /**
  * @brief Recursive descent parser for the Phi programming language
  *
@@ -33,6 +37,10 @@ namespace phi {
  */
 class Parser {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Constructs a parser instance
    *
@@ -45,6 +53,10 @@ public:
          std::vector<Token> &Tokens,
          std::shared_ptr<DiagnosticManager> DiagnosticManager);
 
+  //===--------------------------------------------------------------------===//
+  // Main Entry Point
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Main entry point for parsing
    *
@@ -56,7 +68,10 @@ public:
   std::vector<std::unique_ptr<Decl>> parse();
 
 private:
-  // PARSER STATE
+  //===--------------------------------------------------------------------===//
+  // Parser State
+  //===--------------------------------------------------------------------===//
+
   std::string Path;
   std::vector<std::string_view> Lines;
   std::vector<Token> &Tokens;
@@ -66,7 +81,10 @@ private:
 
   bool NoStructInit = false;
 
-  // TOKEN NAVIGATION UTILITIES
+  //===--------------------------------------------------------------------===//
+  // Token Navigation Utilities
+  //===--------------------------------------------------------------------===//
+
   /// Checks if parser has reached end of token stream
   [[nodiscard]] bool atEOF() const;
 
@@ -103,7 +121,10 @@ private:
    */
   bool matchToken(TokenKind Kind);
 
-  // DIAGNOSTIC REPORTING
+  //===--------------------------------------------------------------------===//
+  // Diagnostic Reporting
+  //===--------------------------------------------------------------------===//
+
   void emitError(Diagnostic &&Diag) { DiagnosticsMan->emit(Diag); }
   void emitWarning(Diagnostic &&Diag) const { DiagnosticsMan->emit(Diag); }
 
@@ -135,7 +156,10 @@ private:
   void emitUnclosedDelimiterError(const Token &OpeningToken,
                                   const std::string &ExpectedClosing);
 
-  // ERROR RECOVERY
+  //===--------------------------------------------------------------------===//
+  // Error Recovery
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Synchronizes parser state to next safe point
    *
@@ -172,7 +196,10 @@ private:
    */
   bool syncTo(const TokenKind TargetToken);
 
-  // TYPE SYSTEM PARSING
+  //===--------------------------------------------------------------------===//
+  // Type System Parsing
+  //===--------------------------------------------------------------------===//
+
   /**
    * @brief Parses type annotations
    *
@@ -193,12 +220,18 @@ private:
   std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
   std::optional<MethodDecl> parseStructMethodDecl();
 
-  // FUNCTION DECLARATION PARSING
+  //===--------------------------------------------------------------------===//
+  // Function Declaration Parsing
+  //===--------------------------------------------------------------------===//
+
   std::unique_ptr<FunDecl> parseFunDecl();
   std::unique_ptr<ParamDecl> parseParamDecl();
   std::unique_ptr<Block> parseBlock();
 
-  // STATEMENT PARSING
+  //===--------------------------------------------------------------------===//
+  // Statement Parsing
+  //===--------------------------------------------------------------------===//
+
   std::unique_ptr<Stmt> parseStmt();
   std::unique_ptr<ReturnStmt> parseReturn();
   std::unique_ptr<DeferStmt> parseDefer();
@@ -209,7 +242,10 @@ private:
   std::unique_ptr<BreakStmt> parseBreak();
   std::unique_ptr<ContinueStmt> parseContinue();
 
-  // EXPRESSION PARSING
+  //===--------------------------------------------------------------------===//
+  // Expression Parsing
+  //===--------------------------------------------------------------------===//
+
   std::unique_ptr<Expr> parseExpr();
   std::unique_ptr<StructInitExpr> parseStructInit(std::unique_ptr<Expr> expr);
   std::unique_ptr<FieldInitExpr> parseFieldInit();
@@ -245,7 +281,10 @@ private:
    */
   std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
 
-  // PARSING UTILITIES
+  //===--------------------------------------------------------------------===//
+  // Parsing Utilities
+  //===--------------------------------------------------------------------===//
+
   struct TypedBinding {
     SrcLocation Loc;
     std::string Name;

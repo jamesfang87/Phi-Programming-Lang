@@ -17,18 +17,42 @@
 
 namespace phi {
 
+//===----------------------------------------------------------------------===//
+// TypeInferencer - Hindley-Milner type inference for Phi AST
+//===----------------------------------------------------------------------===//
+
 class TypeInferencer {
 public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
   explicit TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast);
 
+  //===--------------------------------------------------------------------===//
+  // Main Entry Point
+  //===--------------------------------------------------------------------===//
+
   std::vector<std::unique_ptr<Decl>> inferProgram();
+
+  //===--------------------------------------------------------------------===//
+  // Declaration Visitor Methods
+  //===--------------------------------------------------------------------===//
 
   void visit(Decl &D);
   void visit(VarDecl &D);
   void visit(FunDecl &D);
   void visit(StructDecl &D);
 
+  //===--------------------------------------------------------------------===//
+  // Inference Result Type Definition
+  //===--------------------------------------------------------------------===//
+
   using InferRes = std::pair<Substitution, Monotype>;
+
+  //===--------------------------------------------------------------------===//
+  // Statement Visitor Methods -> return InferRes
+  //===--------------------------------------------------------------------===//
 
   InferRes visit(Stmt &S);
   InferRes visit(ReturnStmt &S);
@@ -40,6 +64,10 @@ public:
   InferRes visit(BreakStmt &S);
   InferRes visit(ContinueStmt &S);
   InferRes visit(ExprStmt &S);
+
+  //===--------------------------------------------------------------------===//
+  // Expression Visitor Methods -> return InferRes
+  //===--------------------------------------------------------------------===//
 
   InferRes visit(Expr &E);
   InferRes visit(IntLiteral &E);
@@ -58,6 +86,10 @@ public:
   InferRes visit(MethodCallExpr &E);
 
 private:
+  //===--------------------------------------------------------------------===//
+  // Core Inference State
+  //===--------------------------------------------------------------------===//
+
   std::vector<std::unique_ptr<Decl>> Ast;
   TypeEnv Env;
   TypeVarFactory Factory;
@@ -67,29 +99,54 @@ private:
   // Accumulate all substitutions produced during inference so we can finalize.
   Substitution GlobalSubst;
 
+  //===--------------------------------------------------------------------===//
+  // Type Annotation Side Tables
+  //===--------------------------------------------------------------------===//
+
   // Side tables: store the HM monotypes for nodes until finalization.
   std::unordered_map<Expr *, Monotype> ExprMonos;
   std::unordered_map<ValueDecl *, Monotype> ValDeclMonos;
   std::unordered_map<FunDecl *, Monotype> FunDeclMonos;
 
+  //===--------------------------------------------------------------------===//
+  // Numeric Type Variable Tracking
+  //===--------------------------------------------------------------------===//
+
   // track integer-literal-origin type variables (so we can default them later)
   std::vector<TypeVar> IntTypeVars;
   std::vector<TypeVar> FloatTypeVars;
 
+  //===--------------------------------------------------------------------===//
+  // Function Context Stack
+  //===--------------------------------------------------------------------===//
+
   // expected return type stack
   std::vector<Monotype> CurFunRetType;
 
-  // main passes
+  //===--------------------------------------------------------------------===//
+  // Main Inference Passes
+  //===--------------------------------------------------------------------===//
+
   void predeclare();
 
-  // statements / blocks
+  //===--------------------------------------------------------------------===//
+  // Statement & Block Inference
+  //===--------------------------------------------------------------------===//
+
   InferRes inferBlock(Block &B);
 
-  // helpers
+  //===--------------------------------------------------------------------===//
+  // Unification Utilities
+  //===--------------------------------------------------------------------===//
+
   static void unifyInto(Substitution &S, const Monotype &A, const Monotype &B) {
     Substitution U = unify(S.apply(A), S.apply(B));
     S.compose(U);
   }
+
+  //===--------------------------------------------------------------------===//
+  // Annotation Management
+  //===--------------------------------------------------------------------===//
 
   // *** annotation helpers (now side-table based) ***
   void annotate(ValueDecl &D, const Monotype &T);
@@ -98,11 +155,19 @@ private:
   // record and propagate substitutions into global state + env
   void recordSubst(const Substitution &S);
 
+  //===--------------------------------------------------------------------===//
+  // Type Defaulting & Finalization
+  //===--------------------------------------------------------------------===//
+
   void defaultNums();
 
   // After inference & defaulting, finalize by applying GlobalSubst
   // to stored Monotypes and writing concrete phi::Type back into AST.
   void finalizeAnnotations();
+
+  //===--------------------------------------------------------------------===//
+  // Type Variable Classification Helpers
+  //===--------------------------------------------------------------------===//
 
   // Helper function to check if a type variable comes from a float literal
   [[nodiscard]] bool isFloatLiteralVar(const Monotype &T) const {
@@ -118,7 +183,10 @@ private:
     return std::ranges::contains(IntTypeVars, T.asVar());
   }
 
-  // token-kind helpers (same as before)
+  //===--------------------------------------------------------------------===//
+  // Token Kind Classification Utilities
+  //===--------------------------------------------------------------------===//
+
   [[nodiscard]] static bool isArithmetic(TokenKind K) noexcept;
   [[nodiscard]] static bool isLogical(TokenKind K) noexcept;
   [[nodiscard]] static bool isComparison(TokenKind K) noexcept;
