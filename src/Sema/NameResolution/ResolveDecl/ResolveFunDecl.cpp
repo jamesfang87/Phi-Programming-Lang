@@ -11,14 +11,25 @@ namespace phi {
  * - Special rules for main() function
  */
 bool NameResolver::visit(FunDecl *F) {
-  bool Success = resolveType(F->getReturnTy());
-
-  // Resolve parameters
-  for (const auto &Param : F->getParams()) {
-    Success = visit(Param.get()) && Success;
+  CurrentFun = F;
+  if (!CurrentFun) {
+    return false;
   }
 
-  return Success;
+  // Create function scope
+  SymbolTable::ScopeGuard FunctionScope(SymbolTab);
+
+  // Add parameters to function scope
+  bool Success = true;
+  for (const auto &Param : CurrentFun->getParams()) {
+    if (!SymbolTab.insert(Param.get())) {
+      emitRedefinitionError("Parameter", SymbolTab.lookup(*Param), Param.get());
+      Success = false;
+    }
+  }
+
+  // Resolve function body
+  return resolveBlock(CurrentFun->getBody(), true) && Success;
 }
 
 /**

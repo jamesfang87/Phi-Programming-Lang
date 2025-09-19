@@ -8,13 +8,12 @@ using namespace phi;
 
 llvm::Value *CodeGen::visit(BinaryOp &E) {
   if (E.getOp() == TokenKind::Equals) {
-    if (auto *Ldr = llvm::dyn_cast<DeclRefExpr>(&E.getLhs())) {
-      llvm::Value *Alloc = getAllocaForDecl(Ldr->getDecl());
-      if (!Alloc)
-        throw std::runtime_error("assignment to unknown var");
-      llvm::Value *Rv = E.getRhs().accept(*this);
-      return Builder.CreateStore(Rv, Alloc);
+    if (auto *Lhs = llvm::dyn_cast<DeclRefExpr>(&E.getLhs())) {
+      llvm::Value *Alloc = DeclMap[Lhs->getDecl()];
+      llvm::Value *RhsVal = visit(E.getRhs());
+      return Builder.CreateStore(RhsVal, Alloc);
     }
+
     throw std::runtime_error("unsupported assignment lhs");
   }
 

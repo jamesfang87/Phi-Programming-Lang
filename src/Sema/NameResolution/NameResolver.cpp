@@ -10,6 +10,47 @@
 
 namespace phi {
 
+bool NameResolver::resolveHeader(Decl &D) {
+  if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
+    return resolveHeader(*Struct);
+  } else if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
+    return resolveHeader(*Fun);
+  }
+  return true;
+}
+
+bool NameResolver::resolveHeader(StructDecl &D) {
+  if (!SymbolTab.insert(&D)) {
+    emitRedefinitionError("Struct", SymbolTab.lookup(D), &D);
+    return false;
+  }
+  return true;
+}
+
+bool NameResolver::resolveHeader(FunDecl &D) {
+  bool Success = resolveType(D.getReturnTy());
+
+  // Resolve parameters
+  for (const auto &Param : D.getParams()) {
+    Success = visit(Param.get()) && Success;
+  }
+
+  if (!SymbolTab.insert(&D)) {
+    emitRedefinitionError("Function", SymbolTab.lookup(D), &D);
+  }
+
+  return Success;
+}
+
+bool NameResolver::resolveBodies(Decl &D) {
+  if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
+    return visit(Struct);
+  } else if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
+    return visit(Fun);
+  }
+  return true;
+}
+
 std::pair<bool, std::vector<std::unique_ptr<Decl>>>
 NameResolver::resolveNames() {
   // Create global scope
@@ -20,56 +61,15 @@ NameResolver::resolveNames() {
   // Phase 2: Resolve bodies
 
   for (auto &DeclPtr : Ast) {
-    auto Struct = llvm::dyn_cast<StructDecl>(DeclPtr.get());
-    if (!Struct) {
-      // Skip if this is not a struct declaration
-      continue;
-    }
-
-    // now insert into symbol table
-    if (!SymbolTab.insert(Struct)) {
-      emitRedefinitionError("Function", SymbolTab.lookup(*Struct), Struct);
-    }
-  }
-
-  // Phase 1: Resolve function signatures
-  for (auto &DeclPtr : Ast) {
-    auto Fun = llvm::dyn_cast<FunDecl>(DeclPtr.get());
-    if (!Fun)
-      continue;
-
-    visit(Fun);
-    if (!SymbolTab.insert(Fun)) {
-      emitRedefinitionError("Function", SymbolTab.lookup(*Fun), Fun);
-    }
+    resolveHeader(*DeclPtr);
   }
 
   // Phase 2: Resolve function bodies
   for (auto &Decl : Ast) {
-    CurFun = llvm::dyn_cast<FunDecl>(Decl.get());
-    if (CurFun) {
-      // Create function scope
-      SymbolTable::ScopeGuard FunctionScope(SymbolTab);
-
-      // Add parameters to function scope
-      for (const std::unique_ptr<ParamDecl> &Param : CurFun->getParams()) {
-        if (!SymbolTab.insert(Param.get())) {
-          emitRedefinitionError("Parameter", SymbolTab.lookup(*Param),
-                                Param.get());
-        }
-      }
-
-      // Resolve function body
-      resolveBlock(CurFun->getBody(), true);
-    }
-
-    auto Struct = llvm::dyn_cast<StructDecl>(Decl.get());
-    if (Struct) {
-      visit(Struct);
-    }
+    resolveBodies(*Decl);
   }
 
-  return {!DiagnosticsMan->has_errors(), std::move(Ast)};
+  return {!Diags->has_errors(), std::move(Ast)};
 }
 
 } // namespace phi

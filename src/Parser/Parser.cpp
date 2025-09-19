@@ -38,7 +38,7 @@ std::vector<std::unique_ptr<Decl>> Parser::parse() {
     switch (peekToken().getKind()) {
     case TokenKind::FunKw: {
       if (auto Res = parseFunDecl()) {
-        TopLvlDecls.push_back(std::move(Res));
+        Ast.push_back(std::move(Res));
       } else {
         SyncToTopLvl(); // Error recovery
       }
@@ -46,7 +46,7 @@ std::vector<std::unique_ptr<Decl>> Parser::parse() {
     }
     case TokenKind::StructKw: {
       if (auto Res = parseStructDecl()) {
-        TopLvlDecls.push_back(std::move(Res));
+        Ast.push_back(std::move(Res));
       } else {
         SyncToTopLvl(); // Error recovery
       }
@@ -58,7 +58,18 @@ std::vector<std::unique_ptr<Decl>> Parser::parse() {
     }
   }
 
-  return std::move(TopLvlDecls);
+  llvm::sort(Ast, [](const std::unique_ptr<Decl> &LHS,
+                     const std::unique_ptr<Decl> &RHS) {
+    if (llvm::isa<StructDecl>(LHS.get()) && !llvm::isa<StructDecl>(RHS.get()))
+      return true;
+
+    if (llvm::isa<StructDecl>(RHS.get()) && !llvm::isa<StructDecl>(LHS.get()))
+      return false;
+
+    return false;
+  });
+
+  return std::move(Ast);
 }
 
 } // namespace phi

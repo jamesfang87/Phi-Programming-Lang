@@ -1,3 +1,4 @@
+#include "AST/Type.hpp"
 #include "CodeGen/CodeGen.hpp"
 
 #include <llvm/ADT/APFloat.h>
@@ -12,43 +13,14 @@
 
 using namespace phi;
 
+llvm::Value *CodeGen::visit(Expr &E) { return E.accept(*this); }
+
 llvm::Value *CodeGen::visit(IntLiteral &E) {
-  // Prefer the type from the AST for this literal.
-  llvm::Type *Ty = E.getType().toLLVM(Context);
-  if (!Ty) {
-    // Defensive fallback to previous behavior
-    return llvm::ConstantInt::get(Builder.getInt64Ty(), E.getValue());
-  }
-
-  if (auto *IT = llvm::dyn_cast<llvm::IntegerType>(Ty)) {
-    unsigned Bits = IT->getBitWidth();
-
-    // Determine signedness from AST Type. We expect Type has helpers like:
-    // isUnsignedInteger() / isSignedInteger(). If not, adapt to whichever API
-    // your Type class provides.
-    bool isUnsigned = E.getType().isUnsignedInteger();
-
-    // E.getValue() returns an integral value (likely 64-bit signed). We must
-    // construct an APInt of the specified width. Use the signed-constructor
-    // if the AST type is signed so negative literals are encoded correctly.
-    auto Raw = static_cast<uint64_t>(E.getValue());
-    llvm::APInt Api = isUnsigned ? llvm::APInt(Bits, Raw)
-                                 : llvm::APInt(Bits, Raw, /*isSigned=*/true);
-
-    return llvm::ConstantInt::get(Context, Api);
-  }
-
-  // If the declared type is not an integer, fallback to i64 constant so we
-  // still return something usable (but this likely indicates a bug upstream).
-  return llvm::ConstantInt::get(Builder.getInt64Ty(), E.getValue());
+  return llvm::ConstantInt::get(E.getType().toLLVM(Context), E.getValue());
 }
 
 llvm::Value *CodeGen::visit(FloatLiteral &E) {
-  llvm::Type *Ty = E.getType().toLLVM(Context);
-  if (!Ty)
-    return llvm::ConstantFP::get(Builder.getDoubleTy(), E.getValue());
-
-  return llvm::ConstantFP::get(Ty, E.getValue());
+  return llvm::ConstantFP::get(E.getType().toLLVM(Context), E.getValue());
 }
 
 llvm::Value *CodeGen::visit(StrLiteral &E) {
@@ -65,8 +37,8 @@ llvm::Value *CodeGen::visit(BoolLiteral &E) {
 
 llvm::Value *CodeGen::visit(RangeLiteral &E) {
   // evaluate start and end; return end (previous code relied on end)
-  llvm::Value *StartVal = E.getStart().accept(*this);
-  llvm::Value *EndVal = E.getEnd().accept(*this);
+  llvm::Value *StartVal = visit(E.getStart());
+  llvm::Value *EndVal = visit(E.getEnd());
 
   // store start to a temporary alloca in case it's referenced elsewhere by
   // lowered code
