@@ -1,7 +1,22 @@
 fun println(const message: string) {}
 
+fun foo(const message: string) {
+    println(message);
+}
+
 fun main() {
-    var a = 1;
+    if (true) {
+        println("true");
+    } else {
+        println("false");
+    }
+
+    if (3 > 5) {
+        println("true");
+    } else {
+        println("false");
+    }
+
     println("hello world");
-    defer a = 1;
+    foo("phi");
 }

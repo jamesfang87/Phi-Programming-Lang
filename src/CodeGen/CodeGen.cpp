@@ -1,8 +1,11 @@
 #include "CodeGen/CodeGen.hpp"
+#include "AST/Decl.hpp"
 
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 
+#include "llvm/ADT/STLExtras.h"
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Host.h>
@@ -11,45 +14,33 @@
 using namespace phi;
 
 CodeGen::CodeGen(std::vector<std::unique_ptr<Decl>> Ast,
-                 std::string_view SourcePath, std::string_view TargetTriple)
-    : AstList(std::move(Ast)), Context(), Builder(Context),
+                 std::string_view SourcePath)
+    : Ast(std::move(Ast)), Context(), Builder(Context),
       Module(std::string(SourcePath), Context) {
   Module.setSourceFileName(std::string(SourcePath));
-  if (TargetTriple.empty())
-    Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
-  else
-    Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
-}
-
-void CodeGen::ensurePrintfDeclared() {
-  if (PrintfFn)
-    return;
-  llvm::Type *I8Ptr = llvm::PointerType::get(Builder.getInt8Ty(), 0);
-  llvm::FunctionType *FT =
-      llvm::FunctionType::get(Builder.getInt32Ty(), {I8Ptr}, true);
-  PrintfFn = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
-                                    "printf", &Module);
+  Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
 }
 
 void CodeGen::generate() {
-  declareStructs();
-  defineStructBodies();
+  declarePrint();
 
-  ensurePrintfDeclared();
+  // sort so StructDecls come first
 
-  // Generate top-level: functions and globals
-  for (auto &D : AstList) {
-    if (!D)
-      continue;
+  for (auto &D : Ast) {
+    if (auto Struct = llvm::dyn_cast<StructDecl>(D.get())) {
+      declareHeader(*Struct);
+    }
 
-    if (auto *FD = llvm::dyn_cast<FunDecl>(D.get())) {
-      if (FD->getId() == "println")
-        continue;
-      visit(*FD);
-    } else if (auto *SD = llvm::dyn_cast<StructDecl>(D.get())) {
-      visit(*SD);
+    if (auto Fun = llvm::dyn_cast<FunDecl>(D.get())) {
+      declareHeader(*Fun);
     }
   }
+
+  for (auto &D : Ast) {
+    visit(*D);
+  }
+
+  generateMainWrapper();
 }
 
 void CodeGen::outputIR(const std::string &Filename) {
@@ -60,74 +51,54 @@ void CodeGen::outputIR(const std::string &Filename) {
   Module.print(File, nullptr);
 }
 
-llvm::Value *CodeGen::getAllocaForDecl(Decl *D) {
-  auto It = DeclMap.find(D);
-  if (It == DeclMap.end())
-    return nullptr;
-  return It->second;
+llvm::AllocaInst *CodeGen::stackAlloca(Decl &D) {
+  std::string_view Id = D.getId();
+  Type T = D.getType();
+
+  llvm::IRBuilder<> TempBuilder(Context);
+  TempBuilder.SetInsertPoint(AllocaInsertPoint);
+
+  return TempBuilder.CreateAlloca(T.toLLVM(Context), nullptr, Id);
 }
 
-void CodeGen::createStructLayout(StructDecl *S) {
-  if (StructTypeMap.count(S))
-    return;
-  std::vector<llvm::Type *> FieldTypes;
-  unsigned Idx = 0;
-  for (auto &F : S->getFields()) {
-    FieldTypes.push_back(F->getType().toLLVM(Context));
-    FieldIndexMap[F.get()] = Idx++;
-  }
-  llvm::StructType *ST =
-      llvm::StructType::create(Context, FieldTypes, S->getId());
-  StructTypeMap[S] = ST;
+llvm::Value *CodeGen::store(llvm::Value *Val, llvm::Value *Destination,
+                            const Type &T) {
+  if (!T.isCustom())
+    return Builder.CreateStore(Val, Destination);
+
+  auto &DataLayout = Module.getDataLayout();
+  auto *StructLayout = DataLayout.getStructLayout(
+      static_cast<llvm::StructType *>(T.toLLVM(Context)));
+
+  return Builder.CreateMemCpy(Destination, StructLayout->getAlignment(), Val,
+                              StructLayout->getAlignment(),
+                              StructLayout->getSizeInBytes());
 }
 
-llvm::Value *CodeGen::computeMemberPointer(llvm::Value *BasePtr,
-                                           const FieldDecl *Field) {
-  if (!BasePtr)
-    throw std::runtime_error("member base is null");
-
-  const StructDecl *Parent = Field->getParent();
-
-  if (!Parent)
-    throw std::runtime_error("member parent not found");
-
-  llvm::StructType *ST = StructTypeMap.at(Parent);
-  unsigned Idx = FieldIndexMap.at(Field);
-
-  if (!BasePtr->getType()->isPointerTy())
-    throw std::runtime_error("member access requires pointer to struct");
-
-  // Always cast to the correct struct pointer type under opaque pointers.
-  llvm::PointerType *DesiredPtrTy = llvm::PointerType::getUnqual(ST);
-  BasePtr = Builder.CreateBitCast(BasePtr, DesiredPtrTy,
-                                  Field->getId() + ".self.cast");
-
-  // Now BasePtr is %Person*, so CreateStructGEP works.
-  return Builder.CreateStructGEP(ST, BasePtr, Idx, Field->getId());
+llvm::Value *CodeGen::load(llvm::Value *Val, const Type &T) {
+  return Builder.CreateLoad(T.toLLVM(Context), Val);
 }
 
-llvm::Value *CodeGen::getAddressOf(Expr *E) {
-  // For DeclRefExpr, return the alloca directly instead of loading from it
-  if (auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(E)) {
-    Decl *D = DeclRef->getDecl();
-    auto It = DeclMap.find(D);
-    if (It == DeclMap.end())
-      return nullptr;
-    llvm::Value *Val = It->second;
-    if (auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(Val))
-      return Alloca; // Return the alloca directly, don't load
-    return Val;
-  }
+void CodeGen::generateMainWrapper() {
+  auto *BuiltinMain = Module.getFunction("main");
+  BuiltinMain->setName("__builtin_main");
 
-  // For member access, recursively get the address and compute member pointer
-  if (auto *MemberAccess = llvm::dyn_cast<FieldAccessExpr>(E)) {
-    llvm::Value *BasePtr = getAddressOf(MemberAccess->getBase());
-    if (!BasePtr)
-      return nullptr;
-    return computeMemberPointer(BasePtr, MemberAccess->getField());
-  }
+  auto *Main = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getInt32Ty(), {}, false),
+      llvm::Function::ExternalLinkage, "main", Module);
 
-  // For other expressions, fall back to normal evaluation
-  // This may not work for all cases, but handles the common ones
-  return E->accept(*this);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Main);
+  Builder.SetInsertPoint(Entry);
+
+  Builder.CreateCall(BuiltinMain);
+  Builder.CreateRet(llvm::ConstantInt::getSigned(Builder.getInt32Ty(), 0));
+}
+
+void CodeGen::breakIntoBB(llvm::BasicBlock *Target) {
+  llvm::BasicBlock *Current = Builder.GetInsertBlock();
+
+  if (Current && !Current->getTerminator())
+    Builder.CreateBr(Target);
+
+  Builder.SetInsertPoint(Target);
 }

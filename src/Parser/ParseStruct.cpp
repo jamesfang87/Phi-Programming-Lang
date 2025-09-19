@@ -1,6 +1,7 @@
 #include "Parser/Parser.hpp"
 
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -20,6 +21,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
   }
   advanceToken();
 
+  uint32_t FieldIndex = 0;
   std::vector<MethodDecl> Methods;
   std::vector<std::unique_ptr<FieldDecl>> Fields;
   while (!atEOF() && peekToken().getKind() != TokenKind::CloseBrace) {
@@ -47,7 +49,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
                 TokenKind::OpenBrace});
       }
     } else if (Check.getKind() == TokenKind::Identifier) {
-      auto Res = parseFieldDecl();
+      auto Res = parseFieldDecl(FieldIndex);
       if (Res) {
         Fields.push_back(std::move(Res));
       } else {
@@ -63,7 +65,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
                                       std::move(Methods));
 }
 
-std::unique_ptr<FieldDecl> Parser::parseFieldDecl() {
+std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
   bool IsPrivate = true;
   if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
@@ -77,8 +79,8 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl() {
 
   // Validate assignment operator
   if (advanceToken().getKind() != TokenKind::Equals) {
-    return std::make_unique<FieldDecl>(VarLoc, Id, DeclType, nullptr,
-                                       IsPrivate);
+    return std::make_unique<FieldDecl>(VarLoc, Id, DeclType, nullptr, IsPrivate,
+                                       FieldIndex);
   }
 
   // Parse initializer expression
@@ -98,7 +100,7 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl() {
   }
 
   return std::make_unique<FieldDecl>(VarLoc, Id, DeclType, std::move(Init),
-                                     IsPrivate);
+                                     IsPrivate, FieldIndex);
 }
 
 std::optional<MethodDecl> Parser::parseStructMethodDecl() {

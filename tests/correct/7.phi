@@ -1,4 +1,4 @@
-fun println(const msg: i64) {}
+fun println(const msg: string) {}
 
 struct Person {
     public name: string;
@@ -36,6 +36,6 @@ fun main() {
     };
 
     const str = me.name;
-    const res = me.age_gap(17);
-    println(res);
+    //const res = me.age_gap(17);
+    println(str);
 }

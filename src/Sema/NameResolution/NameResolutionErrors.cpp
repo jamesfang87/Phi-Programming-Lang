@@ -13,7 +13,7 @@ void NameResolver::emitRedefinitionError(std::string_view SymbolKind,
   error(std::format("Redefinition of {} `{}`", SymbolKind, FirstDecl->getId()))
       .with_primary_label(Redecl->getLocation(), "Redeclaration here.")
       .with_code_snippet(FirstDecl->getLocation(), "First declared here:")
-      .emit(*DiagnosticsMan);
+      .emit(*Diags);
 }
 
 void NameResolver::emitVariableNotFound(std::string_view VarId,
@@ -29,7 +29,7 @@ void NameResolver::emitVariableNotFound(std::string_view VarId,
       std::format("Declaration for `{}` could not be found. {}", VarId, Hint);
   error(std::format("use of undeclared variable `{}`", VarId))
       .with_primary_label(Loc, PrimaryMsg)
-      .emit(*DiagnosticsMan);
+      .emit(*Diags);
 }
 
 void NameResolver::emitTypeNotFound(std::string_view TypeName,
@@ -46,7 +46,7 @@ void NameResolver::emitTypeNotFound(std::string_view TypeName,
             "Could not match type `{}` with any primitive type or a struct",
             TypeName))
       .with_primary_label(Loc, PrimaryMsg)
-      .emit(*DiagnosticsMan);
+      .emit(*Diags);
 }
 
 void NameResolver::emitStructNotFound(std::string_view StructId,
@@ -62,7 +62,7 @@ void NameResolver::emitStructNotFound(std::string_view StructId,
   auto Diag = error(std::format("Could not find struct `{}`", StructId))
                   .with_primary_label(Loc, PrimaryMsg);
 
-  Diag.emit(*DiagnosticsMan);
+  Diag.emit(*Diags);
 }
 
 void NameResolver::emitFieldNotFound(
@@ -79,7 +79,7 @@ void NameResolver::emitFieldNotFound(
   auto Diag = error(std::format("Could not find field `{}`", FieldId))
                   .with_primary_label(RefLoc, PrimaryMsg);
 
-  Diag.emit(*DiagnosticsMan);
+  Diag.emit(*Diags);
 }
 
 void NameResolver::emitFunctionNotFound(std::string_view FunId,
@@ -94,7 +94,7 @@ void NameResolver::emitFunctionNotFound(std::string_view FunId,
       .with_primary_label(
           Loc, std::format("Declaration for `{}` could not be found. {}", FunId,
                            Hint))
-      .emit(*DiagnosticsMan);
+      .emit(*Diags);
 }
 
 } // namespace phi

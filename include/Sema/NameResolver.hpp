@@ -21,7 +21,7 @@ class NameResolver {
 public:
   explicit NameResolver(std::vector<std::unique_ptr<Decl>> Ast,
                         std::shared_ptr<DiagnosticManager> DiagnosticsMan)
-      : Ast(std::move(Ast)), DiagnosticsMan(std::move(DiagnosticsMan)) {}
+      : Ast(std::move(Ast)), Diags(std::move(DiagnosticsMan)) {}
 
   std::pair<bool, std::vector<std::unique_ptr<Decl>>> resolveNames();
 
@@ -64,10 +64,10 @@ private:
   /// The AST being analyzed (function declarations)
   std::vector<std::unique_ptr<Decl>> Ast;
   SymbolTable SymbolTab;
-  FunDecl *CurFun = nullptr;
-  std::shared_ptr<DiagnosticManager> DiagnosticsMan;
+  FunDecl *CurrentFun = nullptr;
+  std::shared_ptr<DiagnosticManager> Diags;
 
-  void emitError(Diagnostic &&diagnostic) { DiagnosticsMan->emit(diagnostic); }
+  void emitError(Diagnostic &&diagnostic) { Diags->emit(diagnostic); }
   void emitRedefinitionError(std::string_view SymbolKind, Decl *FirstDecl,
                              Decl *Redecl);
 
@@ -128,6 +128,11 @@ private:
    */
   // Check if the type has been defined yet
   bool resolveType(std::optional<Type> Type);
+
+  bool resolveHeader(Decl &D);
+  bool resolveBodies(Decl &D);
+  bool resolveHeader(StructDecl &D);
+  bool resolveHeader(FunDecl &D);
 };
 
 } // namespace phi
