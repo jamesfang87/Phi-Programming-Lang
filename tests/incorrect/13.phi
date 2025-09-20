@@ -1,5 +1,0 @@
-fun main() {
-    var s = "this is a multi-line
-    string that is never closed
-    var x = 42;
-}
