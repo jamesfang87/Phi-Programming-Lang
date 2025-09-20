@@ -1,1 +1,0 @@
-fun main() { const s = "hello\Q world"; }

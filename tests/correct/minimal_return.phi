@@ -1,7 +1,0 @@
-fun test_return() -> i64 {
-    return 42;
-}
-
-fun main() {
-    const result = test_return();
-}

@@ -14,7 +14,7 @@ using namespace phi;
 
 CodeGen::CodeGen(std::vector<std::unique_ptr<Decl>> Ast,
                  std::string_view SourcePath)
-    : Ast(std::move(Ast)), Context(), Builder(Context),
+    : Path(SourcePath), Ast(std::move(Ast)), Context(), Builder(Context),
       Module(std::string(SourcePath), Context) {
   Module.setSourceFileName(std::string(SourcePath));
   Module.setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
@@ -40,6 +40,18 @@ void CodeGen::generate() {
   }
 
   generateMainWrapper();
+
+  // Output IR to file
+  std::string IRFileName = Path;
+  size_t DotPos = IRFileName.find_last_of('.');
+  if (DotPos != std::string::npos) {
+    IRFileName = IRFileName.substr(0, DotPos);
+  }
+  IRFileName += ".ll";
+
+  outputIR(IRFileName);
+  system(std::format("clang {}", IRFileName).c_str());
+  system(std::format("rm {}", IRFileName).c_str());
 }
 
 void CodeGen::outputIR(const std::string &Filename) {

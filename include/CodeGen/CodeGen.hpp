@@ -92,6 +92,7 @@ private:
   //===--------------------------------------------------------------------===//
   // Member Variables
   //===--------------------------------------------------------------------===//
+  std::string Path;
 
   std::vector<std::unique_ptr<Decl>> Ast;
 
@@ -199,24 +200,24 @@ private:
 
   // If statement generation
   IfStatementBlocks createIfStatementBlocks(IfStmt &S);
-  void generateIfCondition(IfStmt &S, const IfStatementBlocks &blocks);
-  void generateIfBranches(IfStmt &S, const IfStatementBlocks &blocks);
+  void generateIfCondition(IfStmt &S, const IfStatementBlocks &Blocks);
+  void generateIfBranches(IfStmt &S, const IfStatementBlocks &Blocks);
 
   // While loop generation
   WhileLoopBlocks createWhileLoopBlocks();
-  void generateWhileCondition(WhileStmt &S, const WhileLoopBlocks &blocks);
-  void generateWhileBody(WhileStmt &S, const WhileLoopBlocks &blocks);
+  void generateWhileCondition(WhileStmt &S, const WhileLoopBlocks &Blocks);
+  void generateWhileBody(WhileStmt &S, const WhileLoopBlocks &Blocks);
 
   // For loop generation
   ForLoopBlocks createForLoopBlocks();
   ForRangeInfo extractRangeInfo(ForStmt &S);
-  void generateForInit(ForStmt &S, const ForRangeInfo &rangeInfo,
-                       const ForLoopBlocks &blocks);
-  void generateForCondition(ForStmt &S, const ForRangeInfo &rangeInfo,
-                            const ForLoopBlocks &blocks);
-  void generateForBody(ForStmt &S, const ForLoopBlocks &blocks);
-  void generateForIncrement(ForStmt &S, const ForRangeInfo &rangeInfo,
-                            const ForLoopBlocks &blocks);
+  void generateForInit(ForStmt &S, const ForRangeInfo &RangeInfo,
+                       const ForLoopBlocks &Blocks);
+  void generateForCondition(ForStmt &S, const ForRangeInfo &RangeInfo,
+                            const ForLoopBlocks &Blocks);
+  void generateForBody(ForStmt &S, const ForLoopBlocks &Blocks);
+  void generateForIncrement(ForStmt &S, const ForRangeInfo &RangeInfo,
+                            const ForLoopBlocks &Blocks);
 
   //===--------------------------------------------------------------------===//
   // Code Generation Utilities

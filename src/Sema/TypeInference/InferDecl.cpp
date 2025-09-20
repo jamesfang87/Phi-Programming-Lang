@@ -69,8 +69,7 @@ void TypeInferencer::visit(FunDecl &D) {
     FunType = Monotype::makeFun(std::move(Params), Ret);
   }
 
-  if (!FunType->isFun())
-    throw std::runtime_error("internal: function expected a function monotype");
+  assert(FunType->isFun());
 
   // Save environment (we will restore)
   auto SavedEnv = Env;

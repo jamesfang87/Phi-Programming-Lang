@@ -1,4 +1,0 @@
-fun main() {
-    const x = "unterminated string
-    const y = 42;
-}

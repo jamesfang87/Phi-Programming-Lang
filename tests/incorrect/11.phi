@@ -1,4 +1,0 @@
-fun main() -> null {
-    println("Hello, World!");
-    println("This is a test of the println function!");
-}

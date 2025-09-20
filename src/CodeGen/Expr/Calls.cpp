@@ -29,8 +29,8 @@ llvm::Value *CodeGen::visit(DeclRefExpr &E) {
 
 llvm::Value *CodeGen::visit(FunCallExpr &E) {
   // Special case for println - use our built-in bridge
-  if (auto *DR = llvm::dyn_cast<DeclRefExpr>(&E.getCallee())) {
-    if (DR->getId() == "println") {
+  if (auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&E.getCallee())) {
+    if (DeclRef->getId() == "println") {
       return generatePrintlnBridge(E);
     }
   }

@@ -1,8 +1,0 @@
-fun main() {
-    var a = 0;
-    var b = &a; // b is a non-mutable reference to an i32
-    //var c: &i32; // c is a mutable reference to an i32
-
-    //const d = 1;
-    //var e: &i32; // not allowed, since d itself is non-mutable
-}

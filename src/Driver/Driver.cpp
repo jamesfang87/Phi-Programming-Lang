@@ -31,29 +31,16 @@ bool PhiCompiler::compile() {
     return false;
   }
 
-  auto [Success, ResolvedNames] =
+  auto [NameResolutionSuccess, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
-  auto ResolvedTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
-  for (auto &D : ResolvedTypes) {
-    D->emit(0);
-  }
-  auto [S, A] = TypeChecker(std::move(ResolvedTypes)).check();
+  auto InferredTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
+  auto [TypeCheckingSuccess, CheckedTypes] =
+      TypeChecker(std::move(InferredTypes)).check();
 
   // Code Generation
-  phi::CodeGen codegen(std::move(A), Path);
-  codegen.generate();
+  phi::CodeGen CodeGen(std::move(CheckedTypes), Path);
+  CodeGen.generate();
 
-  // Output IR to file
-  std::string ir_filename = Path;
-  size_t dot_pos = ir_filename.find_last_of('.');
-  if (dot_pos != std::string::npos) {
-    ir_filename = ir_filename.substr(0, dot_pos);
-  }
-  ir_filename += ".ll";
-
-  codegen.outputIR(ir_filename);
-  system(std::format("clang {}", ir_filename).c_str());
-  system(std::format("rm {}", ir_filename).c_str());
   return true;
 }
 
