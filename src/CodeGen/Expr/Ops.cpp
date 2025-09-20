@@ -20,8 +20,8 @@ llvm::Value *CodeGen::visit(BinaryOp &E) {
   llvm::Value *L = E.getLhs().accept(*this);
   llvm::Value *R = E.getRhs().accept(*this);
 
-  Type OpType = E.getLhs().getType();
-  if (OpType.isFloat()) {
+  Type OperandType = E.getLhs().getType();
+  if (OperandType.isFloat()) {
     switch (E.getOp()) {
     case TokenKind::Plus:
       return Builder.CreateFAdd(L, R);
@@ -48,7 +48,7 @@ llvm::Value *CodeGen::visit(BinaryOp &E) {
     default:
       break;
     }
-  } else if (OpType.isSignedInteger()) {
+  } else if (OperandType.isSignedInteger()) {
     switch (E.getOp()) {
     case TokenKind::Plus:
       return Builder.CreateAdd(L, R);
@@ -75,7 +75,7 @@ llvm::Value *CodeGen::visit(BinaryOp &E) {
     default:
       break;
     }
-  } else if (OpType.isUnsignedInteger()) {
+  } else if (OperandType.isUnsignedInteger()) {
     switch (E.getOp()) {
     case TokenKind::Plus:
       return Builder.CreateAdd(L, R);
@@ -105,8 +105,8 @@ llvm::Value *CodeGen::visit(BinaryOp &E) {
   }
 
   throw std::runtime_error(
-      std::format("unsupported binary operand type: {}, {}", tyToStr(E.getOp()),
-                  OpType.toString()));
+      std::format("unsupported binary operator for operands of type: {}, {}",
+                  tyToStr(E.getOp()), OperandType.toString()));
 }
 
 llvm::Value *CodeGen::visit(UnaryOp &E) {

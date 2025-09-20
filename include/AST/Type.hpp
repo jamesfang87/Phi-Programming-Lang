@@ -170,7 +170,7 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  const Node &node() const noexcept { return Data; }
+  [[nodiscard]] const Node &node() const noexcept { return Data; }
   SrcLocation getLocation() { return Location; }
 
   [[nodiscard]] PrimitiveKind asPrimitive() const {
@@ -217,7 +217,7 @@ public:
   // Semantic Type Queries
   //===--------------------------------------------------------------------===//
 
-  bool isInteger() {
+  [[nodiscard]] bool isInteger() const {
     if (!isPrimitive()) {
       return false;
     }
@@ -237,7 +237,7 @@ public:
     }
   }
 
-  bool isSignedInteger() {
+  [[nodiscard]] bool isSignedInteger() const {
     if (!isPrimitive()) {
       return false;
     }
@@ -253,7 +253,7 @@ public:
     }
   }
 
-  bool isUnsignedInteger() {
+  [[nodiscard]] bool isUnsignedInteger() const {
     if (!isPrimitive()) {
       return false;
     }
@@ -269,7 +269,7 @@ public:
     }
   }
 
-  bool isFloat() {
+  [[nodiscard]] bool isFloat() const {
     if (!isPrimitive()) {
       return false;
     }
@@ -278,9 +278,17 @@ public:
     return K == PrimitiveKind::F32 || K == PrimitiveKind::F64;
   }
 
-  bool isStruct() { return isCustom(); }
+  [[nodiscard]] bool isNullType() const {
+    if (!isPrimitive()) {
+      return false;
+    }
 
-  std::optional<std::string> getStructName() {
+    return asPrimitive() == PrimitiveKind::Null;
+  }
+
+  [[nodiscard]] bool isStruct() const { return isCustom(); }
+
+  [[nodiscard]] std::optional<std::string> getStructName() const {
     if (!isCustom()) {
       return std::nullopt;
     }

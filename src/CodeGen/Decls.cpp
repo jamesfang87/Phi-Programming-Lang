@@ -1,6 +1,7 @@
 #include "CodeGen/CodeGen.hpp"
 #include "llvm/IR/DerivedTypes.h"
 
+#include <cassert>
 #include <llvm/Support/Casting.h>
 
 using namespace phi;
@@ -40,6 +41,7 @@ void CodeGen::visit(FunDecl &D) {
   for (auto &P : D.getParams()) {
     auto *Alloca = stackAlloca(*P);
     DeclMap[P.get()] = Alloca;
+
     if (ArgIt != Fun->arg_end()) {
       Builder.CreateStore(ArgIt, Alloca);
       ++ArgIt;
@@ -52,25 +54,25 @@ void CodeGen::visit(FunDecl &D) {
   // emit body statements
   visit(D.getBody());
 
-  // Clean up alloca insert point
-  AllocaInsertPoint->eraseFromParent();
-  AllocaInsertPoint = nullptr;
-
-  // Add return if the function doesn't already have a terminator
+  // Handle function exit with deferred statements
   if (Builder.GetInsertBlock() && !Builder.GetInsertBlock()->getTerminator()) {
-    if (D.getReturnTy().isPrimitive() &&
-        D.getReturnTy().asPrimitive() == PrimitiveKind::Null) {
+    // Execute all deferred statements before function exit
+    executeDefers();
+
+    // Create the appropriate return instruction
+    if (D.getReturnTy().isNullType()) {
       Builder.CreateRetVoid();
     } else {
-      // For now, return a default value - this should be improved
-      // to handle explicit returns properly
-      llvm::Value *DefaultRet =
-          llvm::Constant::getNullValue(D.getReturnTy().toLLVM(Context));
-      Builder.CreateRet(DefaultRet);
+      // This should not happen for well-formed code since non-void functions
+      // must have explicit returns, but we handle it for robustness
+      Builder.CreateRet(llvm::UndefValue::get(D.getReturnTy().toLLVM(Context)));
     }
   }
 
-  // Reset current function
+  // Clear deferred statements and clean up
+  clearDefers();
+  AllocaInsertPoint->eraseFromParent();
+  AllocaInsertPoint = nullptr;
   CurrentFun = nullptr;
 }
 
@@ -79,4 +81,12 @@ void CodeGen::visit(ParamDecl &D) { (void)D; }
 void CodeGen::declareHeader(StructDecl &D) {}
 void CodeGen::visit(StructDecl &D) { (void)D; }
 void CodeGen::visit(FieldDecl &D) { (void)D; }
-void CodeGen::visit(VarDecl &D) { (void)D; }
+
+void CodeGen::visit(VarDecl &D) {
+  llvm::AllocaInst *Var = stackAlloca(D);
+
+  if (D.hasInit())
+    store(visit(D.getInit()), Var, D.getInit().getType());
+
+  DeclMap[&D] = Var;
+}
