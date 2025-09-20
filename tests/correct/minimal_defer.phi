@@ -1,0 +1,10 @@
+fun println(const msg: string) {}
+
+fun test_defer() {
+    defer println("This should execute at function exit");
+    const x = 5;
+}
+
+fun main() {
+    test_defer();
+}

@@ -4,6 +4,6 @@
 
 using namespace phi;
 
-llvm::Value *CodeGen::visit(StructInitExpr &E) {}
+llvm::Value *CodeGen::visit(StructLiteral &E) {}
 
 llvm::Value *CodeGen::visit(FieldInitExpr &E) {}

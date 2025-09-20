@@ -705,15 +705,15 @@ private:
   FieldDecl *FieldDecl = nullptr;
 };
 
-class StructInitExpr final : public Expr {
+class StructLiteral final : public Expr {
 public:
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  StructInitExpr(SrcLocation Location, std::string StructId,
-                 std::vector<std::unique_ptr<FieldInitExpr>> Fields);
-  ~StructInitExpr() override;
+  StructLiteral(SrcLocation Location, std::string StructId,
+                std::vector<std::unique_ptr<FieldInitExpr>> Fields);
+  ~StructLiteral() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
