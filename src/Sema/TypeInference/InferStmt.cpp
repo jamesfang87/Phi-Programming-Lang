@@ -13,7 +13,7 @@ TypeInferencer::InferRes TypeInferencer::inferBlock(Block &B) {
     auto [StmtSubst, _] = visit(*Stmt);
     AllSubsts.compose(StmtSubst);
   }
-  return {AllSubsts, Monotype::makeCon("unit")};
+  return {AllSubsts, Monotype::makeCon("null")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(Stmt &S) {
@@ -22,17 +22,16 @@ TypeInferencer::InferRes TypeInferencer::visit(Stmt &S) {
 
 TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
   const auto ExpectedType =
-      CurFunRetType.empty() ? Monotype::makeCon("unit") : CurFunRetType.back();
+      CurFunRetType.empty() ? Monotype::makeCon("null") : CurFunRetType.back();
   if (S.hasExpr()) {
     auto [Subst, ActualType] = visit(S.getExpr());
     unifyInto(Subst, ActualType, ExpectedType);
     recordSubst(Subst);
-    return {Subst, Monotype::makeCon("unit")};
+    return {Subst, Monotype::makeCon("null")};
   } else {
-    Substitution Subst;
-    unifyInto(Subst, Monotype::makeCon("unit"), ExpectedType);
-    recordSubst(Subst);
-    return {Subst, Monotype::makeCon("unit")};
+    auto Subst = Substitution();
+    unifyInto(Subst, Monotype::makeCon("null"), ExpectedType);
+    return {Subst, Monotype::makeCon("null")};
   }
 }
 
@@ -43,7 +42,7 @@ TypeInferencer::InferRes TypeInferencer::visit(DeferStmt &S) {
 
   recordSubst(Subst);
 
-  return {Subst, Monotype::makeCon("unit")};
+  return {Subst, Monotype::makeCon("null")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
@@ -72,12 +71,12 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
   AllSubsts.compose(BlockSubst);
   recordSubst(BlockSubst);
 
-  return {AllSubsts, Monotype::makeCon("unit")};
+  return {AllSubsts, Monotype::makeCon("null")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(DeclStmt &S) {
   visit(S.getDecl());
-  return {Substitution{}, Monotype::makeCon("unit")};
+  return {Substitution{}, Monotype::makeCon("null")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(WhileStmt &S) {
@@ -88,7 +87,7 @@ TypeInferencer::InferRes TypeInferencer::visit(WhileStmt &S) {
   AllSubsts.compose(BlockSubst);
 
   recordSubst(AllSubsts);
-  return {AllSubsts, Monotype::makeCon("unit")};
+  return {AllSubsts, Monotype::makeCon("null")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(IfStmt &S) {
@@ -104,17 +103,17 @@ TypeInferencer::InferRes TypeInferencer::visit(IfStmt &S) {
   }
 
   recordSubst(AllSubsts);
-  return {AllSubsts, Monotype::makeCon("unit")};
+  return {AllSubsts, Monotype::makeCon("null")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(BreakStmt &S) {
   (void)S;
-  return {Substitution{}, Monotype::makeCon("unit")};
+  return {Substitution{}, Monotype::makeCon("null")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ContinueStmt &S) {
   (void)S;
-  return {Substitution{}, Monotype::makeCon("unit")};
+  return {Substitution{}, Monotype::makeCon("null")};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ExprStmt &S) {

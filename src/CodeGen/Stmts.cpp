@@ -39,40 +39,40 @@ void CodeGen::visit(DeferStmt &S) {
 void CodeGen::visit(IfStmt &S) {
   assert(CurrentFun != nullptr);
 
-  auto blocks = createIfStatementBlocks(S);
-  generateIfCondition(S, blocks);
-  generateIfBranches(S, blocks);
+  auto Blocks = createIfStatementBlocks(S);
+  generateIfCondition(S, Blocks);
+  generateIfBranches(S, Blocks);
 
-  Builder.SetInsertPoint(blocks.ExitBB);
+  Builder.SetInsertPoint(Blocks.ExitBB);
 }
 
 void CodeGen::visit(WhileStmt &S) {
   assert(CurrentFun != nullptr);
 
-  auto BasicBlocks = createWhileLoopBlocks();
-  pushLoopContext(BasicBlocks.ExitBB, BasicBlocks.CondBB);
+  auto Blocks = createWhileLoopBlocks();
+  pushLoopContext(Blocks.ExitBB, Blocks.CondBB);
 
-  generateWhileCondition(S, BasicBlocks);
-  generateWhileBody(S, BasicBlocks);
+  generateWhileCondition(S, Blocks);
+  generateWhileBody(S, Blocks);
 
   popLoopContext();
-  Builder.SetInsertPoint(BasicBlocks.ExitBB);
+  Builder.SetInsertPoint(Blocks.ExitBB);
 }
 
 void CodeGen::visit(ForStmt &S) {
   assert(CurrentFun != nullptr);
 
-  auto BasicBlocks = createForLoopBlocks();
+  auto Blocks = createForLoopBlocks();
   auto RangeInfo = extractRangeInfo(S);
-  pushLoopContext(BasicBlocks.ExitBB, BasicBlocks.IncBB);
+  pushLoopContext(Blocks.ExitBB, Blocks.IncBB);
 
-  generateForInit(S, RangeInfo, BasicBlocks);
-  generateForCondition(S, RangeInfo, BasicBlocks);
-  generateForBody(S, BasicBlocks);
-  generateForIncrement(S, RangeInfo, BasicBlocks);
+  generateForInit(S, RangeInfo, Blocks);
+  generateForCondition(S, RangeInfo, Blocks);
+  generateForBody(S, Blocks);
+  generateForIncrement(S, RangeInfo, Blocks);
 
   popLoopContext();
-  Builder.SetInsertPoint(BasicBlocks.ExitBB);
+  Builder.SetInsertPoint(Blocks.ExitBB);
 }
 
 void CodeGen::visit(DeclStmt &S) { visit(S.getDecl()); }
@@ -100,83 +100,83 @@ void CodeGen::visit(ExprStmt &S) { S.getExpr().accept(*this); }
 //===----------------------------------------------------------------------===//
 
 CodeGen::WhileLoopBlocks CodeGen::createWhileLoopBlocks() {
-  WhileLoopBlocks blocks;
-  blocks.CondBB = llvm::BasicBlock::Create(Context, "while.cond", CurrentFun);
-  blocks.BodyBB = llvm::BasicBlock::Create(Context, "while.body", CurrentFun);
-  blocks.ExitBB = llvm::BasicBlock::Create(Context, "while.exit", CurrentFun);
-  return blocks;
+  WhileLoopBlocks Blocks;
+  Blocks.CondBB = llvm::BasicBlock::Create(Context, "while.cond", CurrentFun);
+  Blocks.BodyBB = llvm::BasicBlock::Create(Context, "while.body", CurrentFun);
+  Blocks.ExitBB = llvm::BasicBlock::Create(Context, "while.exit", CurrentFun);
+  return Blocks;
 }
 
 void CodeGen::generateWhileCondition(WhileStmt &S,
-                                     const WhileLoopBlocks &blocks) {
-  breakIntoBB(blocks.CondBB);
+                                     const WhileLoopBlocks &Blocks) {
+  breakIntoBB(Blocks.CondBB);
   llvm::Value *Cond = visit(S.getCond());
   assert(Cond->getType()->isIntegerTy(1));
-  Builder.CreateCondBr(Cond, blocks.BodyBB, blocks.ExitBB);
+  Builder.CreateCondBr(Cond, Blocks.BodyBB, Blocks.ExitBB);
 }
 
-void CodeGen::generateWhileBody(WhileStmt &S, const WhileLoopBlocks &blocks) {
-  Builder.SetInsertPoint(blocks.BodyBB);
+void CodeGen::generateWhileBody(WhileStmt &S, const WhileLoopBlocks &Blocks) {
+  Builder.SetInsertPoint(Blocks.BodyBB);
   visit(S.getBody());
-  breakIntoBB(blocks.CondBB);
+  breakIntoBB(Blocks.CondBB);
 }
 
 CodeGen::ForLoopBlocks CodeGen::createForLoopBlocks() {
-  ForLoopBlocks blocks;
-  blocks.InitBB = llvm::BasicBlock::Create(Context, "for.init", CurrentFun);
-  blocks.CondBB = llvm::BasicBlock::Create(Context, "for.cond", CurrentFun);
-  blocks.BodyBB = llvm::BasicBlock::Create(Context, "for.body", CurrentFun);
-  blocks.IncBB = llvm::BasicBlock::Create(Context, "for.inc", CurrentFun);
-  blocks.ExitBB = llvm::BasicBlock::Create(Context, "for.exit", CurrentFun);
-  return blocks;
+  ForLoopBlocks Blocks;
+  Blocks.InitBB = llvm::BasicBlock::Create(Context, "for.init", CurrentFun);
+  Blocks.CondBB = llvm::BasicBlock::Create(Context, "for.cond", CurrentFun);
+  Blocks.BodyBB = llvm::BasicBlock::Create(Context, "for.body", CurrentFun);
+  Blocks.IncBB = llvm::BasicBlock::Create(Context, "for.inc", CurrentFun);
+  Blocks.ExitBB = llvm::BasicBlock::Create(Context, "for.exit", CurrentFun);
+  return Blocks;
 }
 
 CodeGen::ForRangeInfo CodeGen::extractRangeInfo(ForStmt &S) {
-  ForRangeInfo info;
+  ForRangeInfo Info;
   auto *Range = llvm::dyn_cast<RangeLiteral>(&S.getRange());
   assert(Range && "For loop only supports range literals for now");
 
-  info.Range = Range;
-  info.Start = visit(Range->getStart());
-  info.End = visit(Range->getEnd());
-  return info;
+  Info.Range = Range;
+  Info.Start = visit(Range->getStart());
+  Info.End = visit(Range->getEnd());
+  return Info;
 }
 
-void CodeGen::generateForInit(ForStmt &S, const ForRangeInfo &rangeInfo,
-                              const ForLoopBlocks &blocks) {
-  breakIntoBB(blocks.InitBB);
+void CodeGen::generateForInit(ForStmt &S, const ForRangeInfo &RangeInfo,
+                              const ForLoopBlocks &Blocks) {
+  breakIntoBB(Blocks.InitBB);
   auto &Decl = S.getLoopVar();
   llvm::AllocaInst *Var = stackAlloca(Decl);
   DeclMap[&Decl] = Var;
-  store(rangeInfo.Start, Var, Decl.getType());
+  store(RangeInfo.Start, Var, Decl.getType());
 }
 
-void CodeGen::generateForCondition(ForStmt &S, const ForRangeInfo &rangeInfo,
-                                   const ForLoopBlocks &blocks) {
-  breakIntoBB(blocks.CondBB);
+void CodeGen::generateForCondition(ForStmt &S, const ForRangeInfo &RangeInfo,
+                                   const ForLoopBlocks &Blocks) {
+  breakIntoBB(Blocks.CondBB);
   auto &Decl = S.getLoopVar();
   llvm::Value *CurVal = load(DeclMap[&Decl], Decl.getType());
-  llvm::Value *Cond = rangeInfo.Range->isInclusive()
-                          ? Builder.CreateICmpSLE(CurVal, rangeInfo.End)
-                          : Builder.CreateICmpSLT(CurVal, rangeInfo.End);
-  Builder.CreateCondBr(Cond, blocks.BodyBB, blocks.ExitBB);
+  llvm::Value *Cond = RangeInfo.Range->isInclusive()
+                          ? Builder.CreateICmpSLE(CurVal, RangeInfo.End)
+                          : Builder.CreateICmpSLT(CurVal, RangeInfo.End);
+  Builder.CreateCondBr(Cond, Blocks.BodyBB, Blocks.ExitBB);
 }
 
-void CodeGen::generateForBody(ForStmt &S, const ForLoopBlocks &blocks) {
-  Builder.SetInsertPoint(blocks.BodyBB);
+void CodeGen::generateForBody(ForStmt &S, const ForLoopBlocks &Blocks) {
+  Builder.SetInsertPoint(Blocks.BodyBB);
   visit(S.getBody());
-  breakIntoBB(blocks.IncBB);
+  breakIntoBB(Blocks.IncBB);
 }
 
-void CodeGen::generateForIncrement(ForStmt &S, const ForRangeInfo &rangeInfo,
-                                   const ForLoopBlocks &blocks) {
-  Builder.SetInsertPoint(blocks.IncBB);
+void CodeGen::generateForIncrement(ForStmt &S, const ForRangeInfo &RangeInfo,
+                                   const ForLoopBlocks &Blocks) {
+  Builder.SetInsertPoint(Blocks.IncBB);
   auto &Decl = S.getLoopVar();
   llvm::Value *CurrentVal = load(DeclMap[&Decl], Decl.getType());
   llvm::Value *IncrementedVal = Builder.CreateAdd(
       CurrentVal, llvm::ConstantInt::get(Decl.getType().toLLVM(Context), 1));
   Builder.CreateStore(IncrementedVal, DeclMap[&Decl]);
-  breakIntoBB(blocks.CondBB);
+  breakIntoBB(Blocks.CondBB);
 }
 
 //===----------------------------------------------------------------------===//
@@ -184,31 +184,31 @@ void CodeGen::generateForIncrement(ForStmt &S, const ForRangeInfo &rangeInfo,
 //===----------------------------------------------------------------------===//
 
 CodeGen::IfStatementBlocks CodeGen::createIfStatementBlocks(IfStmt &S) {
-  IfStatementBlocks blocks;
-  blocks.ThenBB = llvm::BasicBlock::Create(Context, "if.then", CurrentFun);
-  blocks.ExitBB = llvm::BasicBlock::Create(Context, "if.exit", CurrentFun);
-  blocks.ElseBB = S.hasElse()
+  IfStatementBlocks Blocks;
+  Blocks.ThenBB = llvm::BasicBlock::Create(Context, "if.then", CurrentFun);
+  Blocks.ExitBB = llvm::BasicBlock::Create(Context, "if.exit", CurrentFun);
+  Blocks.ElseBB = S.hasElse()
                       ? llvm::BasicBlock::Create(Context, "if.else", CurrentFun)
-                      : blocks.ExitBB;
-  return blocks;
+                      : Blocks.ExitBB;
+  return Blocks;
 }
 
-void CodeGen::generateIfCondition(IfStmt &S, const IfStatementBlocks &blocks) {
+void CodeGen::generateIfCondition(IfStmt &S, const IfStatementBlocks &Blocks) {
   llvm::Value *Cond = visit(S.getCond());
   assert(Cond->getType()->isIntegerTy(1));
-  Builder.CreateCondBr(Cond, blocks.ThenBB, blocks.ElseBB);
+  Builder.CreateCondBr(Cond, Blocks.ThenBB, Blocks.ElseBB);
 }
 
-void CodeGen::generateIfBranches(IfStmt &S, const IfStatementBlocks &blocks) {
+void CodeGen::generateIfBranches(IfStmt &S, const IfStatementBlocks &Blocks) {
   // Generate then branch
-  Builder.SetInsertPoint(blocks.ThenBB);
+  Builder.SetInsertPoint(Blocks.ThenBB);
   visit(S.getThen());
-  breakIntoBB(blocks.ExitBB);
+  breakIntoBB(Blocks.ExitBB);
 
   // Generate else branch if it exists
   if (S.hasElse()) {
-    Builder.SetInsertPoint(blocks.ElseBB);
+    Builder.SetInsertPoint(Blocks.ElseBB);
     visit(S.getElse());
-    breakIntoBB(blocks.ExitBB);
+    breakIntoBB(Blocks.ExitBB);
   }
 }

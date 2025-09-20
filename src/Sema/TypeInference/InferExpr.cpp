@@ -195,8 +195,8 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     unifyInto(AllSubst, LhsType, RhsType);
     recordSubst(AllSubst);
 
-    // Assignment expressions evaluate to unit
-    auto ResultingType = Monotype::makeCon("unit");
+    // Assignment expressions evaluate to null
+    auto ResultingType = Monotype::makeCon("null");
     annotate(E, ResultingType);
     return {AllSubst, ResultingType};
   }

@@ -8,97 +8,97 @@ using namespace phi;
 
 llvm::Value *CodeGen::visit(BinaryOp &E) {
   if (E.getOp() == TokenKind::Equals) {
-    if (auto *Lhs = llvm::dyn_cast<DeclRefExpr>(&E.getLhs())) {
-      llvm::Value *Alloc = DeclMap[Lhs->getDecl()];
-      llvm::Value *RhsVal = visit(E.getRhs());
-      return Builder.CreateStore(RhsVal, Alloc);
+    if (auto *LHS = llvm::dyn_cast<DeclRefExpr>(&E.getLhs())) {
+      llvm::Value *Alloc = DeclMap[LHS->getDecl()];
+      llvm::Value *RHSVal = visit(E.getRhs());
+      return Builder.CreateStore(RHSVal, Alloc);
     }
 
     throw std::runtime_error("unsupported assignment lhs");
   }
 
-  llvm::Value *L = E.getLhs().accept(*this);
-  llvm::Value *R = E.getRhs().accept(*this);
+  llvm::Value *LHS = E.getLhs().accept(*this);
+  llvm::Value *RHS = E.getRhs().accept(*this);
 
   Type OperandType = E.getLhs().getType();
   if (OperandType.isFloat()) {
     switch (E.getOp()) {
     case TokenKind::Plus:
-      return Builder.CreateFAdd(L, R);
+      return Builder.CreateFAdd(LHS, RHS);
     case TokenKind::Minus:
-      return Builder.CreateFSub(L, R);
+      return Builder.CreateFSub(LHS, RHS);
     case TokenKind::Star:
-      return Builder.CreateFMul(L, R);
+      return Builder.CreateFMul(LHS, RHS);
     case TokenKind::Slash:
-      return Builder.CreateFDiv(L, R);
+      return Builder.CreateFDiv(LHS, RHS);
     case TokenKind::Percent:
-      return Builder.CreateFRem(L, R);
+      return Builder.CreateFRem(LHS, RHS);
     case TokenKind::OpenCaret:
-      return Builder.CreateFCmpOLT(L, R);
+      return Builder.CreateFCmpOLT(LHS, RHS);
     case TokenKind::CloseCaret:
-      return Builder.CreateFCmpOGT(L, R);
+      return Builder.CreateFCmpOGT(LHS, RHS);
     case TokenKind::LessEqual:
-      return Builder.CreateFCmpOLE(L, R);
+      return Builder.CreateFCmpOLE(LHS, RHS);
     case TokenKind::GreaterEqual:
-      return Builder.CreateFCmpOGE(L, R);
+      return Builder.CreateFCmpOGE(LHS, RHS);
     case TokenKind::DoubleEquals:
-      return Builder.CreateFCmpOEQ(L, R);
+      return Builder.CreateFCmpOEQ(LHS, RHS);
     case TokenKind::BangEquals:
-      return Builder.CreateFCmpONE(L, R);
+      return Builder.CreateFCmpONE(LHS, RHS);
     default:
       break;
     }
   } else if (OperandType.isSignedInteger()) {
     switch (E.getOp()) {
     case TokenKind::Plus:
-      return Builder.CreateAdd(L, R);
+      return Builder.CreateAdd(LHS, RHS);
     case TokenKind::Minus:
-      return Builder.CreateSub(L, R);
+      return Builder.CreateSub(LHS, RHS);
     case TokenKind::Star:
-      return Builder.CreateMul(L, R);
+      return Builder.CreateMul(LHS, RHS);
     case TokenKind::Slash:
-      return Builder.CreateSDiv(L, R);
+      return Builder.CreateSDiv(LHS, RHS);
     case TokenKind::Percent:
-      return Builder.CreateSRem(L, R);
+      return Builder.CreateSRem(LHS, RHS);
     case TokenKind::OpenCaret:
-      return Builder.CreateICmpSLT(L, R);
+      return Builder.CreateICmpSLT(LHS, RHS);
     case TokenKind::CloseCaret:
-      return Builder.CreateICmpSGT(L, R);
+      return Builder.CreateICmpSGT(LHS, RHS);
     case TokenKind::LessEqual:
-      return Builder.CreateICmpSLE(L, R);
+      return Builder.CreateICmpSLE(LHS, RHS);
     case TokenKind::GreaterEqual:
-      return Builder.CreateICmpSGE(L, R);
+      return Builder.CreateICmpSGE(LHS, RHS);
     case TokenKind::DoubleEquals:
-      return Builder.CreateICmpEQ(L, R);
+      return Builder.CreateICmpEQ(LHS, RHS);
     case TokenKind::BangEquals:
-      return Builder.CreateICmpNE(L, R);
+      return Builder.CreateICmpNE(LHS, RHS);
     default:
       break;
     }
   } else if (OperandType.isUnsignedInteger()) {
     switch (E.getOp()) {
     case TokenKind::Plus:
-      return Builder.CreateAdd(L, R);
+      return Builder.CreateAdd(LHS, RHS);
     case TokenKind::Minus:
-      return Builder.CreateSub(L, R);
+      return Builder.CreateSub(LHS, RHS);
     case TokenKind::Star:
-      return Builder.CreateMul(L, R);
+      return Builder.CreateMul(LHS, RHS);
     case TokenKind::Slash:
-      return Builder.CreateUDiv(L, R);
+      return Builder.CreateUDiv(LHS, RHS);
     case TokenKind::Percent:
-      return Builder.CreateURem(L, R);
+      return Builder.CreateURem(LHS, RHS);
     case TokenKind::OpenCaret:
-      return Builder.CreateICmpULT(L, R);
+      return Builder.CreateICmpULT(LHS, RHS);
     case TokenKind::CloseCaret:
-      return Builder.CreateICmpUGT(L, R);
+      return Builder.CreateICmpUGT(LHS, RHS);
     case TokenKind::LessEqual:
-      return Builder.CreateICmpULE(L, R);
+      return Builder.CreateICmpULE(LHS, RHS);
     case TokenKind::GreaterEqual:
-      return Builder.CreateICmpUGE(L, R);
+      return Builder.CreateICmpUGE(LHS, RHS);
     case TokenKind::DoubleEquals:
-      return Builder.CreateICmpEQ(L, R);
+      return Builder.CreateICmpEQ(LHS, RHS);
     case TokenKind::BangEquals:
-      return Builder.CreateICmpNE(L, R);
+      return Builder.CreateICmpNE(LHS, RHS);
     default:
       break;
     }
