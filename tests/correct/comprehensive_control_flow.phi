@@ -1,0 +1,145 @@
+fun println(const msg: string) {}
+
+// Test basic return statement
+fun test_return() -> i64 {
+    return 42;
+}
+
+// Test return with defer
+fun test_return_with_defer() -> i64 {
+    defer println("Defer executed before return");
+    return 100;
+}
+
+// Test multiple defers (should execute in reverse order)
+fun test_multiple_defers() {
+    defer println("First defer");
+    defer println("Second defer");
+    defer println("Third defer");
+    // Should print: Third defer, Second defer, First defer
+}
+
+// Test defer without explicit return
+fun test_defer_function_exit() {
+    defer println("Defer on function exit");
+    const x = 5;
+}
+
+// Test break in while loop
+fun test_while_break() {
+    var i = 0;
+    while i < 10 {
+        if i == 3 {
+            break;
+        }
+        i = i + 1;
+    }
+}
+
+// Test continue in while loop
+fun test_while_continue() {
+    var i = 0;
+    while i < 5 {
+        i = i + 1;
+        if i == 3 {
+            continue;
+        }
+    }
+}
+
+// Test break in for loop
+fun test_for_break() {
+    for i in 0..10 {
+        if i == 5 {
+            break;
+        }
+    }
+}
+
+// Test continue in for loop
+fun test_for_continue() {
+    for i in 0..5 {
+        if i == 2 {
+            continue;
+        }
+    }
+}
+
+// Test nested loops with break/continue
+fun test_nested_loops() {
+    for i in 0..3 {
+        for j in 0..3 {
+            if j == 1 {
+                continue;
+            }
+            if i == 2 {
+                break;
+            }
+        }
+    }
+}
+
+// Test defer with early return
+fun test_defer_early_return() -> i64 {
+    defer println("Early return defer");
+
+    const condition = true;
+    if condition {
+        return 25;
+    }
+
+    return 50;
+}
+
+// Test complex control flow combining all features
+fun test_complex_flow() -> i64 {
+    defer println("Function exit defer");
+
+    var result = 0;
+    for i in 0..5 {
+        if i == 1 {
+            continue;
+        }
+
+        if i == 4 {
+            break;
+        }
+
+        var j = 0;
+        while j < 3 {
+            if j == 2 {
+                break;
+            }
+            j = j + 1;
+            result = result + 1;
+        }
+    }
+
+    if result > 5 {
+        defer println("Conditional defer before return");
+        return result;
+    }
+
+    return result * 2;
+}
+
+fun main() {
+    // Test basic functionality
+    const ret_val = test_return();
+    const ret_defer_val = test_return_with_defer();
+
+    // Test defer execution
+    test_multiple_defers();
+    test_defer_function_exit();
+
+    // Test loop control statements
+    test_while_break();
+    test_while_continue();
+    test_for_break();
+    test_for_continue();
+    test_nested_loops();
+
+    // Test complex scenarios
+    const early_ret = test_defer_early_return();
+    const complex_result = test_complex_flow();
+}

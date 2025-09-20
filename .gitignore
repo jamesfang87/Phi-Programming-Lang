@@ -38,5 +38,8 @@ ehthumbs.db
 Thumbs.db
 
 .cache/*
-# Compile commands (keep this one as we want it for static analysis)
-# compile_commands.json
+
+.clang-format
+.clangd
+compile_commands.json
+CMakeLists.txt

@@ -12,7 +12,7 @@
 
 namespace phi {
 
-bool NameResolver::visit(StructInitExpr &E) {
+bool NameResolver::visit(StructLiteral &E) {
   auto *Found = SymbolTab.lookup(E.getStructId());
   if (!Found) {
     emitNotFoundError(NotFoundErrorKind::Struct, E.getStructId(),

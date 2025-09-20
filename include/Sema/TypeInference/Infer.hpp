@@ -80,7 +80,7 @@ public:
   InferRes visit(FunCallExpr &E);
   InferRes visit(BinaryOp &E);
   InferRes visit(UnaryOp &E);
-  InferRes visit(StructInitExpr &E);
+  InferRes visit(StructLiteral &E);
   InferRes visit(FieldInitExpr &E);
   InferRes visit(FieldAccessExpr &E);
   InferRes visit(MethodCallExpr &E);

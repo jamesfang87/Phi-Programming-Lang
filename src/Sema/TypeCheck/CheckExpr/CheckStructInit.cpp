@@ -6,7 +6,7 @@
 
 using namespace phi;
 
-bool TypeChecker::visit(StructInitExpr &E) {
+bool TypeChecker::visit(StructLiteral &E) {
   bool Success = true;
   for (auto &&FieldInit : E.getFields()) {
     Success = visit(*FieldInit) && Success;

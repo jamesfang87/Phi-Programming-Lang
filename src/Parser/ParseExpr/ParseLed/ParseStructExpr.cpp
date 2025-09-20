@@ -6,7 +6,7 @@
 
 namespace phi {
 
-std::unique_ptr<StructInitExpr>
+std::unique_ptr<StructLiteral>
 Parser::parseStructInit(std::unique_ptr<Expr> InitExpr) {
   const auto DeclRef = llvm::dyn_cast<DeclRefExpr>(InitExpr.get());
   std::string StructId = DeclRef->getId();
@@ -17,8 +17,8 @@ Parser::parseStructInit(std::unique_ptr<Expr> InitExpr) {
     return nullptr;
   }
 
-  return std::make_unique<StructInitExpr>(InitExpr->getLocation(), StructId,
-                                          std::move(FieldInits.value()));
+  return std::make_unique<StructLiteral>(InitExpr->getLocation(), StructId,
+                                         std::move(FieldInits.value()));
 }
 
 std::unique_ptr<FieldInitExpr> Parser::parseFieldInit() {
