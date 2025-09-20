@@ -13,8 +13,8 @@ Type Monotype::toAstType() const {
   return this->visit(
       [&](const TypeVar &Var) {
         (void)Var;
-        std::println("Cannot convert Monotype which has unknown type to a "
-                     "concrete AST/Type");
+        assert(false && "Cannot convert Monotype which has unknown type to a "
+                        "concrete AST/Type");
         return Type::makePrimitive(PrimitiveKind::Null, this->Location);
       },
       [&](const TypeCon &Con) {

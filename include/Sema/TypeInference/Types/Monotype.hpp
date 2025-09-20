@@ -78,6 +78,8 @@ public:
                     std::move(L));
   }
 
+  static Monotype makeVar(const TypeVar &V) { return makeVar(V.Id); }
+
   /// Creates a type application monotype
   static Monotype makeApp(std::string Name, std::vector<Monotype> Args = {},
                           SrcLocation L = {"", -1, -1}) {

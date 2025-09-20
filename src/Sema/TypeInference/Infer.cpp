@@ -1,6 +1,7 @@
 #include "Sema/TypeInference/Infer.hpp"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <llvm/Support/Casting.h>
@@ -80,34 +81,40 @@ void TypeInferencer::annotate(Expr &E, const Monotype &T) { ExprMonos[&E] = T; }
 
 // ---------------- integer defaulting ----------------
 void TypeInferencer::defaultNums() {
-  for (auto &V : IntTypeVars) {
-    if (GlobalSubst.Map.contains(V)) {
-      continue;
+  // Helper lambda to default a list of type-vars to a concrete constructor
+  auto tryDefault = [&](auto &TypeVarList, const std::string &TargetCon) {
+    for (auto &V : TypeVarList) {
+      // Apply the global substitution to get the current representative.
+      // Build a monotype for V so we can apply the substitution:
+      Monotype RepMono = GlobalSubst.apply(Monotype::makeVar(V));
+
+      // If the representative is not a Var, it's already concrete -> skip.
+      if (!RepMono.isVar())
+        continue;
+
+      // Get the representative variable (after applying global substs).
+      TypeVar RepVar = RepMono.asVar();
+
+      // If the representative already has been mapped in GlobalSubst
+      // to something else, GlobalSubst.apply(...) above would have returned
+      // that something else; we already handled that by the isVar() check.
+
+      // If this representative has constraints and the target isn't allowed,
+      // skip it.
+      if (RepVar.Constraints &&
+          !std::ranges::contains(*RepVar.Constraints, TargetCon)) {
+        continue;
+      }
+
+      // Default the representative to the concrete type (i32 / f32).
+      Substitution S;
+      S.Map.emplace(RepVar, Monotype::makeCon(TargetCon));
+      recordSubst(S);
     }
+  };
 
-    if (V.Constraints && !std::ranges::contains(*V.Constraints, "i32")) {
-      continue;
-    }
-
-    Substitution S;
-    S.Map.emplace(V, Monotype::makeCon("i32"));
-    recordSubst(S);
-  }
-
-  // Similar logic for floats
-  for (auto &V : FloatTypeVars) {
-    if (GlobalSubst.Map.contains(V)) {
-      continue;
-    }
-
-    if (V.Constraints && !std::ranges::contains(*V.Constraints, "f32")) {
-      continue;
-    }
-
-    Substitution S;
-    S.Map.emplace(V, Monotype::makeCon("f32"));
-    recordSubst(S);
-  }
+  tryDefault(IntTypeVars, "i32");
+  tryDefault(FloatTypeVars, "f32");
 }
 
 // ---------------- finalize annotations ----------------

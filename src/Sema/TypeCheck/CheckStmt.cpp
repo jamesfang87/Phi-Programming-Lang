@@ -62,7 +62,9 @@ bool TypeChecker::visit(IfStmt &S) {
 
   visit(S.getCond());
   visit(S.getThen());
-  visit(S.getElse());
+  if (S.hasElse()) {
+    visit(S.getElse());
+  }
 
   if (!S.getCond().getType().isPrimitive()) {
     return false;
