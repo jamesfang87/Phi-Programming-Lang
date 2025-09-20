@@ -56,7 +56,7 @@ public:
   llvm::Value *visit(FunCallExpr &E);
   llvm::Value *visit(BinaryOp &E);
   llvm::Value *visit(UnaryOp &E);
-  llvm::Value *visit(StructInitExpr &E);
+  llvm::Value *visit(StructLiteral &E);
   llvm::Value *visit(FieldInitExpr &E);
   llvm::Value *visit(FieldAccessExpr &E);
   llvm::Value *visit(MethodCallExpr &E);
@@ -155,6 +155,68 @@ private:
   void pushDefer(Expr &DeferredExpr);
   void executeDefers();
   void clearDefers();
+
+  //===--------------------------------------------------------------------===//
+  // Control Flow Utilities
+  //===--------------------------------------------------------------------===//
+
+  void generateTerminatorIfNeeded(llvm::BasicBlock *Target);
+  bool hasTerminator() const;
+
+  //===--------------------------------------------------------------------===//
+  // Statement Generation Helper Structures
+  //===--------------------------------------------------------------------===//
+
+  struct IfStatementBlocks {
+    llvm::BasicBlock *ThenBB;
+    llvm::BasicBlock *ElseBB;
+    llvm::BasicBlock *ExitBB;
+  };
+
+  struct WhileLoopBlocks {
+    llvm::BasicBlock *CondBB;
+    llvm::BasicBlock *BodyBB;
+    llvm::BasicBlock *ExitBB;
+  };
+
+  struct ForLoopBlocks {
+    llvm::BasicBlock *InitBB;
+    llvm::BasicBlock *CondBB;
+    llvm::BasicBlock *BodyBB;
+    llvm::BasicBlock *IncBB;
+    llvm::BasicBlock *ExitBB;
+  };
+
+  struct ForRangeInfo {
+    RangeLiteral *Range;
+    llvm::Value *Start;
+    llvm::Value *End;
+  };
+
+  //===--------------------------------------------------------------------===//
+  // Statement Generation Helper Methods
+  //===--------------------------------------------------------------------===//
+
+  // If statement generation
+  IfStatementBlocks createIfStatementBlocks(IfStmt &S);
+  void generateIfCondition(IfStmt &S, const IfStatementBlocks &blocks);
+  void generateIfBranches(IfStmt &S, const IfStatementBlocks &blocks);
+
+  // While loop generation
+  WhileLoopBlocks createWhileLoopBlocks();
+  void generateWhileCondition(WhileStmt &S, const WhileLoopBlocks &blocks);
+  void generateWhileBody(WhileStmt &S, const WhileLoopBlocks &blocks);
+
+  // For loop generation
+  ForLoopBlocks createForLoopBlocks();
+  ForRangeInfo extractRangeInfo(ForStmt &S);
+  void generateForInit(ForStmt &S, const ForRangeInfo &rangeInfo,
+                       const ForLoopBlocks &blocks);
+  void generateForCondition(ForStmt &S, const ForRangeInfo &rangeInfo,
+                            const ForLoopBlocks &blocks);
+  void generateForBody(ForStmt &S, const ForLoopBlocks &blocks);
+  void generateForIncrement(ForStmt &S, const ForRangeInfo &rangeInfo,
+                            const ForLoopBlocks &blocks);
 
   //===--------------------------------------------------------------------===//
   // Code Generation Utilities

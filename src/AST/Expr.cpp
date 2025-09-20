@@ -324,22 +324,21 @@ void FieldInitExpr::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 // Constructors & Destructors
-StructInitExpr::StructInitExpr(
-    SrcLocation Location, std::string StructId,
-    std::vector<std::unique_ptr<FieldInitExpr>> Fields)
+StructLiteral::StructLiteral(SrcLocation Location, std::string StructId,
+                             std::vector<std::unique_ptr<FieldInitExpr>> Fields)
     : Expr(Expr::Kind::StructInitKind, std::move(Location)),
       StructId(std::move(StructId)), FieldInits(std::move(Fields)) {}
 
-StructInitExpr::~StructInitExpr() = default;
+StructLiteral::~StructLiteral() = default;
 
 // Visitor Methods
-bool StructInitExpr::accept(NameResolver &R) { return R.visit(*this); }
-InferRes StructInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-bool StructInitExpr::accept(TypeChecker &C) { return C.visit(*this); }
-llvm::Value *StructInitExpr::accept(CodeGen &G) { return G.visit(*this); }
+bool StructLiteral::accept(NameResolver &R) { return R.visit(*this); }
+InferRes StructLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
+bool StructLiteral::accept(TypeChecker &C) { return C.visit(*this); }
+llvm::Value *StructLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
-void StructInitExpr::emit(int Level) const {
+void StructLiteral::emit(int Level) const {
   std::println("{}StructInitExpr:", indent(Level));
   std::println("{}  struct: {}", indent(Level), StructId);
   std::println("{}  fields:", indent(Level));
