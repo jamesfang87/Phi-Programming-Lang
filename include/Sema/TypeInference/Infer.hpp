@@ -112,7 +112,6 @@ private:
   // Numeric Type Variable Tracking
   //===--------------------------------------------------------------------===//
 
-  // track integer-literal-origin type variables (so we can default them later)
   std::vector<TypeVar> IntTypeVars;
   std::vector<TypeVar> FloatTypeVars;
 
@@ -164,24 +163,6 @@ private:
   // After inference & defaulting, finalize by applying GlobalSubst
   // to stored Monotypes and writing concrete phi::Type back into AST.
   void finalizeAnnotations();
-
-  //===--------------------------------------------------------------------===//
-  // Type Variable Classification Helpers
-  //===--------------------------------------------------------------------===//
-
-  // Helper function to check if a type variable comes from a float literal
-  [[nodiscard]] bool isFloatLiteralVar(const Monotype &T) const {
-    if (!T.isVar())
-      return false;
-    return std::ranges::contains(FloatTypeVars, T.asVar());
-  }
-
-  // Helper function to check if a type variable comes from an int literal
-  [[nodiscard]] bool isIntLiteralVar(const Monotype &T) const {
-    if (!T.isVar())
-      return false;
-    return std::ranges::contains(IntTypeVars, T.asVar());
-  }
 
   //===--------------------------------------------------------------------===//
   // Token Kind Classification Utilities

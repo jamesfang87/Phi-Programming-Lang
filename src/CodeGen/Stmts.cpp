@@ -9,17 +9,32 @@ using namespace phi;
 void CodeGen::visit(Block &B) {
   for (auto &Stmt : B.getStmts()) {
     visit(*Stmt);
-
-    if (!Builder.GetInsertBlock())
-      break;
   }
 }
 
 void CodeGen::visit(Stmt &S) { S.accept(*this); }
 
-void CodeGen::visit(ReturnStmt &S) {}
+void CodeGen::visit(ReturnStmt &S) {
+  // Execute all deferred statements before returning
+  executeDefers();
 
-void CodeGen::visit(DeferStmt &S) {}
+  if (S.hasExpr()) {
+    // Return with value
+    llvm::Value *RetVal = visit(S.getExpr());
+    Builder.CreateRet(RetVal);
+  } else {
+    // Void return
+    Builder.CreateRetVoid();
+  }
+
+  // Note: Control flow ends here, so no need to set insert point
+}
+
+void CodeGen::visit(DeferStmt &S) {
+  // Add the deferred expression to the defer stack
+  // It will be executed in reverse order when the function returns
+  pushDefer(S.getDeferred());
+}
 
 void CodeGen::visit(IfStmt &S) {
   assert(CurrentFun != nullptr);
@@ -59,17 +74,24 @@ void CodeGen::visit(WhileStmt &S) {
   auto ThenBB = llvm::BasicBlock::Create(Context, "while.then", CurrentFun);
   auto ExitBB = llvm::BasicBlock::Create(Context, "while.exit", CurrentFun);
 
+  // Push loop context for break/continue statements
+  pushLoopContext(ExitBB, CondBB);
+
+  // Jump to condition block to start the loop
+  breakIntoBB(CondBB);
+
   llvm::Value *Cond = visit(S.getCond());
   assert(Cond->getType()->isIntegerTy(1));
-
-  // we first go to the BB for the cond and eval
-  Builder.SetInsertPoint(CondBB);
   Builder.CreateCondBr(Cond, ThenBB, ExitBB);
 
-  // now we go to the then BB
+  // Generate the loop body
   Builder.SetInsertPoint(ThenBB);
   visit(S.getBody());
   breakIntoBB(CondBB); // go to conditional when done
+
+  // Pop loop context and set insert point to exit
+  popLoopContext();
+  Builder.SetInsertPoint(ExitBB);
 }
 
 void CodeGen::visit(ForStmt &S) {
@@ -86,6 +108,9 @@ void CodeGen::visit(ForStmt &S) {
   assert(Range && "For loop only supports range literals for now");
   llvm::Value *Start = visit(Range->getStart());
   llvm::Value *End = visit(Range->getEnd());
+
+  // Push loop context for break/continue statements
+  pushLoopContext(ExitBB, IncBB);
 
   /* Generate Init Block */
   breakIntoBB(InitBB);
@@ -106,27 +131,34 @@ void CodeGen::visit(ForStmt &S) {
   breakIntoBB(IncBB);
 
   /* Generate Inc Block */
+  Builder.SetInsertPoint(IncBB);
+  llvm::Value *CurrentVal = load(Var, Decl.getType());
   llvm::Value *IncrementedVal = Builder.CreateAdd(
-      CurVal, llvm::ConstantInt::get(Decl.getType().toLLVM(Context), 1));
+      CurrentVal, llvm::ConstantInt::get(Decl.getType().toLLVM(Context), 1));
   Builder.CreateStore(IncrementedVal, Var);
   breakIntoBB(CondBB);
 
-  /* Lastly, set the insert point to exit for the next stmt */
+  /* Pop loop context and set the insert point to exit for the next stmt */
+  popLoopContext();
   Builder.SetInsertPoint(ExitBB);
 }
 
-void CodeGen::visit(DeclStmt &S) {
-  auto &Decl = S.getDecl();
-  llvm::AllocaInst *Var = stackAlloca(Decl);
+void CodeGen::visit(DeclStmt &S) { visit(S.getDecl()); }
 
-  if (Decl.hasInit())
-    store(visit(Decl.getInit()), Var, Decl.getInit().getType());
-
-  DeclMap[&Decl] = Var;
+void CodeGen::visit(BreakStmt &S) {
+  llvm::BasicBlock *BreakTarget = getCurrentBreakTarget();
+  if (BreakTarget) {
+    Builder.CreateBr(BreakTarget);
+  }
+  // Note: Control flow ends here, so no need to set insert point
 }
 
-void CodeGen::visit(BreakStmt &S) {}
-
-void CodeGen::visit(ContinueStmt &S) {}
+void CodeGen::visit(ContinueStmt &S) {
+  llvm::BasicBlock *ContinueTarget = getCurrentContinueTarget();
+  if (ContinueTarget) {
+    Builder.CreateBr(ContinueTarget);
+  }
+  // Note: Control flow ends here, so no need to set insert point
+}
 
 void CodeGen::visit(ExprStmt &S) { S.getExpr().accept(*this); }

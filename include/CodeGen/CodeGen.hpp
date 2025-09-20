@@ -103,6 +103,19 @@ private:
   llvm::Instruction *AllocaInsertPoint;
   std::unordered_map<Decl *, llvm::Value *> DeclMap;
 
+  // Loop context for break/continue statements
+  struct LoopContext {
+    llvm::BasicBlock *BreakTarget;    // Where 'break' should jump
+    llvm::BasicBlock *ContinueTarget; // Where 'continue' should jump
+
+    LoopContext(llvm::BasicBlock *BreakBB, llvm::BasicBlock *ContinueBB)
+        : BreakTarget(BreakBB), ContinueTarget(ContinueBB) {}
+  };
+  std::vector<LoopContext> LoopStack;
+
+  // Defer statement management
+  std::vector<std::reference_wrapper<Expr>> DeferStack;
+
   //===--------------------------------------------------------------------===//
   // Declaration Helper Methods
   //===--------------------------------------------------------------------===//
@@ -127,21 +140,28 @@ private:
   llvm::Value *generatePrintlnBridge(FunCallExpr &Call);
 
   //===--------------------------------------------------------------------===//
+  // Loop Context Management
+  //===--------------------------------------------------------------------===//
+
+  void pushLoopContext(llvm::BasicBlock *BreakBB, llvm::BasicBlock *ContinueBB);
+  void popLoopContext();
+  llvm::BasicBlock *getCurrentBreakTarget();
+  llvm::BasicBlock *getCurrentContinueTarget();
+
+  //===--------------------------------------------------------------------===//
+  // Defer Statement Management
+  //===--------------------------------------------------------------------===//
+
+  void pushDefer(Expr &DeferredExpr);
+  void executeDefers();
+  void clearDefers();
+
+  //===--------------------------------------------------------------------===//
   // Code Generation Utilities
   //===--------------------------------------------------------------------===//
 
   void generateMainWrapper();
   void breakIntoBB(llvm::BasicBlock *Target);
-
-  //===--------------------------------------------------------------------===//
-  // Loop Context Management
-  //===--------------------------------------------------------------------===//
-
-  struct LoopContext {
-    llvm::BasicBlock *BreakTarget;
-    llvm::BasicBlock *ContinueTarget;
-  };
-  std::vector<LoopContext> LoopStack;
 };
 
 } // namespace phi
