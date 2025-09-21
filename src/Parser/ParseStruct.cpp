@@ -13,7 +13,6 @@ namespace phi {
 std::unique_ptr<StructDecl> Parser::parseStructDecl() {
   assert(peekToken().getKind() == TokenKind::StructKw);
   SrcLocation Loc = advanceToken().getStart();
-
   std::string Id = advanceToken().getLexeme();
 
   if (peekToken().getKind() != TokenKind::OpenBrace) {
@@ -75,18 +74,17 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
   auto Binding = parseTypedBinding();
   if (!Binding)
     return nullptr;
+
   auto [VarLoc, Id, DeclType] = *Binding;
 
-  // Validate assignment operator
-  if (advanceToken().getKind() != TokenKind::Equals) {
-    return std::make_unique<FieldDecl>(VarLoc, Id, DeclType, nullptr, IsPrivate,
-                                       FieldIndex);
-  }
+  std::unique_ptr<Expr> Init;
 
-  // Parse initializer expression
-  auto Init = parseExpr();
-  if (!Init)
-    return nullptr;
+  if (peekToken().getKind() == TokenKind::Equals) {
+    advanceToken(); // consume '='
+    Init = parseExpr();
+    if (!Init)
+      return nullptr;
+  }
 
   // Validate semicolon terminator
   if (advanceToken().getKind() != TokenKind::Semicolon) {

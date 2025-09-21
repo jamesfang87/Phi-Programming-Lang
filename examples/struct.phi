@@ -9,5 +9,4 @@ struct RGB {
 fun main() {
     const color = RGB { r = 255, b = 255, g = 255};
     println(color.r);
-
 }
