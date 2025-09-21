@@ -1,5 +1,6 @@
-#include "AST/Type.hpp"
 #include "CodeGen/CodeGen.hpp"
+
+#include <map>
 
 #include <llvm/ADT/APFloat.h>
 #include <llvm/ADT/APInt.h>
@@ -10,6 +11,9 @@
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
 #include <llvm/Support/Casting.h>
+#include <print>
+
+#include "AST/Type.hpp"
 
 using namespace phi;
 
@@ -42,9 +46,28 @@ llvm::Value *CodeGen::visit(RangeLiteral &E) {
 
   // store start to a temporary alloca in case it's referenced elsewhere by
   // lowered code
-  llvm::AllocaInst *Tmp =
+  llvm::AllocaInst *Temp =
       Builder.CreateAlloca(StartVal->getType(), nullptr, "range.start.tmp");
-  Builder.CreateStore(StartVal, Tmp);
-  (void)Tmp;
+  Builder.CreateStore(StartVal, Temp);
+  (void)Temp;
   return EndVal;
+}
+
+llvm::Value *CodeGen::visit(StructLiteral &E) {
+  phi::Type Type = E.getType();
+  llvm::Value *Temp = stackAlloca(*Type.getStructName() + ".tmp", Type);
+
+  std::map<const FieldDecl *, llvm::Value *> Inits;
+  for (auto &&Init : E.getFields()) {
+    llvm::Value *Val = visit(*Init->getValue());
+    Inits[Init->getDecl()] = Val;
+  }
+
+  size_t I = 0;
+  for (auto &&Field : E.getStructDecl()->getFields()) {
+    llvm::Value *Dst = Builder.CreateStructGEP(Type.toLLVM(Context), Temp, I++);
+    store(Inits[Field.get()], Dst, Field->getType());
+  }
+
+  return Temp;
 }

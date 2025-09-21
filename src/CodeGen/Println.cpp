@@ -20,7 +20,8 @@ llvm::Value *CodeGen::generatePrintlnBridge(FunCallExpr &Call) {
     llvm::Value *Fmt = Builder.CreateGlobalString("\n");
     Args.push_back(Fmt);
   } else if (Call.getArgs().size() == 1) {
-    llvm::Value *V = Call.getArgs()[0]->accept(*this);
+    llvm::Value *V =
+        load(visit(*Call.getArgs()[0]), Call.getArgs()[0]->getType());
     llvm::Value *Fmt;
     if (Call.getArgs()[0]->getType().isInteger()) {
       Fmt = Builder.CreateGlobalString("%lld\n");
@@ -42,9 +43,11 @@ llvm::Value *CodeGen::generatePrintlnBridge(FunCallExpr &Call) {
     (void)FmtExpr; // we still use constant format to be safe
     llvm::Value *Fmt = Builder.CreateGlobalString("%s\n");
     Args.push_back(Fmt);
-    Args.push_back(Call.getArgs()[0]->accept(*this));
+    Args.push_back(
+        load(visit(*Call.getArgs()[0]), Call.getArgs()[0]->getType()));
     for (size_t I = 1; I < Call.getArgs().size(); ++I)
-      Args.push_back(Call.getArgs()[I]->accept(*this));
+      Args.push_back(
+          load(visit(*Call.getArgs()[I]), Call.getArgs()[I]->getType()));
   }
 
   return Builder.CreateCall(PrintFun, Args);

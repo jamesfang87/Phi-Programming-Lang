@@ -1,6 +1,8 @@
 #include "CodeGen/CodeGen.hpp"
 #include "AST/Decl.hpp"
 
+#include <cassert>
+#include <print>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -22,8 +24,6 @@ CodeGen::CodeGen(std::vector<std::unique_ptr<Decl>> Ast,
 
 void CodeGen::generate() {
   declarePrint();
-
-  // sort so StructDecls come first
 
   for (auto &D : Ast) {
     if (auto Struct = llvm::dyn_cast<StructDecl>(D.get())) {
@@ -72,26 +72,58 @@ llvm::AllocaInst *CodeGen::stackAlloca(Decl &D) {
   return TempBuilder.CreateAlloca(T.toLLVM(Context), nullptr, Id);
 }
 
+llvm::AllocaInst *CodeGen::stackAlloca(std::string_view Id, const Type &T) {
+  llvm::IRBuilder<> TempBuilder(Context);
+  TempBuilder.SetInsertPoint(AllocaInsertPoint);
+
+  return TempBuilder.CreateAlloca(T.toLLVM(Context), nullptr, Id);
+}
+
 llvm::Value *CodeGen::store(llvm::Value *Val, llvm::Value *Destination,
                             const Type &T) {
   if (!T.isCustom())
     return Builder.CreateStore(Val, Destination);
 
-  auto &DataLayout = Module.getDataLayout();
-  auto *StructLayout = DataLayout.getStructLayout(
-      static_cast<llvm::StructType *>(T.toLLVM(Context)));
+  // T.toLLVM(Context) should return the llvm::StructType* for the struct
+  auto *StructTy = static_cast<llvm::StructType *>(T.toLLVM(Context));
+  unsigned NumFields = StructTy->getNumElements();
 
-  return Builder.CreateMemCpy(Destination, StructLayout->getAlignment(), Val,
-                              StructLayout->getAlignment(),
-                              StructLayout->getSizeInBytes());
+  // We expect Val and Destination to be pointers to the struct (allocas).
+  // For each field: load from src.field and store into dst.field.
+  for (unsigned i = 0; i < NumFields; ++i) {
+    // GEP to the i-th element for src and dst
+    llvm::Value *DstGEP = Builder.CreateStructGEP(StructTy, Destination, i);
+    llvm::Value *SrcGEP = Builder.CreateStructGEP(StructTy, Val, i);
+
+    // Load the element from source and store into destination
+    llvm::Type *ElemTy = StructTy->getElementType(i);
+    llvm::Value *Loaded = Builder.CreateLoad(ElemTy, SrcGEP);
+    Builder.CreateStore(Loaded, DstGEP);
+  }
+
+  // Return the destination pointer (consistent with your previous API)
+  return Destination;
 }
 
 llvm::Value *CodeGen::load(llvm::Value *Val, const Type &T) {
-  return Builder.CreateLoad(T.toLLVM(Context), Val);
+  // For custom types (structs), the "value" is its address (l-value).
+  // Do not load it into an aggregate r-value. Just return the pointer.
+  if (T.isCustom()) {
+    return Val;
+  }
+
+  if (auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(Val)) {
+    return Builder.CreateLoad(T.toLLVM(Context), Alloca);
+  } else {
+    return Val;
+  }
+
+  // For primitive types, perform the actual load.
 }
 
 void CodeGen::generateMainWrapper() {
   auto *BuiltinMain = Module.getFunction("main");
+  assert(BuiltinMain);
   BuiltinMain->setName("__builtin_main");
 
   auto *Main = llvm::Function::Create(

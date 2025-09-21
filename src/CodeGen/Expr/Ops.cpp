@@ -10,17 +10,17 @@ llvm::Value *CodeGen::visit(BinaryOp &E) {
   if (E.getOp() == TokenKind::Equals) {
     if (auto *LHS = llvm::dyn_cast<DeclRefExpr>(&E.getLhs())) {
       llvm::Value *Alloc = DeclMap[LHS->getDecl()];
-      llvm::Value *RHSVal = visit(E.getRhs());
-      return Builder.CreateStore(RHSVal, Alloc);
+      llvm::Value *RHSVal = load(visit(E.getRhs()), LHS->getType());
+      return store(RHSVal, Alloc, LHS->getType());
     }
 
     throw std::runtime_error("unsupported assignment lhs");
   }
 
-  llvm::Value *LHS = E.getLhs().accept(*this);
-  llvm::Value *RHS = E.getRhs().accept(*this);
-
   Type OperandType = E.getLhs().getType();
+  llvm::Value *LHS = load(visit(E.getLhs()), OperandType);
+  llvm::Value *RHS = load(visit(E.getRhs()), OperandType);
+
   if (OperandType.isFloat()) {
     switch (E.getOp()) {
     case TokenKind::Plus:
@@ -110,7 +110,7 @@ llvm::Value *CodeGen::visit(BinaryOp &E) {
 }
 
 llvm::Value *CodeGen::visit(UnaryOp &E) {
-  llvm::Value *Val = E.getOperand().accept(*this);
+  llvm::Value *Val = load(visit(E.getOperand()), E.getOperand().getType());
   switch (E.getOp()) {
   case TokenKind::Minus:
     if (E.getOperand().getType().isFloat())

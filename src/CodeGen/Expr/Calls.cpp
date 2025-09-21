@@ -17,13 +17,6 @@ llvm::Value *CodeGen::visit(DeclRefExpr &E) {
 
   llvm::Value *Val = It->second;
 
-  // If it's an alloca (local variable/parameter), load the value using our
-  // helper
-  if (auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(Val)) {
-    return load(Alloca, D->getType());
-  }
-
-  // For other values (like function references), return directly
   return Val;
 }
 
@@ -38,7 +31,7 @@ llvm::Value *CodeGen::visit(FunCallExpr &E) {
   std::vector<llvm::Value *> Args;
   Args.reserve(E.getArgs().size());
   for (auto &Arg : E.getArgs()) {
-    llvm::Value *ArgVal = visit(*Arg);
+    llvm::Value *ArgVal = load(visit(*Arg), Arg->getType());
     assert(ArgVal);
     Args.push_back(ArgVal);
   }

@@ -90,9 +90,9 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
 
   // Validate semicolon terminator
   if (advanceToken().getKind() != TokenKind::Semicolon) {
-    error("missing semicolon after variable declaration")
+    error("missing semicolon after field declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
-        .with_help("variable declarations must end with a semicolon")
+        .with_help("field declarations must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
         .with_code("E0025")
         .emit(*DiagnosticsMan);
