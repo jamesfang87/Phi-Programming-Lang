@@ -20,7 +20,7 @@ void CodeGen::visit(ReturnStmt &S) {
 
   if (S.hasExpr()) {
     // Return with value
-    llvm::Value *RetVal = visit(S.getExpr());
+    llvm::Value *RetVal = load(visit(S.getExpr()), S.getExpr().getType());
     Builder.CreateRet(RetVal);
   } else {
     // Void return
@@ -110,7 +110,7 @@ CodeGen::WhileLoopBlocks CodeGen::createWhileLoopBlocks() {
 void CodeGen::generateWhileCondition(WhileStmt &S,
                                      const WhileLoopBlocks &Blocks) {
   breakIntoBB(Blocks.CondBB);
-  llvm::Value *Cond = visit(S.getCond());
+  llvm::Value *Cond = load(visit(S.getCond()), S.getCond().getType());
   assert(Cond->getType()->isIntegerTy(1));
   Builder.CreateCondBr(Cond, Blocks.BodyBB, Blocks.ExitBB);
 }
@@ -137,8 +137,8 @@ CodeGen::ForRangeInfo CodeGen::extractRangeInfo(ForStmt &S) {
   assert(Range && "For loop only supports range literals for now");
 
   Info.Range = Range;
-  Info.Start = visit(Range->getStart());
-  Info.End = visit(Range->getEnd());
+  Info.Start = load(visit(Range->getStart()), Range->getStart().getType());
+  Info.End = load(visit(Range->getEnd()), Range->getEnd().getType());
   return Info;
 }
 
@@ -194,7 +194,7 @@ CodeGen::IfStatementBlocks CodeGen::createIfStatementBlocks(IfStmt &S) {
 }
 
 void CodeGen::generateIfCondition(IfStmt &S, const IfStatementBlocks &Blocks) {
-  llvm::Value *Cond = visit(S.getCond());
+  llvm::Value *Cond = load(visit(S.getCond()), S.getCond().getType());
   assert(Cond->getType()->isIntegerTy(1));
   Builder.CreateCondBr(Cond, Blocks.ThenBB, Blocks.ElseBB);
 }
