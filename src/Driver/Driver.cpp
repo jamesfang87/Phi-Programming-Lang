@@ -36,6 +36,9 @@ bool PhiCompiler::compile() {
   auto InferredTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
   auto [TypeCheckingSuccess, CheckedTypes] =
       TypeChecker(std::move(InferredTypes)).check();
+  if (DiagnosticMan->error_count() > 0) {
+    return false;
+  }
 
   // Code Generation
   phi::CodeGen CodeGen(std::move(CheckedTypes), Path);
