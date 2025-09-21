@@ -1,13 +1,7 @@
 #include <gtest/gtest.h>
 #include <memory>
-#include <sstream>
 #include <string>
-#include <vector>
 
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
-#include "AST/Stmt.hpp"
-#include "CodeGen/CodeGen.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Driver/Driver.hpp"
 #include "SrcManager/SrcManager.hpp"

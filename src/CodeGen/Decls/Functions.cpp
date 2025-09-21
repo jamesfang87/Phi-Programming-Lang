@@ -1,12 +1,10 @@
 #include "CodeGen/CodeGen.hpp"
-#include "llvm/IR/DerivedTypes.h"
 
 #include <cassert>
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/Support/Casting.h>
 
 using namespace phi;
-
-void CodeGen::visit(Decl &D) { D.accept(*this); }
 
 void CodeGen::declareHeader(FunDecl &D) {
   // Get parameter types
@@ -74,19 +72,4 @@ void CodeGen::visit(FunDecl &D) {
   AllocaInsertPoint->eraseFromParent();
   AllocaInsertPoint = nullptr;
   CurrentFun = nullptr;
-}
-
-void CodeGen::visit(ParamDecl &D) { (void)D; }
-
-void CodeGen::declareHeader(StructDecl &D) {}
-void CodeGen::visit(StructDecl &D) { (void)D; }
-void CodeGen::visit(FieldDecl &D) { (void)D; }
-
-void CodeGen::visit(VarDecl &D) {
-  llvm::AllocaInst *Var = stackAlloca(D);
-
-  if (D.hasInit())
-    store(visit(D.getInit()), Var, D.getInit().getType());
-
-  DeclMap[&D] = Var;
 }

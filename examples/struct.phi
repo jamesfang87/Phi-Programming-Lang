@@ -1,0 +1,13 @@
+fun println(const msg: i32) {}
+
+struct RGB { 
+    r: i32; 
+    b: i32; 
+    g: i32;
+}
+
+fun main() {
+    const color = RGB { r = 255, b = 255, g = 255};
+    println(color.r);
+
+}

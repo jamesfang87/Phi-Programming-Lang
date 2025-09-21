@@ -45,7 +45,7 @@ void CodeGen::pushDefer(Expr &DeferredExpr) {
 void CodeGen::executeDefers() {
   // Execute deferred statements in reverse order (LIFO)
   for (auto It = DeferStack.rbegin(); It != DeferStack.rend(); ++It) {
-    visit(It->get());
+    load(visit(It->get()), It->get().getType());
   }
 }
 

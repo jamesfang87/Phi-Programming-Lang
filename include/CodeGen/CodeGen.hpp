@@ -57,7 +57,6 @@ public:
   llvm::Value *visit(BinaryOp &E);
   llvm::Value *visit(UnaryOp &E);
   llvm::Value *visit(StructLiteral &E);
-  llvm::Value *visit(FieldInitExpr &E);
   llvm::Value *visit(FieldAccessExpr &E);
   llvm::Value *visit(MethodCallExpr &E);
 
@@ -83,9 +82,7 @@ public:
 
   void visit(Decl &D);
   void visit(FunDecl &D);
-  void visit(ParamDecl &D);
   void visit(StructDecl &D);
-  void visit(FieldDecl &D);
   void visit(VarDecl &D);
 
 private:
@@ -129,6 +126,7 @@ private:
   //===--------------------------------------------------------------------===//
 
   llvm::AllocaInst *stackAlloca(Decl &D);
+  llvm::AllocaInst *stackAlloca(std::string_view Id, const Type &T);
   llvm::Value *load(llvm::Value *Val, const Type &T);
   llvm::Value *store(llvm::Value *Val, llvm::Value *Destination, const Type &T);
 

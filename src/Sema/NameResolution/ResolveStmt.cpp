@@ -66,7 +66,11 @@ bool NameResolver::visit(ForStmt &S) {
 
   // Create scope for loop variable
   SymbolTable::ScopeGuard BlockScope(SymbolTab);
-  SymbolTab.insert(&S.getLoopVar());
+  if (!SymbolTab.insert(&S.getLoopVar())) {
+    emitRedefinitionError("variable", SymbolTab.lookup(S.getLoopVar()),
+                          &S.getLoopVar());
+    return false;
+  }
 
   // Resolve loop body (scope already created)
   Success = visit(S.getBody(), true) && Success;
@@ -89,6 +93,10 @@ bool NameResolver::visit(DeclStmt &S) {
 
   // Add to symbol table
   SymbolTab.insert(&Var);
+  if (!SymbolTab.insert(&Var)) {
+    emitRedefinitionError("variable", SymbolTab.lookup(Var), &Var);
+    return false;
+  }
 
   return Success;
 }
