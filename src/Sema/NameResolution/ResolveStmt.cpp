@@ -69,7 +69,7 @@ bool NameResolver::visit(ForStmt &S) {
   if (!SymbolTab.insert(&S.getLoopVar())) {
     emitRedefinitionError("variable", SymbolTab.lookup(S.getLoopVar()),
                           &S.getLoopVar());
-    return false;
+    Success = false;
   }
 
   // Resolve loop body (scope already created)
@@ -92,10 +92,9 @@ bool NameResolver::visit(DeclStmt &S) {
   }
 
   // Add to symbol table
-  SymbolTab.insert(&Var);
   if (!SymbolTab.insert(&Var)) {
     emitRedefinitionError("variable", SymbolTab.lookup(Var), &Var);
-    return false;
+    Success = false;
   }
 
   return Success;
