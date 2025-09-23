@@ -37,10 +37,10 @@ llvm::Value *CodeGen::visit(FunCallExpr &E) {
   }
 
   // Get the callee function
-  auto *CalleeRef = llvm::dyn_cast<DeclRefExpr>(&E.getCallee());
-  assert(CalleeRef);
+  auto *Called = llvm::dyn_cast<DeclRefExpr>(&E.getCallee());
+  assert(Called);
 
-  llvm::Function *Fun = Module.getFunction(CalleeRef->getId());
+  llvm::Function *Fun = Module.getFunction(Called->getId());
   llvm::Value *CallResult = Builder.CreateCall(Fun, Args);
 
   // For void functions, return null; otherwise return the result

@@ -121,7 +121,6 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
  * @return std::unique_ptr<ParamDecl> Parameter AST or nullptr on error.
  *         Errors are emitted to DiagnosticManager.
  *
- * Wrapper around parse_typed_binding() that creates a ParamDecl node.
  */
 std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
   bool IsConst;

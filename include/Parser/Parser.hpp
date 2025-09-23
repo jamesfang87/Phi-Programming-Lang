@@ -18,6 +18,7 @@
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
@@ -218,7 +219,8 @@ private:
    */
   std::unique_ptr<StructDecl> parseStructDecl();
   std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
-  std::optional<MethodDecl> parseStructMethodDecl();
+  std::optional<MethodDecl> parseStructMethodDecl(std::string ParentName,
+                                                  SrcLocation ParentLoc);
 
   //===--------------------------------------------------------------------===//
   // Function Declaration Parsing
@@ -323,7 +325,7 @@ private:
     // Parse list elements
     std::vector<std::unique_ptr<T>> content;
     while (!atEOF() && peekToken().getKind() != Closing) {
-      auto result = (this->*Fun)();
+      auto result = std::invoke(Fun, this);
       if (result) {
         content.push_back(std::move(result));
       } else {

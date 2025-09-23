@@ -40,6 +40,14 @@ bool PhiCompiler::compile() {
     return false;
   }
 
+  for (auto &D : CheckedTypes) {
+    D->emit(0);
+  }
+
+  if (DiagnosticMan->error_count() > 0) {
+    return false;
+  }
+
   // Code Generation
   phi::CodeGen CodeGen(std::move(CheckedTypes), Path);
   CodeGen.generate();
