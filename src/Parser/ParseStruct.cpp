@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "AST/Decl.hpp"
@@ -40,7 +41,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     }
 
     if (Check.getKind() == TokenKind::FunKw) {
-      auto Res = parseStructMethodDecl();
+      auto Res = parseStructMethodDecl(Id, Loc);
       if (Res) {
         Methods.push_back(std::move(*Res));
       } else {
@@ -101,22 +102,74 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
                                      IsPrivate, FieldIndex);
 }
 
-std::optional<MethodDecl> Parser::parseStructMethodDecl() {
+std::optional<MethodDecl>
+Parser::parseStructMethodDecl(std::string ParentStruct, SrcLocation ParentLoc) {
   bool IsPrivate = true;
   if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
     advanceToken();
   }
 
-  assert(peekToken().getKind() == TokenKind::FunKw);
-  auto Res = parseFunDecl();
-  if (!Res) {
+  Token Tok = advanceToken(); // Eat 'fun'
+  const SrcLocation &Loc = Tok.getStart();
+
+  // Validate function name
+  if (peekToken().getKind() != TokenKind::Identifier) {
+    error("invalid function name")
+        .with_primary_label(spanFromToken(peekToken()),
+                            "expected function name here")
+        .with_secondary_label(spanFromToken(Tok), "after `fun` keyword")
+        .with_help("function names must be valid identifiers")
+        .with_note("identifiers must start with a letter or underscore")
+        .with_code("E0006")
+        .emit(*DiagnosticsMan);
     return std::nullopt;
   }
+  std::string Id = advanceToken().getLexeme();
 
-  MethodDecl Method(std::move(*Res), IsPrivate);
+  // Parse parameter list
+  auto Params = parseList<ParamDecl>(
+      TokenKind::OpenParen, TokenKind::CloseParen,
+      [&](Parser *P) -> std::unique_ptr<ParamDecl> {
+        if (P->peekToken(1).getKind() == TokenKind::ThisKw) {
+          // emit error if not const or var
+          bool IsConst = P->peekToken().getKind() == TokenKind::ConstKw;
+          P->advanceToken();
+          Type T = Type::makeReference(
+              Type::makeCustom(ParentStruct, ParentLoc), ParentLoc);
+          return std::make_unique<ParamDecl>(P->advanceToken().getStart(),
+                                             "this", T, IsConst);
+        } else {
 
-  return std::optional<MethodDecl>{std::move(Method)};
+          return P->parseParamDecl();
+        }
+      }
+
+  );
+  if (!Params)
+    return std::nullopt;
+
+  for (auto &Param : *Params) {
+    assert(Param->hasType());
+  }
+
+  // Handle optional return type
+  auto ReturnType = Type::makePrimitive(PrimitiveKind::Null, SrcLocation{});
+  if (peekToken().getKind() == TokenKind::Arrow) {
+    advanceToken(); // eat '->'
+    auto Res = parseType();
+    if (!Res.has_value())
+      return std::nullopt;
+    ReturnType = Res.value();
+  }
+
+  // Parse function body
+  auto Body = parseBlock();
+  if (!Body)
+    return std::nullopt;
+
+  return MethodDecl(Loc, std::move(Id), ReturnType, std::move(Params.value()),
+                    std::move(Body), IsPrivate);
 }
 
 } // namespace phi

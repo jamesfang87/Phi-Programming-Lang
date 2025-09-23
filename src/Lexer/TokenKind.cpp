@@ -57,6 +57,8 @@ std::string tyToStr(const TokenKind Kind) {
     return "STRUCT";
   case TokenKind::TrueKw:
     return "TRUE";
+  case TokenKind::ThisKw:
+    return "THIS";
   case TokenKind::VarKw:
     return "VAR";
   case TokenKind::WhileKw:

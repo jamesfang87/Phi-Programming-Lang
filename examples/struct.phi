@@ -4,6 +4,10 @@ struct RGB {
     r: i32; 
     b: i32; 
     g: i32;
+
+    public fun compareRed(const this, const other: i32) -> bool {
+        return r < other;
+    }
 }
 
 fun main() {
