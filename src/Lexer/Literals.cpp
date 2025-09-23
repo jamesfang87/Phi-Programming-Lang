@@ -72,14 +72,14 @@ Token Lexer::parseIdentifierOrKw() {
       {"if", TokenKind::IfKw},         {"import", TokenKind::ImportKw},
       {"in", TokenKind::InKwKind},     {"public", TokenKind::PublicKw},
       {"return", TokenKind::ReturnKw}, {"struct", TokenKind::StructKw},
-      {"true", TokenKind::TrueKw},     {"var", TokenKind::VarKw},
-      {"while", TokenKind::WhileKw},   {"i8", TokenKind::I8},
-      {"i16", TokenKind::I16},         {"i32", TokenKind::I32},
-      {"i64", TokenKind::I64},         {"u8", TokenKind::U8},
-      {"u16", TokenKind::U16},         {"u32", TokenKind::U32},
-      {"u64", TokenKind::U64},         {"f32", TokenKind::F32},
-      {"f64", TokenKind::F64},         {"string", TokenKind::String},
-      {"char", TokenKind::Char},
+      {"true", TokenKind::TrueKw},     {"this", TokenKind::ThisKw},
+      {"var", TokenKind::VarKw},       {"while", TokenKind::WhileKw},
+      {"i8", TokenKind::I8},           {"i16", TokenKind::I16},
+      {"i32", TokenKind::I32},         {"i64", TokenKind::I64},
+      {"u8", TokenKind::U8},           {"u16", TokenKind::U16},
+      {"u32", TokenKind::U32},         {"u64", TokenKind::U64},
+      {"f32", TokenKind::F32},         {"f64", TokenKind::F64},
+      {"string", TokenKind::String},   {"char", TokenKind::Char},
   };
 
   const auto It = Kws.find(Id);

@@ -38,7 +38,8 @@ enum class TokenKind : uint8_t {
   PublicKw, ///< `public` keyword
   ReturnKw, ///< `return` keyword
   StructKw,
-  TrueKw,  ///< `true` literal
+  TrueKw, ///< `true` literal
+  ThisKw,
   VarKw,   ///< `let` keyword
   WhileKw, ///< `while` keyword
 
