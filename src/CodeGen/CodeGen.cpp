@@ -106,19 +106,20 @@ llvm::Value *CodeGen::store(llvm::Value *Val, llvm::Value *Destination,
 }
 
 llvm::Value *CodeGen::load(llvm::Value *Val, const Type &T) {
-  // For custom types (structs), the "value" is its address (l-value).
-  // Do not load it into an aggregate r-value. Just return the pointer.
+  // If it's already a value (not an alloca), return it directly
+  if (!llvm::isa<llvm::AllocaInst>(Val) &&
+      !llvm::isa<llvm::GetElementPtrInst>(Val)) {
+    return Val;
+  }
+
+  // For custom types (structs), we want the pointer, don't load the entire
+  // struct
   if (T.isCustom()) {
     return Val;
   }
 
-  if (auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(Val)) {
-    return Builder.CreateLoad(T.toLLVM(Context), Alloca);
-  } else {
-    return Val;
-  }
-
-  // For primitive types, perform the actual load.
+  // For primitive types, perform the actual load
+  return Builder.CreateLoad(T.toLLVM(Context), Val);
 }
 
 void CodeGen::generateMainWrapper() {
