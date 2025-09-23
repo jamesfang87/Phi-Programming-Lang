@@ -5,12 +5,15 @@ struct RGB {
     b: i32; 
     g: i32;
 
-    public fun compareRed(const this, const other: i32) -> bool {
-        return r < other;
+    public fun compareRed(const this, const other: i32) -> i32 {
+        return r - other;
     }
 }
 
 fun main() {
     const color = RGB { r = 255, b = 255, g = 255};
     println(color.r);
+    println(12);
+    println(color.compareRed(7));
+
 }
