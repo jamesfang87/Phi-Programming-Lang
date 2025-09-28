@@ -5,12 +5,12 @@ using namespace phi;
 
 llvm::Value *CodeGen::visit(FieldAccessExpr &E) {
   auto T = E.getBase()->getType();
-  assert(T.isCustom() || T.isPointer() || T.isReference());
+  assert(T.isStruct() || T.isPtr() || T.isRef());
 
   llvm::Type *LlvmType = T.toLLVM(Context);
-  if (T.isPointer()) {
+  if (T.isPtr()) {
     LlvmType = T.asPtr().Pointee->toLLVM(Context);
-  } else if (T.isReference()) {
+  } else if (T.isRef()) {
     LlvmType = T.asRef().Pointee->toLLVM(Context);
   }
 
