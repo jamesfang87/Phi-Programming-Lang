@@ -1,13 +1,13 @@
-fun test_while_break() {
-            var i = 0;
-            while i < 10 {
-                if i == 5 {
-                    break;
-                }
-                i = i + 1;
-            }
+fun foo() {
+    var i = 0;
+    while i < 10 {
+        if i == 5 {
+            break;
         }
+        i = i + 1;
+    }
+}
 
-        fun main() {
-            test_while_break();
-        }
+fun main() {
+    foo();
+}
