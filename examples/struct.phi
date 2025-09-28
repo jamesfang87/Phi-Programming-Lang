@@ -6,8 +6,6 @@ struct RGB {
     g: i32;
 
     public fun compareRed(const this, const other: i32) -> i32 {
-        println(this.r);
-        //println(other);
         return this.r - other;
     }
 }
@@ -17,5 +15,4 @@ fun main() {
     println(color.r);
     println(12);
     println(color.compareRed(7));
-
 }
