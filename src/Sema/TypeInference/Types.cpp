@@ -51,7 +51,7 @@ Type Monotype::toAstType() const {
           return Type::makePrimitive(PrimitiveKind::Null, this->Location);
 
         // Otherwise treat as custom/struct name
-        return Type::makeCustom(Name, this->Location);
+        return Type::makeStruct(Name, this->Location);
       },
       [&](const TypeApp &App) {
         if (App.Name == "Ptr") {

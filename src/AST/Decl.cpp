@@ -136,7 +136,7 @@ StructDecl::StructDecl(SrcLocation Loc, std::string Id,
                        std::vector<std::unique_ptr<FieldDecl>> Fields,
                        std::vector<MethodDecl> Methods)
     : Decl(Kind::StructDecl, Loc, Id),
-      DeclType(Type::makeCustom(std::move(Id), std::move(Loc))),
+      DeclType(Type::makeStruct(std::move(Id), std::move(Loc))),
       Fields(std::move(Fields)), Methods(std::move(Methods)) {
   std::vector<Type> ContainedTypes;
   for (auto &Field : this->Fields) {

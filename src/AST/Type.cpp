@@ -22,7 +22,7 @@ std::string Type::toString() const {
       return std::format("{}", primitiveKindToString(K));
     }
 
-    std::string operator()(const CustomType &C) const { return C.Name; }
+    std::string operator()(const StructType &C) const { return C.Name; }
 
     std::string operator()(const ReferenceType &R) const {
       return "&" + R.Pointee->toString();
@@ -72,7 +72,7 @@ class Monotype Type::toMonotype() const {
       return Monotype::makeCon(primitiveKindToString(K), {}, L);
     }
 
-    Monotype operator()(const CustomType &C) const {
+    Monotype operator()(const StructType &C) const {
       return Monotype::makeCon(C.Name, {}, L);
     }
 
@@ -155,7 +155,7 @@ llvm::Type *Type::toLLVM(llvm::LLVMContext &Ctx) const {
       return llvm::Type::getVoidTy(Ctx);
     }
 
-    llvm::Type *operator()(const CustomType &C) const {
+    llvm::Type *operator()(const StructType &C) const {
       // Reuse an existing named struct if it exists; otherwise create opaque.
       if (auto *T = llvm::StructType::getTypeByName(Ctx, C.Name))
         return T;

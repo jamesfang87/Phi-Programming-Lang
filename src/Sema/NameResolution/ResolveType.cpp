@@ -24,11 +24,11 @@ bool NameResolver::visit(std::optional<Type> Type) {
   }
 
   class Type T = Type.value();
-  if (T.isPointer()) {
+  if (T.isPtr()) {
     T = *T.asPtr().Pointee;
   }
 
-  if (T.isReference()) {
+  if (T.isRef()) {
     T = *T.asRef().Pointee;
   }
 
