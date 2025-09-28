@@ -82,6 +82,7 @@ public:
 
   void visit(Decl &D);
   void visit(FunDecl &D);
+  void visit(MethodDecl &D);
   void visit(StructDecl &D);
   void visit(VarDecl &D);
 
@@ -120,6 +121,7 @@ private:
 
   void declareHeader(StructDecl &D);
   void declareHeader(FunDecl &D);
+  void declareHeader(MethodDecl &D, const std::string &MangledName);
 
   //===--------------------------------------------------------------------===//
   // Memory Management Operations

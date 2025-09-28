@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 
 #include "AST/Decl.hpp"

@@ -1,5 +1,9 @@
 fun println(const msg: i32) {}
 
+fun foo() -> i32 {
+    return 67;
+}
+
 
 fun main() {
     var i = 0;
@@ -8,7 +12,9 @@ fun main() {
         i = i + 1;
     }
 
-    for i in 0..5 {
-        println(i);
+    for j in 0..5 {
+        println(j);
     }
+
+    println(foo());
 }
