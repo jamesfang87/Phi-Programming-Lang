@@ -1,10 +1,5 @@
 fun println(const msg: i32) {}
 
-fun foo() -> i32 {
-    return 67;
-}
-
-
 fun main() {
     var i = 0;
     while (i < 5) {
