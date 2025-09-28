@@ -22,14 +22,13 @@ Variables are declared with `var` (mutable) or `const` (immutable):
 
 ```phi
 fun main() {
-    var phi  = 0;       // mutable integer
-    const foo = 10;    // immutable integer
-    const var: i64 = 11;
-
+    var foo = 0;            // mutable integer
+    const bar = 1;          // immutable integer
+    const phi: f32 = 1.618; // variable with type annotation
 }
 ```
 
-Phi uses **type inference**: the compiler figures out the type of `phi` and `lambda` based on their initial values. Type annotations may be provided as seen with the variable `bar`.
+Phi uses **type inference**: the compiler figures out the type of `foo` and `bar` based on their initial values and uses later in the program. Type annotations may be provided as seen with the variable `phi`.
 
 ---
 
@@ -68,7 +67,6 @@ Phi provides familiar control-flow constructs:
 ```phi
 var i = 0;
 while (i < 5) {
-    println(i);
     i = i + 1;
 }
 ```
@@ -101,13 +99,13 @@ struct RGB {
     g: i32;
     b: i32;
 
-    public fun compareRed(const this, const other: i32) -> i32 {
-        return this.r - other;
+    public fun sameRed(const this, const other: i32) -> i32 {
+        return this.r == other;
     }
 }
 ```
 
-Here we define an `RGB` struct with three integer fields. Methods are declared inside structs, and the first parameter is always `this`, which refers to the instance. `this` can be prefixed with const or var, based on whether the method will mutate the internal contents of the struct or not.
+Here we define an `RGB` struct with three integer fields. Methods are declared inside structs, and the first parameter is always `this`, which refers to the instance. `this` can be prefixed with `const` or `var`, based on whether the method will mutate the internal contents of the struct or not.
 
 You can construct a struct with field initializers:
 
@@ -118,6 +116,6 @@ const color = RGB { r = 255, g = 255, b = 255 };
 And access fields or call methods:
 
 ```phi
-println(color.r);              // field access
-println(color.compareRed(7));  // method call
+color.r;           // field access
+color.sameRed(7);  // method call
 ```
