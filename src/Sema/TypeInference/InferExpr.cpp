@@ -1,6 +1,7 @@
 #include "Sema/TypeInference/Infer.hpp"
 
 #include <cassert>
+#include <optional>
 #include <print>
 #include <string>
 #include <vector>
@@ -231,11 +232,25 @@ TypeInferencer::InferRes TypeInferencer::visit(FieldAccessExpr &E) {
   auto [BaseSubst, BaseType] = visit(*E.getBase());
   auto FieldType = Monotype::makeVar(Factory.fresh());
 
-  auto [TypeName, Args] = BaseType.asCon();
+  std::optional<std::string> TypeName;
+  if (BaseType.isApp()) {
+    assert(BaseType.isApp() && "BaseType should be Ref<Type>");
+    assert(BaseType.asApp().Name == "Ref" &&
+           "BaseType should be a ref to a class");
+    assert(BaseType.asApp().Args.size() == 1 &&
+           "Should hold only 1 Arg (the class)");
+    assert(BaseType.asApp().Args.front().isCon() &&
+           "The class should be a constant type");
 
-  const auto It = Structs.find(TypeName);
+    TypeName = BaseType.asApp().Args.front().asCon().Name;
+  } else if (BaseType.isCon()) {
+    TypeName = BaseType.asCon().Name;
+  }
+  assert(TypeName && "Could not infer type before field access");
+
+  const auto It = Structs.find(*TypeName);
   if (It == Structs.end()) {
-    std::println("Could not find struct {} in symbol table", TypeName);
+    std::println("Could not find struct {} in symbol table", *TypeName);
     return {BaseSubst, FieldType};
   }
   StructDecl *Struct = It->second;
@@ -243,12 +258,12 @@ TypeInferencer::InferRes TypeInferencer::visit(FieldAccessExpr &E) {
   const FieldDecl *FieldDecl = Struct->getField(E.getFieldId());
   if (FieldDecl == nullptr) {
     std::println("Could not find field {} in struct {}", E.getFieldId(),
-                 TypeName);
+                 *TypeName);
     return {BaseSubst, FieldType};
   }
 
   // Set the member field for code generation
-  E.setMember(const_cast<::phi::FieldDecl *>(FieldDecl));
+  E.setMember(const_cast<phi::FieldDecl *>(FieldDecl));
 
   // Convert the field's AST type to a Monotype and unify with our output
   const auto DeclaredAs = FieldDecl->getType().toMonotype();
@@ -261,22 +276,15 @@ TypeInferencer::InferRes TypeInferencer::visit(FieldAccessExpr &E) {
 
 TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   // 1) Infer base expression (the receiver)
-  auto [sBase, tBase] = visit(*E.getBase());
+  auto [BaseSubst, BaseType] = visit(*E.getBase());
 
   // Ensure base is a struct constructor type
-  if (!tBase.isCon()) {
-    throw std::runtime_error("method call on non-struct type: " +
-                             tBase.toString());
-  }
+  assert(BaseType.isCon());
 
-  const std::string StructName = tBase.asCon().Name;
-
-  // Lookup the struct in your symbol table
-  auto it = Structs.find(StructName);
-  if (it == Structs.end()) {
-    throw std::runtime_error("unknown struct type: " + StructName);
-  }
-  StructDecl *Struct = it->second;
+  const std::string StructName = BaseType.asCon().Name;
+  auto It = Structs.find(StructName);
+  assert(It != Structs.end());
+  StructDecl *Struct = It->second;
 
   // The callee inside MemberFunCallExpr is expected to be a DeclRefExpr naming
   // the method. If it's not, that's an unsupported form for now.
@@ -292,64 +300,44 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   MethodDecl *Method = Struct->getMethod(MethodName);
   E.setDecl(Method);
   E.setMethod(Method);
-  if (!Method) {
-    throw std::runtime_error("struct '" + StructName + "' has no method '" +
-                             MethodName + "'");
-  }
+  assert(Method);
 
   // 2) Build the method's Monotype from its AST param types and return type
   std::vector<Monotype> MethodParams;
   MethodParams.reserve(Method->getParams().size());
-
   for (auto &ParamUP : Method->getParams()) {
-    ParamDecl *P = ParamUP.get();
-    if (!P->hasType()) {
-      throw std::runtime_error("method parameter '" + P->getId() +
-                               "' missing type annotation");
-    }
-    auto PTy = P->getType().toMonotype();
-    MethodParams.push_back(PTy);
+    auto ParamType = ParamUP->getType().toMonotype();
+    MethodParams.push_back(ParamType);
   }
 
-  // Return type must be present (your FunDecl stores return type)
-  auto RetTy = Method->getReturnTy().toMonotype();
-  // 3) Prepend the receiver type to the parameter list to form full function
-  // type
-  //    Here the receiver type is tBase (the concrete struct monotype).
-  std::vector<Monotype> FullParams;
-  FullParams.reserve(1 + MethodParams.size());
-  FullParams.push_back(
-      sBase.apply(tBase)); // apply substitution so receiver is up-to-date
-  for (auto &p : MethodParams)
-    FullParams.push_back(p);
-
-  auto MethodMonotype = Monotype::makeFun(std::move(FullParams), RetTy);
-  // 4) Now infer the call: first collect argument types (receiver + explicit
-  // args) Start with the base substitution sBase
-  Substitution S = sBase;
+  auto MethodMonotype = E.getMethod().getFunType().toMonotype();
+  std::println("Type: {}", E.getMethod().getFunType().toString());
+  Substitution S = BaseSubst;
 
   // receiver arg type (we already have it): use s-applied version
   std::vector<Monotype> CallArgTys;
   CallArgTys.reserve(1 + E.getArgs().size());
-  CallArgTys.push_back(S.apply(tBase)); // receiver goes first
-
-  // Infer each explicit argument, composing substitutions as we go
+  CallArgTys.push_back(
+      S.apply(Monotype::makeApp("Ref", {BaseType}))); // receiver goes first
   for (auto &ArgUP : E.getArgs()) {
-    auto [si, ti] = visit(*ArgUP);
-    S.compose(si);
+    auto [Subst, Type] = visit(*ArgUP);
+    S.compose(Subst);
     // make sure to apply the current substitution to argument type
-    CallArgTys.push_back(S.apply(ti));
+    CallArgTys.push_back(S.apply(Type));
   }
 
   // 5) Make a fresh result type for the call
   auto ResultTy = Monotype::makeVar(Factory.fresh());
 
   // Expected function shape from the call site: (arg types...) -> ResultTy
-  auto FnExpect = Monotype::makeFun(CallArgTys, ResultTy);
+  auto FunExpect = Monotype::makeFun(CallArgTys, ResultTy);
+
+  std::println("Method Monotype: {}, FunExpect: {}", MethodMonotype.toString(),
+               FunExpect.toString());
 
   // 6) Unify the declared method monotype with the expected call shape.
   //    This will unify receiver and arguments and produce substitutions.
-  unifyInto(S, MethodMonotype, FnExpect);
+  unifyInto(S, MethodMonotype, FunExpect);
 
   // 7) Record the substitution so the environment sees it and annotate the call
   recordSubst(S);

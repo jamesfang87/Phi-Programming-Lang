@@ -46,7 +46,7 @@ std::string Type::toString() const {
 
     std::string operator()(const FunctionType &F) const {
       std::ostringstream Oss;
-      Oss << "fn(";
+      Oss << "fun(";
       for (size_t I = 0; I < F.Parameters.size(); ++I) {
         Oss << F.Parameters[I].toString();
         if (I + 1 < F.Parameters.size())
@@ -64,7 +64,7 @@ std::string Type::toString() const {
 //===----------------------------------------------------------------------===//
 
 class Monotype Type::toMonotype() const {
-  SrcLocation L = this->Location;
+  const SrcLocation L = this->Location;
   struct Visitor {
     SrcLocation L;
 
@@ -98,8 +98,8 @@ class Monotype Type::toMonotype() const {
       Params.reserve(F.Parameters.size());
       for (const auto &Param : F.Parameters)
         Params.push_back(Param.toMonotype());
-      Monotype ret = F.ReturnType->toMonotype();
-      return Monotype::makeFun(Params, ret, L);
+      const Monotype Ret = F.ReturnType->toMonotype();
+      return Monotype::makeFun(Params, Ret, L);
     }
   };
   return std::visit(Visitor{L}, Data);
@@ -163,13 +163,13 @@ llvm::Type *Type::toLLVM(llvm::LLVMContext &Ctx) const {
     }
 
     llvm::Type *operator()(const ReferenceType &R) const {
-      (void)R;
-      return llvm::PointerType::getUnqual(Ctx);
+      llvm::Type *PointeeTy = R.Pointee->toLLVM(Ctx);
+      return llvm::PointerType::get(PointeeTy, 0);
     }
 
     llvm::Type *operator()(const PointerType &P) const {
-      (void)P;
-      return llvm::PointerType::getUnqual(Ctx);
+      llvm::Type *PointeeTy = P.Pointee->toLLVM(Ctx);
+      return llvm::PointerType::get(PointeeTy, 0);
     }
 
     llvm::Type *operator()(const GenericType &G) const {

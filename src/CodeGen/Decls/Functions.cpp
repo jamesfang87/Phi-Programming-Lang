@@ -7,17 +7,9 @@
 using namespace phi;
 
 void CodeGen::declareHeader(FunDecl &D) {
-  // Get parameter types
-  std::vector<llvm::Type *> ParamTypes;
-  for (const auto &Param : D.getParams()) {
-    ParamTypes.push_back(Param->getType().toLLVM(Context));
-  }
-
-  // Get return type
-  llvm::Type *RetType = D.getReturnTy().toLLVM(Context);
-
   // Create function type
-  auto *FunType = llvm::FunctionType::get(RetType, ParamTypes, false);
+  auto *FunType =
+      llvm::dyn_cast<llvm::FunctionType>(D.getFunType().toLLVM(Context));
 
   llvm::Function::Create(FunType, llvm::Function::ExternalLinkage, D.getId(),
                          Module);
@@ -37,13 +29,20 @@ void CodeGen::visit(FunDecl &D) {
   // allocate and store parameters
   auto ArgIt = Fun->arg_begin();
   for (auto &P : D.getParams()) {
-    auto *Alloca = stackAlloca(*P);
-    DeclMap[P.get()] = Alloca;
+    auto T = P->getType().toLLVM(Context);
+    if (T->isPointerTy()) {
+      assert(ArgIt != Fun->arg_end() && "function param/arg mismatch");
+      llvm::Argument *A = &*ArgIt;
+      // Map the parameter declaration to the argument value (no alloca)
+      DeclMap[P.get()] = A;
+    } else {
+      auto *Alloca = stackAlloca(*P);
+      DeclMap[P.get()] = Alloca;
 
-    if (ArgIt != Fun->arg_end()) {
+      assert(ArgIt != Fun->arg_end());
       Builder.CreateStore(ArgIt, Alloca);
-      ++ArgIt;
     }
+    ++ArgIt;
   }
 
   // Set current function for statement generation

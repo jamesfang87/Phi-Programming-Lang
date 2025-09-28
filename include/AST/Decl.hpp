@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -284,7 +285,14 @@ protected:
           std::unique_ptr<Block> Body)
       : Decl(K, std::move(Loc), std::move(Id)),
         ReturnType(std::move(ReturnType)), Params(std::move(Params)),
-        Body(std::move(Body)) {}
+        Body(std::move(Body)) {
+    std::vector<Type> ParamTypes;
+    ParamTypes.reserve(this->Params.size());
+    for (auto &Param : this->Params) {
+      ParamTypes.push_back(Param->getType());
+    }
+    FunType = Type::makeFunction(ParamTypes, this->ReturnType, this->Location);
+  }
 
 public:
   //===--------------------------------------------------------------------===//
@@ -297,11 +305,11 @@ public:
       : FunDecl(Kind::FunDecl, std::move(Loc), std::move(Id),
                 std::move(ReturnType), std::move(Params), std::move(Body)) {
     std::vector<Type> ParamTypes;
-    ParamTypes.reserve(Params.size());
-    for (auto &Param : Params) {
+    ParamTypes.reserve(this->Params.size());
+    for (auto &Param : this->Params) {
       ParamTypes.push_back(Param->getType());
     }
-    FunType = Type::makeFunction(ParamTypes, ReturnType, Loc);
+    FunType = Type::makeFunction(ParamTypes, this->ReturnType, this->Location);
   }
 
   //===--------------------------------------------------------------------===//
@@ -366,12 +374,6 @@ public:
                 std::move(ReturnType), std::move(Params), std::move(Body)),
         IsPrivate(IsPrivate) {}
 
-  MethodDecl(FunDecl &&FD, bool IsPrivate)
-      : FunDecl(Kind::MethodDecl, FD.getLocation(), FD.getId(),
-                FD.getReturnTy(), std::move(FD.getParams()),
-                std::move(FD.getBodyPtr())),
-        IsPrivate(IsPrivate) {}
-
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
@@ -383,12 +385,14 @@ public:
   //===--------------------------------------------------------------------===//
 
   void setParent(StructDecl *P) { Parent = P; }
+  void setMangledId(std::string Mangled) { MangledId = std::move(Mangled); }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] bool isPrivate() const { return IsPrivate; }
+  [[nodiscard]] std::string getMangledId() const { return MangledId; }
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
@@ -408,6 +412,7 @@ public:
 
 private:
   class StructDecl *Parent = nullptr;
+  std::string MangledId;
   bool IsPrivate;
 };
 
