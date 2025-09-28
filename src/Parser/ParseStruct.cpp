@@ -137,7 +137,7 @@ Parser::parseStructMethodDecl(std::string ParentStruct, SrcLocation ParentLoc) {
           bool IsConst = P->peekToken().getKind() == TokenKind::ConstKw;
           P->advanceToken();
           Type T = Type::makeReference(
-              Type::makeCustom(ParentStruct, ParentLoc), ParentLoc);
+              Type::makeStruct(ParentStruct, ParentLoc), ParentLoc);
           return std::make_unique<ParamDecl>(P->advanceToken().getStart(),
                                              "this", T, IsConst);
         } else {

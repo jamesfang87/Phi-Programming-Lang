@@ -73,7 +73,7 @@ std::optional<Type> Parser::parseType() {
   const auto It = PrimitiveMap.find(Id);
 
   advanceToken();
-  Type Base = (It == PrimitiveMap.end()) ? Type::makeCustom(Id, Loc)
+  Type Base = (It == PrimitiveMap.end()) ? Type::makeStruct(Id, Loc)
                                          : Type::makePrimitive(It->second, Loc);
   switch (Kind) {
   case Indirection::Ptr:

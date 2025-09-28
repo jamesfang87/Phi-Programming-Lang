@@ -85,9 +85,9 @@ inline std::string primitiveKindToString(PrimitiveKind Kind) {
 // Composite Type Structures
 //===----------------------------------------------------------------------===//
 
-struct CustomType {
+struct StructType {
   std::string Name;
-  bool operator==(const CustomType &Other) const noexcept {
+  bool operator==(const StructType &Other) const noexcept {
     return Name == Other.Name;
   }
 };
@@ -120,7 +120,7 @@ struct FunctionType {
 
 class Type {
 public:
-  using Node = std::variant<PrimitiveKind, CustomType, ReferenceType,
+  using Node = std::variant<PrimitiveKind, StructType, ReferenceType,
                             PointerType, GenericType, FunctionType>;
 
   //===--------------------------------------------------------------------===//
@@ -137,8 +137,8 @@ public:
     return Type{K, std::move(L)};
   }
 
-  static Type makeCustom(std::string Name, SrcLocation L) {
-    return Type(CustomType{std::move(Name)}, std::move(L));
+  static Type makeStruct(std::string Name, SrcLocation L) {
+    return Type(StructType{std::move(Name)}, std::move(L));
   }
 
   static Type makeReference(Type Pointee, SrcLocation L) {
@@ -177,12 +177,24 @@ public:
     return std::get<PrimitiveKind>(Data);
   }
 
+  [[nodiscard]] StructType asStruct() const {
+    return std::get<StructType>(Data);
+  }
+
   [[nodiscard]] PointerType asPtr() const {
     return std::get<PointerType>(Data);
   }
 
   [[nodiscard]] ReferenceType asRef() const {
     return std::get<ReferenceType>(Data);
+  }
+
+  [[nodiscard]] GenericType asGeneric() const {
+    return std::get<GenericType>(Data);
+  }
+
+  [[nodiscard]] FunctionType asFun() const {
+    return std::get<FunctionType>(Data);
   }
 
   //===--------------------------------------------------------------------===//
@@ -193,15 +205,15 @@ public:
     return std::holds_alternative<PrimitiveKind>(Data);
   }
 
-  [[nodiscard]] bool isCustom() const {
-    return std::holds_alternative<CustomType>(Data);
+  [[nodiscard]] bool isStruct() const {
+    return std::holds_alternative<StructType>(Data);
   }
 
-  [[nodiscard]] bool isReference() const {
+  [[nodiscard]] bool isRef() const {
     return std::holds_alternative<ReferenceType>(Data);
   }
 
-  [[nodiscard]] bool isPointer() const {
+  [[nodiscard]] bool isPtr() const {
     return std::holds_alternative<PointerType>(Data);
   }
 
@@ -286,13 +298,11 @@ public:
     return asPrimitive() == PrimitiveKind::Null;
   }
 
-  [[nodiscard]] bool isStruct() const { return isCustom(); }
-
   [[nodiscard]] std::optional<std::string> getStructName() const {
-    if (!isCustom()) {
+    if (!isStruct()) {
       return std::nullopt;
     }
-    return std::get<CustomType>(Data).Name;
+    return std::get<StructType>(Data).Name;
   }
 
   //===--------------------------------------------------------------------===//
