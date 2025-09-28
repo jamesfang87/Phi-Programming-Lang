@@ -4,9 +4,19 @@
 using namespace phi;
 
 llvm::Value *CodeGen::visit(FieldAccessExpr &E) {
+  auto T = E.getBase()->getType();
+  assert(T.isCustom() || T.isPointer() || T.isReference());
+
+  llvm::Type *LlvmType = T.toLLVM(Context);
+  if (T.isPointer()) {
+    LlvmType = T.asPtr().Pointee->toLLVM(Context);
+  } else if (T.isReference()) {
+    LlvmType = T.asRef().Pointee->toLLVM(Context);
+  }
+
   llvm::Value *Base = visit(*E.getBase());
-  llvm::Value *Field = Builder.CreateStructGEP(
-      E.getBase()->getType().toLLVM(Context), Base, E.getField()->getIndex());
+  llvm::Value *Field =
+      Builder.CreateStructGEP(LlvmType, Base, E.getField()->getIndex());
   return Field;
 }
 
@@ -25,7 +35,7 @@ llvm::Value *CodeGen::visit(MethodCallExpr &E) {
 
   // Look up the function in the module
   llvm::Function *Fun = Module.getFunction(MangledName);
-  assert(Fun);
+  assert(Fun && "Did not find function");
 
   // Prepare arguments: [baseValue, ...originalArgs]
   std::vector<llvm::Value *> Args = {BaseVal};

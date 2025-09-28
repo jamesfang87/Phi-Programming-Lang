@@ -51,7 +51,7 @@ void CodeGen::generate() {
 
   outputIR(IRFileName);
   system(std::format("clang {}", IRFileName).c_str());
-  system(std::format("rm {}", IRFileName).c_str());
+  // system(std::format("rm {}", IRFileName).c_str());
 }
 
 void CodeGen::outputIR(const std::string &Filename) {
