@@ -311,7 +311,6 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   }
 
   auto MethodMonotype = E.getMethod().getFunType().toMonotype();
-  std::println("Type: {}", E.getMethod().getFunType().toString());
   Substitution S = BaseSubst;
 
   // receiver arg type (we already have it): use s-applied version
@@ -331,9 +330,6 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
 
   // Expected function shape from the call site: (arg types...) -> ResultTy
   auto FunExpect = Monotype::makeFun(CallArgTys, ResultTy);
-
-  std::println("Method Monotype: {}, FunExpect: {}", MethodMonotype.toString(),
-               FunExpect.toString());
 
   // 6) Unify the declared method monotype with the expected call shape.
   //    This will unify receiver and arguments and produce substitutions.
