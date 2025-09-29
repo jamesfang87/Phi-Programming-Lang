@@ -74,8 +74,9 @@ while (i < 5) {
 ### For loops
 
 ```phi
+var sum = 0;
 for i in 0..5 {
-    println(i);
+    sum += i;
 }
 ```
 
@@ -83,7 +84,7 @@ for i in 0..5 {
 
 ```phi
 if x < 5 {
-    println("less than");
+    println("less than 5");
 }
 ```
 
