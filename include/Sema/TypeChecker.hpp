@@ -20,7 +20,8 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  TypeChecker(std::vector<std::unique_ptr<Decl>> Ast) : Ast(std::move(Ast)) {}
+  TypeChecker(std::vector<std::unique_ptr<Decl>> Ast, std::shared_ptr<DiagnosticManager> Diag) 
+    : Ast(std::move(Ast)), Diag(std::move(Diag)) {}
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point

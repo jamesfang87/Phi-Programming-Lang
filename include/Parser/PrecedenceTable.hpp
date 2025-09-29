@@ -35,7 +35,7 @@ inline std::optional<std::pair<int, int>> infixBP(const TokenKind &Kind) {
   case TokenKind::Equals:
   case TokenKind::PlusEquals:
   case TokenKind::SubEquals:
-  case TokenKind::MulEqual:
+  case TokenKind::MulEquals:
   case TokenKind::DivEquals:
   case TokenKind::ModEquals:
     return std::make_pair(2, 1);

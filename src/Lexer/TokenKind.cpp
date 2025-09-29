@@ -137,7 +137,7 @@ std::string tyToStr(const TokenKind Kind) {
     return "PLUS_EQUALS";
   case TokenKind::SubEquals:
     return "SUB_EQUALS";
-  case TokenKind::MulEqual:
+  case TokenKind::MulEquals:
     return "MUL_EQUALS";
   case TokenKind::DivEquals:
     return "DIV_EQUALS";
