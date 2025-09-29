@@ -1,6 +1,7 @@
 #include "Driver/Driver.hpp"
 
 #include <cstdlib>
+#include <string>
 
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
@@ -31,21 +32,13 @@ bool PhiCompiler::compile() {
     return false;
   }
 
-  for (auto &D : Ast) {
-    D->emit(0);
-  }
-
   auto [NameResolutionSuccess, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
   auto InferredTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
   auto [TypeCheckingSuccess, CheckedTypes] =
-      TypeChecker(std::move(InferredTypes)).check();
+      TypeChecker(std::move(InferredTypes), DiagnosticMan).check();
   if (DiagnosticMan->error_count() > 0) {
     return false;
-  }
-
-  for (auto &D : CheckedTypes) {
-    D->emit(0);
   }
 
   if (DiagnosticMan->error_count() > 0) {

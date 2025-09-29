@@ -86,7 +86,7 @@ enum class TokenKind : uint8_t {
   // COMPOUND ASSIGNMENT OPERATORS
   PlusEquals, ///< `+=` add-assign
   SubEquals,  ///< `-=` subtract-assign
-  MulEqual,   ///< `*=` multiply-assign
+  MulEquals,  ///< `*=` multiply-assign
   DivEquals,  ///< `/=` divide-assign
   ModEquals,  ///< `%=` modulo-assign
 

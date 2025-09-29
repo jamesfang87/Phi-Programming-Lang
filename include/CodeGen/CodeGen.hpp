@@ -220,6 +220,18 @@ private:
                             const ForLoopBlocks &Blocks);
 
   //===--------------------------------------------------------------------===//
+  // Operator Generation Utilities
+  //===--------------------------------------------------------------------===//
+
+  llvm::Value *toBoolValue(llvm::Value *Val, const Type &Ty);
+  llvm::Value *getLValuePointer(Expr *E);
+  llvm::Value *emitAssignment(BinaryOp &E);
+  llvm::Value *emitCompoundAssignment(BinaryOp &E);
+  llvm::Value *emitLogicalAnd(BinaryOp &E);
+  llvm::Value *emitLogicalOr(BinaryOp &E);
+  llvm::Value *emitArithmeticOrComparison(BinaryOp &E);
+
+  //===--------------------------------------------------------------------===//
   // Code Generation Utilities
   //===--------------------------------------------------------------------===//
 
