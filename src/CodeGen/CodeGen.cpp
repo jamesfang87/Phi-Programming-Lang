@@ -2,7 +2,6 @@
 #include "AST/Decl.hpp"
 
 #include <cassert>
-#include <print>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -50,8 +49,8 @@ void CodeGen::generate() {
   IRFileName += ".ll";
 
   outputIR(IRFileName);
-  system(std::format("clang {}", IRFileName).c_str());
-  // system(std::format("rm {}", IRFileName).c_str());
+  system(std::format("clang -o ~/Phi/a.out {}", IRFileName).c_str());
+  system(std::format("rm {}", IRFileName).c_str());
 }
 
 void CodeGen::outputIR(const std::string &Filename) {

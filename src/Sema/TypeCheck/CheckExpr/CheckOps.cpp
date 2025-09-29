@@ -26,7 +26,7 @@ bool TypeChecker::visit(BinaryOp &E) {
   case TokenKind::Equals: // Assignment operator
   case TokenKind::PlusEquals:
   case TokenKind::SubEquals:
-  case TokenKind::MulEqual:
+  case TokenKind::MulEquals:
   case TokenKind::DivEquals:
   case TokenKind::ModEquals:
   case TokenKind::DoubleEquals:
@@ -43,7 +43,7 @@ bool TypeChecker::visit(BinaryOp &E) {
     bool isAssignmentOp =
         (E.getOp() == TokenKind::Equals || E.getOp() == TokenKind::PlusEquals ||
          E.getOp() == TokenKind::SubEquals ||
-         E.getOp() == TokenKind::MulEqual ||
+         E.getOp() == TokenKind::MulEquals ||
          E.getOp() == TokenKind::DivEquals ||
          E.getOp() == TokenKind::ModEquals);
 
@@ -65,7 +65,7 @@ bool TypeChecker::visit(BinaryOp &E) {
          E.getOp() == TokenKind::Slash || E.getOp() == TokenKind::Percent ||
          E.getOp() == TokenKind::PlusEquals ||
          E.getOp() == TokenKind::SubEquals ||
-         E.getOp() == TokenKind::MulEqual ||
+         E.getOp() == TokenKind::MulEquals ||
          E.getOp() == TokenKind::DivEquals ||
          E.getOp() == TokenKind::ModEquals);
 
@@ -148,10 +148,20 @@ bool TypeChecker::visit(UnaryOp &E) {
 
     return Success;
   }
+  case TokenKind::DoublePlus:
+  case TokenKind::DoubleMinus: {
+    if (!E.getOperand().isAssignable()) {
+      error("Operand is not assignable")
+          .with_primary_label(E.getOperand().getLocation(),
+                              "Cannot assign here")
+          .emit(*Diag);
+      Success = false;
+    }
+  }
   case TokenKind::Minus: {
     phi::Type Type = E.getOperand().getType();
     if (!Type.isPrimitive() || E.getOperand().getType().isUnsignedInteger()) {
-      error("Negation can only be applied to signed intgers or floats")
+      error("Operator can only be applied to signed intgers or floats")
           .with_primary_label(E.getOperand().getLocation(),
                               "Expected this to be of type `i8`, `i16`, `i32`, "
                               "`i64`, `f32`, or `f64`")

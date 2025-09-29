@@ -131,7 +131,7 @@ Token Lexer::scanToken() {
       return makeToken(TokenKind::SubEquals);
     return makeToken(TokenKind::Minus);
   case '*':
-    return makeToken(matchNext('=') ? TokenKind::MulEqual : TokenKind::Star);
+    return makeToken(matchNext('=') ? TokenKind::MulEquals : TokenKind::Star);
   case '/':
     return makeToken(matchNext('=') ? TokenKind::DivEquals : TokenKind::Slash);
   case '%':
