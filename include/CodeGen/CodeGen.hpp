@@ -85,6 +85,8 @@ public:
   void visit(MethodDecl &D);
   void visit(StructDecl &D);
   void visit(VarDecl &D);
+  void visit(EnumDecl &D);
+  void visit(VariantDecl &D);
 
 private:
   //===--------------------------------------------------------------------===//

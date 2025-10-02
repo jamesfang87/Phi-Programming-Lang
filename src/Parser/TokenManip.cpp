@@ -22,10 +22,18 @@ bool Parser::atEOF() const {
  */
 Token Parser::peekToken() const {
   if (TokenIt >= Tokens.end()) {
-    const SrcLocation EofLoc{.path = "", .line = -1, .col = -1};
+    const SrcLocation EofLoc{.Path = "", .Line = -1, .Col = -1};
     return Token{EofLoc, EofLoc, TokenKind::Eof, ""};
   }
   return *TokenIt;
+}
+
+Token Parser::peekToken(int Offset) const {
+  const SrcLocation EofLoc{.Path = "", .Line = -1, .Col = -1};
+  auto It = TokenIt + Offset;
+  if (It >= Tokens.end())
+    return Token{EofLoc, EofLoc, TokenKind::Eof, ""};
+  return *It;
 }
 
 /**

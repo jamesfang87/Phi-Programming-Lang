@@ -24,6 +24,7 @@ class FunDecl;
 class FieldDecl;
 class StructDecl;
 class MethodDecl;
+
 class NameResolver;
 class TypeInferencer;
 class CodeGen;
@@ -44,14 +45,15 @@ public:
     CharLiteralKind,
     BoolLiteralKind,
     RangeLiteralKind,
+    TupleLiteralKind,
     DeclRefExprKind,
     FunCallExprKind,
     BinaryOpKind,
     UnaryOpKind,
-    StructInitKind,
+    StructLiteralKind,
     FieldInitKind,
     FieldAccessKind,
-    MemberFunAccessKind
+    MethodCallKind
   };
 
   //===--------------------------------------------------------------------===//
@@ -405,6 +407,51 @@ private:
   bool Inclusive;
 };
 
+class TupleLiteral final : public Expr {
+public:
+  TupleLiteral(SrcLocation Location,
+               std::vector<std::unique_ptr<Expr>> Elements);
+  ~TupleLiteral() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] const auto &getElements() { return Elements; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &C) override;
+  llvm::Value *accept(CodeGen &G) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::TupleLiteralKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+
+  void emit(int level) const override;
+
+private:
+  std::vector<std::unique_ptr<Expr>> Elements;
+};
+
 //===----------------------------------------------------------------------===//
 // Reference and Call Expression Classes
 //===----------------------------------------------------------------------===//
@@ -477,6 +524,10 @@ protected:
   // Constructor for derived classes to specify their own Kind
   FunCallExpr(Kind K, SrcLocation Location, std::unique_ptr<Expr> Callee,
               std::vector<std::unique_ptr<Expr>> Args);
+
+  FunCallExpr(FunCallExpr &&Other, Kind K)
+      : Expr(K, Other.getLocation()), Callee(std::move(Other.Callee)),
+        Args(std::move(Other.Args)), Decl(Other.Decl) {}
 
 public:
   ~FunCallExpr() override;
@@ -749,7 +800,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Kind::StructInitKind;
+    return E->getKind() == Kind::StructLiteralKind;
   }
 
   //===--------------------------------------------------------------------===//
@@ -836,6 +887,8 @@ public:
   MethodCallExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
                  std::unique_ptr<Expr> Callee,
                  std::vector<std::unique_ptr<Expr>> Args);
+  MethodCallExpr(FunCallExpr &&Call, std::unique_ptr<Expr> Base);
+
   ~MethodCallExpr() override;
 
   //===--------------------------------------------------------------------===//
@@ -872,7 +925,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Kind::MemberFunAccessKind;
+    return E->getKind() == Kind::MethodCallKind;
   }
 
   //===--------------------------------------------------------------------===//

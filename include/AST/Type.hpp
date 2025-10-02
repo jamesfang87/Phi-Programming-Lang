@@ -92,6 +92,11 @@ struct StructType {
   }
 };
 
+struct TupleType {
+  std::vector<Type> Types;
+  bool operator==(const TupleType &Other) const noexcept;
+};
+
 struct ReferenceType {
   TypePtr Pointee;
   bool operator==(const ReferenceType &Other) const noexcept;
@@ -120,7 +125,7 @@ struct FunctionType {
 
 class Type {
 public:
-  using Node = std::variant<PrimitiveKind, StructType, ReferenceType,
+  using Node = std::variant<PrimitiveKind, StructType, TupleType, ReferenceType,
                             PointerType, GenericType, FunctionType>;
 
   //===--------------------------------------------------------------------===//
@@ -137,8 +142,12 @@ public:
     return Type{K, std::move(L)};
   }
 
-  static Type makeStruct(std::string Name, SrcLocation L) {
+  static Type makeCustom(std::string Name, SrcLocation L) {
     return Type(StructType{std::move(Name)}, std::move(L));
+  }
+
+  static Type makeTuple(std::vector<Type> Types, SrcLocation L) {
+    return Type(TupleType{.Types = std::move(Types)}, std::move(L));
   }
 
   static Type makeReference(Type Pointee, SrcLocation L) {
@@ -171,7 +180,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] const Node &node() const noexcept { return Data; }
-  SrcLocation getLocation() { return Location; }
+  [[nodiscard]] SrcLocation getLocation() const { return Location; }
 
   [[nodiscard]] PrimitiveKind asPrimitive() const {
     return std::get<PrimitiveKind>(Data);
@@ -180,6 +189,8 @@ public:
   [[nodiscard]] StructType asStruct() const {
     return std::get<StructType>(Data);
   }
+
+  [[nodiscard]] TupleType asTuple() const { return std::get<TupleType>(Data); }
 
   [[nodiscard]] PointerType asPtr() const {
     return std::get<PointerType>(Data);
@@ -207,6 +218,10 @@ public:
 
   [[nodiscard]] bool isStruct() const {
     return std::holds_alternative<StructType>(Data);
+  }
+
+  [[nodiscard]] bool isTuple() const {
+    return std::holds_alternative<TupleType>(Data);
   }
 
   [[nodiscard]] bool isRef() const {
@@ -331,7 +346,7 @@ private:
   //===--------------------------------------------------------------------===//
 
   Node Data;
-  SrcLocation Location{"", -1, -1};
+  SrcLocation Location{.Path = "", .Line = -1, .Col = -1};
 
   //===--------------------------------------------------------------------===//
   // Private Constructors
@@ -345,6 +360,10 @@ private:
 //===----------------------------------------------------------------------===//
 // Inline Implementations for Composite Type Comparisons
 //===----------------------------------------------------------------------===//
+
+inline bool TupleType::operator==(const TupleType &Other) const noexcept {
+  return (Types == Other.Types);
+}
 
 inline bool
 ReferenceType::operator==(const ReferenceType &Other) const noexcept {
