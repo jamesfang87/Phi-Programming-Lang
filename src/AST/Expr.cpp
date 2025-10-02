@@ -1,6 +1,7 @@
 #include "AST/Expr.hpp"
 
 #include <cassert>
+#include <memory>
 #include <optional>
 #include <print>
 #include <string>
@@ -173,6 +174,33 @@ void RangeLiteral::emit(int Level) const {
 }
 
 //===----------------------------------------------------------------------===//
+// TupleLiteral Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
+TupleLiteral::TupleLiteral(SrcLocation Location,
+                           std::vector<std::unique_ptr<Expr>> Elements)
+    : Expr(Expr::Kind::TupleLiteralKind, std::move(Location), std::nullopt),
+      Elements(std::move(Elements)) {}
+
+TupleLiteral::~TupleLiteral() = default;
+
+// Visitor Methods
+bool TupleLiteral::accept(NameResolver &R) { return R.visit(*this); }
+InferRes TupleLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
+bool TupleLiteral::accept(TypeChecker &C) { return C.visit(*this); }
+llvm::Value *TupleLiteral::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
+void TupleLiteral::emit(int Level) const {
+  std::println("{}TupleLiteral:", indent(Level));
+  std::println("{}  Elements:", indent(Level));
+  for (auto &E : Elements) {
+    E->emit(Level + 2);
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // DeclRefExpr Implementation
 //===----------------------------------------------------------------------===//
 
@@ -326,7 +354,7 @@ void FieldInitExpr::emit(int Level) const {
 // Constructors & Destructors
 StructLiteral::StructLiteral(SrcLocation Location, std::string StructId,
                              std::vector<std::unique_ptr<FieldInitExpr>> Fields)
-    : Expr(Expr::Kind::StructInitKind, std::move(Location)),
+    : Expr(Expr::Kind::StructLiteralKind, std::move(Location)),
       StructId(std::move(StructId)), FieldInits(std::move(Fields)) {}
 
 StructLiteral::~StructLiteral() = default;
@@ -382,9 +410,14 @@ void FieldAccessExpr::emit(int Level) const {
 MethodCallExpr::MethodCallExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
                                std::unique_ptr<Expr> Callee,
                                std::vector<std::unique_ptr<Expr>> Args)
-    : FunCallExpr(Expr::Kind::MemberFunAccessKind, std::move(Location),
+    : FunCallExpr(Expr::Kind::MethodCallKind, std::move(Location),
                   std::move(Callee), std::move(Args)),
       Base(std::move(Base)) {}
+
+MethodCallExpr::MethodCallExpr(FunCallExpr &&Call,
+                               std::unique_ptr<Expr> BaseExpr)
+    : FunCallExpr(std::move(Call), Kind::MethodCallKind),
+      Base(std::move(BaseExpr)) {}
 
 MethodCallExpr::~MethodCallExpr() = default;
 

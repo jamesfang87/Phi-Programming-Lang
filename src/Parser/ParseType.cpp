@@ -1,9 +1,13 @@
+#include "AST/Type.hpp"
+#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
+#include <cassert>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "Lexer/Token.hpp"
 #include "SrcManager/SrcLocation.hpp"
@@ -34,6 +38,18 @@ std::optional<Type> Parser::parseType() {
           {"f32", PrimitiveKind::F32},       {"f64", PrimitiveKind::F64},
           {"string", PrimitiveKind::String}, {"char", PrimitiveKind::Char},
           {"bool", PrimitiveKind::Bool},     {"null", PrimitiveKind::Null}};
+
+  if (peekToken().getKind() == TokenKind::OpenParen) {
+    SrcLocation Location = peekToken().getStart();
+    std::optional<std::vector<Type>> Temp = parseValueList<Type>(
+        TokenKind::OpenParen, TokenKind::CloseParen, &Parser::parseType);
+
+    if (!Temp) {
+      return std::nullopt;
+    }
+
+    return Type::makeTuple(*Temp, Location);
+  }
 
   Indirection Kind;
   SrcLocation IndrectionLocation;
@@ -73,7 +89,7 @@ std::optional<Type> Parser::parseType() {
   const auto It = PrimitiveMap.find(Id);
 
   advanceToken();
-  Type Base = (It == PrimitiveMap.end()) ? Type::makeStruct(Id, Loc)
+  Type Base = (It == PrimitiveMap.end()) ? Type::makeCustom(Id, Loc)
                                          : Type::makePrimitive(It->second, Loc);
   switch (Kind) {
   case Indirection::Ptr:

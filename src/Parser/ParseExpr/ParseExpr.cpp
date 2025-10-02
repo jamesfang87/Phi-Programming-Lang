@@ -57,8 +57,9 @@ std::unique_ptr<Expr> Parser::parseExpr() {
 std::unique_ptr<Expr> Parser::pratt(int MinBp,
                                     const std::vector<TokenKind> &Terminators) {
   std::unique_ptr<Expr> Lhs = parseNud(advanceToken());
-  if (!Lhs)
+  if (!Lhs) {
     return nullptr;
+  }
 
   // Process right-hand side and operators
   while (true) {

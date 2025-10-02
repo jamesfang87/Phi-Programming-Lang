@@ -109,7 +109,7 @@ void FunDecl::accept(CodeGen &G) { G.visit(*this); }
 // Utility Methods
 void FunDecl::emit(int Level) const {
   std::println("{}Function {} at {}:{}. Returns {}", indent(Level), Id,
-               Location.line, Location.col, ReturnType.toString());
+               Location.Line, Location.Col, ReturnType.toString());
   // Dump parameters
   for (auto &p : Params) {
     p->emit(Level + 1);
@@ -136,7 +136,7 @@ StructDecl::StructDecl(SrcLocation Loc, std::string Id,
                        std::vector<std::unique_ptr<FieldDecl>> Fields,
                        std::vector<MethodDecl> Methods)
     : Decl(Kind::StructDecl, Loc, Id),
-      DeclType(Type::makeStruct(std::move(Id), std::move(Loc))),
+      DeclType(Type::makeCustom(std::move(Id), std::move(Loc))),
       Fields(std::move(Fields)), Methods(std::move(Methods)) {
   std::vector<Type> ContainedTypes;
   for (auto &Field : this->Fields) {
@@ -162,13 +162,66 @@ void StructDecl::emit(int Level) const {
                DeclType.toString());
 
   std::println("{}Fields:", indent(Level));
-  for (auto &f : Fields) {
-    f->emit(Level + 1);
+  for (auto &F : Fields) {
+    F->emit(Level + 1);
   }
 
   std::println("{}Methods:", indent(Level));
-  for (auto &m : Methods) {
-    m.emit(Level + 1);
+  for (auto &M : Methods) {
+    M.emit(Level + 1);
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// VariantDecl Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
+VariantDecl::VariantDecl(SrcLocation Loc, std::string Id,
+                         std::optional<Type> DeclType)
+    : Decl(Kind::VariantDecl, std::move(Loc), std::move(Id)),
+      DeclType(std::move(DeclType)) {}
+
+// Visitor Methods
+void VariantDecl::accept(TypeInferencer &I) { I.visit(*this); }
+bool VariantDecl::accept(TypeChecker &C) { return C.visit(*this); }
+void VariantDecl::accept(CodeGen &G) { G.visit(*this); }
+
+// Utility Methods
+void VariantDecl::emit(int Level) const {
+  std::string T = (hasType()) ? DeclType->toString() : "No Type";
+  std::println("{}VariantDecl: {} (type: {})", indent(Level), Id, T);
+}
+
+//===----------------------------------------------------------------------===//
+// EnumDecl Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
+EnumDecl::EnumDecl(SrcLocation Loc, std::string Id,
+                   std::vector<VariantDecl> Variants)
+    : Decl(Kind::EnumDecl, Loc, Id),
+      DeclType(Type::makeCustom(std::move(Id), std::move(Loc))),
+      Variants(std::move(Variants)) {
+  std::vector<Type> ContainedTypes;
+  for (auto &&Variant : this->Variants) {
+    VariantMap[Variant.getId()] = &Variant;
+  }
+}
+
+// Visitor Methods
+void EnumDecl::accept(TypeInferencer &I) { I.visit(*this); }
+bool EnumDecl::accept(TypeChecker &C) { return C.visit(*this); }
+void EnumDecl::accept(CodeGen &G) { G.visit(*this); }
+
+// Utility Methods
+void EnumDecl::emit(int Level) const {
+  std::println("{}EnumDecl: {} (type: {})", indent(Level), Id,
+               DeclType.toString());
+
+  std::println("{}Variants:", indent(Level));
+  for (auto &V : Variants) {
+    V.emit(Level + 1);
   }
 }
 

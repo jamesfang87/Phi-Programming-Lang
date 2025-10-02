@@ -1,7 +1,6 @@
 #include "Sema/TypeInference/TypeEnv.hpp"
 
 #include <cassert>
-#include <print>
 #include <string>
 #include <vector>
 
@@ -51,7 +50,7 @@ Type Monotype::toAstType() const {
           return Type::makePrimitive(PrimitiveKind::Null, this->Location);
 
         // Otherwise treat as custom/struct name
-        return Type::makeStruct(Name, this->Location);
+        return Type::makeCustom(Name, this->Location);
       },
       [&](const TypeApp &App) {
         if (App.Name == "Ptr") {
@@ -66,6 +65,15 @@ Type Monotype::toAstType() const {
           assert(App.Args.size() == 1);
           return Type::makeReference(App.Args.front().toAstType(),
                                      this->Location);
+        }
+
+        if (App.Name == "Tuple") {
+          std::vector<Type> TypeArgs;
+          TypeArgs.reserve(App.Args.size());
+          for (const auto &Arg : App.Args) {
+            TypeArgs.push_back(Arg.toAstType());
+          }
+          return Type::makeTuple(TypeArgs, this->Location);
         }
 
         std::vector<Type> TypeArgs;

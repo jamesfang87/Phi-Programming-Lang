@@ -32,6 +32,10 @@ bool PhiCompiler::compile() {
     return false;
   }
 
+  for (auto &D : Ast) {
+    D->emit(0);
+  }
+
   auto [NameResolutionSuccess, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
   auto InferredTypes = TypeInferencer(std::move(ResolvedNames)).inferProgram();
@@ -41,8 +45,8 @@ bool PhiCompiler::compile() {
     return false;
   }
 
-  if (DiagnosticMan->error_count() > 0) {
-    return false;
+  for (auto &D : CheckedTypes) {
+    D->emit(0);
   }
 
   // Code Generation

@@ -1,0 +1,12 @@
+struct Point {
+    public x: i32;
+    public y: i32;
+}
+
+fun foo() -> (i32, (i32, Point)) {
+
+}
+
+fun main() {
+
+}

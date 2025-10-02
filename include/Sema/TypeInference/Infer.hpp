@@ -43,6 +43,7 @@ public:
   void visit(VarDecl &D);
   void visit(FunDecl &D);
   void visit(StructDecl &D);
+  void visit(EnumDecl &D);
 
   //===--------------------------------------------------------------------===//
   // Inference Result Type Definition

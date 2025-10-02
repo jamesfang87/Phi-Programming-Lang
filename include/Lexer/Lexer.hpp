@@ -252,8 +252,8 @@ private:
     int StartLine = LineNum;
     int EndLine = LineNum;
 
-    return {SrcLocation{.path = this->Path, .line = StartLine, .col = StartCol},
-            SrcLocation{.path = this->Path, .line = EndLine, .col = EndCol},
+    return {SrcLocation{.Path = this->Path, .Line = StartLine, .Col = StartCol},
+            SrcLocation{.Path = this->Path, .Line = EndLine, .Col = EndCol},
             Kind, std::string(CurLexeme, CurChar)};
   }
 

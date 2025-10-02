@@ -28,22 +28,22 @@ namespace phi {
 std::unique_ptr<Stmt> Parser::parseStmt() {
   switch (peekToken().getKind()) {
   case TokenKind::ReturnKw:
-    return parseReturn();
+    return parseReturnStmt();
   case TokenKind::DeferKw:
-    return parseDefer();
+    return parseDeferStmt();
   case TokenKind::IfKw:
-    return parseIf();
+    return parseIfStmt();
   case TokenKind::WhileKw:
-    return parseWhile();
+    return parseWhileStmt();
   case TokenKind::ForKw:
-    return parseFor();
+    return parseForStmt();
   case TokenKind::VarKw:
   case TokenKind::ConstKw:
-    return parseDecl();
+    return parseDeclStmt();
   case TokenKind::BreakKw:
-    return parseBreak();
+    return parseBreakStmt();
   case TokenKind::ContinueKw:
-    return parseContinue();
+    return parseContinueStmt();
   default:
     auto Res = parseExpr();
     if (!Res)
@@ -66,7 +66,7 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
  *
  * Validates semicolon terminator and expression validity.
  */
-std::unique_ptr<ReturnStmt> Parser::parseReturn() {
+std::unique_ptr<ReturnStmt> Parser::parseReturnStmt() {
   SrcLocation Loc = peekToken().getStart();
   advanceToken(); // eat 'return'
 
@@ -88,7 +88,6 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("return statements must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
-        .with_code("E0012")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -97,7 +96,7 @@ std::unique_ptr<ReturnStmt> Parser::parseReturn() {
   return std::make_unique<ReturnStmt>(Loc, std::move(ReturnExpr));
 }
 
-std::unique_ptr<DeferStmt> Parser::parseDefer() {
+std::unique_ptr<DeferStmt> Parser::parseDeferStmt() {
   SrcLocation Loc = peekToken().getStart();
   advanceToken(); // eat 'return'
 
@@ -109,11 +108,10 @@ std::unique_ptr<DeferStmt> Parser::parseDefer() {
 
   // Validate semicolon terminator
   if (peekToken().getKind() != TokenKind::Semicolon) {
-    error("missing semicolon after return statement")
+    error("missing semicolon after defer statement")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
-        .with_help("return statements must end with a semicolon")
+        .with_help("defer statements must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
-        .with_code("E0012")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -133,7 +131,7 @@ std::unique_ptr<DeferStmt> Parser::parseDefer() {
  * - if (cond) { ... } else { ... }
  * - if (cond) { ... } else if { ... } (chained)
  */
-std::unique_ptr<IfStmt> Parser::parseIf() {
+std::unique_ptr<IfStmt> Parser::parseIfStmt() {
   NoStructInit = true;
   SrcLocation Loc = peekToken().getStart();
   advanceToken(); // eat 'if'
@@ -176,7 +174,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
   if (peekToken().getKind() == TokenKind::IfKw) {
     std::vector<std::unique_ptr<Stmt>> ElifStmt;
 
-    auto Res = parseIf();
+    auto Res = parseIfStmt();
     if (!Res) {
       NoStructInit = false;
       return nullptr;
@@ -193,8 +191,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
   error("invalid else clause")
       .with_primary_label(spanFromToken(peekToken()), "unexpected token here")
       .with_help(
-          "else must be followed by a block `{` or another `if` statement")
-      .with_code("E0040")
+          "`else` must be followed by a block `{` or another `if` statement")
       .emit(*DiagnosticsMan);
   NoStructInit = false;
   return nullptr;
@@ -208,7 +205,7 @@ std::unique_ptr<IfStmt> Parser::parseIf() {
  *
  * Format: while (condition) { body }
  */
-std::unique_ptr<WhileStmt> Parser::parseWhile() {
+std::unique_ptr<WhileStmt> Parser::parseWhileStmt() {
   NoStructInit = true;
   SrcLocation loc = peekToken().getStart();
   advanceToken(); // eat 'while'
@@ -240,7 +237,7 @@ std::unique_ptr<WhileStmt> Parser::parseWhile() {
  * Creates implicit loop variable declaration (i64 type).
  * Validates loop variable and 'in' keyword syntax.
  */
-std::unique_ptr<ForStmt> Parser::parseFor() {
+std::unique_ptr<ForStmt> Parser::parseForStmt() {
   NoStructInit = true;
   SrcLocation Loc = peekToken().getStart();
   advanceToken(); // eat 'for'
@@ -253,7 +250,6 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
         .with_help("for loops have the form: `for variable in iterable`")
         .with_note(
             "the loop variable will be assigned each value from the iterable")
-        .with_code("E0014")
         .emit(*DiagnosticsMan);
     NoStructInit = false;
     return nullptr;
@@ -267,7 +263,6 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
         .with_secondary_label(spanFromToken(InKw), "expected `in` here")
         .with_help("for loops have the form: `for variable in iterable`")
         .with_suggestion(spanFromToken(InKw), "in", "add `in` keyword")
-        .with_code("E0015")
         .emit(*DiagnosticsMan);
     NoStructInit = false;
     return nullptr;
@@ -311,7 +306,7 @@ std::unique_ptr<ForStmt> Parser::parseFor() {
  * - Initializer expression
  * - Semicolon terminator
  */
-std::unique_ptr<DeclStmt> Parser::parseDecl() {
+std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
   SrcLocation letLoc = peekToken().getStart();
   bool IsConst;
   if (peekToken().getKind() == TokenKind::ConstKw) {
@@ -357,7 +352,6 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
         .with_primary_label(spanFromToken(peekToken()), "expected `=` here")
         .with_help("variables must be initialized with a value")
         .with_note("variable syntax: `let name: type = value;`")
-        .with_code("E0023")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -369,28 +363,27 @@ std::unique_ptr<DeclStmt> Parser::parseDecl() {
     return nullptr;
 
   // Validate semicolon terminator
-  if (advanceToken().getKind() != TokenKind::Semicolon) {
+  if (peekToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after variable declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("variable declarations must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
-        .with_code("E0025")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
+  advanceToken();
 
   return std::make_unique<DeclStmt>(
       letLoc, std::make_unique<VarDecl>(VarLoc, Id, DeclType, IsConst,
                                         std::move(Init)));
 }
 
-std::unique_ptr<BreakStmt> Parser::parseBreak() {
+std::unique_ptr<BreakStmt> Parser::parseBreakStmt() {
   SrcLocation Loc = peekToken().getStart();
   if (advanceToken().getKind() != TokenKind::BreakKw) {
     error("missing break keyword")
         .with_primary_label(spanFromToken(peekToken()), "expected `break` here")
         .with_help("break statements must be preceded by a loop")
-        .with_code("E0026")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -401,7 +394,6 @@ std::unique_ptr<BreakStmt> Parser::parseBreak() {
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("break statements must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
-        .with_code("E0027")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -409,7 +401,7 @@ std::unique_ptr<BreakStmt> Parser::parseBreak() {
   return std::make_unique<BreakStmt>(Loc);
 }
 
-std::unique_ptr<ContinueStmt> Parser::parseContinue() {
+std::unique_ptr<ContinueStmt> Parser::parseContinueStmt() {
   SrcLocation Loc = peekToken().getStart();
   if (advanceToken().getKind() != TokenKind::ContinueKw) {
     error("missing continue keyword")
@@ -427,7 +419,6 @@ std::unique_ptr<ContinueStmt> Parser::parseContinue() {
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("continue statements must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
-        .with_code("E0029")
         .emit(*DiagnosticsMan);
     return nullptr;
   }

@@ -1,7 +1,11 @@
+#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
 #include "AST/Expr.hpp"
 #include "Parser/PrecedenceTable.hpp"
+#include <cassert>
+#include <memory>
+#include <vector>
 
 namespace phi {
 
@@ -24,16 +28,16 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
 
   // Grouping: ( expr )
   case TokenKind::OpenParen:
-    return parseGroupingExpr();
+    return parseGroupingOrTupleLiteral();
 
   // Literals
   default:
-    return parseLiteralExpr(Tok);
+    return parsePrimitiveLiteral(Tok);
   }
   return nullptr;
 }
 
-std::unique_ptr<Expr> Parser::parseGroupingExpr() {
+std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
   std::unique_ptr<Expr> Lhs;
   std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
                                         TokenKind::Comma, TokenKind::CloseParen,
@@ -41,10 +45,56 @@ std::unique_ptr<Expr> Parser::parseGroupingExpr() {
   if (!NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
+
   auto Res = pratt(0, Terminators);
-  if (!Res)
+  if (!Res) {
     return nullptr;
+  }
   Lhs = std::move(Res);
+
+  switch (peekToken().getKind()) {
+  case TokenKind::CloseParen:
+    advanceToken(); // treat as grouping expr
+    return Lhs;
+  case TokenKind::Comma: {
+    advanceToken();
+    std::vector<std::unique_ptr<Expr>> Elements;
+    Elements.push_back(std::move(Lhs));
+    do {
+      auto Element = pratt(0, Terminators);
+      if (!Element) {
+        return nullptr;
+      }
+      Elements.push_back(std::move(Element));
+
+      // Check for closing delimiter before comma
+      if (peekToken().getKind() == TokenKind::CloseParen) {
+        break;
+      }
+
+      // Handle comma separator
+      if (peekToken().getKind() == TokenKind::Comma) {
+        advanceToken();
+      } else {
+        emitError(error("missing comma in tuple list")
+                      .with_primary_label(spanFromToken(peekToken()),
+                                          "expected `,` here")
+                      .with_help("separate tuple elements with commas")
+                      .build());
+        return nullptr;
+      }
+    } while (peekToken().getKind() != TokenKind::CloseParen);
+    assert(peekToken().getKind() == TokenKind::CloseParen);
+    advanceToken(); // Consume the closing parenthesis
+    return std::make_unique<TupleLiteral>(Elements[0]->getLocation(),
+                                          std::move(Elements));
+  }
+
+    // treat as tuple literal
+  default:
+    emitUnexpectedTokenError(peekToken());
+    break;
+  }
 
   if (peekToken().getKind() != TokenKind::CloseParen) {
     error("missing closing parenthesis")
@@ -59,7 +109,7 @@ std::unique_ptr<Expr> Parser::parseGroupingExpr() {
 }
 
 std::unique_ptr<Expr> Parser::parsePrefixUnaryOp(const Token &Tok) {
-  int R = prefixBP(Tok.getKind()).value();
+  int RBp = prefixBP(Tok.getKind()).value();
   std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
                                         TokenKind::Comma, TokenKind::CloseParen,
                                         TokenKind::CloseBracket};
@@ -67,14 +117,14 @@ std::unique_ptr<Expr> Parser::parsePrefixUnaryOp(const Token &Tok) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
 
-  auto rhs = pratt(R, Terminators);
-  if (!rhs)
+  auto Rhs = pratt(RBp, Terminators);
+  if (!Rhs)
     return nullptr;
 
-  return std::make_unique<UnaryOp>(std::move(rhs), Tok, true); // prefix
+  return std::make_unique<UnaryOp>(std::move(Rhs), Tok, true); // prefix
 }
 
-std::unique_ptr<Expr> Parser::parseLiteralExpr(const Token &Tok) {
+std::unique_ptr<Expr> Parser::parsePrimitiveLiteral(const Token &Tok) {
   switch (Tok.getKind()) {
   case TokenKind::IntLiteral:
     return std::make_unique<IntLiteral>(Tok.getStart(),
