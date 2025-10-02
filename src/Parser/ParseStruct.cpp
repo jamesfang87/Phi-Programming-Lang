@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <print>
 #include <string>
 
 #include "AST/Decl.hpp"
@@ -42,7 +41,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     }
 
     if (Check.getKind() == TokenKind::FunKw) {
-      auto Res = parseStructMethodDecl(Id, Loc);
+      auto Res = parseMethodDecl(Id, Loc);
       if (Res) {
         Methods.push_back(std::move(*Res));
       } else {
@@ -94,7 +93,6 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
         .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
         .with_help("field declarations must end with a semicolon")
         .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
-        .with_code("E0025")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -103,8 +101,8 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
                                      IsPrivate, FieldIndex);
 }
 
-std::optional<MethodDecl>
-Parser::parseStructMethodDecl(std::string ParentStruct, SrcLocation ParentLoc) {
+std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentStruct,
+                                                  SrcLocation ParentLoc) {
   bool IsPrivate = true;
   if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
@@ -122,7 +120,6 @@ Parser::parseStructMethodDecl(std::string ParentStruct, SrcLocation ParentLoc) {
         .with_secondary_label(spanFromToken(Tok), "after `fun` keyword")
         .with_help("function names must be valid identifiers")
         .with_note("identifiers must start with a letter or underscore")
-        .with_code("E0006")
         .emit(*DiagnosticsMan);
     return std::nullopt;
   }
@@ -137,7 +134,7 @@ Parser::parseStructMethodDecl(std::string ParentStruct, SrcLocation ParentLoc) {
           bool IsConst = P->peekToken().getKind() == TokenKind::ConstKw;
           P->advanceToken();
           Type T = Type::makeReference(
-              Type::makeStruct(ParentStruct, ParentLoc), ParentLoc);
+              Type::makeCustom(ParentStruct, ParentLoc), ParentLoc);
           return std::make_unique<ParamDecl>(P->advanceToken().getStart(),
                                              "this", T, IsConst);
         } else {

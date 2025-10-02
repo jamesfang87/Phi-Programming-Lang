@@ -8,6 +8,14 @@
 
 namespace phi {
 
+bool NameResolver::resolveHeader(StructDecl &D) {
+  if (!SymbolTab.insert(&D)) {
+    emitRedefinitionError("Struct", SymbolTab.lookup(D), &D);
+    return false;
+  }
+  return true;
+}
+
 bool NameResolver::visit(StructDecl *D) {
   SymbolTable::ScopeGuard StructScope(SymbolTab);
   assert(D);

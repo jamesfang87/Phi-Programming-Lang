@@ -95,3 +95,6 @@ bool TypeChecker::visit(VarDecl &D) {
 
   return true;
 }
+
+bool TypeChecker::visit(EnumDecl &D) { return true; }
+bool TypeChecker::visit(VariantDecl &D) { return true; }

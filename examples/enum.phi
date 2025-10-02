@@ -1,0 +1,8 @@
+enum Foo {
+    Bar,
+    Baz: i32
+}
+
+fun main() {
+    const foo = (1, 2, 3);
+}

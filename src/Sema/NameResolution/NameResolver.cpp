@@ -19,29 +19,6 @@ bool NameResolver::resolveHeader(Decl &D) {
   return true;
 }
 
-bool NameResolver::resolveHeader(StructDecl &D) {
-  if (!SymbolTab.insert(&D)) {
-    emitRedefinitionError("Struct", SymbolTab.lookup(D), &D);
-    return false;
-  }
-  return true;
-}
-
-bool NameResolver::resolveHeader(FunDecl &D) {
-  bool Success = visit(D.getReturnTy());
-
-  // Resolve parameters
-  for (const auto &Param : D.getParams()) {
-    Success = visit(Param.get()) && Success;
-  }
-
-  if (!SymbolTab.insert(&D)) {
-    emitRedefinitionError("Function", SymbolTab.lookup(D), &D);
-  }
-
-  return Success;
-}
-
 bool NameResolver::resolveBodies(Decl &D) {
   if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
     return visit(Struct);
