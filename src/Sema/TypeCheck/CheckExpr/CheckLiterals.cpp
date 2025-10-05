@@ -47,3 +47,14 @@ bool TypeChecker::visit(RangeLiteral &E) {
   Success = E.getType().asPrimitive() == PrimitiveKind::Range && Success;
   return Success;
 }
+
+bool TypeChecker::visit(TupleLiteral &E) {
+  assert(E.hasType());
+
+  bool Success = true;
+  for (auto &Element : E.getElements()) {
+    Success = visit(*Element) && Success;
+  }
+  Success = E.getType().isTuple() && Success;
+  return Success;
+}

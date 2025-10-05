@@ -41,6 +41,7 @@ public:
   bool visit(CharLiteral &E);
   bool visit(BoolLiteral &E);
   bool visit(RangeLiteral &E);
+  bool visit(TupleLiteral &E);
   bool visit(DeclRefExpr &E);
   bool visit(FunCallExpr &E);
   bool visit(BinaryOp &E);
