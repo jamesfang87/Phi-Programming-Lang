@@ -10,7 +10,7 @@ namespace phi {
 
 bool NameResolver::resolveTypeByName(const phi::Type &Type,
                                      const std::string &Name) {
-  if (this->SymbolTab.lookup(Name))
+  if (this->SymbolTab.lookupStruct(Name) || this->SymbolTab.lookupEnum(Name))
     return true;
 
   auto Best = this->SymbolTab.getClosestType(Name);

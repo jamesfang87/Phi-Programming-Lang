@@ -10,6 +10,7 @@
 
 #include "Lexer/TokenKind.hpp"
 #include "Sema/TypeInference/Algorithms.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
 
 namespace phi {
 
@@ -20,33 +21,33 @@ namespace phi {
 TypeInferencer::InferRes TypeInferencer::visit(IntLiteral &E) {
   const std::vector<std::string> IntConstraints = {"i8", "i16", "i32", "i64",
                                                    "u8", "u16", "u32", "u64"};
-  auto T = Monotype::makeVar(Factory.fresh(), IntConstraints);
+  auto T = Monotype::makeVar(Factory.fresh(), IntConstraints, E.getLocation());
   IntTypeVars.push_back(T.asVar());
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(FloatLiteral &E) {
-  auto T = Monotype::makeVar(Factory.fresh(), {"f32", "f64"});
+  auto T = Monotype::makeVar(Factory.fresh(), {"f32", "f64"}, E.getLocation());
   FloatTypeVars.push_back(T.asVar());
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(BoolLiteral &E) {
-  auto T = Monotype::makeCon("bool");
+  auto T = Monotype::makeCon("bool", {}, E.getLocation());
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(CharLiteral &E) {
-  auto T = Monotype::makeCon("char");
+  auto T = Monotype::makeCon("char", {}, E.getLocation());
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(StrLiteral &E) {
-  auto T = Monotype::makeCon("string");
+  auto T = Monotype::makeCon("string", {}, E.getLocation());
   annotate(E, T);
   return {Substitution{}, T};
 }
@@ -60,9 +61,23 @@ TypeInferencer::InferRes TypeInferencer::visit(RangeLiteral &E) {
   unifyInto(AllSubsts, StartType, EndType);
   recordSubst(AllSubsts);
   auto EndPointType = AllSubsts.apply(StartType);
-  auto RangeType = Monotype::makeCon("range", {EndPointType});
+  auto RangeType = Monotype::makeCon("range", {EndPointType}, E.getLocation());
   annotate(E, RangeType);
   return {AllSubsts, RangeType};
+}
+
+TypeInferencer::InferRes TypeInferencer::visit(TupleLiteral &E) {
+  Substitution AllSubsts;
+  std::vector<Monotype> Types;
+  for (auto &Element : E.getElements()) {
+    auto [ElementSubst, ElementType] = visit(*Element);
+    Types.push_back(ElementType);
+    AllSubsts.compose(ElementSubst);
+  }
+
+  auto TupleType = Monotype::makeApp("Tuple", Types, E.getLocation());
+  annotate(E, TupleType);
+  return {AllSubsts, TupleType};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(DeclRefExpr &E) {

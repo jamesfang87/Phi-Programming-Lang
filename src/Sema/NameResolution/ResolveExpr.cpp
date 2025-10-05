@@ -44,6 +44,14 @@ bool NameResolver::visit(RangeLiteral &E) {
   return visit(E.getStart()) && visit(E.getEnd());
 }
 
+bool NameResolver::visit(TupleLiteral &E) {
+  bool Success = true;
+  for (auto &Element : E.getElements()) {
+    Success = visit(*Element) && Success;
+  }
+  return Success;
+}
+
 /**
  * Resolves a variable reference expression.
  *
