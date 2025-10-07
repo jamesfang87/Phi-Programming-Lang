@@ -135,4 +135,9 @@ enum class TokenKind : uint8_t {
  */
 std::string tyToStr(TokenKind Type);
 
+bool isArithmetic(const TokenKind K) noexcept;
+bool isLogical(const TokenKind K) noexcept;
+bool isComparison(const TokenKind K) noexcept;
+bool isEquality(const TokenKind K) noexcept;
+
 } // namespace phi

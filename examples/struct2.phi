@@ -1,0 +1,42 @@
+struct Person {
+    public name: string;
+    age: i64;
+    pos: Pos;
+
+    fun age_gap(const this, const other: i64) -> i64 {
+        return other - age;
+    }
+
+    //public fun same_name(const this, const other: Person) -> bool {
+        //return name == other.name;
+    //}
+}
+
+struct Pos {
+    x: i64;
+    y: i64;
+}
+
+fun main() {
+    const name = "james";
+    var me = Person {
+        name = name,
+        age = 17,
+        pos = Pos {
+            x = 0,
+            y = 0
+        }
+    };
+
+    var phiona = Person {
+        name = "phiona",
+        age = 16,
+        pos = Pos {
+            x = 1,
+            y = 1
+        }
+    };
+
+    const str = me.name;
+    //const res = me.same_name(phiona);
+}

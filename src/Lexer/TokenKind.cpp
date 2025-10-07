@@ -208,4 +208,48 @@ std::string tyToStr(const TokenKind Kind) {
   }
 }
 
+bool isArithmetic(const TokenKind K) noexcept {
+  switch (K) {
+  case TokenKind::Plus:
+  case TokenKind::Minus:
+  case TokenKind::Star:
+  case TokenKind::Slash:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool isLogical(const TokenKind K) noexcept {
+  switch (K) {
+  case TokenKind::DoubleAmp:
+  case TokenKind::DoublePipe:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool isComparison(const TokenKind K) noexcept {
+  switch (K) {
+  case TokenKind::OpenCaret:
+  case TokenKind::LessEqual:
+  case TokenKind::CloseCaret:
+  case TokenKind::GreaterEqual:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool isEquality(const TokenKind K) noexcept {
+  switch (K) {
+  case TokenKind::DoubleEquals:
+  case TokenKind::BangEquals:
+    return true;
+  default:
+    return false;
+  }
+}
+
 } // namespace phi

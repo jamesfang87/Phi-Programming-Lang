@@ -4,6 +4,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Type.h>
+#include <sstream>
 #include <string>
 
 #include "Sema/TypeInference/Types/Monotype.hpp"
@@ -204,12 +205,12 @@ llvm::Type *Type::toLLVM(llvm::LLVMContext &Ctx) const {
 
     llvm::Type *operator()(const ReferenceType &R) const {
       llvm::Type *PointeeTy = R.Pointee->toLLVM(Ctx);
-      return llvm::PointerType::get(PointeeTy, 0);
+      return llvm::PointerType::getUnqual(PointeeTy);
     }
 
     llvm::Type *operator()(const PointerType &P) const {
       llvm::Type *PointeeTy = P.Pointee->toLLVM(Ctx);
-      return llvm::PointerType::get(PointeeTy, 0);
+      return llvm::PointerType::getUnqual(PointeeTy);
     }
 
     llvm::Type *operator()(const GenericType &G) const {
