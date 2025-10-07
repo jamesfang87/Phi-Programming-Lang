@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -32,6 +31,7 @@ namespace phi {
  */
 class Monotype {
 public:
+  using Variant = std::variant<TypeVar, TypeCon, TypeApp, TypeFun>;
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
@@ -59,6 +59,7 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
+  [[nodiscard]] Variant getPtr() const { return *Ptr; }
   [[nodiscard]] SrcLocation getLocation() const { return Location; }
 
   //===--------------------------------------------------------------------===//
@@ -66,14 +67,15 @@ public:
   //===--------------------------------------------------------------------===//
 
   /// Creates a type variable monotype
-  static Monotype makeVar(const int Id, SrcLocation L = {"", -1, -1}) {
+  static Monotype makeVar(const int Id,
+                          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
     return Monotype(TypeVar{.Id = Id, .Constraints = std::nullopt},
                     std::move(L));
   }
 
   /// Creates a constrained type variable monotype
   static Monotype makeVar(const int Id, std::vector<std::string> Constraints,
-                          SrcLocation L = {"", -1, -1}) {
+                          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
     return Monotype(TypeVar{.Id = Id, .Constraints = std::move(Constraints)},
                     std::move(L));
   }
@@ -82,32 +84,32 @@ public:
 
   /// Creates a type application monotype
   static Monotype makeApp(std::string Name, std::vector<Monotype> Args = {},
-                          SrcLocation L = {"", -1, -1}) {
+                          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
     return Monotype(TypeApp{.Name = std::move(Name), .Args = std::move(Args)},
                     std::move(L));
   }
 
   /// Creates a type constructor monotype
   static Monotype makeCon(std::string Name, std::vector<Monotype> Args = {},
-                          SrcLocation L = {"", -1, -1}) {
+                          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
     return Monotype(TypeCon{.Name = std::move(Name), .Args = std::move(Args)},
                     std::move(L));
   }
 
   /// Creates a function type monotype
   static Monotype makeFun(std::vector<Monotype> Params, Monotype Ret,
-                          SrcLocation L = {"", -1, -1}) {
+                          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
     TypeFun F;
     F.Params = std::move(Params);
     // wrap the provided Monotype into a shared_ptr
     F.Ret = std::make_shared<Monotype>(std::move(Ret));
-    return Monotype(std::move(F), std::move(L));
+    return {std::move(F), std::move(L)};
   }
 
   /// Creates a function type monotype from shared pointer
   static Monotype makeFun(std::vector<Monotype> params,
                           const std::shared_ptr<Monotype> &ret,
-                          SrcLocation L = {"", -1, -1}) {
+                          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
     return makeFun(std::move(params), *ret, std::move(L));
   }
 
@@ -143,42 +145,10 @@ public:
   [[nodiscard]] const TypeFun &asFun() const { return std::get<TypeFun>(*Ptr); }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Pattern Support
+  // Generalize
   //===--------------------------------------------------------------------===//
 
-  template <typename VarT, typename ConT, typename AppT, typename FunT>
-  auto visit(VarT &&Var, ConT &&Con, AppT App, FunT &&Fun) {
-    return std::visit(
-        [&]<typename Input>(Input &&Val) -> decltype(auto) {
-          using T = std::decay_t<Input>;
-          if constexpr (std::is_same_v<T, TypeVar>)
-            return Var(Val);
-          else if constexpr (std::is_same_v<T, TypeCon>)
-            return Con(Val);
-          else if constexpr (std::is_same_v<T, TypeApp>)
-            return App(Val);
-          else
-            return Fun(Val);
-        },
-        *Ptr);
-  }
-
-  template <typename VarT, typename ConT, typename AppT, typename FunT>
-  auto visit(VarT &&Var, ConT &&Con, AppT App, FunT &&Fun) const {
-    return std::visit(
-        [&]<typename Input>(Input &&Val) -> decltype(auto) {
-          using T = std::decay_t<Input>;
-          if constexpr (std::is_same_v<T, TypeVar>)
-            return Var(Val);
-          else if constexpr (std::is_same_v<T, TypeCon>)
-            return Con(Val);
-          else if constexpr (std::is_same_v<T, TypeApp>)
-            return App(Val);
-          else
-            return Fun(Val);
-        },
-        *Ptr);
-  }
+  class Polytype generalize(const class TypeEnv &Env);
 
   //===--------------------------------------------------------------------===//
   // Conversion & Analysis Methods
@@ -210,14 +180,15 @@ public:
     return isCon() && (asCon().Name == "f32" || asCon().Name == "f64");
   }
 
+  [[nodiscard]] bool sameMonotypeKind(const Monotype &Other) const;
+
 private:
   //===--------------------------------------------------------------------===//
   // Member Variables
   //===--------------------------------------------------------------------===//
 
-  using Variant = std::variant<TypeVar, TypeCon, TypeApp, TypeFun>;
   std::shared_ptr<Variant> Ptr;
-  SrcLocation Location{"", -1, -1};
+  SrcLocation Location{.Path = "", .Line = -1, .Col = -1};
 };
 
 } // namespace phi

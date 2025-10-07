@@ -7,14 +7,15 @@
 #include <llvm/Support/Casting.h>
 
 #include "AST/Decl.hpp"
-#include "Sema/TypeInference/Algorithms.hpp"
+#include "Diagnostics/DiagnosticManager.hpp"
 #include "Sema/TypeInference/TypeEnv.hpp"
 
 namespace phi {
 
 // ---------------- constructor ----------------
-TypeInferencer::TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast)
-    : Ast(std::move(Ast)) {}
+TypeInferencer::TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast,
+                               std::shared_ptr<DiagnosticManager> DiagMan)
+    : DiagMan(std::move(DiagMan)), Ast(std::move(Ast)) {}
 
 // ---------------- top-level driver ----------------
 std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
@@ -35,24 +36,9 @@ std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
 // user-provided annotations (functions must be annotated).
 void TypeInferencer::predeclare() {
   for (auto &Decl : Ast) {
-    if (const auto Var = llvm::dyn_cast<VarDecl>(Decl.get())) {
-      const auto NewTypeVar = Monotype::makeVar(Factory.fresh());
-      Env.bind(Var, Polytype{{}, NewTypeVar});
-      continue;
-    }
-
     if (const auto Fun = llvm::dyn_cast<FunDecl>(Decl.get())) {
-      std::vector<Monotype> ParamTypes;
-      ParamTypes.reserve(Fun->getParams().size());
-
-      for (const auto &Param : Fun->getParams()) {
-        assert(Param->hasType());
-        ParamTypes.push_back(Param->getType().toMonotype());
-      }
-
-      const auto Ret = Fun->getReturnTy().toMonotype();
-      auto FunType = Monotype::makeFun(std::move(ParamTypes), Ret);
-      Env.bind(Fun->getId(), generalize(Env, FunType));
+      auto FunType = Fun->getType().toMonotype();
+      Env.bind(Fun->getId(), FunType.generalize(Env));
     }
 
     if (const auto Struct = llvm::dyn_cast<StructDecl>(Decl.get())) {
@@ -133,10 +119,6 @@ void TypeInferencer::finalizeAnnotations() {
     Monotype T = GlobalSubst.apply(Mono);
     Expr->setType(T.toAstType());
   }
-
-  // Optionally clear side tables
-  ExprMonos.clear();
-  ValDeclMonos.clear();
 }
 
 // ----- token-kind helpers -----
