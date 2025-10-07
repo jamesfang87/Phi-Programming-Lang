@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Sema/TypeInference/TypeVarFactory.hpp"
 #include "Sema/TypeInference/Types/Monotype.hpp"
 
 namespace phi {
@@ -11,13 +12,8 @@ public:
 
   [[nodiscard]] const std::vector<TypeVar> &getQuant() const { return Quant; }
   [[nodiscard]] const Monotype &getBody() const { return Body; }
-
-  [[nodiscard]] std::unordered_set<TypeVar> freeTypeVars() const {
-    auto FreeTypeVars = Body.freeTypeVars();
-    for (auto &Q : Quant)
-      FreeTypeVars.erase(Q);
-    return FreeTypeVars;
-  }
+  [[nodiscard]] std::unordered_set<TypeVar> freeTypeVars() const;
+  Monotype instantiate(TypeVarFactory &Factory);
 
 private:
   std::vector<TypeVar> Quant;

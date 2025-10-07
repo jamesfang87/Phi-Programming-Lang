@@ -9,7 +9,6 @@
 #include <llvm/Support/Casting.h>
 
 #include "Lexer/TokenKind.hpp"
-#include "Sema/TypeInference/Algorithms.hpp"
 #include "Sema/TypeInference/Substitution.hpp"
 
 namespace phi {
@@ -86,16 +85,11 @@ TypeInferencer::InferRes TypeInferencer::visit(DeclRefExpr &E) {
   if (const auto *Decl = E.getDecl()) {
     DeclaredAs = Env.lookup(Decl);
   } else {
-    // fallback by name (could be a function or var)
     DeclaredAs = Env.lookup(E.getId());
   }
+  assert(DeclaredAs);
 
-  if (!DeclaredAs) {
-    std::println("{}", E.getId());
-    assert(DeclaredAs);
-  }
-
-  Monotype T = instantiate(*DeclaredAs, Factory);
+  Monotype T = DeclaredAs->instantiate(Factory);
   annotate(E, T);
   return {Substitution{}, T};
 }
@@ -191,15 +185,23 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
   if (isArithmetic(K)) {
     LhsType = AllSubst.apply(LhsType);
     RhsType = AllSubst.apply(RhsType);
+    unifyInto(AllSubst, LhsType, RhsType);
+    std::println("LHS: {}", LhsType.toString());
+    std::println("RHS: {}", RhsType.toString());
+    if (LhsType.isVar()) {
+      auto lhsConstraints = LhsType.asVar().Constraints;
+      std::println("LHS Constraints: {}", 
+                   lhsConstraints ? lhsConstraints->size() : 0);
+    }
+    if (RhsType.isVar()) {
+      auto rhsConstraints = RhsType.asVar().Constraints;
+      std::println("RHS Constraints: {}", 
+                   rhsConstraints ? rhsConstraints->size() : 0);
+    }
 
-    // Standard arithmetic unification for non-float cases
-    auto NewTypeVar = Monotype::makeVar(Factory.fresh());
-    const auto OpType = Monotype::makeFun({NewTypeVar, NewTypeVar}, NewTypeVar);
-    const auto TypeOfCall = Monotype::makeFun(
-        {LhsType, RhsType}, Monotype::makeVar(Factory.fresh()));
-    unifyInto(AllSubst, OpType, TypeOfCall);
+    auto ResultingType = Monotype::makeVar(Factory.fresh());
+    unifyInto(AllSubst, LhsType, ResultingType);
     recordSubst(AllSubst);
-    auto ResultingType = AllSubst.apply(NewTypeVar);
     annotate(E, ResultingType);
     return {AllSubst, ResultingType};
   }

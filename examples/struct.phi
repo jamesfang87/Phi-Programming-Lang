@@ -1,18 +1,26 @@
 fun println(const msg: i32) {}
 
 struct RGB {
-    r: i32;
-    b: i32;
-    g: i32;
+    public r: i32;
+    public b: i32;
+    public g: i32;
 
-    public fun compareRed(const this, const other: i32) -> i32 {
-        return this.r - other;
+
+    public fun redDiff(const this, const other: i32) -> i32 {
+        return other - this.r;
+    }
+
+    public fun blueDiff(const this, const other: RGB) -> i32 {
+        return other.b - this.b;
     }
 }
 
 fun main() {
-    const color = RGB { r = 255, b = 255, g = 255};
-    println(color.r);
-    println(12);
-    println(color.compareRed(7));
+    const red = RGB { r = 255, b = 0, g = 0};
+    const blue = RGB { r = 0, b = 255, g = 0};
+    const green = RGB { r = 0, b = 0, g = 255};
+
+    println(red.redDiff(32));
+    println(red.blueDiff(blue));
+    println(red.g);
 }
