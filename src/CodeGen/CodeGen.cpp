@@ -50,7 +50,7 @@ void CodeGen::generate() {
 
   outputIR(IRFileName);
   system(std::format("clang -o ~/Phi/a.out {}", IRFileName).c_str());
-  system(std::format("rm {}", IRFileName).c_str());
+  // system(std::format("rm {}", IRFileName).c_str());
 }
 
 void CodeGen::outputIR(const std::string &Filename) {
@@ -80,7 +80,7 @@ llvm::AllocaInst *CodeGen::stackAlloca(std::string_view Id, const Type &T) {
 
 llvm::Value *CodeGen::store(llvm::Value *Val, llvm::Value *Destination,
                             const Type &T) {
-  if (!T.isStruct())
+  if (!T.isCustom())
     return Builder.CreateStore(Val, Destination);
 
   // T.toLLVM(Context) should return the llvm::StructType* for the struct
@@ -113,7 +113,7 @@ llvm::Value *CodeGen::load(llvm::Value *Val, const Type &T) {
 
   // For custom types (structs), we want the pointer, don't load the entire
   // struct
-  if (T.isStruct()) {
+  if (T.isCustom()) {
     return Val;
   }
 

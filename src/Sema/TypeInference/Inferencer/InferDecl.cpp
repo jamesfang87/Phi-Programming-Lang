@@ -21,18 +21,6 @@ void TypeInferencer::visit(VarDecl &D) {
     auto [InitSubst, InitType] = visit(D.getInit());
     Subst = std::move(InitSubst);
     VarType = Subst.apply(VarType);
-    if (VarType.isVar()) {
-      auto varConstraints = VarType.asVar().Constraints;
-      std::println("Vardecl {} is a var: {} constraints", D.getId(),
-                   varConstraints ? varConstraints->size() : 0);
-      if (InitType.isVar()) {
-        auto initConstraints = InitType.asVar().Constraints;
-        std::println("InitType has: {} constraints", 
-                     initConstraints ? initConstraints->size() : 0);
-      } else {
-        std::println("InitType is concrete: {}", InitType.toString());
-      }
-    }
 
     unifyInto(Subst, VarType, InitType);
     // After unification, apply the substitution to get the unified result
