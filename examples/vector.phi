@@ -23,5 +23,6 @@ fun main() {
 
     println(a.get_x()); // 1
     println(a.y); // 1
-    println(a.dot(b));
+    println(b.y); // 1000
+    println(a.dot(b)); // 1005
 }
