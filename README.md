@@ -51,7 +51,7 @@ fun foo() {
 A function can take parameters and return values:
 
 ```phi
-fun add(x: i32, y: i32) -> i32 {
+fun add(const x: i32, const y: i32) -> i32 {
     return x + y;
 }
 ```
@@ -66,7 +66,7 @@ Phi provides familiar control-flow constructs:
 
 ```phi
 var i = 0;
-while (i < 5) {
+while i < 5 {
     i = i + 1;
 }
 ```
@@ -95,28 +95,27 @@ if x < 5 {
 Phi supports user-defined types with `struct`:
 
 ```phi
-struct RGB {
-    r: i32;
-    g: i32;
-    b: i32;
+struct Vector2D {
+    public x: f64;
+    public y: f64;
 
-    public fun sameRed(const this, const other: i32) -> i32 {
-        return this.r == other;
+    public fun dot(const this, const other: Vector2D) -> i32 {
+        return this.x * other.x + this.y * other.y;
     }
 }
 ```
 
-Here we define an `RGB` struct with three integer fields. Methods are declared inside structs, and the first parameter is always `this`, which refers to the instance. `this` can be prefixed with `const` or `var`, based on whether the method will mutate the internal contents of the struct or not.
+Here we define an `Vector2D` struct with two float fields. Methods are declared inside structs, and the first parameter is always `this`, which refers to the instance. `this` can be prefixed with `const` or `var`, based on whether the method will mutate the internal contents of the struct or not.
 
 You can construct a struct with field initializers:
 
 ```phi
-const color = RGB { r = 255, g = 255, b = 255 };
+const force = Vector2D{ x = 1.0, y = 1.0 };
 ```
 
 And access fields or call methods:
 
 ```phi
-color.r;           // field access
-color.sameRed(7);  // method call
+force.x;           // field access
+force.dot(other_force);  // method call
 ```
