@@ -63,25 +63,18 @@ Substitution TypeInferencer::unify(const Monotype &A, const Monotype &B) {
 }
 
 Substitution TypeInferencer::unifyVar(const Monotype &Var, const Monotype &B) {
-  std::println("Unifying var {} with {}", Var.toString(), B.toString());
   if (Var.isVar()) {
     auto varConstraints = Var.asVar().Constraints;
-    std::println("  Var {} has {} constraints", Var.asVar().Id,
-                 varConstraints ? varConstraints->size() : 0);
   }
   if (B.isVar()) {
     auto bConstraints = B.asVar().Constraints;
-    std::println("  B {} has {} constraints", B.asVar().Id,
-                 bConstraints ? bConstraints->size() : 0);
   }
 
   auto Res = Var.asVar().bindWith(B);
   if (Res) {
-    std::println("  Unification succeeded");
     return *Res;
   }
 
-  std::println("  Unification failed");
   DiagMan->emit(Res.error());
   return Substitution{};
 }
