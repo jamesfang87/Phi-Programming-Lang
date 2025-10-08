@@ -12,7 +12,7 @@
 
 using namespace phi;
 
-class OperatorCodeGenTest : public ::testing::Test {
+class StructCodeGenTest : public ::testing::Test {
 protected:
   void SetUp() override {
     SrcMan = std::make_shared<SrcManager>();
@@ -103,117 +103,99 @@ protected:
 
 // ---------------- Operator tests ----------------
 
-TEST_F(OperatorCodeGenTest, ArithmeticBasic) {
+// ---------------- Struct / Method codegen tests ----------------
+
+TEST_F(StructCodeGenTest, StructFieldAccessSimple) {
   std::string Code = R"(
-    fun println(const msg: i32) {}
+    fun println(const msg: f64) {}
+
+    struct S {
+      public a: f64;
+      public b: f64;
+
+      fun get_a(const this) -> f64 { return this.a; }
+      fun get_b(const this) -> f64 { return this.b; }
+    }
 
     fun main() {
-      println(1 + 2 * 3);
+      const s = S { a = 2.0, b = 3.0 };
+      println(s.a);          // direct field access -> 2.0
+      println(s.b);          // direct field access -> 3.0
+      println(s.get_a());    // method reading a -> 2.0
+      println(s.get_b());    // method reading b -> 3.0
     }
   )";
-  compileAndExpectOutput(Code, "7\n");
+  // each println prints a line with %g format
+  compileAndExpectOutput(Code, "2\n3\n2\n3\n");
 }
 
-TEST_F(OperatorCodeGenTest, ArithmeticParentheses) {
+TEST_F(StructCodeGenTest, MethodCall_WithByValueParameter) {
   std::string Code = R"(
-    fun println(const msg: i32) {}
+    fun println(const msg: f64) {}
 
-    fun main() {
-      println((1 + 2) * 3);
-    }
-  )";
-  compileAndExpectOutput(Code, "9\n");
-}
+    struct V {
+      public x: f64;
+      public y: f64;
 
-TEST_F(OperatorCodeGenTest, UnaryPlusMinus) {
-  std::string Code = R"(
-    fun println(const msg: i32) {}
+      fun get_x(const this) -> f64 { return this.x; }
+      fun get_y(const this) -> f64 { return this.y; }
 
-    fun main() {
-      println(-5 + 3);
-    }
-  )";
-  compileAndExpectOutput(Code, "-2\n");
-}
-
-TEST_F(OperatorCodeGenTest, CompoundAssignmentLike) {
-  std::string Code = R"(
-    fun println(const msg: i32) {}
-
-    fun main() {
-      var a = 10;
-      a = a + 5;
-      println(a);
-    }
-  )";
-  compileAndExpectOutput(Code, "15\n");
-}
-
-TEST_F(OperatorCodeGenTest, Comparisons) {
-  std::string Code = R"(
-    fun println(const msg: i32) {}
-
-    fun main() {
-      if (2 < 3) {
-        println(1);
-      } else {
-        println(0);
+      // takes other by-value and returns other's y
+      fun other_y(const this, const other: V) -> f64 {
+        return other.y;
       }
     }
-  )";
-  compileAndExpectOutput(Code, "1\n");
-}
-
-TEST_F(OperatorCodeGenTest, EqualityInequality) {
-  std::string Code = R"(
-    fun println(const msg: i32) {}
 
     fun main() {
-      if (5 == 5 && !(5 != 5)) {
-        println(1);
-      } else {
-        println(0);
+      const a = V { x = 1.0, y = 1.0 };
+      const b = V { x = 5.0, y = 1000.0 };
+      // other is passed by-value; we expect to receive the correct y (1000)
+      println(a.other_y(b));
+    }
+  )";
+  compileAndExpectOutput(Code, "1000\n");
+}
+
+TEST_F(StructCodeGenTest, DotProduct_MethodsAndFieldAccess) {
+  std::string Code = R"(
+    fun println(const msg: f64) {}
+
+    struct Vector2D {
+      public x: f64;
+      public y: f64;
+
+      fun get_x(const this) -> f64 { return this.x; }
+      fun get_y(const this) -> f64 { return this.y; }
+
+      // this: pointer, other: by-value
+      fun dot(const this, const other: Vector2D) -> f64 {
+        return this.x * other.get_x() + this.get_y() * other.y;
       }
     }
-  )";
-  compileAndExpectOutput(Code, "1\n");
-}
-
-TEST_F(OperatorCodeGenTest, LogicalOps) {
-  std::string Code = R"(
-    fun println(const msg: i32) {}
 
     fun main() {
-      if (true || false) {
-        if (true && false) {
-          println(0);
-        } else {
-          println(1);
-        }
-      }
+      const a = Vector2D { x = 1.0, y = 1.0 };
+      const b = Vector2D { x = 5.0, y = 1000.0 };
+      // expected: 1*5 + 1*1000 = 1005
+      println(a.dot(b));
     }
   )";
-  compileAndExpectOutput(Code, "1\n");
+  compileAndExpectOutput(Code, "1005\n");
 }
 
-TEST_F(OperatorCodeGenTest, IntegerDivision) {
+TEST_F(StructCodeGenTest, FieldCopyingAndIndependence) {
   std::string Code = R"(
-    fun println(const msg: i32) {}
+    fun println(const msg: f64) {}
+
+    struct P { public x: f64; public y: f64; }
 
     fun main() {
-      println(7 / 2);
+      var a = P { x = 10.0, y = 20.0 };
+      var b = a;        // copy struct
+      b.y = 99.0;       // should only change b
+      println(a.y);     // expect 20.0
+      println(b.y);     // expect 99.0
     }
   )";
-  compileAndExpectOutput(Code, "3\n");
-}
-
-TEST_F(OperatorCodeGenTest, ComplexExpression) {
-  std::string Code = R"(
-    fun println(const msg: i32) {}
-
-    fun main() {
-      println(((4 + 3) * 2) - (4) + (9 / 3));
-    }
-  )";
-  compileAndExpectOutput(Code, "13\n");
+  compileAndExpectOutput(Code, "20\n99\n");
 }
