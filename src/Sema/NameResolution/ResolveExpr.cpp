@@ -1,3 +1,4 @@
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/NameResolver.hpp"
 
 #include <cassert>
@@ -61,9 +62,19 @@ bool NameResolver::visit(TupleLiteral &E) {
  */
 bool NameResolver::visit(DeclRefExpr &E) {
   ValueDecl *DeclPtr = SymbolTab.lookup(E);
+  if (llvm::isa<FieldDecl>(DeclPtr)) {
+    auto PrimaryMsg = std::format("Declaration for `{}` could not be found.",
+                                  DeclPtr->getId());
+    error(std::format("use of undeclared variable `{}`", DeclPtr->getId()))
+        .with_primary_label(E.getLocation(), PrimaryMsg)
+        .with_note(std::format("If you meant to access the field `{}`, please "
+                               "prefix this with `self.` as in `self.{}` ",
+                               DeclPtr->getId(), DeclPtr->getId()))
+        .emit(*Diags);
+  }
+
   if (!DeclPtr) {
     emitNotFoundError(NotFoundErrorKind::Variable, E.getId(), E.getLocation());
-
     return false;
   }
   E.setDecl(DeclPtr);

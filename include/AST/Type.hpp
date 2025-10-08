@@ -85,9 +85,9 @@ inline std::string primitiveKindToString(PrimitiveKind Kind) {
 // Composite Type Structures
 //===----------------------------------------------------------------------===//
 
-struct StructType {
+struct CustomType {
   std::string Name;
-  bool operator==(const StructType &Other) const noexcept {
+  bool operator==(const CustomType &Other) const noexcept {
     return Name == Other.Name;
   }
 };
@@ -125,7 +125,7 @@ struct FunctionType {
 
 class Type {
 public:
-  using Node = std::variant<PrimitiveKind, StructType, TupleType, ReferenceType,
+  using Node = std::variant<PrimitiveKind, CustomType, TupleType, ReferenceType,
                             PointerType, GenericType, FunctionType>;
 
   //===--------------------------------------------------------------------===//
@@ -143,7 +143,7 @@ public:
   }
 
   static Type makeCustom(std::string Name, SrcLocation L) {
-    return Type(StructType{std::move(Name)}, std::move(L));
+    return Type(CustomType{std::move(Name)}, std::move(L));
   }
 
   static Type makeTuple(std::vector<Type> Types, SrcLocation L) {
@@ -186,8 +186,8 @@ public:
     return std::get<PrimitiveKind>(Data);
   }
 
-  [[nodiscard]] StructType asStruct() const {
-    return std::get<StructType>(Data);
+  [[nodiscard]] CustomType asCustom() const {
+    return std::get<CustomType>(Data);
   }
 
   [[nodiscard]] TupleType asTuple() const { return std::get<TupleType>(Data); }
@@ -216,8 +216,8 @@ public:
     return std::holds_alternative<PrimitiveKind>(Data);
   }
 
-  [[nodiscard]] bool isStruct() const {
-    return std::holds_alternative<StructType>(Data);
+  [[nodiscard]] bool isCustom() const {
+    return std::holds_alternative<CustomType>(Data);
   }
 
   [[nodiscard]] bool isTuple() const {
@@ -313,11 +313,11 @@ public:
     return asPrimitive() == PrimitiveKind::Null;
   }
 
-  [[nodiscard]] std::optional<std::string> getStructName() const {
-    if (!isStruct()) {
+  [[nodiscard]] std::optional<std::string> getCustomName() const {
+    if (!isCustom()) {
       return std::nullopt;
     }
-    return std::get<StructType>(Data).Name;
+    return std::get<CustomType>(Data).Name;
   }
 
   //===--------------------------------------------------------------------===//

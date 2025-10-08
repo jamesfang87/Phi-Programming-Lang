@@ -1,3 +1,4 @@
+#include "AST/Expr.hpp"
 #include "Sema/TypeInference/Infer.hpp"
 
 #include <cassert>
@@ -284,10 +285,24 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   auto [BaseSubst, BaseType] = visit(*E.getBase());
 
   // Ensure base is a struct constructor type
-  assert(BaseType.isCon());
+  std::optional<std::string> StructName;
+  if (BaseType.isApp()) {
+    assert(BaseType.isApp() && "BaseType should be Ref<Type>");
+    assert(BaseType.asApp().Name == "Ref" &&
+           "BaseType should be a ref to a class");
+    assert(BaseType.asApp().Args.size() == 1 &&
+           "Should hold only 1 Arg (the class)");
+    assert(BaseType.asApp().Args.front().isCon() &&
+           "The class should be a constant type");
 
-  const std::string StructName = BaseType.asCon().Name;
-  auto It = Structs.find(StructName);
+    StructName = BaseType.asApp().Args.front().asCon().Name;
+  } else {
+    assert(BaseType.isCon());
+    StructName = BaseType.asCon().Name;
+  }
+  assert(StructName);
+
+  auto It = Structs.find(*StructName);
   assert(It != Structs.end());
   StructDecl *Struct = It->second;
 
@@ -325,8 +340,11 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   // receiver arg type (we already have it): use s-applied version
   std::vector<Monotype> CallArgTys;
   CallArgTys.reserve(1 + E.getArgs().size());
-  CallArgTys.push_back(
-      S.apply(Monotype::makeApp("Ref", {BaseType}))); // receiver goes first
+  if (llvm::dyn_cast<DeclRefExpr>(E.getBase())->getId() == "this") {
+    CallArgTys.push_back(S.apply(BaseType));
+  } else {
+    CallArgTys.push_back(S.apply(Monotype::makeApp("Ref", {BaseType})));
+  }
   for (auto &ArgUP : E.getArgs()) {
     auto [Subst, Type] = visit(*ArgUP);
     S.compose(Subst);

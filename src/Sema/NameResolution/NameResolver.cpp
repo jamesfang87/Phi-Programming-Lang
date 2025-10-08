@@ -22,7 +22,8 @@ bool NameResolver::resolveHeader(Decl &D) {
 bool NameResolver::resolveBodies(Decl &D) {
   if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
     return visit(Struct);
-  } else if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
+  }
+  if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
     return visit(Fun);
   }
   return true;
