@@ -57,7 +57,7 @@ bool NameResolver::visit(std::optional<phi::Type> MaybeType) {
       return Success;
     }
 
-    bool operator()(const phi::StructType &S) const {
+    bool operator()(const phi::CustomType &S) const {
       (void)S;
       return Resolver->resolveTypeByName(Cur, Cur.toString());
     }

@@ -20,6 +20,7 @@ void CodeGen::visit(ReturnStmt &S) {
 
   if (S.hasExpr()) {
     // Return with value
+    assert(visit(S.getExpr()));
     llvm::Value *RetVal = load(visit(S.getExpr()), S.getExpr().getType());
     Builder.CreateRet(RetVal);
   } else {

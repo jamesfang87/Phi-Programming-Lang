@@ -54,7 +54,7 @@ llvm::Value *CodeGen::visit(RangeLiteral &E) {
 
 llvm::Value *CodeGen::visit(StructLiteral &E) {
   phi::Type Type = E.getType();
-  llvm::Value *Temp = stackAlloca(*Type.getStructName() + ".tmp", Type);
+  llvm::Value *Temp = stackAlloca(*Type.getCustomName() + ".tmp", Type);
 
   std::map<const FieldDecl *, llvm::Value *> Inits;
   for (auto &&Init : E.getFields()) {

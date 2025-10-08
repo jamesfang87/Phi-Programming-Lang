@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 
 #include "AST/Decl.hpp"
@@ -49,7 +50,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
                 TokenKind::OpenBrace});
       }
     } else if (Check.getKind() == TokenKind::Identifier) {
-      auto Res = parseFieldDecl(FieldIndex);
+      auto Res = parseFieldDecl(FieldIndex++);
       if (Res) {
         Fields.push_back(std::move(Res));
       } else {
