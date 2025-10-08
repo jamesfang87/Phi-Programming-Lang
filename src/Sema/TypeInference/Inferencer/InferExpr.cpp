@@ -186,18 +186,6 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     LhsType = AllSubst.apply(LhsType);
     RhsType = AllSubst.apply(RhsType);
     unifyInto(AllSubst, LhsType, RhsType);
-    std::println("LHS: {}", LhsType.toString());
-    std::println("RHS: {}", RhsType.toString());
-    if (LhsType.isVar()) {
-      auto lhsConstraints = LhsType.asVar().Constraints;
-      std::println("LHS Constraints: {}", 
-                   lhsConstraints ? lhsConstraints->size() : 0);
-    }
-    if (RhsType.isVar()) {
-      auto rhsConstraints = RhsType.asVar().Constraints;
-      std::println("RHS Constraints: {}", 
-                   rhsConstraints ? rhsConstraints->size() : 0);
-    }
 
     auto ResultingType = Monotype::makeVar(Factory.fresh());
     unifyInto(AllSubst, LhsType, ResultingType);
@@ -317,7 +305,11 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   MethodDecl *Method = Struct->getMethod(MethodName);
   E.setDecl(Method);
   E.setMethod(Method);
-  assert(Method);
+  if (Method == nullptr) {
+    std::println("Could not find Method {} in struct {}", MethodName,
+                 Struct->getId());
+    return {BaseSubst, Monotype::makeCon("null")};
+  }
 
   // 2) Build the method's Monotype from its AST param types and return type
   std::vector<Monotype> MethodParams;

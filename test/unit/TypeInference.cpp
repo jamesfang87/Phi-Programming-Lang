@@ -498,3 +498,102 @@ TEST_F(TypeInferenceTest, InferenceErrorWithStatements) {
   auto MaybeAst = compileToASTWrap(Code);
   ASSERT_FALSE(MaybeAst.has_value());
 }
+
+TEST_F(TypeInferenceTest, AssignmentTypeMismatch) {
+  const std::string Code = R"(
+    fun main() {
+      var x: i32 = 1.5; // assigning float to i32
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_FALSE(MaybeAst.has_value());
+}
+
+TEST_F(TypeInferenceTest, BinaryOpTypeMismatch) {
+  const std::string Code = R"(
+    fun main() {
+      var a = 1;
+      var b = true;
+      var c = a + b; // cannot add int and bool
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_FALSE(MaybeAst.has_value());
+}
+
+TEST_F(TypeInferenceTest, StructFieldTypeMismatch) {
+  const std::string Code = R"(
+    struct Point {
+      x: i32;
+      y: i32;
+    }
+
+    fun main() {
+      var p = Point { x = 1, y = 2.5 }; // y expects i32 but got float
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_FALSE(MaybeAst.has_value());
+}
+
+TEST_F(TypeInferenceTest, FunctionCallArgumentMismatch) {
+  const std::string Code = R"(
+    fun sum(const a: i32, const b: i32) -> i32 {
+      return a + b;
+    }
+
+    fun main() {
+      var r = sum(1, 2.5); // second argument is float, expects i32
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_FALSE(MaybeAst.has_value());
+}
+
+TEST_F(TypeInferenceTest, IncompatibleReturnType) {
+  const std::string Code = R"(
+    fun foo() -> i32 {
+      return 1.5; // returning float for i32 function
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_FALSE(MaybeAst.has_value());
+}
+
+TEST_F(TypeInferenceTest, TupleElementTypeMismatch) {
+  const std::string Code = R"(
+    fun main() {
+      var t = (1, true + 3); // bool + int invalid
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_FALSE(MaybeAst.has_value());
+}
+
+TEST_F(TypeInferenceTest, StructMethodCallTypeError) {
+  const std::string Code = R"(
+    struct RGB {
+        r: i32;
+        g: i32;
+        b: i32;
+
+        fun addRed(const this, const val: i32) -> i32 {
+            return this.r + val;
+        }
+    }
+
+    fun main() {
+        var color = RGB { r = 1, g = 2, b = 3 };
+        var result = color.addRed("oops"); // argument type mismatch
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_FALSE(MaybeAst.has_value());
+}
