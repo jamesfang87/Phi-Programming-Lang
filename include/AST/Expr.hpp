@@ -9,6 +9,7 @@
 #include <llvm/IR/Value.h>
 
 #include "AST/Decl.hpp"
+#include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
@@ -53,7 +54,8 @@ public:
     StructLiteralKind,
     FieldInitKind,
     FieldAccessKind,
-    MethodCallKind
+    MethodCallKind,
+    MatchExprKind,
   };
 
   //===--------------------------------------------------------------------===//
@@ -161,7 +163,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   int64_t Value;
@@ -208,7 +210,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   double Value;
@@ -255,7 +257,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::string Value;
@@ -302,7 +304,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   char Value;
@@ -349,7 +351,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   bool Value;
@@ -400,7 +402,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Start, End;
@@ -446,7 +448,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::vector<std::unique_ptr<Expr>> Elements;
@@ -504,7 +506,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::string Id;
@@ -576,7 +578,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Callee;
@@ -633,7 +635,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Lhs;
@@ -685,7 +687,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Operand;
@@ -748,7 +750,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::string FieldId;
@@ -807,7 +809,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::string StructId;
@@ -870,7 +872,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Base;
@@ -932,11 +934,68 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Base;
   MethodDecl *Method = nullptr;
+};
+
+class MatchExpr final : public Expr {
+public:
+  struct Case {
+    std::vector<std::unique_ptr<Expr>> Patterns;
+    std::unique_ptr<Block> Body;
+    std::unique_ptr<Expr> Return;
+  };
+
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
+  MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Value,
+            std::vector<Case> Cases);
+  ~MatchExpr() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] Expr *getValue() const { return Value.get(); }
+  [[nodiscard]] auto &getCases() const { return Cases; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] bool isAssignable() const override { return true; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &C) override;
+  llvm::Value *accept(CodeGen &G) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::MatchExprKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+
+  void emit(int Level) const override;
+
+private:
+  std::unique_ptr<Expr> Value;
+  std::vector<Case> Cases;
 };
 
 } // namespace phi

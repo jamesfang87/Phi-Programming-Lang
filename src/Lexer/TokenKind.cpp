@@ -33,7 +33,7 @@ std::string tyToStr(const TokenKind Kind) {
     return "CONTINUE";
   case TokenKind::DeferKw:
     return "DEFER";
-  case TokenKind::ElseKwKind:
+  case TokenKind::ElseKw:
     return "ELSE";
   case TokenKind::EnumKw:
     return "ENUM";
@@ -47,8 +47,10 @@ std::string tyToStr(const TokenKind Kind) {
     return "IF";
   case TokenKind::ImportKw:
     return "IMPORT";
-  case TokenKind::InKwKind:
+  case TokenKind::InKw:
     return "IN";
+  case TokenKind::MatchKw:
+    return "MATCH";
   case TokenKind::PublicKw:
     return "PUBLIC";
   case TokenKind::ReturnKw:

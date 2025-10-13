@@ -36,6 +36,8 @@ Token Parser::peekToken(int Offset) const {
   return *It;
 }
 
+TokenKind Parser::peekKind() const { return peekToken().getKind(); }
+
 /**
  * Advances token stream and returns current token.
  *

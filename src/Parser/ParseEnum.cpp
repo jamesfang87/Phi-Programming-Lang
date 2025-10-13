@@ -3,6 +3,7 @@
 #include <cassert>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 
 #include "AST/Decl.hpp"
@@ -46,20 +47,21 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
   SrcLocation Loc = peekToken().getStart();
   std::string Id = advanceToken().getLexeme();
 
-  switch (peekToken().getKind()) {
+  switch (peekKind()) {
   case TokenKind::Comma:
     // typeless
     advanceToken();
-    return VariantDecl(Loc, Id, std::nullopt);
+  case TokenKind::CloseBrace:
+    return VariantDecl(Loc, std::move(Id), std::nullopt);
   case TokenKind::Colon: {
     advanceToken();
     auto DeclType = parseType();
-    auto Kind = peekToken().getKind();
-    if (Kind == TokenKind::Comma || Kind == TokenKind::CloseBrace)
-      return (DeclType)
-                 ? std::optional<VariantDecl>(VariantDecl(Loc, Id, DeclType))
-                 : std::nullopt;
-
+    if (peekKind() == TokenKind::Comma || peekKind() == TokenKind::CloseBrace) {
+      matchToken(TokenKind::Comma);
+      return (DeclType) ? std::optional<VariantDecl>(
+                              VariantDecl(Loc, std::move(Id), DeclType))
+                        : std::nullopt;
+    }
     error("missing comma after enum variant declaration")
         .with_primary_label(spanFromToken(peekToken()), "expected `,` here")
         .with_help("enum vairant declarations must end with a comma")
