@@ -10,6 +10,18 @@ enum Shape {
     Triangle: Triangle
 }
 
+fun area(const shape: Shape) {
+    match shape {
+        Rectangle: { println("rectangle"); }
+        Circle: { println("circle");  }
+        Square:  println("square"),
+        Triangle:  println("triangle")
+    };
+
+    println("done!");
+}
+
 fun main() {
     const foo = (1, 2, 3);
 }
+

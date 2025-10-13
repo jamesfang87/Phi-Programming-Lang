@@ -5,6 +5,7 @@
 #include "Parser/PrecedenceTable.hpp"
 #include <cassert>
 #include <memory>
+#include <print>
 #include <vector>
 
 namespace phi {
