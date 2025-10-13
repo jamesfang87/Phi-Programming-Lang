@@ -946,7 +946,7 @@ public:
   struct Case {
     std::vector<std::unique_ptr<Expr>> Patterns;
     std::unique_ptr<Block> Body;
-    std::unique_ptr<Expr> Return;
+    Expr *Return;
   };
 
   //===--------------------------------------------------------------------===//

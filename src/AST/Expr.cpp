@@ -453,7 +453,7 @@ MatchExpr::MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Value,
 MatchExpr::~MatchExpr() = default;
 
 void MatchExpr::emit(int Level) const {
-  std::println("Match:");
+  std::println("{}Match:", indent(Level));
   std::println("{}  Value: ", indent(Level));
   Value->emit(Level + 2);
   std::println("{}  Cases: ", indent(Level));

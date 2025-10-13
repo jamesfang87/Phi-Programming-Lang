@@ -25,9 +25,10 @@ namespace phi {
  * Uses Pratt parsing with operator precedence handling.
  */
 std::unique_ptr<Expr> Parser::parseExpr() {
-  std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
-                                        TokenKind::Comma, TokenKind::CloseParen,
-                                        TokenKind::CloseBracket};
+  std::vector<TokenKind> Terminators = {
+      TokenKind::Eof,        TokenKind::Semicolon,    TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket, TokenKind::CloseBrace,
+      TokenKind::Colon};
   if (NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
@@ -66,8 +67,9 @@ std::unique_ptr<Expr> Parser::pratt(int MinBp,
     Token Op = peekToken();
 
     // Terminate if we reach a terminator token
-    if (std::ranges::find(Terminators, Op.getKind()) != Terminators.end())
+    if (std::ranges::find(Terminators, Op.getKind()) != Terminators.end()) {
       break;
+    }
 
     // Handle postfix operators
     if (postfixBP(Op.getKind())) {
