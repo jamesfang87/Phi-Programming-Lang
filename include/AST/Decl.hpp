@@ -516,7 +516,6 @@ public:
   void emit(int level) const override;
 
 private:
-  std::string Id;
   std::optional<Type> DeclType;
 };
 
@@ -536,8 +535,8 @@ public:
   [[nodiscard]] auto &getVariants() { return Variants; }
 
   [[nodiscard]] VariantDecl *getVariant(const std::string &Id) {
-    auto it = VariantMap.find(Id);
-    return it != VariantMap.end() ? it->second : nullptr;
+    auto It = VariantMap.find(Id);
+    return It != VariantMap.end() ? It->second : nullptr;
   }
 
   //===--------------------------------------------------------------------===//

@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 #include <vector>
 
@@ -31,21 +32,19 @@ bool PhiCompiler::compile() {
   }
 
   auto Ast = Parser(SrcFile, Path, Tokens, DiagnosticMan).parse();
-  if (DiagnosticMan->error_count() > 0) {
-    return false;
-  }
 
   for (auto &D : Ast) {
     D->emit(0);
+  }
+
+  if (DiagnosticMan->error_count() > 0) {
+    return false;
   }
 
   auto [NameResolutionSuccess, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
   auto InferredTypes =
       TypeInferencer(std::move(ResolvedNames), DiagnosticMan).inferProgram();
-  for (auto &D : InferredTypes) {
-    D->emit(0);
-  }
 
   auto [TypeCheckingSuccess, CheckedTypes] =
       TypeChecker(std::move(InferredTypes), DiagnosticMan).check();

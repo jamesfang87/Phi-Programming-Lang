@@ -473,6 +473,7 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
+  std::unique_ptr<Expr> takeExpr() { return std::move(Expression); }
   [[nodiscard]] Expr &getExpr() const { return *Expression; }
 
   //===--------------------------------------------------------------------===//

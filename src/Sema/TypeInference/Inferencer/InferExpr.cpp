@@ -1,4 +1,5 @@
 #include "AST/Expr.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/TypeInference/Infer.hpp"
 
 #include <cassert>
@@ -256,15 +257,25 @@ TypeInferencer::InferRes TypeInferencer::visit(FieldAccessExpr &E) {
 
   const auto It = Structs.find(*TypeName);
   if (It == Structs.end()) {
-    std::println("Could not find struct {} in symbol table", *TypeName);
+    auto PrimaryMsg =
+        std::format("No declaration for struct `{}` was found.", *TypeName);
+    auto Diag = error(std::format("Could not find struct `{}`", *TypeName))
+                    .with_primary_label(E.getLocation(), PrimaryMsg);
+    Diag.emit(*DiagMan);
+
     return {BaseSubst, FieldType};
   }
   StructDecl *Struct = It->second;
 
   const FieldDecl *FieldDecl = Struct->getField(E.getFieldId());
   if (FieldDecl == nullptr) {
-    std::println("Could not find field {} in struct {}", E.getFieldId(),
-                 *TypeName);
+    error(
+        std::format("attempt to access undeclared field `{}`", E.getFieldId()))
+        .with_primary_label(
+            E.getLocation(),
+            std::format("Declaration for `{}` could not be found in {}.",
+                        E.getFieldId(), *TypeName))
+        .emit(*DiagMan);
     return {BaseSubst, FieldType};
   }
 
@@ -303,7 +314,16 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   assert(StructName);
 
   auto It = Structs.find(*StructName);
-  assert(It != Structs.end());
+  if (It == Structs.end()) {
+    auto PrimaryMsg =
+        std::format("No declaration for struct `{}` was found.", *StructName);
+    auto Diag = error(std::format("Could not find struct `{}`", *StructName))
+                    .with_primary_label(E.getLocation(), PrimaryMsg);
+    Diag.emit(*DiagMan);
+
+    return {BaseSubst, Monotype::makeVar(Factory.fresh(), E.getLocation())};
+  }
+
   StructDecl *Struct = It->second;
 
   // The callee inside MemberFunCallExpr is expected to be a DeclRefExpr naming
@@ -321,9 +341,13 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   E.setDecl(Method);
   E.setMethod(Method);
   if (Method == nullptr) {
-    std::println("Could not find Method {} in struct {}", MethodName,
-                 Struct->getId());
-    return {BaseSubst, Monotype::makeCon("null")};
+    error(std::format("attempt to call undeclared method`{}`", MethodName))
+        .with_primary_label(
+            E.getLocation(),
+            std::format("Declaration for `{}` could not be found in {}.",
+                        MethodName, Struct->getId()))
+        .emit(*DiagMan);
+    return {BaseSubst, Monotype::makeVar(Factory.fresh(), E.getLocation())};
   }
 
   // 2) Build the method's Monotype from its AST param types and return type
@@ -353,7 +377,7 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   }
 
   // 5) Make a fresh result type for the call
-  auto ResultTy = Monotype::makeVar(Factory.fresh());
+  auto ResultTy = Monotype::makeVar(Factory.fresh(), E.getLocation());
 
   // Expected function shape from the call site: (arg types...) -> ResultTy
   auto FunExpect = Monotype::makeFun(CallArgTys, ResultTy);

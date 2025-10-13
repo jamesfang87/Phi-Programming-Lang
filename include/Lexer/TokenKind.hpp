@@ -27,14 +27,15 @@ enum class TokenKind : uint8_t {
   ConstKw,    ///< `const` keyword
   ContinueKw, ///< `continue` keyword
   DeferKw,
-  ElseKwKind, ///< `else` keyword
+  ElseKw, ///< `else` keyword
   EnumKw,
   FalseKw,  ///< `false` literal
   ForKw,    ///< `for` keyword
   FunKw,    ///< `fun` keyword
   IfKw,     ///< `if` keyword
   ImportKw, ///< `import` keyword
-  InKwKind, ///< `in` keyword
+  InKw,     ///< `in` keyword
+  MatchKw,
   PublicKw, ///< `public` keyword
   ReturnKw, ///< `return` keyword
   StructKw,

@@ -89,6 +89,7 @@ private:
   [[nodiscard]] bool atEOF() const;
   [[nodiscard]] Token peekToken() const;
   [[nodiscard]] Token peekToken(int Offset) const;
+  [[nodiscard]] TokenKind peekKind() const;
 
   Token advanceToken();
   bool expectToken(TokenKind Expected, const std::string &Context = "");
@@ -179,8 +180,9 @@ private:
   std::unique_ptr<Expr> parseInfix(const Token &Op, std::unique_ptr<Expr> Expr,
                                    int RBp);
   std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
-  std::unique_ptr<StructLiteral> parseStructLiteral(std::unique_ptr<Expr> expr);
+  std::unique_ptr<StructLiteral> parseStructLiteral(std::unique_ptr<Expr> Expr);
   std::unique_ptr<FieldInitExpr> parseFieldInit();
+  std::unique_ptr<MatchExpr> parseMatchExpr();
 
   //===--------------------------------------------------------------------===//
   // Parsing Utilities
