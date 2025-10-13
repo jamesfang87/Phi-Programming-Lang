@@ -31,8 +31,8 @@ namespace phi {
 // Utility Methods
 void Block::emit(int Level) const {
   std::println("{}Block", indent(Level));
-  for (auto &s : Stmts)
-    s->emit(Level + 1);
+  for (auto &S : Stmts)
+    S->emit(Level + 1);
 }
 
 //===----------------------------------------------------------------------===//
