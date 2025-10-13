@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "AST/Stmt.hpp"
-#include "Diagnostics/Diagnostic.hpp"
 #include "Lexer/TokenKind.hpp"
+#include "SrcManager/SrcSpan.hpp"
 
 namespace phi {
 
@@ -85,9 +85,10 @@ std::unique_ptr<ReturnStmt> Parser::parseReturnStmt() {
   // Validate semicolon terminator
   if (peekToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after return statement")
-        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_primary_label(SrcSpan(peekToken(-1).getEnd()),
+                            "expected `;` here")
         .with_help("return statements must end with a semicolon")
-        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -109,9 +110,10 @@ std::unique_ptr<DeferStmt> Parser::parseDeferStmt() {
   // Validate semicolon terminator
   if (peekToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after defer statement")
-        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_primary_label(SrcSpan(peekToken(-1).getEnd()),
+                            "expected `;` here")
         .with_help("defer statements must end with a semicolon")
-        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -149,7 +151,7 @@ std::unique_ptr<IfStmt> Parser::parseIfStmt() {
   }
 
   // No else clause
-  if (peekToken().getKind() != TokenKind::ElseKwKind) {
+  if (peekToken().getKind() != TokenKind::ElseKw) {
     NoStructInit = false;
     return std::make_unique<IfStmt>(Loc, std::move(Cond), std::move(Body),
                                     nullptr);
@@ -257,7 +259,7 @@ std::unique_ptr<ForStmt> Parser::parseForStmt() {
 
   // Validate 'in' keyword
   Token InKw = advanceToken();
-  if (InKw.getKind() != TokenKind::InKwKind) {
+  if (InKw.getKind() != TokenKind::InKw) {
     error("missing `in` keyword in for loop")
         .with_primary_label(spanFromToken(LoopVar), "loop variable")
         .with_secondary_label(spanFromToken(InKw), "expected `in` here")
@@ -349,7 +351,7 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
   // Validate assignment operator
   if (peekToken().getKind() != TokenKind::Equals) {
     error("missing assignment in variable declaration")
-        .with_primary_label(spanFromToken(peekToken()), "expected `=` here")
+        .with_primary_label(SrcSpan(peekToken().getEnd()), "expected `=` here")
         .with_help("variables must be initialized with a value")
         .with_note("variable syntax: `let name: type = value;`")
         .emit(*DiagnosticsMan);
@@ -365,9 +367,9 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
   // Validate semicolon terminator
   if (peekToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after variable declaration")
-        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_primary_label(spanFromToken(peekToken(-1)), "expected `;` here")
         .with_help("variable declarations must end with a semicolon")
-        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -391,9 +393,10 @@ std::unique_ptr<BreakStmt> Parser::parseBreakStmt() {
   // Validate semicolon terminator
   if (advanceToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after break statement")
-        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_primary_label(SrcSpan(peekToken(-1).getEnd()),
+                            "expected `;` here")
         .with_help("break statements must end with a semicolon")
-        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
@@ -416,9 +419,10 @@ std::unique_ptr<ContinueStmt> Parser::parseContinueStmt() {
   // Validate semicolon terminator
   if (advanceToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after continue statement")
-        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_primary_label(SrcSpan(peekToken(-1).getEnd()),
+                            "expected `;` here")
         .with_help("continue statements must end with a semicolon")
-        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
         .emit(*DiagnosticsMan);
     return nullptr;
   }

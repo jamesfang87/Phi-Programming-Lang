@@ -20,11 +20,13 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   case TokenKind::Star:
     return parsePrefixUnaryOp(Tok);
 
-  // Identifiers
+  // Identifiers and Kws
   case TokenKind::Identifier:
     return std::make_unique<DeclRefExpr>(Tok.getStart(), Tok.getLexeme());
   case TokenKind::ThisKw:
     return std::make_unique<DeclRefExpr>(Tok.getStart(), "this");
+  case TokenKind::MatchKw:
+    return parseMatchExpr();
 
   // Grouping: ( expr )
   case TokenKind::OpenParen:

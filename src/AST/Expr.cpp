@@ -15,6 +15,7 @@
 #include "Sema/NameResolver.hpp"
 #include "Sema/TypeChecker.hpp"
 #include "Sema/TypeInference/Infer.hpp"
+#include "SrcManager/SrcLocation.hpp"
 #include <llvm/IR/Value.h>
 
 namespace {
@@ -439,6 +440,40 @@ void MethodCallExpr::emit(int Level) const {
     Arg->emit(Level + 2);
   }
 }
+
+//===----------------------------------------------------------------------===//
+// MatchExpr Implementation
+//===----------------------------------------------------------------------===//
+
+MatchExpr::MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Value,
+                     std::vector<Case> Cases)
+    : Expr(Expr::Kind::MatchExprKind, std::move(Location)),
+      Value(std::move(Value)), Cases(std::move(Cases)) {}
+
+MatchExpr::~MatchExpr() = default;
+
+void MatchExpr::emit(int Level) const {
+  std::println("Match:");
+  std::println("{}  Value: ", indent(Level));
+  Value->emit(Level + 2);
+  std::println("{}  Cases: ", indent(Level));
+  for (const auto &Case : Cases) {
+    std::println("{}  Patterns: ", indent(Level + 2));
+    for (auto &P : Case.Patterns) {
+      P->emit(Level + 4);
+    }
+    std::println("{}  Body: ", indent(Level + 2));
+    Case.Body->emit(Level + 4);
+
+    std::println("{}  Return: ", indent(Level + 2));
+    Case.Return->emit(Level + 4);
+  }
+}
+
+bool MatchExpr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes MatchExpr::accept(TypeInferencer &I) { return I.visit(*this); }
+bool MatchExpr::accept(TypeChecker &C) { return C.visit(*this); }
+llvm::Value *MatchExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 //===----------------------------------------------------------------------===//
 // Additional TypeChecker accept implementations
