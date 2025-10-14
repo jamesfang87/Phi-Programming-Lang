@@ -13,8 +13,13 @@ namespace phi {
 bool NameResolver::resolveHeader(Decl &D) {
   if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
     return resolveHeader(*Struct);
-  } else if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
+  }
+  if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
     return resolveHeader(*Fun);
+  }
+
+  if (auto *Enum = llvm::dyn_cast<EnumDecl>(&D)) {
+    return resolveHeader(*Enum);
   }
   return true;
 }
