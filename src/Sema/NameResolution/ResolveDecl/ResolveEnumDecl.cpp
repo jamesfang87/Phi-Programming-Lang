@@ -11,6 +11,7 @@ bool NameResolver::resolveHeader(EnumDecl &D) {
     emitRedefinitionError("Enum", SymbolTab.lookup(D), &D);
     return false;
   }
+  assert(SymbolTab.lookup(D));
   return true;
 }
 
