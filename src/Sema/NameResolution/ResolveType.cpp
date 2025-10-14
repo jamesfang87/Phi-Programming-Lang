@@ -13,8 +13,7 @@ bool NameResolver::resolveTypeByName(const phi::Type &Type,
   if (this->SymbolTab.lookupStruct(Name) || this->SymbolTab.lookupEnum(Name))
     return true;
 
-  auto Best = this->SymbolTab.getClosestType(Name);
-  if (Best) {
+  if (auto Best = this->SymbolTab.getClosestType(Name)) {
     std::string Hint = std::format("Did you mean `{}`?", *Best);
   }
 
