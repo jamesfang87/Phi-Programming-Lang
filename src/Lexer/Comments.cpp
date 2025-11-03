@@ -17,8 +17,7 @@ namespace phi {
  * @throws Scanning error for unclosed block comments
  */
 void Lexer::skipComment() {
-  // first consume the first '/' to decide what to do next
-  advanceChar();
+  advanceChar(); // first consume the first '/' to decide what to do next
   if (matchNext('/')) {
     // skip until we reach the end of line
     while (peekChar() != '\n') {

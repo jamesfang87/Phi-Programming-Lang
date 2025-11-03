@@ -72,7 +72,7 @@ public:
    * @brief Retrieves token type name
    * @return Human-readable type name string
    */
-  [[nodiscard]] std::string getName() const { return tyToStr(Kind); }
+  [[nodiscard]] std::string getName() const { return TokenKindToStr(Kind); }
 
   /**
    * @brief Retrieves original source text

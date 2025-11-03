@@ -1,6 +1,7 @@
 #include "Parser/Parser.hpp"
 
 #include "Lexer/TokenKind.hpp"
+#include <memory>
 
 namespace phi {
 
@@ -35,27 +36,26 @@ Parser::Parser(const std::string_view Src, const std::string_view Path,
  */
 std::vector<std::unique_ptr<Decl>> Parser::parse() {
   while (!atEOF()) {
+    std::unique_ptr<Decl> Res = nullptr;
     switch (peekToken().getKind()) {
-    case TokenKind::FunKw: {
-      if (auto Res = parseFunDecl()) {
-        Ast.push_back(std::move(Res));
-      } else {
-        SyncToTopLvl(); // Error recovery
-      }
+    case TokenKind::FunKw:
+      Res = parseFunDecl();
       break;
-    }
-    case TokenKind::StructKw: {
-      if (auto Res = parseStructDecl()) {
-        Ast.push_back(std::move(Res));
-      } else {
-        SyncToTopLvl(); // Error recovery
-      }
+    case TokenKind::StructKw:
+      Res = parseStructDecl();
       break;
-    }
+    case TokenKind::EnumKw:
+      Res = parseEnumDecl();
+      break;
     default:
-      emitUnexpectedTokenError(peekToken(), {"fun", "struct"});
+      emitUnexpectedTokenError(peekToken(), {"fun", "struct", "enum"});
       SyncToTopLvl(); // Error recovery
     }
+
+    if (Res)
+      Ast.push_back(std::move(Res));
+    else
+      SyncToTopLvl(); // Error recovery
   }
 
   llvm::sort(Ast, [](const std::unique_ptr<Decl> &LHS,

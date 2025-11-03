@@ -1,10 +1,13 @@
 #include "AST/Expr.hpp"
 
 #include <cassert>
+#include <memory>
 #include <optional>
 #include <print>
 #include <string>
 #include <utility>
+
+#include <llvm/IR/Value.h>
 
 #include "AST/Decl.hpp"
 #include "AST/Stmt.hpp"
@@ -14,7 +17,7 @@
 #include "Sema/NameResolver.hpp"
 #include "Sema/TypeChecker.hpp"
 #include "Sema/TypeInference/Infer.hpp"
-#include <llvm/IR/Value.h>
+#include "SrcManager/SrcLocation.hpp"
 
 namespace {
 
@@ -173,13 +176,39 @@ void RangeLiteral::emit(int Level) const {
 }
 
 //===----------------------------------------------------------------------===//
+// TupleLiteral Implementation
+//===----------------------------------------------------------------------===//
+
+// Constructors & Destructors
+TupleLiteral::TupleLiteral(SrcLocation Location,
+                           std::vector<std::unique_ptr<Expr>> Elements)
+    : Expr(Expr::Kind::TupleLiteralKind, std::move(Location), std::nullopt),
+      Elements(std::move(Elements)) {}
+
+TupleLiteral::~TupleLiteral() = default;
+
+// Visitor Methods
+bool TupleLiteral::accept(NameResolver &R) { return R.visit(*this); }
+InferRes TupleLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
+bool TupleLiteral::accept(TypeChecker &C) { return C.visit(*this); }
+llvm::Value *TupleLiteral::accept(CodeGen &G) { return G.visit(*this); }
+
+// Utility Methods
+void TupleLiteral::emit(int Level) const {
+  std::println("{}TupleLiteral:", indent(Level));
+  std::println("{}  Elements:", indent(Level));
+  for (auto &E : Elements) {
+    E->emit(Level + 2);
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // DeclRefExpr Implementation
 //===----------------------------------------------------------------------===//
 
 // Constructors & Destructors
 DeclRefExpr::DeclRefExpr(SrcLocation Location, std::string Id)
-    : Expr(Expr::Kind::DeclRefExprKind, std::move(Location)),
-      Id(std::move(Id)) {}
+    : Expr(Expr::Kind::DeclRefKind, std::move(Location)), Id(std::move(Id)) {}
 
 // Visitor Methods
 bool DeclRefExpr::accept(NameResolver &R) { return R.visit(*this); }
@@ -192,11 +221,11 @@ void DeclRefExpr::emit(int Level) const {
   if (DeclPtr == nullptr) {
     std::println("{}DeclRefExpr: {} ", indent(Level), Id);
   } else {
-    std::string typeStr =
+    std::string TypeStr =
         DeclPtr->hasType() ? DeclPtr->getType().toString() : "<unresolved>";
 
     std::println("{}DeclRefExpr: {}; referring to: {} of type {}",
-                 indent(Level), Id, DeclPtr->getId(), typeStr);
+                 indent(Level), Id, DeclPtr->getId(), TypeStr);
   }
 }
 
@@ -207,7 +236,7 @@ void DeclRefExpr::emit(int Level) const {
 // Constructors & Destructors
 FunCallExpr::FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
                          std::vector<std::unique_ptr<Expr>> Args)
-    : Expr(Expr::Kind::FunCallExprKind, std::move(Location)),
+    : Expr(Expr::Kind::FunCallKind, std::move(Location)),
       Callee(std::move(Callee)), Args(std::move(Args)) {}
 
 // Protected constructor for derived classes
@@ -258,7 +287,7 @@ llvm::Value *BinaryOp::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
 void BinaryOp::emit(int Level) const {
-  std::println("{}BinaryOp: {}", indent(Level), tyToStr(Op));
+  std::println("{}BinaryOp: {}", indent(Level), TokenKindToStr(Op));
   std::println("{}  lhs:", indent(Level));
   Lhs->emit(Level + 2);
   std::println("{}  rhs:", indent(Level));
@@ -288,7 +317,7 @@ llvm::Value *UnaryOp::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
 void UnaryOp::emit(int Level) const {
-  std::println("{}UnaryOp: {}", indent(Level), tyToStr(Op));
+  std::println("{}UnaryOp: {}", indent(Level), TokenKindToStr(Op));
   std::println("{}  expr:", indent(Level));
   Operand->emit(Level + 2);
 }
@@ -301,7 +330,7 @@ void UnaryOp::emit(int Level) const {
 FieldInitExpr::FieldInitExpr(SrcLocation Location, std::string FieldId,
                              std::unique_ptr<Expr> Init)
     : Expr(Expr::Kind::FieldInitKind, std::move(Location)),
-      FieldId(std::move(FieldId)), Init(std::move(Init)) {}
+      FieldId(std::move(FieldId)), InitValue(std::move(Init)) {}
 
 FieldInitExpr::~FieldInitExpr() = default;
 
@@ -316,7 +345,7 @@ void FieldInitExpr::emit(int Level) const {
   std::println("{}FieldInitExpr:", indent(Level));
   std::println("{}  field: {}", indent(Level), FieldId);
   std::println("{}  value:", indent(Level));
-  Init->emit(Level + 2);
+  InitValue->emit(Level + 2);
 }
 
 //===----------------------------------------------------------------------===//
@@ -326,7 +355,7 @@ void FieldInitExpr::emit(int Level) const {
 // Constructors & Destructors
 StructLiteral::StructLiteral(SrcLocation Location, std::string StructId,
                              std::vector<std::unique_ptr<FieldInitExpr>> Fields)
-    : Expr(Expr::Kind::StructInitKind, std::move(Location)),
+    : Expr(Expr::Kind::StructLiteralKind, std::move(Location)),
       StructId(std::move(StructId)), FieldInits(std::move(Fields)) {}
 
 StructLiteral::~StructLiteral() = default;
@@ -382,9 +411,14 @@ void FieldAccessExpr::emit(int Level) const {
 MethodCallExpr::MethodCallExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
                                std::unique_ptr<Expr> Callee,
                                std::vector<std::unique_ptr<Expr>> Args)
-    : FunCallExpr(Expr::Kind::MemberFunAccessKind, std::move(Location),
+    : FunCallExpr(Expr::Kind::MethodCallKind, std::move(Location),
                   std::move(Callee), std::move(Args)),
       Base(std::move(Base)) {}
+
+MethodCallExpr::MethodCallExpr(FunCallExpr &&Call,
+                               std::unique_ptr<Expr> BaseExpr)
+    : FunCallExpr(std::move(Call), Kind::MethodCallKind),
+      Base(std::move(BaseExpr)) {}
 
 MethodCallExpr::~MethodCallExpr() = default;
 
@@ -406,6 +440,73 @@ void MethodCallExpr::emit(int Level) const {
     Arg->emit(Level + 2);
   }
 }
+
+EnumInitExpr::EnumInitExpr(SrcLocation Location, std::string EnumName,
+                           std::string VariantName, std::unique_ptr<Expr> Init)
+    : Expr(Kind::EnumInitKind, std::move(Location)),
+      EnumName(std::move(EnumName)), ActiveVariantName(std::move(VariantName)),
+      Enum(nullptr), ActiveVariant(nullptr), Init(std::move(Init)) {}
+
+EnumInitExpr::~EnumInitExpr() = default;
+
+bool EnumInitExpr::accept(NameResolver &R) { return R.visit(*this); }
+
+InferRes EnumInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
+
+bool EnumInitExpr::accept(TypeChecker &C) { return C.visit(*this); }
+
+llvm::Value *EnumInitExpr::accept(CodeGen &G) { return G.visit(*this); }
+
+void EnumInitExpr::emit(int Level) const {
+  std::println("{}EnumInitExpr", indent(Level));
+  std::println("{}Enum Name: {}", indent(Level + 1), EnumName);
+  std::println("{}Active Variant Name: {}", indent(Level + 1),
+               ActiveVariantName);
+  if (Enum) {
+    std::println("Found decl for enum: ", Enum->getId());
+  }
+
+  if (ActiveVariant) {
+    std::println("Found decl for ActiveVariant: ", ActiveVariant->getId());
+  }
+
+  std::println("{}Init:", indent(Level + 1));
+  Init->emit(Level + 2);
+}
+
+//===----------------------------------------------------------------------===//
+// MatchExpr Implementation
+//===----------------------------------------------------------------------===//
+
+MatchExpr::MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Value,
+                     std::vector<Case> Cases)
+    : Expr(Expr::Kind::MatchExprKind, std::move(Location)),
+      Value(std::move(Value)), Cases(std::move(Cases)) {}
+
+MatchExpr::~MatchExpr() = default;
+
+void MatchExpr::emit(int Level) const {
+  std::println("{}Match:", indent(Level));
+  std::println("{}  Value: ", indent(Level));
+  Value->emit(Level + 2);
+  std::println("{}  Cases: ", indent(Level));
+  for (const auto &Case : Cases) {
+    std::println("{}  Patterns: ", indent(Level + 2));
+    for (auto &P : Case.Patterns) {
+      P->emit(Level + 4);
+    }
+    std::println("{}  Body: ", indent(Level + 2));
+    Case.Body->emit(Level + 4);
+
+    std::println("{}  Return: ", indent(Level + 2));
+    Case.Return->emit(Level + 4);
+  }
+}
+
+bool MatchExpr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes MatchExpr::accept(TypeInferencer &I) { return I.visit(*this); }
+bool MatchExpr::accept(TypeChecker &C) { return C.visit(*this); }
+llvm::Value *MatchExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 //===----------------------------------------------------------------------===//
 // Additional TypeChecker accept implementations

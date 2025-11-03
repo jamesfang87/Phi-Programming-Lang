@@ -7,52 +7,44 @@
 #include "AST/Decl.hpp"
 
 namespace phi {
-
-bool NameResolver::visit(StructDecl *D) {
-  SymbolTable::ScopeGuard StructScope(SymbolTab);
-  assert(D);
-
-  bool Success = true;
-
-  for (auto &Field : D->getFields()) {
-    Success = visit(Field.get()) && Success;
-    SymbolTab.insert(Field.get());
-  }
-
-  for (auto &Method : D->getMethods()) {
-    Success = visit(&Method) && Success;
-    SymbolTab.insert(&Method);
-  }
-
-  for (auto &Method : D->getMethods()) {
-    CurrentFun = llvm::dyn_cast<FunDecl>(&Method);
-
-    // Create function scope
-    SymbolTable::ScopeGuard FunctionScope(SymbolTab);
-
-    // Add parameters to function scope
-    for (const std::unique_ptr<ParamDecl> &param : Method.getParams()) {
-      if (!SymbolTab.insert(param.get())) {
-        emitRedefinitionError("Parameter", SymbolTab.lookup(*param),
-                              param.get());
-      }
+    bool NameResolver::resolveHeader(StructDecl &D) {
+        if (!SymbolTab.insert(&D)) {
+            emitRedefinitionError("Struct", SymbolTab.lookup(D), &D);
+            return false;
+        }
+        return true;
     }
 
-    Success = visit(Method.getBody(), true) && Success;
-  }
+    bool NameResolver::visit(StructDecl *D) {
+        SymbolTable::ScopeGuard StructScope(SymbolTab);
+        assert(D);
 
-  return Success;
-}
+        bool Success = true;
 
-bool NameResolver::visit(FieldDecl *D) {
-  bool Success = visit(D->getType());
+        for (auto &Field: D->getFields()) {
+            Success = visit(Field.get()) && Success;
+            SymbolTab.insert(Field.get());
+        }
 
-  // Handle initializer if present
-  if (D->hasInit()) {
-    Success = visit(D->getInit()) && Success;
-  }
+        for (auto &Method: D->getMethods()) {
+            SymbolTab.insert(&Method);
+        }
 
-  return Success;
-}
+        for (auto &Method: D->getMethods()) {
+            Success = visit(&Method) && Success;
+        }
 
+        return Success;
+    }
+
+    bool NameResolver::visit(FieldDecl *D) {
+        bool Success = visit(D->getType());
+
+        // Handle initializer if present
+        if (D->hasInit()) {
+            Success = visit(D->getInit()) && Success;
+        }
+
+        return Success;
+    }
 } // namespace phi

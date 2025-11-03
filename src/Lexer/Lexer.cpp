@@ -140,8 +140,11 @@ Token Lexer::scanToken() {
   case '!':
     return makeToken(matchNext('=') ? TokenKind::BangEquals : TokenKind::Bang);
   case '=':
-    return makeToken(matchNext('=') ? TokenKind::DoubleEquals
-                                    : TokenKind::Equals);
+    if (matchNext('>'))
+      return makeToken(TokenKind::FatArrow);
+    if (matchNext('='))
+      return makeToken(TokenKind::DoubleEquals);
+    return makeToken(TokenKind::Equals);
   case '<':
     return makeToken(matchNext('=') ? TokenKind::LessEqual
                                     : TokenKind::OpenCaret);
@@ -182,15 +185,15 @@ Token Lexer::scanToken() {
     }
 
     // Handle unknown character with better error message
-    std::string charDisplay;
+    std::string CharDisplay;
     if (std::isprint(C)) {
-      charDisplay = "'" + std::string(1, C) + "'";
+      CharDisplay = "'" + std::string(1, C) + "'";
     } else {
-      charDisplay =
+      CharDisplay =
           "\\x" + std::format("{:02x}", static_cast<unsigned char>(C));
     }
 
-    error("unexpected character " + charDisplay)
+    error("unexpected character " + CharDisplay)
         .with_primary_label(getCurSpan(), "unexpected character")
         .with_help("remove this character or use a valid token")
         .with_note("valid characters include letters, digits, operators, and "
@@ -207,49 +210,49 @@ Token Lexer::scanToken() {
 // =============================================================================
 
 void Lexer::emitError(std::string_view msg, std::string_view helpMsg) {
-  auto diagnostic = error(std::string(msg)).with_primary_label(getCurSpan());
+  auto Diag = error(std::string(msg)).with_primary_label(getCurSpan());
 
   if (!helpMsg.empty()) {
-    diagnostic.with_help(std::string(helpMsg));
+    Diag.with_help(std::string(helpMsg));
   }
 
-  diagnostic.emit(*DiagnosticsMan);
+  Diag.emit(*DiagnosticsMan);
 }
 
-void Lexer::emitUnclosedBlockCommentError(std::string::iterator startPos,
-                                          std::string::iterator startLine,
-                                          int startLineNum) {
+void Lexer::emitUnclosedBlockCommentError(std::string::iterator StartPos,
+                                          std::string::iterator StartLine,
+                                          int StartLineNum) {
   // Calculate current position (where we reached EOF)
-  int curCol = static_cast<int>(CurChar - CurLine) + 1;
-  SrcLocation curStart{.path = Path, .line = LineNum, .col = curCol};
-  SrcLocation curEnd{.path = Path, .line = LineNum, .col = curCol};
-  SrcSpan curSpan{curStart, curEnd};
+  int CurCol = static_cast<int>(CurChar - CurLine) + 1;
+  SrcLocation CurStart{.Path = Path, .Line = LineNum, .Col = CurCol};
+  SrcLocation CurEnd{.Path = Path, .Line = LineNum, .Col = CurCol};
+  SrcSpan CurSpan{CurStart, CurEnd};
 
   // Calculate where the block comment started using passed parameters
-  int col = static_cast<int>(startPos - startLine) + 1;
-  SrcLocation start{.path = Path, .line = startLineNum, .col = col};
-  SrcLocation end{.path = Path, .line = startLineNum, .col = col + 2};
-  SrcSpan span{start, end};
+  int Col = static_cast<int>(StartPos - StartLine) + 1;
+  SrcLocation Start{.Path = Path, .Line = StartLineNum, .Col = Col};
+  SrcLocation End{.Path = Path, .Line = StartLineNum, .Col = Col + 2};
+  SrcSpan Span{Start, End};
 
   error("unclosed block comment")
-      .with_primary_label(span, "block comment starts here")
+      .with_primary_label(Span, "block comment starts here")
       .with_help("add a closing `*/` to terminate the block comment")
       .emit(*DiagnosticsMan);
 }
 
 SrcLocation Lexer::getCurLocation() const {
-  int col = static_cast<int>(CurChar - LexemeLine) + 1;
-  return SrcLocation{.path = Path, .line = LineNum, .col = col};
+  int Col = static_cast<int>(CurChar - LexemeLine) + 1;
+  return SrcLocation{.Path = Path, .Line = LineNum, .Col = Col};
 }
 
 SrcSpan Lexer::getCurSpan() const {
-  int startCol = static_cast<int>(CurLexeme - LexemeLine) + 1;
-  int endCol = static_cast<int>(CurChar - CurLine) + 1;
+  int StartCol = static_cast<int>(CurLexeme - LexemeLine) + 1;
+  int EndCol = static_cast<int>(CurChar - CurLine) + 1;
 
-  SrcLocation start{.path = Path, .line = LineNum, .col = startCol};
-  SrcLocation end{.path = Path, .line = LineNum, .col = endCol};
+  SrcLocation Start{.Path = Path, .Line = LineNum, .Col = StartCol};
+  SrcLocation End{.Path = Path, .Line = LineNum, .Col = EndCol};
 
-  return SrcSpan{start, end};
+  return SrcSpan{Start, End};
 }
 
 } // namespace phi

@@ -20,8 +20,9 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  TypeChecker(std::vector<std::unique_ptr<Decl>> Ast, std::shared_ptr<DiagnosticManager> Diag) 
-    : Ast(std::move(Ast)), Diag(std::move(Diag)) {}
+  TypeChecker(std::vector<std::unique_ptr<Decl>> Ast,
+              std::shared_ptr<DiagnosticManager> Diag)
+      : Ast(std::move(Ast)), Diag(std::move(Diag)) {}
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point
@@ -40,6 +41,7 @@ public:
   bool visit(CharLiteral &E);
   bool visit(BoolLiteral &E);
   bool visit(RangeLiteral &E);
+  bool visit(TupleLiteral &E);
   bool visit(DeclRefExpr &E);
   bool visit(FunCallExpr &E);
   bool visit(BinaryOp &E);
@@ -76,6 +78,8 @@ public:
   bool visit(FieldDecl &D);
   bool visit(MethodDecl &D);
   bool visit(VarDecl &D);
+  bool visit(EnumDecl &D);
+  bool visit(VariantDecl &D);
 
 private:
   //===--------------------------------------------------------------------===//
