@@ -58,12 +58,12 @@ llvm::Value *CodeGen::visit(StructLiteral &E) {
 
   std::map<const FieldDecl *, llvm::Value *> Inits;
   for (auto &&Init : E.getFields()) {
-    llvm::Value *Val = visit(*Init->getValue());
+    llvm::Value *Val = visit(*Init->getInitValue());
     Inits[Init->getDecl()] = Val;
   }
 
   size_t I = 0;
-  for (auto &&Field : E.getStructDecl()->getFields()) {
+  for (auto &&Field : E.getDecl()->getFields()) {
     llvm::Value *Dst = Builder.CreateStructGEP(Type.toLLVM(Context), Temp, I++);
     store(Inits[Field.get()], Dst, Field->getType());
   }

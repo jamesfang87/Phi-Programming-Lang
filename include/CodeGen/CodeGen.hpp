@@ -155,7 +155,6 @@ private:
   // Defer Statement Management
   //===--------------------------------------------------------------------===//
 
-  void pushDefer(Expr &DeferredExpr);
   void executeDefers();
   void clearDefers();
 

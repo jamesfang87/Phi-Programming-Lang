@@ -43,7 +43,10 @@ public:
 
   void visit(Decl &D);
   void visit(VarDecl &D);
+  void visit(ParamDecl &D);
   void visit(FunDecl &D);
+  void visit(FieldDecl &D);
+  void visit(MethodDecl &D);
   void visit(StructDecl &D);
   void visit(EnumDecl &D);
 
@@ -149,7 +152,11 @@ private:
   void emitUnifyError(const Monotype &A, const Monotype &B,
                       const std::string &TopMsg,
                       const std::optional<std::string> &Note = std::nullopt);
-
+  InferRes unifyAndAnnotate(Expr &E, Substitution S, const Monotype &ExprType,
+                            const Monotype &ExpectedType);
+  InferRes unifyAndAnnotate(Expr &E, Substitution S, const Monotype &Type1,
+                            const Monotype &Type2,
+                            const Monotype &ExpectedType);
   //===--------------------------------------------------------------------===//
   // Annotation Management
   //===--------------------------------------------------------------------===//
@@ -170,14 +177,8 @@ private:
   // to stored Monotypes and writing concrete phi::Type back into AST.
   void finalizeAnnotations();
 
-  //===--------------------------------------------------------------------===//
-  // Token Kind Classification Utilities
-  //===--------------------------------------------------------------------===//
-
-  [[nodiscard]] static bool isArithmetic(TokenKind K) noexcept;
-  [[nodiscard]] static bool isLogical(TokenKind K) noexcept;
-  [[nodiscard]] static bool isComparison(TokenKind K) noexcept;
-  [[nodiscard]] static bool isEquality(TokenKind K) noexcept;
+  std::tuple<Substitution, Monotype, StructDecl *>
+  inferStructBase(Expr &BaseExpr, SrcLocation Loc);
 };
 
 } // namespace phi

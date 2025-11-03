@@ -33,10 +33,6 @@ bool PhiCompiler::compile() {
 
   auto Ast = Parser(SrcFile, Path, Tokens, DiagnosticMan).parse();
 
-  for (auto &D : Ast) {
-    D->emit(0);
-  }
-
   if (DiagnosticMan->error_count() > 0) {
     return false;
   }
@@ -45,6 +41,9 @@ bool PhiCompiler::compile() {
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
   auto InferredTypes =
       TypeInferencer(std::move(ResolvedNames), DiagnosticMan).inferProgram();
+  for (const auto &D : InferredTypes) {
+    D->emit(0);
+  }
 
   auto [TypeCheckingSuccess, CheckedTypes] =
       TypeChecker(std::move(InferredTypes), DiagnosticMan).check();

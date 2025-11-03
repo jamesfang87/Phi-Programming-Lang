@@ -15,13 +15,13 @@ bool TypeChecker::visit(StructLiteral &E) {
 }
 
 bool TypeChecker::visit(FieldInitExpr &E) {
-  assert(E.getValue()->hasType());
+  assert(E.getInitValue()->hasType());
   assert(E.getDecl());
   assert(E.getDecl()->hasType());
 
-  bool Success = visit(*E.getValue());
+  bool Success = visit(*E.getInitValue());
 
-  Type InitType = E.getValue()->getType();
+  Type InitType = E.getInitValue()->getType();
   if (InitType != E.getDecl()->getType()) {
     error(std::format("Init of type `{}` cannot be assigned to field `{}`, "
                       "which has type `{}",

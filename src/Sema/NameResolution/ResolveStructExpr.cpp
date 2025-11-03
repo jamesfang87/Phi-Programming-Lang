@@ -19,7 +19,7 @@ bool NameResolver::visit(StructLiteral &E) {
                       E.getLocation());
     return false;
   }
-  E.setStructDecl(Found);
+  E.setDecl(Found);
 
   std::unordered_set<std::string> AccountedFor;
   for (auto &Field : Found->getFields()) {
@@ -35,7 +35,7 @@ bool NameResolver::visit(StructLiteral &E) {
       emitNotFoundError(NotFoundErrorKind::Field, FieldInit->getFieldId(),
                         FieldInit->getLocation());
     } else {
-      FieldInit->setFieldDecl(Found->getField(FieldInit->getFieldId()));
+      FieldInit->setDecl(Found->getField(FieldInit->getFieldId()));
       assert(FieldInit->getDecl() != nullptr);
       AccountedFor.erase(FieldInit->getFieldId());
     }
@@ -61,9 +61,9 @@ bool NameResolver::visit(StructLiteral &E) {
 }
 
 bool NameResolver::visit(FieldInitExpr &E) {
-  assert(E.getValue() != nullptr);
+  assert(E.getInitValue() != nullptr);
 
-  return visit(*E.getValue());
+  return visit(*E.getInitValue());
 }
 
 bool NameResolver::visit(FieldAccessExpr &E) { return visit(*E.getBase()); }

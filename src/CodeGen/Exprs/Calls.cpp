@@ -1,6 +1,7 @@
 #include "CodeGen/CodeGen.hpp"
 
 #include <cassert>
+
 #include <llvm/Support/Casting.h>
 
 #include "AST/Expr.hpp"
@@ -56,7 +57,7 @@ llvm::Value *CodeGen::visit(FunCallExpr &E) {
     } else {
       // pass value: for primitives this loads a scalar; for structs this
       // loads the whole aggregate value
-      if (Arg->getType().isCustom()) {
+      if (Arg->getType().isStruct()) {
         // Raw should be a pointer to the alloca/GEP to the struct: load
         // aggregate
         ArgToPass = Builder.CreateLoad(Arg->getType().toLLVM(Context), Raw);

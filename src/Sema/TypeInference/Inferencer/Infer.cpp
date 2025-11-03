@@ -19,21 +19,16 @@ TypeInferencer::TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast,
 
 // ---------------- top-level driver ----------------
 std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
-  // Predeclare top-level vars and function names
   predeclare();
 
-  // Infer each top-level declaration
   for (auto &Decl : Ast)
     visit(*Decl);
 
-  // Finalize annotations: apply global substitution and write back to AST
   finalizeAnnotations();
   return std::move(Ast);
 }
 
 // ---------------- predeclaration ----------------
-// Binds top-level VarDecl by ValueDecl pointer and FunDecl by name with their
-// user-provided annotations (functions must be annotated).
 void TypeInferencer::predeclare() {
   for (auto &Decl : Ast) {
     if (const auto Fun = llvm::dyn_cast<FunDecl>(Decl.get())) {
@@ -52,9 +47,7 @@ void TypeInferencer::recordSubst(const Substitution &S) {
   if (S.empty())
     return;
 
-  // Compose new substitution into the global substitution (this := S ∘ this)
   GlobalSubst.compose(S);
-  // Also apply substitution to the environment for subsequent lookups
   Env.applySubstitution(S);
 }
 
@@ -118,51 +111,6 @@ void TypeInferencer::finalizeAnnotations() {
   for (auto &[Expr, Mono] : ExprMonos) {
     Monotype T = GlobalSubst.apply(Mono);
     Expr->setType(T.toAstType());
-  }
-}
-
-// ----- token-kind helpers -----
-bool TypeInferencer::isArithmetic(const TokenKind K) noexcept {
-  switch (K) {
-  case TokenKind::Plus:
-  case TokenKind::Minus:
-  case TokenKind::Star:
-  case TokenKind::Slash:
-    return true;
-  default:
-    return false;
-  }
-}
-
-bool TypeInferencer::isLogical(const TokenKind K) noexcept {
-  switch (K) {
-  case TokenKind::DoubleAmp:
-  case TokenKind::DoublePipe:
-    return true;
-  default:
-    return false;
-  }
-}
-
-bool TypeInferencer::isComparison(const TokenKind K) noexcept {
-  switch (K) {
-  case TokenKind::OpenCaret:
-  case TokenKind::LessEqual:
-  case TokenKind::CloseCaret:
-  case TokenKind::GreaterEqual:
-    return true;
-  default:
-    return false;
-  }
-}
-
-bool TypeInferencer::isEquality(const TokenKind K) noexcept {
-  switch (K) {
-  case TokenKind::DoubleEquals:
-  case TokenKind::BangEquals:
-    return true;
-  default:
-    return false;
   }
 }
 

@@ -2,7 +2,6 @@
 
 #include <cassert>
 #include <optional>
-#include <print>
 
 #include "AST/Decl.hpp"
 #include "Sema/TypeInference/Types/Monotype.hpp"
@@ -23,7 +22,6 @@ void TypeInferencer::visit(VarDecl &D) {
     VarType = Subst.apply(VarType);
 
     unifyInto(Subst, VarType, InitType);
-    // After unification, apply the substitution to get the unified result
     VarType = Subst.apply(VarType);
     InitType = Subst.apply(InitType);
   }
@@ -36,118 +34,93 @@ void TypeInferencer::visit(VarDecl &D) {
     VarType = Subst.apply(VarType);
   }
 
-  // Propagate substitutions globally (so subsequent lookups see effects).
   recordSubst(Subst);
-
-  // Local variable: bind a monomorphic scheme (no quantification).
-  // This ensures the same Monotype instance stays associated with the VarDecl
-  // for the remainder of the function, so later unifications update it.
   Env.bind(&D, Polytype{{}, VarType});
-
-  // Side-table annotate (will be finalized later)
   annotate(D, VarType);
 }
 
+void TypeInferencer::visit(ParamDecl &D) {
+  assert(D.hasType());
+
+  auto T = D.getType().toMonotype();
+  Env.bind(&D, Polytype{{}, T});
+  annotate(D, T);
+}
+
 void TypeInferencer::visit(FunDecl &D) {
-  std::optional<Monotype> FunType;
+  // 1) Lookup by name to get the Function's Type
+  Monotype FunType = Env.lookup(D.getId())->instantiate(Factory);
+  assert(FunType.isFun());
 
-  // Lookup by name
-  if (auto Polytype = Env.lookup(D.getId())) {
-    FunType = Polytype->instantiate(Factory);
-  }
-  assert(FunType->isFun());
+  // 2) Now we begin to infer the contents of the functions body
+  auto OuterScopeEnv = Env; // we are about to enter the fun's scope
 
-  // Save environment (we will restore)
-  auto SavedEnv = Env;
-
-  // Bind parameters (use user-declared types) for body inference
+  // 3) Visit params
   for (auto &Param : D.getParams()) {
-    assert(Param->hasType());
-
-    auto T = Param->getType().toMonotype();
-    Env.bind(Param.get(), Polytype{{}, T});
-    // record param monotype too so we can finalize param annotations if desired
-    ValDeclMonos[Param.get()] = T;
+    visit(*Param);
   }
 
-  // Use declared return type as expected for body
-  auto DeclaredRet = D.getReturnTy().toMonotype();
-  CurFunRetType.push_back(DeclaredRet);
-
-  // Infer body
+  // 4) Visit Body
+  CurFunRetType.push_back(D.getReturnTy().toMonotype());
   auto [BodySubst, _] = visit(D.getBody());
-
-  // Propagate body substitution globally (important so call-sites see effects)
   recordSubst(BodySubst);
-
-  // Apply substitution to function type
-  FunType = BodySubst.apply(*FunType);
-
   CurFunRetType.pop_back();
 
-  // Re-generalize in outer environment and rebind function name
-  SavedEnv.bind(D.getId(), FunType->generalize(SavedEnv));
+  // 5) Re-generalize in outer environment and rebind function name
+  OuterScopeEnv.bind(D.getId(), FunType.generalize(OuterScopeEnv));
+  Env = std::move(OuterScopeEnv);
+}
 
-  FunDeclMonos[&D] = *FunType;
+void TypeInferencer::visit(FieldDecl &D) {
+  assert(D.hasType() && "struct fields must have type annotations");
 
-  // Restore outer environment
-  Env = std::move(SavedEnv);
+  Monotype Type = D.getType().toMonotype();
+  Env.bind(&D, Polytype{{}, Type});
+  annotate(D, Type);
+}
+
+void TypeInferencer::visit(MethodDecl &D) {
+  // 1) Build method monotype
+  Monotype StructMono = Monotype::makeVar(Factory.fresh());
+  std::vector<Monotype> ParamMonos = {StructMono};
+  ParamMonos.reserve(1 + D.getParams().size());
+  for (auto &Param : D.getParams())
+    ParamMonos.push_back(Param->getType().toMonotype());
+  Monotype RetMono = D.getReturnTy().toMonotype();
+  Monotype MethodMono = Monotype::makeFun(std::move(ParamMonos), RetMono);
+
+  // 2) Now we begin to infer the body of the method
+  auto OuterScopeEnv = Env; // Save the outer scope
+
+  // 3) Visit params
+  for (auto &Param : D.getParams()) {
+    visit(*Param);
+  }
+
+  // 4) Visit body
+  CurFunRetType.push_back(RetMono);
+  auto [BodySubst, _] = visit(D.getBody());
+  recordSubst(BodySubst);
+  CurFunRetType.pop_back();
+
+  // 5) Re-generalize and bind method under dotted name
+  std::string Qualified = D.getParent()->getId() + "." + D.getId();
+  OuterScopeEnv.bind(Qualified, MethodMono.generalize(OuterScopeEnv));
+  Env = std::move(OuterScopeEnv);
 }
 
 void TypeInferencer::visit(StructDecl &D) {
-  // Create struct monotype and bind the struct name (so fields/methods can
-  // reference it)
-  Monotype StructMono = Monotype::makeVar(Factory.fresh());
-  Env.bind(D.getId(), Polytype{{}, StructMono});
+  // 1) Create struct monotype and bind the struct name
+  Env.bind(D.getId(), Polytype{{}, D.getType().toMonotype()});
 
-  // Bind fields into Env and annotate
+  // 2) Bind fields into Env and annotate
   for (auto &Field : D.getFields()) {
-    FieldDecl *TheDecl = Field.get();
-    assert(TheDecl->hasType() && "struct fields must have type annotations");
-    Monotype Type = TheDecl->getType().toMonotype();
-    Env.bind(TheDecl, Polytype{{}, Type}); // <-- bind field decl into Env
-    ValDeclMonos[TheDecl] = Type;
-    annotate(*TheDecl, Type);
+    visit(*Field);
   }
 
-  // Methods: same approach as functions but prepend self (StructMono).
+  // 3) Infer types for methods
   for (auto &Method : D.getMethods()) {
-    MethodDecl *TheDecl = &Method;
-
-    // Build method monotype
-    std::vector<Monotype> ParamMonos;
-    ParamMonos.reserve(1 + TheDecl->getParams().size());
-    ParamMonos.push_back(StructMono); // self
-    for (auto &Param : TheDecl->getParams())
-      ParamMonos.push_back(Param->getType().toMonotype());
-    Monotype RetMono = TheDecl->getReturnTy().toMonotype();
-    Monotype MethodMono = Monotype::makeFun(std::move(ParamMonos), RetMono);
-
-    auto SavedEnv = Env;
-
-    for (auto &Param : TheDecl->getParams()) {
-      Monotype ParamType = Param->getType().toMonotype();
-      Env.bind(Param.get(), Polytype{{}, ParamType});
-      ValDeclMonos[Param.get()] = ParamType;
-    }
-
-    CurFunRetType.push_back(RetMono);
-    auto [BodySubst, _] = visit(TheDecl->getBody());
-    recordSubst(BodySubst);
-    MethodMono = BodySubst.apply(MethodMono);
-    CurFunRetType.pop_back();
-
-    // Unify declared param/return types with inferred
-    auto &MethodMonotype = MethodMono.asFun();
-    unifyInto(BodySubst, RetMono, *MethodMonotype.Ret);
-    recordSubst(BodySubst);
-
-    // Re-generalize and bind method under dotted name
-    std::string Qualified = D.getId() + "." + TheDecl->getId();
-    SavedEnv.bind(Qualified, MethodMono.generalize(SavedEnv));
-    FunDeclMonos[TheDecl] = MethodMono;
-
-    Env = std::move(SavedEnv);
+    visit(Method);
   }
 }
 

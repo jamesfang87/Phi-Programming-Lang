@@ -1,6 +1,9 @@
 #include "CodeGen/CodeGen.hpp"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/Support/Casting.h"
+
+#include <cassert>
+
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/Support/Casting.h>
 
 using namespace phi;
 
@@ -28,24 +31,20 @@ void CodeGen::visit(StructDecl &D) {
 }
 
 void CodeGen::declareHeader(MethodDecl &D, const std::string &MangledName) {
-  auto *FunType =
-      llvm::dyn_cast<llvm::FunctionType>(D.getFunType().toLLVM(Context));
+  auto *T = llvm::dyn_cast<llvm::FunctionType>(D.getFunType().toLLVM(Context));
   D.setMangledId(MangledName);
 
-  llvm::Function::Create(FunType, llvm::Function::ExternalLinkage, MangledName,
+  llvm::Function::Create(T, llvm::Function::ExternalLinkage, MangledName,
                          Module);
 }
 
 void CodeGen::visit(MethodDecl &D) {
   // Methods are handled the same way as functions
   // The mangled name should already be set from the declaration phase
-  std::string MangledId =
-      D.getMangledId(); // This should already be StructName.methodName
+  std::string MangledId = D.getMangledId();
 
   auto *Fun = Module.getFunction(MangledId);
-  if (!Fun) {
-    throw std::runtime_error("Method function not found: " + MangledId);
-  }
+  assert(Fun);
 
   // Create the entry block
   auto *EntryBB = llvm::BasicBlock::Create(Context, "entry", Fun);
@@ -56,21 +55,15 @@ void CodeGen::visit(MethodDecl &D) {
                                             "alloca.placeholder", EntryBB);
 
   // Allocate and store parameters
-  //
-  //
   auto ArgIt = Fun->arg_begin();
   for (auto &P : D.getParams()) {
-    auto T = P->getType().toLLVM(Context);
-    if (T->isPointerTy()) {
-      assert(ArgIt != Fun->arg_end() && "function param/arg mismatch");
+    assert(ArgIt != Fun->arg_end() && "function param/arg mismatch");
+    if (P->getType().toLLVM(Context)->isPointerTy()) {
       llvm::Argument *A = &*ArgIt;
-      // Map the parameter declaration to the argument value (no alloca)
       DeclMap[P.get()] = A;
     } else {
       auto *Alloca = stackAlloca(*P);
       DeclMap[P.get()] = Alloca;
-
-      assert(ArgIt != Fun->arg_end());
       Builder.CreateStore(ArgIt, Alloca);
     }
     ++ArgIt;
@@ -86,7 +79,7 @@ void CodeGen::visit(MethodDecl &D) {
   if (Builder.GetInsertBlock() && !Builder.GetInsertBlock()->getTerminator()) {
     executeDefers();
 
-    if (D.getReturnTy().isNullType()) {
+    if (D.getReturnTy().isNull()) {
       Builder.CreateRetVoid();
     } else {
       Builder.CreateRet(llvm::UndefValue::get(D.getReturnTy().toLLVM(Context)));

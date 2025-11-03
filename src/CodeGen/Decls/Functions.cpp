@@ -29,17 +29,14 @@ void CodeGen::visit(FunDecl &D) {
   // allocate and store parameters
   auto ArgIt = Fun->arg_begin();
   for (auto &P : D.getParams()) {
-    auto T = P->getType().toLLVM(Context);
-    if (T->isPointerTy()) {
-      assert(ArgIt != Fun->arg_end() && "function param/arg mismatch");
+    assert(ArgIt != Fun->arg_end() && "function param/arg mismatch");
+
+    if (P->getType().toLLVM(Context)->isPointerTy()) {
       llvm::Argument *A = &*ArgIt;
-      // Map the parameter declaration to the argument value (no alloca)
       DeclMap[P.get()] = A;
     } else {
       auto *Alloca = stackAlloca(*P);
       DeclMap[P.get()] = Alloca;
-
-      assert(ArgIt != Fun->arg_end());
       Builder.CreateStore(ArgIt, Alloca);
     }
     ++ArgIt;
@@ -57,7 +54,7 @@ void CodeGen::visit(FunDecl &D) {
     executeDefers();
 
     // Create the appropriate return instruction
-    if (D.getReturnTy().isNullType()) {
+    if (D.getReturnTy().isNull()) {
       Builder.CreateRetVoid();
     } else {
       // This should not happen for well-formed code since non-void functions
