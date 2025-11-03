@@ -34,13 +34,13 @@ struct SrcSpan {
    * @brief Checks for multi-line span
    * @return true if spans multiple lines
    */
-  [[nodiscard]] bool isMultiline() const { return start.line != end.line; }
+  [[nodiscard]] bool isMultiline() const { return start.Line != end.Line; }
 
   /**
    * @brief Calculates line count
    * @return Number of lines covered
    */
-  [[nodiscard]] int lineCount() const { return end.line - start.line + 1; }
+  [[nodiscard]] int lineCount() const { return end.Line - start.Line + 1; }
 };
 
 /**

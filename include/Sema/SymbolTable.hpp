@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -64,6 +65,7 @@ public:
     std::unordered_map<std::string, ValueDecl *> Vars;
     std::unordered_map<std::string, FunDecl *> Funs;
     std::unordered_map<std::string, StructDecl *> Structs;
+    std::unordered_map<std::string, EnumDecl *> Enums;
   };
 
   //===--------------------------------------------------------------------===//
@@ -72,6 +74,7 @@ public:
 
   bool insert(FunDecl *Fun);
   bool insert(StructDecl *Struct);
+  bool insert(EnumDecl *Struct);
   bool insert(VarDecl *Var);
   bool insert(ParamDecl *Param);
   bool insert(FieldDecl *Field);
@@ -81,11 +84,13 @@ public:
   //===--------------------------------------------------------------------===//
 
   FunDecl *lookup(FunCallExpr &Fun);
-  StructDecl *lookup(const std::string &Struct);
+  StructDecl *lookupStruct(const std::string &Id);
+  EnumDecl *lookupEnum(const std::string &Id);
   ValueDecl *lookup(DeclRefExpr &Var);
 
   FunDecl *lookup(FunDecl &Fun);
   StructDecl *lookup(StructDecl &Struct);
+  EnumDecl *lookup(EnumDecl &Struct);
   VarDecl *lookup(VarDecl &Var);
   ParamDecl *lookup(ParamDecl &Param);
   FieldDecl *lookup(FieldDecl &Field);

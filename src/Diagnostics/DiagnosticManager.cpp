@@ -78,10 +78,10 @@ void DiagnosticManager::render_diagnostic(const Diagnostic &diagnostic,
 
     // Render a separate snippet block
     out << snippet.second << '\n';
-    out << " --> " << snippet.first.start.path << ":"
-        << snippet.first.start.line << ":" << snippet.first.start.col << "\n";
+    out << " --> " << snippet.first.start.Path << ":"
+        << snippet.first.start.Line << ":" << snippet.first.start.Col << "\n";
 
-    render_file_snippet(snippet.first.start.path, labels, out);
+    render_file_snippet(snippet.first.start.Path, labels, out);
   }
 }
 
@@ -104,8 +104,8 @@ void DiagnosticManager::render_diagnostic_header(const Diagnostic &diagnostic,
 
   // Show file location for primary span
   if (const auto span = diagnostic.primary_span()) {
-    out << " --> " << span->start.path << ":" << span->start.line << ":"
-        << span->start.col << "\n";
+    out << " --> " << span->start.Path << ":" << span->start.Line << ":"
+        << span->start.Col << "\n";
   }
 }
 
@@ -132,12 +132,12 @@ void DiagnosticManager::render_file_snippet(
     return;
 
   // Calculate line range to display with context
-  int min_line = labels[0]->span.start.line;
-  int max_line = labels[0]->span.end.line;
+  int min_line = labels[0]->span.start.Line;
+  int max_line = labels[0]->span.end.Line;
 
   for (const auto *label : labels) {
-    min_line = std::min(min_line, label->span.start.line);
-    max_line = std::max(max_line, label->span.end.line);
+    min_line = std::min(min_line, label->span.start.Line);
+    max_line = std::max(max_line, label->span.end.Line);
   }
 
   const int start_line = std::max(1, min_line - config_.context_lines);
@@ -183,8 +183,8 @@ void DiagnosticManager::render_labels_for_line(
 
   // Collect labels applicable to this line
   for (const auto *label : labels) {
-    if (line_num >= label->span.start.line &&
-        line_num <= label->span.end.line) {
+    if (line_num >= label->span.start.Line &&
+        line_num <= label->span.end.Line) {
       line_labels.push_back(label);
     }
   }
@@ -198,7 +198,7 @@ void DiagnosticManager::render_labels_for_line(
                       if (a->is_primary != b->is_primary) {
                         return a->is_primary > b->is_primary;
                       }
-                      return a->span.start.col < b->span.start.col;
+                      return a->span.start.Col < b->span.start.Col;
                     });
 
   const std::string gutter = std::string(gutter_width, ' ') + " | ";
@@ -212,9 +212,9 @@ void DiagnosticManager::render_labels_for_line(
     out << gutter;
 
     int start_col =
-        line_num == label->span.start.line ? label->span.start.col - 1 : 0;
-    int end_col = line_num == label->span.end.line
-                      ? label->span.end.col - 1
+        line_num == label->span.start.Line ? label->span.start.Col - 1 : 0;
+    int end_col = line_num == label->span.end.Line
+                      ? label->span.end.Col - 1
                       : static_cast<int>(line_content.length() - 1);
 
     // Clamp to valid column range
@@ -434,7 +434,7 @@ DiagnosticManager::group_labels_by_location(
   std::map<std::string, std::vector<const DiagnosticLabel *>> grouped;
 
   for (const auto &label : labels) {
-    grouped[label.span.start.path].push_back(&label);
+    grouped[label.span.start.Path].push_back(&label);
   }
 
   return grouped;

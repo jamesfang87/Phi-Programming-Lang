@@ -22,11 +22,21 @@ bool Parser::atEOF() const {
  */
 Token Parser::peekToken() const {
   if (TokenIt >= Tokens.end()) {
-    const SrcLocation EofLoc{.path = "", .line = -1, .col = -1};
+    const SrcLocation EofLoc{.Path = "", .Line = -1, .Col = -1};
     return Token{EofLoc, EofLoc, TokenKind::Eof, ""};
   }
   return *TokenIt;
 }
+
+Token Parser::peekToken(int Offset) const {
+  const SrcLocation EofLoc{.Path = "", .Line = -1, .Col = -1};
+  auto It = TokenIt + Offset;
+  if (It >= Tokens.end())
+    return Token{EofLoc, EofLoc, TokenKind::Eof, ""};
+  return *It;
+}
+
+TokenKind Parser::peekKind() const { return peekToken().getKind(); }
 
 /**
  * Advances token stream and returns current token.
@@ -57,7 +67,7 @@ bool Parser::expectToken(const TokenKind Expected, const std::string &Context) {
   }
 
   const std::string Msg = Context.empty() ? "" : " in " + Context;
-  emitExpectedFoundError(tyToStr(Expected) + Msg, peekToken());
+  emitExpectedFoundError(TokenKindToStr(Expected) + Msg, peekToken());
   return false;
 }
 

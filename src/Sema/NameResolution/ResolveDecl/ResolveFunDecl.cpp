@@ -2,14 +2,21 @@
 
 namespace phi {
 
-/**
- * Resolves a function declaration.
- *
- * Validates:
- * - Return type is valid
- * - Parameters are valid
- * - Special rules for main() function
- */
+bool NameResolver::resolveHeader(FunDecl &D) {
+  bool Success = visit(D.getReturnTy());
+
+  // Resolve parameters
+  for (const auto &Param : D.getParams()) {
+    Success = visit(Param.get()) && Success;
+  }
+
+  if (!SymbolTab.insert(&D)) {
+    emitRedefinitionError("Function", SymbolTab.lookup(D), &D);
+  }
+
+  return Success;
+}
+
 bool NameResolver::visit(FunDecl *D) {
   CurrentFun = D;
   if (!CurrentFun) {
@@ -32,13 +39,6 @@ bool NameResolver::visit(FunDecl *D) {
   return visit(CurrentFun->getBody(), true) && Success;
 }
 
-/**
- * Resolves a parameter declaration.
- *
- * Validates:
- * - Type is valid
- * - Type is not null
- */
 bool NameResolver::visit(ParamDecl *D) { return visit(D->getType()); }
 
 } // namespace phi

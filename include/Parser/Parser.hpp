@@ -86,40 +86,13 @@ private:
   // Token Navigation Utilities
   //===--------------------------------------------------------------------===//
 
-  /// Checks if parser has reached end of token stream
   [[nodiscard]] bool atEOF() const;
-
-  /// Returns the current token without advancing
   [[nodiscard]] Token peekToken() const;
+  [[nodiscard]] Token peekToken(int Offset) const;
+  [[nodiscard]] TokenKind peekKind() const;
 
-  [[nodiscard]] Token peekToken(int Offset) const {
-    const SrcLocation EofLoc{.path = "", .line = -1, .col = -1};
-    auto It = TokenIt + Offset;
-    if (It >= Tokens.end())
-      return Token{EofLoc, EofLoc, TokenKind::Eof, ""};
-    return *It;
-  }
-
-  /// Advances to next token and returns the previous one
   Token advanceToken();
-
-  /**
-   * @brief Verifies current token matches expected type
-   *
-   * @param expected_type The expected token type
-   * @param context Context description for error messages
-   * @return true if token matches, false otherwise
-   *
-   * @note Automatically generates error if token doesn't match
-   */
   bool expectToken(TokenKind Expected, const std::string &Context = "");
-
-  /**
-   * @brief Conditionally consumes token if it matches
-   *
-   * @param type Token type to match
-   * @return true if token matched and consumed, false otherwise
-   */
   bool matchToken(TokenKind Kind);
 
   //===--------------------------------------------------------------------===//
@@ -128,32 +101,11 @@ private:
 
   void emitError(Diagnostic &&Diag) { DiagnosticsMan->emit(Diag); }
   void emitWarning(Diagnostic &&Diag) const { DiagnosticsMan->emit(Diag); }
-
-  /**
-   * @brief Reports "expected X but found Y" error
-   *
-   * @param expected String description of expected token
-   * @param found_token The actual token encountered
-   */
   void emitExpectedFoundError(const std::string &Expected,
                               const Token &FoundToken);
-
-  /**
-   * @brief Reports unexpected token error
-   *
-   * @param token The unexpected token
-   * @param expected_tokens List of expected token descriptions
-   */
   void
   emitUnexpectedTokenError(const Token &Token,
                            const std::vector<std::string> &ExpectedTokens = {});
-
-  /**
-   * @brief Reports unclosed delimiter error
-   *
-   * @param opening_token The opening delimiter token
-   * @param expected_closing String representation of expected closing delimiter
-   */
   void emitUnclosedDelimiterError(const Token &OpeningToken,
                                   const std::string &ExpectedClosing);
 
@@ -161,66 +113,32 @@ private:
   // Error Recovery
   //===--------------------------------------------------------------------===//
 
-  /**
-   * @brief Synchronizes parser state to next safe point
-   *
-   * Attempts to recover from errors by skipping tokens until reaching a
-   * token that likely begins a new construct (statement or declaration).
-   *
-   * @return true if synchronized successfully, false if reached EOF
-   */
   bool SyncToTopLvl();
-
-  /**
-   * @brief Synchronizes parser state to next safe point
-   *
-   * Attempts to recover from errors by skipping tokens until reaching a
-   * token that likely begins a new construct (statement or declaration).
-   *
-   * @return true if synchronized successfully, false if reached EOF
-   */
   bool SyncToStmt();
-
-  /**
-   * @brief Synchronizes to one of specified token types
-   *
-   * @param target_tokens Set of tokens to synchronize to
-   * @return true if found synchronization token, false if reached EOF
-   */
   bool syncTo(const std::initializer_list<TokenKind> TargetTokens);
-
-  /**
-   * @brief Synchronizes to specific token type
-   *
-   * @param target_token Token type to synchronize to
-   * @return true if found target token, false if reached EOF
-   */
   bool syncTo(const TokenKind TargetToken);
+
+  //===--------------------------------------------------------------------===//
+  // Enum Parsing
+  //===--------------------------------------------------------------------===//
+
+  std::optional<VariantDecl> parseVariantDecl();
+  std::unique_ptr<EnumDecl> parseEnumDecl();
+
+  //===--------------------------------------------------------------------===//
+  // Struct Parsing
+  //===--------------------------------------------------------------------===//
+
+  std::unique_ptr<StructDecl> parseStructDecl();
+  std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
+  std::optional<MethodDecl> parseMethodDecl(std::string ParentName,
+                                            SrcLocation ParentLoc);
 
   //===--------------------------------------------------------------------===//
   // Type System Parsing
   //===--------------------------------------------------------------------===//
 
-  /**
-   * @brief Parses type annotations
-   *
-   * @return std::optional<Type>
-   *         Valid type if successful, std::nullopt on failure
-   *         Errors are reported through the DiagnosticManager
-   */
   std::optional<Type> parseType();
-
-  /**
-   * @brief Parses struct declaration
-   *
-   * @return std::unique_ptr<StructDecl>
-   *         Valid struct declaration if successful, nullptr on failure
-   *         Errors are reported through the DiagnosticManager
-   */
-  std::unique_ptr<StructDecl> parseStructDecl();
-  std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
-  std::optional<MethodDecl> parseStructMethodDecl(std::string ParentName,
-                                                  SrcLocation ParentLoc);
 
   //===--------------------------------------------------------------------===//
   // Function Declaration Parsing
@@ -235,53 +153,36 @@ private:
   //===--------------------------------------------------------------------===//
 
   std::unique_ptr<Stmt> parseStmt();
-  std::unique_ptr<ReturnStmt> parseReturn();
-  std::unique_ptr<DeferStmt> parseDefer();
-  std::unique_ptr<IfStmt> parseIf();
-  std::unique_ptr<WhileStmt> parseWhile();
-  std::unique_ptr<ForStmt> parseFor();
-  std::unique_ptr<DeclStmt> parseDecl();
-  std::unique_ptr<BreakStmt> parseBreak();
-  std::unique_ptr<ContinueStmt> parseContinue();
+  std::unique_ptr<ReturnStmt> parseReturnStmt();
+  std::unique_ptr<DeferStmt> parseDeferStmt();
+  std::unique_ptr<IfStmt> parseIfStmt();
+  std::unique_ptr<WhileStmt> parseWhileStmt();
+  std::unique_ptr<ForStmt> parseForStmt();
+  std::unique_ptr<DeclStmt> parseDeclStmt();
+  std::unique_ptr<BreakStmt> parseBreakStmt();
+  std::unique_ptr<ContinueStmt> parseContinueStmt();
 
   //===--------------------------------------------------------------------===//
   // Expression Parsing
   //===--------------------------------------------------------------------===//
 
   std::unique_ptr<Expr> parseExpr();
-  std::unique_ptr<StructLiteral> parseStructInit(std::unique_ptr<Expr> expr);
-  std::unique_ptr<FieldInitExpr> parseFieldInit();
-
-  /**
-   * @brief Pratt parser implementation for expressions
-   *
-   * @param min_bp Minimum binding power for current context
-   * @return std::unique_ptr<Expr>
-   *         Parsed expression or nullptr on failure
-   *         Errors are emitted to DiagnosticManager
-   */
   std::unique_ptr<Expr> pratt(int MinBp,
                               const std::vector<TokenKind> &Terminators);
 
   std::unique_ptr<Expr> parseNud(const Token &Tok);
   std::unique_ptr<Expr> parsePrefixUnaryOp(const Token &Tok);
-  std::unique_ptr<Expr> parseLiteralExpr(const Token &Tok);
-  std::unique_ptr<Expr> parseGroupingExpr();
+  std::unique_ptr<Expr> parsePrimitiveLiteral(const Token &Tok);
+  std::unique_ptr<Expr> parseGroupingOrTupleLiteral();
 
   std::unique_ptr<Expr> parsePostfix(const Token &Op,
                                      std::unique_ptr<Expr> Expr);
   std::unique_ptr<Expr> parseInfix(const Token &Op, std::unique_ptr<Expr> Expr,
                                    int RBp);
-
-  /**
-   * @brief Parses function call expressions
-   *
-   * @param callee The expression being called
-   * @return std::unique_ptr<FunCallExpr>
-   *         Function call expression or nullptr on failure
-   *         Errors are emitted to DiagnosticManager
-   */
   std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
+  std::unique_ptr<StructLiteral> parseStructLiteral(std::unique_ptr<Expr> Expr);
+  std::unique_ptr<FieldInitExpr> parseFieldInit();
+  std::unique_ptr<MatchExpr> parseMatchExpr();
 
   //===--------------------------------------------------------------------===//
   // Parsing Utilities
@@ -317,17 +218,17 @@ private:
     // Verify opening delimiter
     const Token OpeningToken = peekToken();
     if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(tyToStr(Opening), OpeningToken);
+      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
       return std::nullopt;
     }
     advanceToken();
 
     // Parse list elements
-    std::vector<std::unique_ptr<T>> content;
+    std::vector<std::unique_ptr<T>> Content;
     while (!atEOF() && peekToken().getKind() != Closing) {
-      auto result = std::invoke(Fun, this);
-      if (result) {
-        content.push_back(std::move(result));
+      auto Result = std::invoke(Fun, this);
+      if (Result) {
+        Content.push_back(std::move(Result));
       } else {
         // Recover by syncing to comma or closing delimiter
         syncTo({Closing, TokenKind::Comma});
@@ -354,12 +255,64 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekToken().getKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, tyToStr(Closing));
+      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
       return std::nullopt;
     }
 
     advanceToken(); // Consume closing delimiter
-    return content;
+    return Content;
+  }
+
+  template <typename T, typename F>
+  std::optional<std::vector<T>>
+  parseValueList(const TokenKind Opening, const TokenKind Closing, F Fun,
+                 const std::string &Context = "list") {
+    // Verify opening delimiter
+    const Token OpeningToken = peekToken();
+    if (OpeningToken.getKind() != Opening) {
+      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
+      return std::nullopt;
+    }
+    advanceToken();
+
+    // Parse list elements
+    std::vector<T> Content;
+    while (!atEOF() && peekToken().getKind() != Closing) {
+      auto Res = std::invoke(Fun, this);
+      if (Res) {
+        Content.push_back(std::move(*Res));
+      } else {
+        // Recover by syncing to comma or closing delimiter
+        syncTo({Closing, TokenKind::Comma});
+      }
+
+      // Check for closing delimiter before comma
+      if (peekToken().getKind() == Closing) {
+        break;
+      }
+
+      // Handle comma separator
+      if (peekToken().getKind() == TokenKind::Comma) {
+        advanceToken();
+      } else {
+        emitError(
+            error("missing comma in " + Context)
+                .with_primary_label(spanFromToken(peekToken()),
+                                    "expected `,` here")
+                .with_help("separate " + Context + " elements with commas")
+                .build());
+        return std::nullopt;
+      }
+    }
+
+    // Verify closing delimiter
+    if (atEOF() || peekToken().getKind() != Closing) {
+      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
+      return std::nullopt;
+    }
+
+    advanceToken(); // Consume closing delimiter
+    return Content;
   }
 };
 

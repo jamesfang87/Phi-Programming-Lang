@@ -1,0 +1,61 @@
+struct Rectangle {
+    public l: f64;
+    public w: f64;
+}
+
+enum Shape {
+    Rectangle: Rectangle,
+    Circle: f64,
+    Square: f64,
+    Triangle: (f64, f64)
+
+    fun perimeter(const this) -> f64 {
+        return match this {
+            Shape::Rectangle(rect) => rect.l * rect.w
+            Shape::Circle(r) =>  3.14 * r * r
+            Shape::Square(l) =>  l * l
+            Shape::Triangle(b, h) => 0.5 * b * h
+        };
+    }
+}
+
+fun print_name(const shape: Shape) {
+    match shape {
+        Shape::Rectangle => println("rectangle"), 
+        Shape::Circle => println("circle"),  
+        Shape::Square => println("square"),
+        Shape::Triangle => println("triangle")
+    };
+}
+
+fun area(const shape: Shape) -> f64 {
+    return match shape {
+        Shape::Rectangle(rect) => { rect.l * rect.w; } 
+        Shape::Circle(r) => { 3.14 * r * r; }
+        Shape::Square(l) => { l * l; }
+        Shape::Triangle(b, h) => { 0.5 * b * h; }
+    };
+}
+
+fun main() {
+    const rect = Shape { Rectangle { l = 4, w = 6} };
+    const circle = Shape { Circle = 4 };
+    const square = Shape { Square = 5 };
+    const triangle = Shape { Triangle = (1, 2) };
+
+    rect.perimeter();
+    circle.perimeter();
+    square.perimeter();
+    triangle.perimeter();
+
+    print_name(rect);
+    print_name(circle);
+    print_name(square);
+    print_name(triangle);
+
+    area(rect);
+    area(circle);
+    area(square);
+    area(triangle);
+}
+

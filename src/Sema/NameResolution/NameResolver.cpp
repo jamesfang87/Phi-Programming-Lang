@@ -13,39 +13,22 @@ namespace phi {
 bool NameResolver::resolveHeader(Decl &D) {
   if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
     return resolveHeader(*Struct);
-  } else if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
+  }
+  if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
     return resolveHeader(*Fun);
   }
-  return true;
-}
 
-bool NameResolver::resolveHeader(StructDecl &D) {
-  if (!SymbolTab.insert(&D)) {
-    emitRedefinitionError("Struct", SymbolTab.lookup(D), &D);
-    return false;
+  if (auto *Enum = llvm::dyn_cast<EnumDecl>(&D)) {
+    return resolveHeader(*Enum);
   }
   return true;
-}
-
-bool NameResolver::resolveHeader(FunDecl &D) {
-  bool Success = visit(D.getReturnTy());
-
-  // Resolve parameters
-  for (const auto &Param : D.getParams()) {
-    Success = visit(Param.get()) && Success;
-  }
-
-  if (!SymbolTab.insert(&D)) {
-    emitRedefinitionError("Function", SymbolTab.lookup(D), &D);
-  }
-
-  return Success;
 }
 
 bool NameResolver::resolveBodies(Decl &D) {
   if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
     return visit(Struct);
-  } else if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
+  }
+  if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
     return visit(Fun);
   }
   return true;

@@ -40,7 +40,8 @@ public:
   //===--------------------------------------------------------------------===//
   // Type Visitor Method -> return bool (success/failure)
   //===--------------------------------------------------------------------===//
-  bool visit(std::optional<Type> Type);
+  bool visit(std::optional<Type> MaybeType);
+  bool resolveTypeByName(const phi::Type &Type, const std::string &Name);
 
   //===--------------------------------------------------------------------===//
   // Declaration Visitor Methods -> return bool (success/failure)
@@ -50,15 +51,18 @@ public:
   bool visit(ParamDecl *D);
   bool visit(StructDecl *D);
   bool visit(FieldDecl *D);
+  bool visit(EnumDecl *D);
+  bool visit(VariantDecl *D);
 
   //===--------------------------------------------------------------------===//
   // Declaration Resolution Methods, for Decls with Headers and Bodies
   //===--------------------------------------------------------------------===//
 
   bool resolveHeader(Decl &D);
-  bool resolveBodies(Decl &D);
   bool resolveHeader(StructDecl &D);
+  bool resolveHeader(EnumDecl &D);
   bool resolveHeader(FunDecl &D);
+  bool resolveBodies(Decl &D);
 
   //===--------------------------------------------------------------------===//
   // Expression Visitor Methods -> return bool (success/failure)
@@ -71,6 +75,7 @@ public:
   bool visit(CharLiteral &E);
   bool visit(BoolLiteral &E);
   bool visit(RangeLiteral &E);
+  bool visit(TupleLiteral &E);
   bool visit(DeclRefExpr &E);
   bool visit(FunCallExpr &E);
   bool visit(BinaryOp &E);

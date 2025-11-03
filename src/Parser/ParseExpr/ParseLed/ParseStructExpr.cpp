@@ -7,7 +7,7 @@
 namespace phi {
 
 std::unique_ptr<StructLiteral>
-Parser::parseStructInit(std::unique_ptr<Expr> InitExpr) {
+Parser::parseStructLiteral(std::unique_ptr<Expr> InitExpr) {
   const auto DeclRef = llvm::dyn_cast<DeclRefExpr>(InitExpr.get());
   std::string StructId = DeclRef->getId();
 

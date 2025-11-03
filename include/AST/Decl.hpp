@@ -32,7 +32,9 @@ public:
     FieldDecl,
     FunDecl,
     MethodDecl,
-    StructDecl
+    StructDecl,
+    EnumDecl,
+    VariantDecl,
   };
 
   //===--------------------------------------------------------------------===//
@@ -477,6 +479,91 @@ private:
 
   std::unordered_map<std::string, FieldDecl *> FieldMap;
   std::unordered_map<std::string, MethodDecl *> MethodMap;
+};
+
+class VariantDecl final : public Decl {
+public:
+  VariantDecl(SrcLocation Loc, std::string Id, std::optional<Type> DeclType);
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] bool hasType() const { return DeclType.has_value(); };
+  [[nodiscard]] Type getType() const override { return *DeclType; }
+  [[nodiscard]] std::optional<Type> getOptType() const { return DeclType; };
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  void accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &C) override;
+  void accept(CodeGen &G) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
+  static bool classof(const Decl *D) {
+    return D->getKind() == Kind::VariantDecl;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+
+  void emit(int level) const override;
+
+private:
+  std::optional<Type> DeclType;
+};
+
+class EnumDecl final : public Decl {
+public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===--------------------------------------------------------------------===//
+
+  EnumDecl(SrcLocation Loc, std::string Id, std::vector<VariantDecl> Variants);
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] Type getType() const override { return DeclType; }
+  [[nodiscard]] auto &getVariants() { return Variants; }
+
+  [[nodiscard]] VariantDecl *getVariant(const std::string &Id) {
+    auto It = VariantMap.find(Id);
+    return It != VariantMap.end() ? It->second : nullptr;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===--------------------------------------------------------------------===//
+
+  void accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &C) override;
+  void accept(CodeGen &G) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
+  static bool classof(const Decl *D) { return D->getKind() == Kind::EnumDecl; }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+
+  void emit(int level) const override;
+
+private:
+  Type DeclType;
+  std::vector<VariantDecl> Variants;
+
+  std::unordered_map<std::string, VariantDecl *> VariantMap;
 };
 
 } // namespace phi

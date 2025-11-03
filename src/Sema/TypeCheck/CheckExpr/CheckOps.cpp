@@ -72,7 +72,7 @@ bool TypeChecker::visit(BinaryOp &E) {
     if (isNumericOp) {
       if (!Lhs.isInteger() && !Lhs.isFloat()) {
         error(std::format("Operation `{}` not defined for non-numeric types",
-                          tyToStr(E.getOp())))
+                          TokenKindToStr(E.getOp())))
             .with_primary_label(E.getLhs().getLocation(),
                                 "Expected numeric type")
             .emit(*Diag);
@@ -81,7 +81,7 @@ bool TypeChecker::visit(BinaryOp &E) {
 
       if (!Rhs.isInteger() && !Rhs.isFloat()) {
         error(std::format("Operation `{}` not defined for non-numeric types",
-                          tyToStr(E.getOp())))
+                          TokenKindToStr(E.getOp())))
             .with_primary_label(E.getRhs().getLocation(),
                                 "Expected numeric type")
             .emit(*Diag);
@@ -106,7 +106,7 @@ bool TypeChecker::visit(BinaryOp &E) {
   case TokenKind::DoubleAmp: {
     if (!Lhs.isPrimitive() || Lhs.asPrimitive() != PrimitiveKind::Bool) {
       error(std::format("Operation `{}` can only be applied to bool type",
-                        tyToStr(E.getOp())))
+                        TokenKindToStr(E.getOp())))
           .with_primary_label(E.getLhs().getLocation(), "Expected type `bool`")
           .emit(*Diag);
       Success = false;
@@ -114,7 +114,7 @@ bool TypeChecker::visit(BinaryOp &E) {
 
     if (!Rhs.isPrimitive() || Rhs.asPrimitive() != PrimitiveKind::Bool) {
       error(std::format("Operation `{}` can only be applied to bool type",
-                        tyToStr(E.getOp())))
+                        TokenKindToStr(E.getOp())))
           .with_primary_label(E.getRhs().getLocation(), "Expected type `bool`")
           .emit(*Diag);
       Success = false;

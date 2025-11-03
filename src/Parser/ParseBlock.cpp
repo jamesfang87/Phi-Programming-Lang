@@ -34,8 +34,7 @@ std::unique_ptr<Block> Parser::parseBlock() {
     }
 
     // Parse valid statements
-    auto Res = parseStmt();
-    if (Res) {
+    if (auto Res = parseStmt()) {
       Stmts.push_back(std::move(Res));
       continue;
     }
