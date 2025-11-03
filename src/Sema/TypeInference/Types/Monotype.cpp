@@ -70,7 +70,7 @@ Type Monotype::toAstType() const {
         return Type::makePrimitive(PrimitiveKind::Null, Self->Location);
 
       // Otherwise treat as custom/struct name
-      return Type::makeCustom(Name, Self->Location);
+      return Type::makeStruct(Name, Self->Location);
     }
 
     Type operator()(const TypeApp &App) const {

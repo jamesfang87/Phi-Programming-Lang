@@ -26,23 +26,23 @@ enum class TokenKind : uint8_t {
   BreakKw,    ///< `break` keyword
   ConstKw,    ///< `const` keyword
   ContinueKw, ///< `continue` keyword
-  DeferKw,
-  ElseKw, ///< `else` keyword
-  EnumKw,
-  FalseKw,  ///< `false` literal
-  ForKw,    ///< `for` keyword
-  FunKw,    ///< `fun` keyword
-  IfKw,     ///< `if` keyword
-  ImportKw, ///< `import` keyword
-  InKw,     ///< `in` keyword
-  MatchKw,
-  PublicKw, ///< `public` keyword
-  ReturnKw, ///< `return` keyword
-  StructKw,
-  TrueKw, ///< `true` literal
-  ThisKw,
-  VarKw,   ///< `let` keyword
-  WhileKw, ///< `while` keyword
+  DeferKw,    ///< `defer` keyword
+  ElseKw,     ///< `else` keyword
+  EnumKw,     ///< `enum` keyword
+  FalseKw,    ///< `false` literal
+  ForKw,      ///< `for` keyword
+  FunKw,      ///< `fun` keyword
+  IfKw,       ///< `if` keyword
+  ImportKw,   ///< `import` keyword
+  InKw,       ///< `in` keyword
+  MatchKw,    ///< `match` keyword
+  PublicKw,   ///< `public` keyword
+  ReturnKw,   ///< `return` keyword
+  StructKw,   ///< `struct` keyword
+  TrueKw,     ///< `true` literal
+  ThisKw,     ///< `this` keyword
+  VarKw,      ///< `let` keyword
+  WhileKw,    ///< `while` keyword
 
   // SIGNED INTEGER TYPES
   I8,  ///< `i8` type (8-bit signed)
@@ -72,6 +72,7 @@ enum class TokenKind : uint8_t {
   OpenBracket,  ///< `[` bracket
   CloseBracket, ///< `]` bracket
   Arrow,        ///< `->` function return
+  FatArrow,     ///< `=>` as in the match stmt
   Comma,        ///< `,` separator
   Semicolon,    ///< `;` statement terminator
 
@@ -82,7 +83,7 @@ enum class TokenKind : uint8_t {
   Slash,   ///< `/` division
   Percent, ///< `%` modulo
   Bang,    ///< `!` logical NOT
-  Amp,
+  Amp,     ///< `&` references
 
   // COMPOUND ASSIGNMENT OPERATORS
   PlusEquals, ///< `+=` add-assign
@@ -93,7 +94,7 @@ enum class TokenKind : uint8_t {
 
   // MEMBER ACCESS
   Period,      ///< `.` member access
-  DoubleColon, ///< `::` namespace access
+  DoubleColon, ///< `::` namespace/enum access
 
   // INCREMENT/DECREMENT
   DoublePlus,  ///< `++` increment
@@ -134,7 +135,7 @@ enum class TokenKind : uint8_t {
  * @param Type Token type to convert
  * @return String representation of token type
  */
-std::string tyToStr(TokenKind Type);
+std::string TokenKindToStr(TokenKind Type);
 
 bool isArithmetic(const TokenKind K) noexcept;
 bool isLogical(const TokenKind K) noexcept;

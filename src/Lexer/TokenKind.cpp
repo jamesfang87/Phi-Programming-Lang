@@ -14,7 +14,7 @@ namespace phi {
  * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")
  */
 
-std::string tyToStr(const TokenKind Kind) {
+std::string TokenKindToStr(const TokenKind Kind) {
   switch (Kind) {
   // Special tokens
   case TokenKind::Eof:
@@ -112,7 +112,9 @@ std::string tyToStr(const TokenKind Kind) {
   case TokenKind::CloseBracket:
     return "CLOSE_BRACKET";
   case TokenKind::Arrow:
-    return "FUN_RETURN";
+    return "ARROW";
+  case TokenKind::FatArrow:
+    return "FAT ARROW";
   case TokenKind::Comma:
     return "COMMA";
   case TokenKind::Semicolon:

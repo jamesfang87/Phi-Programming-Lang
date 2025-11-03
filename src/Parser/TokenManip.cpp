@@ -67,7 +67,7 @@ bool Parser::expectToken(const TokenKind Expected, const std::string &Context) {
   }
 
   const std::string Msg = Context.empty() ? "" : " in " + Context;
-  emitExpectedFoundError(tyToStr(Expected) + Msg, peekToken());
+  emitExpectedFoundError(TokenKindToStr(Expected) + Msg, peekToken());
   return false;
 }
 

@@ -1,49 +1,28 @@
 #include "CodeGen/CodeGen.hpp"
 #include <cassert>
-#include <print>
 #include <string>
 
 using namespace phi;
 
 llvm::Value *CodeGen::visit(FieldAccessExpr &E) {
-  auto T = E.getBase()->getType();
-  assert(T.isCustom() || T.isPtr() || T.isRef());
-
-  llvm::Type *LlvmType = T.toLLVM(Context);
-  if (T.isPtr()) {
-    LlvmType = T.asPtr().Pointee->toLLVM(Context);
-  } else if (T.isRef()) {
-    LlvmType = T.asRef().Pointee->toLLVM(Context);
-  }
+  auto T = E.getBase()->getType().getUnderlying().toLLVM(Context);
 
   llvm::Value *Base = visit(*E.getBase());
   llvm::Value *Field =
-      Builder.CreateStructGEP(LlvmType, Base, E.getField()->getIndex());
+      Builder.CreateStructGEP(T, Base, E.getField()->getIndex());
   return Field;
 }
 
 llvm::Value *CodeGen::visit(MethodCallExpr &E) {
-  // Desugar method call into a regular function call
-  // Method name is mangled as: StructName.methodName
-
   // Get the base object (the struct instance)
   llvm::Value *BaseVal = visit(*E.getBase());
-  Type BaseType = E.getBase()->getType();
 
-  std::string StructName;
-  if (BaseType.isRef()) {
-    StructName = *BaseType.asRef().Pointee->getCustomName();
-  } else if (BaseType.isPtr()) {
-    StructName = *BaseType.asPtr().Pointee->getCustomName();
-  } else if (BaseType.isCustom()) {
-    StructName = *BaseType.getCustomName();
-  }
-
-  // Create the mangled function name: StructName.methodName
-  std::string MangledName =
-      StructName + "." + llvm::dyn_cast<DeclRefExpr>(&E.getCallee())->getId();
-
-  // Look up the function in the module
+  // Desugar method call into a regular function call
+  // Method name is mangled as: StructName.methodName
+  // And look up the function in the Module
+  std::string Name = *E.getBase()->getType().getUnderlying().getCustomName();
+  std::string MangledName = std::format(
+      "{}.{}", Name, llvm::dyn_cast<DeclRefExpr>(&E.getCallee())->getId());
   llvm::Function *Fun = Module.getFunction(MangledName);
   assert(Fun && "Did not find function");
 
@@ -59,7 +38,7 @@ llvm::Value *CodeGen::visit(MethodCallExpr &E) {
       Args.push_back(BaseVal);
     } else {
       // pass by-value: load the aggregate or primitive
-      if (E.getBase()->getType().isCustom()) {
+      if (E.getBase()->getType().isStruct()) {
         Args.push_back(Builder.CreateLoad(
             E.getBase()->getType().toLLVM(Context), BaseVal));
       } else {
@@ -82,7 +61,7 @@ llvm::Value *CodeGen::visit(MethodCallExpr &E) {
     if (ParamTy && ParamTy->isPointerTy()) {
       ArgToPass = Raw;
     } else {
-      if (Arg->getType().isCustom())
+      if (Arg->getType().isStruct())
         ArgToPass = Builder.CreateLoad(Arg->getType().toLLVM(Context), Raw);
       else
         ArgToPass = load(Raw, Arg->getType());

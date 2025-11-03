@@ -97,64 +97,52 @@ TypeInferencer::InferRes TypeInferencer::visit(DeclRefExpr &E) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(FunCallExpr &E) {
-  auto [CalleeSubst, CalleeType] = visit(E.getCallee());
-  Substitution AllSubst = CalleeSubst;
+  Substitution AllSubst;
 
   std::vector<Monotype> ArgTypes;
   ArgTypes.reserve(E.getArgs().size());
   for (auto &Arg : E.getArgs()) {
     auto [ArgSubst, ArgType] = visit(*Arg);
     AllSubst.compose(ArgSubst);
-    CalleeType = AllSubst.apply(CalleeType);
     ArgTypes.push_back(AllSubst.apply(ArgType));
   }
 
-  const auto RetType = Monotype::makeVar(Factory.fresh());
-  const auto ExpectedFunType = Monotype::makeFun(ArgTypes, RetType);
-  unifyInto(AllSubst, CalleeType, ExpectedFunType);
+  const auto RetType = E.getDecl()->getReturnTy().toMonotype();
+  const auto DeclaredType = E.getDecl()->getFunType().toMonotype();
+  const auto GotType = Monotype::makeFun(ArgTypes, RetType);
+  unifyInto(AllSubst, DeclaredType, GotType);
   recordSubst(AllSubst);
-  annotate(E, AllSubst.apply(RetType));
-  return {AllSubst, AllSubst.apply(RetType)};
+  annotate(E, RetType);
+  return {AllSubst, RetType};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
   auto [OperandSubst, OperandType] = visit(E.getOperand());
   Substitution AllSubst = OperandSubst;
+
   if (E.getOp() == TokenKind::Bang) {
-    unifyInto(AllSubst, OperandType, Monotype::makeCon("bool"));
+    auto Bool = Monotype::makeCon("bool", {}, E.getLocation());
+    unifyInto(AllSubst, OperandType, Bool);
     recordSubst(AllSubst);
-    annotate(E, Monotype::makeCon("bool"));
-    return {AllSubst, Monotype::makeCon("bool")};
+    annotate(E, Bool);
+    return {AllSubst, Bool};
   }
 
-  // Numeric UnaryOp
-  auto NewTypeVar = Monotype::makeVar(Factory.fresh());
+  // Apply current substitutions so we annotate with a resolved type.
+  OperandType = AllSubst.apply(OperandType);
 
-  auto OpType = Monotype::makeFun({NewTypeVar}, NewTypeVar);
-  auto TypeOfCall = Monotype::makeFun({AllSubst.apply(OperandType)},
-                                      Monotype::makeVar(Factory.fresh()));
   if (E.getOp() == TokenKind::Amp) {
-    OpType =
-        Monotype::makeFun({NewTypeVar}, Monotype::makeApp("Ref", {NewTypeVar}));
-    assert(OpType.isFun());
-    assert(OpType.asFun().Ret->isApp());
-    TypeOfCall = Monotype::makeFun(
-        {AllSubst.apply(OperandType)},
-        Monotype::makeApp("Ref", {AllSubst.apply(OperandType)}));
-    assert(TypeOfCall.isFun());
-    assert(TypeOfCall.asFun().Ret->isApp());
-    unifyInto(AllSubst, OpType, TypeOfCall);
-    auto T = TypeOfCall.asFun().Ret;
+    // &: result is Ref<operand-type>
+    auto Result = Monotype::makeApp("Ref", {OperandType});
     recordSubst(AllSubst);
-    annotate(E, *T);
-    assert(T->isApp());
-    return {AllSubst, *T};
+    annotate(E, Result);
+    return {AllSubst, Result};
   }
 
-  unifyInto(AllSubst, OpType, TypeOfCall);
+  // Numeric unary: result is operand's type (after applying substitutions)
   recordSubst(AllSubst);
-  annotate(E, AllSubst.apply(NewTypeVar));
-  return {AllSubst, AllSubst.apply(NewTypeVar)};
+  annotate(E, OperandType);
+  return {AllSubst, OperandType};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
@@ -166,11 +154,13 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
   const TokenKind K = E.getOp();
 
   if (isLogical(K)) {
-    unifyInto(AllSubst, LhsType, Monotype::makeCon("bool"));
-    unifyInto(AllSubst, RhsType, Monotype::makeCon("bool"));
+    unifyInto(AllSubst, LhsType,
+              Monotype::makeCon("bool", {}, LhsType.getLocation()));
+    unifyInto(AllSubst, RhsType,
+              Monotype::makeCon("bool", {}, RhsType.getLocation()));
     recordSubst(AllSubst);
-    annotate(E, Monotype::makeCon("bool"));
-    return {AllSubst, Monotype::makeCon("bool")};
+    annotate(E, Monotype::makeCon("bool", {}, E.getLocation()));
+    return {AllSubst, Monotype::makeCon("bool", {}, E.getLocation())};
   }
 
   if (isComparison(K) || isEquality(K)) {
@@ -180,8 +170,8 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     unifyInto(AllSubst, LhsType, RhsType);
 
     recordSubst(AllSubst);
-    annotate(E, Monotype::makeCon("bool"));
-    return {AllSubst, Monotype::makeCon("bool")};
+    annotate(E, Monotype::makeCon("bool", {}, E.getLocation()));
+    return {AllSubst, Monotype::makeCon("bool", {}, E.getLocation())};
   }
 
   if (isArithmetic(K)) {
@@ -189,7 +179,8 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     RhsType = AllSubst.apply(RhsType);
     unifyInto(AllSubst, LhsType, RhsType);
 
-    auto ResultingType = Monotype::makeVar(Factory.fresh());
+    // New type created for better location info
+    auto ResultingType = Monotype::makeVar(Factory.fresh(), E.getLocation());
     unifyInto(AllSubst, LhsType, ResultingType);
     recordSubst(AllSubst);
     annotate(E, ResultingType);
@@ -215,90 +206,35 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
 TypeInferencer::InferRes TypeInferencer::visit(StructLiteral &E) {
   auto Struct = Monotype::makeCon(E.getStructId());
   Substitution AllSubsts;
+
   for (auto &Field : E.getFields()) {
-    auto [FieldSubst, FieldType] = visit(*Field->getValue());
+    auto [FieldSubst, FieldType] = visit(*Field->getInitValue());
     AllSubsts.compose(FieldSubst);
+
     if (const auto *FieldDecl = Field->getDecl()) {
       auto DeclaredAs = FieldDecl->getType().toMonotype();
       unifyInto(AllSubsts, DeclaredAs, FieldType);
     }
   }
+
   recordSubst(AllSubsts);
   annotate(E, Struct);
   return {AllSubsts, Struct};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(FieldInitExpr &E) {
-  auto [Subst, Type] = visit(*E.getValue());
+  auto [Subst, Type] = visit(*E.getInitValue());
   recordSubst(Subst);
   annotate(E, Type);
   return {Subst, Type};
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(FieldAccessExpr &E) {
-  auto [BaseSubst, BaseType] = visit(*E.getBase());
-  auto FieldType = Monotype::makeVar(Factory.fresh());
+std::tuple<Substitution, Monotype, StructDecl *>
+TypeInferencer::inferStructBase(Expr &BaseExpr, SrcLocation Loc) {
+  auto [BaseSubst, BaseType] = visit(BaseExpr);
 
-  std::optional<std::string> TypeName;
-  if (BaseType.isApp()) {
-    assert(BaseType.isApp() && "BaseType should be Ref<Type>");
-    assert(BaseType.asApp().Name == "Ref" &&
-           "BaseType should be a ref to a class");
-    assert(BaseType.asApp().Args.size() == 1 &&
-           "Should hold only 1 Arg (the class)");
-    assert(BaseType.asApp().Args.front().isCon() &&
-           "The class should be a constant type");
-
-    TypeName = BaseType.asApp().Args.front().asCon().Name;
-  } else if (BaseType.isCon()) {
-    TypeName = BaseType.asCon().Name;
-  }
-  assert(TypeName && "Could not infer type before field access");
-
-  const auto It = Structs.find(*TypeName);
-  if (It == Structs.end()) {
-    auto PrimaryMsg =
-        std::format("No declaration for struct `{}` was found.", *TypeName);
-    auto Diag = error(std::format("Could not find struct `{}`", *TypeName))
-                    .with_primary_label(E.getLocation(), PrimaryMsg);
-    Diag.emit(*DiagMan);
-
-    return {BaseSubst, FieldType};
-  }
-  StructDecl *Struct = It->second;
-
-  const FieldDecl *FieldDecl = Struct->getField(E.getFieldId());
-  if (FieldDecl == nullptr) {
-    error(
-        std::format("attempt to access undeclared field `{}`", E.getFieldId()))
-        .with_primary_label(
-            E.getLocation(),
-            std::format("Declaration for `{}` could not be found in {}.",
-                        E.getFieldId(), *TypeName))
-        .emit(*DiagMan);
-    return {BaseSubst, FieldType};
-  }
-
-  // Set the member field for code generation
-  E.setMember(const_cast<phi::FieldDecl *>(FieldDecl));
-
-  // Convert the field's AST type to a Monotype and unify with our output
-  const auto DeclaredAs = FieldDecl->getType().toMonotype();
-  unifyInto(BaseSubst, FieldType, DeclaredAs);
-
-  recordSubst(BaseSubst);
-  annotate(E, FieldType);
-  return {BaseSubst, FieldType};
-}
-
-TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
-  // 1) Infer base expression (the receiver)
-  auto [BaseSubst, BaseType] = visit(*E.getBase());
-
-  // Ensure base is a struct constructor type
   std::optional<std::string> StructName;
   if (BaseType.isApp()) {
-    assert(BaseType.isApp() && "BaseType should be Ref<Type>");
     assert(BaseType.asApp().Name == "Ref" &&
            "BaseType should be a ref to a class");
     assert(BaseType.asApp().Args.size() == 1 &&
@@ -307,41 +243,71 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
            "The class should be a constant type");
 
     StructName = BaseType.asApp().Args.front().asCon().Name;
-  } else {
-    assert(BaseType.isCon());
+  } else if (BaseType.isCon()) {
     StructName = BaseType.asCon().Name;
   }
-  assert(StructName);
+
+  if (!StructName) {
+    std::println("{}, {}", BaseType.toString(), Loc.toString());
+  }
+  assert(StructName && "Could not infer type before struct access");
 
   auto It = Structs.find(*StructName);
   if (It == Structs.end()) {
     auto PrimaryMsg =
         std::format("No declaration for struct `{}` was found.", *StructName);
     auto Diag = error(std::format("Could not find struct `{}`", *StructName))
-                    .with_primary_label(E.getLocation(), PrimaryMsg);
+                    .with_primary_label(Loc, PrimaryMsg);
     Diag.emit(*DiagMan);
 
-    return {BaseSubst, Monotype::makeVar(Factory.fresh(), E.getLocation())};
+    return {BaseSubst, BaseType, nullptr};
   }
 
-  StructDecl *Struct = It->second;
+  return {BaseSubst, BaseType, It->second};
+}
 
-  // The callee inside MemberFunCallExpr is expected to be a DeclRefExpr naming
-  // the method. If it's not, that's an unsupported form for now.
+TypeInferencer::InferRes TypeInferencer::visit(FieldAccessExpr &E) {
+  auto [BaseSubst, BaseType, Struct] =
+      inferStructBase(*E.getBase(), E.getLocation());
+  auto FieldType = Monotype::makeVar(Factory.fresh());
+
+  if (!Struct) {
+    return {BaseSubst, FieldType};
+  }
+
+  FieldDecl *FieldDecl = Struct->getField(E.getFieldId());
+  if (!FieldDecl) {
+    error(
+        std::format("attempt to access undeclared field `{}`", E.getFieldId()))
+        .with_primary_label(
+            E.getLocation(),
+            std::format("Declaration for `{}` could not be found in {}.",
+                        E.getFieldId(), Struct->getId()))
+        .emit(*DiagMan);
+    return {BaseSubst, FieldType};
+  }
+  E.setMember(FieldDecl);
+
+  return unifyAndAnnotate(E, BaseSubst, FieldDecl->getType().toMonotype(),
+                          FieldType);
+}
+
+TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
+  auto [BaseSubst, BaseType, Struct] =
+      inferStructBase(*E.getBase(), E.getLocation());
+  if (!Struct) {
+    auto Ret = Monotype::makeVar(Factory.fresh(), E.getLocation());
+    return {BaseSubst, Ret};
+  }
+
   auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&E.getCallee());
-  if (!DeclRef) {
-    throw std::runtime_error(
-        "unsupported method call syntax (expected identifier)");
-  }
+  assert(DeclRef && "unsupported method call syntax");
 
   const std::string MethodName = DeclRef->getId();
-
-  // Find the method declaration inside the struct
   MethodDecl *Method = Struct->getMethod(MethodName);
-  E.setDecl(Method);
   E.setMethod(Method);
-  if (Method == nullptr) {
-    error(std::format("attempt to call undeclared method`{}`", MethodName))
+  if (!Method) {
+    error(std::format("attempt to call undeclared method `{}`", MethodName))
         .with_primary_label(
             E.getLocation(),
             std::format("Declaration for `{}` could not be found in {}.",
@@ -350,47 +316,26 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
     return {BaseSubst, Monotype::makeVar(Factory.fresh(), E.getLocation())};
   }
 
-  // 2) Build the method's Monotype from its AST param types and return type
-  std::vector<Monotype> MethodParams;
-  MethodParams.reserve(Method->getParams().size());
-  for (auto &ParamUP : Method->getParams()) {
-    auto ParamType = ParamUP->getType().toMonotype();
-    MethodParams.push_back(ParamType);
+  auto DeclaredType = Method->getFunType().toMonotype();
+  Substitution AllSubst = BaseSubst;
+
+  std::vector<Monotype> ArgTypes = {
+      AllSubst.apply(llvm::dyn_cast<DeclRefExpr>(E.getBase())->getId() == "this"
+                         ? BaseType
+                         : Monotype::makeApp("Ref", {BaseType}))};
+  ArgTypes.reserve(1 + E.getArgs().size());
+  for (auto &Arg : E.getArgs()) {
+    auto [Subst, Type] = visit(*Arg);
+    AllSubst.compose(Subst);
+    ArgTypes.push_back(AllSubst.apply(Type));
   }
 
-  auto MethodMonotype = E.getMethod().getFunType().toMonotype();
-  Substitution S = BaseSubst;
-
-  // receiver arg type (we already have it): use s-applied version
-  std::vector<Monotype> CallArgTys;
-  CallArgTys.reserve(1 + E.getArgs().size());
-  if (llvm::dyn_cast<DeclRefExpr>(E.getBase())->getId() == "this") {
-    CallArgTys.push_back(S.apply(BaseType));
-  } else {
-    CallArgTys.push_back(S.apply(Monotype::makeApp("Ref", {BaseType})));
-  }
-  for (auto &ArgUP : E.getArgs()) {
-    auto [Subst, Type] = visit(*ArgUP);
-    S.compose(Subst);
-    // make sure to apply the current substitution to argument type
-    CallArgTys.push_back(S.apply(Type));
-  }
-
-  // 5) Make a fresh result type for the call
-  auto ResultTy = Monotype::makeVar(Factory.fresh(), E.getLocation());
-
-  // Expected function shape from the call site: (arg types...) -> ResultTy
-  auto FunExpect = Monotype::makeFun(CallArgTys, ResultTy);
-
-  // 6) Unify the declared method monotype with the expected call shape.
-  //    This will unify receiver and arguments and produce substitutions.
-  unifyInto(S, MethodMonotype, FunExpect);
-
-  // 7) Record the substitution so the environment sees it and annotate the call
-  recordSubst(S);
-  annotate(E, S.apply(ResultTy));
-
-  return {S, S.apply(ResultTy)};
+  auto RetType = Method->getReturnTy().toMonotype();
+  auto GotType = Monotype::makeFun(ArgTypes, RetType);
+  unifyInto(AllSubst, GotType, DeclaredType);
+  recordSubst(AllSubst);
+  annotate(E, AllSubst.apply(RetType));
+  return {AllSubst, AllSubst.apply(RetType)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(Expr &E) {

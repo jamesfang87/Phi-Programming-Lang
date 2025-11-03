@@ -7,6 +7,8 @@
 #include <string>
 #include <utility>
 
+#include <llvm/IR/Value.h>
+
 #include "AST/Decl.hpp"
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
@@ -16,7 +18,6 @@
 #include "Sema/TypeChecker.hpp"
 #include "Sema/TypeInference/Infer.hpp"
 #include "SrcManager/SrcLocation.hpp"
-#include <llvm/IR/Value.h>
 
 namespace {
 
@@ -207,8 +208,7 @@ void TupleLiteral::emit(int Level) const {
 
 // Constructors & Destructors
 DeclRefExpr::DeclRefExpr(SrcLocation Location, std::string Id)
-    : Expr(Expr::Kind::DeclRefExprKind, std::move(Location)),
-      Id(std::move(Id)) {}
+    : Expr(Expr::Kind::DeclRefKind, std::move(Location)), Id(std::move(Id)) {}
 
 // Visitor Methods
 bool DeclRefExpr::accept(NameResolver &R) { return R.visit(*this); }
@@ -221,11 +221,11 @@ void DeclRefExpr::emit(int Level) const {
   if (DeclPtr == nullptr) {
     std::println("{}DeclRefExpr: {} ", indent(Level), Id);
   } else {
-    std::string typeStr =
+    std::string TypeStr =
         DeclPtr->hasType() ? DeclPtr->getType().toString() : "<unresolved>";
 
     std::println("{}DeclRefExpr: {}; referring to: {} of type {}",
-                 indent(Level), Id, DeclPtr->getId(), typeStr);
+                 indent(Level), Id, DeclPtr->getId(), TypeStr);
   }
 }
 
@@ -236,7 +236,7 @@ void DeclRefExpr::emit(int Level) const {
 // Constructors & Destructors
 FunCallExpr::FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
                          std::vector<std::unique_ptr<Expr>> Args)
-    : Expr(Expr::Kind::FunCallExprKind, std::move(Location)),
+    : Expr(Expr::Kind::FunCallKind, std::move(Location)),
       Callee(std::move(Callee)), Args(std::move(Args)) {}
 
 // Protected constructor for derived classes
@@ -287,7 +287,7 @@ llvm::Value *BinaryOp::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
 void BinaryOp::emit(int Level) const {
-  std::println("{}BinaryOp: {}", indent(Level), tyToStr(Op));
+  std::println("{}BinaryOp: {}", indent(Level), TokenKindToStr(Op));
   std::println("{}  lhs:", indent(Level));
   Lhs->emit(Level + 2);
   std::println("{}  rhs:", indent(Level));
@@ -317,7 +317,7 @@ llvm::Value *UnaryOp::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
 void UnaryOp::emit(int Level) const {
-  std::println("{}UnaryOp: {}", indent(Level), tyToStr(Op));
+  std::println("{}UnaryOp: {}", indent(Level), TokenKindToStr(Op));
   std::println("{}  expr:", indent(Level));
   Operand->emit(Level + 2);
 }
@@ -330,7 +330,7 @@ void UnaryOp::emit(int Level) const {
 FieldInitExpr::FieldInitExpr(SrcLocation Location, std::string FieldId,
                              std::unique_ptr<Expr> Init)
     : Expr(Expr::Kind::FieldInitKind, std::move(Location)),
-      FieldId(std::move(FieldId)), Init(std::move(Init)) {}
+      FieldId(std::move(FieldId)), InitValue(std::move(Init)) {}
 
 FieldInitExpr::~FieldInitExpr() = default;
 
@@ -345,7 +345,7 @@ void FieldInitExpr::emit(int Level) const {
   std::println("{}FieldInitExpr:", indent(Level));
   std::println("{}  field: {}", indent(Level), FieldId);
   std::println("{}  value:", indent(Level));
-  Init->emit(Level + 2);
+  InitValue->emit(Level + 2);
 }
 
 //===----------------------------------------------------------------------===//
@@ -439,6 +439,39 @@ void MethodCallExpr::emit(int Level) const {
   for (const auto &Arg : getArgs()) {
     Arg->emit(Level + 2);
   }
+}
+
+EnumInitExpr::EnumInitExpr(SrcLocation Location, std::string EnumName,
+                           std::string VariantName, std::unique_ptr<Expr> Init)
+    : Expr(Kind::EnumInitKind, std::move(Location)),
+      EnumName(std::move(EnumName)), ActiveVariantName(std::move(VariantName)),
+      Enum(nullptr), ActiveVariant(nullptr), Init(std::move(Init)) {}
+
+EnumInitExpr::~EnumInitExpr() = default;
+
+bool EnumInitExpr::accept(NameResolver &R) { return R.visit(*this); }
+
+InferRes EnumInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
+
+bool EnumInitExpr::accept(TypeChecker &C) { return C.visit(*this); }
+
+llvm::Value *EnumInitExpr::accept(CodeGen &G) { return G.visit(*this); }
+
+void EnumInitExpr::emit(int Level) const {
+  std::println("{}EnumInitExpr", indent(Level));
+  std::println("{}Enum Name: {}", indent(Level + 1), EnumName);
+  std::println("{}Active Variant Name: {}", indent(Level + 1),
+               ActiveVariantName);
+  if (Enum) {
+    std::println("Found decl for enum: ", Enum->getId());
+  }
+
+  if (ActiveVariant) {
+    std::println("Found decl for ActiveVariant: ", ActiveVariant->getId());
+  }
+
+  std::println("{}Init:", indent(Level + 1));
+  Init->emit(Level + 2);
 }
 
 //===----------------------------------------------------------------------===//

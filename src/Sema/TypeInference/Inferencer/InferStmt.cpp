@@ -46,7 +46,7 @@ TypeInferencer::InferRes TypeInferencer::visit(DeferStmt &S) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
-  // 1) Infer the range expression (we don’t constrain its type here)
+  // 1) Infer the range expression
   auto [RangeSubst, RangeType] = visit(S.getRange());
   Substitution AllSubsts = RangeSubst;
 
@@ -58,7 +58,6 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
   // types
   assert(RangeType.asCon().Args.size() == 1);
   auto LoopVarTy = RangeType.asCon().Args[0];
-  // IntTypeVars.push_back(LoopVarTy.asVar());
 
   // 4) Bind loop variable in environment
   recordSubst(AllSubsts);
