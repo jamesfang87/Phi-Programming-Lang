@@ -185,4 +185,25 @@ void TypeInferencer::emitUnifyError(const Monotype &A, const Monotype &B,
   Builder.emit(*DiagMan);
 }
 
+InferRes TypeInferencer::unifyAndAnnotate(Expr &E, Substitution S,
+                                          const Monotype &ExprType,
+                                          const Monotype &ExpectedType) {
+  unifyInto(S, ExprType, ExpectedType);
+  recordSubst(S);
+  Monotype Resolved = S.apply(ExprType);
+  annotate(E, Resolved);
+  return {S, Resolved};
+}
+
+InferRes TypeInferencer::unifyAndAnnotate(Expr &E, Substitution S,
+                                          const Monotype &Type1,
+                                          const Monotype &Type2,
+                                          const Monotype &ExpectedType) {
+  unifyInto(S, Type1, ExpectedType);
+  unifyInto(S, Type2, ExpectedType);
+  recordSubst(S);
+  annotate(E, ExpectedType);
+  return {S, ExpectedType};
+}
+
 } // namespace phi

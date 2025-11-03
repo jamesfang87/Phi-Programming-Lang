@@ -218,7 +218,7 @@ private:
     // Verify opening delimiter
     const Token OpeningToken = peekToken();
     if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(tyToStr(Opening), OpeningToken);
+      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
       return std::nullopt;
     }
     advanceToken();
@@ -255,7 +255,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekToken().getKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, tyToStr(Closing));
+      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
       return std::nullopt;
     }
 
@@ -270,7 +270,7 @@ private:
     // Verify opening delimiter
     const Token OpeningToken = peekToken();
     if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(tyToStr(Opening), OpeningToken);
+      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
       return std::nullopt;
     }
     advanceToken();
@@ -307,7 +307,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekToken().getKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, tyToStr(Closing));
+      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
       return std::nullopt;
     }
 

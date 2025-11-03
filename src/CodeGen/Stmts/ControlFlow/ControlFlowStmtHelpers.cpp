@@ -1,103 +1,13 @@
 #include "CodeGen/CodeGen.hpp"
-#include "llvm/IR/BasicBlock.h"
 
 #include <cassert>
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/Support/Casting.h>
 
-using namespace phi;
-
-void CodeGen::visit(Block &B) {
-  for (auto &Stmt : B.getStmts()) {
-    visit(*Stmt);
-  }
-}
-
-void CodeGen::visit(Stmt &S) { S.accept(*this); }
-
-void CodeGen::visit(ReturnStmt &S) {
-  // Execute all deferred statements before returning
-  executeDefers();
-
-  if (S.hasExpr()) {
-    // Return with value
-    assert(visit(S.getExpr()));
-    llvm::Value *RetVal = load(visit(S.getExpr()), S.getExpr().getType());
-    Builder.CreateRet(RetVal);
-  } else {
-    // Void return
-    Builder.CreateRetVoid();
-  }
-
-  // Note: Control flow ends here, so no need to set insert point
-}
-
-void CodeGen::visit(DeferStmt &S) {
-  // Add the deferred expression to the defer stack
-  // It will be executed in reverse order when the function returns
-  pushDefer(S.getDeferred());
-}
-
-void CodeGen::visit(IfStmt &S) {
-  assert(CurrentFun != nullptr);
-
-  auto Blocks = createIfStatementBlocks(S);
-  generateIfCondition(S, Blocks);
-  generateIfBranches(S, Blocks);
-
-  Builder.SetInsertPoint(Blocks.ExitBB);
-}
-
-void CodeGen::visit(WhileStmt &S) {
-  assert(CurrentFun != nullptr);
-
-  auto Blocks = createWhileLoopBlocks();
-  pushLoopContext(Blocks.ExitBB, Blocks.CondBB);
-
-  generateWhileCondition(S, Blocks);
-  generateWhileBody(S, Blocks);
-
-  popLoopContext();
-  Builder.SetInsertPoint(Blocks.ExitBB);
-}
-
-void CodeGen::visit(ForStmt &S) {
-  assert(CurrentFun != nullptr);
-
-  auto Blocks = createForLoopBlocks();
-  auto RangeInfo = extractRangeInfo(S);
-  pushLoopContext(Blocks.ExitBB, Blocks.IncBB);
-
-  generateForInit(S, RangeInfo, Blocks);
-  generateForCondition(S, RangeInfo, Blocks);
-  generateForBody(S, Blocks);
-  generateForIncrement(S, RangeInfo, Blocks);
-
-  popLoopContext();
-  Builder.SetInsertPoint(Blocks.ExitBB);
-}
-
-void CodeGen::visit(DeclStmt &S) { visit(S.getDecl()); }
-
-void CodeGen::visit(BreakStmt &S) {
-  llvm::BasicBlock *BreakTarget = getCurrentBreakTarget();
-  if (BreakTarget) {
-    Builder.CreateBr(BreakTarget);
-  }
-  // Note: Control flow ends here, so no need to set insert point
-}
-
-void CodeGen::visit(ContinueStmt &S) {
-  llvm::BasicBlock *ContinueTarget = getCurrentContinueTarget();
-  if (ContinueTarget) {
-    Builder.CreateBr(ContinueTarget);
-  }
-  // Note: Control flow ends here, so no need to set insert point
-}
-
-void CodeGen::visit(ExprStmt &S) { S.getExpr().accept(*this); }
+namespace phi {
 
 //===----------------------------------------------------------------------===//
-// Loop Generation Helper Methods
+// While Loop Generation Helper Methods
 //===----------------------------------------------------------------------===//
 
 CodeGen::WhileLoopBlocks CodeGen::createWhileLoopBlocks() {
@@ -121,6 +31,10 @@ void CodeGen::generateWhileBody(WhileStmt &S, const WhileLoopBlocks &Blocks) {
   visit(S.getBody());
   breakIntoBB(Blocks.CondBB);
 }
+
+//===----------------------------------------------------------------------===//
+// For Loop Generation Helper Methods
+//===----------------------------------------------------------------------===//
 
 CodeGen::ForLoopBlocks CodeGen::createForLoopBlocks() {
   ForLoopBlocks Blocks;
@@ -213,3 +127,5 @@ void CodeGen::generateIfBranches(IfStmt &S, const IfStatementBlocks &Blocks) {
     breakIntoBB(Blocks.ExitBB);
   }
 }
+
+} // namespace phi

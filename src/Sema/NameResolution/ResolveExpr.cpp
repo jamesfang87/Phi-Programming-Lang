@@ -62,6 +62,12 @@ bool NameResolver::visit(TupleLiteral &E) {
  */
 bool NameResolver::visit(DeclRefExpr &E) {
   ValueDecl *DeclPtr = SymbolTab.lookup(E);
+
+  if (!DeclPtr) {
+    emitNotFoundError(NotFoundErrorKind::Variable, E.getId(), E.getLocation());
+    return false;
+  }
+
   if (llvm::isa<FieldDecl>(DeclPtr)) {
     auto PrimaryMsg = std::format("Declaration for `{}` could not be found.",
                                   DeclPtr->getId());
@@ -73,10 +79,6 @@ bool NameResolver::visit(DeclRefExpr &E) {
         .emit(*Diags);
   }
 
-  if (!DeclPtr) {
-    emitNotFoundError(NotFoundErrorKind::Variable, E.getId(), E.getLocation());
-    return false;
-  }
   E.setDecl(DeclPtr);
   return true;
 }

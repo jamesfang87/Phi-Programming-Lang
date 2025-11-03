@@ -140,8 +140,11 @@ Token Lexer::scanToken() {
   case '!':
     return makeToken(matchNext('=') ? TokenKind::BangEquals : TokenKind::Bang);
   case '=':
-    return makeToken(matchNext('=') ? TokenKind::DoubleEquals
-                                    : TokenKind::Equals);
+    if (matchNext('>'))
+      return makeToken(TokenKind::FatArrow);
+    if (matchNext('='))
+      return makeToken(TokenKind::DoubleEquals);
+    return makeToken(TokenKind::Equals);
   case '<':
     return makeToken(matchNext('=') ? TokenKind::LessEqual
                                     : TokenKind::OpenCaret);

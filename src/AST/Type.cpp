@@ -12,6 +12,36 @@
 
 namespace phi {
 
+[[nodiscard]] const Type Type::getUnderlying() const {
+  struct Visitor {
+    const Type operator()(const PrimitiveKind &) const noexcept { return Self; }
+
+    const Type operator()(const StructType &) const noexcept { return Self; }
+
+    const Type operator()(const EnumType &) const noexcept { return Self; }
+
+    const Type operator()(const TupleType &) const noexcept { return Self; }
+
+    const Type operator()(const GenericType &) const noexcept { return Self; }
+
+    const Type operator()(const FunctionType &) const noexcept { return Self; }
+
+    const Type operator()(const ReferenceType &R) const noexcept {
+      // Recurse until base type is not a pointer/ref
+      return R.Pointee->getUnderlying();
+    }
+
+    const Type operator()(const PointerType &P) const noexcept {
+      // Recurse until base type is not a pointer/ref
+      return P.Pointee->getUnderlying();
+    }
+
+    const Type &Self;
+  };
+
+  return std::visit(Visitor{*this}, Data);
+}
+
 //===----------------------------------------------------------------------===//
 // String Conversion Methods
 //===----------------------------------------------------------------------===//
@@ -25,7 +55,9 @@ std::string Type::toString() const {
       return std::format("{}", primitiveKindToString(K));
     }
 
-    std::string operator()(const CustomType &C) const { return C.Name; }
+    std::string operator()(const StructType &S) const { return S.Name; }
+
+    std::string operator()(const EnumType &E) const { return E.Name; }
 
     std::string operator()(const TupleType &T) const {
       std::ostringstream Oss;
@@ -78,7 +110,7 @@ std::string Type::toString() const {
 // Monotype Conversion Methods
 //===----------------------------------------------------------------------===//
 
-class Monotype Type::toMonotype() const {
+Monotype Type::toMonotype() const {
   const SrcLocation L = this->Location;
   struct Visitor {
     SrcLocation L;
@@ -87,7 +119,11 @@ class Monotype Type::toMonotype() const {
       return Monotype::makeCon(primitiveKindToString(K), {}, L);
     }
 
-    Monotype operator()(const CustomType &C) const {
+    Monotype operator()(const StructType &S) const {
+      return Monotype::makeCon(S.Name, {}, L);
+    }
+
+    Monotype operator()(const EnumType &C) const {
       return Monotype::makeCon(C.Name, {}, L);
     }
 
@@ -98,7 +134,7 @@ class Monotype Type::toMonotype() const {
       for (const auto &Arg : T.Types) {
         Types.push_back(Arg.toMonotype());
       }
-      return Monotype::makeCon("Tuple", Types, L);
+      return Monotype::makeApp("Tuple", Types, L);
     }
 
     Monotype operator()(const ReferenceType &R) const {
@@ -180,7 +216,14 @@ llvm::Type *Type::toLLVM(llvm::LLVMContext &Ctx) const {
       return llvm::Type::getVoidTy(Ctx);
     }
 
-    llvm::Type *operator()(const CustomType &C) const {
+    llvm::Type *operator()(const StructType &C) const {
+      // Reuse an existing named struct if it exists; otherwise create opaque.
+      if (auto *T = llvm::StructType::getTypeByName(Ctx, C.Name))
+        return T;
+      return llvm::StructType::create(Ctx, C.Name);
+    }
+
+    llvm::Type *operator()(const EnumType &C) const {
       // Reuse an existing named struct if it exists; otherwise create opaque.
       if (auto *T = llvm::StructType::getTypeByName(Ctx, C.Name))
         return T;

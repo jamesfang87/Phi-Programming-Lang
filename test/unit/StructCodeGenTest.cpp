@@ -199,3 +199,55 @@ TEST_F(StructCodeGenTest, FieldCopyingAndIndependence) {
   )";
   compileAndExpectOutput(Code, "20\n99\n");
 }
+
+TEST_F(StructCodeGenTest, NestedStructsAndReturnedByValue) {
+  std::string Code = R"(
+    fun println(const msg: f64) {}
+
+    struct Inner { public a: f64; public b: f64; }
+    struct Outer {
+      public i: Inner;
+      fun inner_sum(const this) -> f64 {
+        return this.i.a + this.i.b;
+      }
+      // return inner by value
+      fun take_inner(const this) -> Inner { return this.i; }
+    }
+
+    fun main() {
+      const o: Outer = Outer { i = Inner { a = 2.0, b = 3.0 } };
+      println(o.inner_sum());             // 5
+    }
+  )";
+  compileAndExpectOutput(Code, "5\n2\n3\n");
+}
+
+TEST_F(StructCodeGenTest, MethodReturnsStructAndCopySemantics) {
+  std::string Code = R"(
+    fun println(const msg: f64) {}
+
+    struct Point { public x: f64; public y: f64; }
+
+    struct Builder {
+      public base: Point;
+
+      // returns a new point by value
+      fun make_point(const this, const dx: f64, const dy: f64) -> Point {
+        return Point { x = this.base.x + dx, y = this.base.y + dy };
+      }
+    }
+
+    fun main() {
+      const b = Builder { base = Point { x = 1.0, y = 2.0 } };
+      const p = b.make_point(5.0, 6.0);
+      // verify returned copy values
+      println(p.x);
+      println(p.y);
+
+      // ensure original builder.base unchanged
+      println(b.base.x);
+      println(b.base.y);
+    }
+  )";
+  compileAndExpectOutput(Code, "6\n8\n1\n2\n");
+}

@@ -32,7 +32,7 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
     auto Res = parseExpr();
     Patterns.push_back(std::move(Res));
 
-    if (!matchToken(TokenKind::Colon)) {
+    if (!matchToken(TokenKind::FatArrow)) {
       emitUnexpectedTokenError(peekToken());
     }
 
@@ -41,11 +41,11 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
     switch (peekKind()) {
     case TokenKind::OpenBrace:
       Body = parseBlock();
-        Body->emit(0);
+      Body->emit(0);
       if (Body->getStmts().empty())
         break;
 
-      if (const auto S = llvm::dyn_cast<ExprStmt>(Body->getStmts().back().get())) {
+      if (auto S = llvm::dyn_cast<ExprStmt>(Body->getStmts().back().get())) {
         Return = &S->getExpr();
       } else {
         error("Invalid expression as return value in match case")

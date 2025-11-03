@@ -38,26 +38,31 @@ bool NameResolver::visit(std::optional<phi::Type> MaybeType) {
     // Pointer -> recurse into the pointee's variant
     bool operator()(const phi::PointerType &P) const {
       this->Cur = *P.Pointee;
-      return std::visit(*this, P.Pointee->node());
+      return std::visit(*this, P.Pointee->getData());
     }
 
     // Reference -> recurse into the pointee's variant
     bool operator()(const phi::ReferenceType &R) const {
       this->Cur = *R.Pointee;
-      return std::visit(*this, R.Pointee->node());
+      return std::visit(*this, R.Pointee->getData());
     }
 
     bool operator()(const phi::TupleType &T) const {
       bool Success = true;
       for (const auto &ElementTy : T.Types) {
         this->Cur = ElementTy;
-        Success = std::visit(*this, ElementTy.node()) && Success;
+        Success = std::visit(*this, ElementTy.getData()) && Success;
       }
       return Success;
     }
 
-    bool operator()(const phi::CustomType &S) const {
+    bool operator()(const phi::StructType &S) const {
       (void)S;
+      return Resolver->resolveTypeByName(Cur, Cur.toString());
+    }
+
+    bool operator()(const phi::EnumType &E) const {
+      (void)E;
       return Resolver->resolveTypeByName(Cur, Cur.toString());
     }
 
@@ -72,7 +77,7 @@ bool NameResolver::visit(std::optional<phi::Type> MaybeType) {
     }
   };
 
-  return std::visit(Visitor{.Resolver = this, .Cur = T}, T.node());
+  return std::visit(Visitor{.Resolver = this, .Cur = T}, T.getData());
 }
 
 } // namespace phi

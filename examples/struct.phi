@@ -1,26 +1,25 @@
-fun println(const msg: i32) {}
+fun println(const msg: f64) {}
 
-struct RGB {
-    public r: i32;
-    public b: i32;
-    public g: i32;
+struct Inner { public a: f64; public b: f64; }
 
-
-    public fun redDiff(const this, const other: i32) -> i32 {
-        return other - this.r;
+struct Outer {
+    public i: Inner;
+    
+    fun inner_sum(const this) -> f64 {
+        return this.i.a + this.i.b;
     }
 
-    public fun blueDiff(const this, const other: RGB) -> i32 {
-        return other.b - this.b;
+    fun take_inner(const this) -> Inner { 
+        return this.i;
     }
 }
 
 fun main() {
-    const red = RGB { r = 255, b = 0, g = 0};
-    const blue = RGB { r = 0, b = 255, g = 0};
-    const green = RGB { r = 0, b = 0, g = 255};
-
-    println(red.redDiff(32));
-    println(red.blueDiff(blue));
-    println(red.g);
+    const o: Outer = Outer { 
+        i = Inner {
+            a = 2.0, 
+            b = 3.0 
+        } 
+    };
+    println(o.inner_sum());             // 5
 }

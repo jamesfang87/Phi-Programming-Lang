@@ -199,7 +199,7 @@ protected:
 
     if (auto SL = dynamic_cast<StructLiteral *>(E)) {
       for (const auto &FI : SL->getFields()) {
-        collectFromExpr(FI->getValue(), out);
+        collectFromExpr(FI->getInitValue(), out);
       }
       return;
     }
@@ -597,3 +597,111 @@ TEST_F(TypeInferenceTest, StructMethodCallTypeError) {
   auto MaybeAst = compileToASTWrap(Code);
   ASSERT_FALSE(MaybeAst.has_value());
 }
+
+TEST_F(TypeInferenceTest, FunctionCallWithStructParam) {
+  const std::string Code = R"(
+    struct Pair {
+        public first: i32;
+        public second: i32;
+    }
+
+    fun sum(const pair: Pair) -> i32 {
+        return pair.first + pair.second;
+    }
+
+    fun main() {
+        const pair = Pair {first = 10, second = 20};
+        var result = sum(pair);
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_TRUE(MaybeAst.has_value());
+
+  auto Map = collectTopLevel(*MaybeAst);
+  EXPECT_EQ(Map["result"], "i32"); // inferred from add return
+}
+
+TEST_F(TypeInferenceTest, NestedFunctionCalls) {
+  const std::string Code = R"(
+    fun square(const x: i32) -> i32 {
+        return x * x;
+    }
+
+    fun double(const x: i32) -> i32 {
+        return x + x;
+    }
+
+    fun main() {
+        var x = double(square(3));
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_TRUE(MaybeAst.has_value());
+
+  auto Map = collectTopLevel(*MaybeAst);
+  EXPECT_EQ(Map["x"], "i32"); // should infer correctly through nested calls
+}
+
+TEST_F(TypeInferenceTest, FunctionCallWithIncorrectArgumentType) {
+  const std::string Code = R"(
+    fun increment(const x: i32) -> i32 {
+        return x + 1;
+    }
+
+    fun main() {
+        var a = increment(2.5); // float passed to i32 param
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_FALSE(MaybeAst.has_value());
+}
+
+TEST_F(TypeInferenceTest, FunctionCallReturnUsedInExpression) {
+  const std::string Code = R"(
+    fun getValue() -> i32 {
+        return 10;
+    }
+
+    fun main() {
+        var x = getValue() * 2;
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_TRUE(MaybeAst.has_value());
+
+  auto Map = collectTopLevel(*MaybeAst);
+  EXPECT_EQ(Map["x"], "i32");
+}
+
+/*
+TEST_F(TypeInferenceTest, FunctionCallWithStructReturn) {
+  const std::string Code = R"(
+    struct Point {
+      x: i32;
+      y: i32;
+    }
+
+    fun makePoint(a: i32, b: i32) -> Point {
+        return Point { x = a, y = b }
+    }
+
+    fun main() {
+        var p = makePoint(1, 2);
+        var px = p.x;
+        var py = p.y;
+    }
+  )";
+
+  auto MaybeAst = compileToASTWrap(Code);
+  ASSERT_TRUE(MaybeAst.has_value());
+
+  auto Map = collectTopLevel(*MaybeAst);
+  EXPECT_EQ(Map["p"], "Point");
+  EXPECT_EQ(Map["px"], "i32");
+  EXPECT_EQ(Map["py"], "i32");
+}
+*/
