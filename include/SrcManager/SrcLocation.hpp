@@ -12,10 +12,10 @@ namespace phi {
  * error reporting and debugging.
  */
 struct SrcLocation {
-  std::string path; ///< Source file path
-  int line, col;    ///< Line and column numbers (1-indexed)
+  std::string Path; ///< Source file path
+  int Line, Col;    ///< Line and column numbers (1-indexed)
                     ///
-  std::string toString() const { return std::format("{}:{}", line, col); }
+  std::string toString() const { return std::format("{}:{}", Line, Col); }
 };
 
 } // namespace phi

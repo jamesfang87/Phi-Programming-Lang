@@ -157,10 +157,20 @@ SymbolTable::getClosestType(const std::string &Undeclared) const {
     }
   }
 
-  // 2) structs (prefer innermost scopes)
+  // 2) structs and enums (prefer innermost scopes)
   for (auto ScopeIt = Scopes.rbegin(); ScopeIt != Scopes.rend(); ++ScopeIt) {
     const auto &ScopeRef = *ScopeIt;
+    // Check structs
     for (const auto &Pair : ScopeRef.Structs) {
+      const std::string &CandName = Pair.first;
+      std::size_t Dist = damerauLevenshtein(Undeclared, CandName);
+      if (Dist < BestDist) {
+        BestDist = Dist;
+        BestName = CandName;
+      }
+    }
+    // Check enums
+    for (const auto &Pair : ScopeRef.Enums) {
       const std::string &CandName = Pair.first;
       std::size_t Dist = damerauLevenshtein(Undeclared, CandName);
       if (Dist < BestDist) {

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -9,11 +9,12 @@
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "AST/Stmt.hpp"
+#include "Diagnostics/DiagnosticManager.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
 #include "Sema/TypeInference/TypeEnv.hpp"
 #include "Sema/TypeInference/TypeVarFactory.hpp"
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "Sema/TypeInference/Types/MonotypeAtoms.hpp"
-#include "Sema/TypeInference/Unify.hpp"
 
 namespace phi {
 
@@ -27,7 +28,8 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  explicit TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast);
+  TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast,
+                 std::shared_ptr<DiagnosticManager> DiagMan);
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point
@@ -41,8 +43,12 @@ public:
 
   void visit(Decl &D);
   void visit(VarDecl &D);
+  void visit(ParamDecl &D);
   void visit(FunDecl &D);
+  void visit(FieldDecl &D);
+  void visit(MethodDecl &D);
   void visit(StructDecl &D);
+  void visit(EnumDecl &D);
 
   //===--------------------------------------------------------------------===//
   // Inference Result Type Definition
@@ -65,6 +71,8 @@ public:
   InferRes visit(ContinueStmt &S);
   InferRes visit(ExprStmt &S);
 
+  InferRes visit(Block &B);
+
   //===--------------------------------------------------------------------===//
   // Expression Visitor Methods -> return InferRes
   //===--------------------------------------------------------------------===//
@@ -76,6 +84,7 @@ public:
   InferRes visit(CharLiteral &E);
   InferRes visit(StrLiteral &E);
   InferRes visit(RangeLiteral &E);
+  InferRes visit(TupleLiteral &E);
   InferRes visit(DeclRefExpr &E);
   InferRes visit(FunCallExpr &E);
   InferRes visit(BinaryOp &E);
@@ -86,6 +95,8 @@ public:
   InferRes visit(MethodCallExpr &E);
 
 private:
+  std::shared_ptr<DiagnosticManager> DiagMan;
+
   //===--------------------------------------------------------------------===//
   // Core Inference State
   //===--------------------------------------------------------------------===//
@@ -129,25 +140,27 @@ private:
   void predeclare();
 
   //===--------------------------------------------------------------------===//
-  // Statement & Block Inference
-  //===--------------------------------------------------------------------===//
-
-  InferRes inferBlock(Block &B);
-
-  //===--------------------------------------------------------------------===//
   // Unification Utilities
   //===--------------------------------------------------------------------===//
 
-  static void unifyInto(Substitution &S, const Monotype &A, const Monotype &B) {
-    Substitution U = unify(S.apply(A), S.apply(B));
-    S.compose(U);
-  }
-
+  void unifyInto(Substitution &S, const Monotype &A, const Monotype &B);
+  Substitution unify(const Monotype &A, const Monotype &B);
+  Substitution unifyVar(const Monotype &Var, const Monotype &B);
+  Substitution unifyCon(const Monotype &A, const Monotype &B);
+  Substitution unifyApp(const Monotype &A, const Monotype &B);
+  Substitution unifyFun(const Monotype &A, const Monotype &B);
+  void emitUnifyError(const Monotype &A, const Monotype &B,
+                      const std::string &TopMsg,
+                      const std::optional<std::string> &Note = std::nullopt);
+  InferRes unifyAndAnnotate(Expr &E, Substitution S, const Monotype &ExprType,
+                            const Monotype &ExpectedType);
+  InferRes unifyAndAnnotate(Expr &E, Substitution S, const Monotype &Type1,
+                            const Monotype &Type2,
+                            const Monotype &ExpectedType);
   //===--------------------------------------------------------------------===//
   // Annotation Management
   //===--------------------------------------------------------------------===//
 
-  // *** annotation helpers (now side-table based) ***
   void annotate(ValueDecl &D, const Monotype &T);
   void annotate(Expr &E, const Monotype &T);
 
@@ -164,14 +177,8 @@ private:
   // to stored Monotypes and writing concrete phi::Type back into AST.
   void finalizeAnnotations();
 
-  //===--------------------------------------------------------------------===//
-  // Token Kind Classification Utilities
-  //===--------------------------------------------------------------------===//
-
-  [[nodiscard]] static bool isArithmetic(TokenKind K) noexcept;
-  [[nodiscard]] static bool isLogical(TokenKind K) noexcept;
-  [[nodiscard]] static bool isComparison(TokenKind K) noexcept;
-  [[nodiscard]] static bool isEquality(TokenKind K) noexcept;
+  std::tuple<Substitution, Monotype, StructDecl *>
+  inferStructBase(Expr &BaseExpr, SrcLocation Loc);
 };
 
 } // namespace phi

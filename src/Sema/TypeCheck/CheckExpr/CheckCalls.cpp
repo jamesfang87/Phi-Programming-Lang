@@ -40,6 +40,19 @@ bool TypeChecker::visit(FieldAccessExpr &E) {
 }
 
 bool TypeChecker::visit(MethodCallExpr &E) {
-  // TODO: Finish
-  return true;
+  assert(E.getDecl());
+
+  const auto &Args = E.getArgs();
+  const auto &Params = E.getDecl()->getParams();
+
+  bool Success = Args.size() == Params.size();
+  for (size_t I = 0; I < Args.size(); I++) {
+    assert(Args[I]->hasType());
+    assert(Params[I]->hasType());
+
+    Success = visit(*Args[I]) && Success;
+    Success = (Args[I]->getType() == Params[I]->getType()) && Success;
+  }
+
+  return Success;
 }

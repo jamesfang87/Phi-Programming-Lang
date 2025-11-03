@@ -246,14 +246,14 @@ private:
    */
   [[nodiscard]] Token makeToken(TokenKind Kind) const {
     int StartCol = static_cast<int>(CurLexeme - LexemeLine) + 1;
-    int EndCol = std::distance(CurChar, CurLine) + 1;
+    int EndCol = std::distance(CurLine, CurChar) + 1;
 
     // TODO: correctly use start line
     int StartLine = LineNum;
     int EndLine = LineNum;
 
-    return {SrcLocation{.path = this->Path, .line = StartLine, .col = StartCol},
-            SrcLocation{.path = this->Path, .line = EndLine, .col = EndCol},
+    return {SrcLocation{.Path = this->Path, .Line = StartLine, .Col = StartCol},
+            SrcLocation{.Path = this->Path, .Line = EndLine, .Col = EndCol},
             Kind, std::string(CurLexeme, CurChar)};
   }
 

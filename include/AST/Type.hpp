@@ -92,6 +92,18 @@ struct StructType {
   }
 };
 
+struct EnumType {
+  std::string Name;
+  bool operator==(const EnumType &Other) const noexcept {
+    return Name == Other.Name;
+  }
+};
+
+struct TupleType {
+  std::vector<Type> Types;
+  bool operator==(const TupleType &Other) const noexcept;
+};
+
 struct ReferenceType {
   TypePtr Pointee;
   bool operator==(const ReferenceType &Other) const noexcept;
@@ -120,8 +132,9 @@ struct FunctionType {
 
 class Type {
 public:
-  using Node = std::variant<PrimitiveKind, StructType, ReferenceType,
-                            PointerType, GenericType, FunctionType>;
+  using TypeAtoms =
+      std::variant<PrimitiveKind, StructType, EnumType, TupleType,
+                   ReferenceType, PointerType, GenericType, FunctionType>;
 
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
@@ -139,6 +152,14 @@ public:
 
   static Type makeStruct(std::string Name, SrcLocation L) {
     return Type(StructType{std::move(Name)}, std::move(L));
+  }
+
+  static Type makeEnum(std::string Name, SrcLocation L) {
+    return Type(EnumType{std::move(Name)}, std::move(L));
+  }
+
+  static Type makeTuple(std::vector<Type> Types, SrcLocation L) {
+    return Type(TupleType{.Types = std::move(Types)}, std::move(L));
   }
 
   static Type makeReference(Type Pointee, SrcLocation L) {
@@ -170,30 +191,46 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] const Node &node() const noexcept { return Data; }
-  SrcLocation getLocation() { return Location; }
+  [[nodiscard]] const TypeAtoms &getData() const noexcept { return Data; }
+  [[nodiscard]] SrcLocation getLocation() const { return Location; }
 
   [[nodiscard]] PrimitiveKind asPrimitive() const {
+    assert(isPrimitive() && "asPrimitive() used on non-primitive type");
     return std::get<PrimitiveKind>(Data);
   }
 
   [[nodiscard]] StructType asStruct() const {
+    assert(isStruct() && "asStruct() used on non-custom type");
     return std::get<StructType>(Data);
   }
 
+  [[nodiscard]] EnumType asEnum() const {
+    assert(isStruct() && "asEnum() used on non-custom type");
+    return std::get<EnumType>(Data);
+  }
+
+  [[nodiscard]] TupleType asTuple() const {
+    assert(isTuple() && "asTuple() used on non-tuple type");
+    return std::get<TupleType>(Data);
+  }
+
   [[nodiscard]] PointerType asPtr() const {
+    assert(isPtr() && "asPtr() used on non-ptr type");
     return std::get<PointerType>(Data);
   }
 
   [[nodiscard]] ReferenceType asRef() const {
+    assert(isRef() && "asRef() used on non-ref type");
     return std::get<ReferenceType>(Data);
   }
 
   [[nodiscard]] GenericType asGeneric() const {
+    assert(isGeneric() && "asGeneric() used on non-generic type");
     return std::get<GenericType>(Data);
   }
 
   [[nodiscard]] FunctionType asFun() const {
+    assert(isFun() && "asFun() used on non-function type");
     return std::get<FunctionType>(Data);
   }
 
@@ -207,6 +244,14 @@ public:
 
   [[nodiscard]] bool isStruct() const {
     return std::holds_alternative<StructType>(Data);
+  }
+
+  [[nodiscard]] bool isEnum() const {
+    return std::holds_alternative<EnumType>(Data);
+  }
+
+  [[nodiscard]] bool isTuple() const {
+    return std::holds_alternative<TupleType>(Data);
   }
 
   [[nodiscard]] bool isRef() const {
@@ -290,7 +335,7 @@ public:
     return K == PrimitiveKind::F32 || K == PrimitiveKind::F64;
   }
 
-  [[nodiscard]] bool isNullType() const {
+  [[nodiscard]] bool isNull() const {
     if (!isPrimitive()) {
       return false;
     }
@@ -298,12 +343,19 @@ public:
     return asPrimitive() == PrimitiveKind::Null;
   }
 
-  [[nodiscard]] std::optional<std::string> getStructName() const {
-    if (!isStruct()) {
-      return std::nullopt;
+  [[nodiscard]] std::optional<std::string> getCustomName() const {
+    if (isStruct()) {
+      return asStruct().Name;
     }
-    return std::get<StructType>(Data).Name;
+
+    if (isEnum()) {
+      return asEnum().Name;
+    }
+
+    return std::nullopt;
   }
+
+  [[nodiscard]] const Type getUnderlying() const;
 
   //===--------------------------------------------------------------------===//
   // Comparison Operators
@@ -322,7 +374,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] std::string toString() const;
-  [[nodiscard]] class Monotype toMonotype() const;
+  [[nodiscard]] Monotype toMonotype() const;
   [[nodiscard]] llvm::Type *toLLVM(llvm::LLVMContext &Ctx) const;
 
 private:
@@ -330,21 +382,25 @@ private:
   // Private Members
   //===--------------------------------------------------------------------===//
 
-  Node Data;
-  SrcLocation Location{"", -1, -1};
+  TypeAtoms Data;
+  SrcLocation Location{.Path = "", .Line = -1, .Col = -1};
 
   //===--------------------------------------------------------------------===//
   // Private Constructors
   //===--------------------------------------------------------------------===//
 
-  explicit Type(Node N) : Data(std::move(N)) {}
-  Type(Node N, SrcLocation Location)
+  explicit Type(TypeAtoms N) : Data(std::move(N)) {}
+  Type(TypeAtoms N, SrcLocation Location)
       : Data(std::move(N)), Location(std::move(Location)) {}
 };
 
 //===----------------------------------------------------------------------===//
 // Inline Implementations for Composite Type Comparisons
 //===----------------------------------------------------------------------===//
+
+inline bool TupleType::operator==(const TupleType &Other) const noexcept {
+  return (Types == Other.Types);
+}
 
 inline bool
 ReferenceType::operator==(const ReferenceType &Other) const noexcept {

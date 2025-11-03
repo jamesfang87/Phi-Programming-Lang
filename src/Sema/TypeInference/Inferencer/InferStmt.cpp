@@ -7,7 +7,7 @@
 namespace phi {
 
 // ---------------- Block / Stmt ----------------
-TypeInferencer::InferRes TypeInferencer::inferBlock(Block &B) {
+TypeInferencer::InferRes TypeInferencer::visit(Block &B) {
   Substitution AllSubsts;
   for (const auto &Stmt : B.getStmts()) {
     auto [StmtSubst, _] = visit(*Stmt);
@@ -46,7 +46,7 @@ TypeInferencer::InferRes TypeInferencer::visit(DeferStmt &S) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
-  // 1) Infer the range expression (we don’t constrain its type here)
+  // 1) Infer the range expression
   auto [RangeSubst, RangeType] = visit(S.getRange());
   Substitution AllSubsts = RangeSubst;
 
@@ -58,7 +58,6 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
   // types
   assert(RangeType.asCon().Args.size() == 1);
   auto LoopVarTy = RangeType.asCon().Args[0];
-  // IntTypeVars.push_back(LoopVarTy.asVar());
 
   // 4) Bind loop variable in environment
   recordSubst(AllSubsts);
@@ -67,7 +66,7 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
   annotate(*LoopVar, BoundTy);
 
   // 5) Infer the loop body
-  auto [BlockSubst, _] = inferBlock(S.getBody());
+  auto [BlockSubst, _] = visit(S.getBody());
   AllSubsts.compose(BlockSubst);
   recordSubst(BlockSubst);
 
@@ -83,7 +82,7 @@ TypeInferencer::InferRes TypeInferencer::visit(WhileStmt &S) {
   auto [CondSubst, CondType] = visit(S.getCond());
   Substitution AllSubsts = CondSubst;
 
-  auto [BlockSubst, _] = inferBlock(S.getBody());
+  auto [BlockSubst, _] = visit(S.getBody());
   AllSubsts.compose(BlockSubst);
 
   recordSubst(AllSubsts);
@@ -94,11 +93,11 @@ TypeInferencer::InferRes TypeInferencer::visit(IfStmt &S) {
   auto [CondSubst, CondType] = visit(S.getCond());
   Substitution AllSubsts = CondSubst;
 
-  auto [ThenBlockSubst, _] = inferBlock(S.getThen());
+  auto [ThenBlockSubst, _] = visit(S.getThen());
   AllSubsts.compose(ThenBlockSubst);
 
   if (S.hasElse()) {
-    auto [ElseBlockSubst, __] = inferBlock(S.getElse());
+    auto [ElseBlockSubst, __] = visit(S.getElse());
     AllSubsts.compose(ElseBlockSubst);
   }
 

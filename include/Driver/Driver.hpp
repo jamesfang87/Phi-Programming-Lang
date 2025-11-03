@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "AST/Decl.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
 
 namespace phi {
@@ -49,6 +50,8 @@ public:
    * @return true if compilation succeeded without errors, false otherwise
    */
   bool compile();
+
+  std::optional<std::vector<std::unique_ptr<phi::Decl>>> compileToAST();
 
 private:
   //===--------------------------------------------------------------------===//

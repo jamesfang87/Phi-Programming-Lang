@@ -2,7 +2,6 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <sstream>
 #include <string>
 
 #include <gtest/gtest.h>

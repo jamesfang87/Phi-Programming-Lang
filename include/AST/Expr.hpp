@@ -9,6 +9,7 @@
 #include <llvm/IR/Value.h>
 
 #include "AST/Decl.hpp"
+#include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
@@ -24,6 +25,9 @@ class FunDecl;
 class FieldDecl;
 class StructDecl;
 class MethodDecl;
+class EnumDecl;
+class VariantDecl;
+
 class NameResolver;
 class TypeInferencer;
 class CodeGen;
@@ -44,14 +48,18 @@ public:
     CharLiteralKind,
     BoolLiteralKind,
     RangeLiteralKind,
-    DeclRefExprKind,
-    FunCallExprKind,
+    TupleLiteralKind,
+    DeclRefKind,
+    FunCallKind,
     BinaryOpKind,
     UnaryOpKind,
-    StructInitKind,
+    StructLiteralKind,
     FieldInitKind,
     FieldAccessKind,
-    MemberFunAccessKind
+    MethodCallKind,
+    EnumInitKind,
+    MatchExprKind,
+    CustomTypeCtorKind, // <-- added for new CustomTypeCtor expr
   };
 
   //===--------------------------------------------------------------------===//
@@ -124,7 +132,7 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  IntLiteral(SrcLocation Location, const int64_t Value);
+  IntLiteral(SrcLocation Location, int64_t Value);
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -159,7 +167,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   int64_t Value;
@@ -181,7 +189,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Type Queries
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
 
@@ -196,7 +204,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::FloatLiteralKind;
@@ -206,7 +214,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   double Value;
@@ -243,7 +251,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::StrLiteralKind;
@@ -253,7 +261,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::string Value;
@@ -281,7 +289,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -290,7 +298,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::CharLiteralKind;
@@ -300,7 +308,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   char Value;
@@ -328,7 +336,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -337,7 +345,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::BoolLiteralKind;
@@ -347,7 +355,7 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   bool Value;
@@ -379,7 +387,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -388,7 +396,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::RangeLiteralKind;
@@ -398,11 +406,56 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Start, End;
   bool Inclusive;
+};
+
+class TupleLiteral final : public Expr {
+public:
+  TupleLiteral(SrcLocation Location,
+               std::vector<std::unique_ptr<Expr>> Elements);
+  ~TupleLiteral() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] const auto &getElements() { return Elements; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===-----------------------------------------------------------------------//
+
+  bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &C) override;
+  llvm::Value *accept(CodeGen &G) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::TupleLiteralKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::vector<std::unique_ptr<Expr>> Elements;
 };
 
 //===----------------------------------------------------------------------===//
@@ -438,7 +491,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -447,17 +500,17 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Kind::DeclRefExprKind;
+    return E->getKind() == Kind::DeclRefKind;
   }
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::string Id;
@@ -477,6 +530,10 @@ protected:
   // Constructor for derived classes to specify their own Kind
   FunCallExpr(Kind K, SrcLocation Location, std::unique_ptr<Expr> Callee,
               std::vector<std::unique_ptr<Expr>> Args);
+
+  FunCallExpr(FunCallExpr &&Other, Kind K)
+      : Expr(K, Other.getLocation()), Callee(std::move(Other.Callee)),
+        Args(std::move(Other.Args)), Decl(Other.Decl) {}
 
 public:
   ~FunCallExpr() override;
@@ -506,7 +563,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -515,17 +572,17 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Kind::FunCallExprKind;
+    return E->getKind() == Kind::FunCallKind;
   }
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Callee;
@@ -557,13 +614,13 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Type Queries
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -572,7 +629,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::BinaryOpKind;
@@ -580,9 +637,9 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Lhs;
@@ -594,14 +651,14 @@ class UnaryOp final : public Expr {
 public:
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   UnaryOp(std::unique_ptr<Expr> Operand, const Token &Op, const bool IsPrefix);
   ~UnaryOp() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] Expr &getOperand() const { return *Operand; }
   [[nodiscard]] TokenKind getOp() const { return Op; }
@@ -609,13 +666,13 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Type Queries
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -624,7 +681,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::UnaryOpKind;
@@ -632,9 +689,9 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Operand;
@@ -650,7 +707,7 @@ class FieldInitExpr final : public Expr {
 public:
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   FieldInitExpr(SrcLocation Location, std::string FieldId,
                 std::unique_ptr<Expr> Init);
@@ -658,27 +715,27 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Getters
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] const std::string &getFieldId() const { return FieldId; }
   [[nodiscard]] FieldDecl *getDecl() const { return FieldDecl; }
-  [[nodiscard]] Expr *getValue() const { return Init.get(); }
+  [[nodiscard]] Expr *getInitValue() const { return InitValue.get(); }
 
   //===--------------------------------------------------------------------===//
   // Setters
   //===--------------------------------------------------------------------===//
 
-  void setFieldDecl(FieldDecl *decl) { FieldDecl = decl; }
+  void setDecl(FieldDecl *decl) { FieldDecl = decl; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -687,7 +744,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::FieldInitKind;
@@ -695,49 +752,43 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::string FieldId;
-  std::unique_ptr<Expr> Init;
+  std::unique_ptr<Expr> InitValue;
   FieldDecl *FieldDecl = nullptr;
 };
 
-class StructLiteral final : public Expr {
-public:
-  //===--------------------------------------------------------------------===//
-  // Constructors & Destructors
-  //===--------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
+// CustomTypeCtor - new expression which can represent either a struct-like
+// constructor (with named fields) or an enum variant constructor.
+//===----------------------------------------------------------------------===//
 
-  StructLiteral(SrcLocation Location, std::string StructId,
-                std::vector<std::unique_ptr<FieldInitExpr>> Fields);
-  ~StructLiteral() override;
+class CustomTypeCtor final : public Expr {
+public:
+  CustomTypeCtor(SrcLocation Location, std::string TypeName,
+                 std::vector<std::unique_ptr<FieldInitExpr>> Inits);
+  ~CustomTypeCtor() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] StructDecl *getStructDecl() const { return StructDecl; }
-  [[nodiscard]] const std::string &getStructId() const { return StructId; }
-  [[nodiscard]] const auto &getFields() const { return FieldInits; }
-
-  //===--------------------------------------------------------------------===//
-  // Setters
-  //===--------------------------------------------------------------------===//
-
-  void setStructDecl(StructDecl *decl) { StructDecl = decl; }
+  [[nodiscard]] const std::string &getTypeName() const { return TypeName; }
+  [[nodiscard]] auto &getFields() const { return Inits; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
-  [[nodiscard]] bool isAssignable() const override { return false; }
+  [[nodiscard]] bool isAssignable() const override { return true; }
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -749,14 +800,78 @@ public:
   //===--------------------------------------------------------------------===//
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Kind::StructInitKind;
+    return E->getKind() == Kind::CustomTypeCtorKind;
   }
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
+
+private:
+  std::string TypeName;
+  std::string VariantName;
+  std::vector<std::unique_ptr<FieldInitExpr>> Inits;
+};
+
+//===----------------------------------------------------------------------===//
+// Struct Literal (now has a constructor that can take a CustomTypeCtor)
+//===----------------------------------------------------------------------===//
+
+class StructLiteral final : public Expr {
+public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===-----------------------------------------------------------------------//
+
+  StructLiteral(SrcLocation Location, std::string StructId,
+                std::vector<std::unique_ptr<FieldInitExpr>> Fields);
+  StructLiteral(CustomTypeCtor &&Ctor);
+  ~StructLiteral() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] StructDecl *getDecl() const { return StructDecl; }
+  [[nodiscard]] const std::string &getStructId() const { return StructId; }
+  [[nodiscard]] const auto &getFields() const { return FieldInits; }
+
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===-----------------------------------------------------------------------//
+
+  void setDecl(StructDecl *Decl) { StructDecl = Decl; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===-----------------------------------------------------------------------//
+
+  bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &C) override;
+  llvm::Value *accept(CodeGen &G) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::StructLiteralKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
 
 private:
   std::string StructId;
@@ -772,7 +887,7 @@ class FieldAccessExpr final : public Expr {
 public:
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   FieldAccessExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
                   std::string MemberId);
@@ -780,7 +895,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Getters
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] const FieldDecl *getField() const { return Member; }
   [[nodiscard]] Expr *getBase() const { return Base.get(); }
@@ -788,19 +903,19 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Setters
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   void setMember(FieldDecl *Field) { Member = Field; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -809,7 +924,7 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::FieldAccessKind;
@@ -817,9 +932,9 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Base;
@@ -831,16 +946,18 @@ class MethodCallExpr final : public FunCallExpr {
 public:
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   MethodCallExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
                  std::unique_ptr<Expr> Callee,
                  std::vector<std::unique_ptr<Expr>> Args);
+  MethodCallExpr(FunCallExpr &&Call, std::unique_ptr<Expr> Base);
+
   ~MethodCallExpr() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] const MethodDecl &getMethod() const { return *Method; }
   [[nodiscard]] Expr *getBase() const { return Base.get(); }
@@ -848,19 +965,22 @@ public:
 
   //===--------------------------------------------------------------------===//
   // Setters
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
-  void setMethod(MethodDecl *M) { Method = M; }
+  void setMethod(MethodDecl *M) {
+    setDecl(M);
+    Method = M;
+  }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   bool accept(NameResolver &R) override;
   InferRes accept(TypeInferencer &I) override;
@@ -869,21 +989,148 @@ public:
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Kind::MemberFunAccessKind;
+    return E->getKind() == Kind::MethodCallKind;
   }
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
-  //===--------------------------------------------------------------------===//
+  //===-----------------------------------------------------------------------//
 
-  void emit(int level) const override;
+  void emit(int Level) const override;
 
 private:
   std::unique_ptr<Expr> Base;
   MethodDecl *Method = nullptr;
+};
+
+class EnumInitExpr final : public Expr {
+public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===-----------------------------------------------------------------------//
+
+  EnumInitExpr(SrcLocation Location, std::string EnumName,
+               std::string VariantName, std::unique_ptr<Expr> Init);
+  EnumInitExpr(class CustomTypeCtor &&Ctor);
+  ~EnumInitExpr() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] const std::string_view getEnumName() { return EnumName; }
+  [[nodiscard]] const std::string_view getActiveVariantName() {
+    return ActiveVariantName;
+  }
+
+  [[nodiscard]] const EnumDecl *getEnum() { return Enum; }
+  [[nodiscard]] const VariantDecl *getActiveVariant() { return ActiveVariant; }
+
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===-----------------------------------------------------------------------//
+
+  void setEnum(EnumDecl *E) { Enum = E; }
+  void setActiveVariant(VariantDecl *V) { ActiveVariant = V; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] bool isAssignable() const override { return true; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===-----------------------------------------------------------------------//
+
+  bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &C) override;
+  llvm::Value *accept(CodeGen &G) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::EnumInitKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::string EnumName;
+  std::string ActiveVariantName;
+
+  // the following are filled in during name resolution phase
+  EnumDecl *Enum;
+  VariantDecl *ActiveVariant;
+
+  std::unique_ptr<Expr> Init;
+};
+
+class MatchExpr final : public Expr {
+public:
+  struct Case {
+    std::vector<std::unique_ptr<Expr>> Patterns;
+    std::unique_ptr<Block> Body;
+    Expr *Return;
+  };
+
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===-----------------------------------------------------------------------//
+
+  MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Value,
+            std::vector<Case> Cases);
+  ~MatchExpr() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] Expr *getValue() const { return Value.get(); }
+  [[nodiscard]] auto &getCases() const { return Cases; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] bool isAssignable() const override { return true; }
+
+  //===--------------------------------------------------------------------===//
+  // Visitor Methods
+  //===-----------------------------------------------------------------------//
+
+  bool accept(NameResolver &R) override;
+  InferRes accept(TypeInferencer &I) override;
+  bool accept(TypeChecker &C) override;
+  llvm::Value *accept(CodeGen &G) override;
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::MatchExprKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::unique_ptr<Expr> Value;
+  std::vector<Case> Cases;
 };
 
 } // namespace phi

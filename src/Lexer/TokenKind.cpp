@@ -14,7 +14,7 @@ namespace phi {
  * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")
  */
 
-std::string tyToStr(const TokenKind Kind) {
+std::string TokenKindToStr(const TokenKind Kind) {
   switch (Kind) {
   // Special tokens
   case TokenKind::Eof:
@@ -33,7 +33,7 @@ std::string tyToStr(const TokenKind Kind) {
     return "CONTINUE";
   case TokenKind::DeferKw:
     return "DEFER";
-  case TokenKind::ElseKwKind:
+  case TokenKind::ElseKw:
     return "ELSE";
   case TokenKind::EnumKw:
     return "ENUM";
@@ -47,8 +47,10 @@ std::string tyToStr(const TokenKind Kind) {
     return "IF";
   case TokenKind::ImportKw:
     return "IMPORT";
-  case TokenKind::InKwKind:
+  case TokenKind::InKw:
     return "IN";
+  case TokenKind::MatchKw:
+    return "MATCH";
   case TokenKind::PublicKw:
     return "PUBLIC";
   case TokenKind::ReturnKw:
@@ -110,7 +112,9 @@ std::string tyToStr(const TokenKind Kind) {
   case TokenKind::CloseBracket:
     return "CLOSE_BRACKET";
   case TokenKind::Arrow:
-    return "FUN_RETURN";
+    return "ARROW";
+  case TokenKind::FatArrow:
+    return "FAT ARROW";
   case TokenKind::Comma:
     return "COMMA";
   case TokenKind::Semicolon:
@@ -205,6 +209,50 @@ std::string tyToStr(const TokenKind Kind) {
 
   default:
     return "UNKNOWN";
+  }
+}
+
+bool isArithmetic(const TokenKind K) noexcept {
+  switch (K) {
+  case TokenKind::Plus:
+  case TokenKind::Minus:
+  case TokenKind::Star:
+  case TokenKind::Slash:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool isLogical(const TokenKind K) noexcept {
+  switch (K) {
+  case TokenKind::DoubleAmp:
+  case TokenKind::DoublePipe:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool isComparison(const TokenKind K) noexcept {
+  switch (K) {
+  case TokenKind::OpenCaret:
+  case TokenKind::LessEqual:
+  case TokenKind::CloseCaret:
+  case TokenKind::GreaterEqual:
+    return true;
+  default:
+    return false;
+  }
+}
+
+bool isEquality(const TokenKind K) noexcept {
+  switch (K) {
+  case TokenKind::DoubleEquals:
+  case TokenKind::BangEquals:
+    return true;
+  default:
+    return false;
   }
 }
 

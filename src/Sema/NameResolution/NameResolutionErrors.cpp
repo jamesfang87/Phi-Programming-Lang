@@ -42,9 +42,9 @@ void NameResolver::emitTypeNotFound(std::string_view TypeName,
 
   auto PrimaryMsg =
       std::format("Expected `{}` to be a valid type. {}", TypeName, Hint);
-  error(std::format(
-            "Could not match type `{}` with any primitive type or a struct",
-            TypeName))
+  error(
+      std::format("Could not match type `{}` with any primitive or custom type",
+                  TypeName))
       .with_primary_label(Loc, PrimaryMsg)
       .emit(*Diags);
 }

@@ -1,13 +1,46 @@
 #include "AST/Type.hpp"
 
+#include <cassert>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Type.h>
+#include <sstream>
+#include <string>
 
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
+
+[[nodiscard]] const Type Type::getUnderlying() const {
+  struct Visitor {
+    const Type operator()(const PrimitiveKind &) const noexcept { return Self; }
+
+    const Type operator()(const StructType &) const noexcept { return Self; }
+
+    const Type operator()(const EnumType &) const noexcept { return Self; }
+
+    const Type operator()(const TupleType &) const noexcept { return Self; }
+
+    const Type operator()(const GenericType &) const noexcept { return Self; }
+
+    const Type operator()(const FunctionType &) const noexcept { return Self; }
+
+    const Type operator()(const ReferenceType &R) const noexcept {
+      // Recurse until base type is not a pointer/ref
+      return R.Pointee->getUnderlying();
+    }
+
+    const Type operator()(const PointerType &P) const noexcept {
+      // Recurse until base type is not a pointer/ref
+      return P.Pointee->getUnderlying();
+    }
+
+    const Type &Self;
+  };
+
+  return std::visit(Visitor{*this}, Data);
+}
 
 //===----------------------------------------------------------------------===//
 // String Conversion Methods
@@ -22,7 +55,21 @@ std::string Type::toString() const {
       return std::format("{}", primitiveKindToString(K));
     }
 
-    std::string operator()(const StructType &C) const { return C.Name; }
+    std::string operator()(const StructType &S) const { return S.Name; }
+
+    std::string operator()(const EnumType &E) const { return E.Name; }
+
+    std::string operator()(const TupleType &T) const {
+      std::ostringstream Oss;
+      Oss << "(";
+      for (size_t I = 0; I < T.Types.size(); ++I) {
+        Oss << T.Types[I].toString();
+        if (I + 1 < T.Types.size())
+          Oss << ", ";
+      }
+      Oss << ")";
+      return Oss.str();
+    }
 
     std::string operator()(const ReferenceType &R) const {
       return "&" + R.Pointee->toString();
@@ -38,7 +85,7 @@ std::string Type::toString() const {
       for (size_t I = 0; I < G.TypeArguments.size(); ++I) {
         Oss << G.TypeArguments[I].toString();
         if (I + 1 < G.TypeArguments.size())
-          Oss << ",";
+          Oss << ", ";
       }
       Oss << ">";
       return Oss.str();
@@ -50,7 +97,7 @@ std::string Type::toString() const {
       for (size_t I = 0; I < F.Parameters.size(); ++I) {
         Oss << F.Parameters[I].toString();
         if (I + 1 < F.Parameters.size())
-          Oss << ",";
+          Oss << ", ";
       }
       Oss << ") -> " << F.ReturnType->toString();
       return Oss.str();
@@ -63,7 +110,7 @@ std::string Type::toString() const {
 // Monotype Conversion Methods
 //===----------------------------------------------------------------------===//
 
-class Monotype Type::toMonotype() const {
+Monotype Type::toMonotype() const {
   const SrcLocation L = this->Location;
   struct Visitor {
     SrcLocation L;
@@ -72,8 +119,22 @@ class Monotype Type::toMonotype() const {
       return Monotype::makeCon(primitiveKindToString(K), {}, L);
     }
 
-    Monotype operator()(const StructType &C) const {
+    Monotype operator()(const StructType &S) const {
+      return Monotype::makeCon(S.Name, {}, L);
+    }
+
+    Monotype operator()(const EnumType &C) const {
       return Monotype::makeCon(C.Name, {}, L);
+    }
+
+    Monotype operator()(const TupleType &T) const {
+      // TODO: Create Type Constructor so that this is more pedantic
+      std::vector<Monotype> Types;
+      Types.reserve(T.Types.size());
+      for (const auto &Arg : T.Types) {
+        Types.push_back(Arg.toMonotype());
+      }
+      return Monotype::makeApp("Tuple", Types, L);
     }
 
     Monotype operator()(const ReferenceType &R) const {
@@ -162,14 +223,37 @@ llvm::Type *Type::toLLVM(llvm::LLVMContext &Ctx) const {
       return llvm::StructType::create(Ctx, C.Name);
     }
 
+    llvm::Type *operator()(const EnumType &C) const {
+      // Reuse an existing named struct if it exists; otherwise create opaque.
+      if (auto *T = llvm::StructType::getTypeByName(Ctx, C.Name))
+        return T;
+      return llvm::StructType::create(Ctx, C.Name);
+    }
+
+    llvm::Type *operator()(const TupleType &T) const {
+      // Empty tuple -> treat as unit. Choose either `void` or an empty struct.
+      if (T.Types.empty()) {
+        assert(false && "A Tuple should never be empty");
+        return llvm::StructType::get(Ctx, {});
+      }
+
+      std::vector<llvm::Type *> Types;
+      Types.reserve(T.Types.size());
+      for (const auto &E : T.Types)
+        Types.push_back(E.toLLVM(Ctx));
+
+      // Create an anonymous (literal) struct to represent the tuple
+      return llvm::StructType::get(Ctx, Types, /*isPacked=*/false);
+    }
+
     llvm::Type *operator()(const ReferenceType &R) const {
       llvm::Type *PointeeTy = R.Pointee->toLLVM(Ctx);
-      return llvm::PointerType::get(PointeeTy, 0);
+      return llvm::PointerType::getUnqual(PointeeTy);
     }
 
     llvm::Type *operator()(const PointerType &P) const {
       llvm::Type *PointeeTy = P.Pointee->toLLVM(Ctx);
-      return llvm::PointerType::get(PointeeTy, 0);
+      return llvm::PointerType::getUnqual(PointeeTy);
     }
 
     llvm::Type *operator()(const GenericType &G) const {
