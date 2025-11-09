@@ -32,6 +32,10 @@ bool PhiCompiler::compile() {
   }
 
   auto Ast = Parser(SrcFile, Path, Tokens, DiagnosticMan).parse();
+  for (auto &D : Ast) {
+    D->emit(0);
+  }
+  return false;
 
   if (DiagnosticMan->error_count() > 0) {
     return false;

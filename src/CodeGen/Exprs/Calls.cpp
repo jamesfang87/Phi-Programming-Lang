@@ -44,26 +44,17 @@ llvm::Value *CodeGen::visit(FunCallExpr &E) {
     llvm::Value *Raw = visit(*Arg);
     assert(Raw && "argument visit returned null");
 
-    // If callee expects a pointer for this param, pass the pointer.
-    // Otherwise load the value (primitive or aggregate) and pass it.
     llvm::Type *ParamTy = nullptr;
-    if (ArgIndex < Fun->getFunctionType()->getNumParams()) {
+    if (ArgIndex < Fun->getFunctionType()->getNumParams())
       ParamTy = Fun->getFunctionType()->getParamType(ArgIndex);
-    }
 
     llvm::Value *ArgToPass = nullptr;
     if (ParamTy && ParamTy->isPointerTy()) {
-      ArgToPass = Raw; // pass pointer
+      // Callee expects a pointer: forward the address (l-value)
+      ArgToPass = Raw;
     } else {
-      // pass value: for primitives this loads a scalar; for structs this
-      // loads the whole aggregate value
-      if (Arg->getType().isStruct()) {
-        // Raw should be a pointer to the alloca/GEP to the struct: load
-        // aggregate
-        ArgToPass = Builder.CreateLoad(Arg->getType().toLLVM(Context), Raw);
-      } else {
-        ArgToPass = load(Raw, Arg->getType());
-      }
+      // Callee expects a value: load (primitives and aggregates)
+      ArgToPass = load(Raw, Arg->getType());
     }
 
     assert(ArgToPass && "Could not form call argument");

@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-#include <llvm/IR/Value.h>
+#include "llvm/IR/Value.h"
 
 #include "AST/Decl.hpp"
 #include "AST/Stmt.hpp"
@@ -352,27 +352,27 @@ void FieldInitExpr::emit(int Level) const {
 // StructInitExpr Implementation
 //===----------------------------------------------------------------------===//
 
-// Constructors & Destructors
-StructLiteral::StructLiteral(SrcLocation Location, std::string StructId,
-                             std::vector<std::unique_ptr<FieldInitExpr>> Fields)
-    : Expr(Expr::Kind::StructLiteralKind, std::move(Location)),
-      StructId(std::move(StructId)), FieldInits(std::move(Fields)) {}
+CustomTypeCtor::CustomTypeCtor(
+    SrcLocation Location, std::optional<std::string> TypeName,
+    std::vector<std::unique_ptr<FieldInitExpr>> Inits)
+    : Expr(Expr::Kind::CustomTypeCtorKind, std::move(Location)),
+      TypeName(std::move(TypeName)), Inits(std::move(Inits)) {}
 
-StructLiteral::~StructLiteral() = default;
+CustomTypeCtor::~CustomTypeCtor() = default;
 
 // Visitor Methods
-bool StructLiteral::accept(NameResolver &R) { return R.visit(*this); }
-InferRes StructLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-bool StructLiteral::accept(TypeChecker &C) { return C.visit(*this); }
-llvm::Value *StructLiteral::accept(CodeGen &G) { return G.visit(*this); }
+bool CustomTypeCtor::accept(NameResolver &R) { return R.visit(*this); }
+InferRes CustomTypeCtor::accept(TypeInferencer &I) { return I.visit(*this); }
+bool CustomTypeCtor::accept(TypeChecker &C) { return C.visit(*this); }
+llvm::Value *CustomTypeCtor::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
-void StructLiteral::emit(int Level) const {
-  std::println("{}StructInitExpr:", indent(Level));
-  std::println("{}  struct: {}", indent(Level), StructId);
-  std::println("{}  fields:", indent(Level));
-  for (const auto &Field : FieldInits) {
-    Field->emit(Level + 2);
+void CustomTypeCtor::emit(int Level) const {
+  std::println("{}CustomTypeCtor:", indent(Level));
+  std::println("{}  For name: {}", indent(Level), TypeName.value_or("No name"));
+  std::println("{}  Inits:", indent(Level));
+  for (const auto &Init : Inits) {
+    Init->emit(Level + 2);
   }
 }
 
@@ -441,39 +441,6 @@ void MethodCallExpr::emit(int Level) const {
   }
 }
 
-EnumInitExpr::EnumInitExpr(SrcLocation Location, std::string EnumName,
-                           std::string VariantName, std::unique_ptr<Expr> Init)
-    : Expr(Kind::EnumInitKind, std::move(Location)),
-      EnumName(std::move(EnumName)), ActiveVariantName(std::move(VariantName)),
-      Enum(nullptr), ActiveVariant(nullptr), Init(std::move(Init)) {}
-
-EnumInitExpr::~EnumInitExpr() = default;
-
-bool EnumInitExpr::accept(NameResolver &R) { return R.visit(*this); }
-
-InferRes EnumInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-
-bool EnumInitExpr::accept(TypeChecker &C) { return C.visit(*this); }
-
-llvm::Value *EnumInitExpr::accept(CodeGen &G) { return G.visit(*this); }
-
-void EnumInitExpr::emit(int Level) const {
-  std::println("{}EnumInitExpr", indent(Level));
-  std::println("{}Enum Name: {}", indent(Level + 1), EnumName);
-  std::println("{}Active Variant Name: {}", indent(Level + 1),
-               ActiveVariantName);
-  if (Enum) {
-    std::println("Found decl for enum: ", Enum->getId());
-  }
-
-  if (ActiveVariant) {
-    std::println("Found decl for ActiveVariant: ", ActiveVariant->getId());
-  }
-
-  std::println("{}Init:", indent(Level + 1));
-  Init->emit(Level + 2);
-}
-
 //===----------------------------------------------------------------------===//
 // MatchExpr Implementation
 //===----------------------------------------------------------------------===//
@@ -507,16 +474,5 @@ bool MatchExpr::accept(NameResolver &R) { return R.visit(*this); }
 InferRes MatchExpr::accept(TypeInferencer &I) { return I.visit(*this); }
 bool MatchExpr::accept(TypeChecker &C) { return C.visit(*this); }
 llvm::Value *MatchExpr::accept(CodeGen &G) { return G.visit(*this); }
-
-//===----------------------------------------------------------------------===//
-// Additional TypeChecker accept implementations
-// (keeps structure consistent; added for completeness)
-//===----------------------------------------------------------------------===//
-
-// Note: The per-node TypeChecker::accept implementations are duplicates of the
-// pattern used above (returning C.visit(*this)). They are present here to
-// explicitly override the base implementation where needed. If a node already
-// had its TypeChecker accept method defined above, this block will not
-// redefine it — the definitions above are the canonical ones.
 
 } // namespace phi
