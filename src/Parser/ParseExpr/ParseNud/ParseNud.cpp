@@ -5,12 +5,15 @@
 #include "Parser/PrecedenceTable.hpp"
 #include <cassert>
 #include <memory>
-#include <print>
+#include <optional>
 #include <vector>
 
 namespace phi {
 
 std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
+  if (Tok.getKind() != TokenKind::OpenBrace) {
+    advanceToken();
+  }
   switch (Tok.getKind()) {
   // Prefix operators: -a, !b, ++c
   case TokenKind::Minus:       // -
@@ -32,7 +35,15 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   // Grouping: ( expr )
   case TokenKind::OpenParen:
     return parseGroupingOrTupleLiteral();
+  case TokenKind::OpenBrace: {
+    auto Inits = parseList<FieldInitExpr>(
+        TokenKind::OpenBrace, TokenKind::CloseBrace, &Parser::parseFieldInit);
 
+    return (!Inits)
+               ? nullptr
+               : std::make_unique<CustomTypeCtor>(Tok.getStart(), std::nullopt,
+                                                  std::move(Inits.value()));
+  }
   // Literals
   default:
     return parsePrimitiveLiteral(Tok);
@@ -92,8 +103,6 @@ std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
     return std::make_unique<TupleLiteral>(Elements[0]->getLocation(),
                                           std::move(Elements));
   }
-
-    // treat as tuple literal
   default:
     emitUnexpectedTokenError(peekToken());
     break;

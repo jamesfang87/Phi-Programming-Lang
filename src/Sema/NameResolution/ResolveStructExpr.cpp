@@ -12,10 +12,10 @@
 
 namespace phi {
 
-bool NameResolver::visit(StructLiteral &E) {
-  auto *Found = SymbolTab.lookupStruct(E.getStructId());
+bool NameResolver::visit(CustomTypeCtor &E) {
+  auto *Found = SymbolTab.lookupStruct(E.getTypeName());
   if (!Found) {
-    emitNotFoundError(NotFoundErrorKind::Struct, E.getStructId(),
+    emitNotFoundError(NotFoundErrorKind::Struct, E.getTypeName(),
                       E.getLocation());
     return false;
   }
@@ -30,7 +30,7 @@ bool NameResolver::visit(StructLiteral &E) {
   }
 
   bool Success = true;
-  for (auto &FieldInit : E.getFields()) {
+  for (auto &FieldInit : E.getInits()) {
     if (Found->getField(FieldInit->getFieldId()) == nullptr) {
       emitNotFoundError(NotFoundErrorKind::Field, FieldInit->getFieldId(),
                         FieldInit->getLocation());

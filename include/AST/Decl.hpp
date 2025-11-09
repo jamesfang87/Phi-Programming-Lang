@@ -437,7 +437,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] Type getType() const override { return DeclType; }
-  [[nodiscard]] auto &getFields() { return Fields; }
+  [[nodiscard]] const auto &getFields() const { return Fields; }
   [[nodiscard]] std::vector<MethodDecl> &getMethods() { return Methods; }
 
   [[nodiscard]] FieldDecl *getField(const std::string &Id) {
@@ -525,7 +525,8 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  EnumDecl(SrcLocation Loc, std::string Id, std::vector<VariantDecl> Variants);
+  EnumDecl(SrcLocation Loc, std::string Id, std::vector<VariantDecl> Variants,
+           std::vector<MethodDecl> Methods);
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -533,6 +534,7 @@ public:
 
   [[nodiscard]] Type getType() const override { return DeclType; }
   [[nodiscard]] auto &getVariants() { return Variants; }
+  [[nodiscard]] auto &getMethods() { return Methods; }
 
   [[nodiscard]] VariantDecl *getVariant(const std::string &Id) {
     auto It = VariantMap.find(Id);
@@ -562,6 +564,7 @@ public:
 private:
   Type DeclType;
   std::vector<VariantDecl> Variants;
+  std::vector<MethodDecl> Methods;
 
   std::unordered_map<std::string, VariantDecl *> VariantMap;
 };

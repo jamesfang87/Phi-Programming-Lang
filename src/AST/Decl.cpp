@@ -199,10 +199,11 @@ void VariantDecl::emit(int Level) const {
 
 // Constructors & Destructors
 EnumDecl::EnumDecl(SrcLocation Loc, std::string Id,
-                   std::vector<VariantDecl> Variants)
+                   std::vector<VariantDecl> Variants,
+                   std::vector<MethodDecl> Methods)
     : Decl(Kind::EnumDecl, Loc, Id),
-      DeclType(Type::makeStruct(std::move(Id), std::move(Loc))),
-      Variants(std::move(Variants)) {
+      DeclType(Type::makeEnum(std::move(Id), std::move(Loc))),
+      Variants(std::move(Variants)), Methods(std::move(Methods)) {
   std::vector<Type> ContainedTypes;
   for (auto &&Variant : this->Variants) {
     VariantMap[Variant.getId()] = &Variant;
@@ -222,6 +223,11 @@ void EnumDecl::emit(int Level) const {
   std::println("{}Variants:", indent(Level));
   for (auto &V : Variants) {
     V.emit(Level + 1);
+  }
+
+  std::println("{}Methods:", indent(Level));
+  for (auto &M : Methods) {
+    M.emit(Level + 1);
   }
 }
 

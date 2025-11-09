@@ -24,7 +24,7 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
   // Struct init
   case TokenKind::OpenBrace:
     if (!NoStructInit)
-      return parseStructLiteral(std::move(Lhs));
+      return parseCustomInit(std::move(Lhs));
 
   default:
     return Lhs;

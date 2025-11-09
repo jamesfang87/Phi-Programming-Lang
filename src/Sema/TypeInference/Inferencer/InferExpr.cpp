@@ -203,11 +203,11 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
   throw std::runtime_error("inferBinary: unsupported operator token kind");
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(StructLiteral &E) {
-  auto Struct = Monotype::makeCon(E.getStructId());
+TypeInferencer::InferRes TypeInferencer::visit(CustomTypeCtor &E) {
+  auto Struct = Monotype::makeCon(E.getTypeName());
   Substitution AllSubsts;
 
-  for (auto &Field : E.getFields()) {
+  for (auto &Field : E.getInits()) {
     auto [FieldSubst, FieldType] = visit(*Field->getInitValue());
     AllSubsts.compose(FieldSubst);
 
