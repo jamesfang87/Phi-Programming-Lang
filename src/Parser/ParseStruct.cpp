@@ -1,10 +1,10 @@
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <print>
 #include <string>
 
 #include "AST/Decl.hpp"
@@ -42,7 +42,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     }
 
     if (Check.getKind() == TokenKind::FunKw) {
-      auto Res = parseMethodDecl(Id, Loc);
+      auto Res = parseMethodDecl(Id, Loc, /*InEnum=*/false);
       if (Res) {
         Methods.push_back(std::move(*Res));
       } else {
@@ -102,8 +102,9 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
                                      IsPrivate, FieldIndex);
 }
 
-std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentStruct,
-                                                  SrcLocation ParentLoc) {
+std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
+                                                  SrcLocation ParentLoc,
+                                                  bool InEnum) {
   bool IsPrivate = true;
   if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
@@ -130,21 +131,20 @@ std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentStruct,
   auto Params = parseList<ParamDecl>(
       TokenKind::OpenParen, TokenKind::CloseParen,
       [&](Parser *P) -> std::unique_ptr<ParamDecl> {
-        if (P->peekToken(1).getKind() == TokenKind::ThisKw) {
-          // emit error if not const or var
-          bool IsConst = P->peekToken().getKind() == TokenKind::ConstKw;
-          P->advanceToken();
-          Type T = Type::makeReference(
-              Type::makeStruct(ParentStruct, ParentLoc), ParentLoc);
-          return std::make_unique<ParamDecl>(P->advanceToken().getStart(),
-                                             "this", T, IsConst);
-        } else {
-
+        if (P->peekToken(1).getKind() != TokenKind::ThisKw) {
           return P->parseParamDecl();
         }
-      }
 
-  );
+        // TODO: emit error if not const or var
+        bool IsConst = P->peekToken().getKind() == TokenKind::ConstKw;
+        P->advanceToken();
+        auto InsideType = (InEnum) ? Type::makeEnum(ParentName, ParentLoc)
+                                   : Type::makeStruct(ParentName, ParentLoc);
+        auto T = Type::makeReference(InsideType, ParentLoc);
+        return std::make_unique<ParamDecl>(P->advanceToken().getStart(), "this",
+                                           T, IsConst);
+      });
+
   if (!Params)
     return std::nullopt;
 

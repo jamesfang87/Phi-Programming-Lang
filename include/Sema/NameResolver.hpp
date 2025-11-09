@@ -80,7 +80,7 @@ public:
   bool visit(FunCallExpr &E);
   bool visit(BinaryOp &E);
   bool visit(UnaryOp &E);
-  bool visit(StructLiteral &E);
+  bool visit(CustomTypeCtor &E);
   bool visit(FieldInitExpr &E);
   bool visit(FieldAccessExpr &E);
   bool visit(MethodCallExpr &E);

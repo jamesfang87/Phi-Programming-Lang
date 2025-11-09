@@ -57,7 +57,7 @@ std::unique_ptr<Expr> Parser::parseExpr() {
  */
 std::unique_ptr<Expr> Parser::pratt(int MinBp,
                                     const std::vector<TokenKind> &Terminators) {
-  std::unique_ptr<Expr> Lhs = parseNud(advanceToken());
+  std::unique_ptr<Expr> Lhs = parseNud(peekToken());
   if (!Lhs) {
     return nullptr;
   }

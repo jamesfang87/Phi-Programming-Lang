@@ -197,8 +197,8 @@ protected:
       return;
     }
 
-    if (auto SL = dynamic_cast<StructLiteral *>(E)) {
-      for (const auto &FI : SL->getFields()) {
+    if (auto SL = dynamic_cast<CustomTypeCtor *>(E)) {
+      for (const auto &FI : SL->getInits()) {
         collectFromExpr(FI->getInitValue(), out);
       }
       return;

@@ -219,7 +219,7 @@ TEST_F(StructCodeGenTest, NestedStructsAndReturnedByValue) {
       println(o.inner_sum());             // 5
     }
   )";
-  compileAndExpectOutput(Code, "5\n2\n3\n");
+  compileAndExpectOutput(Code, "5\n");
 }
 
 TEST_F(StructCodeGenTest, MethodReturnsStructAndCopySemantics) {

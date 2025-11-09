@@ -6,9 +6,9 @@
 
 using namespace phi;
 
-bool TypeChecker::visit(StructLiteral &E) {
+bool TypeChecker::visit(CustomTypeCtor &E) {
   bool Success = true;
-  for (auto &&FieldInit : E.getFields()) {
+  for (auto &&FieldInit : E.getInits()) {
     Success = visit(*FieldInit) && Success;
   }
   return Success;
