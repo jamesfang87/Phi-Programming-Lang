@@ -5,11 +5,20 @@
 using namespace phi;
 
 llvm::Value *CodeGen::visit(FieldAccessExpr &E) {
-  auto T = E.getBase()->getType().getUnderlying().toLLVM(Context);
+  llvm::Type *StructLLTy = E.getBase()->getType().getUnderlying().toLLVM(Context);
 
-  llvm::Value *Base = visit(*E.getBase());
+  // Prefer an lvalue pointer if available; otherwise, materialize a temporary
+  llvm::Value *BasePtr = getLValuePointer(E.getBase());
+  if (!BasePtr) {
+    // rvalue aggregate: spill to a temporary so we can take a GEP
+    llvm::Value *BaseVal = load(visit(*E.getBase()), E.getBase()->getType());
+    llvm::AllocaInst *Tmp = stackAlloca("field.tmp", E.getBase()->getType());
+    store(BaseVal, Tmp, E.getBase()->getType());
+    BasePtr = Tmp;
+  }
+
   llvm::Value *Field =
-      Builder.CreateStructGEP(T, Base, E.getField()->getIndex());
+      Builder.CreateStructGEP(StructLLTy, BasePtr, E.getField()->getIndex());
   return Field;
 }
 
@@ -37,13 +46,8 @@ llvm::Value *CodeGen::visit(MethodCallExpr &E) {
       // pass pointer 'this' as-is
       Args.push_back(BaseVal);
     } else {
-      // pass by-value: load the aggregate or primitive
-      if (E.getBase()->getType().isStruct()) {
-        Args.push_back(Builder.CreateLoad(
-            E.getBase()->getType().toLLVM(Context), BaseVal));
-      } else {
-        Args.push_back(load(BaseVal, E.getBase()->getType()));
-      }
+      // pass by-value using unified load
+      Args.push_back(load(BaseVal, E.getBase()->getType()));
     }
   } else {
     Args.push_back(BaseVal);
@@ -61,10 +65,7 @@ llvm::Value *CodeGen::visit(MethodCallExpr &E) {
     if (ParamTy && ParamTy->isPointerTy()) {
       ArgToPass = Raw;
     } else {
-      if (Arg->getType().isStruct())
-        ArgToPass = Builder.CreateLoad(Arg->getType().toLLVM(Context), Raw);
-      else
-        ArgToPass = load(Raw, Arg->getType());
+      ArgToPass = load(Raw, Arg->getType());
     }
 
     Args.push_back(ArgToPass);

@@ -52,18 +52,18 @@ llvm::Value *CodeGen::visit(RangeLiteral &E) {
   return EndVal;
 }
 
-llvm::Value *CodeGen::visit(StructLiteral &E) {
+llvm::Value *CodeGen::visit(CustomTypeCtor &E) {
   phi::Type Type = E.getType();
   llvm::Value *Temp = stackAlloca(*Type.getCustomName() + ".tmp", Type);
 
   std::map<const FieldDecl *, llvm::Value *> Inits;
-  for (auto &&Init : E.getFields()) {
+  for (auto &&Init : E.getInits()) {
     llvm::Value *Val = visit(*Init->getInitValue());
     Inits[Init->getDecl()] = Val;
   }
 
   size_t I = 0;
-  for (auto &&Field : E.getDecl()->getFields()) {
+  for (auto &&Field : std::get<StructDecl *>(E.getDecl())->getFields()) {
     llvm::Value *Dst = Builder.CreateStructGEP(Type.toLLVM(Context), Temp, I++);
     store(Inits[Field.get()], Dst, Field->getType());
   }
