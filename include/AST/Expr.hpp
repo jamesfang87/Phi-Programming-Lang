@@ -1,9 +1,12 @@
 #pragma once
 
+#include <cassert>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <llvm/IR/Value.h>
@@ -53,7 +56,6 @@ public:
     FunCallKind,
     BinaryOpKind,
     UnaryOpKind,
-    StructLiteralKind,
     FieldInitKind,
     FieldAccessKind,
     MethodCallKind,
@@ -769,16 +771,39 @@ private:
 
 class CustomTypeCtor final : public Expr {
 public:
-  CustomTypeCtor(SrcLocation Location, std::string TypeName,
+  CustomTypeCtor(SrcLocation Location, std::optional<std::string> TypeName,
                  std::vector<std::unique_ptr<FieldInitExpr>> Inits);
   ~CustomTypeCtor() override;
+
+  enum class InterpretAs : uint8_t { Struct, Enum, Unknown };
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] const std::string &getTypeName() const { return TypeName; }
-  [[nodiscard]] auto &getFields() const { return Inits; }
+  [[nodiscard]] const auto &getTypeName() const { return *TypeName; }
+  [[nodiscard]] const auto &getInits() const { return Inits; }
+  [[nodiscard]] const auto &getKind() const { return InterpretAs; }
+  [[nodiscard]] const auto &getDecl() const { return Decl; }
+  [[nodiscard]] bool isAnonymous() const { return TypeName.has_value(); }
+
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===--------------------------------------------------------------------===//
+
+  void setDecl(EnumDecl *Found) {
+    assert(InterpretAs != InterpretAs::Struct || "Cannot change interpretation"
+                                                 "of CustomTypeCtor");
+    InterpretAs = InterpretAs::Enum;
+    Decl = Found;
+  }
+
+  void setDecl(StructDecl *Found) {
+    assert(InterpretAs != InterpretAs::Enum || "Cannot change interpretation"
+                                               "of CustomTypeCtor");
+    InterpretAs = InterpretAs::Struct;
+    Decl = Found;
+  }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -810,73 +835,15 @@ public:
   void emit(int Level) const override;
 
 private:
-  std::string TypeName;
-  std::string VariantName;
+  std::optional<std::string> TypeName;
   std::vector<std::unique_ptr<FieldInitExpr>> Inits;
-};
 
-//===----------------------------------------------------------------------===//
-// Struct Literal (now has a constructor that can take a CustomTypeCtor)
-//===----------------------------------------------------------------------===//
+  InterpretAs InterpretAs = InterpretAs::Unknown;
+  std::variant<StructDecl *, EnumDecl *, std::monostate> Decl =
+      std::monostate();
 
-class StructLiteral final : public Expr {
-public:
-  //===--------------------------------------------------------------------===//
-  // Constructors & Destructors
-  //===-----------------------------------------------------------------------//
-
-  StructLiteral(SrcLocation Location, std::string StructId,
-                std::vector<std::unique_ptr<FieldInitExpr>> Fields);
-  StructLiteral(CustomTypeCtor &&Ctor);
-  ~StructLiteral() override;
-
-  //===--------------------------------------------------------------------===//
-  // Getters
-  //===-----------------------------------------------------------------------//
-
-  [[nodiscard]] StructDecl *getDecl() const { return StructDecl; }
-  [[nodiscard]] const std::string &getStructId() const { return StructId; }
-  [[nodiscard]] const auto &getFields() const { return FieldInits; }
-
-  //===--------------------------------------------------------------------===//
-  // Setters
-  //===-----------------------------------------------------------------------//
-
-  void setDecl(StructDecl *Decl) { StructDecl = Decl; }
-
-  //===--------------------------------------------------------------------===//
-  // Type Queries
-  //===-----------------------------------------------------------------------//
-
-  [[nodiscard]] bool isAssignable() const override { return false; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  InferRes accept(TypeInferencer &I) override;
-  bool accept(TypeChecker &C) override;
-  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
-  // LLVM-style RTTI
-  //===-----------------------------------------------------------------------//
-
-  static bool classof(const Expr *E) {
-    return E->getKind() == Kind::StructLiteralKind;
-  }
-
-  //===--------------------------------------------------------------------===//
-  // Utility Methods
-  //===-----------------------------------------------------------------------//
-
-  void emit(int Level) const override;
-
-private:
-  std::string StructId;
-  std::vector<std::unique_ptr<FieldInitExpr>> FieldInits;
-  StructDecl *StructDecl = nullptr;
+  std::optional<std::string> ActiveVariantName;
+  VariantDecl *ActiveDecl = nullptr;
 };
 
 //===----------------------------------------------------------------------===//
@@ -1004,76 +971,6 @@ public:
 private:
   std::unique_ptr<Expr> Base;
   MethodDecl *Method = nullptr;
-};
-
-class EnumInitExpr final : public Expr {
-public:
-  //===--------------------------------------------------------------------===//
-  // Constructors & Destructors
-  //===-----------------------------------------------------------------------//
-
-  EnumInitExpr(SrcLocation Location, std::string EnumName,
-               std::string VariantName, std::unique_ptr<Expr> Init);
-  EnumInitExpr(class CustomTypeCtor &&Ctor);
-  ~EnumInitExpr() override;
-
-  //===--------------------------------------------------------------------===//
-  // Getters
-  //===-----------------------------------------------------------------------//
-
-  [[nodiscard]] const std::string_view getEnumName() { return EnumName; }
-  [[nodiscard]] const std::string_view getActiveVariantName() {
-    return ActiveVariantName;
-  }
-
-  [[nodiscard]] const EnumDecl *getEnum() { return Enum; }
-  [[nodiscard]] const VariantDecl *getActiveVariant() { return ActiveVariant; }
-
-  //===--------------------------------------------------------------------===//
-  // Setters
-  //===-----------------------------------------------------------------------//
-
-  void setEnum(EnumDecl *E) { Enum = E; }
-  void setActiveVariant(VariantDecl *V) { ActiveVariant = V; }
-
-  //===--------------------------------------------------------------------===//
-  // Type Queries
-  //===-----------------------------------------------------------------------//
-
-  [[nodiscard]] bool isAssignable() const override { return true; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  InferRes accept(TypeInferencer &I) override;
-  bool accept(TypeChecker &C) override;
-  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
-  // LLVM-style RTTI
-  //===-----------------------------------------------------------------------//
-
-  static bool classof(const Expr *E) {
-    return E->getKind() == Kind::EnumInitKind;
-  }
-
-  //===--------------------------------------------------------------------===//
-  // Utility Methods
-  //===-----------------------------------------------------------------------//
-
-  void emit(int Level) const override;
-
-private:
-  std::string EnumName;
-  std::string ActiveVariantName;
-
-  // the following are filled in during name resolution phase
-  EnumDecl *Enum;
-  VariantDecl *ActiveVariant;
-
-  std::unique_ptr<Expr> Init;
 };
 
 class MatchExpr final : public Expr {

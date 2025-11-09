@@ -13,18 +13,20 @@ namespace phi {
 void CodeGen::visit(BreakStmt &S) {
   (void)S;
   llvm::BasicBlock *BreakTarget = getCurrentBreakTarget();
-  if (BreakTarget) {
-    Builder.CreateBr(BreakTarget);
+  if (!BreakTarget) {
+    throw std::runtime_error("'break' used outside of a loop");
   }
+  Builder.CreateBr(BreakTarget);
   // Note: Control flow ends here, so no need to set insert point
 }
 
 void CodeGen::visit(ContinueStmt &S) {
   (void)S;
   llvm::BasicBlock *ContinueTarget = getCurrentContinueTarget();
-  if (ContinueTarget) {
-    Builder.CreateBr(ContinueTarget);
+  if (!ContinueTarget) {
+    throw std::runtime_error("'continue' used outside of a loop");
   }
+  Builder.CreateBr(ContinueTarget);
   // Note: Control flow ends here, so no need to set insert point
 }
 
