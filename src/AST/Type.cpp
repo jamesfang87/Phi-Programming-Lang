@@ -1,11 +1,12 @@
 #include "AST/Type.hpp"
 
 #include <cassert>
-#include <llvm/IR/DerivedTypes.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Type.h>
 #include <sstream>
 #include <string>
+
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Type.h"
 
 #include "Sema/TypeInference/Types/Monotype.hpp"
 #include "SrcManager/SrcLocation.hpp"

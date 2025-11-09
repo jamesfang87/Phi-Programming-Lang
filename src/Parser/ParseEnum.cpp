@@ -3,7 +3,6 @@
 #include <cassert>
 #include <memory>
 #include <optional>
-#include <print>
 #include <string>
 
 #include "AST/Decl.hpp"
@@ -23,23 +22,58 @@ std::unique_ptr<EnumDecl> Parser::parseEnumDecl() {
   advanceToken();
 
   std::vector<VariantDecl> Variants;
+  std::vector<MethodDecl> Methods;
   while (!atEOF() && peekToken().getKind() != TokenKind::CloseBrace) {
-    if (peekToken().getKind() != TokenKind::Identifier) {
+    Token Check = peekToken();
+    switch (Check.getKind()) {
+    case TokenKind::PublicKw:
+      Check = peekToken(1);
+      break;
+    case TokenKind::FunKw:
+    case TokenKind::Identifier:
+      break; // valid starts: method or variant
+    default:
       emitUnexpectedTokenError(peekToken());
-      syncTo({TokenKind::Identifier, TokenKind::CloseBrace});
+      // recover to next plausible member (method or variant) or end of enum
+      syncTo({TokenKind::PublicKw, TokenKind::FunKw, TokenKind::Identifier,
+              TokenKind::CloseBrace});
       continue;
     }
 
-    if (auto Res = parseVariantDecl()) {
-      Variants.push_back(*Res);
-    } else {
-      syncTo({TokenKind::Identifier, TokenKind::CloseBrace});
+    if (Check.getKind() == TokenKind::FunKw) {
+      // parse a member method (reuses your existing parseMethodDecl)
+      auto Res = parseMethodDecl(Id, Loc, /*InEnum=*/true);
+      if (Res) {
+        Methods.push_back(std::move(*Res));
+      } else {
+        // if method parsing failed, resync to a plausible following token
+        syncTo(
+            {TokenKind::FunKw, TokenKind::Identifier, TokenKind::CloseBrace});
+      }
+    } else if (Check.getKind() == TokenKind::Identifier) {
+      // parse a variant
+      if (peekToken().getKind() != TokenKind::Identifier) {
+        emitUnexpectedTokenError(peekToken());
+        syncTo(
+            {TokenKind::Identifier, TokenKind::CloseBrace, TokenKind::FunKw});
+        continue;
+      }
+
+      if (auto Res = parseVariantDecl()) {
+        Variants.push_back(*Res);
+      } else {
+        // recover to next member or end of enum
+        syncTo(
+            {TokenKind::Identifier, TokenKind::FunKw, TokenKind::CloseBrace});
+      }
     }
   }
 
-  advanceToken(); // consume the `}`
+  // consume the `}`
+  advanceToken();
 
-  return std::make_unique<EnumDecl>(Loc, Id, std::move(Variants));
+  return std::make_unique<EnumDecl>(Loc, Id, std::move(Variants),
+                                    std::move(Methods));
 }
 
 std::optional<VariantDecl> Parser::parseVariantDecl() {
@@ -49,28 +83,122 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
 
   switch (peekKind()) {
   case TokenKind::Comma:
-    // typeless
-    advanceToken();
+    advanceToken(); // eat ','
+    return VariantDecl(Loc, std::move(Id), std::nullopt);
   case TokenKind::CloseBrace:
     return VariantDecl(Loc, std::move(Id), std::nullopt);
   case TokenKind::Colon: {
-    advanceToken();
-    auto DeclType = parseType();
-    if (peekKind() == TokenKind::Comma || peekKind() == TokenKind::CloseBrace) {
-      matchToken(TokenKind::Comma);
+    advanceToken(); // eat ':'
+
+    std::optional<Type> DeclType;
+    if (peekKind() == TokenKind::OpenBrace) {
+      // Remember start location of the anonymous struct (the '{' token)
+      Token Opening = peekToken();
+      SrcLocation StructLoc = Opening.getStart();
+
+      // Parser for a single anonymous struct field:
+      // returns tuple(SrcLocation FieldLoc, std::string Name, Type FieldType)
+      auto FieldParser = [&](Parser *P)
+          -> std::optional<std::tuple<SrcLocation, std::string, Type>> {
+        // Expect identifier for field name
+        if (P->peekKind() != TokenKind::Identifier) {
+          P->emitUnexpectedTokenError(P->peekToken(), {"identifier"});
+          P->syncTo(
+              {TokenKind::Identifier, TokenKind::Comma, TokenKind::CloseBrace});
+          return std::nullopt;
+        }
+
+        Token NameTok = P->advanceToken(); // consume field name
+        SrcLocation FieldLoc = NameTok.getStart();
+        std::string FieldName = NameTok.getLexeme();
+
+        // Expect ':'
+        if (!P->matchToken(TokenKind::Colon)) {
+          error("expected ':' in anonymous struct field")
+              .with_primary_label(spanFromToken(P->peekToken()),
+                                  "missing ':' here")
+              .emit(*P->DiagnosticsMan);
+          P->syncTo({TokenKind::Comma, TokenKind::CloseBrace});
+        }
+
+        // Parse the field type
+        auto FieldTy = P->parseType();
+        if (!FieldTy) {
+          // recovery: skip to next comma or closing brace
+          P->syncTo({TokenKind::Comma, TokenKind::CloseBrace});
+          return std::nullopt;
+        }
+
+        return std::make_optional(
+            std::make_tuple(FieldLoc, std::move(FieldName), *FieldTy));
+      };
+
+      // Parse the list of fields inside { ... }.
+      // parseValueList will consume the opening and closing braces.
+      auto FieldsRes =
+          parseValueList<std::tuple<SrcLocation, std::string, Type>>(
+              TokenKind::OpenBrace, TokenKind::CloseBrace, FieldParser,
+              "anonymous struct fields");
+
+      if (!FieldsRes) {
+        // failed to parse anonymous struct fields; leave DeclType as nullopt
+        DeclType = std::nullopt;
+      } else {
+        // Convert parsed tuples into FieldDecls
+        std::vector<std::unique_ptr<FieldDecl>> Fields;
+        uint32_t FieldIndex = 0;
+        for (auto &Tup : *FieldsRes) {
+          SrcLocation FLoc = std::get<0>(Tup);
+          std::string FName = std::get<1>(Tup);
+          Type FType = std::get<2>(Tup);
+
+          // No initializer for anonymous struct fields; everything is public
+          std::unique_ptr<Expr> Init = nullptr;
+          bool IsPrivate = false;
+          Fields.push_back(std::make_unique<FieldDecl>(
+              FLoc, std::move(FName), FType, std::move(Init), IsPrivate,
+              FieldIndex++));
+        }
+
+        // Generate a unique name for the desugared anonymous struct
+        static uint32_t AnonStructCounter = 0;
+        std::string AnonName =
+            "@_anon_struct_" + std::to_string(++AnonStructCounter);
+
+        // No methods for anonymous struct
+        std::vector<MethodDecl> Methods;
+
+        // Insert the generated StructDecl into the AST
+        Ast.push_back(std::make_unique<StructDecl>(
+            StructLoc, AnonName, std::move(Fields), std::move(Methods)));
+
+        // DeclType becomes a reference to the generated struct type
+        DeclType = Type::makeStruct(AnonName, StructLoc);
+      }
+    } else {
+      DeclType = parseType();
+    }
+
+    if (matchToken(TokenKind::Semicolon)) {
       return (DeclType) ? std::optional<VariantDecl>(
                               VariantDecl(Loc, std::move(Id), DeclType))
                         : std::nullopt;
     }
-    error("missing comma after enum variant declaration")
-        .with_primary_label(spanFromToken(peekToken()), "expected `,` here")
-        .with_help("enum vairant declarations must end with a comma")
-        .with_suggestion(spanFromToken(peekToken()), ",", "add comma")
+
+    // missing comma/brace — emit diagnostic and try to recover
+    error("missing semicolon after enum variant declaration")
+        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_help("enum variant declarations must end with a semicolon")
+        .with_suggestion(spanFromToken(peekToken()), ",", "add semicolon")
         .emit(*DiagnosticsMan);
+
+    // consume the unexpected token to avoid infinite loop and recover
     advanceToken();
     return std::nullopt;
   }
   default:
+    // anything else is unexpected: variants must be followed by ':' or ',' or
+    // be the end
     emitUnexpectedTokenError(peekToken(), {",", ":"});
     return std::nullopt;
   }

@@ -1,24 +1,24 @@
 #include "Parser/Parser.hpp"
 
 #include <llvm/Support/Casting.h>
+#include <memory>
 
 #include "AST/Expr.hpp"
 
 namespace phi {
 
-std::unique_ptr<StructLiteral>
-Parser::parseStructLiteral(std::unique_ptr<Expr> InitExpr) {
+std::unique_ptr<CustomTypeCtor>
+Parser::parseCustomInit(std::unique_ptr<Expr> InitExpr) {
   const auto DeclRef = llvm::dyn_cast<DeclRefExpr>(InitExpr.get());
   std::string StructId = DeclRef->getId();
 
-  auto FieldInits = parseList<FieldInitExpr>(
+  auto Inits = parseList<FieldInitExpr>(
       TokenKind::OpenBrace, TokenKind::CloseBrace, &Parser::parseFieldInit);
-  if (!FieldInits) {
-    return nullptr;
-  }
 
-  return std::make_unique<StructLiteral>(InitExpr->getLocation(), StructId,
-                                         std::move(FieldInits.value()));
+  return (!Inits) ? nullptr
+                  : std::make_unique<CustomTypeCtor>(InitExpr->getLocation(),
+                                                     StructId,
+                                                     std::move(Inits.value()));
 }
 
 std::unique_ptr<FieldInitExpr> Parser::parseFieldInit() {

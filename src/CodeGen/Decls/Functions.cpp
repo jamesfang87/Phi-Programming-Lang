@@ -1,8 +1,8 @@
 #include "CodeGen/CodeGen.hpp"
 
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/Support/Casting.h"
 #include <cassert>
-#include <llvm/IR/DerivedTypes.h>
-#include <llvm/Support/Casting.h>
 
 using namespace phi;
 

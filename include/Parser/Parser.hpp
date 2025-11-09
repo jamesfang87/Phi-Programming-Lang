@@ -132,7 +132,7 @@ private:
   std::unique_ptr<StructDecl> parseStructDecl();
   std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
   std::optional<MethodDecl> parseMethodDecl(std::string ParentName,
-                                            SrcLocation ParentLoc);
+                                            SrcLocation ParentLoc, bool InEnum);
 
   //===--------------------------------------------------------------------===//
   // Type System Parsing
@@ -180,7 +180,7 @@ private:
   std::unique_ptr<Expr> parseInfix(const Token &Op, std::unique_ptr<Expr> Expr,
                                    int RBp);
   std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
-  std::unique_ptr<StructLiteral> parseStructLiteral(std::unique_ptr<Expr> Expr);
+  std::unique_ptr<CustomTypeCtor> parseCustomInit(std::unique_ptr<Expr> Expr);
   std::unique_ptr<FieldInitExpr> parseFieldInit();
   std::unique_ptr<MatchExpr> parseMatchExpr();
 
