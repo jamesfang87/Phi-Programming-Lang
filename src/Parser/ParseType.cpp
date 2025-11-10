@@ -51,7 +51,7 @@ std::optional<Type> Parser::parseType() {
     return Type::makeTuple(*Temp, Location);
   }
 
-  Indirection Kind;
+  Indirection Kind = Indirection::None;
   SrcLocation IndrectionLocation;
   switch (peekToken().getKind()) {
   case TokenKind::Amp:

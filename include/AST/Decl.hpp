@@ -43,7 +43,6 @@ public:
 
   Decl(Kind K, SrcLocation Loc, std::string Id)
       : DeclKind(K), Location(std::move(Loc)), Id(std::move(Id)) {}
-
   virtual ~Decl() = default;
 
   //===--------------------------------------------------------------------===//

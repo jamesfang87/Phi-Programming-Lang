@@ -2,6 +2,7 @@
 
 #include "Lexer/TokenKind.hpp"
 #include <memory>
+#include <print>
 
 namespace phi {
 
@@ -14,7 +15,7 @@ namespace phi {
  * @param diagnostic_manager Shared diagnostic manager
  */
 Parser::Parser(const std::string_view Src, const std::string_view Path,
-               std::vector<Token> &Tokens,
+               std::vector<Token> Tokens,
                std::shared_ptr<DiagnosticManager> DiagnosticMan)
     : Path(Path), Tokens(Tokens), TokenIt(Tokens.begin()),
       DiagnosticsMan(std::move(DiagnosticMan)) {
@@ -37,7 +38,7 @@ Parser::Parser(const std::string_view Src, const std::string_view Path,
 std::vector<std::unique_ptr<Decl>> Parser::parse() {
   while (!atEOF()) {
     std::unique_ptr<Decl> Res = nullptr;
-    switch (peekToken().getKind()) {
+    switch (peekKind()) {
     case TokenKind::FunKw:
       Res = parseFunDecl();
       break;

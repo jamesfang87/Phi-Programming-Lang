@@ -90,7 +90,7 @@ public:
   InferRes visit(BinaryOp &E);
   InferRes visit(UnaryOp &E);
   InferRes visit(CustomTypeCtor &E);
-  InferRes visit(FieldInitExpr &E);
+  InferRes visit(MemberInitExpr &E);
   InferRes visit(FieldAccessExpr &E);
   InferRes visit(MethodCallExpr &E);
 

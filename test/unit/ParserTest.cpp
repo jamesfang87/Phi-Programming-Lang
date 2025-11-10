@@ -1,7 +1,7 @@
 /*
+
 #include <gtest/gtest.h>
 #include <memory>
-#include <sstream>
 #include <string>
 
 #include "Diagnostics/DiagnosticManager.hpp"
@@ -40,7 +40,9 @@ protected:
 
 TEST_F(ParserTest, ParseSimpleStructCtor) {
   std::string Code = R"(
+  fun main() {
       const v = Vector2D { x = 1.0, y = 2.0 };
+  }
   )";
 
   auto Parser = makeParser(Code);
@@ -51,8 +53,10 @@ TEST_F(ParserTest, ParseSimpleStructCtor) {
 
 TEST_F(ParserTest, ParseNestedStructCtor) {
   std::string Code = R"(
+  fun main() {
       const rect = Rect { top_left = Point { x = 0, y = 0 },
                           bottom_right = Point { x = 5, y = 5 } };
+  }
   )";
 
   auto Parser = makeParser(Code);
@@ -63,7 +67,9 @@ TEST_F(ParserTest, ParseNestedStructCtor) {
 
 TEST_F(ParserTest, ParseEnumVariantCtorWithFields) {
   std::string Code = R"(
+  fun main() {
       const r = Shape { Rectangle { l = 4, w = 5 } };
+  }
   )";
 
   auto Parser = makeParser(Code);
@@ -74,7 +80,9 @@ TEST_F(ParserTest, ParseEnumVariantCtorWithFields) {
 
 TEST_F(ParserTest, ParseEnumVariantCtorWithValue) {
   std::string Code = R"(
+  fun main() {
       const c = Shape { Circle = 4 };
+  }
   )";
 
   auto Parser = makeParser(Code);
@@ -85,7 +93,9 @@ TEST_F(ParserTest, ParseEnumVariantCtorWithValue) {
 
 TEST_F(ParserTest, ParseEnumVariantCtorWithTupleLikeValue) {
   std::string Code = R"(
+  fun main() {
       const t = Shape { Triangle = (1, 2) };
+  }
   )";
 
   auto Parser = makeParser(Code);
@@ -94,9 +104,11 @@ TEST_F(ParserTest, ParseEnumVariantCtorWithTupleLikeValue) {
   ASSERT_NE(ExprAST, nullptr);
 }
 
-TEST_F(ParserTest, ParseCustomTypeCtorError_MissingClosingBrace) {
+TEST_F(ParserTest, ParseCustomTypeCtorErrorMissingClosingBrace) {
   std::string Code = R"(
+  fun main() {
       const bad = Shape { Circle = 10;
+  }
   )"; // missing '}' should produce a parser error
 
   auto Parser = makeParser(Code);
@@ -105,9 +117,11 @@ TEST_F(ParserTest, ParseCustomTypeCtorError_MissingClosingBrace) {
   EXPECT_EQ(ExprAST, nullptr) << "Expected parse failure due to missing '}'";
 }
 
-TEST_F(ParserTest, ParseCustomTypeCtorError_UnexpectedToken) {
+TEST_F(ParserTest, ParseCustomTypeCtorErrorUnexpectedToken) {
   std::string Code = R"(
+  fun main() {
       const bad = Vector2D { x == 10, y = 5 };
+  }
   )"; // '==' instead of '=' should fail
 
   auto Parser = makeParser(Code);
@@ -116,10 +130,12 @@ TEST_F(ParserTest, ParseCustomTypeCtorError_UnexpectedToken) {
   EXPECT_EQ(ExprAST, nullptr) << "Expected parse failure due to bad syntax";
 }
 
-TEST_F(ParserTest, ParseAmbiguousCtor_EnumVsStruct) {
+TEST_F(ParserTest, ParseWithMissingEqualSign) {
   std::string Code = R"(
-      const weird = Shape { x = 10 };
-  )"; // neither a valid enum variant nor a struct field
+  fun main() {
+      const weird = Shape { x  10 };
+  }
+  )";
 
   auto Parser = makeParser(Code);
   auto ExprAST = Parser->parse();
