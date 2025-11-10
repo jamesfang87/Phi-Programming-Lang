@@ -36,7 +36,7 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   case TokenKind::OpenParen:
     return parseGroupingOrTupleLiteral();
   case TokenKind::OpenBrace: {
-    auto Inits = parseList<FieldInitExpr>(
+    auto Inits = parseList<MemberInitExpr>(
         TokenKind::OpenBrace, TokenKind::CloseBrace, &Parser::parseFieldInit);
 
     return (!Inits)

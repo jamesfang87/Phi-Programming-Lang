@@ -3,6 +3,7 @@
 #include <cassert>
 #include <memory>
 #include <optional>
+#include <print>
 #include <utility>
 
 #include "AST/Decl.hpp"
@@ -123,7 +124,7 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
  *
  */
 std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
-  bool IsConst;
+  bool IsConst = true;
   if (peekToken().getKind() == TokenKind::ConstKw) {
     IsConst = true;
     advanceToken();
@@ -135,11 +136,11 @@ std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
     return nullptr;
   }
 
-  auto binding = parseTypedBinding();
-  if (!binding)
+  auto Binding = parseTypedBinding();
+  if (!Binding)
     return nullptr;
 
-  auto [Loc, Id, DeclType] = *binding;
+  auto [Loc, Id, DeclType] = *Binding;
   return std::make_unique<ParamDecl>(Loc, Id, DeclType, IsConst);
 }
 

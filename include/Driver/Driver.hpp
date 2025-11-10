@@ -35,8 +35,6 @@ public:
   PhiCompiler(std::string Src, std::string Path,
               std::shared_ptr<DiagnosticManager> DiagnosticsMan);
 
-  ~PhiCompiler();
-
   //===--------------------------------------------------------------------===//
   // Main Compilation Entry Point
   //===--------------------------------------------------------------------===//
