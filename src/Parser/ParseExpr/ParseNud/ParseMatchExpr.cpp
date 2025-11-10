@@ -1,31 +1,30 @@
-#include "AST/Stmt.hpp"
-#include "Diagnostics/DiagnosticBuilder.hpp"
-#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
 #include <memory>
-#include <print>
 #include <vector>
 
 #include <llvm/Support/Casting.h>
 
 #include "AST/Expr.hpp"
+#include "AST/Stmt.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
+#include "Lexer/TokenKind.hpp"
 
 namespace phi {
 std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
   const auto Location = peekToken(-1).getStart(); // def safe
 
-  // parse the Expr which we are matching on
+  // parse the scrutinee
   NoStructInit = true;
-  auto Value = parseExpr();
+  auto Scrutinee = parseExpr();
   NoStructInit = false;
 
   if (!matchToken(TokenKind::OpenBrace)) {
     emitUnexpectedTokenError(peekToken());
   }
 
-  std::vector<MatchExpr::Case> Cases;
+  std::vector<MatchExpr::Arm> Arms;
   while (peekKind() != TokenKind::CloseBrace) {
     // TODO: Add more complex pattern matching
     std::vector<std::unique_ptr<Expr>> Patterns;
@@ -45,7 +44,7 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
       if (Body->getStmts().empty())
         break;
 
-      if (auto S = llvm::dyn_cast<ExprStmt>(Body->getStmts().back().get())) {
+      if (auto *S = llvm::dyn_cast<ExprStmt>(Body->getStmts().back().get())) {
         Return = &S->getExpr();
       } else {
         error("Invalid expression as return value in match case")
@@ -57,10 +56,10 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
     default:
       auto Res = parseExpr();
       std::vector<std::unique_ptr<Stmt>> TempBlock;
-      auto TempStmt =
+      auto Temp =
           std::make_unique<ExprStmt>(Res->getLocation(), std::move(Res));
-      Return = &TempStmt->getExpr();
-      TempBlock.push_back(std::move(TempStmt));
+      Return = &Temp->getExpr();
+      TempBlock.push_back(std::move(Temp));
       Body = std::make_unique<Block>(std::move(TempBlock));
 
       // now we must check whether the next token is
@@ -75,16 +74,16 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
       }
     }
 
-    Cases.push_back(MatchExpr::Case{.Patterns = std::move(Patterns),
-                                    .Body = std::move(Body),
-                                    .Return = Return});
+    Arms.push_back(MatchExpr::Arm{.Patterns = std::move(Patterns),
+                                  .Body = std::move(Body),
+                                  .Return = Return});
   }
 
   if (!matchToken(TokenKind::CloseBrace)) {
     emitUnexpectedTokenError(peekToken());
   }
 
-  return std::make_unique<MatchExpr>(Location, std::move(Value),
-                                     std::move(Cases));
+  return std::make_unique<MatchExpr>(Location, std::move(Scrutinee),
+                                     std::move(Arms));
 }
 } // namespace phi

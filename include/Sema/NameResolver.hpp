@@ -40,6 +40,7 @@ public:
   //===--------------------------------------------------------------------===//
   // Type Visitor Method -> return bool (success/failure)
   //===--------------------------------------------------------------------===//
+
   bool visit(std::optional<Type> MaybeType);
   bool resolveTypeByName(const phi::Type &Type, const std::string &Name);
 
@@ -81,7 +82,7 @@ public:
   bool visit(BinaryOp &E);
   bool visit(UnaryOp &E);
   bool visit(CustomTypeCtor &E);
-  bool visit(FieldInitExpr &E);
+  bool visit(MemberInitExpr &E);
   bool visit(FieldAccessExpr &E);
   bool visit(MethodCallExpr &E);
 
@@ -112,11 +113,14 @@ private:
   FunDecl *CurrentFun = nullptr;
   std::shared_ptr<DiagnosticManager> Diags;
 
+  bool resolveStructCtor(StructDecl *Found, CustomTypeCtor &E);
+  bool resolveEnumCtor(EnumDecl *Found, CustomTypeCtor &E);
+
   //===--------------------------------------------------------------------===//
   // Error Reporting Utilities
   //===--------------------------------------------------------------------===//
 
-  void emitError(Diagnostic &&diagnostic) { Diags->emit(diagnostic); }
+  void emitError(Diagnostic &Diagnostic) { Diags->emit(Diagnostic); }
   void emitRedefinitionError(std::string_view SymbolKind, Decl *FirstDecl,
                              Decl *Redecl);
 
@@ -128,8 +132,9 @@ private:
     Variable,
     Function,
     Type,
-    Struct,
+    Custom,
     Field,
+    Variant,
   };
 
   //===--------------------------------------------------------------------===//
@@ -150,12 +155,14 @@ private:
     case NotFoundErrorKind::Type:
       emitTypeNotFound(PrimaryId, PrimaryLoc);
       break;
-    case NotFoundErrorKind::Struct:
-      emitStructNotFound(PrimaryId, PrimaryLoc);
+    case NotFoundErrorKind::Custom:
+      emitCustomTypeNotFound(PrimaryId, PrimaryLoc);
       break;
     case NotFoundErrorKind::Field:
       emitFieldNotFound(PrimaryId, PrimaryLoc, ContextId);
       break;
+    case NotFoundErrorKind::Variant:
+      emitVariantNotFound(PrimaryId, PrimaryLoc, ContextId);
     }
   }
 
@@ -166,9 +173,13 @@ private:
   void emitVariableNotFound(std::string_view VarId, const SrcLocation &Loc);
   void emitFunctionNotFound(std::string_view FunId, const SrcLocation &Loc);
   void emitTypeNotFound(std::string_view TypeName, const SrcLocation &Loc);
-  void emitStructNotFound(std::string_view StructId, const SrcLocation &Loc);
+  void emitCustomTypeNotFound(std::string_view StructId,
+                              const SrcLocation &Loc);
   void emitFieldNotFound(std::string_view FieldId, const SrcLocation &RefLoc,
                          const std::optional<std::string> &StructId);
+  void emitVariantNotFound(std::string_view VariantId,
+                           const SrcLocation &RefLoc,
+                           const std::optional<std::string> &EnumId);
 };
 
 } // namespace phi

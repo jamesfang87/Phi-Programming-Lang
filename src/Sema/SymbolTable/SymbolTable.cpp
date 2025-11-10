@@ -1,6 +1,5 @@
 #include "Sema/SymbolTable.hpp"
 
-#include <optional>
 #include <string>
 
 #include <llvm/Support/Casting.h>
