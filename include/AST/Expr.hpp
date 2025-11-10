@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cassert>
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -56,7 +55,7 @@ public:
     FunCallKind,
     BinaryOpKind,
     UnaryOpKind,
-    FieldInitKind,
+    MemberInitKind,
     FieldAccessKind,
     MethodCallKind,
     EnumInitKind,
@@ -68,7 +67,7 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  explicit Expr(Kind K, SrcLocation Location,
+  explicit Expr(const Kind K, SrcLocation Location,
                 std::optional<Type> Ty = std::nullopt)
       : ExprKind(K), Location(std::move(Location)), Ty(std::move(Ty)) {}
 
@@ -108,7 +107,10 @@ public:
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
-  static bool classof(const Expr *E) { return true; }
+  static bool classof(const Expr *E) {
+    (void)E;
+    return true;
+  }
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
@@ -117,7 +119,7 @@ public:
   virtual void emit(int Level) const = 0;
 
 private:
-  const Kind ExprKind;
+  Kind ExprKind;
 
 protected:
   SrcLocation Location;
@@ -181,7 +183,7 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  FloatLiteral(SrcLocation Location, const double Value);
+  FloatLiteral(SrcLocation Location, double Value);
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -275,7 +277,7 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  CharLiteral(SrcLocation Location, const char Value);
+  CharLiteral(SrcLocation Location, char Value);
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -370,15 +372,15 @@ public:
   //===--------------------------------------------------------------------===//
 
   RangeLiteral(SrcLocation Location, std::unique_ptr<Expr> Start,
-               std::unique_ptr<Expr> End, const bool Inclusive);
+               std::unique_ptr<Expr> End, bool Inclusive);
   ~RangeLiteral() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] Expr &getStart() { return *Start; }
-  [[nodiscard]] Expr &getEnd() { return *End; }
+  [[nodiscard]] Expr &getStart() const { return *Start; }
+  [[nodiscard]] Expr &getEnd() const { return *End; }
   [[nodiscard]] bool isInclusive() const { return Inclusive; }
 
   //===--------------------------------------------------------------------===//
@@ -655,7 +657,7 @@ public:
   // Constructors & Destructors
   //===-----------------------------------------------------------------------//
 
-  UnaryOp(std::unique_ptr<Expr> Operand, const Token &Op, const bool IsPrefix);
+  UnaryOp(std::unique_ptr<Expr> Operand, const Token &Op, bool IsPrefix);
   ~UnaryOp() override;
 
   //===--------------------------------------------------------------------===//
@@ -705,21 +707,21 @@ private:
 // Struct and Field Expression Classes
 //===----------------------------------------------------------------------===//
 
-class FieldInitExpr final : public Expr {
+class MemberInitExpr final : public Expr {
 public:
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
   //===-----------------------------------------------------------------------//
 
-  FieldInitExpr(SrcLocation Location, std::string FieldId,
-                std::unique_ptr<Expr> Init);
-  ~FieldInitExpr() override;
+  MemberInitExpr(SrcLocation Location, std::string FieldId,
+                 std::unique_ptr<Expr> Init);
+  ~MemberInitExpr() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===-----------------------------------------------------------------------//
 
-  [[nodiscard]] const std::string &getFieldId() const { return FieldId; }
+  [[nodiscard]] const std::string &getId() const { return FieldId; }
   [[nodiscard]] FieldDecl *getDecl() const { return FieldDecl; }
   [[nodiscard]] Expr *getInitValue() const { return InitValue.get(); }
 
@@ -749,7 +751,7 @@ public:
   //===-----------------------------------------------------------------------//
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Kind::FieldInitKind;
+    return E->getKind() == Kind::MemberInitKind;
   }
 
   //===--------------------------------------------------------------------===//
@@ -772,7 +774,7 @@ private:
 class CustomTypeCtor final : public Expr {
 public:
   CustomTypeCtor(SrcLocation Location, std::optional<std::string> TypeName,
-                 std::vector<std::unique_ptr<FieldInitExpr>> Inits);
+                 std::vector<std::unique_ptr<MemberInitExpr>> Inits);
   ~CustomTypeCtor() override;
 
   enum class InterpretAs : uint8_t { Struct, Enum, Unknown };
@@ -783,7 +785,7 @@ public:
 
   [[nodiscard]] const auto &getTypeName() const { return *TypeName; }
   [[nodiscard]] const auto &getInits() const { return Inits; }
-  [[nodiscard]] const auto &getKind() const { return InterpretAs; }
+  [[nodiscard]] const auto &getInterpretation() const { return InterpretAs; }
   [[nodiscard]] const auto &getDecl() const { return Decl; }
   [[nodiscard]] bool isAnonymous() const { return TypeName.has_value(); }
 
@@ -796,6 +798,16 @@ public:
                                                  "of CustomTypeCtor");
     InterpretAs = InterpretAs::Enum;
     Decl = Found;
+  }
+
+  void setActiveVariant(VariantDecl *Variant) {
+    assert(Variant != nullptr && "Param Variant must not be null");
+    assert(InterpretAs == InterpretAs::Struct && "Interpretation must be enum");
+    assert(std::holds_alternative<EnumDecl *>(getDecl()) &&
+           "Decl must be enum");
+
+    ActiveVariantDecl = Variant;
+    ActiveVariantName = Variant->getId();
   }
 
   void setDecl(StructDecl *Found) {
@@ -836,14 +848,14 @@ public:
 
 private:
   std::optional<std::string> TypeName;
-  std::vector<std::unique_ptr<FieldInitExpr>> Inits;
+  std::vector<std::unique_ptr<MemberInitExpr>> Inits;
 
   InterpretAs InterpretAs = InterpretAs::Unknown;
   std::variant<StructDecl *, EnumDecl *, std::monostate> Decl =
       std::monostate();
 
   std::optional<std::string> ActiveVariantName;
-  VariantDecl *ActiveDecl = nullptr;
+  VariantDecl *ActiveVariantDecl = nullptr;
 };
 
 //===----------------------------------------------------------------------===//
@@ -975,7 +987,7 @@ private:
 
 class MatchExpr final : public Expr {
 public:
-  struct Case {
+  struct Arm {
     std::vector<std::unique_ptr<Expr>> Patterns;
     std::unique_ptr<Block> Body;
     Expr *Return;
@@ -986,15 +998,15 @@ public:
   //===-----------------------------------------------------------------------//
 
   MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Value,
-            std::vector<Case> Cases);
+            std::vector<Arm> Cases);
   ~MatchExpr() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===-----------------------------------------------------------------------//
 
-  [[nodiscard]] Expr *getValue() const { return Value.get(); }
-  [[nodiscard]] auto &getCases() const { return Cases; }
+  [[nodiscard]] Expr *getValue() const { return Scrutinee.get(); }
+  [[nodiscard]] auto &getCases() const { return Arms; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -1026,8 +1038,8 @@ public:
   void emit(int Level) const override;
 
 private:
-  std::unique_ptr<Expr> Value;
-  std::vector<Case> Cases;
+  std::unique_ptr<Expr> Scrutinee;
+  std::vector<Arm> Arms;
 };
 
 } // namespace phi

@@ -50,34 +50,10 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  /**
-   * @brief Retrieves token's start position
-   * @return Constant reference to start SrcLocation
-   */
   [[nodiscard]] const SrcLocation &getStart() const { return Start; }
-
-  /**
-   * @brief Retrieves token's end position
-   * @return Constant reference to end SrcLocation
-   */
   [[nodiscard]] const SrcLocation &getEnd() const { return End; }
-
-  /**
-   * @brief Retrieves token type
-   * @return TokenType enumeration value
-   */
   [[nodiscard]] TokenKind getKind() const { return Kind; }
-
-  /**
-   * @brief Retrieves token type name
-   * @return Human-readable type name string
-   */
   [[nodiscard]] std::string getName() const { return TokenKindToStr(Kind); }
-
-  /**
-   * @brief Retrieves original source text
-   * @return Lexeme string as it appears in source
-   */
   [[nodiscard]] std::string getLexeme() const { return Lexeme; }
 
   //===--------------------------------------------------------------------===//

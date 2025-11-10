@@ -57,6 +57,8 @@ std::vector<Token> Lexer::scan() {
     // finally, scan the token
     Tokens.push_back(scanToken());
   }
+
+  Tokens.push_back(makeToken(TokenKind::Eof));
   return Tokens;
 }
 

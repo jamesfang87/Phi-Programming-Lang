@@ -19,7 +19,7 @@ void NameResolver::emitRedefinitionError(std::string_view SymbolKind,
 void NameResolver::emitVariableNotFound(std::string_view VarId,
                                         const SrcLocation &Loc) {
 
-  auto BestMatch = SymbolTab.getClosestVar(std::string(VarId));
+  auto *BestMatch = SymbolTab.getClosestVar(std::string(VarId));
   std::string Hint;
   if (BestMatch) {
     Hint = std::format("Did you mean `{}`?", BestMatch->getId());
@@ -49,18 +49,17 @@ void NameResolver::emitTypeNotFound(std::string_view TypeName,
       .emit(*Diags);
 }
 
-void NameResolver::emitStructNotFound(std::string_view StructId,
-                                      const SrcLocation &Loc) {
-  auto BestMatch = SymbolTab.getClosestStruct(std::string(StructId));
+void NameResolver::emitCustomTypeNotFound(std::string_view Id,
+                                          const SrcLocation &Loc) {
+  auto *BestMatch = SymbolTab.getClosestCustom(std::string(Id));
   std::string Hint;
   if (BestMatch) {
     Hint = std::format("Did you mean `{}`?", BestMatch->getId());
   }
 
-  auto PrimaryMsg = std::format("No declaration for struct `{}` was found. {}",
-                                StructId, Hint);
-  auto Diag = error(std::format("Could not find struct `{}`", StructId))
-                  .with_primary_label(Loc, PrimaryMsg);
+  auto Msg = std::format("No declaration for id `{}` was found. {}", Id, Hint);
+  auto Diag = error(std::format("Could not find id `{}`", Id))
+                  .with_primary_label(Loc, Msg);
 
   Diag.emit(*Diags);
 }
@@ -82,9 +81,26 @@ void NameResolver::emitFieldNotFound(
   Diag.emit(*Diags);
 }
 
+void NameResolver::emitVariantNotFound(
+    std::string_view VariantId, const SrcLocation &RefLoc,
+    const std::optional<std::string> &EnumId) {
+  std::string PrimaryMsg;
+  if (EnumId) {
+    PrimaryMsg = std::format("Enum `{}` does not declare a variant named `{}`.",
+                             *EnumId, VariantId);
+  } else {
+    PrimaryMsg = std::format("No variant named `{}` found.", VariantId);
+  }
+
+  auto Diag = error(std::format("Could not find variant `{}`", VariantId))
+                  .with_primary_label(RefLoc, PrimaryMsg);
+
+  Diag.emit(*Diags);
+}
+
 void NameResolver::emitFunctionNotFound(std::string_view FunId,
                                         const SrcLocation &Loc) {
-  auto BestMatch = SymbolTab.getClosestFun(std::string(FunId));
+  auto *BestMatch = SymbolTab.getClosestFun(std::string(FunId));
   std::string Hint;
   if (BestMatch) {
     Hint = std::format("Did you mean `{}`?", BestMatch->getId());

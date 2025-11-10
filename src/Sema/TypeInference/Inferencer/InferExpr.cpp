@@ -222,7 +222,7 @@ TypeInferencer::InferRes TypeInferencer::visit(CustomTypeCtor &E) {
   return {AllSubsts, Struct};
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(FieldInitExpr &E) {
+TypeInferencer::InferRes TypeInferencer::visit(MemberInitExpr &E) {
   auto [Subst, Type] = visit(*E.getInitValue());
   recordSubst(Subst);
   annotate(E, Type);

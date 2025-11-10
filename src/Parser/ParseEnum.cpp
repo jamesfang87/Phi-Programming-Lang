@@ -96,49 +96,11 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
       Token Opening = peekToken();
       SrcLocation StructLoc = Opening.getStart();
 
-      // Parser for a single anonymous struct field:
-      // returns tuple(SrcLocation FieldLoc, std::string Name, Type FieldType)
-      auto FieldParser = [&](Parser *P)
-          -> std::optional<std::tuple<SrcLocation, std::string, Type>> {
-        // Expect identifier for field name
-        if (P->peekKind() != TokenKind::Identifier) {
-          P->emitUnexpectedTokenError(P->peekToken(), {"identifier"});
-          P->syncTo(
-              {TokenKind::Identifier, TokenKind::Comma, TokenKind::CloseBrace});
-          return std::nullopt;
-        }
-
-        Token NameTok = P->advanceToken(); // consume field name
-        SrcLocation FieldLoc = NameTok.getStart();
-        std::string FieldName = NameTok.getLexeme();
-
-        // Expect ':'
-        if (!P->matchToken(TokenKind::Colon)) {
-          error("expected ':' in anonymous struct field")
-              .with_primary_label(spanFromToken(P->peekToken()),
-                                  "missing ':' here")
-              .emit(*P->DiagnosticsMan);
-          P->syncTo({TokenKind::Comma, TokenKind::CloseBrace});
-        }
-
-        // Parse the field type
-        auto FieldTy = P->parseType();
-        if (!FieldTy) {
-          // recovery: skip to next comma or closing brace
-          P->syncTo({TokenKind::Comma, TokenKind::CloseBrace});
-          return std::nullopt;
-        }
-
-        return std::make_optional(
-            std::make_tuple(FieldLoc, std::move(FieldName), *FieldTy));
-      };
-
       // Parse the list of fields inside { ... }.
       // parseValueList will consume the opening and closing braces.
-      auto FieldsRes =
-          parseValueList<std::tuple<SrcLocation, std::string, Type>>(
-              TokenKind::OpenBrace, TokenKind::CloseBrace, FieldParser,
-              "anonymous struct fields");
+      auto FieldsRes = parseValueList<TypedBinding>(
+          TokenKind::OpenBrace, TokenKind::CloseBrace,
+          &Parser::parseTypedBinding, "anonymous struct fields");
 
       if (!FieldsRes) {
         // failed to parse anonymous struct fields; leave DeclType as nullopt
@@ -147,16 +109,14 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
         // Convert parsed tuples into FieldDecls
         std::vector<std::unique_ptr<FieldDecl>> Fields;
         uint32_t FieldIndex = 0;
-        for (auto &Tup : *FieldsRes) {
-          SrcLocation FLoc = std::get<0>(Tup);
-          std::string FName = std::get<1>(Tup);
-          Type FType = std::get<2>(Tup);
+        for (auto &Field : *FieldsRes) {
+          auto [Location, Name, Type] = Field;
 
           // No initializer for anonymous struct fields; everything is public
           std::unique_ptr<Expr> Init = nullptr;
           bool IsPrivate = false;
           Fields.push_back(std::make_unique<FieldDecl>(
-              FLoc, std::move(FName), FType, std::move(Init), IsPrivate,
+              Location, std::move(Name), Type, std::move(Init), IsPrivate,
               FieldIndex++));
         }
 
@@ -164,11 +124,7 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
         static uint32_t AnonStructCounter = 0;
         std::string AnonName =
             "@_anon_struct_" + std::to_string(++AnonStructCounter);
-
-        // No methods for anonymous struct
         std::vector<MethodDecl> Methods;
-
-        // Insert the generated StructDecl into the AST
         Ast.push_back(std::make_unique<StructDecl>(
             StructLoc, AnonName, std::move(Fields), std::move(Methods)));
 
