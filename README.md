@@ -110,12 +110,12 @@ Here we define an `Vector2D` struct with two float fields. Methods are declared 
 You can construct a struct with field initializers:
 
 ```phi
-const force = Vector2D{ x = 1.0, y = 1.0 };
+const force = Vector2D { x = 1.0, y = 1.0 };
 ```
 
 And access fields or call methods:
 
 ```phi
-force.x;           // field access
+force.x;                 // field access
 force.dot(other_force);  // method call
 ```

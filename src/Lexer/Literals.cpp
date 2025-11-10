@@ -37,7 +37,7 @@ Token Lexer::parseNumber() {
     return makeToken(TokenKind::IntLiteral);
   }
 
-  // TODO: implement exponents
+  // TODO(jamesfang): implement exponents
   return makeToken(TokenKind::FloatLiteral);
 }
 
@@ -183,7 +183,7 @@ Token Lexer::parseChar() {
     return makeToken(TokenKind::Error);
   }
 
-  char C;
+  char C = 0;
   if (peekChar() != '\\') {
     C = advanceChar();
   } else {

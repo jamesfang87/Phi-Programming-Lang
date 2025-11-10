@@ -23,8 +23,6 @@ PhiCompiler::PhiCompiler(std::string Src, std::string Path,
     : SrcFile(std::move(Src)), Path(std::move(Path)),
       DiagnosticMan(std::move(DiagMan)) {}
 
-PhiCompiler::~PhiCompiler() = default;
-
 bool PhiCompiler::compile() {
   auto Tokens = Lexer(SrcFile, Path, DiagnosticMan).scan();
   if (DiagnosticMan->error_count() > 0) {
