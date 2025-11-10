@@ -169,9 +169,9 @@ llvm::Value *RangeLiteral::accept(CodeGen &G) { return G.visit(*this); }
 // Utility Methods
 void RangeLiteral::emit(int Level) const {
   std::println("{}RangeLiteral:", indent(Level));
-  std::println("{}  start:", indent(Level));
+  std::println("{}Start:", indent(Level + 1));
   Start->emit(Level + 2);
-  std::println("{}  end:", indent(Level));
+  std::println("{}End:", indent(Level + 1));
   End->emit(Level + 2);
 }
 
@@ -196,7 +196,7 @@ llvm::Value *TupleLiteral::accept(CodeGen &G) { return G.visit(*this); }
 // Utility Methods
 void TupleLiteral::emit(int Level) const {
   std::println("{}TupleLiteral:", indent(Level));
-  std::println("{}  Elements:", indent(Level));
+  std::println("{}Elements:", indent(Level + 1));
   for (auto &E : Elements) {
     E->emit(Level + 2);
   }
@@ -258,10 +258,10 @@ llvm::Value *FunCallExpr::accept(CodeGen &G) { return G.visit(*this); }
 void FunCallExpr::emit(int Level) const {
   std::println("{}FunCallExpr", indent(Level));
   if (getDecl() != nullptr)
-    std::println("{}  calling: {}", indent(Level), getDecl()->getId());
-  std::println("{}  callee:", indent(Level));
+    std::println("{}Calling: {}", indent(Level + 1), getDecl()->getId());
+  std::println("{}Callee:", indent(Level + 1));
   Callee->emit(Level + 2);
-  std::println("{}  args:", indent(Level));
+  std::println("{}Args:", indent(Level + 1));
   for (const auto &arg : Args) {
     arg->emit(Level + 2);
   }
@@ -288,12 +288,12 @@ llvm::Value *BinaryOp::accept(CodeGen &G) { return G.visit(*this); }
 // Utility Methods
 void BinaryOp::emit(int Level) const {
   std::println("{}BinaryOp: {}", indent(Level), TokenKindToStr(Op));
-  std::println("{}  lhs:", indent(Level));
+  std::println("{}Lhs:", indent(Level + 1));
   Lhs->emit(Level + 2);
-  std::println("{}  rhs:", indent(Level));
+  std::println("{}Rhs:", indent(Level + 1));
   Rhs->emit(Level + 2);
   if (Ty.has_value()) {
-    std::println("{}  type: {}", indent(Level), Ty.value().toString());
+    std::println("{}Type: {}", indent(Level + 1), Ty.value().toString());
   }
 }
 
@@ -318,7 +318,7 @@ llvm::Value *UnaryOp::accept(CodeGen &G) { return G.visit(*this); }
 // Utility Methods
 void UnaryOp::emit(int Level) const {
   std::println("{}UnaryOp: {}", indent(Level), TokenKindToStr(Op));
-  std::println("{}  expr:", indent(Level));
+  std::println("{}Expr:", indent(Level + 1));
   Operand->emit(Level + 2);
 }
 
@@ -327,24 +327,24 @@ void UnaryOp::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 // Constructors & Destructors
-FieldInitExpr::FieldInitExpr(SrcLocation Location, std::string FieldId,
-                             std::unique_ptr<Expr> Init)
-    : Expr(Expr::Kind::FieldInitKind, std::move(Location)),
+MemberInitExpr::MemberInitExpr(SrcLocation Location, std::string FieldId,
+                               std::unique_ptr<Expr> Init)
+    : Expr(Expr::Kind::MemberInitKind, std::move(Location)),
       FieldId(std::move(FieldId)), InitValue(std::move(Init)) {}
 
-FieldInitExpr::~FieldInitExpr() = default;
+MemberInitExpr::~MemberInitExpr() = default;
 
 // Visitor Methods
-bool FieldInitExpr::accept(NameResolver &R) { return R.visit(*this); }
-InferRes FieldInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-bool FieldInitExpr::accept(TypeChecker &C) { return C.visit(*this); }
-llvm::Value *FieldInitExpr::accept(CodeGen &G) { return G.visit(*this); }
+bool MemberInitExpr::accept(NameResolver &R) { return R.visit(*this); }
+InferRes MemberInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
+bool MemberInitExpr::accept(TypeChecker &C) { return C.visit(*this); }
+llvm::Value *MemberInitExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
-void FieldInitExpr::emit(int Level) const {
-  std::println("{}FieldInitExpr:", indent(Level));
-  std::println("{}  field: {}", indent(Level), FieldId);
-  std::println("{}  value:", indent(Level));
+void MemberInitExpr::emit(int Level) const {
+  std::println("{}MemberInitExpr:", indent(Level));
+  std::println("{}Member: {}", indent(Level + 1), FieldId);
+  std::println("{}Value:", indent(Level + 1));
   InitValue->emit(Level + 2);
 }
 
@@ -354,7 +354,7 @@ void FieldInitExpr::emit(int Level) const {
 
 CustomTypeCtor::CustomTypeCtor(
     SrcLocation Location, std::optional<std::string> TypeName,
-    std::vector<std::unique_ptr<FieldInitExpr>> Inits)
+    std::vector<std::unique_ptr<MemberInitExpr>> Inits)
     : Expr(Expr::Kind::CustomTypeCtorKind, std::move(Location)),
       TypeName(std::move(TypeName)), Inits(std::move(Inits)) {}
 
@@ -369,8 +369,9 @@ llvm::Value *CustomTypeCtor::accept(CodeGen &G) { return G.visit(*this); }
 // Utility Methods
 void CustomTypeCtor::emit(int Level) const {
   std::println("{}CustomTypeCtor:", indent(Level));
-  std::println("{}  For name: {}", indent(Level), TypeName.value_or("No name"));
-  std::println("{}  Inits:", indent(Level));
+  std::println("{}For name: {}", indent(Level + 1),
+               TypeName.value_or("No name"));
+  std::println("{}Inits:", indent(Level + 1));
   for (const auto &Init : Inits) {
     Init->emit(Level + 2);
   }
@@ -397,10 +398,10 @@ llvm::Value *FieldAccessExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
 void FieldAccessExpr::emit(int Level) const {
-  std::println("{}MemberAccessExpr:", indent(Level));
-  std::println("{}  base:", indent(Level));
+  std::println("{}FieldAccessExpr:", indent(Level));
+  std::println("{}Base:", indent(Level + 1));
   Base->emit(Level + 2);
-  std::println("{}  member: {}", indent(Level), FieldId);
+  std::println("{}Member: {}", indent(Level + 1), FieldId);
 }
 
 //===----------------------------------------------------------------------===//
@@ -430,12 +431,12 @@ llvm::Value *MethodCallExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
 void MethodCallExpr::emit(int Level) const {
-  std::println("{}MemberFunCallExpr:", indent(Level));
-  std::println("{}  base:", indent(Level));
+  std::println("{}MethodCallExpr:", indent(Level));
+  std::println("{}Base:", indent(Level + 1));
   Base->emit(Level + 2);
-  std::println("{}  callee:", indent(Level));
+  std::println("{}Callee:", indent(Level + 1));
   getCallee().emit(Level + 2);
-  std::println("{}  args:", indent(Level));
+  std::println("{}Args:", indent(Level + 1));
   for (const auto &Arg : getArgs()) {
     Arg->emit(Level + 2);
   }
@@ -445,28 +446,28 @@ void MethodCallExpr::emit(int Level) const {
 // MatchExpr Implementation
 //===----------------------------------------------------------------------===//
 
-MatchExpr::MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Value,
-                     std::vector<Case> Cases)
+MatchExpr::MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Scrutinee,
+                     std::vector<Arm> Arms)
     : Expr(Expr::Kind::MatchExprKind, std::move(Location)),
-      Value(std::move(Value)), Cases(std::move(Cases)) {}
+      Scrutinee(std::move(Scrutinee)), Arms(std::move(Arms)) {}
 
 MatchExpr::~MatchExpr() = default;
 
 void MatchExpr::emit(int Level) const {
-  std::println("{}Match:", indent(Level));
-  std::println("{}  Value: ", indent(Level));
-  Value->emit(Level + 2);
-  std::println("{}  Cases: ", indent(Level));
-  for (const auto &Case : Cases) {
-    std::println("{}  Patterns: ", indent(Level + 2));
-    for (auto &P : Case.Patterns) {
+  std::println("{}MatchExpr:", indent(Level));
+  std::println("{}Scrutinee: ", indent(Level));
+  Scrutinee->emit(Level + 2);
+  std::println("{}Cases: ", indent(Level + 1));
+  for (const auto &Arm : Arms) {
+    std::println("{}Patterns: ", indent(Level + 3));
+    for (auto &P : Arm.Patterns) {
       P->emit(Level + 4);
     }
-    std::println("{}  Body: ", indent(Level + 2));
-    Case.Body->emit(Level + 4);
+    std::println("{}Body: ", indent(Level + 3));
+    Arm.Body->emit(Level + 4);
 
-    std::println("{}  Return: ", indent(Level + 2));
-    Case.Return->emit(Level + 4);
+    std::println("{}Return: ", indent(Level + 3));
+    Arm.Return->emit(Level + 4);
   }
 }
 

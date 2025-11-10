@@ -14,7 +14,7 @@ bool TypeChecker::visit(CustomTypeCtor &E) {
   return Success;
 }
 
-bool TypeChecker::visit(FieldInitExpr &E) {
+bool TypeChecker::visit(MemberInitExpr &E) {
   assert(E.getInitValue()->hasType());
   assert(E.getDecl());
   assert(E.getDecl()->hasType());

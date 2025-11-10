@@ -19,7 +19,7 @@ namespace {
 /// Generates indentation string for AST dumping
 /// @param Level Current indentation Level
 /// @return String of spaces for indentation
-std::string indent(int Level) { return std::string(Level * 2, ' '); }
+std::string indent(const int Level) { return std::string(Level * 2, ' '); }
 
 } // anonymous namespace
 

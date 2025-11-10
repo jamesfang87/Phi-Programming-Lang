@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -81,8 +82,7 @@ FunDecl *SymbolTable::getClosestFun(const std::string &Undeclared) const {
   std::size_t BestDist = std::numeric_limits<std::size_t>::max();
 
   // Prefer innermost scopes first (iterate from back to front)
-  for (auto ScopeIt = Scopes.rbegin(); ScopeIt != Scopes.rend(); ++ScopeIt) {
-    const auto &ScopeRef = *ScopeIt;
+  for (const auto &ScopeRef : std::ranges::reverse_view(Scopes)) {
     for (const auto &Pair : ScopeRef.Funs) {
       const std::string &CandName = Pair.first;
       std::size_t Dist = damerauLevenshtein(Undeclared, CandName);
@@ -98,14 +98,43 @@ FunDecl *SymbolTable::getClosestFun(const std::string &Undeclared) const {
   return nullptr;
 }
 
-StructDecl *SymbolTable::getClosestStruct(const std::string &Undeclared) const {
-  StructDecl *Best = nullptr;
+Decl *SymbolTable::getClosestCustom(const std::string &Undeclared) const {
+  Decl *Best = nullptr;
   std::size_t BestDist = std::numeric_limits<std::size_t>::max();
 
   // Prefer innermost scopes first (iterate from back to front)
-  for (auto ScopeIt = Scopes.rbegin(); ScopeIt != Scopes.rend(); ++ScopeIt) {
-    const auto &ScopeRef = *ScopeIt;
+  for (const auto &ScopeRef : std::ranges::reverse_view(Scopes)) {
     for (const auto &Pair : ScopeRef.Structs) {
+      const std::string &CandName = Pair.first;
+      std::size_t Dist = damerauLevenshtein(Undeclared, CandName);
+      if (Dist < BestDist) {
+        BestDist = Dist;
+        Best = Pair.second;
+      }
+    }
+
+    for (const auto &Pair : ScopeRef.Enums) {
+      const std::string &CandName = Pair.first;
+      std::size_t Dist = damerauLevenshtein(Undeclared, CandName);
+      if (Dist < BestDist) {
+        BestDist = Dist;
+        Best = Pair.second;
+      }
+    }
+  }
+
+  if (Best && IsDistanceGoodEnough(BestDist, Undeclared))
+    return Best;
+  return nullptr;
+}
+
+EnumDecl *SymbolTable::getClosestEnum(const std::string &Undeclared) const {
+  EnumDecl *Best = nullptr;
+  std::size_t BestDist = std::numeric_limits<std::size_t>::max();
+
+  // Prefer innermost scopes first (iterate from back to front)
+  for (const auto &ScopeRef : std::ranges::reverse_view(Scopes)) {
+    for (const auto &Pair : ScopeRef.Enums) {
       const std::string &CandName = Pair.first;
       std::size_t Dist = damerauLevenshtein(Undeclared, CandName);
       if (Dist < BestDist) {
@@ -125,8 +154,7 @@ ValueDecl *SymbolTable::getClosestVar(const std::string &Undeclared) const {
   std::size_t BestDist = std::numeric_limits<std::size_t>::max();
 
   // Prefer innermost scopes first (iterate from back to front)
-  for (auto ScopeIt = Scopes.rbegin(); ScopeIt != Scopes.rend(); ++ScopeIt) {
-    const auto &ScopeRef = *ScopeIt;
+  for (const auto &ScopeRef : std::ranges::reverse_view(Scopes)) {
     for (const auto &Pair : ScopeRef.Vars) {
       const std::string &CandName = Pair.first;
       std::size_t Dist = damerauLevenshtein(Undeclared, CandName);
@@ -142,24 +170,22 @@ ValueDecl *SymbolTable::getClosestVar(const std::string &Undeclared) const {
   return nullptr;
 }
 
-// Search primitives + structs for the closest type name. Return name if found.
 std::optional<std::string>
 SymbolTable::getClosestType(const std::string &Undeclared) const {
   std::string BestName;
   std::size_t BestDist = std::numeric_limits<std::size_t>::max();
 
   // 1) primitives
-  for (const auto &PN : PrimitiveNames) {
-    std::size_t Dist = damerauLevenshtein(Undeclared, PN);
+  for (const auto &Prim : PrimitiveNames) {
+    std::size_t Dist = damerauLevenshtein(Undeclared, Prim);
     if (Dist < BestDist) {
       BestDist = Dist;
-      BestName = PN;
+      BestName = Prim;
     }
   }
 
   // 2) structs and enums (prefer innermost scopes)
-  for (auto ScopeIt = Scopes.rbegin(); ScopeIt != Scopes.rend(); ++ScopeIt) {
-    const auto &ScopeRef = *ScopeIt;
+  for (const auto &ScopeRef : std::ranges::reverse_view(Scopes)) {
     // Check structs
     for (const auto &Pair : ScopeRef.Structs) {
       const std::string &CandName = Pair.first;

@@ -40,9 +40,9 @@ void Block::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 // Constructors & Destructors
-ReturnStmt::ReturnStmt(SrcLocation Location, std::unique_ptr<Expr> ReturnExpr)
+ReturnStmt::ReturnStmt(SrcLocation Location, std::unique_ptr<Expr> Expr)
     : Stmt(Kind::ReturnStmtKind, std::move(Location)),
-      ReturnExpr(std::move(ReturnExpr)) {}
+      ReturnExpr(std::move(Expr)) {}
 
 ReturnStmt::~ReturnStmt() = default;
 
@@ -64,9 +64,9 @@ void ReturnStmt::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 // Constructors & Destructors
-DeferStmt::DeferStmt(SrcLocation Location, std::unique_ptr<Expr> DeferredExpr)
+DeferStmt::DeferStmt(SrcLocation Location, std::unique_ptr<Expr> Expr)
     : Stmt(Kind::DeferStmtKind, std::move(Location)),
-      DeferredExpr(std::move(DeferredExpr)) {}
+      DeferredExpr(std::move(Expr)) {}
 
 DeferStmt::~DeferStmt() = default;
 

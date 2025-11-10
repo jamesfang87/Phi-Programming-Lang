@@ -84,9 +84,9 @@ public:
   //===--------------------------------------------------------------------===//
 
   FunDecl *lookup(FunCallExpr &Fun);
+  ValueDecl *lookup(DeclRefExpr &Var);
   StructDecl *lookupStruct(const std::string &Id);
   EnumDecl *lookupEnum(const std::string &Id);
-  ValueDecl *lookup(DeclRefExpr &Var);
 
   FunDecl *lookup(FunDecl &Fun);
   StructDecl *lookup(StructDecl &Struct);
@@ -100,10 +100,9 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] FunDecl *getClosestFun(const std::string &Undeclared) const;
-  [[nodiscard]] StructDecl *
-  getClosestStruct(const std::string &Undeclared) const;
+  [[nodiscard]] Decl *getClosestCustom(const std::string &Undeclared) const;
+  [[nodiscard]] EnumDecl *getClosestEnum(const std::string &Undeclared) const;
   [[nodiscard]] ValueDecl *getClosestVar(const std::string &Undeclared) const;
-
   [[nodiscard]] std::optional<std::string>
   getClosestType(const std::string &Undeclared) const;
 

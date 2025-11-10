@@ -126,4 +126,112 @@ bool NameResolver::visit(BinaryOp &E) {
  */
 bool NameResolver::visit(UnaryOp &E) { return visit(E.getOperand()); }
 
+bool NameResolver::visit(CustomTypeCtor &E) {
+  if (E.isAnonymous()) {
+    // we must delegate name resolution to after the type is known
+    return true;
+  }
+
+  StructDecl *Struct = SymbolTab.lookupStruct(E.getTypeName());
+  if (Struct) {
+    E.setDecl(Struct);
+    resolveStructCtor(Struct, E);
+  }
+
+  EnumDecl *Enum = SymbolTab.lookupEnum(E.getTypeName());
+  if (Enum) {
+    E.setDecl(Enum);
+    resolveEnumCtor(Enum, E);
+  }
+
+  emitNotFoundError(NotFoundErrorKind::Custom, E.getTypeName(),
+                    E.getLocation());
+  return false;
+}
+
+bool NameResolver::resolveStructCtor(StructDecl *Found, CustomTypeCtor &E) {
+  assert(Found != nullptr);
+
+  std::unordered_set<std::string> Missing;
+  for (auto &Field : Found->getFields()) {
+    if (!Field->hasInit())
+      Missing.insert(Field->getId());
+  }
+
+  bool Success = true;
+  for (auto &FieldInit : E.getInits()) {
+    if (Found->getField(FieldInit->getId()) == nullptr) {
+      emitNotFoundError(NotFoundErrorKind::Field, FieldInit->getId(),
+                        FieldInit->getLocation());
+    } else {
+      FieldInit->setDecl(Found->getField(FieldInit->getId()));
+      assert(FieldInit->getDecl() != nullptr);
+      Missing.erase(FieldInit->getId());
+    }
+
+    Success = visit(*FieldInit) && Success;
+  }
+
+  if (Missing.empty()) {
+    return Success;
+  }
+
+  std::string Err = "Struct " + Found->getId() + "is missing inits for fields ";
+  for (const std::string &Field : Missing) {
+    Err += Field + ", ";
+  }
+  error(Err.substr(0, Err.size() - 2))
+      .with_primary_label(E.getLocation(), "For this init")
+      .emit(*Diags);
+
+  return false;
+}
+
+bool NameResolver::resolveEnumCtor(EnumDecl *Found, CustomTypeCtor &E) {
+  assert(Found != nullptr);
+  assert(E.getInterpretation() == CustomTypeCtor::InterpretAs::Enum);
+  assert(std::holds_alternative<EnumDecl *>(E.getDecl()));
+  assert(std::get<EnumDecl *>(E.getDecl()) != nullptr);
+
+  // 1. Check that we only specify 1 active variant
+  if (E.getInits().size() != 1) {
+    error("Enums can only hold exactly 1 active variant")
+        .with_primary_label(E.getLocation(), "For this init")
+        .emit(*Diags);
+    return false;
+  }
+
+  // 2. Check that the init is actually a variant of the enum
+  assert(E.getInits().size() == 1);
+  auto &ActiveVariant = *E.getInits().front();
+  auto *VariantDecl = Found->getVariant(ActiveVariant.getId());
+  if (VariantDecl) {
+    E.setActiveVariant(VariantDecl);
+    return true;
+  }
+
+  emitNotFoundError(NotFoundErrorKind::Variant, ActiveVariant.getId(),
+                    E.getLocation(), E.getTypeName());
+
+  return false;
+}
+
+bool NameResolver::visit(MemberInitExpr &E) {
+  assert(E.getInitValue() != nullptr);
+
+  return visit(*E.getInitValue());
+}
+
+bool NameResolver::visit(FieldAccessExpr &E) { return visit(*E.getBase()); }
+
+bool NameResolver::visit(MethodCallExpr &E) {
+  bool Success = visit(*E.getBase());
+
+  for (const auto &Args : E.getArgs()) {
+    Success = visit(*Args) && Success;
+  }
+
+  return Success;
+}
+
 } // namespace phi

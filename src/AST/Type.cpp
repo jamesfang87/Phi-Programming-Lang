@@ -13,26 +13,26 @@
 
 namespace phi {
 
-[[nodiscard]] const Type Type::getUnderlying() const {
+[[nodiscard]] Type Type::getUnderlying() const {
   struct Visitor {
-    const Type operator()(const PrimitiveKind &) const noexcept { return Self; }
+    Type operator()(const PrimitiveKind &) const noexcept { return Self; }
 
-    const Type operator()(const StructType &) const noexcept { return Self; }
+    Type operator()(const StructType &) const noexcept { return Self; }
 
-    const Type operator()(const EnumType &) const noexcept { return Self; }
+    Type operator()(const EnumType &) const noexcept { return Self; }
 
-    const Type operator()(const TupleType &) const noexcept { return Self; }
+    Type operator()(const TupleType &) const noexcept { return Self; }
 
-    const Type operator()(const GenericType &) const noexcept { return Self; }
+    Type operator()(const GenericType &) const noexcept { return Self; }
 
-    const Type operator()(const FunctionType &) const noexcept { return Self; }
+    Type operator()(const FunctionType &) const noexcept { return Self; }
 
-    const Type operator()(const ReferenceType &R) const noexcept {
+    Type operator()(const ReferenceType &R) const noexcept {
       // Recurse until base type is not a pointer/ref
       return R.Pointee->getUnderlying();
     }
 
-    const Type operator()(const PointerType &P) const noexcept {
+    Type operator()(const PointerType &P) const noexcept {
       // Recurse until base type is not a pointer/ref
       return P.Pointee->getUnderlying();
     }
@@ -48,7 +48,7 @@ namespace phi {
 //===----------------------------------------------------------------------===//
 
 std::string Type::toString() const {
-  SrcLocation L = this->Location;
+  const SrcLocation L = this->Location;
   struct Visitor {
     SrcLocation L;
 

@@ -355,7 +355,7 @@ public:
     return std::nullopt;
   }
 
-  [[nodiscard]] const Type getUnderlying() const;
+  [[nodiscard]] Type getUnderlying() const;
 
   //===--------------------------------------------------------------------===//
   // Comparison Operators

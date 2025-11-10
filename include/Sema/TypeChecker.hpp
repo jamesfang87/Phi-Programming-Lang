@@ -47,7 +47,7 @@ public:
   bool visit(BinaryOp &E);
   bool visit(UnaryOp &E);
   bool visit(CustomTypeCtor &E);
-  bool visit(FieldInitExpr &E);
+  bool visit(MemberInitExpr &E);
   bool visit(FieldAccessExpr &E);
   bool visit(MethodCallExpr &E);
 
