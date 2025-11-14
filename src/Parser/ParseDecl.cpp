@@ -3,7 +3,6 @@
 #include <cassert>
 #include <memory>
 #include <optional>
-#include <print>
 #include <utility>
 
 #include "AST/Decl.hpp"

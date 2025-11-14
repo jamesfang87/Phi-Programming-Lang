@@ -1,0 +1,8 @@
+fun print_name(const shape: Shape) {
+    match shape {
+        .Rectangle     => println("rectangle"), 
+        .Circle        => println("circle"),  
+        .Square        => println("square"),
+        .Parallelogram => println("parallelogram")
+    };
+}
