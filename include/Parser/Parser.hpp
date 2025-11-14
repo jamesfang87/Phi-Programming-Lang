@@ -11,6 +11,7 @@
 
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
+#include "AST/Pattern.hpp"
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "Diagnostics/Diagnostic.hpp"
@@ -137,6 +138,16 @@ private:
   std::unique_ptr<ContinueStmt> parseContinueStmt();
 
   //===--------------------------------------------------------------------===//
+  // Pattern Parsing
+  //===--------------------------------------------------------------------===//
+
+  std::optional<Pattern> parsePattern();
+  std::optional<PatternAtomics::SingularPattern> parseSingularPattern();
+  std::optional<PatternAtomics::Wildcard> parseWildcardPattern();
+  std::optional<PatternAtomics::Variant> parseVariantPattern();
+  std::optional<PatternAtomics::Literal> parseLiteralPattern();
+
+  //===--------------------------------------------------------------------===//
   // Expression Parsing
   //===--------------------------------------------------------------------===//
 
@@ -261,12 +272,12 @@ private:
       }
 
       // Check for closing delimiter before comma
-      if (peekToken().getKind() == Closing) {
+      if (peekKind() == Closing) {
         break;
       }
 
       // Handle comma separator
-      if (peekToken().getKind() == TokenKind::Comma) {
+      if (peekKind() == TokenKind::Comma) {
         advanceToken();
       } else {
         emitError(
@@ -280,7 +291,7 @@ private:
     }
 
     // Verify closing delimiter
-    if (atEOF() || peekToken().getKind() != Closing) {
+    if (atEOF() || peekKind() != Closing) {
       emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
       return std::nullopt;
     }
