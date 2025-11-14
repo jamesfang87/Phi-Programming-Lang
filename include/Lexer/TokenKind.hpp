@@ -108,6 +108,8 @@ enum class TokenKind : uint8_t {
   DoubleAmp,  ///< `&&` logical AND
   DoublePipe, ///< `||` logical OR
 
+  Pipe,
+
   // RELATIONAL
   OpenCaret,    ///< `<` less than
   LessEqual,    ///< `<=` less than or equal
@@ -121,6 +123,9 @@ enum class TokenKind : uint8_t {
   // RANGE OPERATORS
   ExclRange, ///< `..` exclusive range
   InclRange, ///< `..=` inclusive range
+
+  // WILDCARD
+  Wildcard, ///< `_`
 
   // LITERALS
   IntLiteral,   ///< Integer literal (e.g., 42)
