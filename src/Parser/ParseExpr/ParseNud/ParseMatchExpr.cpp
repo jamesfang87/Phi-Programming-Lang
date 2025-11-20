@@ -26,10 +26,7 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
 
   std::vector<MatchExpr::Arm> Arms;
   while (peekKind() != TokenKind::CloseBrace) {
-    // TODO: Add more complex pattern matching
-    std::vector<std::unique_ptr<Expr>> Patterns;
-    auto Res = parseExpr();
-    Patterns.push_back(std::move(Res));
+    auto Pattern = parsePattern();
 
     if (!matchToken(TokenKind::FatArrow)) {
       emitUnexpectedTokenError(peekToken());
@@ -40,7 +37,6 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
     switch (peekKind()) {
     case TokenKind::OpenBrace:
       Body = parseBlock();
-      Body->emit(0);
       if (Body->getStmts().empty())
         break;
 
@@ -74,7 +70,7 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
       }
     }
 
-    Arms.push_back(MatchExpr::Arm{.Patterns = std::move(Patterns),
+    Arms.push_back(MatchExpr::Arm{.Pattern = std::move(*Pattern),
                                   .Body = std::move(Body),
                                   .Return = Return});
   }

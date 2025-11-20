@@ -11,6 +11,7 @@
 #include <llvm/IR/Value.h>
 
 #include "AST/Decl.hpp"
+#include "AST/Pattern.hpp"
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "Lexer/Token.hpp"
@@ -988,7 +989,7 @@ private:
 class MatchExpr final : public Expr {
 public:
   struct Arm {
-    std::vector<std::unique_ptr<Expr>> Patterns;
+    Pattern Pattern;
     std::unique_ptr<Block> Body;
     Expr *Return;
   };

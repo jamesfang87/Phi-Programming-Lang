@@ -172,6 +172,9 @@ std::string TokenKindToStr(const TokenKind Kind) {
   case TokenKind::DoublePipe:
     return "OR";
 
+  case TokenKind::Pipe:
+    return "PIPE";
+
   // Relational
   case TokenKind::OpenCaret:
     return "LESS";
@@ -192,6 +195,10 @@ std::string TokenKindToStr(const TokenKind Kind) {
     return "EXCLUSIVE_RANGE";
   case TokenKind::InclRange:
     return "INCLUSIVE_RANGE";
+
+  // Wildcard
+  case TokenKind::Wildcard:
+    return "WILDCARD";
 
   // Literals
   case TokenKind::IntLiteral:

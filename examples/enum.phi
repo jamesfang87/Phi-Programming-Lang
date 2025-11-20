@@ -4,36 +4,36 @@ struct Rectangle {
 }
 
 enum Shape {
-    Rectangle: Rectangle,
-    Circle: f64,
-    Square: { l: f64 },
-    Triangle: (f64, f64)
+    Rectangle: Rectangle;
+    Circle: f64;
+    Square: { l: f64 };
+    Parallelogram: (f64, f64);
 
     fun perimeter(const this) -> f64 {
         return match this {
-            Shape::Rectangle(rect) => rect.l * rect.w
-            Shape::Circle(r)       => 3.14 * r * r
-            Shape::Square(l)       => l * l
-            Shape::Triangle(b, h)  => 0.5 * b * h
+            .Rectangle(rect)     => 2 * (rect.l + rect.w),
+            .Circle(r)           => 2 * 3.14 * r,
+            .Square(l)           => 4 * l,
+            .Parallelogram(b, h) => 2 * (b + h),
         };
     }
 }
 
 fun print_name(const shape: Shape) {
     match shape {
-        Shape::Rectangle => println("rectangle"), 
-        Shape::Circle    => println("circle"),  
-        Shape::Square    => println("square"),
-        Shape::Triangle  => println("triangle")
+        .Rectangle     => println("rectangle"), 
+        .Circle        => println("circle"),  
+        .Square        => println("square"),
+        .Parallelogram => println("parallelogram")
     };
 }
 
 fun area(const shape: Shape) -> f64 {
     return match shape {
-        Shape::Rectangle(rect) => { rect.l * rect.w; } 
-        Shape::Circle(r)       => { 3.14 * r * r; }
-        Shape::Square(l)       => { l * l; }
-        Shape::Triangle(b, h)  => { 0.5 * b * h; }
+        .Rectangle(rect)     => { rect.l * rect.w; } 
+        .Circle(r)           => { 3.14 * r * r; }
+        .Square(l)           => { l * l; }
+        .Parallelogram(b, h) => { b * h; }
     };
 }
 
@@ -41,21 +41,20 @@ fun main() {
     const rect = Shape { Rectangle = Rectangle { l = 4, w = 6} };
     const circle = Shape { Circle = 4 };
     const square = Shape { Square = { l = 4 } };
-    const triangle = Shape { Triangle = (1, 2) };
+    const parallelogram = Shape { Parallelogram = (1, 2) };
 
     rect.perimeter();
     circle.perimeter();
     square.perimeter();
-    triangle.perimeter();
+    parallelogram.perimeter();
 
     print_name(rect);
     print_name(circle);
     print_name(square);
-    print_name(triangle);
+    print_name(parallelogram);
 
     area(rect);
     area(circle);
     area(square);
-    area(triangle);
+    area(parallelogram);
 }
-
