@@ -165,13 +165,10 @@ Token Lexer::scanToken() {
     if (matchNext('|')) {
       return makeToken(TokenKind::DoublePipe);
     } else {
-      error("unexpected character '|'")
-          .with_primary_label(getCurSpan(), "unexpected character")
-          .with_help("use '||' for logical OR operation")
-          .with_note("single '|' is not supported in this language")
-          .emit(*DiagnosticsMan);
-      return makeToken(TokenKind::Error);
+      return makeToken(TokenKind::Pipe);
     }
+  case '_':
+    return makeToken(TokenKind::Wildcard);
 
   case '"':
     return parseString();
@@ -211,11 +208,11 @@ Token Lexer::scanToken() {
 // ERROR HANDLING
 // =============================================================================
 
-void Lexer::emitError(std::string_view msg, std::string_view helpMsg) {
-  auto Diag = error(std::string(msg)).with_primary_label(getCurSpan());
+void Lexer::emitError(std::string_view Msg, std::string_view HelpMsg) {
+  auto Diag = error(std::string(Msg)).with_primary_label(getCurSpan());
 
-  if (!helpMsg.empty()) {
-    Diag.with_help(std::string(helpMsg));
+  if (!HelpMsg.empty()) {
+    Diag.with_help(std::string(HelpMsg));
   }
 
   Diag.emit(*DiagnosticsMan);
