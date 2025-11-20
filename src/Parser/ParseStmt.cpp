@@ -49,14 +49,15 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     if (!Res)
       return nullptr;
     SrcLocation Loc = Res->getLocation();
-      if (!matchToken(TokenKind::Semicolon)) {
-        error("missing semicolon after statement")
+    if (!matchToken(TokenKind::Semicolon)) {
+      error("missing semicolon after statement")
           .with_primary_label(SrcSpan(peekToken(-1).getEnd()),
                               "expected `;` here")
           .with_help("statements must end with a semicolon")
-          .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
+          .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";",
+                           "add semicolon")
           .emit(*DiagnosticsMan);
-      }
+    }
     return std::make_unique<ExprStmt>(Loc, std::move(Res));
   }
 }

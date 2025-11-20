@@ -6,10 +6,12 @@
 #include <print>
 #include <string>
 #include <utility>
+#include <variant>
 
 #include "llvm/IR/Value.h"
 
 #include "AST/Decl.hpp"
+#include "AST/Pattern.hpp"
 #include "AST/Stmt.hpp"
 #include "AST/Type.hpp"
 #include "CodeGen/CodeGen.hpp"
@@ -27,6 +29,58 @@ namespace {
 
 /// Generates indentation string for AST dumping
 std::string indent(int Level) { return std::string(Level * 2, ' '); }
+
+/// Helper to emit a SingularPattern
+void emitSingularPattern(const PatternAtomics::SingularPattern &SP,
+                         int Level) {
+  std::visit(
+      [Level](const auto &P) {
+        using T = std::decay_t<decltype(P)>;
+        if constexpr (std::is_same_v<T, PatternAtomics::Wildcard>) {
+          std::println("{}Wildcard", indent(Level));
+        } else if constexpr (std::is_same_v<T, PatternAtomics::Literal>) {
+          std::println("{}Literal:", indent(Level));
+          P.Value->emit(Level + 1);
+        } else if constexpr (std::is_same_v<T, PatternAtomics::Variant>) {
+          std::println("{}Variant: {}", indent(Level), P.VariantName);
+          if (!P.Vars.empty()) {
+            std::println("{}Variables:", indent(Level + 1));
+            for (const auto &Var : P.Vars) {
+              std::println("{}{}", indent(Level + 2), Var);
+            }
+          }
+        }
+      },
+      SP);
+}
+
+/// Helper to emit a Pattern
+void emitPattern(const Pattern &Pat, int Level) {
+  std::visit(
+      [Level](const auto &P) {
+        using T = std::decay_t<decltype(P)>;
+        if constexpr (std::is_same_v<T, PatternAtomics::Wildcard>) {
+          std::println("{}Wildcard", indent(Level));
+        } else if constexpr (std::is_same_v<T, PatternAtomics::Literal>) {
+          std::println("{}Literal:", indent(Level));
+          P.Value->emit(Level + 1);
+        } else if constexpr (std::is_same_v<T, PatternAtomics::Variant>) {
+          std::println("{}Variant: {}", indent(Level), P.VariantName);
+          if (!P.Vars.empty()) {
+            std::println("{}Variables:", indent(Level + 1));
+            for (const auto &Var : P.Vars) {
+              std::println("{}{}", indent(Level + 2), Var);
+            }
+          }
+        } else if constexpr (std::is_same_v<T, PatternAtomics::Alternation>) {
+          std::println("{}Alternation:", indent(Level));
+          for (const auto &SP : P.Patterns) {
+            emitSingularPattern(SP, Level + 1);
+          }
+        }
+      },
+      Pat);
+}
 
 } // anonymous namespace
 
@@ -459,15 +513,14 @@ void MatchExpr::emit(int Level) const {
   Scrutinee->emit(Level + 2);
   std::println("{}Cases: ", indent(Level + 1));
   for (const auto &Arm : Arms) {
-    std::println("{}Patterns: ", indent(Level + 3));
-    for (auto &P : Arm.Patterns) {
-      P->emit(Level + 4);
-    }
-    std::println("{}Body: ", indent(Level + 3));
-    Arm.Body->emit(Level + 4);
+    std::println("{}Pattern: ", indent(Level + 2));
+    emitPattern(Arm.Pattern, Level + 3);
 
-    std::println("{}Return: ", indent(Level + 3));
-    Arm.Return->emit(Level + 4);
+    std::println("{}Body: ", indent(Level + 2));
+    Arm.Body->emit(Level + 3);
+
+    std::println("{}Return: ", indent(Level + 2));
+    Arm.Return->emit(Level + 3);
   }
 }
 
