@@ -82,10 +82,8 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
   std::string Id = advanceToken().getLexeme();
 
   switch (peekKind()) {
-  case TokenKind::Comma:
-    advanceToken(); // eat ','
-    return VariantDecl(Loc, std::move(Id), std::nullopt);
-  case TokenKind::CloseBrace:
+  case TokenKind::Semicolon:
+    advanceToken(); // eat ';'
     return VariantDecl(Loc, std::move(Id), std::nullopt);
   case TokenKind::Colon: {
     advanceToken(); // eat ':'
@@ -153,9 +151,9 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
     return std::nullopt;
   }
   default:
-    // anything else is unexpected: variants must be followed by ':' or ',' or
+    // anything else is unexpected: variants must be followed by ':' or ';' or
     // be the end
-    emitUnexpectedTokenError(peekToken(), {",", ":"});
+    emitUnexpectedTokenError(peekToken(), {";", ":"});
     return std::nullopt;
   }
 }

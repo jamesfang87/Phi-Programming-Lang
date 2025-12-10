@@ -10,6 +10,7 @@
 
 #include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
+#include "AST/Pattern.hpp"
 #include "AST/Type.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Sema/SymbolTable.hpp"
@@ -85,6 +86,15 @@ public:
   bool visit(MemberInitExpr &E);
   bool visit(FieldAccessExpr &E);
   bool visit(MethodCallExpr &E);
+  bool visit(MatchExpr &E);
+
+  //===--------------------------------------------------------------------===//
+  // Pattern Resolution Methods
+  //===--------------------------------------------------------------------===//
+
+  bool resolvePattern(const Pattern &Pat);
+  bool resolveSingularPattern(const PatternAtomics::SingularPattern &Pat);
+  bool resolveVariantPattern(const PatternAtomics::Variant &P);
 
   //===--------------------------------------------------------------------===//
   // Statement Visitor Methods -> return bool (success/failure)

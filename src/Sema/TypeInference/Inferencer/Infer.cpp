@@ -7,6 +7,7 @@
 #include <llvm/Support/Casting.h>
 
 #include "AST/Decl.hpp"
+#include "AST/Type.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Sema/TypeInference/TypeEnv.hpp"
 
@@ -31,13 +32,17 @@ std::vector<std::unique_ptr<Decl>> TypeInferencer::inferProgram() {
 // ---------------- predeclaration ----------------
 void TypeInferencer::predeclare() {
   for (auto &Decl : Ast) {
-    if (const auto Fun = llvm::dyn_cast<FunDecl>(Decl.get())) {
+    if (auto *const Fun = llvm::dyn_cast<FunDecl>(Decl.get())) {
       auto FunType = Fun->getType().toMonotype();
       Env.bind(Fun->getId(), FunType.generalize(Env));
     }
 
-    if (const auto Struct = llvm::dyn_cast<StructDecl>(Decl.get())) {
+    if (auto *const Struct = llvm::dyn_cast<StructDecl>(Decl.get())) {
       Structs[Struct->getId()] = Struct;
+    }
+
+    if (auto *const Enum = llvm::dyn_cast<EnumDecl>(Decl.get())) {
+      Enums[Enum->getId()] = Enum;
     }
   }
 }
@@ -61,7 +66,7 @@ void TypeInferencer::annotate(Expr &E, const Monotype &T) { ExprMonos[&E] = T; }
 // ---------------- integer defaulting ----------------
 void TypeInferencer::defaultNums() {
   // Helper lambda to default a list of type-vars to a concrete constructor
-  auto tryDefault = [&](auto &TypeVarList, const std::string &TargetCon) {
+  auto tryDefault = [&](auto &TypeVarList, auto Default) {
     for (auto &V : TypeVarList) {
       // Apply the global substitution to get the current representative.
       // Build a monotype for V so we can apply the substitution:
@@ -81,19 +86,20 @@ void TypeInferencer::defaultNums() {
       // If this representative has constraints and the target isn't allowed,
       // skip it.
       if (RepVar.Constraints &&
-          !std::ranges::contains(*RepVar.Constraints, TargetCon)) {
+          !std::ranges::contains(*RepVar.Constraints,
+                                 primitiveKindToString(Default))) {
         continue;
       }
 
-      // Default the representative to the concrete type (i32 / f32).
+      // Default the representative to the concrete type (i32 / f64).
       Substitution S;
-      S.Map.emplace(RepVar, Monotype::makeCon(TargetCon));
+      S.Map.emplace(RepVar, Monotype::makeCon(Default));
       recordSubst(S);
     }
   };
 
-  tryDefault(IntTypeVars, "i32");
-  tryDefault(FloatTypeVars, "f32");
+  tryDefault(IntTypeVars, PrimitiveKind::I32);
+  tryDefault(FloatTypeVars, PrimitiveKind::F64);
 }
 
 // ---------------- finalize annotations ----------------

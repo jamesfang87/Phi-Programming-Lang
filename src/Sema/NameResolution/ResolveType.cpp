@@ -1,7 +1,5 @@
 #include "Sema/NameResolver.hpp"
 
-#include <format>
-#include <print>
 #include <string>
 
 #include "AST/Type.hpp"
@@ -12,10 +10,6 @@ bool NameResolver::resolveTypeByName(const phi::Type &Type,
                                      const std::string &Name) {
   if (this->SymbolTab.lookupStruct(Name) || this->SymbolTab.lookupEnum(Name))
     return true;
-
-  if (auto Best = this->SymbolTab.getClosestType(Name)) {
-    std::string Hint = std::format("Did you mean `{}`?", *Best);
-  }
 
   this->emitNotFoundError(NotFoundErrorKind::Type, Name, Type.getLocation());
   return false;

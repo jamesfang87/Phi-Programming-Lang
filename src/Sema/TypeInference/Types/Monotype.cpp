@@ -37,64 +37,46 @@ Type Monotype::toAstType() const {
     }
 
     Type operator()(const TypeCon &Con) const {
-      const auto &Name = Con.Name;
-      if (Name == "i8")
-        return Type::makePrimitive(PrimitiveKind::I8, Self->Location);
-      if (Name == "i16")
-        return Type::makePrimitive(PrimitiveKind::I16, Self->Location);
-      if (Name == "i32")
-        return Type::makePrimitive(PrimitiveKind::I32, Self->Location);
-      if (Name == "i64")
-        return Type::makePrimitive(PrimitiveKind::I64, Self->Location);
-      if (Name == "u8")
-        return Type::makePrimitive(PrimitiveKind::U8, Self->Location);
-      if (Name == "u16")
-        return Type::makePrimitive(PrimitiveKind::U16, Self->Location);
-      if (Name == "u32")
-        return Type::makePrimitive(PrimitiveKind::U32, Self->Location);
-      if (Name == "u64")
-        return Type::makePrimitive(PrimitiveKind::U64, Self->Location);
-      if (Name == "f32")
-        return Type::makePrimitive(PrimitiveKind::F32, Self->Location);
-      if (Name == "f64")
-        return Type::makePrimitive(PrimitiveKind::F64, Self->Location);
-      if (Name == "string")
-        return Type::makePrimitive(PrimitiveKind::String, Self->Location);
-      if (Name == "char")
-        return Type::makePrimitive(PrimitiveKind::Char, Self->Location);
-      if (Name == "bool")
-        return Type::makePrimitive(PrimitiveKind::Bool, Self->Location);
-      if (Name == "range")
-        return Type::makePrimitive(PrimitiveKind::Range, Self->Location);
-      if (Name == "null")
-        return Type::makePrimitive(PrimitiveKind::Null, Self->Location);
+      return std::visit(
+          [&](auto &&Val) -> Type {
+            using T = std::decay_t<decltype(Val)>;
 
-      // Otherwise treat as custom/struct name
-      return Type::makeStruct(Name, Self->Location);
+            if constexpr (std::is_same_v<T, PrimitiveKind>) {
+              return Type::makePrimitive(Val, Self->Location);
+            } else if constexpr (std::is_same_v<T, TypeCon::StructType>) {
+              return Type::makeStruct(Val.Id, Self->Location);
+            } else if constexpr (std::is_same_v<T, TypeCon::EnumType>) {
+              return Type::makeEnum(Val.Id, Self->Location);
+            }
+          },
+          Con.Data);
     }
 
     Type operator()(const TypeApp &App) const {
-      if (App.Name == "Ptr") {
-        assert(App.Args.size() == 1);
-        return Type::makePointer(App.Args.front().toAstType(), Self->Location);
-      }
-      if (App.Name == "Ref") {
-        assert(App.Args.size() == 1);
-        return Type::makeReference(App.Args.front().toAstType(),
-                                   Self->Location);
-      }
-      if (App.Name == "Tuple") {
-        std::vector<Type> TypeArgs;
-        TypeArgs.reserve(App.Args.size());
-        for (const auto &Arg : App.Args)
-          TypeArgs.push_back(Arg.toAstType());
-        return Type::makeTuple(TypeArgs, Self->Location);
-      }
       std::vector<Type> TypeArgs;
       TypeArgs.reserve(App.Args.size());
       for (const auto &Arg : App.Args)
         TypeArgs.push_back(Arg.toAstType());
-      return Type::makeGeneric(App.Name, TypeArgs, Self->Location);
+
+      return std::visit(
+          [&](auto &&K) -> Type {
+            using T = std::decay_t<decltype(K)>;
+            if constexpr (std::is_same_v<T, TypeApp::BuiltinKind>) {
+              if (K == TypeApp::BuiltinKind::Ptr)
+                return Type::makePointer(TypeArgs.at(0), Self->Location);
+              if (K == TypeApp::BuiltinKind::Ref)
+                return Type::makeReference(TypeArgs.at(0), Self->Location);
+              if (K == TypeApp::BuiltinKind::Range)
+                return Type::makePrimitive(PrimitiveKind::Range,
+                                           Self->Location);
+              if (K == TypeApp::BuiltinKind::Tuple)
+                return Type::makeTuple(TypeArgs, Self->Location);
+              throw std::runtime_error("Unknown BuiltinKind");
+            } else {
+              return Type::makeGeneric(K.Id, TypeArgs, Self->Location);
+            }
+          },
+          App.AppKind);
     }
 
     Type operator()(const TypeFun &Fun) const {
@@ -108,7 +90,6 @@ Type Monotype::toAstType() const {
   };
 
   return std::visit(Visitor{this}, *this->Ptr);
-  // If Monotype *is* a variant: return std::visit(Visitor{this}, *this);
 }
 
 std::string Monotype::toString() const {
@@ -117,28 +98,41 @@ std::string Monotype::toString() const {
       return std::to_string(Var.Id);
     }
 
-    std::string operator()(const TypeCon &Con) const {
-      if (Con.Args.empty())
-        return Con.Name;
-      std::ostringstream Os;
-      Os << Con.Name << "<";
-      for (size_t I = 0; I < Con.Args.size(); ++I) {
-        Os << Con.Args[I].toString();
-        if (I + 1 < Con.Args.size())
-          Os << ", ";
-      }
-      Os << ">";
-      return Os.str();
-    }
+    std::string operator()(const TypeCon &Con) const { return Con.StringRep; }
 
     std::string operator()(const TypeApp &App) const {
+      // Helper to get the base name
+      auto name = std::visit(
+          [](auto &&K) -> std::string {
+            using T = std::decay_t<decltype(K)>;
+            if constexpr (std::is_same_v<T, TypeApp::BuiltinKind>) {
+              switch (K) {
+              case TypeApp::BuiltinKind::Ref:
+                return "Ref";
+              case TypeApp::BuiltinKind::Ptr:
+                return "Ptr";
+              case TypeApp::BuiltinKind::Tuple:
+                return "Tuple";
+              case TypeApp::BuiltinKind::Range:
+                return "Range";
+              default:
+                return "Unknown";
+              }
+            } else if constexpr (std::is_same_v<T, TypeApp::CustomKind>) {
+              return K.Id;
+            }
+          },
+          App.AppKind);
+
+      // Append type arguments if any
       if (App.Args.empty())
-        return App.Name;
+        return name;
+
       std::ostringstream Os;
-      Os << App.Name << "<";
-      for (size_t I = 0; I < App.Args.size(); ++I) {
-        Os << App.Args[I].toString();
-        if (I + 1 < App.Args.size())
+      Os << name << "<";
+      for (size_t i = 0; i < App.Args.size(); ++i) {
+        Os << App.Args[i].toString();
+        if (i + 1 < App.Args.size())
           Os << ", ";
       }
       Os << ">";
@@ -168,11 +162,8 @@ std::unordered_set<TypeVar> Monotype::freeTypeVars() const {
     }
 
     std::unordered_set<TypeVar> operator()(const TypeCon &Con) const {
+      (void)Con;
       std::unordered_set<TypeVar> AllFTVs;
-      for (const auto &Arg : Con.Args) {
-        auto FTV = Arg.freeTypeVars();
-        AllFTVs.insert(FTV.begin(), FTV.end());
-      }
       return AllFTVs;
     }
 
