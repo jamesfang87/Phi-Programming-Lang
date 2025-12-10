@@ -1,17 +1,18 @@
-#include "AST/Expr.hpp"
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/TypeInference/Infer.hpp"
 
 #include <cassert>
 #include <optional>
-#include <print>
 #include <string>
 #include <vector>
 
 #include <llvm/Support/Casting.h>
 
+#include "AST/Expr.hpp"
+#include "AST/Type.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "Sema/TypeInference/Substitution.hpp"
+#include "Sema/TypeInference/Types/MonotypeAtoms.hpp"
 
 namespace phi {
 
@@ -36,19 +37,19 @@ TypeInferencer::InferRes TypeInferencer::visit(FloatLiteral &E) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(BoolLiteral &E) {
-  auto T = Monotype::makeCon("bool", {}, E.getLocation());
+  auto T = Monotype::makeCon(PrimitiveKind::Bool, E.getLocation());
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(CharLiteral &E) {
-  auto T = Monotype::makeCon("char", {}, E.getLocation());
+  auto T = Monotype::makeCon(PrimitiveKind::Char, E.getLocation());
   annotate(E, T);
   return {Substitution{}, T};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(StrLiteral &E) {
-  auto T = Monotype::makeCon("string", {}, E.getLocation());
+  auto T = Monotype::makeCon(PrimitiveKind::String, E.getLocation());
   annotate(E, T);
   return {Substitution{}, T};
 }
@@ -62,7 +63,8 @@ TypeInferencer::InferRes TypeInferencer::visit(RangeLiteral &E) {
   unifyInto(AllSubsts, StartType, EndType);
   recordSubst(AllSubsts);
   auto EndPointType = AllSubsts.apply(StartType);
-  auto RangeType = Monotype::makeCon("range", {EndPointType}, E.getLocation());
+  auto RangeType = Monotype::makeApp(TypeApp::BuiltinKind::Range,
+                                     {EndPointType}, E.getLocation());
   annotate(E, RangeType);
   return {AllSubsts, RangeType};
 }
@@ -76,7 +78,8 @@ TypeInferencer::InferRes TypeInferencer::visit(TupleLiteral &E) {
     AllSubsts.compose(ElementSubst);
   }
 
-  auto TupleType = Monotype::makeApp("Tuple", Types, E.getLocation());
+  auto TupleType =
+      Monotype::makeApp(TypeApp::BuiltinKind::Tuple, Types, E.getLocation());
   annotate(E, TupleType);
   return {AllSubsts, TupleType};
 }
@@ -121,7 +124,7 @@ TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
   Substitution AllSubst = OperandSubst;
 
   if (E.getOp() == TokenKind::Bang) {
-    auto Bool = Monotype::makeCon("bool", {}, E.getLocation());
+    auto Bool = Monotype::makeCon(PrimitiveKind::Bool, E.getLocation());
     unifyInto(AllSubst, OperandType, Bool);
     recordSubst(AllSubst);
     annotate(E, Bool);
@@ -133,7 +136,7 @@ TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
 
   if (E.getOp() == TokenKind::Amp) {
     // &: result is Ref<operand-type>
-    auto Result = Monotype::makeApp("Ref", {OperandType});
+    auto Result = Monotype::makeApp(TypeApp::BuiltinKind::Ref, {OperandType});
     recordSubst(AllSubst);
     annotate(E, Result);
     return {AllSubst, Result};
@@ -155,12 +158,12 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
 
   if (isLogical(K)) {
     unifyInto(AllSubst, LhsType,
-              Monotype::makeCon("bool", {}, LhsType.getLocation()));
+              Monotype::makeCon(PrimitiveKind::Bool, LhsType.getLocation()));
     unifyInto(AllSubst, RhsType,
-              Monotype::makeCon("bool", {}, RhsType.getLocation()));
+              Monotype::makeCon(PrimitiveKind::Bool, RhsType.getLocation()));
     recordSubst(AllSubst);
-    annotate(E, Monotype::makeCon("bool", {}, E.getLocation()));
-    return {AllSubst, Monotype::makeCon("bool", {}, E.getLocation())};
+    annotate(E, Monotype::makeCon(PrimitiveKind::Bool, E.getLocation()));
+    return {AllSubst, Monotype::makeCon(PrimitiveKind::Bool, E.getLocation())};
   }
 
   if (isComparison(K) || isEquality(K)) {
@@ -170,8 +173,8 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     unifyInto(AllSubst, LhsType, RhsType);
 
     recordSubst(AllSubst);
-    annotate(E, Monotype::makeCon("bool", {}, E.getLocation()));
-    return {AllSubst, Monotype::makeCon("bool", {}, E.getLocation())};
+    annotate(E, Monotype::makeCon(PrimitiveKind::Bool, E.getLocation()));
+    return {AllSubst, Monotype::makeCon(PrimitiveKind::Bool, E.getLocation())};
   }
 
   if (isArithmetic(K)) {
@@ -195,31 +198,47 @@ TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {
     recordSubst(AllSubst);
 
     // Assignment expressions evaluate to null
-    auto ResultingType = Monotype::makeCon("null");
-    annotate(E, ResultingType);
-    return {AllSubst, ResultingType};
+    auto ResultType = Monotype::makeCon(PrimitiveKind::Null, E.getLocation());
+    annotate(E, ResultType);
+    return {AllSubst, ResultType};
   }
 
   throw std::runtime_error("inferBinary: unsupported operator token kind");
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(CustomTypeCtor &E) {
-  auto Struct = Monotype::makeCon(E.getTypeName());
+  if (E.isAnonymous()) {
+    return {Substitution{},
+            Monotype::makeVar(Factory.fresh(), E.getLocation())};
+  }
+
+  Monotype Type;
+  switch (E.getInterpretation()) {
+  case CustomTypeCtor::InterpretAs::Struct:
+    Type = Monotype::makeCon(E.getTypeName(), TypeCon::Struct, E.getLocation());
+    break;
+  case CustomTypeCtor::InterpretAs::Enum:
+    Type = Monotype::makeCon(E.getTypeName(), TypeCon::Enum, E.getLocation());
+    break;
+  case CustomTypeCtor::InterpretAs::Unknown:
+    static_assert("A CustomTypeCtor which is not anonymous should not have an "
+                  "interpretation of `Unknown`");
+  }
+
   Substitution AllSubsts;
+  for (auto &Init : E.getInits()) {
+    auto [InitSubst, InitType] = visit(*Init->getInitValue());
+    AllSubsts.compose(InitSubst);
 
-  for (auto &Field : E.getInits()) {
-    auto [FieldSubst, FieldType] = visit(*Field->getInitValue());
-    AllSubsts.compose(FieldSubst);
-
-    if (const auto *FieldDecl = Field->getDecl()) {
-      auto DeclaredAs = FieldDecl->getType().toMonotype();
-      unifyInto(AllSubsts, DeclaredAs, FieldType);
+    if (const auto *Decl = Init->getDecl()) {
+      auto DeclaredType = Decl->getType().toMonotype();
+      unifyInto(AllSubsts, DeclaredType, InitType);
     }
   }
 
   recordSubst(AllSubsts);
-  annotate(E, Struct);
-  return {AllSubsts, Struct};
+  annotate(E, Type);
+  return {AllSubsts, Type};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(MemberInitExpr &E) {
@@ -229,36 +248,43 @@ TypeInferencer::InferRes TypeInferencer::visit(MemberInitExpr &E) {
   return {Subst, Type};
 }
 
+TypeInferencer::InferRes TypeInferencer::visit(MatchExpr &E) {
+  auto [AllSubst, ScrutineeType] = visit(*E.getScrutinee());
+
+  Monotype ReturnType;
+  for (const MatchExpr::Arm &Arm : E.getArms()) {
+    // be my, be my love
+
+    auto [BodySubst, _] = visit(*Arm.Body);
+    AllSubst.compose(BodySubst);
+
+    // does visiting twice do anything bad?
+
+    auto [_, ArmType] = visit(*Arm.Return);
+    unify(ReturnType, ArmType); // does this
+  }
+
+  // Since MatchExpr returns a type, we must check
+  // whether all arms return the same type here rather
+  // than in type checking
+
+  return {AllSubst, ReturnType};
+}
+
 std::tuple<Substitution, Monotype, StructDecl *>
-TypeInferencer::inferStructBase(Expr &BaseExpr, SrcLocation Loc) {
+TypeInferencer::inferStructBase(Expr &BaseExpr, const SrcLocation &Loc) {
   auto [BaseSubst, BaseType] = visit(BaseExpr);
 
-  std::optional<std::string> StructName;
-  if (BaseType.isApp()) {
-    assert(BaseType.asApp().Name == "Ref" &&
-           "BaseType should be a ref to a class");
-    assert(BaseType.asApp().Args.size() == 1 &&
-           "Should hold only 1 Arg (the class)");
-    assert(BaseType.asApp().Args.front().isCon() &&
-           "The class should be a constant type");
-
-    StructName = BaseType.asApp().Args.front().asCon().Name;
-  } else if (BaseType.isCon()) {
-    StructName = BaseType.asCon().Name;
-  }
-
-  if (!StructName) {
-    std::println("{}, {}", BaseType.toString(), Loc.toString());
-  }
+  auto StructName = BaseType.toAstType().unwrap().getCustomName();
   assert(StructName && "Could not infer type before struct access");
 
   auto It = Structs.find(*StructName);
   if (It == Structs.end()) {
     auto PrimaryMsg =
         std::format("No declaration for struct `{}` was found.", *StructName);
-    auto Diag = error(std::format("Could not find struct `{}`", *StructName))
-                    .with_primary_label(Loc, PrimaryMsg);
-    Diag.emit(*DiagMan);
+    error(std::format("Could not find struct `{}`", *StructName))
+        .with_primary_label(Loc, PrimaryMsg)
+        .emit(*DiagMan);
 
     return {BaseSubst, BaseType, nullptr};
   }
@@ -319,10 +345,10 @@ TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {
   auto DeclaredType = Method->getFunType().toMonotype();
   Substitution AllSubst = BaseSubst;
 
-  std::vector<Monotype> ArgTypes = {
-      AllSubst.apply(llvm::dyn_cast<DeclRefExpr>(E.getBase())->getId() == "this"
-                         ? BaseType
-                         : Monotype::makeApp("Ref", {BaseType}))};
+  std::vector<Monotype> ArgTypes = {AllSubst.apply(
+      llvm::dyn_cast<DeclRefExpr>(E.getBase())->getId() == "this"
+          ? BaseType
+          : Monotype::makeApp(TypeApp::BuiltinKind::Ref, {BaseType}))};
   ArgTypes.reserve(1 + E.getArgs().size());
   for (auto &Arg : E.getArgs()) {
     auto [Subst, Type] = visit(*Arg);

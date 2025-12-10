@@ -93,6 +93,7 @@ public:
   InferRes visit(MemberInitExpr &E);
   InferRes visit(FieldAccessExpr &E);
   InferRes visit(MethodCallExpr &E);
+  InferRes visit(MatchExpr &E);
 
 private:
   std::shared_ptr<DiagnosticManager> DiagMan;
@@ -105,6 +106,7 @@ private:
   TypeEnv Env;
   TypeVarFactory Factory;
 
+  std::unordered_map<std::string, EnumDecl *> Enums;
   std::unordered_map<std::string, StructDecl *> Structs;
 
   // Accumulate all substitutions produced during inference so we can finalize.
@@ -178,7 +180,7 @@ private:
   void finalizeAnnotations();
 
   std::tuple<Substitution, Monotype, StructDecl *>
-  inferStructBase(Expr &BaseExpr, SrcLocation Loc);
+  inferStructBase(Expr &BaseExpr, const SrcLocation &Loc);
 };
 
 } // namespace phi

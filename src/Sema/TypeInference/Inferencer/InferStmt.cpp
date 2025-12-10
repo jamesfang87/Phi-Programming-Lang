@@ -1,8 +1,9 @@
 #include "Sema/TypeInference/Infer.hpp"
 
+#include <cassert>
+
 #include "AST/Stmt.hpp"
 #include "Sema/TypeInference/Substitution.hpp"
-#include <cassert>
 
 namespace phi {
 
@@ -13,7 +14,7 @@ TypeInferencer::InferRes TypeInferencer::visit(Block &B) {
     auto [StmtSubst, _] = visit(*Stmt);
     AllSubsts.compose(StmtSubst);
   }
-  return {AllSubsts, Monotype::makeCon("null")};
+  return {AllSubsts, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(Stmt &S) {
@@ -21,18 +22,19 @@ TypeInferencer::InferRes TypeInferencer::visit(Stmt &S) {
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
-  const auto ExpectedType =
-      CurFunRetType.empty() ? Monotype::makeCon("null") : CurFunRetType.back();
+  const auto ExpectedType = CurFunRetType.empty()
+                                ? Monotype::makeCon(PrimitiveKind::Null)
+                                : CurFunRetType.back();
   if (S.hasExpr()) {
     auto [Subst, ActualType] = visit(S.getExpr());
     unifyInto(Subst, ActualType, ExpectedType);
     recordSubst(Subst);
-    return {Subst, Monotype::makeCon("null")};
-  } else {
-    auto Subst = Substitution();
-    unifyInto(Subst, Monotype::makeCon("null"), ExpectedType);
-    return {Subst, Monotype::makeCon("null")};
+    return {Subst, Monotype::makeCon(PrimitiveKind::Null)};
   }
+
+  auto Subst = Substitution();
+  unifyInto(Subst, Monotype::makeCon(PrimitiveKind::Null), ExpectedType);
+  return {Subst, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(DeferStmt &S) {
@@ -42,7 +44,7 @@ TypeInferencer::InferRes TypeInferencer::visit(DeferStmt &S) {
 
   recordSubst(Subst);
 
-  return {Subst, Monotype::makeCon("null")};
+  return {Subst, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
@@ -56,8 +58,8 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
 
   // 3) Create fresh type variable for loop variable, restricted to integer
   // types
-  assert(RangeType.asCon().Args.size() == 1);
-  auto LoopVarTy = RangeType.asCon().Args[0];
+  assert(RangeType.asApp().Args.size() == 1);
+  auto LoopVarTy = RangeType.asApp().Args[0];
 
   // 4) Bind loop variable in environment
   recordSubst(AllSubsts);
@@ -70,12 +72,12 @@ TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
   AllSubsts.compose(BlockSubst);
   recordSubst(BlockSubst);
 
-  return {AllSubsts, Monotype::makeCon("null")};
+  return {AllSubsts, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(DeclStmt &S) {
   visit(S.getDecl());
-  return {Substitution{}, Monotype::makeCon("null")};
+  return {Substitution{}, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(WhileStmt &S) {
@@ -86,7 +88,7 @@ TypeInferencer::InferRes TypeInferencer::visit(WhileStmt &S) {
   AllSubsts.compose(BlockSubst);
 
   recordSubst(AllSubsts);
-  return {AllSubsts, Monotype::makeCon("null")};
+  return {AllSubsts, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(IfStmt &S) {
@@ -102,17 +104,17 @@ TypeInferencer::InferRes TypeInferencer::visit(IfStmt &S) {
   }
 
   recordSubst(AllSubsts);
-  return {AllSubsts, Monotype::makeCon("null")};
+  return {AllSubsts, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(BreakStmt &S) {
   (void)S;
-  return {Substitution{}, Monotype::makeCon("null")};
+  return {Substitution{}, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ContinueStmt &S) {
   (void)S;
-  return {Substitution{}, Monotype::makeCon("null")};
+  return {Substitution{}, Monotype::makeCon(PrimitiveKind::Null)};
 }
 
 TypeInferencer::InferRes TypeInferencer::visit(ExprStmt &S) {

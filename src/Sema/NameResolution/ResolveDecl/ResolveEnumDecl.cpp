@@ -1,8 +1,11 @@
-#include "AST/Decl.hpp"
 #include "Sema/NameResolver.hpp"
+
 #include <cassert>
+#include <print>
 #include <string>
 #include <unordered_map>
+
+#include "AST/Decl.hpp"
 
 namespace phi {
 
@@ -17,16 +20,28 @@ bool NameResolver::resolveHeader(EnumDecl &D) {
 
 bool NameResolver::visit(EnumDecl *D) {
   bool Success = true;
-  std::unordered_map<std::string, VariantDecl *> Seen;
+  std::unordered_map<std::string, VariantDecl *> SeenVariants;
   for (auto &Variant : D->getVariants()) {
-    if (Seen.contains(Variant.getId())) {
-      assert(Seen[Variant.getId()]);
-      emitRedefinitionError("Variant", Seen[Variant.getId()], &Variant);
+    if (SeenVariants.contains(Variant.getId())) {
+      assert(SeenVariants[Variant.getId()]);
+      emitRedefinitionError("Variant", SeenVariants[Variant.getId()], &Variant);
       Success = false;
     }
-    Seen[Variant.getId()] = &Variant;
+    SeenVariants[Variant.getId()] = &Variant;
 
     Success = visit(&Variant) && Success;
+  }
+
+  std::unordered_map<std::string, MethodDecl *> SeenMethods;
+  for (auto &Method : D->getMethods()) {
+    if (SeenMethods.contains(Method.getId())) {
+      assert(SeenMethods[Method.getId()]);
+      emitRedefinitionError("Method", SeenMethods[Method.getId()], &Method);
+      Success = false;
+    }
+    SeenMethods[Method.getId()] = &Method;
+
+    Success = visit(&Method) && Success;
   }
 
   return Success;

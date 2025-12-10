@@ -166,7 +166,7 @@ private:
                                    int RBp);
   std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
   std::unique_ptr<CustomTypeCtor> parseCustomInit(std::unique_ptr<Expr> Expr);
-  std::unique_ptr<MemberInitExpr> parseFieldInit();
+  std::unique_ptr<MemberInitExpr> parseMemberInit();
   std::unique_ptr<MatchExpr> parseMatchExpr();
 
   //===--------------------------------------------------------------------===//

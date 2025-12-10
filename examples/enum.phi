@@ -1,3 +1,5 @@
+fun println(const msg: string) {}
+
 struct Rectangle {
     public l: f64;
     public w: f64;

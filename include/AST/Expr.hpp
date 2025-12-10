@@ -788,7 +788,7 @@ public:
   [[nodiscard]] const auto &getInits() const { return Inits; }
   [[nodiscard]] const auto &getInterpretation() const { return InterpretAs; }
   [[nodiscard]] const auto &getDecl() const { return Decl; }
-  [[nodiscard]] bool isAnonymous() const { return TypeName.has_value(); }
+  [[nodiscard]] bool isAnonymous() const { return !TypeName.has_value(); }
 
   //===--------------------------------------------------------------------===//
   // Setters
@@ -803,7 +803,7 @@ public:
 
   void setActiveVariant(VariantDecl *Variant) {
     assert(Variant != nullptr && "Param Variant must not be null");
-    assert(InterpretAs == InterpretAs::Struct && "Interpretation must be enum");
+    assert(InterpretAs == InterpretAs::Enum && "Interpretation must be enum");
     assert(std::holds_alternative<EnumDecl *>(getDecl()) &&
            "Decl must be enum");
 
@@ -998,16 +998,16 @@ public:
   // Constructors & Destructors
   //===-----------------------------------------------------------------------//
 
-  MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Value,
-            std::vector<Arm> Cases);
+  MatchExpr(SrcLocation Location, std::unique_ptr<Expr> Scrutinee,
+            std::vector<Arm> Arms);
   ~MatchExpr() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===-----------------------------------------------------------------------//
 
-  [[nodiscard]] Expr *getValue() const { return Scrutinee.get(); }
-  [[nodiscard]] auto &getCases() const { return Arms; }
+  [[nodiscard]] Expr *getScrutinee() const { return Scrutinee.get(); }
+  [[nodiscard]] auto &getArms() const { return Arms; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries

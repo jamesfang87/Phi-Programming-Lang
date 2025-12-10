@@ -1,6 +1,8 @@
 #pragma once
 
+#include "AST/Type.hpp"
 #include "Diagnostics/Diagnostic.hpp"
+#include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
@@ -23,15 +25,39 @@ struct TypeVar {
 };
 
 struct TypeCon {
-  std::string Name;
-  std::vector<Monotype> Args;
+  enum CustomKind : uint8_t { Struct, Enum };
+
+  struct StructType {
+    std::string Id;
+    bool operator==(const StructType &Rhs) const { return Id == Rhs.Id; };
+  };
+
+  struct EnumType {
+    std::string Id;
+    bool operator==(const EnumType &Rhs) const { return Id == Rhs.Id; };
+  };
+
+  std::variant<PrimitiveKind, StructType, EnumType> Data;
+  std::string StringRep;
 
   bool operator==(const TypeCon &Rhs) const;
   bool operator!=(const TypeCon &Rhs) const;
 };
 
 struct TypeApp {
-  std::string Name;
+  enum BuiltinKind : uint8_t {
+    Ref,
+    Ptr,
+    Tuple,
+    Range,
+  };
+
+  struct CustomKind {
+    std::string Id;
+    bool operator==(const CustomKind &Rhs) const { return Id == Rhs.Id; };
+  };
+
+  std::variant<BuiltinKind, CustomKind> AppKind;
   std::vector<Monotype> Args;
 
   bool operator==(const TypeApp &Rhs) const;

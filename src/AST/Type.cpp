@@ -9,11 +9,12 @@
 #include "llvm/IR/Type.h"
 
 #include "Sema/TypeInference/Types/Monotype.hpp"
+#include "Sema/TypeInference/Types/MonotypeAtoms.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
-[[nodiscard]] Type Type::getUnderlying() const {
+[[nodiscard]] Type Type::unwrap() const {
   struct Visitor {
     Type operator()(const PrimitiveKind &) const noexcept { return Self; }
 
@@ -29,12 +30,12 @@ namespace phi {
 
     Type operator()(const ReferenceType &R) const noexcept {
       // Recurse until base type is not a pointer/ref
-      return R.Pointee->getUnderlying();
+      return R.Pointee->unwrap();
     }
 
     Type operator()(const PointerType &P) const noexcept {
       // Recurse until base type is not a pointer/ref
-      return P.Pointee->getUnderlying();
+      return P.Pointee->unwrap();
     }
 
     const Type &Self;
@@ -117,33 +118,34 @@ Monotype Type::toMonotype() const {
     SrcLocation L;
 
     Monotype operator()(PrimitiveKind K) const {
-      return Monotype::makeCon(primitiveKindToString(K), {}, L);
+      return Monotype::makeCon(K, L);
     }
 
     Monotype operator()(const StructType &S) const {
-      return Monotype::makeCon(S.Name, {}, L);
+      return Monotype::makeCon(S.Name, TypeCon::Struct, L);
     }
 
     Monotype operator()(const EnumType &C) const {
-      return Monotype::makeCon(C.Name, {}, L);
+      return Monotype::makeCon(C.Name, TypeCon::Enum, L);
     }
 
     Monotype operator()(const TupleType &T) const {
-      // TODO: Create Type Constructor so that this is more pedantic
       std::vector<Monotype> Types;
       Types.reserve(T.Types.size());
       for (const auto &Arg : T.Types) {
         Types.push_back(Arg.toMonotype());
       }
-      return Monotype::makeApp("Tuple", Types, L);
+      return Monotype::makeApp(TypeApp::BuiltinKind::Tuple, Types, L);
     }
 
     Monotype operator()(const ReferenceType &R) const {
-      return Monotype::makeApp("Ref", {R.Pointee->toMonotype()}, L);
+      return Monotype::makeApp(TypeApp::BuiltinKind::Ref,
+                               {R.Pointee->toMonotype()}, L);
     }
 
     Monotype operator()(const PointerType &P) const {
-      return Monotype::makeApp("Ptr", {P.Pointee->toMonotype()}, L);
+      return Monotype::makeApp(TypeApp::BuiltinKind::Ptr,
+                               {P.Pointee->toMonotype()}, L);
     }
 
     Monotype operator()(const GenericType &G) const {

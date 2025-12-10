@@ -5,7 +5,7 @@
 using namespace phi;
 
 llvm::Value *CodeGen::visit(FieldAccessExpr &E) {
-  llvm::Type *StructLLTy = E.getBase()->getType().getUnderlying().toLLVM(Context);
+  llvm::Type *StructLLTy = E.getBase()->getType().unwrap().toLLVM(Context);
 
   // Prefer an lvalue pointer if available; otherwise, materialize a temporary
   llvm::Value *BasePtr = getLValuePointer(E.getBase());
@@ -29,7 +29,7 @@ llvm::Value *CodeGen::visit(MethodCallExpr &E) {
   // Desugar method call into a regular function call
   // Method name is mangled as: StructName.methodName
   // And look up the function in the Module
-  std::string Name = *E.getBase()->getType().getUnderlying().getCustomName();
+  std::string Name = *E.getBase()->getType().unwrap().getCustomName();
   std::string MangledName = std::format(
       "{}.{}", Name, llvm::dyn_cast<DeclRefExpr>(&E.getCallee())->getId());
   llvm::Function *Fun = Module.getFunction(MangledName);

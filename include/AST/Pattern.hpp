@@ -1,9 +1,11 @@
 #pragma once
 
+#include "AST/Decl.hpp"
 #include "AST/Expr.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 #include <memory>
+#include <variant>
 #include <vector>
 
 namespace PatternAtomics {
@@ -16,7 +18,7 @@ struct Literal {
 
 struct Variant {
   std::string VariantName;
-  std::vector<std::string> Vars;
+  std::vector<std::unique_ptr<phi::VarDecl>> Vars;
   phi::SrcLocation Location;
 };
 

@@ -269,7 +269,7 @@ TEST_F(TypeInferenceTest, DefaultsAndExplicitTypes) {
   auto Map = collectTopLevel(*MaybeAst);
 
   EXPECT_EQ(Map["a"], "i32");
-  EXPECT_EQ(Map["b"], "f32");
+  EXPECT_EQ(Map["b"], "f64");
   EXPECT_EQ(Map["c"], "bool");
   EXPECT_EQ(Map["s"], "string");
   EXPECT_EQ(Map["big"], "i64");
@@ -468,7 +468,7 @@ TEST_F(TypeInferenceTest, InferenceWithStatements) {
   EXPECT_EQ(Map["y"], "i64");
   EXPECT_EQ(Map["a"], "f64");
   EXPECT_EQ(Map["b"], "f64");
-  EXPECT_EQ(Map["c"], "f32");
+  EXPECT_EQ(Map["c"], "f64");
   EXPECT_EQ(Map["i"], "u64");
 }
 
