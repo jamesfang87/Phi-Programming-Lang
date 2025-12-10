@@ -16,13 +16,8 @@ namespace phi {
     }
 
     Monotype operator()(const TypeCon &Con) const {
-      if (Con.Args.empty())
-        return Orig;
-      std::vector<Monotype> Args;
-      Args.reserve(Con.Args.size());
-      for (const auto &Arg : Con.Args)
-        Args.push_back(Self->apply(Arg));
-      return Monotype::makeCon(Con.Name, std::move(Args));
+      (void)Con;
+      return Orig;
     }
 
     Monotype operator()(const TypeApp &App) const {
@@ -32,7 +27,7 @@ namespace phi {
       Args.reserve(App.Args.size());
       for (const auto &Arg : App.Args)
         Args.push_back(Self->apply(Arg));
-      return Monotype::makeApp(App.Name, std::move(Args));
+      return Monotype::makeApp(App.AppKind, std::move(Args));
     }
 
     Monotype operator()(const TypeFun &Fun) const {

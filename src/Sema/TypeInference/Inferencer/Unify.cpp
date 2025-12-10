@@ -1,5 +1,6 @@
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/TypeInference/Infer.hpp"
+
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/TypeInference/Substitution.hpp"
 #include "Sema/TypeInference/Types/Monotype.hpp"
 
@@ -80,28 +81,14 @@ Substitution TypeInferencer::unifyVar(const Monotype &Var, const Monotype &B) {
 }
 
 Substitution TypeInferencer::unifyCon(const Monotype &A, const Monotype &B) {
-  if (!B.isCon()) {
-    emitUnifyError(
-        A, B,
-        std::format("cannot unify `{}` with `{}`", A.toString(), B.toString()));
+  if (B.isCon() && A.asCon() == B.asCon()) {
     return Substitution{};
   }
 
-  if (A.asCon() != B.asCon()) {
-    emitUnifyError(
-        A, B,
-        std::format("cannot unify `{}` with `{}`", A.toString(), B.toString()));
-    return Substitution{};
-  }
-
-  Substitution S;
-  for (size_t i = 0; i < B.asCon().Args.size(); ++i) {
-    auto ArgA = A.asCon().Args[i];
-    auto ArgB = B.asCon().Args[i];
-    auto Sub = unify(S.apply(ArgA), S.apply(ArgB));
-    S.compose(Sub);
-  }
-  return S;
+  emitUnifyError(
+      A, B,
+      std::format("cannot unify `{}` with `{}`", A.toString(), B.toString()));
+  return Substitution{};
 }
 
 Substitution TypeInferencer::unifyApp(const Monotype &A, const Monotype &B) {

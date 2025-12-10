@@ -119,3 +119,41 @@ And access fields or call methods:
 force.x;                 // field access
 force.dot(other_force);  // method call
 ```
+
+## Structs and Methods
+
+Phi is not an object oriented programming language. There is no inheritance. Instead, polymorphism can be achieved through sum types. This is done in phi through enums and pattern matching.
+
+Example:
+
+```phi
+struct Rectangle {
+    public l: f64;
+    public w: f64;
+}
+
+enum Shape {
+    Rectangle: Rectangle;
+    Circle: f64;
+    Square: { l: f64 };
+    Parallelogram: (f64, f64);
+
+    fun perimeter(const this) -> f64 {
+        return match this {
+            .Rectangle(rect)     => 2 * (rect.l + rect.w),
+            .Circle(r)           => 2 * 3.14 * r,
+            .Square(l)           => 4 * l,
+            .Parallelogram(b, h) => 2 * (b + h),
+        };
+    }
+}
+
+fun print_name(const shape: Shape) {
+    match shape {
+        .Rectangle     => println("rectangle"),
+        .Circle        => println("circle"),
+        .Square        => println("square"),
+        .Parallelogram => println("parallelogram")
+    };
+}
+```

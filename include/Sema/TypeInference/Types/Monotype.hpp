@@ -25,7 +25,7 @@ namespace phi {
  * that are polymorphic). This class provides a shared variant container
  * for the four fundamental monotype constructs:
  * - TypeVar: Type variables (e.g., 'a, 'b)
- * - TypeCon: Type constructors (e.g., Int, Bool)
+ * - TypeCon: Type constants (e.g., Int, Bool)
  * - TypeApp: Type applications (e.g., List[Int])
  * - TypeFun: Function types (e.g., Int -> Bool)
  */
@@ -38,12 +38,6 @@ public:
 
   // Default constructor
   Monotype() = default;
-
-  // Basic variant constructors
-  explicit Monotype(TypeVar V) : Ptr(std::make_shared<Variant>(std::move(V))) {}
-  explicit Monotype(TypeCon C) : Ptr(std::make_shared<Variant>(std::move(C))) {}
-  explicit Monotype(TypeApp A) : Ptr(std::make_shared<Variant>(std::move(A))) {}
-  explicit Monotype(TypeFun F) : Ptr(std::make_shared<Variant>(std::move(F))) {}
 
   // Constructors with source location
   Monotype(TypeVar V, SrcLocation L)
@@ -85,14 +79,45 @@ public:
   /// Creates a type application monotype
   static Monotype makeApp(std::string Name, std::vector<Monotype> Args = {},
                           SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
-    return Monotype(TypeApp{.Name = std::move(Name), .Args = std::move(Args)},
+    return Monotype(
+        TypeApp{.AppKind = TypeApp::CustomKind{.Id = std::move(Name)},
+                .Args = std::move(Args)},
+        std::move(L));
+  }
+
+  static Monotype makeApp(TypeApp::BuiltinKind Builtin,
+                          std::vector<Monotype> Args = {},
+                          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
+    return Monotype(TypeApp{.AppKind = Builtin, .Args = std::move(Args)},
                     std::move(L));
   }
 
-  /// Creates a type constructor monotype
-  static Monotype makeCon(std::string Name, std::vector<Monotype> Args = {},
+  static Monotype
+  makeApp(std::variant<TypeApp::BuiltinKind, TypeApp::CustomKind> Kind,
+          std::vector<Monotype> Args = {},
+          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
+    return Monotype(
+        TypeApp{.AppKind = std::move(Kind), .Args = std::move(Args)},
+        std::move(L));
+  }
+
+  static Monotype makeCon(PrimitiveKind Primitive,
                           SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
-    return Monotype(TypeCon{.Name = std::move(Name), .Args = std::move(Args)},
+    return Monotype(TypeCon{.Data = Primitive,
+                            .StringRep = primitiveKindToString(Primitive)},
+                    std::move(L));
+  }
+
+  static Monotype makeCon(std::string Name, TypeCon::CustomKind Kind,
+                          SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
+    if (Kind == TypeCon::CustomKind::Struct) {
+      return Monotype(
+          TypeCon{.Data = TypeCon::StructType{.Id = std::move(Name)},
+                  .StringRep = Name},
+          std::move(L));
+    }
+    return Monotype(TypeCon{.Data = TypeCon::EnumType{.Id = std::move(Name)},
+                            .StringRep = Name},
                     std::move(L));
   }
 
@@ -107,10 +132,10 @@ public:
   }
 
   /// Creates a function type monotype from shared pointer
-  static Monotype makeFun(std::vector<Monotype> params,
-                          const std::shared_ptr<Monotype> &ret,
+  static Monotype makeFun(std::vector<Monotype> Params,
+                          const std::shared_ptr<Monotype> &Ret,
                           SrcLocation L = {.Path = "", .Line = -1, .Col = -1}) {
-    return makeFun(std::move(params), *ret, std::move(L));
+    return makeFun(std::move(Params), *Ret, std::move(L));
   }
 
   //===--------------------------------------------------------------------===//
@@ -169,18 +194,47 @@ public:
 
   /// Checks if this monotype represents an integer type
   [[nodiscard]] bool isIntType() const {
-    return isCon() && (asCon().Name == "i8" || asCon().Name == "i16" ||
-                       asCon().Name == "i32" || asCon().Name == "i64" ||
-                       asCon().Name == "u8" || asCon().Name == "u16" ||
-                       asCon().Name == "u32" || asCon().Name == "u64");
+    if (!isCon())
+      return false;
+
+    if (auto *Prim = std::get_if<PrimitiveKind>(&this->asCon().Data)) {
+      switch (*Prim) {
+      case PrimitiveKind::I8:
+      case PrimitiveKind::I16:
+      case PrimitiveKind::I32:
+      case PrimitiveKind::I64:
+      case PrimitiveKind::U8:
+      case PrimitiveKind::U16:
+      case PrimitiveKind::U32:
+      case PrimitiveKind::U64:
+        return true;
+      default:
+        return false;
+      }
+    }
+    return false;
   }
 
-  /// Checks if this monotype represents a floating-point type
   [[nodiscard]] bool isFloatType() const {
-    return isCon() && (asCon().Name == "f32" || asCon().Name == "f64");
+    if (!isCon())
+      return false;
+
+    if (auto *Prim = std::get_if<PrimitiveKind>(&this->asCon().Data)) {
+      switch (*Prim) {
+      case PrimitiveKind::F32:
+      case PrimitiveKind::F64:
+        return true;
+      default:
+        return false;
+      }
+    }
+    return false;
   }
 
   [[nodiscard]] bool sameMonotypeKind(const Monotype &Other) const;
+
+  bool operator==(const Monotype &Rhs) const { return *Ptr == Rhs.getPtr(); }
+  bool operator!=(const Monotype &Rhs) const { return !(*this == Rhs); }
 
 private:
   //===--------------------------------------------------------------------===//

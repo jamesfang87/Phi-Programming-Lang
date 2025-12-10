@@ -1,6 +1,8 @@
+#include "AST/Decl.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -101,26 +103,23 @@ optional<PatternAtomics::Variant> Parser::parseVariantPattern() {
   // parse destructing variables
   if (peekKind() == TokenKind::OpenParen) {
     bool ErrorHappened = false;
-    auto Vars = parseValueList<std::optional<std::string>>(
+    auto Vars = parseList<VarDecl>(
         TokenKind::OpenParen, TokenKind::CloseParen,
-        [&](Parser *P) -> std::optional<std::string> {
+        [&](Parser *P) -> std::unique_ptr<VarDecl> {
           if (P->peekKind() == TokenKind::Identifier) {
-            return optional<std::string>{P->advanceToken().getLexeme()};
+            return std::make_unique<VarDecl>(P->peekToken().getStart(),
+                                             P->advanceToken().getLexeme(),
+                                             std::nullopt, false, nullptr);
           }
           P->emitUnexpectedTokenError(P->peekToken());
           ErrorHappened = true;
-          return std::nullopt;
+          return nullptr;
         });
 
     if (ErrorHappened || !Vars)
       return std::nullopt;
 
-    std::vector<std::string> CorrectVars;
-    for (auto Var : *Vars) {
-      CorrectVars.push_back(*Var);
-    }
-
-    return PatternAtomics::Variant(Name, CorrectVars, Loc);
+    return PatternAtomics::Variant(Name, std::move(*Vars), Loc);
   }
 
   return PatternAtomics::Variant(Name, {}, Loc);

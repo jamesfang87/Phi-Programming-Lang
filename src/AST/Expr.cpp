@@ -31,8 +31,7 @@ namespace {
 std::string indent(int Level) { return std::string(Level * 2, ' '); }
 
 /// Helper to emit a SingularPattern
-void emitSingularPattern(const PatternAtomics::SingularPattern &SP,
-                         int Level) {
+void emitSingularPattern(const PatternAtomics::SingularPattern &SP, int Level) {
   std::visit(
       [Level](const auto &P) {
         using T = std::decay_t<decltype(P)>;
@@ -46,7 +45,7 @@ void emitSingularPattern(const PatternAtomics::SingularPattern &SP,
           if (!P.Vars.empty()) {
             std::println("{}Variables:", indent(Level + 1));
             for (const auto &Var : P.Vars) {
-              std::println("{}{}", indent(Level + 2), Var);
+              std::println("{}{}", indent(Level + 2), Var->getId());
             }
           }
         }
@@ -69,7 +68,7 @@ void emitPattern(const Pattern &Pat, int Level) {
           if (!P.Vars.empty()) {
             std::println("{}Variables:", indent(Level + 1));
             for (const auto &Var : P.Vars) {
-              std::println("{}{}", indent(Level + 2), Var);
+              std::println("{}{}", indent(Level + 2), Var->getId());
             }
           }
         } else if constexpr (std::is_same_v<T, PatternAtomics::Alternation>) {
@@ -272,6 +271,9 @@ llvm::Value *DeclRefExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 // Utility Methods
 void DeclRefExpr::emit(int Level) const {
+  if (Id == "val" && DeclPtr == nullptr) {
+    std::println("This was not found");
+  }
   if (DeclPtr == nullptr) {
     std::println("{}DeclRefExpr: {} ", indent(Level), Id);
   } else {
@@ -398,8 +400,10 @@ llvm::Value *MemberInitExpr::accept(CodeGen &G) { return G.visit(*this); }
 void MemberInitExpr::emit(int Level) const {
   std::println("{}MemberInitExpr:", indent(Level));
   std::println("{}Member: {}", indent(Level + 1), FieldId);
-  std::println("{}Value:", indent(Level + 1));
-  InitValue->emit(Level + 2);
+  if (InitValue) {
+    std::println("{}Value:", indent(Level + 1));
+    InitValue->emit(Level + 2);
+  }
 }
 
 //===----------------------------------------------------------------------===//

@@ -81,7 +81,7 @@ void TypeInferencer::visit(FieldDecl &D) {
 
 void TypeInferencer::visit(MethodDecl &D) {
   // 1) Build method monotype
-  Monotype StructMono = Monotype::makeVar(Factory.fresh());
+  Monotype StructMono = D.getParent()->getType().toMonotype();
   std::vector<Monotype> ParamMonos = {StructMono};
   ParamMonos.reserve(1 + D.getParams().size());
   for (auto &Param : D.getParams())
@@ -124,6 +124,12 @@ void TypeInferencer::visit(StructDecl &D) {
   }
 }
 
-void TypeInferencer::visit(EnumDecl &D) {}
+void TypeInferencer::visit(EnumDecl &D) {
+  Env.bind(D.getId(), Polytype{{}, D.getType().toMonotype()});
+
+  for (auto &Method : D.getMethods()) {
+    visit(Method);
+  }
+}
 
 } // namespace phi

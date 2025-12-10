@@ -1,0 +1,22 @@
+enum Result {
+    Ok: i32;
+    Err: string;
+    
+    fun is_ok(const this) -> bool {
+        return match this {
+            .Ok => true,
+            .Err => false,
+        };
+    }
+
+    fun is_err(const this) -> bool {
+        return !this.is_ok();
+    }
+
+    fun unwrap_or(const this, const default: i32) -> i32 {
+        return match this {
+            .Ok(x) => x,
+            .Err => default,
+        };
+    }
+}

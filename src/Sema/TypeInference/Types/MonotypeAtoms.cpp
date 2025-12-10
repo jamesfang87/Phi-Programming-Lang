@@ -1,11 +1,12 @@
 #include "Sema/TypeInference/Types/MonotypeAtoms.hpp"
 
+#include <expected>
+#include <numeric>
+
 #include "Diagnostics/Diagnostic.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/TypeInference/Substitution.hpp"
 #include "Sema/TypeInference/Types/Monotype.hpp"
-#include <expected>
-#include <numeric>
 
 namespace phi {
 
@@ -37,7 +38,7 @@ TypeVar::bindWith(const Monotype &M) const {
   if (Constraints) {
     // Concrete type case
     if (M.isCon()) {
-      const auto &Name = M.asCon().Name;
+      const auto &Name = M.asCon().StringRep;
       if (!std::ranges::contains(*Constraints, Name)) {
         std::string Allowed =
             std::accumulate(std::next(Constraints->begin()), Constraints->end(),
@@ -89,19 +90,18 @@ TypeVar::bindWith(const Monotype &M) const {
   return S;
 }
 
-bool TypeCon::operator==(const TypeCon &Rhs) const {
-  return Name == Rhs.Name && Args.size() == Rhs.Args.size();
-}
+bool TypeCon::operator==(const TypeCon &Rhs) const { return Data == Rhs.Data; }
 
 bool TypeCon::operator!=(const TypeCon &Rhs) const { return !(*this == Rhs); }
 
 bool TypeApp::operator==(const TypeApp &Rhs) const {
-  return Name == Rhs.Name && Args.size() == Rhs.Args.size();
+  return AppKind == Rhs.AppKind && Args == Rhs.Args;
 }
 
 bool TypeApp::operator!=(const TypeApp &Rhs) const { return !(*this == Rhs); }
 
 bool TypeFun::operator==(const TypeFun &Rhs) const {
+  // two TypeFun are "equal" (read compatible) if they have the same arity
   return Params.size() == Rhs.Params.size();
 }
 
