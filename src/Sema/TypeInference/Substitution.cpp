@@ -2,75 +2,78 @@
 
 #include <ranges>
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/TypeSwitch.h"
+#include "llvm/ADT/iterator_range.h"
+
+#include "AST/TypeSystem/Context.hpp"
+
 namespace phi {
 
-// Apply to a type
-[[nodiscard]] Monotype Substitution::apply(const Monotype &M) const {
-  struct Visitor {
-    const Substitution *Self;
-    const Monotype &Orig;
+[[nodiscard]] TypeRef Substitution::apply(const TypeRef &T) const {
+  return llvm::TypeSwitch<Type *, TypeRef>(T.getPtr())
 
-    Monotype operator()(const TypeVar &Var) const {
-      const auto It = Self->Map.find(Var);
-      return (It != Self->Map.end()) ? Self->apply(It->second) : Orig;
-    }
+      // ---------- Type variable ----------
+      .Case<VarTy>([&](VarTy *V) -> TypeRef {
+        auto It = Map.find(V);
+        if (It != Map.end())
+          return apply(It->second);
+        return T;
+      })
 
-    Monotype operator()(const TypeCon &Con) const {
-      (void)Con;
-      return Orig;
-    }
+      // ---------- Type constructors ----------
+      .Case<BuiltinTy>([&](const BuiltinTy * /*B*/) -> TypeRef { return T; })
+      .Case<AdtTy>([&](const AdtTy * /*A*/) -> TypeRef { return T; })
 
-    Monotype operator()(const TypeApp &App) const {
-      if (App.Args.empty())
-        return Orig;
-      std::vector<Monotype> Args;
-      Args.reserve(App.Args.size());
-      for (const auto &Arg : App.Args)
-        Args.push_back(Self->apply(Arg));
-      return Monotype::makeApp(App.AppKind, std::move(Args));
-    }
+      // ---------- Function ----------
+      .Case<FunTy>([&](const FunTy *F) -> TypeRef {
+        auto R = llvm::map_range(F->getParamTys(), [&](const TypeRef &Param) {
+          return apply(Param);
+        });
+        std::vector<TypeRef> Params(R.begin(), R.end());
+        auto Ret = apply(F->getReturnTy());
 
-    Monotype operator()(const TypeFun &Fun) const {
-      std::vector<Monotype> Params;
-      Params.reserve(Fun.Params.size());
-      for (const auto &Param : Fun.Params)
-        Params.push_back(Self->apply(Param));
-      return Monotype::makeFun(std::move(Params), Self->apply(*Fun.Ret));
-    }
-  };
+        return TypeCtx::getFun(Params, Ret, T.getSpan());
+      })
 
-  return std::visit(Visitor{.Self = this, .Orig = M}, M.getPtr());
+      // ---------- Tuple (type application) ----------
+      .Case<TupleTy>([&](const TupleTy *Tup) -> TypeRef {
+        auto R = llvm::map_range(Tup->getElementTys(),
+                                 [&](const TypeRef &E) { return apply(E); });
+        std::vector<TypeRef> Elems(R.begin(), R.end());
+
+        return TypeCtx::getTuple(Elems, T.getSpan());
+      })
+
+      // ---------- Pointer (type application) ----------
+      .Case<PtrTy>([&](const PtrTy *P) -> TypeRef {
+        return TypeCtx::getPtr(apply(P->getPointee()), T.getSpan());
+      })
+
+      // ---------- Reference (type application) ----------
+      .Case<RefTy>([&](const RefTy *R) -> TypeRef {
+        return TypeCtx::getRef(apply(R->getPointee()), T.getSpan());
+      })
+
+      // ---------- Error ----------
+      .Case<ErrTy>([&](const ErrTy *) -> TypeRef { return T; })
+
+      // ---------- Exhaustiveness ----------
+      .Default([&](Type *) -> TypeRef {
+        llvm_unreachable("unknown Type kind in Substitution::apply");
+      });
 }
 
-// Apply to a scheme (don’t touch quantified vars)
-[[nodiscard]] Polytype Substitution::apply(const Polytype &P) const {
-  if (Map.empty() || P.getQuant().empty())
-    return {P.getQuant(), apply(P.getBody())};
-
-  Substitution Filtered;
-  for (const auto &[TypeVar, Monotype] : Map) {
-    bool Quantified = false;
-    for (auto &Q : P.getQuant())
-      if (Q == TypeVar) {
-        Quantified = true;
-        break;
-      }
-    if (!Quantified)
-      Filtered.Map.emplace(TypeVar, Monotype);
-  }
-  return Polytype{P.getQuant(), Filtered.apply(P.getBody())};
-}
-
-// Compose: this := s2 ∘ this   (apply s2 after this)
 void Substitution::compose(const Substitution &Other) {
-  if (Other.empty())
+  if (Other.empty()) {
     return;
+  }
 
-  // this := S2 ∘ this
   for (auto &T : Map | std::views::values)
     T = Other.apply(T);
-  for (const auto &[TypeVar, Monotype] : Other.Map)
-    Map.insert_or_assign(TypeVar, Monotype);
+
+  for (const auto &[TypeVar, TypeRef] : Other.Map)
+    Map.insert_or_assign(TypeVar, TypeRef);
 }
 
 } // namespace phi

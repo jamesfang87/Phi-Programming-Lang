@@ -1,9 +1,9 @@
-#include "Sema/NameResolver.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
 
 namespace phi {
 
 bool NameResolver::resolveHeader(FunDecl &D) {
-  bool Success = visit(D.getReturnTy());
+  bool Success = visit(D.getReturnTy()); // we visit param types later
 
   // Resolve parameters
   for (const auto &Param : D.getParams()) {

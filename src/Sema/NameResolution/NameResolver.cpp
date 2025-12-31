@@ -1,12 +1,12 @@
-#include "Sema/NameResolver.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
 
 #include <cassert>
 #include <memory>
 #include <vector>
 
-#include <llvm/Support/Casting.h>
+#include "llvm/Support/Casting.h"
 
-#include "AST/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
 
 namespace phi {
 

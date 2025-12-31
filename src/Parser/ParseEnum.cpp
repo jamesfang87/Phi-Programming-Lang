@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-#include "AST/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
@@ -41,8 +41,7 @@ std::unique_ptr<EnumDecl> Parser::parseEnumDecl() {
     }
 
     if (Check.getKind() == TokenKind::FunKw) {
-      // parse a member method (reuses your existing parseMethodDecl)
-      auto Res = parseMethodDecl(Id, Loc, /*InEnum=*/true);
+      auto Res = parseMethodDecl(Id);
       if (Res) {
         Methods.push_back(std::move(*Res));
       } else {
@@ -88,24 +87,25 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
   case TokenKind::Colon: {
     advanceToken(); // eat ':'
 
-    std::optional<Type> DeclType;
+    std::optional<TypeRef> DeclType;
     if (peekKind() == TokenKind::OpenBrace) {
       // Remember start location of the anonymous struct (the '{' token)
       Token Opening = peekToken();
-      SrcLocation StructLoc = Opening.getStart();
+      SrcLocation Start = Opening.getStart();
 
       // Parse the list of fields inside { ... }.
       // parseValueList will consume the opening and closing braces.
       auto FieldsRes = parseValueList<TypedBinding>(
           TokenKind::OpenBrace, TokenKind::CloseBrace,
           &Parser::parseTypedBinding, "anonymous struct fields");
+      SrcLocation End = peekToken().getEnd();
 
       if (!FieldsRes) {
         // failed to parse anonymous struct fields; leave DeclType as nullopt
         DeclType = std::nullopt;
       } else {
         // Convert parsed tuples into FieldDecls
-        std::vector<std::unique_ptr<FieldDecl>> Fields;
+        std::vector<FieldDecl> Fields;
         uint32_t FieldIndex = 0;
         for (auto &Field : *FieldsRes) {
           auto [Location, Name, Type] = Field;
@@ -113,24 +113,24 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
           // No initializer for anonymous struct fields; everything is public
           std::unique_ptr<Expr> Init = nullptr;
           bool IsPrivate = false;
-          Fields.push_back(std::make_unique<FieldDecl>(
-              Location, std::move(Name), Type, std::move(Init), IsPrivate,
-              FieldIndex++));
+          Fields.emplace_back(Location, std::move(Name), *Type, std::move(Init),
+                              IsPrivate, FieldIndex++);
         }
 
         // Generate a unique name for the desugared anonymous struct
         static uint32_t AnonStructCounter = 0;
         std::string AnonName =
-            "@_anon_struct_" + std::to_string(++AnonStructCounter);
+            "@anon_struct_" + std::to_string(++AnonStructCounter);
         std::vector<MethodDecl> Methods;
-        Ast.push_back(std::make_unique<StructDecl>(
-            StructLoc, AnonName, std::move(Fields), std::move(Methods)));
-
-        // DeclType becomes a reference to the generated struct type
-        DeclType = Type::makeStruct(AnonName, StructLoc);
+        auto UniPtr = std::make_unique<StructDecl>(
+            Start, AnonName, std::move(Fields), std::move(Methods));
+        auto *RawPtr = UniPtr.get();
+        Ast.push_back(std::move(UniPtr));
+        DeclType.emplace(
+            TypeCtx::getAdt(AnonName, RawPtr, SrcSpan(Start, End)));
       }
     } else {
-      DeclType = parseType();
+      DeclType.emplace(std::move(*parseType()));
     }
 
     if (matchToken(TokenKind::Semicolon)) {
@@ -141,9 +141,9 @@ std::optional<VariantDecl> Parser::parseVariantDecl() {
 
     // missing comma/brace — emit diagnostic and try to recover
     error("missing semicolon after enum variant declaration")
-        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_primary_label(peekToken().getSpan(), "expected `;` here")
         .with_help("enum variant declarations must end with a semicolon")
-        .with_suggestion(spanFromToken(peekToken()), ",", "add semicolon")
+        .with_suggestion(peekToken().getSpan(), ",", "add semicolon")
         .emit(*DiagnosticsMan);
 
     // consume the unexpected token to avoid infinite loop and recover
