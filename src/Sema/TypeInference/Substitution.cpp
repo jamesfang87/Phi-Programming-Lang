@@ -7,6 +7,7 @@
 #include "llvm/ADT/iterator_range.h"
 
 #include "AST/TypeSystem/Context.hpp"
+#include "AST/TypeSystem/Type.hpp"
 
 namespace phi {
 
@@ -63,6 +64,8 @@ namespace phi {
         llvm_unreachable("unknown Type kind in Substitution::apply");
       });
 }
+
+void Substitution::add(VarTy *Var, TypeRef T) { Map.insert_or_assign(Var, T); }
 
 void Substitution::compose(const Substitution &Other) {
   if (Other.empty()) {

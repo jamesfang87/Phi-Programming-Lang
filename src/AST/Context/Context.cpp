@@ -92,7 +92,8 @@ RefTy *TypeCtx::ref(const TypeRef &Pointee) {
   return NewInst;
 }
 
-VarTy *TypeCtx::var(uint64_t N) {
+VarTy *TypeCtx::var(uint64_t N,
+                    std::optional<std::vector<TypeRef>> /*Constraints*/) {
   if (N >= Vars.size()) {
     return nullptr;
   }
@@ -100,7 +101,7 @@ VarTy *TypeCtx::var(uint64_t N) {
   return Vars[N];
 }
 
-VarTy *TypeCtx::var() {
+VarTy *TypeCtx::var(std::optional<std::vector<TypeRef>> /*Constraints*/) {
   auto *NewInst = Allocate<VarTy>(Vars.size());
   Vars.push_back(NewInst);
   return NewInst;
@@ -139,13 +140,16 @@ TypeRef TypeCtx::getRef(const TypeRef &Pointee, SrcSpan Span) {
   return {T, std::move(Span)};
 }
 
-TypeRef TypeCtx::getVar(uint64_t N, SrcSpan Span) {
-  auto *T = inst().var(N);
+TypeRef TypeCtx::getVar(uint64_t N,
+                        std::optional<std::vector<TypeRef>> Constraints,
+                        SrcSpan Span) {
+  auto *T = inst().var(N, Constraints);
   return {T, std::move(Span)};
 }
 
-TypeRef TypeCtx::makeVar(SrcSpan Span) {
-  auto *T = inst().var();
+TypeRef TypeCtx::getVar(std::optional<std::vector<TypeRef>> Constraints,
+                        SrcSpan Span) {
+  auto *T = inst().var(Constraints);
   return {T, std::move(Span)};
 }
 
