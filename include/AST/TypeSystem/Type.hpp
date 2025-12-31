@@ -2,12 +2,14 @@
 
 #include <cassert>
 #include <cstdint>
+#include <expected>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "llvm/Support/Casting.h"
 
+#include "Diagnostics/Diagnostic.hpp"
 #include "SrcManager/SrcSpan.hpp"
 
 namespace phi {
@@ -194,12 +196,17 @@ public:
   explicit VarTy(uint64_t N) : Type(TypeKind::Var), N(N) {}
 
   [[nodiscard]] auto getN() const { return N; }
+  [[nodiscard]] auto getConstraints() const { return Constraints; }
+
   [[nodiscard]] std::string toString() const override;
+  [[nodiscard]] bool occursIn(TypeRef Other) const;
+  [[nodiscard]] std::expected<class Substitution, Diagnostic> bind(TypeRef T);
 
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Var; }
 
 private:
   const uint64_t N;
+  std::vector<TypeRef> Constraints;
 };
 
 class ErrTy final : public Type {

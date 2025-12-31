@@ -1,4 +1,3 @@
-#include "AST/Nodes/Stmt.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
@@ -6,6 +5,7 @@
 #include <optional>
 #include <string>
 
+#include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
@@ -48,39 +48,57 @@ optional<Pattern> Parser::parseSingularPattern() {
   }
 }
 
-optional<PatternAtomics::Wildcard> Parser::parseWildcardPattern() {
+optional<Pattern> Parser::parseWildcardPattern() {
   assert(peekKind() == TokenKind::Wildcard);
   advanceToken();
-  return PatternAtomics::Wildcard();
+
+  std::optional<Pattern> Result;
+  Result.emplace(std::in_place_type<PatternAtomics::Wildcard>);
+  return Result;
 }
 
-optional<PatternAtomics::Literal> Parser::parseLiteralPattern() {
+optional<Pattern> Parser::parseLiteralPattern() {
   auto Tok = advanceToken();
+
+  std::optional<Pattern> Result;
+
   switch (Tok.getKind()) {
   case TokenKind::IntLiteral:
-    return PatternAtomics::Literal(std::make_unique<IntLiteral>(
-        Tok.getStart(), std::stoll(Tok.getLexeme())));
+    Result.emplace(std::in_place_type<PatternAtomics::Literal>,
+                   std::make_unique<IntLiteral>(Tok.getStart(),
+                                                std::stoll(Tok.getLexeme())));
+    break;
   case TokenKind::FloatLiteral:
-    return PatternAtomics::Literal(std::make_unique<FloatLiteral>(
-        Tok.getStart(), std::stod(Tok.getLexeme())));
+    Result.emplace(std::in_place_type<PatternAtomics::Literal>,
+                   std::make_unique<FloatLiteral>(Tok.getStart(),
+                                                  std::stod(Tok.getLexeme())));
+    break;
   case TokenKind::StrLiteral:
-    return PatternAtomics::Literal(
+    Result.emplace(
+        std::in_place_type<PatternAtomics::Literal>,
         std::make_unique<StrLiteral>(Tok.getStart(), Tok.getLexeme()));
+    break;
   case TokenKind::CharLiteral:
-    return PatternAtomics::Literal(
+    Result.emplace(
+        std::in_place_type<PatternAtomics::Literal>,
         std::make_unique<CharLiteral>(Tok.getStart(), Tok.getLexeme()[0]));
+    break;
   case TokenKind::TrueKw:
-    return PatternAtomics::Literal(
-        std::make_unique<BoolLiteral>(Tok.getStart(), true));
+    Result.emplace(std::in_place_type<PatternAtomics::Literal>,
+                   std::make_unique<BoolLiteral>(Tok.getStart(), true));
+    break;
   case TokenKind::FalseKw:
-    return PatternAtomics::Literal(
-        std::make_unique<BoolLiteral>(Tok.getStart(), false));
+    Result.emplace(std::in_place_type<PatternAtomics::Literal>,
+                   std::make_unique<BoolLiteral>(Tok.getStart(), false));
+    break;
   default:
     return std::nullopt;
   }
+
+  return Result;
 }
 
-optional<PatternAtomics::Variant> Parser::parseVariantPattern() {
+optional<Pattern> Parser::parseVariantPattern() {
   assert(peekKind() == TokenKind::Period);
   advanceToken();
 
@@ -91,10 +109,12 @@ optional<PatternAtomics::Variant> Parser::parseVariantPattern() {
   const std::string Name = peekToken().getLexeme();
   const SrcLocation Loc = advanceToken().getStart();
 
-  // parse destructing variables
+  std::vector<std::unique_ptr<VarDecl>> Vars;
+
   if (peekKind() == TokenKind::OpenParen) {
     bool ErrorHappened = false;
-    auto Vars = parseList<VarDecl>(
+
+    auto ParsedVars = parseList<VarDecl>(
         TokenKind::OpenParen, TokenKind::CloseParen,
         [&](Parser *P) -> std::unique_ptr<VarDecl> {
           if (P->peekKind() == TokenKind::Identifier) {
@@ -107,13 +127,16 @@ optional<PatternAtomics::Variant> Parser::parseVariantPattern() {
           return nullptr;
         });
 
-    if (ErrorHappened || !Vars)
+    if (ErrorHappened || !ParsedVars)
       return std::nullopt;
 
-    return PatternAtomics::Variant(Name, std::move(*Vars), Loc);
+    Vars = std::move(*ParsedVars);
   }
 
-  return PatternAtomics::Variant(Name, {}, Loc);
+  std::optional<Pattern> Result;
+  Result.emplace(std::in_place_type<PatternAtomics::Variant>, Name,
+                 std::move(Vars), Loc);
+  return Result;
 }
 
 } // namespace phi

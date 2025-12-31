@@ -23,8 +23,11 @@ public:
                         const TypeRef &Return, SrcSpan Span);
   static TypeRef getPtr(const TypeRef &Pointee, SrcSpan Span);
   static TypeRef getRef(const TypeRef &Pointee, SrcSpan Span);
-  static TypeRef getVar(uint64_t N, SrcSpan Span);
-  static TypeRef makeVar(SrcSpan Span);
+  static TypeRef getVar(uint64_t N,
+                        std::optional<std::vector<TypeRef>> Constraints,
+                        SrcSpan Span);
+  static TypeRef getVar(std::optional<std::vector<TypeRef>> Constraints,
+                        SrcSpan Span);
   static TypeRef getErr(SrcSpan Span);
 
   static std::vector<std::unique_ptr<Type>> &getAll();
@@ -46,8 +49,8 @@ private:
   FunTy *fun(const std::vector<TypeRef> &Params, const TypeRef &Ret);
   PtrTy *ptr(const TypeRef &Pointee);
   RefTy *ref(const TypeRef &Pointee);
-  VarTy *var(uint64_t N);
-  VarTy *var();
+  VarTy *var(uint64_t N, std::optional<std::vector<TypeRef>> Constraints);
+  VarTy *var(std::optional<std::vector<TypeRef>> Constraints);
   ErrTy *err();
 
   std::vector<std::unique_ptr<Type>> Arena;
