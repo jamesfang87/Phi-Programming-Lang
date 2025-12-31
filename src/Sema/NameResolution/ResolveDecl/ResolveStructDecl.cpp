@@ -1,10 +1,10 @@
-#include "Sema/NameResolver.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
 
 #include <cassert>
 
 #include <llvm/Support/Casting.h>
 
-#include "AST/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
 
 namespace phi {
 
@@ -13,7 +13,9 @@ bool NameResolver::resolveHeader(StructDecl &D) {
     emitRedefinitionError("Struct", SymbolTab.lookup(D), &D);
     return false;
   }
-  return true;
+  assert(SymbolTab.lookup(D));
+
+  return visit(D.getType());
 }
 
 bool NameResolver::visit(StructDecl *D) {
@@ -23,8 +25,8 @@ bool NameResolver::visit(StructDecl *D) {
   bool Success = true;
 
   for (auto &Field : D->getFields()) {
-    Success = visit(Field.get()) && Success;
-    SymbolTab.insert(Field.get());
+    Success = visit(&Field) && Success;
+    SymbolTab.insert(&Field);
   }
 
   for (auto &Method : D->getMethods()) {
@@ -39,11 +41,15 @@ bool NameResolver::visit(StructDecl *D) {
 }
 
 bool NameResolver::visit(FieldDecl *D) {
-  bool Success = visit(D->getType());
+  bool Success = true;
 
   // Handle initializer if present
   if (D->hasInit()) {
     Success = visit(D->getInit()) && Success;
+  }
+
+  if (D->hasType()) {
+    Success = visit(D->getType()) && Success;
   }
 
   return Success;

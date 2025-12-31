@@ -27,7 +27,7 @@ namespace phi {
  * @return A formatted string representation of this token
  */
 std::string Token::toString() const {
-  auto [Path, Line, Col] = Start;
+  auto [Path, Line, Col] = Span.Start;
   return std::format("[{}] \"{}\" at {}:{}:{}", this->getName(), Lexeme, Path,
                      Line, Col);
 }

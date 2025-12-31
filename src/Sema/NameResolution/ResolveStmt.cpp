@@ -1,11 +1,11 @@
-#include "Sema/NameResolver.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
 
 #include <optional>
 
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
-#include "AST/Stmt.hpp"
-#include "Sema/SymbolTable.hpp"
+#include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Expr.hpp"
+#include "AST/Nodes/Stmt.hpp"
+#include "Sema/NameResolution/SymbolTable.hpp"
 
 namespace phi {
 
@@ -81,14 +81,13 @@ bool NameResolver::visit(DeclStmt &S) {
   VarDecl &Var = S.getDecl();
   bool Success = true;
 
-  // Resolve variable type
-  if (Var.hasType()) {
-    Success = visit(Var.getType()) && Success;
-  }
-
   // Resolve initializer if present
   if (Var.hasInit()) {
     Success = visit(Var.getInit()) && Success;
+  }
+
+  if (Var.hasType()) {
+    Success = visit(Var.getType()) && Success;
   }
 
   // Add to symbol table

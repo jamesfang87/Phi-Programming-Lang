@@ -1,7 +1,7 @@
 #include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
-#include "AST/Expr.hpp"
+#include "AST/Nodes/Expr.hpp"
 #include "Parser/PrecedenceTable.hpp"
 #include <cassert>
 #include <memory>
@@ -90,11 +90,10 @@ std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
       if (peekToken().getKind() == TokenKind::Comma) {
         advanceToken();
       } else {
-        emitError(error("missing comma in tuple list")
-                      .with_primary_label(spanFromToken(peekToken()),
-                                          "expected `,` here")
-                      .with_help("separate tuple elements with commas")
-                      .build());
+        error("missing comma in tuple list")
+            .with_primary_label(peekToken().getSpan(), "expected `,` here")
+            .with_help("separate tuple elements with commas")
+            .emit(*DiagnosticsMan);
         return nullptr;
       }
     } while (peekToken().getKind() != TokenKind::CloseParen);
@@ -110,7 +109,7 @@ std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
 
   if (peekToken().getKind() != TokenKind::CloseParen) {
     error("missing closing parenthesis")
-        .with_primary_label(spanFromToken(peekToken()), "expected `)` here")
+        .with_primary_label(peekToken().getSpan(), "expected `)` here")
         .with_help("parentheses must be properly matched")
         .emit(*DiagnosticsMan);
     return nullptr;

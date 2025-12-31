@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "AST/Stmt.hpp"
+#include "AST/Nodes/Decl.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcSpan.hpp"
 
@@ -199,7 +199,7 @@ std::unique_ptr<IfStmt> Parser::parseIfStmt() {
 
   // Invalid else clause
   error("invalid else clause")
-      .with_primary_label(spanFromToken(peekToken()), "unexpected token here")
+      .with_primary_label(peekToken().getSpan(), "unexpected token here")
       .with_help(
           "`else` must be followed by a block `{` or another `if` statement")
       .emit(*DiagnosticsMan);
@@ -256,7 +256,7 @@ std::unique_ptr<ForStmt> Parser::parseForStmt() {
   Token LoopVar = advanceToken();
   if (LoopVar.getKind() != TokenKind::Identifier) {
     error("for loop must have a loop variable")
-        .with_primary_label(spanFromToken(LoopVar), "expected identifier here")
+        .with_primary_label(LoopVar.getSpan(), "expected identifier here")
         .with_help("for loops have the form: `for variable in iterable`")
         .with_note(
             "the loop variable will be assigned each value from the iterable")
@@ -269,10 +269,10 @@ std::unique_ptr<ForStmt> Parser::parseForStmt() {
   Token InKw = advanceToken();
   if (InKw.getKind() != TokenKind::InKw) {
     error("missing `in` keyword in for loop")
-        .with_primary_label(spanFromToken(LoopVar), "loop variable")
-        .with_secondary_label(spanFromToken(InKw), "expected `in` here")
+        .with_primary_label(LoopVar.getSpan(), "loop variable")
+        .with_secondary_label(InKw.getSpan(), "expected `in` here")
         .with_help("for loops have the form: `for variable in iterable`")
-        .with_suggestion(spanFromToken(InKw), "in", "add `in` keyword")
+        .with_suggestion(InKw.getSpan(), "in", "add `in` keyword")
         .emit(*DiagnosticsMan);
     NoStructInit = false;
     return nullptr;
@@ -332,14 +332,13 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
 
   SrcLocation VarLoc;
   std::string Id;
-  std::optional<Type> DeclType = std::nullopt; // initialize to nullptr
+  std::optional<TypeRef> DeclType;
 
   if (peekToken(1).getKind() != TokenKind::Colon) {
     // just parse the name and leave DeclType as nullptr
     if (peekToken().getKind() != TokenKind::Identifier) {
       error("expected identifier")
-          .with_primary_label(spanFromToken(peekToken()),
-                              "expected identifier here")
+          .with_primary_label(peekToken().getSpan(), "expected identifier here")
           .emit(*DiagnosticsMan);
       return nullptr;
     }
@@ -375,7 +374,7 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
   // Validate semicolon terminator
   if (peekToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after variable declaration")
-        .with_primary_label(spanFromToken(peekToken(-1)), "expected `;` here")
+        .with_primary_label(peekToken(-1).getSpan(), "expected `;` here")
         .with_help("variable declarations must end with a semicolon")
         .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
         .emit(*DiagnosticsMan);
@@ -392,7 +391,7 @@ std::unique_ptr<BreakStmt> Parser::parseBreakStmt() {
   SrcLocation Loc = peekToken().getStart();
   if (advanceToken().getKind() != TokenKind::BreakKw) {
     error("missing break keyword")
-        .with_primary_label(spanFromToken(peekToken()), "expected `break` here")
+        .with_primary_label(peekToken().getSpan(), "expected `break` here")
         .with_help("break statements must be preceded by a loop")
         .emit(*DiagnosticsMan);
     return nullptr;
@@ -416,8 +415,7 @@ std::unique_ptr<ContinueStmt> Parser::parseContinueStmt() {
   SrcLocation Loc = peekToken().getStart();
   if (advanceToken().getKind() != TokenKind::ContinueKw) {
     error("missing continue keyword")
-        .with_primary_label(spanFromToken(peekToken()),
-                            "expected `continue` here")
+        .with_primary_label(peekToken().getSpan(), "expected `continue` here")
         .with_help("continue statements must be preceded by a loop")
         .with_code("E0028")
         .emit(*DiagnosticsMan);

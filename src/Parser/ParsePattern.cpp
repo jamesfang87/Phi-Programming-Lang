@@ -1,4 +1,4 @@
-#include "AST/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
@@ -13,8 +13,8 @@
 namespace phi {
 using std::optional;
 
-optional<Pattern> Parser::parsePattern() {
-  std::vector<PatternAtomics::SingularPattern> Patterns;
+optional<std::vector<Pattern>> Parser::parsePattern() {
+  std::vector<Pattern> Patterns;
 
   // Parse the first singular pattern
   auto First = parseSingularPattern();
@@ -34,18 +34,10 @@ optional<Pattern> Parser::parsePattern() {
     Patterns.push_back(std::move(*Next));
   }
 
-  if (Patterns.size() == 1) {
-    // Extract the contained type from SingularPattern and construct Pattern
-    return std::visit(
-        [](auto &&Arg) -> Pattern {
-          return Pattern(std::forward<decltype(Arg)>(Arg));
-        },
-        std::move(Patterns[0]));
-  }
-  return Pattern(PatternAtomics::Alternation{std::move(Patterns)});
+  return Patterns;
 }
 
-optional<PatternAtomics::SingularPattern> Parser::parseSingularPattern() {
+optional<Pattern> Parser::parseSingularPattern() {
   switch (peekKind()) {
   case TokenKind::Wildcard:
     return parseWildcardPattern();
@@ -59,7 +51,6 @@ optional<PatternAtomics::SingularPattern> Parser::parseSingularPattern() {
 optional<PatternAtomics::Wildcard> Parser::parseWildcardPattern() {
   assert(peekKind() == TokenKind::Wildcard);
   advanceToken();
-
   return PatternAtomics::Wildcard();
 }
 

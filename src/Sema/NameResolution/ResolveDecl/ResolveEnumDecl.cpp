@@ -1,11 +1,10 @@
-#include "Sema/NameResolver.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
 
 #include <cassert>
-#include <print>
 #include <string>
 #include <unordered_map>
 
-#include "AST/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
 
 namespace phi {
 
@@ -15,7 +14,10 @@ bool NameResolver::resolveHeader(EnumDecl &D) {
     return false;
   }
   assert(SymbolTab.lookup(D));
-  return true;
+
+  // should just be true...
+  bool Success = visit(D.getType());
+  return Success;
 }
 
 bool NameResolver::visit(EnumDecl *D) {
@@ -32,15 +34,11 @@ bool NameResolver::visit(EnumDecl *D) {
     Success = visit(&Variant) && Success;
   }
 
-  std::unordered_map<std::string, MethodDecl *> SeenMethods;
   for (auto &Method : D->getMethods()) {
-    if (SeenMethods.contains(Method.getId())) {
-      assert(SeenMethods[Method.getId()]);
-      emitRedefinitionError("Method", SeenMethods[Method.getId()], &Method);
-      Success = false;
-    }
-    SeenMethods[Method.getId()] = &Method;
+    SymbolTab.insert(&Method);
+  }
 
+  for (auto &Method : D->getMethods()) {
     Success = visit(&Method) && Success;
   }
 
@@ -48,12 +46,10 @@ bool NameResolver::visit(EnumDecl *D) {
 }
 
 bool NameResolver::visit(VariantDecl *D) {
-  // typeless variants
-  if (!D->hasType()) {
-    return true;
+  if (D->hasType()) {
+    return visit(D->getType());
   }
-
-  return visit(D->getType());
+  return true;
 }
 
 } // namespace phi

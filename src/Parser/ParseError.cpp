@@ -17,7 +17,7 @@ void Parser::emitExpectedFoundError(const std::string &Expected,
                                     const Token &FoundToken) {
   error(
       std::format("expected {}, found `{}`", Expected, FoundToken.getLexeme()))
-      .with_primary_label(spanFromToken(FoundToken),
+      .with_primary_label(FoundToken.getSpan(),
                           std::format("expected {} here", Expected))
       .emit(*DiagnosticsMan);
 }
@@ -34,9 +34,8 @@ void Parser::emitExpectedFoundError(const std::string &Expected,
  */
 void Parser::emitUnexpectedTokenError(
     const Token &Token, const std::vector<std::string> &ExpectedTokens) {
-  auto Builder =
-      error(std::format("unexpected token `{}`", Token.getLexeme()))
-          .with_primary_label(spanFromToken(Token), "unexpected token");
+  auto Builder = error(std::format("unexpected token `{}`", Token.getLexeme()))
+                     .with_primary_label(Token.getSpan(), "unexpected token");
 
   if (!ExpectedTokens.empty()) {
     std::string Suggestion = "expected ";
@@ -67,7 +66,7 @@ void Parser::emitUnclosedDelimiterError(const Token &OpeningToken,
                                         const std::string &ExpectedClosing) {
   error("unclosed delimiter")
       .with_primary_label(
-          spanFromToken(OpeningToken),
+          OpeningToken.getSpan(),
           std::format("unclosed `{}`", OpeningToken.getLexeme()))
       .with_help(
           std::format("expected `{}` to close this delimiter", ExpectedClosing))

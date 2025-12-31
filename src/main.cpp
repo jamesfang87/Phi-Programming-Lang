@@ -4,14 +4,18 @@
 
 #include "Driver/Driver.hpp"
 
+namespace {
+
 std::string readFileToStr(const std::string &Path) {
-  std::ifstream Fin(Path);
-  if (!Fin.is_open()) {
+  std::ifstream In(Path);
+  if (!In.is_open()) {
     throw std::runtime_error("Could not open file: " + Path);
   }
-  return std::string{std::istreambuf_iterator(Fin),
+  return std::string{std::istreambuf_iterator(In),
                      std::istreambuf_iterator<char>()};
 }
+
+} // namespace
 
 int main(int argc, char *argv[]) {
   if (argc < 2) {

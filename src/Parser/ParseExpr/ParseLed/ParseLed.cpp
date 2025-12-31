@@ -4,7 +4,7 @@
 
 #include <llvm/Support/Casting.h>
 
-#include "AST/Expr.hpp"
+#include "AST/Nodes/Expr.hpp"
 
 namespace phi {
 
@@ -60,12 +60,12 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
     if (!Rhs)
       return nullptr;
 
-    if (auto Member = llvm::dyn_cast<DeclRefExpr>(Rhs.get())) {
+    if (auto *Member = llvm::dyn_cast<DeclRefExpr>(Rhs.get())) {
       return std::make_unique<FieldAccessExpr>(Member->getLocation(),
                                                std::move(Lhs), Member->getId());
     }
 
-    if (auto FunCall = llvm::dyn_cast<FunCallExpr>(Rhs.get())) {
+    if (auto *FunCall = llvm::dyn_cast<FunCallExpr>(Rhs.get())) {
       return std::make_unique<MethodCallExpr>(std::move(*FunCall),
                                               std::move(Lhs));
     }

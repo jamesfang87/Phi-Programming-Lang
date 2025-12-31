@@ -1,15 +1,15 @@
-#include "Sema/NameResolver.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
 
 #include <cassert>
 #include <cstddef>
+#include <unordered_set>
 
-#include <llvm/Support/Casting.h>
-#include <print>
+#include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/Casting.h"
 
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
+#include "AST/Nodes/Expr.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
-#include "llvm/IR/CFG.h"
 
 namespace phi {
 
@@ -63,25 +63,25 @@ bool NameResolver::visit(TupleLiteral &E) {
  * - Not attempting to use function as value
  */
 bool NameResolver::visit(DeclRefExpr &E) {
-  ValueDecl *DeclPtr = SymbolTab.lookup(E);
+  ValueDecl *Decl = SymbolTab.lookup(E);
 
-  if (!DeclPtr) {
+  if (!Decl) {
     emitNotFoundError(NotFoundErrorKind::Variable, E.getId(), E.getLocation());
     return false;
   }
 
-  if (llvm::isa<FieldDecl>(DeclPtr)) {
-    auto PrimaryMsg = std::format("Declaration for `{}` could not be found.",
-                                  DeclPtr->getId());
-    error(std::format("use of undeclared variable `{}`", DeclPtr->getId()))
+  if (llvm::isa<FieldDecl>(Decl)) {
+    auto PrimaryMsg =
+        std::format("Declaration for `{}` could not be found.", Decl->getId());
+    error(std::format("use of undeclared variable `{}`", Decl->getId()))
         .with_primary_label(E.getLocation(), PrimaryMsg)
         .with_note(std::format("If you meant to access the field `{}`, please "
                                "prefix this with `self.` as in `self.{}` ",
-                               DeclPtr->getId(), DeclPtr->getId()))
+                               Decl->getId(), Decl->getId()))
         .emit(*Diags);
   }
 
-  E.setDecl(DeclPtr);
+  E.setDecl(Decl);
   return true;
 }
 
@@ -90,8 +90,8 @@ bool NameResolver::visit(DeclRefExpr &E) {
  */
 bool NameResolver::visit(FunCallExpr &E) {
   bool Success = true;
-  FunDecl *FunPtr = SymbolTab.lookup(E);
-  if (!FunPtr) {
+  FunDecl *Decl = SymbolTab.lookup(E);
+  if (!Decl) {
     auto *DeclRef = llvm::dyn_cast<DeclRefExpr>(&E.getCallee());
     emitNotFoundError(NotFoundErrorKind::Function, DeclRef->getId(),
                       E.getLocation());
@@ -102,7 +102,7 @@ bool NameResolver::visit(FunCallExpr &E) {
     Success = visit(*Arg) && Success;
   }
 
-  E.setDecl(FunPtr);
+  E.setDecl(Decl);
   return Success;
 }
 
@@ -134,21 +134,16 @@ bool NameResolver::visit(CustomTypeCtor &E) {
     return true;
   }
 
-  StructDecl *Struct = SymbolTab.lookupStruct(E.getTypeName());
-  if (Struct) {
-    E.setDecl(Struct);
-    return resolveStructCtor(Struct, E);
+  auto *Decl = SymbolTab.lookup(E.getTypeName());
+  if (!Decl) {
+    emitNotFoundError(NotFoundErrorKind::Adt, E.getTypeName(), E.getLocation());
+    return false;
   }
 
-  EnumDecl *Enum = SymbolTab.lookupEnum(E.getTypeName());
-  if (Enum) {
-    E.setDecl(Enum);
-    return resolveEnumCtor(Enum, E);
-  }
-
-  emitNotFoundError(NotFoundErrorKind::Custom, E.getTypeName(),
-                    E.getLocation());
-  return false;
+  E.setDecl(Decl);
+  return llvm::TypeSwitch<AdtDecl *, bool>(SymbolTab.lookup(E.getTypeName()))
+      .Case<StructDecl>([&](auto *D) { return resolveStructCtor(D, E); })
+      .Case<EnumDecl>([&](auto *D) { return resolveEnumCtor(D, E); });
 }
 
 bool NameResolver::resolveStructCtor(StructDecl *Found, CustomTypeCtor &E) {
@@ -156,8 +151,8 @@ bool NameResolver::resolveStructCtor(StructDecl *Found, CustomTypeCtor &E) {
 
   std::unordered_set<std::string> Missing;
   for (auto &Field : Found->getFields()) {
-    if (!Field->hasInit())
-      Missing.insert(Field->getId());
+    if (!Field.hasInit())
+      Missing.insert(Field.getId());
   }
 
   bool Success = true;
@@ -211,9 +206,6 @@ bool NameResolver::resolveStructCtor(StructDecl *Found, CustomTypeCtor &E) {
 
 bool NameResolver::resolveEnumCtor(EnumDecl *Found, CustomTypeCtor &E) {
   assert(Found != nullptr);
-  assert(E.getInterpretation() == CustomTypeCtor::InterpretAs::Enum);
-  assert(std::holds_alternative<EnumDecl *>(E.getDecl()));
-  assert(std::get<EnumDecl *>(E.getDecl()) != nullptr);
 
   bool Success = true;
 
@@ -250,9 +242,17 @@ bool NameResolver::visit(MemberInitExpr &E) {
   return visit(*E.getInitValue());
 }
 
-bool NameResolver::visit(FieldAccessExpr &E) { return visit(*E.getBase()); }
+bool NameResolver::visit(FieldAccessExpr &E) {
+  // We can know with certainty the Field which E is accessing at this point.
+  // Thus, we defer name resolution to after type inference,
+  // where upon we can know the type.
+  return visit(*E.getBase());
+}
 
 bool NameResolver::visit(MethodCallExpr &E) {
+  // We can know with certainty the Method which E is calling at this point.
+  // Thus, we defer name resolution to after type inference,
+  // where upon we can know the type.
   bool Success = visit(*E.getBase());
 
   for (const auto &Args : E.getArgs()) {
@@ -281,8 +281,7 @@ bool NameResolver::resolveVariantPattern(const PatternAtomics::Variant &P) {
 /**
  * Resolves a singular pattern (used within alternations).
  */
-bool NameResolver::resolveSingularPattern(
-    const PatternAtomics::SingularPattern &Pat) {
+bool NameResolver::resolveSingularPattern(const Pattern &Pat) {
   return std::visit(
       [this](const auto &P) -> bool {
         using T = std::decay_t<decltype(P)>;
@@ -300,36 +299,14 @@ bool NameResolver::resolveSingularPattern(
 /**
  * Resolves a pattern, handling captured variables and literal expressions.
  */
-bool NameResolver::resolvePattern(const Pattern &Pat) {
-  return std::visit(
-      [this](const auto &P) -> bool {
-        using T = std::decay_t<decltype(P)>;
-        if constexpr (std::is_same_v<T, PatternAtomics::Wildcard>) {
-          return true;
-        } else if constexpr (std::is_same_v<T, PatternAtomics::Literal>) {
-          return visit(*P.Value);
-        } else if constexpr (std::is_same_v<T, PatternAtomics::Variant>) {
-          return resolveVariantPattern(P);
-        } else if constexpr (std::is_same_v<T, PatternAtomics::Alternation>) {
-          bool Success = true;
-          for (const auto &SubPattern : P.Patterns) {
-            Success = resolveSingularPattern(SubPattern) && Success;
-          }
-          return Success;
-        }
-      },
-      Pat);
+bool NameResolver::resolvePattern(const std::vector<Pattern> &Patterns) {
+  bool Success = true;
+  for (const auto &SubPattern : Patterns) {
+    Success = resolveSingularPattern(SubPattern) && Success;
+  }
+  return Success;
 }
 
-/**
- * Resolves a match expression.
- *
- * Validates:
- * - Scrutinee resolves successfully
- * - All pattern literals resolve successfully
- * - Pattern captured variables are added to each arm's scope
- * - Each arm's body resolves in a scope containing captured variables
- */
 bool NameResolver::visit(MatchExpr &E) {
   bool Success = visit(*E.getScrutinee());
 
@@ -339,7 +316,7 @@ bool NameResolver::visit(MatchExpr &E) {
     SymbolTable::ScopeGuard ArmScope(SymbolTab);
 
     // Resolve pattern and add any captured variables to the scope
-    Success = resolvePattern(Arm.Pattern) && Success;
+    Success = resolvePattern(Arm.Patterns) && Success;
 
     // Resolve arm body (scope already created)
     // The Return pointer is non-owning and points into the Body,

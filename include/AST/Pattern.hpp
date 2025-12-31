@@ -1,7 +1,6 @@
 #pragma once
 
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 #include <memory>
@@ -22,16 +21,7 @@ struct Variant {
   phi::SrcLocation Location;
 };
 
-using SingularPattern =
-    std::variant<PatternAtomics::Wildcard, PatternAtomics::Literal,
-                 PatternAtomics::Variant>;
-
-struct Alternation {
-  std::vector<SingularPattern> Patterns;
-};
-
 } // namespace PatternAtomics
 
-using Pattern =
-    std::variant<PatternAtomics::Wildcard, PatternAtomics::Literal,
-                 PatternAtomics::Variant, PatternAtomics::Alternation>;
+using Pattern = std::variant<PatternAtomics::Wildcard, PatternAtomics::Literal,
+                             PatternAtomics::Variant>;
