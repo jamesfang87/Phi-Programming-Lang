@@ -1,11 +1,14 @@
 #pragma once
 
+#include <expected>
 #include <memory>
 #include <vector>
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
+#include "Diagnostics/Diagnostic.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
+#include "Sema/TypeInference/Substitution.hpp"
 
 namespace phi {
 
@@ -22,7 +25,7 @@ public:
   // Main Entry Point
   //===--------------------------------------------------------------------===//
 
-  std::vector<std::unique_ptr<Decl>> inferProgram();
+  std::vector<std::unique_ptr<Decl>> infer();
 
   //===--------------------------------------------------------------------===//
   // Declaration Visitor Methods
@@ -80,6 +83,9 @@ public:
   InferRes visit(FieldAccessExpr &E);
   InferRes visit(MethodCallExpr &E);
   InferRes visit(MatchExpr &E);
+
+private:
+  std::expected<Substitution, Diagnostic> unify(TypeRef A, TypeRef B);
 };
 
 } // namespace phi

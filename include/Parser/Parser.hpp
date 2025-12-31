@@ -143,9 +143,9 @@ private:
 
   std::optional<std::vector<Pattern>> parsePattern();
   std::optional<Pattern> parseSingularPattern();
-  std::optional<PatternAtomics::Wildcard> parseWildcardPattern();
-  std::optional<PatternAtomics::Variant> parseVariantPattern();
-  std::optional<PatternAtomics::Literal> parseLiteralPattern();
+  std::optional<Pattern> parseWildcardPattern();
+  std::optional<Pattern> parseVariantPattern();
+  std::optional<Pattern> parseLiteralPattern();
 
   //===--------------------------------------------------------------------===//
   // Expression Parsing
