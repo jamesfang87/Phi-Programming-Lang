@@ -6,8 +6,8 @@
 
 #include <llvm/Support/Casting.h>
 
-#include "AST/Expr.hpp"
-#include "AST/Stmt.hpp"
+#include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Expr.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/TokenKind.hpp"
 
@@ -70,7 +70,7 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
       }
     }
 
-    Arms.push_back(MatchExpr::Arm{.Pattern = std::move(*Pattern),
+    Arms.push_back(MatchExpr::Arm{.Patterns = std::move(*Pattern),
                                   .Body = std::move(Body),
                                   .Return = Return});
   }

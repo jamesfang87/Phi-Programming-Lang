@@ -2,8 +2,7 @@
 
 #include <unordered_map>
 
-#include "Sema/TypeInference/Types/Monotype.hpp"
-#include "Sema/TypeInference/Types/Polytype.hpp"
+#include "AST/TypeSystem/Type.hpp"
 
 namespace phi {
 
@@ -11,12 +10,10 @@ namespace phi {
 // Substitution
 // ---------------------------
 struct Substitution {
-  // v ↦ type
-  std::unordered_map<TypeVar, Monotype> Map;
+  std::unordered_map<VarTy *, TypeRef> Map;
 
   [[nodiscard]] bool empty() const { return Map.empty(); }
-  [[nodiscard]] Monotype apply(const Monotype &M) const;
-  [[nodiscard]] Polytype apply(const Polytype &P) const;
+  [[nodiscard]] TypeRef apply(const TypeRef &T) const;
   void compose(const Substitution &Other);
 };
 

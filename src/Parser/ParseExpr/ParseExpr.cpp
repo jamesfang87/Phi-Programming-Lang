@@ -9,21 +9,13 @@
 
 #include <llvm/Support/Casting.h>
 
-#include "AST/Expr.hpp"
+#include "AST/Nodes/Expr.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "Parser/PrecedenceTable.hpp"
 
 namespace phi {
 
-/**
- * Entry point for expression parsing.
- *
- * @return std::unique_ptr<Expr> Expression AST or nullptr on error.
- *         Errors are emitted to DiagnosticManager.
- *
- * Uses Pratt parsing with operator precedence handling.
- */
 std::unique_ptr<Expr> Parser::parseExpr() {
   std::vector<TokenKind> Terminators = {
       TokenKind::Eof,        TokenKind::Semicolon,    TokenKind::Comma,
@@ -41,20 +33,6 @@ std::unique_ptr<Expr> Parser::parseExpr() {
   return Res;
 }
 
-/**
- * Pratt parser implementation for expressions.
- *
- * @param min_bp Minimum binding power for current expression
- * @return std::unique_ptr<Expr> Expression AST or nullptr on error
- *         Errors are emitted to DiagnosticManager.
- *
- * Recursive descent parser that handles:
- * - Prefix operators
- * - Literal values
- * - Identifiers
- * - Parenthesized expressions
- * - Postfix operations (function calls, member access)
- */
 std::unique_ptr<Expr> Parser::pratt(int MinBp,
                                     const std::vector<TokenKind> &Terminators) {
   std::unique_ptr<Expr> Lhs = parseNud(peekToken());

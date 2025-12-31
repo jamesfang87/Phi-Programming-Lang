@@ -1,11 +1,12 @@
-#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
-#include <llvm/Support/Casting.h>
 #include <memory>
 
-#include "AST/Expr.hpp"
+#include <llvm/Support/Casting.h>
+
+#include "AST/Nodes/Expr.hpp"
+#include "Lexer/TokenKind.hpp"
 
 namespace phi {
 

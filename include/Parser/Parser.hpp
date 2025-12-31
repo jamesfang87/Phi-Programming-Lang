@@ -9,11 +9,12 @@
 #include <utility>
 #include <vector>
 
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
+#include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Expr.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
-#include "AST/Stmt.hpp"
-#include "AST/Type.hpp"
+#include "AST/TypeSystem/Context.hpp"
+#include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/Diagnostic.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
@@ -105,15 +106,14 @@ private:
   //===--------------------------------------------------------------------===//
 
   std::unique_ptr<StructDecl> parseStructDecl();
-  std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
-  std::optional<MethodDecl> parseMethodDecl(std::string ParentName,
-                                            SrcLocation ParentLoc, bool InEnum);
+  std::optional<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
+  std::optional<MethodDecl> parseMethodDecl(std::string ParentName);
 
   //===--------------------------------------------------------------------===//
   // Type System Parsing
   //===--------------------------------------------------------------------===//
 
-  std::optional<Type> parseType();
+  std::optional<TypeRef> parseType();
 
   //===--------------------------------------------------------------------===//
   // Function Declaration Parsing
@@ -141,8 +141,8 @@ private:
   // Pattern Parsing
   //===--------------------------------------------------------------------===//
 
-  std::optional<Pattern> parsePattern();
-  std::optional<PatternAtomics::SingularPattern> parseSingularPattern();
+  std::optional<std::vector<Pattern>> parsePattern();
+  std::optional<Pattern> parseSingularPattern();
   std::optional<PatternAtomics::Wildcard> parseWildcardPattern();
   std::optional<PatternAtomics::Variant> parseVariantPattern();
   std::optional<PatternAtomics::Literal> parseLiteralPattern();
@@ -176,7 +176,7 @@ private:
   struct TypedBinding {
     SrcLocation Loc;
     std::string Name;
-    Type Type;
+    std::optional<TypeRef> Type;
   };
   std::optional<TypedBinding> parseTypedBinding();
 
@@ -230,8 +230,7 @@ private:
       } else {
         emitError(
             error("missing comma in " + Context)
-                .with_primary_label(spanFromToken(peekToken()),
-                                    "expected `,` here")
+                .with_primary_label(peekToken().getSpan(), "expected `,` here")
                 .with_help("separate " + Context + " elements with commas")
                 .build());
         return std::nullopt;
@@ -282,8 +281,58 @@ private:
       } else {
         emitError(
             error("missing comma in " + Context)
-                .with_primary_label(spanFromToken(peekToken()),
-                                    "expected `,` here")
+                .with_primary_label(peekToken().getSpan(), "expected `,` here")
+                .with_help("separate " + Context + " elements with commas")
+                .build());
+        return std::nullopt;
+      }
+    }
+
+    // Verify closing delimiter
+    if (atEOF() || peekKind() != Closing) {
+      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
+      return std::nullopt;
+    }
+
+    advanceToken(); // Consume closing delimiter
+    return Content;
+  }
+
+  template <typename T, typename F>
+  std::optional<std::vector<T>>
+  parsePtrList(const TokenKind Opening, const TokenKind Closing, F Fun,
+               const std::string &Context = "list") {
+    // Verify opening delimiter
+    const Token OpeningToken = peekToken();
+    if (OpeningToken.getKind() != Opening) {
+      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
+      return std::nullopt;
+    }
+    advanceToken();
+
+    // Parse list elements
+    std::vector<T> Content;
+    while (!atEOF() && peekToken().getKind() != Closing) {
+      auto Res = std::invoke(Fun, this);
+      if (Res) {
+        Content.push_back(Res);
+      } else {
+        // Recover by syncing to comma or closing delimiter
+        syncTo({Closing, TokenKind::Comma});
+      }
+
+      // Check for closing delimiter before comma
+      if (peekKind() == Closing) {
+        break;
+      }
+
+      // Handle comma separator
+      if (peekKind() == TokenKind::Comma) {
+        advanceToken();
+      } else {
+        emitError(
+            error("missing comma in " + Context)
+                .with_primary_label(peekToken().getSpan(), "expected `,` here")
                 .with_help("separate " + Context + " elements with commas")
                 .build());
         return std::nullopt;
