@@ -120,7 +120,7 @@ force.x;                 // field access
 force.dot(other_force);  // method call
 ```
 
-## Structs and Methods
+## Enums
 
 Phi is not an object oriented programming language. There is no inheritance. Instead, polymorphism can be achieved through sum types. This is done in phi through enums and pattern matching.
 
