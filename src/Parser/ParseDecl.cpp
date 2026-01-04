@@ -46,8 +46,9 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   SrcSpan IdSpan = advanceToken().getSpan();
 
   // Parse parameter list
-  auto Params = parseList<ParamDecl>(
-      TokenKind::OpenParen, TokenKind::CloseParen, &Parser::parseParamDecl);
+  auto Params = parseList<ParamDecl>(TokenKind(TokenKind::OpenParen),
+                                     TokenKind(TokenKind::CloseParen),
+                                     &Parser::parseParamDecl);
   if (!Params)
     return nullptr;
 
@@ -85,9 +86,11 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
  */
 std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   // Parse identifier
-  if (peekToken().getKind() != TokenKind::Identifier) {
+  if (peekKind() != TokenKind::Identifier) {
     error("expected identifier")
-        .with_primary_label(peekToken().getSpan(), "expected identifier here")
+        .with_primary_label(peekToken().getSpan(),
+                            std::format("expected identifier here (got {})",
+                                        peekKind().toString()))
         .emit(*DiagnosticsMan);
     return std::nullopt;
   }

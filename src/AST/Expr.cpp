@@ -81,7 +81,9 @@ bool Expr::accept(NameResolver &R) { return R.visit(*this); }
 //===----------------------------------------------------------------------===//
 
 IntLiteral::IntLiteral(SrcLocation Location, const int64_t Value)
-    : Expr(Expr::Kind::IntLiteralKind, std::move(Location)), Value(Value) {}
+    : Expr(Expr::Kind::IntLiteralKind, Location,
+           TypeCtx::getVar(VarTy::Domain::Int, SrcSpan(std::move(Location)))),
+      Value(Value) {}
 
 bool IntLiteral::accept(NameResolver &R) { return R.visit(*this); }
 // InferRes IntLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
@@ -89,7 +91,7 @@ bool IntLiteral::accept(NameResolver &R) { return R.visit(*this); }
 // llvm::Value *IntLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 void IntLiteral::emit(int Level) const {
-  std::string TypeStr = Type ? Type->toString() : "<unresolved>";
+  std::string TypeStr = Type.toString();
   std::println("{}IntLiteral: {} (type: {})", indent(Level), Value, TypeStr);
 }
 
@@ -98,15 +100,16 @@ void IntLiteral::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 FloatLiteral::FloatLiteral(SrcLocation Location, const double Value)
-    : Expr(Expr::Kind::FloatLiteralKind, std::move(Location)), Value(Value) {}
+    : Expr(Expr::Kind::FloatLiteralKind, Location,
+           TypeCtx::getVar(VarTy::Domain::Float, SrcSpan(std::move(Location)))),
+      Value(Value) {}
 
 bool FloatLiteral::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes FloatLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
 // bool FloatLiteral::accept(TypeChecker &C) { return C.visit(*this); }
 // llvm::Value *FloatLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 void FloatLiteral::emit(int Level) const {
-  std::string TypeStr = Type ? Type->toString() : "<unresolved>";
+  std::string TypeStr = Type.toString();
   std::println("{}FloatLiteral: {} (type: {})", indent(Level), Value, TypeStr);
 }
 
@@ -115,8 +118,9 @@ void FloatLiteral::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 StrLiteral::StrLiteral(SrcLocation Location, std::string Value)
-    : Expr(Expr::Kind::StrLiteralKind, std::move(Location),
-           TypeCtx::getBuiltin(BuiltinTy::String, SrcSpan(Location))),
+    : Expr(
+          Expr::Kind::StrLiteralKind, Location,
+          TypeCtx::getBuiltin(BuiltinTy::String, SrcSpan(std::move(Location)))),
       Value(std::move(Value)) {}
 
 bool StrLiteral::accept(NameResolver &R) { return R.visit(*this); }
@@ -133,8 +137,8 @@ void StrLiteral::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 CharLiteral::CharLiteral(SrcLocation Location, char Value)
-    : Expr(Expr::Kind::CharLiteralKind, std::move(Location),
-           TypeCtx::getBuiltin(BuiltinTy::Char, SrcSpan(Location))),
+    : Expr(Expr::Kind::CharLiteralKind, Location,
+           TypeCtx::getBuiltin(BuiltinTy::Char, SrcSpan(std::move(Location)))),
       Value(Value) {}
 
 bool CharLiteral::accept(NameResolver &R) { return R.visit(*this); }
@@ -151,8 +155,8 @@ void CharLiteral::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 BoolLiteral::BoolLiteral(SrcLocation Location, bool Value)
-    : Expr(Expr::Kind::BoolLiteralKind, std::move(Location),
-           TypeCtx::getBuiltin(BuiltinTy::Bool, SrcSpan(Location))),
+    : Expr(Expr::Kind::BoolLiteralKind, Location,
+           TypeCtx::getBuiltin(BuiltinTy::Bool, SrcSpan(std::move(Location)))),
       Value(Value) {}
 
 bool BoolLiteral::accept(NameResolver &R) { return R.visit(*this); }
@@ -170,8 +174,8 @@ void BoolLiteral::emit(int Level) const {
 
 RangeLiteral::RangeLiteral(SrcLocation Location, std::unique_ptr<Expr> Start,
                            std::unique_ptr<Expr> End, const bool Inclusive)
-    : Expr(Expr::Kind::RangeLiteralKind, std::move(Location),
-           TypeCtx::getBuiltin(BuiltinTy::Range, SrcSpan(Location))),
+    : Expr(Expr::Kind::RangeLiteralKind, Location,
+           TypeCtx::getBuiltin(BuiltinTy::Range, SrcSpan(std::move(Location)))),
       Start(std::move(Start)), End(std::move(End)), Inclusive(Inclusive) {}
 
 RangeLiteral::~RangeLiteral() = default;
@@ -207,6 +211,7 @@ bool TupleLiteral::accept(NameResolver &R) { return R.visit(*this); }
 
 void TupleLiteral::emit(int Level) const {
   std::println("{}TupleLiteral:", indent(Level));
+  std::println("{}Type: {}", indent(Level + 1), Type.toString());
   std::println("{}Elements:", indent(Level + 1));
   for (auto &E : Elements) {
     E->emit(Level + 2);
@@ -231,10 +236,9 @@ void DeclRefExpr::emit(int Level) const {
   }
   if (DeclPtr == nullptr) {
     std::println("{}DeclRefExpr: {} ", indent(Level), Id);
+    std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   } else {
-    std::string TypeStr =
-        DeclPtr->hasType() ? DeclPtr->getType().toString() : "<unresolved>";
-
+    std::string TypeStr = DeclPtr->getType().toString();
     std::println("{}DeclRefExpr: {}; referring to: {} of type {}",
                  indent(Level), Id, DeclPtr->getId(), TypeStr);
   }
@@ -266,6 +270,7 @@ void FunCallExpr::emit(int Level) const {
   std::println("{}FunCallExpr", indent(Level));
   if (getDecl() != nullptr)
     std::println("{}Calling: {}", indent(Level + 1), getDecl()->getId());
+  std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Callee:", indent(Level + 1));
   Callee->emit(Level + 2);
   std::println("{}Args:", indent(Level + 1));
@@ -291,13 +296,14 @@ bool BinaryOp::accept(NameResolver &R) { return R.visit(*this); }
 // llvm::Value *BinaryOp::accept(CodeGen &G) { return G.visit(*this); }
 
 void BinaryOp::emit(int Level) const {
-  std::println("{}BinaryOp: {}", indent(Level), TokenKindToStr(Op));
+  std::println("{}BinaryOp: {}", indent(Level), Op.toString());
+  std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Lhs:", indent(Level + 1));
   Lhs->emit(Level + 2);
   std::println("{}Rhs:", indent(Level + 1));
   Rhs->emit(Level + 2);
-  if (Type) {
-    std::println("{}Type: {}", indent(Level + 1), Type->toString());
+  if (hasType()) {
+    std::println("{}Type: {}", indent(Level + 1), Type.toString());
   }
 }
 
@@ -318,29 +324,28 @@ bool UnaryOp::accept(NameResolver &R) { return R.visit(*this); }
 // llvm::Value *UnaryOp::accept(CodeGen &G) { return G.visit(*this); }
 
 void UnaryOp::emit(int Level) const {
-  std::println("{}UnaryOp: {}", indent(Level), TokenKindToStr(Op));
+  std::println("{}UnaryOp: {}", indent(Level), Op.toString());
+  std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Expr:", indent(Level + 1));
   Operand->emit(Level + 2);
 }
 
 //===----------------------------------------------------------------------===//
-// MemberInitExpr Implementation
+// MemberInit Implementation
 //===----------------------------------------------------------------------===//
 
-MemberInitExpr::MemberInitExpr(SrcLocation Location, std::string FieldId,
-                               std::unique_ptr<Expr> Init)
+MemberInit::MemberInit(SrcLocation Location, std::string FieldId,
+                       std::unique_ptr<Expr> Init)
     : Expr(Expr::Kind::MemberInitKind, std::move(Location)),
       FieldId(std::move(FieldId)), InitValue(std::move(Init)) {}
 
-MemberInitExpr::~MemberInitExpr() = default;
+MemberInit::~MemberInit() = default;
 
-bool MemberInitExpr::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes MemberInitExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool MemberInitExpr::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *MemberInitExpr::accept(CodeGen &G) { return G.visit(*this); }
+bool MemberInit::accept(NameResolver &R) { return R.visit(*this); }
 
-void MemberInitExpr::emit(int Level) const {
-  std::println("{}MemberInitExpr:", indent(Level));
+void MemberInit::emit(int Level) const {
+  std::println("{}MemberInit:", indent(Level));
+  std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Member: {}", indent(Level + 1), FieldId);
   if (InitValue) {
     std::println("{}Value:", indent(Level + 1));
@@ -349,28 +354,28 @@ void MemberInitExpr::emit(int Level) const {
 }
 
 //===----------------------------------------------------------------------===//
-// CustomTypeCtor Implementation
+// AdtInit Implementation
 //===----------------------------------------------------------------------===//
 
-CustomTypeCtor::CustomTypeCtor(
-    SrcLocation Location, std::optional<std::string> TypeName,
-    std::vector<std::unique_ptr<MemberInitExpr>> Inits)
-    : Expr(Expr::Kind::CustomTypeCtorKind, std::move(Location)),
+AdtInit::AdtInit(SrcLocation Location, std::optional<std::string> TypeName,
+                 std::vector<std::unique_ptr<MemberInit>> Inits)
+    : Expr(Expr::Kind::CustomTypeCtorKind, Location,
+           TypeName ? TypeCtx::getAdt(*TypeName, nullptr, SrcSpan(Location))
+                    : TypeCtx::getVar(VarTy::Domain::Adt,
+                                      SrcSpan(std::move(Location)))),
       TypeName(std::move(TypeName)), Inits(std::move(Inits)) {}
 
-CustomTypeCtor::~CustomTypeCtor() = default;
+AdtInit::~AdtInit() = default;
 
-bool CustomTypeCtor::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes CustomTypeCtor::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool CustomTypeCtor::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *CustomTypeCtor::accept(CodeGen &G) { return G.visit(*this); }
+bool AdtInit::accept(NameResolver &R) { return R.visit(*this); }
 
-void CustomTypeCtor::emit(int Level) const {
-  std::println("{}CustomTypeCtor:", indent(Level));
+void AdtInit::emit(int Level) const {
+  std::println("{}AdtInit:", indent(Level));
   std::println("{}For name: {}", indent(Level + 1),
                TypeName.value_or("No name"));
   if (Decl)
     std::println("{}Referring to: {}", indent(Level + 1), Decl->getId());
+  std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Inits:", indent(Level + 1));
   for (const auto &Init : Inits) {
     Init->emit(Level + 2);
@@ -396,6 +401,7 @@ bool FieldAccessExpr::accept(NameResolver &R) { return R.visit(*this); }
 
 void FieldAccessExpr::emit(int Level) const {
   std::println("{}FieldAccessExpr:", indent(Level));
+  std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Base:", indent(Level + 1));
   Base->emit(Level + 2);
   std::println("{}Member: {}", indent(Level + 1), FieldId);
@@ -426,6 +432,7 @@ bool MethodCallExpr::accept(NameResolver &R) { return R.visit(*this); }
 
 void MethodCallExpr::emit(int Level) const {
   std::println("{}MethodCallExpr:", indent(Level));
+  std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Base:", indent(Level + 1));
   Base->emit(Level + 2);
   std::println("{}Callee:", indent(Level + 1));
@@ -449,7 +456,8 @@ MatchExpr::~MatchExpr() = default;
 
 void MatchExpr::emit(int Level) const {
   std::println("{}MatchExpr:", indent(Level));
-  std::println("{}Scrutinee: ", indent(Level));
+  std::println("{}Type: {} ", indent(Level + 1), Type.toString());
+  std::println("{}Scrutinee: ", indent(Level + 1));
   Scrutinee->emit(Level + 2);
   std::println("{}Cases: ", indent(Level + 1));
   for (const auto &Arm : Arms) {

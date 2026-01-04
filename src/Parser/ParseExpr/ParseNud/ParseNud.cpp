@@ -6,6 +6,7 @@
 #include <cassert>
 #include <memory>
 #include <optional>
+#include <print>
 #include <vector>
 
 namespace phi {
@@ -26,6 +27,7 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
 
   // Identifiers and Kws
   case TokenKind::Identifier:
+    std::println("{}", Tok.toString());
     return std::make_unique<DeclRefExpr>(Tok.getStart(), Tok.getLexeme());
   case TokenKind::ThisKw:
     return std::make_unique<DeclRefExpr>(Tok.getStart(), "this");
@@ -36,13 +38,12 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   case TokenKind::OpenParen:
     return parseGroupingOrTupleLiteral();
   case TokenKind::OpenBrace: {
-    auto Inits = parseList<MemberInitExpr>(
+    auto Inits = parseList<MemberInit>(
         TokenKind::OpenBrace, TokenKind::CloseBrace, &Parser::parseMemberInit);
 
-    return (!Inits)
-               ? nullptr
-               : std::make_unique<CustomTypeCtor>(Tok.getStart(), std::nullopt,
-                                                  std::move(Inits.value()));
+    return (!Inits) ? nullptr
+                    : std::make_unique<AdtInit>(Tok.getStart(), std::nullopt,
+                                                std::move(Inits.value()));
   }
   // Literals
   default:
@@ -53,9 +54,9 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
 
 std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
   std::unique_ptr<Expr> Lhs;
-  std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
-                                        TokenKind::Comma, TokenKind::CloseParen,
-                                        TokenKind::CloseBracket};
+  std::vector<TokenKind::Kind> Terminators = {
+      TokenKind::Eof, TokenKind::Semicolon, TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket};
   if (!NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
@@ -121,9 +122,9 @@ std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
 
 std::unique_ptr<Expr> Parser::parsePrefixUnaryOp(const Token &Tok) {
   int RBp = prefixBP(Tok.getKind()).value();
-  std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
-                                        TokenKind::Comma, TokenKind::CloseParen,
-                                        TokenKind::CloseBracket};
+  std::vector<TokenKind::Kind> Terminators = {
+      TokenKind::Eof, TokenKind::Semicolon, TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket};
   if (!NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }

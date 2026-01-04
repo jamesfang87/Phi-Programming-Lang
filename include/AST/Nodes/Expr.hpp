@@ -3,6 +3,7 @@
 #include <cassert>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,10 +33,7 @@ class EnumDecl;
 class VariantDecl;
 
 class NameResolver;
-class TypeInferencer;
 class CodeGen;
-
-using InferRes = std::pair<Substitution, Monotype>;
 
 //===----------------------------------------------------------------------===//
 // Expr - Base class for all Expression nodes
@@ -59,7 +57,6 @@ public:
     MemberInitKind,
     FieldAccessKind,
     MethodCallKind,
-    EnumInitKind,
     MatchExprKind,
     CustomTypeCtorKind,
   };
@@ -70,7 +67,10 @@ public:
 
   explicit Expr(const Kind K, SrcLocation Location,
                 std::optional<TypeRef> Ty = std::nullopt)
-      : ExprKind(K), Location(std::move(Location)), Type(std::move(Ty)) {}
+      : ExprKind(K), Location(std::move(Location)),
+        Type((Ty.has_value())
+                 ? std::move(*Ty)
+                 : TypeCtx::getVar(VarTy::Domain::Any, SrcSpan(Location))) {}
 
   virtual ~Expr() = default;
 
@@ -80,8 +80,9 @@ public:
 
   [[nodiscard]] Kind getKind() const { return ExprKind; }
   [[nodiscard]] SrcLocation &getLocation() { return Location; }
-  [[nodiscard]] bool hasType() const { return Type != std::nullopt; }
-  [[nodiscard]] TypeRef getType() { return *Type; }
+  [[nodiscard]] SrcSpan getSpan() { return SrcSpan(Location); }
+  [[nodiscard]] bool hasType() const { return !Type.isVar(); }
+  [[nodiscard]] TypeRef getType() { return Type; }
 
   //===--------------------------------------------------------------------===//
   // Setters
@@ -124,7 +125,7 @@ private:
 
 protected:
   SrcLocation Location;
-  std::optional<TypeRef> Type;
+  TypeRef Type;
 };
 
 //===----------------------------------------------------------------------===//
@@ -708,15 +709,15 @@ private:
 // Struct and Field Expression Classes
 //===----------------------------------------------------------------------===//
 
-class MemberInitExpr final : public Expr {
+class MemberInit final : public Expr {
 public:
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
   //===-----------------------------------------------------------------------//
 
-  MemberInitExpr(SrcLocation Location, std::string FieldId,
-                 std::unique_ptr<Expr> Init);
-  ~MemberInitExpr() override;
+  MemberInit(SrcLocation Location, std::string FieldId,
+             std::unique_ptr<Expr> Init);
+  ~MemberInit() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -772,11 +773,11 @@ private:
 // constructor (with named fields) or an enum variant constructor.
 //===----------------------------------------------------------------------===//
 
-class CustomTypeCtor final : public Expr {
+class AdtInit final : public Expr {
 public:
-  CustomTypeCtor(SrcLocation Location, std::optional<std::string> TypeName,
-                 std::vector<std::unique_ptr<MemberInitExpr>> Inits);
-  ~CustomTypeCtor() override;
+  AdtInit(SrcLocation Location, std::optional<std::string> TypeName,
+          std::vector<std::unique_ptr<MemberInit>> Inits);
+  ~AdtInit() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -802,7 +803,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   void setDecl(AdtDecl *Found) {
-    assert(Found != nullptr && "Cannot use setDecl on a nullptr");
+    assert(Found != nullptr && "Cannot pass in nullptr to setDecl");
     assert(Decl == nullptr);
 
     Decl = Found;
@@ -847,9 +848,9 @@ public:
 
 private:
   std::optional<std::string> TypeName;
-  std::vector<std::unique_ptr<MemberInitExpr>> Inits;
+  std::vector<std::unique_ptr<MemberInit>> Inits;
 
-  AdtDecl *Decl;
+  AdtDecl *Decl = nullptr;
 
   std::optional<std::string> ActiveVariantName;
   VariantDecl *ActiveVariantDecl = nullptr;

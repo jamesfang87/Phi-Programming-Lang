@@ -59,6 +59,7 @@ public:
 
   [[nodiscard]] Kind getKind() const { return DeclKind; }
   [[nodiscard]] SrcLocation getLocation() const { return Location; }
+  [[nodiscard]] SrcSpan getSpan() const { return SrcSpan(Location); }
   [[nodiscard]] const std::string &getId() const { return Id; }
   [[nodiscard]] virtual TypeRef getType() const = 0;
 
@@ -93,13 +94,17 @@ public:
   //===--------------------------------------------------------------------===//
 
   ValueDecl(Kind K, SrcLocation Loc, std::string Id, std::optional<TypeRef> T)
-      : Decl(K, std::move(Loc), std::move(Id)), DeclType(std::move(T)) {}
+      : Decl(K, std::move(Loc), std::move(Id)),
+        DeclType((T.has_value())
+                     ? std::move(*T)
+                     : TypeCtx::getVar(VarTy::Domain::Any, SrcSpan(Location))) {
+  }
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] TypeRef getType() const override { return *DeclType; }
+  [[nodiscard]] TypeRef getType() const override { return DeclType; }
 
   //===--------------------------------------------------------------------===//
   // Setters
@@ -111,11 +116,11 @@ public:
   // Type Queries
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] bool hasType() const { return DeclType != std::nullopt; }
+  [[nodiscard]] bool hasType() const { return !DeclType.isVar(); }
   [[nodiscard]] virtual bool isConst() const = 0;
 
 protected:
-  std::optional<TypeRef> DeclType;
+  TypeRef DeclType;
 };
 
 class AdtDecl : public Decl {
@@ -128,7 +133,7 @@ public:
 
   [[nodiscard]] auto &getMethods() { return Methods; }
 
-  [[nodiscard]] MethodDecl *getMethod(const std::string &Id) {
+  [[nodiscard]] MethodDecl *getMethod(const std::string &Id) const {
     auto It = MethodMap.find(Id);
     return It != MethodMap.end() ? It->second : nullptr;
   }
@@ -333,12 +338,15 @@ protected:
           std::vector<TypeRef> ParamTys;
           ParamTys.reserve(this->Params.size());
           for (auto const &P : this->Params) {
+            assert(!P->getType().isVar() && "Type of param cannot be VarTy");
             ParamTys.emplace_back(P->getType(), SrcSpan(P->getLocation()));
           }
           return TypeCtx::getFun(ParamTys, this->ReturnType,
                                  SrcSpan(Decl::getLocation()));
         }()) // immediately invoked lambda
-  {}
+  {
+    assert(!ReturnType.isVar() && "Return Type of function cannot be VarTy");
+  }
 
 public:
   //===--------------------------------------------------------------------===//
@@ -448,7 +456,7 @@ public:
 
   [[nodiscard]] auto &getFields() { return Fields; }
 
-  [[nodiscard]] FieldDecl *getField(const std::string &Id) {
+  [[nodiscard]] FieldDecl *getField(const std::string &Id) const {
     auto it = FieldMap.find(Id);
     return it != FieldMap.end() ? it->second : nullptr;
   }
@@ -501,6 +509,7 @@ public:
   void emit(int level) const override;
 
 private:
+  // should be optional since variants can be payload-less
   std::optional<TypeRef> DeclType;
 };
 
@@ -511,7 +520,7 @@ public:
 
   [[nodiscard]] auto &getVariants() { return Variants; }
 
-  [[nodiscard]] VariantDecl *getVariant(const std::string &Id) {
+  [[nodiscard]] VariantDecl *getVariant(const std::string &Id) const {
     auto It = VariantMap.find(Id);
     return It != VariantMap.end() ? It->second : nullptr;
   }

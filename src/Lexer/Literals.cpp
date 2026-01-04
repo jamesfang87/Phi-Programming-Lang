@@ -63,7 +63,7 @@ Token Lexer::parseIdentifierOrKw() {
   }
   const std::string Id(CurLexeme, CurChar);
 
-  static const std::unordered_map<std::string, TokenKind> Kws = {
+  static const std::unordered_map<std::string, TokenKind::Kind> Kws = {
       {"bool", TokenKind::BoolKw},     {"break", TokenKind::BreakKw},
       {"const", TokenKind::ConstKw},   {"continue", TokenKind::ContinueKw},
       {"defer", TokenKind::DeferKw},   {"else", TokenKind::ElseKw},

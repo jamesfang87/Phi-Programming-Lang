@@ -1,3 +1,4 @@
+#include "AST/TypeSystem/Type.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
@@ -294,7 +295,8 @@ std::unique_ptr<ForStmt> Parser::parseForStmt() {
 
   // Create loop variable declaration (no type until inference)
   auto LoopVarDecl = std::make_unique<VarDecl>(
-      LoopVar.getStart(), LoopVar.getLexeme(), std::nullopt, false, nullptr);
+      LoopVar.getStart(), LoopVar.getLexeme(),
+      TypeCtx::getVar(VarTy::Domain::Int, LoopVar.getSpan()), false, nullptr);
 
   NoStructInit = false;
   return std::make_unique<ForStmt>(Loc, std::move(LoopVarDecl),
@@ -317,7 +319,7 @@ std::unique_ptr<ForStmt> Parser::parseForStmt() {
  * - Semicolon terminator
  */
 std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
-  SrcLocation letLoc = peekToken().getStart();
+  SrcLocation StartLoc = peekToken().getStart();
   bool IsConst;
   if (peekToken().getKind() == TokenKind::ConstKw) {
     IsConst = true;
@@ -383,8 +385,8 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
   advanceToken();
 
   return std::make_unique<DeclStmt>(
-      letLoc, std::make_unique<VarDecl>(VarLoc, Id, DeclType, IsConst,
-                                        std::move(Init)));
+      StartLoc, std::make_unique<VarDecl>(VarLoc, Id, DeclType, IsConst,
+                                          std::move(Init)));
 }
 
 std::unique_ptr<BreakStmt> Parser::parseBreakStmt() {

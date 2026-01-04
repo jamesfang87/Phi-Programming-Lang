@@ -68,7 +68,7 @@ private:
   [[nodiscard]] TokenKind peekKind() const;
 
   Token advanceToken();
-  bool matchToken(TokenKind Kind);
+  bool matchToken(TokenKind::Kind Kind);
   bool expectToken(TokenKind Expected, const std::string &Context = "");
 
   //===--------------------------------------------------------------------===//
@@ -89,10 +89,10 @@ private:
   // Error Recovery
   //===--------------------------------------------------------------------===//
 
-  bool SyncToTopLvl();
-  bool SyncToStmt();
-  bool syncTo(const std::initializer_list<TokenKind> TargetTokens);
-  bool syncTo(const TokenKind TargetToken);
+  bool syncToTopLvl();
+  bool syncToStmt();
+  bool syncTo(const std::initializer_list<TokenKind::Kind> TargetTokens);
+  bool syncTo(const TokenKind::Kind TargetToken);
 
   //===--------------------------------------------------------------------===//
   // Enum Parsing
@@ -153,7 +153,7 @@ private:
 
   std::unique_ptr<Expr> parseExpr();
   std::unique_ptr<Expr> pratt(int MinBp,
-                              const std::vector<TokenKind> &Terminators);
+                              const std::vector<TokenKind::Kind> &Terminators);
 
   std::unique_ptr<Expr> parseNud(const Token &Tok);
   std::unique_ptr<Expr> parsePrefixUnaryOp(const Token &Tok);
@@ -165,8 +165,8 @@ private:
   std::unique_ptr<Expr> parseInfix(const Token &Op, std::unique_ptr<Expr> Expr,
                                    int RBp);
   std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
-  std::unique_ptr<CustomTypeCtor> parseCustomInit(std::unique_ptr<Expr> Expr);
-  std::unique_ptr<MemberInitExpr> parseMemberInit();
+  std::unique_ptr<AdtInit> parseAdtInit(std::unique_ptr<Expr> Expr);
+  std::unique_ptr<MemberInit> parseMemberInit();
   std::unique_ptr<MatchExpr> parseMatchExpr();
 
   //===--------------------------------------------------------------------===//
@@ -198,12 +198,15 @@ private:
    */
   template <typename T, typename F>
   std::optional<std::vector<std::unique_ptr<T>>>
-  parseList(const TokenKind Opening, const TokenKind Closing, F Fun,
+  parseList(const TokenKind::Kind Open, const TokenKind::Kind Close, F Fun,
             const std::string &Context = "list") {
+    TokenKind Opening = TokenKind(Open);
+    TokenKind Closing = TokenKind(Close);
+
     // Verify opening delimiter
     const Token OpeningToken = peekToken();
     if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
+      emitExpectedFoundError(Opening.toString(), OpeningToken);
       return std::nullopt;
     }
     advanceToken();
@@ -239,7 +242,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekToken().getKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
+      emitUnclosedDelimiterError(OpeningToken, Closing.toString());
       return std::nullopt;
     }
 
@@ -249,12 +252,15 @@ private:
 
   template <typename T, typename F>
   std::optional<std::vector<T>>
-  parseValueList(const TokenKind Opening, const TokenKind Closing, F Fun,
+  parseValueList(const TokenKind::Kind Open, const TokenKind::Kind Close, F Fun,
                  const std::string &Context = "list") {
+    TokenKind Opening = TokenKind(Open);
+    TokenKind Closing = TokenKind(Close);
+
     // Verify opening delimiter
     const Token OpeningToken = peekToken();
     if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
+      emitExpectedFoundError(Opening.toString(), OpeningToken);
       return std::nullopt;
     }
     advanceToken();
@@ -290,58 +296,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
-      return std::nullopt;
-    }
-
-    advanceToken(); // Consume closing delimiter
-    return Content;
-  }
-
-  template <typename T, typename F>
-  std::optional<std::vector<T>>
-  parsePtrList(const TokenKind Opening, const TokenKind Closing, F Fun,
-               const std::string &Context = "list") {
-    // Verify opening delimiter
-    const Token OpeningToken = peekToken();
-    if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
-      return std::nullopt;
-    }
-    advanceToken();
-
-    // Parse list elements
-    std::vector<T> Content;
-    while (!atEOF() && peekToken().getKind() != Closing) {
-      auto Res = std::invoke(Fun, this);
-      if (Res) {
-        Content.push_back(Res);
-      } else {
-        // Recover by syncing to comma or closing delimiter
-        syncTo({Closing, TokenKind::Comma});
-      }
-
-      // Check for closing delimiter before comma
-      if (peekKind() == Closing) {
-        break;
-      }
-
-      // Handle comma separator
-      if (peekKind() == TokenKind::Comma) {
-        advanceToken();
-      } else {
-        emitError(
-            error("missing comma in " + Context)
-                .with_primary_label(peekToken().getSpan(), "expected `,` here")
-                .with_help("separate " + Context + " elements with commas")
-                .build());
-        return std::nullopt;
-      }
-    }
-
-    // Verify closing delimiter
-    if (atEOF() || peekKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
+      emitUnclosedDelimiterError(OpeningToken, Closing.toString());
       return std::nullopt;
     }
 
