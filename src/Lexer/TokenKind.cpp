@@ -2,20 +2,8 @@
 
 namespace phi {
 
-/**
- * @brief Converts a TokenType enumeration value to its string representation
- *
- * This function provides a mapping from TokenType enum values to their
- * corresponding human-readable string names. This is primarily used for
- * debugging output and error messages. The returned strings are in uppercase
- * and match the token type names without the "tok_" prefix.
- *
- * @param Type The TokenType to convert
- * @return A string representation of the token type (e.g., "IDENTIFIER", "ADD")
- */
-
-std::string TokenKindToStr(const TokenKind Kind) {
-  switch (Kind) {
+std::string TokenKind::toString() const {
+  switch (Value) {
   // Special tokens
   case TokenKind::Eof:
     return "EOF";
@@ -219,8 +207,8 @@ std::string TokenKindToStr(const TokenKind Kind) {
   }
 }
 
-bool isArithmetic(const TokenKind K) noexcept {
-  switch (K) {
+bool TokenKind::isArithmetic() const noexcept {
+  switch (Value) {
   case TokenKind::Plus:
   case TokenKind::Minus:
   case TokenKind::Star:
@@ -231,8 +219,8 @@ bool isArithmetic(const TokenKind K) noexcept {
   }
 }
 
-bool isLogical(const TokenKind K) noexcept {
-  switch (K) {
+bool TokenKind::isLogical() const noexcept {
+  switch (Value) {
   case TokenKind::DoubleAmp:
   case TokenKind::DoublePipe:
     return true;
@@ -241,8 +229,8 @@ bool isLogical(const TokenKind K) noexcept {
   }
 }
 
-bool isComparison(const TokenKind K) noexcept {
-  switch (K) {
+bool TokenKind::isComparison() const noexcept {
+  switch (Value) {
   case TokenKind::OpenCaret:
   case TokenKind::LessEqual:
   case TokenKind::CloseCaret:
@@ -253,8 +241,8 @@ bool isComparison(const TokenKind K) noexcept {
   }
 }
 
-bool isEquality(const TokenKind K) noexcept {
-  switch (K) {
+bool TokenKind::isEquality() const noexcept {
+  switch (Value) {
   case TokenKind::DoubleEquals:
   case TokenKind::BangEquals:
     return true;

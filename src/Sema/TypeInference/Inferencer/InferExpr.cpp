@@ -1,151 +1,437 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
-#include <optional>
+#include <print>
 #include <vector>
 
+#include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/TokenKind.hpp"
-#include "Sema/TypeInference/Substitution.hpp"
 
 namespace phi {
 
-TypeInferencer::InferRes TypeInferencer::visit(Expr &E) {}
-
-TypeInferencer::InferRes TypeInferencer::visit(IntLiteral &E) {
-  std::vector<TypeRef> IntConstraints = {
-      TypeCtx::getBuiltin(BuiltinTy::i8, SrcSpan(E.getLocation())),
-      TypeCtx::getBuiltin(BuiltinTy::i16, SrcSpan(E.getLocation())),
-      TypeCtx::getBuiltin(BuiltinTy::i32, SrcSpan(E.getLocation())),
-      TypeCtx::getBuiltin(BuiltinTy::i64, SrcSpan(E.getLocation())),
-      TypeCtx::getBuiltin(BuiltinTy::u8, SrcSpan(E.getLocation())),
-      TypeCtx::getBuiltin(BuiltinTy::u16, SrcSpan(E.getLocation())),
-      TypeCtx::getBuiltin(BuiltinTy::u32, SrcSpan(E.getLocation())),
-      TypeCtx::getBuiltin(BuiltinTy::u64, SrcSpan(E.getLocation())),
-  };
-  auto T = TypeCtx::getVar(IntConstraints, SrcSpan(E.getLocation()));
-  return {Substitution(), T};
+TypeRef TypeInferencer::visit(IntLiteral &E) {
+  return Unifier.resolve(E.getType());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(FloatLiteral &E) {
-  std::vector<TypeRef> FloatConstraints = {
-      TypeCtx::getBuiltin(BuiltinTy::f32, SrcSpan(E.getLocation())),
-      TypeCtx::getBuiltin(BuiltinTy::f64, SrcSpan(E.getLocation()))};
-  auto T = TypeCtx::getVar(FloatConstraints, SrcSpan(E.getLocation()));
-  return {Substitution(), T};
+TypeRef TypeInferencer::visit(FloatLiteral &E) {
+  return Unifier.resolve(E.getType());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(BoolLiteral &E) {
-  auto T = TypeCtx::getBuiltin(BuiltinTy::Bool, SrcSpan(E.getLocation()));
-  return {Substitution(), T};
+TypeRef TypeInferencer::visit(BoolLiteral &E) {
+  return TypeCtx::getBuiltin(BuiltinTy::Bool, E.getSpan());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(CharLiteral &E) {
-  auto T = TypeCtx::getBuiltin(BuiltinTy::Char, SrcSpan(E.getLocation()));
-  return {Substitution(), T};
+TypeRef TypeInferencer::visit(CharLiteral &E) {
+  return TypeCtx::getBuiltin(BuiltinTy::Char, E.getSpan());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(StrLiteral &E) {
-  auto T = TypeCtx::getBuiltin(BuiltinTy::String, SrcSpan(E.getLocation()));
-  return {Substitution(), T};
+TypeRef TypeInferencer::visit(StrLiteral &E) {
+  return TypeCtx::getBuiltin(BuiltinTy::String, E.getSpan());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(RangeLiteral &E) {
-  auto [StartSubst, StartType] = visit(E.getStart());
-  auto [EndSubst, EndType] = visit(E.getEnd());
-  Substitution AllSubsts(StartSubst, EndSubst);
+TypeRef TypeInferencer::visit(RangeLiteral &E) {
+  auto StartT = visit(E.getStart());
+  auto EndT = visit(E.getEnd());
 
-  auto Res = unify(AllSubsts.apply(StartType), AllSubsts.apply(EndType));
+  auto Res = Unifier.unify(StartT, EndT);
   if (!Res) {
-    return {Substitution(), TypeCtx::getErr(SrcSpan(E.getLocation()))};
+    error("Start and end of range literal must be same type")
+        .with_primary_label(E.getStart().getSpan(),
+                            std::format("of type {}", toString(StartT)))
+        .with_secondary_label(E.getEnd().getSpan(),
+                              std::format("of type {}", toString(EndT)))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
   }
-  AllSubsts.compose(Res);
-  return {AllSubsts,
-          TypeCtx::getBuiltin(BuiltinTy::Range, SrcSpan(E.getLocation()))};
+
+  return TypeCtx::getBuiltin(BuiltinTy::Range, E.getSpan());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(TupleLiteral &E) {
-  Substitution AllSubst;
+TypeRef TypeInferencer::visit(TupleLiteral &E) {
   std::vector<TypeRef> Ts;
   for (auto &Elem : E.getElements()) {
-    auto [Subst, T] = visit(*Elem);
-    AllSubst.compose(Subst);
-    Ts.push_back(AllSubst.apply(T));
+    Ts.push_back(visit(*Elem));
   }
+  return TypeCtx::getTuple(Ts, E.getSpan());
 
-  return {AllSubst, TypeCtx::getTuple(Ts, SrcSpan(E.getLocation()))};
+  Unifier.unify(TypeCtx::getTuple(Ts, E.getSpan()), E.getType());
+  return Unifier.resolve(E.getType());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(DeclRefExpr &E) {
+TypeRef TypeInferencer::visit(DeclRefExpr &E) {
   assert(E.getDecl());
 
-  auto Res = unify(E.getDecl()->getType(), E.getType());
+  auto Res = Unifier.unify(E.getDecl()->getType(), E.getType());
   if (!Res) {
-    // TODO:
-    return {Substitution(), TypeCtx::getErr(SrcSpan(E.getLocation()))};
+    return TypeCtx::getErr(E.getSpan());
   }
-  E.setType(Res->apply(E.getType()));
-  return {*Res, E.getType()};
+
+  return Unifier.resolve(E.getType());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(FunCallExpr &E) {
-  assert(E.getDecl());
+TypeRef TypeInferencer::visit(FunCallExpr &E) {
   assert(llvm::isa<FunDecl>(E.getDecl()));
 
-  Substitution AllSubst;
-  std::vector<TypeRef> Ts;
-  for (auto &Arg : E.getArgs()) {
-    auto [Subst, T] = visit(*Arg);
-    AllSubst.compose(Subst);
-    Ts.push_back(Subst.apply(T));
+  bool Errored = false;
+  for (auto [Arg, Param] : llvm::zip(E.getArgs(), E.getDecl()->getParams())) {
+    visit(*Arg);
+    auto Res = Unifier.unify(Arg->getType(), Param->getType());
+    if (!Res) {
+      Errored = true;
+      error(std::format("Mismatched type for parameter {}", Param->getId()))
+          .with_primary_label(Arg->getSpan(),
+                              std::format("expected type `{}` instead of `{}`",
+                                          toString(Param->getType()),
+                                          toString(Arg->getType())))
+          .with_extra_snippet(
+              E.getDecl()->getSpan(),
+              std::format("{} declared here", E.getDecl()->getId()))
+          .emit(*DiagMan);
+    }
   }
-  auto Got = TypeCtx::getFun(
-      Ts, TypeCtx::getVar(std::nullopt, SrcSpan(E.getLocation())),
-      SrcSpan(E.getLocation()));
-  auto Expected = E.getDecl()->getType();
 
-  auto Res = unify(Got, Expected);
-  if (!Res) {
-    return {Substitution(), TypeCtx::getErr(SrcSpan(E.getLocation()))};
-  }
-  E.setType(Res->apply(E.getType()));
-  return {*Res, E.getType()};
+  Errored = Unifier.unify(E.getType(), E.getDecl()->getReturnTy()) && Errored;
+
+  return Errored ? TypeCtx::getErr(E.getSpan()) : Unifier.resolve(E.getType());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(BinaryOp &E) {}
+TypeRef TypeInferencer::visit(BinaryOp &E) {
+  auto LhsType = visit(E.getLhs());
+  auto RhsType = visit(E.getRhs());
 
-TypeInferencer::InferRes TypeInferencer::visit(UnaryOp &E) {
-  auto [AllSubst, OperandType] = visit(E.getOperand());
+  const TokenKind K = E.getOp();
+
+  if (K.isLogical()) {
+    auto Res = Unifier.unify(
+        LhsType, TypeCtx::getBuiltin(BuiltinTy::Bool, E.getLhs().getSpan()));
+    if (!Res) {
+      error("Operand to logical operator is not a bool")
+          .with_primary_label(E.getLhs().getSpan(),
+                              std::format("expected type `bool`, got type {}",
+                                          toString(LhsType)))
+          .emit(*DiagMan);
+    }
+
+    Res = Unifier.unify(
+        RhsType, TypeCtx::getBuiltin(BuiltinTy::Bool, E.getRhs().getSpan()));
+    if (!Res) {
+      error("Operand to logical operator is not a bool")
+          .with_primary_label(E.getRhs().getSpan(),
+                              std::format("expected type `bool`, got type {}",
+                                          toString(RhsType)))
+          .emit(*DiagMan);
+    }
+
+    Unifier.unify(TypeCtx::getBuiltin(BuiltinTy::Bool, E.getSpan()),
+                  E.getType());
+    return TypeCtx::getBuiltin(BuiltinTy::Bool, E.getSpan());
+  }
+
+  auto Res = Unifier.unify(LhsType, RhsType);
+  if (!Res) {
+    error("Operands have different types")
+        .with_primary_label(E.getLhs().getSpan(),
+                            std::format("type `{}`", toString(LhsType)))
+        .with_secondary_label(E.getRhs().getSpan(),
+                              std::format("type `{}`", toString(RhsType)))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  if (K.isEquality()) {
+    auto Null = TypeCtx::getBuiltin(BuiltinTy::Null, E.getSpan());
+    Unifier.unify(E.getType(), Null);
+    return Null;
+  }
+
+  if (K.isComparison() || K.isEquality()) {
+    auto Bool = TypeCtx::getBuiltin(BuiltinTy::Bool, E.getSpan());
+    Unifier.unify(E.getType(), Bool);
+    return Bool;
+  }
+
+  assert(K.isArithmetic());
+  Unifier.unify(E.getType(), LhsType);
+  return Unifier.resolve(E.getType());
+}
+
+TypeRef TypeInferencer::visit(UnaryOp &E) {
+  auto OperandT = visit(E.getOperand());
 
   switch (E.getOp()) {
   case phi::TokenKind::Bang: {
-    auto Bool = TypeCtx::getBuiltin(BuiltinTy::Bool, SrcSpan(E.getLocation()));
-    auto Res = unify(Bool, OperandType);
+    auto Bool = TypeCtx::getBuiltin(BuiltinTy::Bool, E.getSpan());
+    auto Res = Unifier.unify(Bool, OperandT);
     if (!Res) {
-      return {Substitution(), TypeCtx::getErr(SrcSpan(E.getLocation()))};
+      error("Condition in while statement is not a bool")
+          .with_primary_label(E.getOperand().getSpan(),
+                              std::format("expected type `bool`, got type {}",
+                                          toString(OperandT)))
+          .emit(*DiagMan);
+
+      return TypeCtx::getErr(E.getSpan());
     }
-    AllSubst.compose(*unify(Bool, OperandType));
-    E.setType(AllSubst.apply(OperandType));
-    return {AllSubst, Bool};
+    Unifier.unify(Bool, E.getType());
+    return Bool;
   }
   case phi::TokenKind::Amp: {
-    auto T = TypeCtx::getRef(OperandType, SrcSpan(E.getLocation()));
-    E.setType(T);
-    return {AllSubst, T};
+    return TypeCtx::getRef(OperandT, E.getSpan());
   }
   default:
-    E.setType(AllSubst.apply(OperandType));
-    return {AllSubst, E.getType()};
+    return E.getType();
   }
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(CustomTypeCtor &E) {}
-TypeInferencer::InferRes TypeInferencer::visit(MemberInitExpr &E) {}
-TypeInferencer::InferRes TypeInferencer::visit(FieldAccessExpr &E) {}
-TypeInferencer::InferRes TypeInferencer::visit(MethodCallExpr &E) {}
-TypeInferencer::InferRes TypeInferencer::visit(MatchExpr &E) {}
+TypeRef TypeInferencer::visit(AdtInit &E) {
+  if (E.isAnonymous()) {
+    return E.getType();
+  }
+
+  // if !E.isAnonymous(), then we already know the type of E
+  // after name resolution
+  for (auto &Init : E.getInits()) {
+    visit(*Init);
+
+    if (E.isAnonymous())
+      continue;
+
+    llvm::TypeSwitch<AdtDecl *>(E.getDecl())
+        .Case<StructDecl>([&](StructDecl *D) {
+          auto Declared = D->getField(Init->getId())->getType();
+          auto Got = Init->getInitValue()->getType();
+          Unifier.unify(Declared, Got);
+        })
+        .Case<EnumDecl>([&](EnumDecl *D) {
+          auto *Variant = D->getVariant(Init->getId());
+          if (Variant->hasType()) {
+            auto Declared = Variant->getType();
+            auto Got = Init->getInitValue()->getType();
+            Unifier.unify(Declared, Got);
+          }
+        });
+  }
+
+  return E.getType();
+}
+
+TypeRef TypeInferencer::visit(MemberInit &E) {
+  if (E.getInitValue()) {
+    return visit(*E.getInitValue());
+  }
+  return TypeCtx::getBuiltin(BuiltinTy::Null, E.getSpan());
+}
+
+TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
+  // 1. Infer base type
+  auto BaseT = visit(*E.getBase()).getUnderlying();
+
+  // 2. Only structs / ADTs can have fields
+  if (!BaseT.isAdt() && !BaseT.isVar()) {
+    error("Cannot access field on non-ADT type")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no fields", toString(BaseT)))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  // 3. Resolve ADT
+  if (BaseT.isVar()) {
+    return E.getType();
+  }
+
+  auto *Adt = llvm::cast<AdtTy>(BaseT.getPtr());
+  auto *Decl = Adt->getDecl();
+  if (!Decl) {
+    // Missing declaration should be an error
+    error("Cannot access field on unknown type")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("unknown ADT `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  auto *Struct = llvm::dyn_cast<StructDecl>(Decl);
+  if (!Struct) {
+    error("Cannot perform field access on enums")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("this is an enum `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  auto *Field = Struct->getField(E.getFieldId());
+  if (!Field) {
+    error(std::format("Field `{}` not found in `{}`", E.getFieldId(),
+                      Adt->getId()))
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("type `{}` has no field `{}`",
+                                        Adt->getId(), E.getFieldId()))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+  E.setField(Field);
+
+  auto FieldT = Field->getType();
+  Unifier.unify(E.getType(), FieldT);
+  return FieldT;
+}
+
+TypeRef TypeInferencer::visit(MethodCallExpr &E) {
+  // 1. Infer base type
+  auto BaseT = visit(*E.getBase()).getUnderlying();
+
+  // 2. Only structs / ADTs / traits can have methods
+  if (!BaseT.isAdt() && !BaseT.isVar()) {
+    error("Cannot call method on non-ADT type")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no methods", toString(BaseT)))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  if (BaseT.isVar()) {
+    // Fresh return type for method on type variable
+    for (auto &Arg : E.getArgs())
+      visit(*Arg); // just visit args, we can't check types yet
+    return E.getType();
+  }
+
+  auto *Adt = llvm::cast<AdtTy>(BaseT.getPtr());
+  auto *Decl = Adt->getDecl();
+  if (!Decl) {
+    error("Cannot call method on unknown type")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("unknown ADT `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  auto *Method =
+      Decl->getMethod(llvm::dyn_cast<DeclRefExpr>(&E.getCallee())->getId());
+  if (!Method) {
+    error(std::format("Method `{}` not found in `{}`", E.getMethod().getId(),
+                      Adt->getId()))
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("type `{}` has no method `{}`",
+                                        Adt->getId(), E.getMethod().getId()))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+  E.setMethod(Method);
+
+  bool Errored = false;
+
+  // 3. Unify arguments
+  auto &Params = Method->getParams();
+  if (Params.size() != E.getArgs().size() + 1) {
+    error("Argument count mismatch")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("expected {} argument(s), got {}",
+                                        Params.size(), E.getArgs().size() + 1))
+        .emit(*DiagMan);
+    Errored = true;
+  } else {
+    // Skip the first param (self) when unifying arguments
+    for (auto [Arg, Param] :
+         llvm::zip(E.getArgs(), llvm::drop_begin(Params, 1))) {
+      auto ArgT = visit(*Arg);
+      auto Res = Unifier.unify(ArgT, Param->getType());
+      if (!Res) {
+        error(std::format("Mismatched type for parameter `{}`", Param->getId()))
+            .with_primary_label(Arg->getSpan(),
+                                std::format("expected type `{}` but got `{}`",
+                                            toString(Param->getType()),
+                                            toString(ArgT)))
+            .emit(*DiagMan);
+        Errored = true;
+      }
+    }
+  }
+  // 4. Unify return type
+  auto RetT = Method->getReturnTy();
+  auto RetRes = Unifier.unify(E.getType(), RetT);
+  if (!RetRes)
+    Errored = true;
+
+  return Errored ? TypeCtx::getErr(E.getSpan()) : RetT;
+}
+
+TypeRef TypeInferencer::visit(MatchExpr &E) {
+  auto ScrutineeT = visit(*E.getScrutinee());
+
+  auto visitPattern = [&](const Pattern &Pat) -> TypeRef {
+    return std::visit(
+        [&](auto const &Pattern) -> TypeRef {
+          using T = std::decay_t<decltype(Pattern)>;
+
+          if constexpr (std::is_same_v<T, PatternAtomics::Literal>) {
+            assert(Pattern.Value && "Literal pattern has no expression value");
+            auto LiteralType = visit(*Pattern.Value);
+            return Unifier.resolve(LiteralType);
+          }
+
+          else if constexpr (std::is_same_v<T, PatternAtomics::Variant>) {
+            for (auto &Var : Pattern.Vars) {
+              visit(*Var);
+            }
+
+            return TypeCtx::getVar(VarTy::Any, E.getSpan());
+          }
+
+          else {
+            return E.getType();
+          }
+        },
+        Pat);
+  };
+
+  for (const MatchExpr::Arm &Arm : E.getArms()) {
+    for (auto &Pattern : Arm.Patterns) {
+      auto PatternT = visitPattern(Pattern);
+      Unifier.unify(ScrutineeT, PatternT);
+    }
+
+    visit(*Arm.Body);
+
+    // does visiting twice do anything bad?
+    auto ArmT = visit(*Arm.Return);
+    std::println("{}", ArmT.toString());
+    Unifier.unify(E.getType(), ArmT);
+  }
+
+  return Unifier.resolve(E.getType());
+}
+
+TypeRef TypeInferencer::visit(Expr &E) {
+  return llvm::TypeSwitch<Expr *, TypeRef>(&E)
+      .Case<IntLiteral>([&](IntLiteral *X) { return visit(*X); })
+      .Case<FloatLiteral>([&](FloatLiteral *X) { return visit(*X); })
+      .Case<StrLiteral>([&](StrLiteral *X) { return visit(*X); })
+      .Case<CharLiteral>([&](CharLiteral *X) { return visit(*X); })
+      .Case<BoolLiteral>([&](BoolLiteral *X) { return visit(*X); })
+      .Case<RangeLiteral>([&](RangeLiteral *X) { return visit(*X); })
+      .Case<TupleLiteral>([&](TupleLiteral *X) { return visit(*X); })
+      .Case<DeclRefExpr>([&](DeclRefExpr *X) { return visit(*X); })
+      .Case<FunCallExpr>([&](FunCallExpr *X) { return visit(*X); })
+      .Case<BinaryOp>([&](BinaryOp *X) { return visit(*X); })
+      .Case<UnaryOp>([&](UnaryOp *X) { return visit(*X); })
+      .Case<MemberInit>([&](MemberInit *X) { return visit(*X); })
+      .Case<FieldAccessExpr>([&](FieldAccessExpr *X) { return visit(*X); })
+      .Case<MethodCallExpr>([&](MethodCallExpr *X) { return visit(*X); })
+      .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
+      .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
+      .Default([&](Expr *) {
+        llvm_unreachable("Unhandled Expr kind in TypeInferencer");
+        return TypeCtx::getErr(E.getSpan());
+      });
+}
 
 } // namespace phi

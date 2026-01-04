@@ -33,13 +33,13 @@ std::vector<std::unique_ptr<Decl>> Parser::parse() {
       break;
     default:
       emitUnexpectedTokenError(peekToken(), {"fun", "struct", "enum"});
-      SyncToTopLvl(); // Error recovery
+      syncToTopLvl(); // Error recovery
     }
 
     if (Res)
       Ast.push_back(std::move(Res));
     else
-      SyncToTopLvl(); // Error recovery
+      syncToTopLvl(); // Error recovery
   }
 
   llvm::sort(Ast, [](const std::unique_ptr<Decl> &LHS,

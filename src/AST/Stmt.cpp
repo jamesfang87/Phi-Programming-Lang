@@ -222,7 +222,7 @@ bool DeclStmt::accept(NameResolver &R) { return R.visit(*this); }
 
 // Utility Methods
 void DeclStmt::emit(int Level) const {
-  std::println("{}VarDeclStmt", indent(Level));
+  std::println("{}DeclStmt", indent(Level));
   if (Var)
     Var->emit(Level + 1);
 }

@@ -17,7 +17,7 @@
 namespace phi {
 
 std::unique_ptr<Expr> Parser::parseExpr() {
-  std::vector<TokenKind> Terminators = {
+  std::vector<TokenKind::Kind> Terminators = {
       TokenKind::Eof,        TokenKind::Semicolon,    TokenKind::Comma,
       TokenKind::CloseParen, TokenKind::CloseBracket, TokenKind::CloseBrace,
       TokenKind::Colon};
@@ -33,8 +33,8 @@ std::unique_ptr<Expr> Parser::parseExpr() {
   return Res;
 }
 
-std::unique_ptr<Expr> Parser::pratt(int MinBp,
-                                    const std::vector<TokenKind> &Terminators) {
+std::unique_ptr<Expr>
+Parser::pratt(int MinBp, const std::vector<TokenKind::Kind> &Terminators) {
   std::unique_ptr<Expr> Lhs = parseNud(peekToken());
   if (!Lhs) {
     return nullptr;

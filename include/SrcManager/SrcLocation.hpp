@@ -14,8 +14,10 @@ namespace phi {
 struct SrcLocation {
   std::string Path; ///< Source file path
   int Line, Col;    ///< Line and column numbers (1-indexed)
-                    ///
-  std::string toString() const { return std::format("{}:{}", Line, Col); }
+
+  std::string toString() const {
+    return std::format("{}:{}:{}", Path, Line, Col);
+  }
 };
 
 } // namespace phi

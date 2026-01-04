@@ -16,18 +16,18 @@ struct SrcSpan {
 
   /**
    * @brief Constructs span from positions
-   * @param start Start location
-   * @param end End location
+   * @param Start Start location
+   * @param End End location
    */
-  SrcSpan(SrcLocation start, SrcLocation end)
-      : Start(std::move(start)), End(std::move(end)) {}
+  SrcSpan(SrcLocation Start, SrcLocation End)
+      : Start(std::move(Start)), End(std::move(End)) {}
 
   /**
    * @brief Constructs single-position span
-   * @param single_pos Location for single point
+   * @param SinglePos Location for single point
    */
-  explicit SrcSpan(const SrcLocation &single_pos)
-      : Start(single_pos), End(single_pos) {}
+  explicit SrcSpan(const SrcLocation &SinglePos)
+      : Start(SinglePos), End(SinglePos) {}
 
   /**
    * @brief Checks for multi-line span

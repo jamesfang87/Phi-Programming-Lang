@@ -1,14 +1,13 @@
 #pragma once
 
-#include <expected>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
-#include "Diagnostics/Diagnostic.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
-#include "Sema/TypeInference/Substitution.hpp"
+#include "Sema/TypeInference/Unifier.hpp"
 
 namespace phi {
 
@@ -19,7 +18,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast,
-                 std::shared_ptr<DiagnosticManager> DiagMan);
+                 std::shared_ptr<DiagnosticManager> DiagMan)
+      : Ast(std::move(Ast)), DiagMan(DiagMan) {}
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point
@@ -39,53 +39,104 @@ public:
   void visit(MethodDecl &D);
   void visit(StructDecl &D);
   void visit(EnumDecl &D);
+  void visit(VariantDecl &D);
 
   //===--------------------------------------------------------------------===//
-  // Inference Result Type Definition
+  // Statement Visitor Methods
   //===--------------------------------------------------------------------===//
 
-  using InferRes = std::pair<Substitution, TypeRef>;
+  void visit(Stmt &S);
+  void visit(ReturnStmt &S);
+  void visit(DeferStmt &S);
+  void visit(ForStmt &S);
+  void visit(WhileStmt &S);
+  void visit(IfStmt &S);
+  void visit(DeclStmt &S);
+  void visit(BreakStmt &S);
+  void visit(ContinueStmt &S);
+  void visit(ExprStmt &S);
+  void visit(Block &B);
 
   //===--------------------------------------------------------------------===//
-  // Statement Visitor Methods -> return InferRes
+  // Expression Visitor Methods
   //===--------------------------------------------------------------------===//
 
-  InferRes visit(Stmt &S);
-  InferRes visit(ReturnStmt &S);
-  InferRes visit(DeferStmt &S);
-  InferRes visit(ForStmt &S);
-  InferRes visit(WhileStmt &S);
-  InferRes visit(IfStmt &S);
-  InferRes visit(DeclStmt &S);
-  InferRes visit(BreakStmt &S);
-  InferRes visit(ContinueStmt &S);
-  InferRes visit(ExprStmt &S);
-  InferRes visit(Block &B);
+  TypeRef visit(Expr &E);
+  TypeRef visit(IntLiteral &E);
+  TypeRef visit(FloatLiteral &E);
+  TypeRef visit(BoolLiteral &E);
+  TypeRef visit(CharLiteral &E);
+  TypeRef visit(StrLiteral &E);
+  TypeRef visit(RangeLiteral &E);
+  TypeRef visit(TupleLiteral &E);
+  TypeRef visit(DeclRefExpr &E);
+  TypeRef visit(FunCallExpr &E);
+  TypeRef visit(BinaryOp &E);
+  TypeRef visit(UnaryOp &E);
+  TypeRef visit(AdtInit &E);
+  TypeRef visit(MemberInit &E);
+  TypeRef visit(FieldAccessExpr &E);
+  TypeRef visit(MethodCallExpr &E);
+  TypeRef visit(MatchExpr &E);
 
-  //===--------------------------------------------------------------------===//
-  // Expression Visitor Methods -> return InferRes
-  //===--------------------------------------------------------------------===//
-
-  InferRes visit(Expr &E);
-  InferRes visit(IntLiteral &E);
-  InferRes visit(FloatLiteral &E);
-  InferRes visit(BoolLiteral &E);
-  InferRes visit(CharLiteral &E);
-  InferRes visit(StrLiteral &E);
-  InferRes visit(RangeLiteral &E);
-  InferRes visit(TupleLiteral &E);
-  InferRes visit(DeclRefExpr &E);
-  InferRes visit(FunCallExpr &E);
-  InferRes visit(BinaryOp &E);
-  InferRes visit(UnaryOp &E);
-  InferRes visit(CustomTypeCtor &E);
-  InferRes visit(MemberInitExpr &E);
-  InferRes visit(FieldAccessExpr &E);
-  InferRes visit(MethodCallExpr &E);
-  InferRes visit(MatchExpr &E);
+  std::string toString(TypeRef T);
 
 private:
-  std::expected<Substitution, Diagnostic> unify(TypeRef A, TypeRef B);
+  std::vector<std::unique_ptr<Decl>> Ast;
+  std::shared_ptr<DiagnosticManager> DiagMan;
+  FunDecl *CurrentFun{nullptr};
+  TypeUnifier Unifier;
+
+  //===--------------------------------------------------------------------===//
+  // Declaration Finalize Methods
+  //===--------------------------------------------------------------------===//
+
+  void finalize(Decl &D);
+  void finalize(VarDecl &D);
+  void finalize(ParamDecl &D);
+  void finalize(FunDecl &D);
+  void finalize(FieldDecl &D);
+  void finalize(MethodDecl &D);
+  void finalize(StructDecl &D);
+  void finalize(EnumDecl &D);
+
+  //===--------------------------------------------------------------------===//
+  // Statement Finalize Methods
+  //===--------------------------------------------------------------------===//
+
+  void finalize(Stmt &S);
+  void finalize(ReturnStmt &S);
+  void finalize(DeferStmt &S);
+  void finalize(ForStmt &S);
+  void finalize(WhileStmt &S);
+  void finalize(IfStmt &S);
+  void finalize(DeclStmt &S);
+  void finalize(BreakStmt &S);
+  void finalize(ContinueStmt &S);
+  void finalize(ExprStmt &S);
+  void finalize(Block &B);
+
+  //===--------------------------------------------------------------------===//
+  // Expression Finalize Methods
+  //===--------------------------------------------------------------------===//
+
+  void finalize(Expr &E);
+  void finalize(IntLiteral &E);
+  void finalize(FloatLiteral &E);
+  void finalize(BoolLiteral &E);
+  void finalize(CharLiteral &E);
+  void finalize(StrLiteral &E);
+  void finalize(RangeLiteral &E);
+  void finalize(TupleLiteral &E);
+  void finalize(DeclRefExpr &E);
+  void finalize(FunCallExpr &E);
+  void finalize(BinaryOp &E);
+  void finalize(UnaryOp &E);
+  void finalize(AdtInit &E);
+  void finalize(MemberInit &E);
+  void finalize(FieldAccessExpr &E);
+  void finalize(MethodCallExpr &E);
+  void finalize(MatchExpr &E);
 };
 
 } // namespace phi
