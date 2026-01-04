@@ -14,7 +14,7 @@
 #include "Parser/Parser.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
 // #include "Sema/TypeChecker.hpp"
-// #include "Sema/TypeInference/Infer.hpp"
+#include "Sema/TypeInference/Inferencer.hpp"
 
 namespace phi {
 
@@ -38,15 +38,11 @@ bool PhiCompiler::compile() {
   auto [NameResolutionSuccess, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
 
-  for (const auto &D : ResolvedNames) {
+  auto InferredTypes =
+      TypeInferencer(std::move(ResolvedNames), DiagnosticMan).infer();
+  for (const auto &D : InferredTypes) {
     D->emit(0);
   }
-
-  // auto InferredTypes =
-  //     TypeInferencer(std::move(ResolvedNames), DiagnosticMan).inferProgram();
-  // for (const auto &D : InferredTypes) {
-  //   D->emit(0);
-  // }
   //
   // auto [TypeCheckingSuccess, CheckedTypes] =
   //     TypeChecker(std::move(InferredTypes), DiagnosticMan).check();

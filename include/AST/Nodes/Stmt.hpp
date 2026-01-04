@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "SrcManager/SrcLocation.hpp"
+#include "SrcManager/SrcSpan.hpp"
 
 namespace phi {
 
@@ -52,6 +53,7 @@ public:
 
   [[nodiscard]] Kind getKind() const { return StmtKind; }
   [[nodiscard]] SrcLocation &getLocation() { return Location; }
+  [[nodiscard]] SrcSpan getSpan() { return SrcSpan(Location); }
 
   //===--------------------------------------------------------------------===//
   // Visitor Methods

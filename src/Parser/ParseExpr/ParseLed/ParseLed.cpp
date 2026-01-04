@@ -24,7 +24,7 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
   // Struct init
   case TokenKind::OpenBrace:
     if (!NoStructInit)
-      return parseCustomInit(std::move(Lhs));
+      return parseAdtInit(std::move(Lhs));
 
   default:
     return Lhs;
@@ -33,9 +33,9 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
 
 std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
                                          std::unique_ptr<Expr> Lhs, int RBp) {
-  std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
-                                        TokenKind::Comma, TokenKind::CloseParen,
-                                        TokenKind::CloseBracket};
+  std::vector<TokenKind::Kind> Terminators = {
+      TokenKind::Eof, TokenKind::Semicolon, TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket};
   if (NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }

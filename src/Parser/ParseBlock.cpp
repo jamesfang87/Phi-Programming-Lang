@@ -39,7 +39,7 @@ std::unique_ptr<Block> Parser::parseBlock() {
       continue;
     }
 
-    SyncToStmt();
+    syncToStmt();
   }
 
   advanceToken(); // eat `}`

@@ -2,14 +2,12 @@
 
 #include <cassert>
 #include <cstdint>
-#include <expected>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "llvm/Support/Casting.h"
+#include <llvm/Support/Casting.h>
 
-#include "Diagnostics/Diagnostic.hpp"
 #include "SrcManager/SrcSpan.hpp"
 
 namespace phi {
@@ -50,6 +48,7 @@ public:
   [[nodiscard]] bool isRef() const { return llvm::isa<RefTy>(this); }
   [[nodiscard]] bool isVar() const { return llvm::isa<VarTy>(this); }
   [[nodiscard]] bool isErr() const { return llvm::isa<ErrTy>(this); }
+  [[nodiscard]] Type *getUnderlying();
 
 private:
   TypeKind TheKind;
@@ -73,6 +72,7 @@ public:
   [[nodiscard]] bool isRef() const { return llvm::isa<RefTy>(Ptr); }
   [[nodiscard]] bool isVar() const { return llvm::isa<VarTy>(Ptr); }
   [[nodiscard]] bool isErr() const { return llvm::isa<ErrTy>(Ptr); }
+  [[nodiscard]] TypeRef getUnderlying();
 
 private:
   Type *Ptr; // cannot be nullptr
@@ -97,7 +97,6 @@ public:
     Bool,
     Range,
     Null,
-    Error,
   };
 
   explicit BuiltinTy(Kind K) : Type(TypeKind::Builtin), TheKind(K) {}
@@ -193,20 +192,30 @@ private:
 
 class VarTy final : public Type {
 public:
-  explicit VarTy(uint64_t N) : Type(TypeKind::Var), N(N) {}
+  enum Domain : uint8_t {
+    Any,
+    Int,
+    Float,
+    Adt,
+  };
+
+  explicit VarTy(uint64_t N, Domain D)
+      : Type(TypeKind::Var), N(N), TheDomain(D) {}
 
   [[nodiscard]] auto getN() const { return N; }
-  [[nodiscard]] auto getConstraints() const { return Constraints; }
-
+  [[nodiscard]] auto getDomain() const { return TheDomain; }
   [[nodiscard]] std::string toString() const override;
+
   [[nodiscard]] bool occursIn(TypeRef Other) const;
-  [[nodiscard]] std::expected<class Substitution, Diagnostic> bind(TypeRef T);
+  [[nodiscard]] bool accepts(TypeRef T) const;
+  [[nodiscard]] std::optional<Domain> unifyDomain(const VarTy *Var) const;
+  void setDomain(Domain New) { TheDomain = New; }
 
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Var; }
 
 private:
   const uint64_t N;
-  std::vector<TypeRef> Constraints;
+  Domain TheDomain;
 };
 
 class ErrTy final : public Type {

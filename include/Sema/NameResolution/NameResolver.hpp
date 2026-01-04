@@ -81,8 +81,8 @@ public:
   bool visit(FunCallExpr &E);
   bool visit(BinaryOp &E);
   bool visit(UnaryOp &E);
-  bool visit(CustomTypeCtor &E);
-  bool visit(MemberInitExpr &E);
+  bool visit(AdtInit &E);
+  bool visit(MemberInit &E);
   bool visit(FieldAccessExpr &E);
   bool visit(MethodCallExpr &E);
   bool visit(MatchExpr &E);
@@ -122,8 +122,8 @@ private:
   FunDecl *CurrentFun = nullptr;
   std::shared_ptr<DiagnosticManager> Diags;
 
-  bool resolveStructCtor(StructDecl *Found, CustomTypeCtor &E);
-  bool resolveEnumCtor(EnumDecl *Found, CustomTypeCtor &E);
+  bool resolveStructCtor(StructDecl *Found, AdtInit &E);
+  bool resolveEnumCtor(EnumDecl *Found, AdtInit &E);
 
   //===--------------------------------------------------------------------===//
   // Error Reporting Utilities

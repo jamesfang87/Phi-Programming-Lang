@@ -1,3 +1,4 @@
+#include "AST/TypeSystem/Type.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
 
 #include <cassert>
@@ -128,7 +129,7 @@ bool NameResolver::visit(BinaryOp &E) {
  */
 bool NameResolver::visit(UnaryOp &E) { return visit(E.getOperand()); }
 
-bool NameResolver::visit(CustomTypeCtor &E) {
+bool NameResolver::visit(AdtInit &E) {
   if (E.isAnonymous()) {
     // we must delegate name resolution to after the type is known
     return true;
@@ -141,12 +142,13 @@ bool NameResolver::visit(CustomTypeCtor &E) {
   }
 
   E.setDecl(Decl);
+  llvm::dyn_cast<AdtTy>(E.getType().getPtr())->setDecl(Decl);
   return llvm::TypeSwitch<AdtDecl *, bool>(SymbolTab.lookup(E.getTypeName()))
       .Case<StructDecl>([&](auto *D) { return resolveStructCtor(D, E); })
       .Case<EnumDecl>([&](auto *D) { return resolveEnumCtor(D, E); });
 }
 
-bool NameResolver::resolveStructCtor(StructDecl *Found, CustomTypeCtor &E) {
+bool NameResolver::resolveStructCtor(StructDecl *Found, AdtInit &E) {
   assert(Found != nullptr);
 
   std::unordered_set<std::string> Missing;
@@ -204,7 +206,7 @@ bool NameResolver::resolveStructCtor(StructDecl *Found, CustomTypeCtor &E) {
   return false;
 }
 
-bool NameResolver::resolveEnumCtor(EnumDecl *Found, CustomTypeCtor &E) {
+bool NameResolver::resolveEnumCtor(EnumDecl *Found, AdtInit &E) {
   assert(Found != nullptr);
 
   bool Success = true;
@@ -217,27 +219,48 @@ bool NameResolver::resolveEnumCtor(EnumDecl *Found, CustomTypeCtor &E) {
     return false;
   }
 
-  // 2. Check that the init is actually a variant of the enum
+  // 2. Check that the specfied variant is actually a variant of the enum
   assert(E.getInits().size() == 1);
   auto &ActiveVariant = *E.getInits().front();
   auto *VariantDecl = Found->getVariant(ActiveVariant.getId());
+  if (!VariantDecl) {
+    emitNotFoundError(NotFoundErrorKind::Variant, ActiveVariant.getId(),
+                      E.getLocation(), E.getTypeName());
+    return false;
+  }
+  E.setActiveVariant(VariantDecl);
 
+  // 3. Check that if the Variant has no payload, we don't give a payload
   if (ActiveVariant.getInitValue()) {
     Success = visit(ActiveVariant) && Success;
   }
 
-  if (VariantDecl) {
-    E.setActiveVariant(VariantDecl);
-    return true && Success;
+  if (VariantDecl->hasType() == (ActiveVariant.getInitValue() != nullptr)) {
+    return Success;
   }
 
-  emitNotFoundError(NotFoundErrorKind::Variant, ActiveVariant.getId(),
-                    E.getLocation(), E.getTypeName());
+  if (VariantDecl->hasType()) {
+    error(std::format(
+              "No payload given for variant `{}`, which requires a payload",
+              VariantDecl->getId()))
+        .with_primary_label(ActiveVariant.getSpan(), "Add a payload here")
+        .with_extra_snippet(VariantDecl->getSpan(), "Variant declared here")
+        .emit(*Diags);
+  } else {
+    error(std::format("Payload given for variant `{}`, which has no payload",
+                      VariantDecl->getId()))
+        .with_primary_label(ActiveVariant.getSpan(), "remove this payload")
+        .with_extra_snippet(VariantDecl->getSpan(), "Variant declared here")
+        .emit(*Diags);
+  }
+
   return false;
 }
 
-bool NameResolver::visit(MemberInitExpr &E) {
-  assert(E.getInitValue() != nullptr);
+bool NameResolver::visit(MemberInit &E) {
+  if (!E.getInitValue()) {
+    return true;
+  }
 
   return visit(*E.getInitValue());
 }

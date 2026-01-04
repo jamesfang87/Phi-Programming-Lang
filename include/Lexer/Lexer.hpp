@@ -1,15 +1,3 @@
-/**
- * @file Lexer.hpp
- * @brief Lexical analyzer (scanner) for the Phi programming language
- *
- * Contains the Lexer class responsible for converting Phi source code
- * from character streams into tokens. Handles lexical elements including:
- * - Keywords and identifiers
- * - Operators and punctuation
- * - String/character literals with escape sequences
- * - Numeric literals (integers and floats)
- * - Comments and whitespace
- */
 #pragma once
 
 #include <memory>
@@ -18,6 +6,7 @@
 
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Lexer/Token.hpp"
+#include "Lexer/TokenKind.hpp"
 
 namespace phi {
 
@@ -69,11 +58,12 @@ public:
    * @brief Scans source code to generate tokens
    *
    * Processes the entire source string character-by-character to produce
-   * tokens. Handles comments and whitespace appropriately during scanning.
+   * tokens.
    *
    * @return Pair containing:
    *         - Vector of tokens from source
-   *         - Boolean indicating scanning success (false if errors occurred)
+   *         - Boolean indicating scanning success (false if errors
+   * occurred)
    */
   std::vector<Token> scan();
 
@@ -81,16 +71,7 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  /**
-   * @brief Retrieves source code being scanned
-   * @return Copy of source code string
-   */
   [[nodiscard]] const std::string &getSrc() const { return Src; }
-
-  /**
-   * @brief Retrieves source file path
-   * @return Copy of file path string
-   */
   [[nodiscard]] const std::string &getPath() const { return Path; }
 
 private:
@@ -124,28 +105,9 @@ private:
   // Token Parsing Methods
   //===--------------------------------------------------------------------===//
 
-  /**
-   * @brief Parses numeric literal (integer/float)
-   * @return Token representing parsed number
-   */
   Token parseNumber();
-
-  /**
-   * @brief Parses string literal with escape sequences
-   * @return Token representing parsed string
-   */
   Token parseString();
-
-  /**
-   * @brief Parses character literal with escape sequences
-   * @return Token representing parsed character
-   */
   Token parseChar();
-
-  /**
-   * @brief Parses identifier/keyword
-   * @return Token for identifier or recognized keyword
-   */
   Token parseIdentifierOrKw();
 
   //===--------------------------------------------------------------------===//
@@ -244,7 +206,7 @@ private:
    * @param type Token type to create
    * @return Token with specified type and current lexeme
    */
-  [[nodiscard]] Token makeToken(TokenKind Kind) const {
+  [[nodiscard]] Token makeToken(TokenKind::Kind Kind) const {
     int StartCol = static_cast<int>(CurLexeme - LexemeLine) + 1;
     int EndCol = std::distance(CurLine, CurChar) + 1;
 
@@ -254,23 +216,14 @@ private:
 
     return {SrcLocation{.Path = this->Path, .Line = StartLine, .Col = StartCol},
             SrcLocation{.Path = this->Path, .Line = EndLine, .Col = EndCol},
-            Kind, std::string(CurLexeme, CurChar)};
+            TokenKind(Kind), std::string(CurLexeme, CurChar)};
   }
 
   //===--------------------------------------------------------------------===//
   // Escape Sequence Processing
   //===--------------------------------------------------------------------===//
 
-  /**
-   * @brief Parses escape sequence in literals
-   * @return Actual character value of escape sequence
-   */
   char parseEscapeSeq();
-
-  /**
-   * @brief Parses hexadecimal escape sequence (\xNN)
-   * @return Character value from hex digits
-   */
   char parseHexEscape();
 
   //===--------------------------------------------------------------------===//
@@ -285,7 +238,7 @@ private:
   void emitError(std::string_view Msg, std::string_view HelpMsg = "");
 
   /**
-   * @brief Reports unterminated string literal error with ASCII art
+   * @brief Reports unterminated string literal error
    */
   void emitUnterminatedStrError(std::string::iterator StartPos,
                                 std::string::iterator StartLine,

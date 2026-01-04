@@ -14,7 +14,7 @@ namespace phi {
 TypeCtx::TypeCtx() {
   // Initialize builtins
   for (int k = static_cast<int>(BuiltinTy::i8);
-       k <= static_cast<int>(BuiltinTy::Error); ++k) {
+       k <= static_cast<int>(BuiltinTy::Null); ++k) {
     auto K = static_cast<BuiltinTy::Kind>(k);
     auto *NewInst = Allocate<BuiltinTy>(K);
     Builtins.emplace(K, NewInst);
@@ -92,8 +92,7 @@ RefTy *TypeCtx::ref(const TypeRef &Pointee) {
   return NewInst;
 }
 
-VarTy *TypeCtx::var(uint64_t N,
-                    std::optional<std::vector<TypeRef>> /*Constraints*/) {
+VarTy *TypeCtx::var(uint64_t N, VarTy::Domain /*Constraints*/) {
   if (N >= Vars.size()) {
     return nullptr;
   }
@@ -101,8 +100,8 @@ VarTy *TypeCtx::var(uint64_t N,
   return Vars[N];
 }
 
-VarTy *TypeCtx::var(std::optional<std::vector<TypeRef>> /*Constraints*/) {
-  auto *NewInst = Allocate<VarTy>(Vars.size());
+VarTy *TypeCtx::var(VarTy::Domain Domain) {
+  auto *NewInst = Allocate<VarTy>(Vars.size(), Domain);
   Vars.push_back(NewInst);
   return NewInst;
 }
@@ -140,16 +139,13 @@ TypeRef TypeCtx::getRef(const TypeRef &Pointee, SrcSpan Span) {
   return {T, std::move(Span)};
 }
 
-TypeRef TypeCtx::getVar(uint64_t N,
-                        std::optional<std::vector<TypeRef>> Constraints,
-                        SrcSpan Span) {
-  auto *T = inst().var(N, Constraints);
+TypeRef TypeCtx::getVar(uint64_t N, VarTy::Domain Domain, SrcSpan Span) {
+  auto *T = inst().var(N, Domain);
   return {T, std::move(Span)};
 }
 
-TypeRef TypeCtx::getVar(std::optional<std::vector<TypeRef>> Constraints,
-                        SrcSpan Span) {
-  auto *T = inst().var(Constraints);
+TypeRef TypeCtx::getVar(VarTy::Domain Domain, SrcSpan Span) {
+  auto *T = inst().var(Domain);
   return {T, std::move(Span)};
 }
 

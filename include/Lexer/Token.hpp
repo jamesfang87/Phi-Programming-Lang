@@ -1,10 +1,3 @@
-/**
- * @file Token.hpp
- * @brief Token definitions and Token class for Phi language lexer
- *
- * Defines the TokenType enumeration and Token class representing lexical units.
- * Provides source location tracking and token properties for compiler pipeline.
- */
 #pragma once
 
 #include <string>
@@ -26,8 +19,6 @@ namespace phi {
  * - Token type classification
  * - Original source text (lexeme)
  * - Precise source location (start and end positions)
- *
- * Provides accessors for token properties and formatted string representation.
  */
 class Token {
 public:
@@ -38,7 +29,7 @@ public:
   Token(SrcSpan Span, const TokenKind Kind, std::string Lexeme)
       : Span((std::move(Span))), Kind(Kind), Lexeme(std::move(Lexeme)) {}
 
-  Token(SrcLocation Start, SrcLocation End, const TokenKind Kind,
+  Token(SrcLocation Start, SrcLocation End, const TokenKind::Kind Kind,
         std::string Lexeme)
       : Span(SrcSpan(std::move(Start), std::move(End))), Kind(Kind),
         Lexeme(std::move(Lexeme)) {}
@@ -51,7 +42,7 @@ public:
   [[nodiscard]] const SrcLocation &getStart() const { return Span.Start; }
   [[nodiscard]] const SrcLocation &getEnd() const { return Span.End; }
   [[nodiscard]] TokenKind getKind() const { return Kind; }
-  [[nodiscard]] std::string getName() const { return TokenKindToStr(Kind); }
+  [[nodiscard]] std::string getName() const { return Kind.toString(); }
   [[nodiscard]] std::string getLexeme() const { return Lexeme; }
 
   //===--------------------------------------------------------------------===//
@@ -71,8 +62,7 @@ private:
   //===--------------------------------------------------------------------===//
   // Member Variables
   //===--------------------------------------------------------------------===//
-
-  SrcSpan Span;
+  SrcSpan Span;       ///< Span of the Token
   TokenKind Kind;     ///< Token classification type
   std::string Lexeme; ///< Original source text content
 };

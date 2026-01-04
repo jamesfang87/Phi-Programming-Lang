@@ -22,7 +22,7 @@ namespace phi {
  * the token type name, the lexeme (original text), and the source location.
  * This method is primarily used for debugging output and compiler diagnostics.
  *
- * The format is: [TOKEN_TYPE] "lexeme" at line N, column M
+ * The format is: [TOKEN_KIND] "lexeme" at line N, column M
  *
  * @return A formatted string representation of this token
  */

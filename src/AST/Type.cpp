@@ -5,17 +5,31 @@
 #include <llvm-18/llvm/ADT/TypeSwitch.h>
 #include <llvm-18/llvm/Support/Casting.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <iterator>
 #include <ranges>
 #include <string>
 
-#include "Diagnostics/DiagnosticBuilder.hpp"
-#include "Sema/TypeInference/Substitution.hpp"
-
 namespace phi {
+
+Type *Type::getUnderlying() {
+  Type *Current = this;
+
+  while (true) {
+    if (auto Ptr = llvm::dyn_cast<PtrTy>(Current)) {
+      Current = Ptr->getPointee().getPtr();
+    } else if (auto Ref = llvm::dyn_cast<RefTy>(Current)) {
+      Current = Ref->getPointee().getPtr();
+    } else {
+      break;
+    }
+  }
+
+  return Current;
+}
+
+TypeRef TypeRef::getUnderlying() { return TypeRef(Ptr->getUnderlying(), Span); }
 
 std::string BuiltinTy::toString() const {
   switch (getBuiltinKind()) {
@@ -49,27 +63,31 @@ std::string BuiltinTy::toString() const {
     return "range";
   case Kind::Null:
     return "null";
-  case Kind::Error:
-    return "!";
   }
 }
 
 std::string AdtTy::toString() const { return getId(); }
 
 std::string TupleTy::toString() const {
-  std::string Ret = "(";
-  for (uint64_t i = 0; i < ElementTys.size(); i++) {
-    Ret += ElementTys[i].toString();
-    if (i < ElementTys.size() - 1)
-      Ret += ", ";
-    else
-      Ret += ")";
+  std::string Elems = "(";
+  if (Elems.empty()) {
+    Elems = "()";
   }
-  return Ret;
+  for (uint64_t i = 0; i < ElementTys.size(); i++) {
+    Elems += ElementTys[i].toString();
+    if (i < ElementTys.size() - 1)
+      Elems += ", ";
+    else
+      Elems += ")";
+  }
+  return Elems;
 }
 
 std::string FunTy::toString() const {
   std::string Params = "(";
+  if (ParamTys.empty()) {
+    Params = "()";
+  }
   for (uint64_t i = 0; i < ParamTys.size(); i++) {
     Params += ParamTys[i].toString();
     if (i < ParamTys.size() - 1)
@@ -116,63 +134,41 @@ bool VarTy::occursIn(TypeRef Other) const {
       });
 }
 
-std::expected<Substitution, Diagnostic> VarTy::bind(TypeRef T) {
-  if (this == T.getPtr()) {
-    const auto *VT = llvm::dyn_cast<VarTy>(T.getPtr());
-    assert(VT);
-    assert(VT->getN() == getN());
-
-    return Substitution();
+bool VarTy::accepts(TypeRef T) const {
+  if (T.isVar()) {
+    return unifyDomain(llvm::dyn_cast<VarTy>(T.getPtr())) != std::nullopt;
   }
 
-  // occurs check
-  if (occursIn(T))
-    return std::unexpected(
-        error("BindVar failed due to failed occursIn check").build());
-
-  // make sure constraints are compatible
-  if (auto *Other = llvm::dyn_cast<VarTy>(T.getPtr())) {
-    const auto &A = this->Constraints;
-    const auto &B = Other->getConstraints();
-
-    // Build membership set for pointer identity
-    llvm::DenseSet<const Type *> Allowed;
-    Allowed.reserve(A.size());
-    for (const auto &T : A)
-      Allowed.insert(T.getPtr());
-
-    auto Shared = B | std::views::filter([&](const TypeRef &T) {
-                    return Allowed.contains(T.getPtr());
-                  });
-
-    if (std::ranges::empty(Shared)) {
-      // Convert TypeRef vectors to string vectors
-      llvm::SmallVector<std::string, 8> LeftStrings, RightStrings;
-      LeftStrings.reserve(A.size());
-      RightStrings.reserve(B.size());
-
-      for (const auto &T : A)
-        LeftStrings.push_back(T.toString());
-      for (const auto &T : B)
-        RightStrings.push_back(T.toString());
-
-      auto D =
-          error("incompatible type constraints between type variables")
-              .with_note(
-                  std::format("left allows: {}", llvm::join(LeftStrings, ", ")))
-              .with_note(std::format("right allows: {}",
-                                     llvm::join(RightStrings, ", ")))
-              .with_note(
-                  "consider adding an explicit type annotation to disambiguate")
-              .build();
-
-      return std::unexpected(std::move(D));
-    }
+  if (!T.isBuiltin()) {
+    return !occursIn(T);
   }
 
-  // Substitution of Var -> T
-  Substitution S(this, T);
-  return S;
-};
+  auto *B = llvm::dyn_cast<BuiltinTy>(T.getPtr());
+  using K = BuiltinTy::Kind;
+
+  switch (TheDomain) {
+  case Domain::Any:
+    return true;
+  case Domain::Int:
+    return llvm::is_contained(
+        {K::i8, K::i16, K::i32, K::i64, K::u8, K::u16, K::u32, K::u64},
+        B->getBuiltinKind());
+  case Domain::Float:
+    return llvm::is_contained({K::f32, K::f64}, B->getBuiltinKind());
+  case Domain::Adt:
+    return T.isAdt();
+  }
+  std::unreachable();
+}
+
+std::optional<VarTy::Domain> VarTy::unifyDomain(const VarTy *Var) const {
+  if (this->TheDomain == Domain::Any)
+    return Var->getDomain();
+  if (Var->getDomain() == Domain::Any)
+    return this->TheDomain;
+  if (this->TheDomain == Var->getDomain())
+    return this->TheDomain;
+  return std::nullopt;
+}
 
 } // namespace phi

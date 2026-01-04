@@ -34,6 +34,7 @@ AdtDecl::AdtDecl(Kind K, SrcLocation Loc, std::string Id, TypeRef DeclType,
                  std::vector<MethodDecl> Methods)
     : Decl(K, std::move(Loc), std::move(Id)), DeclType(std::move(DeclType)),
       Methods(std::move(Methods)) {
+  assert(DeclType.isAdt() && "Type of an AdtDecl must be AdtTy");
   for (auto &M : this->Methods)
     MethodMap.emplace(M.getId(), &M);
 }
@@ -58,7 +59,7 @@ VarDecl::~VarDecl() = default;
 
 // Utility Methods
 void VarDecl::emit(int Level) const {
-  std::string TypeStr = hasType() ? DeclType->toString() : "<unresolved>";
+  std::string TypeStr = DeclType.toString();
   std::println("{}VarDecl: {} (type: {})", indent(Level), Id, TypeStr);
   if (Init) {
     std::println("{}Initializer:", indent(Level));
@@ -77,7 +78,7 @@ void VarDecl::emit(int Level) const {
 
 // Utility Methods
 void ParamDecl::emit(int Level) const {
-  std::string TypeStr = DeclType ? DeclType->toString() : "<unresolved>";
+  std::string TypeStr = DeclType.toString();
   std::println("{}ParamDecl: {} (type: {})", indent(Level), Id, TypeStr);
 }
 
@@ -100,9 +101,9 @@ FieldDecl::~FieldDecl() = default;
 
 // Utility Methods
 void FieldDecl::emit(int Level) const {
-  std::string TypeStr = DeclType ? DeclType->toString() : "<unresolved>";
-  std::string visibility = isPrivate() ? "private" : "public";
-  std::println("{}{} FieldDecl: {} (type: {})", indent(Level), visibility, Id,
+  std::string TypeStr = DeclType.toString();
+  std::string Visibility = isPrivate() ? "private" : "public";
+  std::println("{}{} FieldDecl: {} (type: {})", indent(Level), Visibility, Id,
                TypeStr);
 }
 
@@ -117,8 +118,8 @@ void FieldDecl::emit(int Level) const {
 
 // Utility Methods
 void FunDecl::emit(int Level) const {
-  std::println("{}Function {} at {}:{}. Returns {}", indent(Level), Id,
-               Location.Line, Location.Col, ReturnType.toString());
+  std::println("{}Function {}. Type: {}", indent(Level), Id,
+               FunType.toString());
   for (auto &p : Params) {
     p->emit(Level + 1);
   }
