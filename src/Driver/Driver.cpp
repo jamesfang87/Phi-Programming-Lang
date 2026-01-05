@@ -7,14 +7,11 @@
 #include <string>
 #include <vector>
 
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
-#include "CodeGen/CodeGen.hpp"
+#include "AST/Nodes/Expr.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
-#include "Sema/NameResolver.hpp"
-#include "Sema/TypeChecker.hpp"
-#include "Sema/TypeInference/Infer.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
+#include "Sema/TypeInference/Inferencer.hpp"
 
 namespace phi {
 
@@ -25,16 +22,14 @@ PhiCompiler::PhiCompiler(std::string Src, std::string Path,
 
 bool PhiCompiler::compile() {
   auto Tokens = Lexer(SrcFile, Path, DiagnosticMan).scan();
+  for (auto Tok : Tokens) {
+    std::println("{}", Tok.toString());
+  }
   if (DiagnosticMan->error_count() > 0) {
     return false;
   }
 
   auto Ast = Parser(SrcFile, Path, Tokens, DiagnosticMan).parse();
-  for (auto &D : Ast) {
-    D->emit(0);
-  }
-
-  return false;
 
   if (DiagnosticMan->error_count() > 0) {
     return false;
@@ -42,22 +37,25 @@ bool PhiCompiler::compile() {
 
   auto [NameResolutionSuccess, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
+  for (const auto &D : ResolvedNames) {
+    D->emit(0);
+  }
   auto InferredTypes =
-      TypeInferencer(std::move(ResolvedNames), DiagnosticMan).inferProgram();
+      TypeInferencer(std::move(ResolvedNames), DiagnosticMan).infer();
   for (const auto &D : InferredTypes) {
     D->emit(0);
   }
-
-  auto [TypeCheckingSuccess, CheckedTypes] =
-      TypeChecker(std::move(InferredTypes), DiagnosticMan).check();
-  if (DiagnosticMan->error_count() > 0) {
-    return false;
-  }
-
-  // Code Generation
-  phi::CodeGen CodeGen(std::move(CheckedTypes), Path);
-  CodeGen.generate();
-
+  //
+  // auto [TypeCheckingSuccess, CheckedTypes] =
+  //     TypeChecker(std::move(InferredTypes), DiagnosticMan).check();
+  // if (DiagnosticMan->error_count() > 0) {
+  //   return false;
+  // }
+  //
+  // // Code Generation
+  // phi::CodeGen CodeGen(std::move(CheckedTypes), Path);
+  // CodeGen.generate();
+  //
   return true;
 }
 
@@ -74,15 +72,17 @@ std::optional<std::vector<std::unique_ptr<Decl>>> PhiCompiler::compileToAST() {
 
   auto [NameResolutionSuccess, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
-  auto InferredTypes =
-      TypeInferencer(std::move(ResolvedNames), DiagnosticMan).inferProgram();
-  auto [TypeCheckingSuccess, CheckedTypes] =
-      TypeChecker(std::move(InferredTypes), DiagnosticMan).check();
-  if (DiagnosticMan->error_count() > 0) {
-    return std::nullopt;
-  }
-
-  return std::move(CheckedTypes);
+  //   auto InferredTypes =
+  //       TypeInferencer(std::move(ResolvedNames),
+  //       DiagnosticMan).inferProgram();
+  //   auto [TypeCheckingSuccess, CheckedTypes] =
+  //       TypeChecker(std::move(InferredTypes), DiagnosticMan).check();
+  //   if (DiagnosticMan->error_count() > 0) {
+  //     return std::nullopt;
+  //   }
+  //
+  //   return std::move(CheckedTypes);
+  return std::move(ResolvedNames);
 }
 
 } // namespace phi

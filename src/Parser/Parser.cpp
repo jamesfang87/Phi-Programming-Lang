@@ -1,19 +1,11 @@
 #include "Parser/Parser.hpp"
 
-#include "Lexer/TokenKind.hpp"
 #include <memory>
-#include <print>
+
+#include "Lexer/TokenKind.hpp"
 
 namespace phi {
 
-/**
- * Constructs a parser instance.
- *
- * @param src Source code string
- * @param path Source file path
- * @param tokens Token stream from lexer
- * @param diagnostic_manager Shared diagnostic manager
- */
 Parser::Parser(const std::string_view Src, const std::string_view Path,
                std::vector<Token> Tokens,
                std::shared_ptr<DiagnosticManager> DiagnosticMan)
@@ -26,15 +18,6 @@ Parser::Parser(const std::string_view Src, const std::string_view Path,
   }
 }
 
-/**
- * Main parsing entry point.
- *
- * @return std::pair<std::vector<std::unique_ptr<FunDecl>>, bool>
- *         Pair of function declarations and success status
- *
- * Parses entire token stream, collecting function declarations.
- * Uses error recovery via sync_to() after errors.
- */
 std::vector<std::unique_ptr<Decl>> Parser::parse() {
   while (!atEOF()) {
     std::unique_ptr<Decl> Res = nullptr;
@@ -50,22 +33,19 @@ std::vector<std::unique_ptr<Decl>> Parser::parse() {
       break;
     default:
       emitUnexpectedTokenError(peekToken(), {"fun", "struct", "enum"});
-      SyncToTopLvl(); // Error recovery
+      syncToTopLvl(); // Error recovery
     }
 
     if (Res)
       Ast.push_back(std::move(Res));
     else
-      SyncToTopLvl(); // Error recovery
+      syncToTopLvl(); // Error recovery
   }
 
   llvm::sort(Ast, [](const std::unique_ptr<Decl> &LHS,
                      const std::unique_ptr<Decl> &RHS) {
     if (llvm::isa<StructDecl>(LHS.get()) && !llvm::isa<StructDecl>(RHS.get()))
       return true;
-
-    if (llvm::isa<StructDecl>(RHS.get()) && !llvm::isa<StructDecl>(LHS.get()))
-      return false;
 
     return false;
   });

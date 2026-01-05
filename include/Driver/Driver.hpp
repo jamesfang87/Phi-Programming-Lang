@@ -2,8 +2,9 @@
 
 #include <string>
 
-#include "AST/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
+#include "Parser/Parser.hpp"
 
 namespace phi {
 
@@ -60,6 +61,7 @@ private:
   std::string Path;    ///< Source file path
   std::shared_ptr<DiagnosticManager>
       DiagnosticMan; ///< Diagnostic reporting system
+  TypeCtx Ctx;
 };
 
 } // namespace phi

@@ -1,0 +1,28 @@
+fun println(const msg: f64) {}
+
+struct Vector2D {
+    public x: f64; // made public for demo of field access
+    public y: f64; // made public for demo of field access
+
+    fun get_x(const this) -> f64 {
+        return this.x;
+    }
+    
+    fun get_y(const this) -> f64 {
+        return this.y;
+    }
+
+    fun dot(const this, const other: Vector2D) -> f64 {
+        return this.x * other.get_x() + this.get_y() * other.y;
+    }
+}
+
+fun main() {
+    const a = Vector2D {x = 1.0, y = 1.0};
+    const b = Vector2D {x = 5.0, y = 1000.0};
+
+    println(a.get_x()); // 1
+    println(a.y); // 1
+    println(b.y); // 1000
+    println(a.dot(b)); // 1005
+}

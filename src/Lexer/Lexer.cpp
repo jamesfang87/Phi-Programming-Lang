@@ -1,5 +1,6 @@
 #include "Lexer/Lexer.hpp"
 
+#include <cstdio>
 #include <cstring>
 
 #include "Diagnostics/DiagnosticBuilder.hpp"
@@ -32,14 +33,15 @@ namespace phi {
  *
  * @return A pair containing the vector of tokens and success status
  */
+
 std::vector<Token> Lexer::scan() {
   std::vector<Token> Tokens;
+
   while (!atEOF()) {
-    // make sure that these two iters are pointing to the same place
     CurLexeme = CurChar;
     LexemeLine = CurLine;
 
-    // handle whitespace
+    // Skip whitespace and track newlines
     if (std::isspace(peekChar())) {
       if (advanceChar() == '\n') {
         LineNum++;
@@ -48,13 +50,12 @@ std::vector<Token> Lexer::scan() {
       continue;
     }
 
-    // handle comments
+    // Skip comments
     if (peekChar() == '/' && (peekNext() == '/' || peekNext() == '*')) {
       skipComment();
       continue;
     }
 
-    // finally, scan the token
     Tokens.push_back(scanToken());
   }
 
@@ -89,6 +90,9 @@ std::vector<Token> Lexer::scan() {
  */
 Token Lexer::scanToken() {
   switch (char C = advanceChar()) {
+  case EOF:
+  case '\0':
+    return makeToken(TokenKind::Eof);
   // One char tokens
   case '(':
     return makeToken(TokenKind::OpenParen);
@@ -179,6 +183,7 @@ Token Lexer::scanToken() {
     if (std::isalpha(C) || C == '_') {
       return parseIdentifierOrKw();
     }
+
     if (std::isdigit(C)) {
       return parseNumber();
     }

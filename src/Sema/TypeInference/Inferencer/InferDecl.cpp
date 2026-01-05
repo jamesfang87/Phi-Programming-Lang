@@ -1,129 +1,112 @@
-#include "Sema/TypeInference/Infer.hpp"
+#include "Sema/TypeInference/Inferencer.hpp"
 
-#include <cassert>
-#include <optional>
+#include <llvm/ADT/TypeSwitch.h>
 
-#include "AST/Decl.hpp"
-#include "Sema/TypeInference/Types/Monotype.hpp"
-#include "Sema/TypeInference/Types/Polytype.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
 
-// ---------------- declarations ----------------
-void TypeInferencer::visit(Decl &D) { D.accept(*this); }
-
 void TypeInferencer::visit(VarDecl &D) {
-  Monotype VarType = Monotype::makeVar(Factory.fresh());
-
-  Substitution Subst;
-  if (D.hasInit()) {
-    auto [InitSubst, InitType] = visit(D.getInit());
-    Subst = std::move(InitSubst);
-    VarType = Subst.apply(VarType);
-
-    unifyInto(Subst, VarType, InitType);
-    VarType = Subst.apply(VarType);
-    InitType = Subst.apply(InitType);
+  if (!D.hasInit()) {
+    return;
   }
 
-  if (D.hasType()) {
-    const auto DeclaredAs = D.getType().toMonotype();
-    unifyInto(Subst, VarType, DeclaredAs);
-    VarType = Subst.apply(DeclaredAs);
-  } else {
-    VarType = Subst.apply(VarType);
+  auto Res = Unifier.unify(D.getType(), visit(D.getInit()));
+  if (!Res) {
+    error("Mismatched types in variable declaration")
+        .with_primary_label(D.getInit().getSpan(),
+                            std::format("expected this to be {}, not {}",
+                                        toString(D.getType()),
+                                        toString(D.getInit().getType())))
+        .with_secondary_label(D.getType().getSpan(), "due to this")
+        .emit(*DiagMan);
+    return;
   }
-
-  recordSubst(Subst);
-  Env.bind(&D, Polytype{{}, VarType});
-  annotate(D, VarType);
 }
 
 void TypeInferencer::visit(ParamDecl &D) {
-  assert(D.hasType());
-
-  auto T = D.getType().toMonotype();
-  Env.bind(&D, Polytype{{}, T});
-  annotate(D, T);
+  assert(D.hasType() && "ParamDecls must have type annotations");
+  assert(!D.getType().isVar() && "ParamDecls cannot be annotated as VarTy");
+  assert(!D.getType().isErr() && "ParamDecls cannot be annotated as ErrTy");
 }
 
 void TypeInferencer::visit(FunDecl &D) {
-  // 1) Lookup by name to get the Function's Type
-  Monotype FunType = Env.lookup(D.getId())->instantiate(Factory);
-  assert(FunType.isFun());
-
-  // 2) Now we begin to infer the contents of the functions body
-  auto OuterScopeEnv = Env; // we are about to enter the fun's scope
-
-  // 3) Visit params
+  CurrentFun = &D;
   for (auto &Param : D.getParams()) {
     visit(*Param);
   }
 
-  // 4) Visit Body
-  CurFunRetType.push_back(D.getReturnTy().toMonotype());
-  auto [BodySubst, _] = visit(D.getBody());
-  recordSubst(BodySubst);
-  CurFunRetType.pop_back();
-
-  // 5) Re-generalize in outer environment and rebind function name
-  OuterScopeEnv.bind(D.getId(), FunType.generalize(OuterScopeEnv));
-  Env = std::move(OuterScopeEnv);
+  visit(D.getBody());
 }
 
 void TypeInferencer::visit(FieldDecl &D) {
-  assert(D.hasType() && "struct fields must have type annotations");
+  assert(D.hasType() && "ParamDecls must have type annotations");
+  assert(!D.getType().isVar() && "ParamDecls cannot be annotated as VarTy");
+  assert(!D.getType().isErr() && "ParamDecls cannot be annotated as ErrTy");
 
-  Monotype Type = D.getType().toMonotype();
-  Env.bind(&D, Polytype{{}, Type});
-  annotate(D, Type);
+  if (!D.hasInit()) {
+    return;
+  }
+
+  auto Res = Unifier.unify(D.getType(), D.getInit().getType());
+  if (!Res) {
+    error("Mismatched types in field declaration")
+        .with_primary_label(D.getInit().getSpan(),
+                            std::format("expected this to be {}, not {}",
+                                        toString(D.getType()),
+                                        toString(D.getInit().getType())))
+        .with_secondary_label(D.getSpan(), "due to this")
+        .emit(*DiagMan);
+  }
 }
 
 void TypeInferencer::visit(MethodDecl &D) {
-  // 1) Build method monotype
-  Monotype StructMono = Monotype::makeVar(Factory.fresh());
-  std::vector<Monotype> ParamMonos = {StructMono};
-  ParamMonos.reserve(1 + D.getParams().size());
-  for (auto &Param : D.getParams())
-    ParamMonos.push_back(Param->getType().toMonotype());
-  Monotype RetMono = D.getReturnTy().toMonotype();
-  Monotype MethodMono = Monotype::makeFun(std::move(ParamMonos), RetMono);
-
-  // 2) Now we begin to infer the body of the method
-  auto OuterScopeEnv = Env; // Save the outer scope
-
-  // 3) Visit params
+  CurrentFun = &D;
   for (auto &Param : D.getParams()) {
     visit(*Param);
   }
 
-  // 4) Visit body
-  CurFunRetType.push_back(RetMono);
-  auto [BodySubst, _] = visit(D.getBody());
-  recordSubst(BodySubst);
-  CurFunRetType.pop_back();
-
-  // 5) Re-generalize and bind method under dotted name
-  std::string Qualified = D.getParent()->getId() + "." + D.getId();
-  OuterScopeEnv.bind(Qualified, MethodMono.generalize(OuterScopeEnv));
-  Env = std::move(OuterScopeEnv);
+  visit(D.getBody());
 }
 
 void TypeInferencer::visit(StructDecl &D) {
-  // 1) Create struct monotype and bind the struct name
-  Env.bind(D.getId(), Polytype{{}, D.getType().toMonotype()});
+  assert(D.getType().isAdt());
 
-  // 2) Bind fields into Env and annotate
   for (auto &Field : D.getFields()) {
-    visit(*Field);
+    visit(Field);
   }
 
-  // 3) Infer types for methods
   for (auto &Method : D.getMethods()) {
     visit(Method);
   }
 }
 
-void TypeInferencer::visit(EnumDecl &D) {}
+void TypeInferencer::visit(EnumDecl &D) {
+  assert(D.getType().isAdt());
+
+  for (auto &Variant : D.getVariants()) {
+    visit(Variant);
+  }
+
+  for (auto &Method : D.getMethods()) {
+    visit(Method);
+  }
+}
+
+void TypeInferencer::visit(VariantDecl &D) { (void)D; }
+
+void TypeInferencer::visit(Decl &D) {
+  llvm::TypeSwitch<Decl *>(&D)
+      .Case<VarDecl>([&](VarDecl *X) { visit(*X); })
+      .Case<ParamDecl>([&](ParamDecl *X) { visit(*X); })
+      .Case<FunDecl>([&](FunDecl *X) { visit(*X); })
+      .Case<FieldDecl>([&](FieldDecl *X) { visit(*X); })
+      .Case<MethodDecl>([&](MethodDecl *X) { visit(*X); })
+      .Case<StructDecl>([&](StructDecl *X) { visit(*X); })
+      .Case<EnumDecl>([&](EnumDecl *X) { visit(*X); })
+      .Default([&](Decl *) {
+        llvm_unreachable("Unhandled Decl kind in TypeInferencer");
+      });
+}
 
 } // namespace phi

@@ -72,16 +72,16 @@ void DiagnosticManager::render_diagnostic(const Diagnostic &diagnostic,
     // Wrap snippet in a temporary DiagnosticLabel
     DiagnosticLabel temp_label(snippet.first, "");
     // Trick: make the span zero-length so no arrow shows
-    temp_label.span.end = temp_label.span.start;
+    temp_label.span.End = temp_label.span.Start;
 
     std::vector<const DiagnosticLabel *> labels = {&temp_label};
 
     // Render a separate snippet block
     out << snippet.second << '\n';
-    out << " --> " << snippet.first.start.Path << ":"
-        << snippet.first.start.Line << ":" << snippet.first.start.Col << "\n";
+    out << " --> " << snippet.first.Start.Path << ":"
+        << snippet.first.Start.Line << ":" << snippet.first.Start.Col << "\n";
 
-    render_file_snippet(snippet.first.start.Path, labels, out);
+    render_file_snippet(snippet.first.Start.Path, labels, out);
   }
 }
 
@@ -104,8 +104,8 @@ void DiagnosticManager::render_diagnostic_header(const Diagnostic &diagnostic,
 
   // Show file location for primary span
   if (const auto span = diagnostic.primary_span()) {
-    out << " --> " << span->start.Path << ":" << span->start.Line << ":"
-        << span->start.Col << "\n";
+    out << " --> " << span->Start.Path << ":" << span->Start.Line << ":"
+        << span->Start.Col << "\n";
   }
 }
 
@@ -132,15 +132,15 @@ void DiagnosticManager::render_file_snippet(
     return;
 
   // Calculate line range to display with context
-  int min_line = labels[0]->span.start.Line;
-  int max_line = labels[0]->span.end.Line;
+  int min_line = labels[0]->span.Start.Line;
+  int max_line = labels[0]->span.End.Line;
 
   for (const auto *label : labels) {
-    min_line = std::min(min_line, label->span.start.Line);
-    max_line = std::max(max_line, label->span.end.Line);
+    min_line = std::min(min_line, label->span.Start.Line);
+    max_line = std::max(max_line, label->span.End.Line);
   }
 
-  const int start_line = std::max(1, min_line - config_.context_lines);
+  const int Start_line = std::max(1, min_line - config_.context_lines);
   const int end_line = std::min(source_manager_->getLineCount(file_path),
                                 max_line + config_.context_lines);
 
@@ -151,7 +151,7 @@ void DiagnosticManager::render_file_snippet(
   out << std::string(gutter_width, ' ') << " |\n";
 
   // Render each line with content and labels
-  for (int line_num = start_line; line_num <= end_line; ++line_num) {
+  for (int line_num = Start_line; line_num <= end_line; ++line_num) {
     auto line_content = source_manager_->getLine(file_path, line_num);
     if (!line_content)
       continue;
@@ -183,8 +183,8 @@ void DiagnosticManager::render_labels_for_line(
 
   // Collect labels applicable to this line
   for (const auto *label : labels) {
-    if (line_num >= label->span.start.Line &&
-        line_num <= label->span.end.Line) {
+    if (line_num >= label->span.Start.Line &&
+        line_num <= label->span.End.Line) {
       line_labels.push_back(label);
     }
   }
@@ -198,7 +198,7 @@ void DiagnosticManager::render_labels_for_line(
                       if (a->is_primary != b->is_primary) {
                         return a->is_primary > b->is_primary;
                       }
-                      return a->span.start.Col < b->span.start.Col;
+                      return a->span.Start.Col < b->span.Start.Col;
                     });
 
   const std::string gutter = std::string(gutter_width, ' ') + " | ";
@@ -211,22 +211,22 @@ void DiagnosticManager::render_labels_for_line(
 
     out << gutter;
 
-    int start_col =
-        line_num == label->span.start.Line ? label->span.start.Col - 1 : 0;
-    int end_col = line_num == label->span.end.Line
-                      ? label->span.end.Col - 1
+    int Start_col =
+        line_num == label->span.Start.Line ? label->span.Start.Col - 1 : 0;
+    int end_col = line_num == label->span.End.Line
+                      ? label->span.End.Col - 1
                       : static_cast<int>(line_content.length() - 1);
 
     // Clamp to valid column range
-    start_col = std::max(
-        0, std::min(start_col, static_cast<int>(line_content.length())));
+    Start_col = std::max(
+        0, std::min(Start_col, static_cast<int>(line_content.length())));
     end_col = std::max(
-        start_col, std::min(end_col, static_cast<int>(line_content.length())));
+        Start_col, std::min(end_col, static_cast<int>(line_content.length())));
 
     if (label->is_primary) {
-      render_primary_label_line(start_col, end_col, *label, out);
+      render_primary_label_line(Start_col, end_col, *label, out);
     } else {
-      render_secondary_label_line(start_col, end_col, *label, out);
+      render_secondary_label_line(Start_col, end_col, *label, out);
     }
 
     out << "\n";
@@ -236,15 +236,15 @@ void DiagnosticManager::render_labels_for_line(
 /**
  * Renders a primary label line with carets (^^^^) and message.
  */
-void DiagnosticManager::render_primary_label_line(const int start_col,
+void DiagnosticManager::render_primary_label_line(const int Start_col,
                                                   const int end_col,
                                                   const DiagnosticLabel &label,
                                                   std::ostream &out) const {
-  const std::string spaces(start_col, ' ');
+  const std::string spaces(Start_col, ' ');
   std::string arrows;
 
-  if (end_col > start_col) {
-    arrows = std::string(end_col - start_col, '^');
+  if (end_col > Start_col) {
+    arrows = std::string(end_col - Start_col, '^');
   } else {
     arrows = "^";
   }
@@ -260,13 +260,13 @@ void DiagnosticManager::render_primary_label_line(const int start_col,
  * Renders a secondary label line with tildes (~~~~) and message.
  */
 void DiagnosticManager::render_secondary_label_line(
-    const int start_col, const int end_col, const DiagnosticLabel &label,
+    const int Start_col, const int end_col, const DiagnosticLabel &label,
     std::ostream &out) const {
-  const std::string spaces(start_col, ' ');
+  const std::string spaces(Start_col, ' ');
   std::string underline;
 
-  if (end_col > start_col) {
-    underline = std::string(end_col - start_col, '~');
+  if (end_col > Start_col) {
+    underline = std::string(end_col - Start_col, '~');
   } else {
     underline = "~";
   }
@@ -434,7 +434,7 @@ DiagnosticManager::group_labels_by_location(
   std::map<std::string, std::vector<const DiagnosticLabel *>> grouped;
 
   for (const auto &label : labels) {
-    grouped[label.span.start.Path].push_back(&label);
+    grouped[label.span.Start.Path].push_back(&label);
   }
 
   return grouped;

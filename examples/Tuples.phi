@@ -1,0 +1,16 @@
+struct Location {
+    public latitude: f32;
+    public longitude: f32;
+}
+
+fun get_weather() -> (string, (f32, f32, Location)) {
+    const city: string = "Denton";
+    const temp = 17; // in Celsius
+    const humidity = 0.93;
+    const loc = Location { latitude = 33.2124, longitude = 97.1512 };
+    return (city, (temp, humidity, loc));
+}
+
+fun main() {
+    const weather = get_weather();
+}

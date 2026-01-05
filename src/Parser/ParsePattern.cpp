@@ -1,9 +1,11 @@
 #include "Parser/Parser.hpp"
 
 #include <cassert>
+#include <memory>
 #include <optional>
 #include <string>
 
+#include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
@@ -11,8 +13,8 @@
 namespace phi {
 using std::optional;
 
-optional<Pattern> Parser::parsePattern() {
-  std::vector<PatternAtomics::SingularPattern> Patterns;
+optional<std::vector<Pattern>> Parser::parsePattern() {
+  std::vector<Pattern> Patterns;
 
   // Parse the first singular pattern
   auto First = parseSingularPattern();
@@ -32,18 +34,10 @@ optional<Pattern> Parser::parsePattern() {
     Patterns.push_back(std::move(*Next));
   }
 
-  if (Patterns.size() == 1) {
-    // Extract the contained type from SingularPattern and construct Pattern
-    return std::visit(
-        [](auto &&Arg) -> Pattern {
-          return Pattern(std::forward<decltype(Arg)>(Arg));
-        },
-        std::move(Patterns[0]));
-  }
-  return Pattern(PatternAtomics::Alternation{std::move(Patterns)});
+  return Patterns;
 }
 
-optional<PatternAtomics::SingularPattern> Parser::parseSingularPattern() {
+optional<Pattern> Parser::parseSingularPattern() {
   switch (peekKind()) {
   case TokenKind::Wildcard:
     return parseWildcardPattern();
@@ -54,40 +48,57 @@ optional<PatternAtomics::SingularPattern> Parser::parseSingularPattern() {
   }
 }
 
-optional<PatternAtomics::Wildcard> Parser::parseWildcardPattern() {
+optional<Pattern> Parser::parseWildcardPattern() {
   assert(peekKind() == TokenKind::Wildcard);
   advanceToken();
 
-  return PatternAtomics::Wildcard();
+  std::optional<Pattern> Result;
+  Result.emplace(std::in_place_type<PatternAtomics::Wildcard>);
+  return Result;
 }
 
-optional<PatternAtomics::Literal> Parser::parseLiteralPattern() {
+optional<Pattern> Parser::parseLiteralPattern() {
   auto Tok = advanceToken();
+
+  std::optional<Pattern> Result;
+
   switch (Tok.getKind()) {
   case TokenKind::IntLiteral:
-    return PatternAtomics::Literal(std::make_unique<IntLiteral>(
-        Tok.getStart(), std::stoll(Tok.getLexeme())));
+    Result.emplace(std::in_place_type<PatternAtomics::Literal>,
+                   std::make_unique<IntLiteral>(Tok.getStart(),
+                                                std::stoll(Tok.getLexeme())));
+    break;
   case TokenKind::FloatLiteral:
-    return PatternAtomics::Literal(std::make_unique<FloatLiteral>(
-        Tok.getStart(), std::stod(Tok.getLexeme())));
+    Result.emplace(std::in_place_type<PatternAtomics::Literal>,
+                   std::make_unique<FloatLiteral>(Tok.getStart(),
+                                                  std::stod(Tok.getLexeme())));
+    break;
   case TokenKind::StrLiteral:
-    return PatternAtomics::Literal(
+    Result.emplace(
+        std::in_place_type<PatternAtomics::Literal>,
         std::make_unique<StrLiteral>(Tok.getStart(), Tok.getLexeme()));
+    break;
   case TokenKind::CharLiteral:
-    return PatternAtomics::Literal(
+    Result.emplace(
+        std::in_place_type<PatternAtomics::Literal>,
         std::make_unique<CharLiteral>(Tok.getStart(), Tok.getLexeme()[0]));
+    break;
   case TokenKind::TrueKw:
-    return PatternAtomics::Literal(
-        std::make_unique<BoolLiteral>(Tok.getStart(), true));
+    Result.emplace(std::in_place_type<PatternAtomics::Literal>,
+                   std::make_unique<BoolLiteral>(Tok.getStart(), true));
+    break;
   case TokenKind::FalseKw:
-    return PatternAtomics::Literal(
-        std::make_unique<BoolLiteral>(Tok.getStart(), false));
+    Result.emplace(std::in_place_type<PatternAtomics::Literal>,
+                   std::make_unique<BoolLiteral>(Tok.getStart(), false));
+    break;
   default:
     return std::nullopt;
   }
+
+  return Result;
 }
 
-optional<PatternAtomics::Variant> Parser::parseVariantPattern() {
+optional<Pattern> Parser::parseVariantPattern() {
   assert(peekKind() == TokenKind::Period);
   advanceToken();
 
@@ -98,32 +109,34 @@ optional<PatternAtomics::Variant> Parser::parseVariantPattern() {
   const std::string Name = peekToken().getLexeme();
   const SrcLocation Loc = advanceToken().getStart();
 
-  // parse destructing variables
+  std::vector<std::unique_ptr<VarDecl>> Vars;
+
   if (peekKind() == TokenKind::OpenParen) {
     bool ErrorHappened = false;
-    auto Vars = parseValueList<std::optional<std::string>>(
+
+    auto ParsedVars = parseList<VarDecl>(
         TokenKind::OpenParen, TokenKind::CloseParen,
-        [&](Parser *P) -> std::optional<std::string> {
+        [&](Parser *P) -> std::unique_ptr<VarDecl> {
           if (P->peekKind() == TokenKind::Identifier) {
-            return optional<std::string>{P->advanceToken().getLexeme()};
+            return std::make_unique<VarDecl>(P->peekToken().getStart(),
+                                             P->advanceToken().getLexeme(),
+                                             std::nullopt, false, nullptr);
           }
           P->emitUnexpectedTokenError(P->peekToken());
           ErrorHappened = true;
-          return std::nullopt;
+          return nullptr;
         });
 
-    if (ErrorHappened || !Vars)
+    if (ErrorHappened || !ParsedVars)
       return std::nullopt;
 
-    std::vector<std::string> CorrectVars;
-    for (auto Var : *Vars) {
-      CorrectVars.push_back(*Var);
-    }
-
-    return PatternAtomics::Variant(Name, CorrectVars, Loc);
+    Vars = std::move(*ParsedVars);
   }
 
-  return PatternAtomics::Variant(Name, {}, Loc);
+  std::optional<Pattern> Result;
+  Result.emplace(std::in_place_type<PatternAtomics::Variant>, Name,
+                 std::move(Vars), Loc);
+  return Result;
 }
 
 } // namespace phi
