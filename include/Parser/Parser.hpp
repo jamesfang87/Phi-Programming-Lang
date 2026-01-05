@@ -9,11 +9,12 @@
 #include <utility>
 #include <vector>
 
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
+#include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Expr.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
-#include "AST/Stmt.hpp"
-#include "AST/Type.hpp"
+#include "AST/TypeSystem/Context.hpp"
+#include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/Diagnostic.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
@@ -67,7 +68,7 @@ private:
   [[nodiscard]] TokenKind peekKind() const;
 
   Token advanceToken();
-  bool matchToken(TokenKind Kind);
+  bool matchToken(TokenKind::Kind Kind);
   bool expectToken(TokenKind Expected, const std::string &Context = "");
 
   //===--------------------------------------------------------------------===//
@@ -88,10 +89,10 @@ private:
   // Error Recovery
   //===--------------------------------------------------------------------===//
 
-  bool SyncToTopLvl();
-  bool SyncToStmt();
-  bool syncTo(const std::initializer_list<TokenKind> TargetTokens);
-  bool syncTo(const TokenKind TargetToken);
+  bool syncToTopLvl();
+  bool syncToStmt();
+  bool syncTo(const std::initializer_list<TokenKind::Kind> TargetTokens);
+  bool syncTo(const TokenKind::Kind TargetToken);
 
   //===--------------------------------------------------------------------===//
   // Enum Parsing
@@ -105,15 +106,14 @@ private:
   //===--------------------------------------------------------------------===//
 
   std::unique_ptr<StructDecl> parseStructDecl();
-  std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
-  std::optional<MethodDecl> parseMethodDecl(std::string ParentName,
-                                            SrcLocation ParentLoc, bool InEnum);
+  std::optional<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
+  std::optional<MethodDecl> parseMethodDecl(std::string ParentName);
 
   //===--------------------------------------------------------------------===//
   // Type System Parsing
   //===--------------------------------------------------------------------===//
 
-  std::optional<Type> parseType();
+  std::optional<TypeRef> parseType();
 
   //===--------------------------------------------------------------------===//
   // Function Declaration Parsing
@@ -141,11 +141,11 @@ private:
   // Pattern Parsing
   //===--------------------------------------------------------------------===//
 
-  std::optional<Pattern> parsePattern();
-  std::optional<PatternAtomics::SingularPattern> parseSingularPattern();
-  std::optional<PatternAtomics::Wildcard> parseWildcardPattern();
-  std::optional<PatternAtomics::Variant> parseVariantPattern();
-  std::optional<PatternAtomics::Literal> parseLiteralPattern();
+  std::optional<std::vector<Pattern>> parsePattern();
+  std::optional<Pattern> parseSingularPattern();
+  std::optional<Pattern> parseWildcardPattern();
+  std::optional<Pattern> parseVariantPattern();
+  std::optional<Pattern> parseLiteralPattern();
 
   //===--------------------------------------------------------------------===//
   // Expression Parsing
@@ -153,7 +153,7 @@ private:
 
   std::unique_ptr<Expr> parseExpr();
   std::unique_ptr<Expr> pratt(int MinBp,
-                              const std::vector<TokenKind> &Terminators);
+                              const std::vector<TokenKind::Kind> &Terminators);
 
   std::unique_ptr<Expr> parseNud(const Token &Tok);
   std::unique_ptr<Expr> parsePrefixUnaryOp(const Token &Tok);
@@ -165,8 +165,8 @@ private:
   std::unique_ptr<Expr> parseInfix(const Token &Op, std::unique_ptr<Expr> Expr,
                                    int RBp);
   std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
-  std::unique_ptr<CustomTypeCtor> parseCustomInit(std::unique_ptr<Expr> Expr);
-  std::unique_ptr<MemberInitExpr> parseFieldInit();
+  std::unique_ptr<AdtInit> parseAdtInit(std::unique_ptr<Expr> Expr);
+  std::unique_ptr<MemberInit> parseMemberInit();
   std::unique_ptr<MatchExpr> parseMatchExpr();
 
   //===--------------------------------------------------------------------===//
@@ -176,7 +176,7 @@ private:
   struct TypedBinding {
     SrcLocation Loc;
     std::string Name;
-    Type Type;
+    std::optional<TypeRef> Type;
   };
   std::optional<TypedBinding> parseTypedBinding();
 
@@ -198,12 +198,15 @@ private:
    */
   template <typename T, typename F>
   std::optional<std::vector<std::unique_ptr<T>>>
-  parseList(const TokenKind Opening, const TokenKind Closing, F Fun,
+  parseList(const TokenKind::Kind Open, const TokenKind::Kind Close, F Fun,
             const std::string &Context = "list") {
+    TokenKind Opening = TokenKind(Open);
+    TokenKind Closing = TokenKind(Close);
+
     // Verify opening delimiter
     const Token OpeningToken = peekToken();
     if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
+      emitExpectedFoundError(Opening.toString(), OpeningToken);
       return std::nullopt;
     }
     advanceToken();
@@ -230,8 +233,7 @@ private:
       } else {
         emitError(
             error("missing comma in " + Context)
-                .with_primary_label(spanFromToken(peekToken()),
-                                    "expected `,` here")
+                .with_primary_label(peekToken().getSpan(), "expected `,` here")
                 .with_help("separate " + Context + " elements with commas")
                 .build());
         return std::nullopt;
@@ -240,7 +242,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekToken().getKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
+      emitUnclosedDelimiterError(OpeningToken, Closing.toString());
       return std::nullopt;
     }
 
@@ -250,12 +252,15 @@ private:
 
   template <typename T, typename F>
   std::optional<std::vector<T>>
-  parseValueList(const TokenKind Opening, const TokenKind Closing, F Fun,
+  parseValueList(const TokenKind::Kind Open, const TokenKind::Kind Close, F Fun,
                  const std::string &Context = "list") {
+    TokenKind Opening = TokenKind(Open);
+    TokenKind Closing = TokenKind(Close);
+
     // Verify opening delimiter
     const Token OpeningToken = peekToken();
     if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(TokenKindToStr(Opening), OpeningToken);
+      emitExpectedFoundError(Opening.toString(), OpeningToken);
       return std::nullopt;
     }
     advanceToken();
@@ -282,8 +287,7 @@ private:
       } else {
         emitError(
             error("missing comma in " + Context)
-                .with_primary_label(spanFromToken(peekToken()),
-                                    "expected `,` here")
+                .with_primary_label(peekToken().getSpan(), "expected `,` here")
                 .with_help("separate " + Context + " elements with commas")
                 .build());
         return std::nullopt;
@@ -292,7 +296,7 @@ private:
 
     // Verify closing delimiter
     if (atEOF() || peekKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, TokenKindToStr(Closing));
+      emitUnclosedDelimiterError(OpeningToken, Closing.toString());
       return std::nullopt;
     }
 

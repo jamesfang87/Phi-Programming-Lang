@@ -1,0 +1,54 @@
+fun println(const msg: string) {}
+
+struct Rectangle {
+    public l: f64;
+    public w: f64;
+}
+
+enum Shape {
+    Rectangle: Rectangle;
+    Circle: f64;
+    Square: { l: f64 };
+
+    fun perimeter(const this) -> f64 {
+        return match this {
+            .Rectangle(rect) => 2.0 * (rect.l + rect.w),
+            .Circle(r)       => 2.0 * 3.14 * r,
+            .Square(square)  => 4.0 * square.l,
+        };
+    }
+}
+
+fun print_name(const shape: Shape) {
+    match shape {
+        .Rectangle => println("rectangle"),
+        .Circle    => println("circle"),
+        .Square    => println("square"),
+    };
+}
+
+fun area(const shape: Shape) -> f64 {
+    return match shape {
+        .Rectangle(rect) => { rect.l * rect.w; } 
+        .Circle(r)       => { 3.14 * r * r; }
+        .Square(square)       => { square.l * square.l; }
+    };
+}
+
+fun main() {
+    const rect = Shape { Rectangle = Rectangle { l = 4.0, w = 6.0 } };
+    const circle = Shape { Circle = 4.0 };
+    const square = Shape { Square = { l = 4.0 } };
+
+    rect.perimeter();
+    circle.perimeter();
+    square.perimeter();
+
+    print_name(rect);
+    print_name(circle);
+    print_name(square);
+
+    area(rect);
+    area(circle);
+    area(square);
+}

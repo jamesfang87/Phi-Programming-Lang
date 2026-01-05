@@ -17,7 +17,7 @@ void Parser::emitExpectedFoundError(const std::string &Expected,
                                     const Token &FoundToken) {
   error(
       std::format("expected {}, found `{}`", Expected, FoundToken.getLexeme()))
-      .with_primary_label(spanFromToken(FoundToken),
+      .with_primary_label(FoundToken.getSpan(),
                           std::format("expected {} here", Expected))
       .emit(*DiagnosticsMan);
 }
@@ -34,9 +34,8 @@ void Parser::emitExpectedFoundError(const std::string &Expected,
  */
 void Parser::emitUnexpectedTokenError(
     const Token &Token, const std::vector<std::string> &ExpectedTokens) {
-  auto Builder =
-      error(std::format("unexpected token `{}`", Token.getLexeme()))
-          .with_primary_label(spanFromToken(Token), "unexpected token");
+  auto Builder = error(std::format("unexpected token `{}`", Token.getLexeme()))
+                     .with_primary_label(Token.getSpan(), "unexpected token");
 
   if (!ExpectedTokens.empty()) {
     std::string Suggestion = "expected ";
@@ -67,7 +66,7 @@ void Parser::emitUnclosedDelimiterError(const Token &OpeningToken,
                                         const std::string &ExpectedClosing) {
   error("unclosed delimiter")
       .with_primary_label(
-          spanFromToken(OpeningToken),
+          OpeningToken.getSpan(),
           std::format("unclosed `{}`", OpeningToken.getLexeme()))
       .with_help(
           std::format("expected `{}` to close this delimiter", ExpectedClosing))
@@ -88,7 +87,7 @@ void Parser::emitUnclosedDelimiterError(const Token &OpeningToken,
  *    - End of file
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
-bool Parser::SyncToTopLvl() {
+bool Parser::syncToTopLvl() {
   return syncTo({TokenKind::FunKw, TokenKind::StructKw, TokenKind::EnumKw});
 }
 
@@ -104,7 +103,7 @@ bool Parser::SyncToTopLvl() {
  *    - Statement block terminators (closing brace)
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
-bool Parser::SyncToStmt() {
+bool Parser::syncToStmt() {
   return syncTo({TokenKind::CloseBrace, TokenKind::ReturnKw, TokenKind::IfKw,
                  TokenKind::WhileKw, TokenKind::ForKw, TokenKind::VarKw});
 }
@@ -118,11 +117,11 @@ bool Parser::SyncToStmt() {
  * Advances through the token stream until encountering one of the specified
  * target tokens. Used for context-specific recovery (e.g., block endings).
  */
-bool Parser::syncTo(const std::initializer_list<TokenKind> Targets) {
+bool Parser::syncTo(const std::initializer_list<TokenKind::Kind> Targets) {
   advanceToken();
   while (!atEOF()) {
-    for (const TokenKind target : Targets) {
-      if (peekToken().getKind() == target) {
+    for (const auto Target : Targets) {
+      if (peekToken().getKind() == Target) {
         return true;
       }
     }
@@ -140,7 +139,7 @@ bool Parser::syncTo(const std::initializer_list<TokenKind> Targets) {
  * Efficiently skips tokens until the exact specified token type is found.
  * Useful for recovering from errors where a specific closing token is expected.
  */
-bool Parser::syncTo(const TokenKind Target) {
+bool Parser::syncTo(const TokenKind::Kind Target) {
   while (!atEOF() && peekToken().getKind() != Target) {
     advanceToken();
   }

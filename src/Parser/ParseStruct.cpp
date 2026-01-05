@@ -1,4 +1,3 @@
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
@@ -7,7 +6,8 @@
 #include <optional>
 #include <string>
 
-#include "AST/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
@@ -24,7 +24,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
 
   uint32_t FieldIndex = 0;
   std::vector<MethodDecl> Methods;
-  std::vector<std::unique_ptr<FieldDecl>> Fields;
+  std::vector<FieldDecl> Fields;
   while (!atEOF() && peekToken().getKind() != TokenKind::CloseBrace) {
     Token Check = peekToken();
     switch (Check.getKind()) {
@@ -42,9 +42,9 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     }
 
     if (Check.getKind() == TokenKind::FunKw) {
-      auto Res = parseMethodDecl(Id, Loc, /*InEnum=*/false);
+      auto Res = parseMethodDecl(Id);
       if (Res) {
-        Methods.push_back(std::move(*Res));
+        Methods.emplace_back(std::move(*Res));
       } else {
         syncTo({TokenKind::FunKw, TokenKind::VarKw, TokenKind::ConstKw,
                 TokenKind::OpenBrace});
@@ -52,7 +52,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     } else if (Check.getKind() == TokenKind::Identifier) {
       auto Res = parseFieldDecl(FieldIndex++);
       if (Res) {
-        Fields.push_back(std::move(Res));
+        Fields.emplace_back(std::move(*Res));
       } else {
         syncTo({TokenKind::FunKw, TokenKind::VarKw, TokenKind::ConstKw,
                 TokenKind::OpenBrace});
@@ -66,7 +66,7 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl() {
                                       std::move(Methods));
 }
 
-std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
+std::optional<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
   bool IsPrivate = true;
   if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
@@ -75,9 +75,9 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
 
   auto Binding = parseTypedBinding();
   if (!Binding)
-    return nullptr;
-
+    return std::nullopt;
   auto [VarLoc, Id, DeclType] = *Binding;
+  assert(DeclType);
 
   std::unique_ptr<Expr> Init;
 
@@ -85,47 +85,46 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex) {
     advanceToken(); // consume '='
     Init = parseExpr();
     if (!Init)
-      return nullptr;
+      return std::nullopt;
   }
 
   // Validate semicolon terminator
   if (advanceToken().getKind() != TokenKind::Semicolon) {
     error("missing semicolon after field declaration")
-        .with_primary_label(spanFromToken(peekToken()), "expected `;` here")
+        .with_primary_label(peekToken().getSpan(), "expected `;` here")
         .with_help("field declarations must end with a semicolon")
-        .with_suggestion(spanFromToken(peekToken()), ";", "add semicolon")
+        .with_suggestion(peekToken().getSpan(), ";", "add semicolon")
         .emit(*DiagnosticsMan);
-    return nullptr;
+    return std::nullopt;
   }
 
-  return std::make_unique<FieldDecl>(VarLoc, Id, DeclType, std::move(Init),
-                                     IsPrivate, FieldIndex);
+  return std::optional<FieldDecl>(std::in_place, VarLoc, Id, *DeclType,
+                                  std::move(Init), IsPrivate, FieldIndex);
 }
 
-std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
-                                                  SrcLocation ParentLoc,
-                                                  bool InEnum) {
+std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentName) {
   bool IsPrivate = true;
   if (peekToken().getKind() == TokenKind::PublicKw) {
     IsPrivate = false;
     advanceToken();
   }
 
-  Token Tok = advanceToken(); // Eat 'fun'
-  const SrcLocation &Loc = Tok.getStart();
+  Token FunKw = advanceToken(); // Eat 'fun'
+  const SrcSpan &FunKwSpan = FunKw.getSpan();
 
   // Validate function name
   if (peekToken().getKind() != TokenKind::Identifier) {
     error("invalid function name")
-        .with_primary_label(spanFromToken(peekToken()),
+        .with_primary_label(peekToken().getSpan(),
                             "expected function name here")
-        .with_secondary_label(spanFromToken(Tok), "after `fun` keyword")
+        .with_secondary_label(FunKw.getSpan(), "after `fun` keyword")
         .with_help("function names must be valid identifiers")
         .with_note("identifiers must start with a letter or underscore")
         .emit(*DiagnosticsMan);
     return std::nullopt;
   }
-  std::string Id = advanceToken().getLexeme();
+  std::string Id = peekToken().getLexeme();
+  SrcSpan IdSpan = advanceToken().getSpan();
 
   // Parse parameter list
   auto Params = parseList<ParamDecl>(
@@ -138,9 +137,8 @@ std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
         // TODO: emit error if not const or var
         bool IsConst = P->peekToken().getKind() == TokenKind::ConstKw;
         P->advanceToken();
-        auto InsideType = (InEnum) ? Type::makeEnum(ParentName, ParentLoc)
-                                   : Type::makeStruct(ParentName, ParentLoc);
-        auto T = Type::makeReference(InsideType, ParentLoc);
+        auto Base = TypeCtx::getAdt(ParentName, nullptr, peekToken().getSpan());
+        auto T = TypeCtx::getRef(Base, peekToken().getSpan());
         return std::make_unique<ParamDecl>(P->advanceToken().getStart(), "this",
                                            T, IsConst);
       });
@@ -153,13 +151,14 @@ std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
   }
 
   // Handle optional return type
-  auto ReturnType = Type::makePrimitive(PrimitiveKind::Null, SrcLocation{});
+  std::optional<TypeRef> ReturnTy = std::nullopt;
   if (peekToken().getKind() == TokenKind::Arrow) {
     advanceToken(); // eat '->'
-    auto Res = parseType();
-    if (!Res.has_value())
+    ReturnTy.emplace(std::move(*parseType()));
+    if (!ReturnTy)
       return std::nullopt;
-    ReturnType = Res.value();
+  } else {
+    ReturnTy.emplace(TypeCtx::getBuiltin(BuiltinTy::Null, IdSpan));
   }
 
   // Parse function body
@@ -167,8 +166,8 @@ std::optional<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
   if (!Body)
     return std::nullopt;
 
-  return MethodDecl(Loc, std::move(Id), ReturnType, std::move(Params.value()),
-                    std::move(Body), IsPrivate);
+  return MethodDecl(FunKwSpan.Start, std::move(Id), *ReturnTy,
+                    std::move(Params.value()), std::move(Body), IsPrivate);
 }
 
 } // namespace phi

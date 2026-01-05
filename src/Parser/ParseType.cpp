@@ -1,5 +1,3 @@
-#include "AST/Type.hpp"
-#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
@@ -9,59 +7,51 @@
 #include <unordered_map>
 #include <vector>
 
+#include "AST/TypeSystem/Type.hpp"
 #include "Lexer/Token.hpp"
+#include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
-/**
- * Parses a type specification from the token stream.
- *
- * @return std::expected<Type, Diagnostic> The parsed type on success, or a
- * diagnostic error on failure.
- *
- * Handles both primitive types (i8, i16, etc.) and custom type identifiers.
- * Emits detailed errors for invalid type tokens, including:
- * - Unexpected tokens in type position
- * - Suggestions for valid primitive types
- * - Notes about type syntax rules
- */
-std::optional<Type> Parser::parseType() {
+std::optional<TypeRef> Parser::parseType() {
   enum class Indirection : uint8_t { Ptr, Ref, None };
   // Map of primitive type names to their enum representations
-  static const std::unordered_map<std::string_view, PrimitiveKind>
-      PrimitiveMap = {
-          {"i8", PrimitiveKind::I8},         {"i16", PrimitiveKind::I16},
-          {"i32", PrimitiveKind::I32},       {"i64", PrimitiveKind::I64},
-          {"u8", PrimitiveKind::U8},         {"u16", PrimitiveKind::U16},
-          {"u32", PrimitiveKind::U32},       {"u64", PrimitiveKind::U64},
-          {"f32", PrimitiveKind::F32},       {"f64", PrimitiveKind::F64},
-          {"string", PrimitiveKind::String}, {"char", PrimitiveKind::Char},
-          {"bool", PrimitiveKind::Bool},     {"null", PrimitiveKind::Null}};
+  static const std::unordered_map<std::string_view, BuiltinTy::Kind>
+      PrimitiveMap = {{"i8", BuiltinTy::i8},         {"i16", BuiltinTy::i16},
+                      {"i32", BuiltinTy::i32},       {"i64", BuiltinTy::i64},
+                      {"u8", BuiltinTy::u8},         {"u16", BuiltinTy::u16},
+                      {"u32", BuiltinTy::u32},       {"u64", BuiltinTy::u64},
+                      {"f32", BuiltinTy::f32},       {"f64", BuiltinTy::f64},
+                      {"string", BuiltinTy::String}, {"char", BuiltinTy::Char},
+                      {"bool", BuiltinTy::Bool},     {"null", BuiltinTy::Null}};
 
+  // a parenthesis indicates a tuple
   if (peekToken().getKind() == TokenKind::OpenParen) {
-    SrcLocation Location = peekToken().getStart();
-    std::optional<std::vector<Type>> Temp = parseValueList<Type>(
+    SrcLocation Start = peekToken().getStart();
+    std::optional<std::vector<TypeRef>> Temp = parseValueList<TypeRef>(
         TokenKind::OpenParen, TokenKind::CloseParen, &Parser::parseType);
 
     if (!Temp) {
       return std::nullopt;
     }
 
-    return Type::makeTuple(*Temp, Location);
+    SrcLocation End = peekToken().getEnd();
+    return TypeCtx::getTuple(*Temp, SrcSpan(Start, End));
   }
 
+  // we look for the type of indirection
   Indirection Kind = Indirection::None;
-  SrcLocation IndrectionLocation;
+  std::optional<SrcSpan> IndirectionSpan;
   switch (peekToken().getKind()) {
   case TokenKind::Amp:
     Kind = Indirection::Ref;
-    IndrectionLocation = peekToken().getStart();
+    IndirectionSpan = peekToken().getSpan();
     advanceToken();
     break;
   case TokenKind::Star:
     Kind = Indirection::Ptr;
-    IndrectionLocation = peekToken().getStart();
+    IndirectionSpan = peekToken().getSpan();
     advanceToken();
     break;
   case TokenKind::Identifier:
@@ -71,7 +61,7 @@ std::optional<Type> Parser::parseType() {
     // Validate token is either primitive type or identifier
     if (!PrimitiveMap.contains(peekToken().getLexeme())) {
       error(std::format("invalid token found: {}", peekToken().getLexeme()))
-          .with_primary_label(spanFromToken(peekToken()),
+          .with_primary_label(peekToken().getSpan(),
                               "expected a valid type here")
           .with_help("valid types include: int, float, bool, string, or custom "
                      "type names")
@@ -85,17 +75,19 @@ std::optional<Type> Parser::parseType() {
   }
 
   const std::string Id = peekToken().getLexeme();
-  const SrcLocation Loc = peekToken().getStart();
+  const SrcSpan Span = peekToken().getSpan();
   const auto It = PrimitiveMap.find(Id);
 
   advanceToken();
-  Type Base = (It == PrimitiveMap.end()) ? Type::makeStruct(Id, Loc)
-                                         : Type::makePrimitive(It->second, Loc);
+
+  TypeRef Base = (It == PrimitiveMap.end())
+                     ? TypeCtx::getAdt(Id, nullptr, Span)
+                     : TypeCtx::getBuiltin(It->second, Span);
   switch (Kind) {
   case Indirection::Ptr:
-    return Type::makePointer(Base, IndrectionLocation);
+    return TypeCtx::getPtr(Base, *IndirectionSpan);
   case Indirection::Ref:
-    return Type::makeReference(Base, IndrectionLocation);
+    return TypeCtx::getRef(Base, *IndirectionSpan);
   case Indirection::None:
     return Base;
   }

@@ -4,7 +4,7 @@
 
 #include <llvm/Support/Casting.h>
 
-#include "AST/Expr.hpp"
+#include "AST/Nodes/Expr.hpp"
 
 namespace phi {
 
@@ -24,7 +24,7 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
   // Struct init
   case TokenKind::OpenBrace:
     if (!NoStructInit)
-      return parseCustomInit(std::move(Lhs));
+      return parseAdtInit(std::move(Lhs));
 
   default:
     return Lhs;
@@ -33,9 +33,9 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
 
 std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
                                          std::unique_ptr<Expr> Lhs, int RBp) {
-  std::vector<TokenKind> Terminators = {TokenKind::Eof, TokenKind::Semicolon,
-                                        TokenKind::Comma, TokenKind::CloseParen,
-                                        TokenKind::CloseBracket};
+  std::vector<TokenKind::Kind> Terminators = {
+      TokenKind::Eof, TokenKind::Semicolon, TokenKind::Comma,
+      TokenKind::CloseParen, TokenKind::CloseBracket};
   if (NoStructInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
@@ -60,12 +60,12 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
     if (!Rhs)
       return nullptr;
 
-    if (auto Member = llvm::dyn_cast<DeclRefExpr>(Rhs.get())) {
+    if (auto *Member = llvm::dyn_cast<DeclRefExpr>(Rhs.get())) {
       return std::make_unique<FieldAccessExpr>(Member->getLocation(),
                                                std::move(Lhs), Member->getId());
     }
 
-    if (auto FunCall = llvm::dyn_cast<FunCallExpr>(Rhs.get())) {
+    if (auto *FunCall = llvm::dyn_cast<FunCallExpr>(Rhs.get())) {
       return std::make_unique<MethodCallExpr>(std::move(*FunCall),
                                               std::move(Lhs));
     }
