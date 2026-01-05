@@ -5,7 +5,6 @@
 #include <optional>
 #include <utility>
 
-#include "AST/Decl.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
@@ -28,26 +27,28 @@ namespace phi {
  * Handles comprehensive error recovery and validation at each step.
  */
 std::unique_ptr<FunDecl> Parser::parseFunDecl() {
-  Token Tok = advanceToken(); // Eat 'fun'
-  SrcLocation Loc = Tok.getStart();
+  Token FunKw = advanceToken(); // Eat 'fun'
+  SrcSpan FunKwSpan = FunKw.getSpan();
 
   // Validate function name
   if (peekToken().getKind() != TokenKind::Identifier) {
     error("invalid function name")
-        .with_primary_label(spanFromToken(peekToken()),
+        .with_primary_label(peekToken().getSpan(),
                             "expected function name here")
-        .with_secondary_label(spanFromToken(Tok), "after `fun` keyword")
+        .with_secondary_label(FunKwSpan, "after `fun` keyword")
         .with_help("function names must be valid identifiers")
         .with_note("identifiers must start with a letter or underscore")
         .with_code("E0006")
         .emit(*DiagnosticsMan);
     return nullptr;
   }
-  std::string Id = advanceToken().getLexeme();
+  std::string Id = peekToken().getLexeme();
+  SrcSpan IdSpan = advanceToken().getSpan();
 
   // Parse parameter list
-  auto Params = parseList<ParamDecl>(
-      TokenKind::OpenParen, TokenKind::CloseParen, &Parser::parseParamDecl);
+  auto Params = parseList<ParamDecl>(TokenKind(TokenKind::OpenParen),
+                                     TokenKind(TokenKind::CloseParen),
+                                     &Parser::parseParamDecl);
   if (!Params)
     return nullptr;
 
@@ -56,39 +57,40 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl() {
   }
 
   // Handle optional return type
-  auto ReturnType = Type::makePrimitive(PrimitiveKind::Null, SrcLocation{});
+  std::optional<TypeRef> ReturnTy = std::nullopt;
   if (peekToken().getKind() == TokenKind::Arrow) {
     advanceToken(); // eat '->'
-    auto Res = parseType();
-    if (!Res.has_value())
+    ReturnTy.emplace(std::move(*parseType()));
+    if (!ReturnTy)
       return nullptr;
-    ReturnType = Res.value();
+  } else {
+    ReturnTy.emplace(TypeCtx::getBuiltin(BuiltinTy::Null, IdSpan));
   }
 
-  // Parse function body
   auto Body = parseBlock();
   if (!Body)
     return nullptr;
 
-  return std::make_unique<FunDecl>(Loc, std::move(Id), ReturnType,
+  return std::make_unique<FunDecl>(FunKwSpan.Start, std::move(Id), *ReturnTy,
                                    std::move(Params.value()), std::move(Body));
 }
 
 /**
  * Parses a typed binding (name: type) used in declarations.
  *
- * @return std::optional<std::pair<std::string, Type>> Name-type pair or nullopt
- * on error. Errors are emitted to DiagnosticManager.
+ * @return std::optional<std::pair<std::string, Type>> Name-type pair or
+ * nullopt on error. Errors are emitted to DiagnosticManager.
  *
  * Format: identifier ':' type
  * Used in variable declarations, function parameters, etc.
  */
 std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   // Parse identifier
-  if (peekToken().getKind() != TokenKind::Identifier) {
+  if (peekKind() != TokenKind::Identifier) {
     error("expected identifier")
-        .with_primary_label(spanFromToken(peekToken()),
-                            "expected identifier here")
+        .with_primary_label(peekToken().getSpan(),
+                            std::format("expected identifier here (got {})",
+                                        peekKind().toString()))
         .emit(*DiagnosticsMan);
     return std::nullopt;
   }
@@ -98,9 +100,8 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
   // Parse colon separator
   if (peekToken().getKind() != TokenKind::Colon) {
     error("expected colon")
-        .with_primary_label(spanFromToken(peekToken()), "expected `:` here")
-        .with_suggestion(spanFromToken(peekToken()), ":",
-                         "add colon before type")
+        .with_primary_label(peekToken().getSpan(), "expected `:` here")
+        .with_suggestion(peekToken().getSpan(), ":", "add colon before type")
         .emit(*DiagnosticsMan);
     return std::nullopt;
   }
@@ -108,11 +109,10 @@ std::optional<Parser::TypedBinding> Parser::parseTypedBinding() {
 
   // Parse type
   auto DeclType = parseType();
-  if (!DeclType.has_value())
+  if (!DeclType)
     return std::nullopt;
 
-  return TypedBinding{
-      .Loc = Start, .Name = Name, .Type = std::move(DeclType.value())};
+  return TypedBinding{.Loc = Start, .Name = Name, .Type = DeclType};
 }
 
 /**
@@ -140,7 +140,8 @@ std::unique_ptr<ParamDecl> Parser::parseParamDecl() {
     return nullptr;
 
   auto [Loc, Id, DeclType] = *Binding;
-  return std::make_unique<ParamDecl>(Loc, Id, DeclType, IsConst);
+  assert(DeclType);
+  return std::make_unique<ParamDecl>(Loc, Id, *DeclType, IsConst);
 }
 
 } // namespace phi

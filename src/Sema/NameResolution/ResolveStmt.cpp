@@ -1,13 +1,32 @@
-#include "Sema/NameResolver.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
 
 #include <optional>
 
-#include "AST/Decl.hpp"
-#include "AST/Expr.hpp"
-#include "AST/Stmt.hpp"
-#include "Sema/SymbolTable.hpp"
+#include <llvm/ADT/TypeSwitch.h>
+
+#include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Expr.hpp"
+#include "AST/Nodes/Stmt.hpp"
+#include "Sema/NameResolution/SymbolTable.hpp"
 
 namespace phi {
+
+bool NameResolver::visit(Stmt &S) {
+  return llvm::TypeSwitch<Stmt *, bool>(&S)
+      .Case<ReturnStmt>([&](ReturnStmt *X) { return visit(*X); })
+      .Case<DeferStmt>([&](DeferStmt *X) { return visit(*X); })
+      .Case<IfStmt>([&](IfStmt *X) { return visit(*X); })
+      .Case<WhileStmt>([&](WhileStmt *X) { return visit(*X); })
+      .Case<ForStmt>([&](ForStmt *X) { return visit(*X); })
+      .Case<DeclStmt>([&](DeclStmt *X) { return visit(*X); })
+      .Case<ContinueStmt>([&](ContinueStmt *X) { return visit(*X); })
+      .Case<BreakStmt>([&](BreakStmt *X) { return visit(*X); })
+      .Case<ExprStmt>([&](ExprStmt *X) { return visit(*X); })
+      .Default([&](Stmt *) {
+        std::unreachable();
+        return false;
+      });
+}
 
 bool NameResolver::visit(Block &Block, bool ScopeCreated = false) {
   // Create new scope unless parent already created one
@@ -23,8 +42,6 @@ bool NameResolver::visit(Block &Block, bool ScopeCreated = false) {
   }
   return Success;
 }
-
-bool NameResolver::visit(Stmt &S) { return S.accept(*this); }
 
 bool NameResolver::visit(ReturnStmt &S) {
   // Void function return
@@ -53,7 +70,7 @@ bool NameResolver::visit(IfStmt &S) {
 }
 
 bool NameResolver::visit(WhileStmt &S) {
-  bool Success = S.getCond().accept(*this);
+  bool Success = visit(S.getCond());
 
   // Resolve loop body
   Success = visit(S.getBody()) && Success;
@@ -62,7 +79,7 @@ bool NameResolver::visit(WhileStmt &S) {
 
 bool NameResolver::visit(ForStmt &S) {
   // Resolve range expression
-  bool Success = S.getRange().accept(*this);
+  bool Success = visit(S.getRange());
 
   // Create scope for loop variable
   SymbolTable::ScopeGuard BlockScope(SymbolTab);
@@ -81,14 +98,13 @@ bool NameResolver::visit(DeclStmt &S) {
   VarDecl &Var = S.getDecl();
   bool Success = true;
 
-  // Resolve variable type
-  if (Var.hasType()) {
-    Success = visit(Var.getType()) && Success;
-  }
-
   // Resolve initializer if present
   if (Var.hasInit()) {
     Success = visit(Var.getInit()) && Success;
+  }
+
+  if (Var.hasType()) {
+    Success = visit(Var.getType()) && Success;
   }
 
   // Add to symbol table

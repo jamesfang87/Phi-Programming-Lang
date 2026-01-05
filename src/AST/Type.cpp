@@ -1,281 +1,172 @@
-#include "AST/Type.hpp"
+#include "AST/TypeSystem/Type.hpp"
 
-#include <cassert>
-#include <sstream>
+#include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/StringExtras.h>
+#include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/Casting.h>
+
+#include <cstdint>
+#include <format>
 #include <string>
-
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Type.h"
-
-#include "Sema/TypeInference/Types/Monotype.hpp"
-#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
-[[nodiscard]] Type Type::getUnderlying() const {
-  struct Visitor {
-    Type operator()(const PrimitiveKind &) const noexcept { return Self; }
+Type *Type::getUnderlying() {
+  Type *Current = this;
 
-    Type operator()(const StructType &) const noexcept { return Self; }
-
-    Type operator()(const EnumType &) const noexcept { return Self; }
-
-    Type operator()(const TupleType &) const noexcept { return Self; }
-
-    Type operator()(const GenericType &) const noexcept { return Self; }
-
-    Type operator()(const FunctionType &) const noexcept { return Self; }
-
-    Type operator()(const ReferenceType &R) const noexcept {
-      // Recurse until base type is not a pointer/ref
-      return R.Pointee->getUnderlying();
+  while (true) {
+    if (auto Ptr = llvm::dyn_cast<PtrTy>(Current)) {
+      Current = Ptr->getPointee().getPtr();
+    } else if (auto Ref = llvm::dyn_cast<RefTy>(Current)) {
+      Current = Ref->getPointee().getPtr();
+    } else {
+      break;
     }
+  }
 
-    Type operator()(const PointerType &P) const noexcept {
-      // Recurse until base type is not a pointer/ref
-      return P.Pointee->getUnderlying();
-    }
-
-    const Type &Self;
-  };
-
-  return std::visit(Visitor{*this}, Data);
+  return Current;
 }
 
-//===----------------------------------------------------------------------===//
-// String Conversion Methods
-//===----------------------------------------------------------------------===//
+TypeRef TypeRef::getUnderlying() { return TypeRef(Ptr->getUnderlying(), Span); }
 
-std::string Type::toString() const {
-  const SrcLocation L = this->Location;
-  struct Visitor {
-    SrcLocation L;
-
-    std::string operator()(PrimitiveKind K) const {
-      return std::format("{}", primitiveKindToString(K));
-    }
-
-    std::string operator()(const StructType &S) const { return S.Name; }
-
-    std::string operator()(const EnumType &E) const { return E.Name; }
-
-    std::string operator()(const TupleType &T) const {
-      std::ostringstream Oss;
-      Oss << "(";
-      for (size_t I = 0; I < T.Types.size(); ++I) {
-        Oss << T.Types[I].toString();
-        if (I + 1 < T.Types.size())
-          Oss << ", ";
-      }
-      Oss << ")";
-      return Oss.str();
-    }
-
-    std::string operator()(const ReferenceType &R) const {
-      return "&" + R.Pointee->toString();
-    }
-
-    std::string operator()(const PointerType &P) const {
-      return "*" + P.Pointee->toString();
-    }
-
-    std::string operator()(const GenericType &G) const {
-      std::ostringstream Oss;
-      Oss << G.Name << "<";
-      for (size_t I = 0; I < G.TypeArguments.size(); ++I) {
-        Oss << G.TypeArguments[I].toString();
-        if (I + 1 < G.TypeArguments.size())
-          Oss << ", ";
-      }
-      Oss << ">";
-      return Oss.str();
-    }
-
-    std::string operator()(const FunctionType &F) const {
-      std::ostringstream Oss;
-      Oss << "fun(";
-      for (size_t I = 0; I < F.Parameters.size(); ++I) {
-        Oss << F.Parameters[I].toString();
-        if (I + 1 < F.Parameters.size())
-          Oss << ", ";
-      }
-      Oss << ") -> " << F.ReturnType->toString();
-      return Oss.str();
-    }
-  };
-  return std::visit(Visitor{L}, Data);
+std::string BuiltinTy::toString() const {
+  switch (getBuiltinKind()) {
+  case Kind::i8:
+    return "i8";
+  case Kind::i16:
+    return "i16";
+  case Kind::i32:
+    return "i32";
+  case Kind::i64:
+    return "i64";
+  case Kind::u8:
+    return "u8";
+  case Kind::u16:
+    return "u16";
+  case Kind::u32:
+    return "u32";
+  case Kind::u64:
+    return "u64";
+  case Kind::f32:
+    return "f32";
+  case Kind::f64:
+    return "f64";
+  case Kind::String:
+    return "string";
+  case Kind::Char:
+    return "char";
+  case Kind::Bool:
+    return "bool";
+  case Kind::Range:
+    return "range";
+  case Kind::Null:
+    return "null";
+  }
 }
 
-//===----------------------------------------------------------------------===//
-// Monotype Conversion Methods
-//===----------------------------------------------------------------------===//
+std::string AdtTy::toString() const { return getId(); }
 
-Monotype Type::toMonotype() const {
-  const SrcLocation L = this->Location;
-  struct Visitor {
-    SrcLocation L;
-
-    Monotype operator()(PrimitiveKind K) const {
-      return Monotype::makeCon(primitiveKindToString(K), {}, L);
-    }
-
-    Monotype operator()(const StructType &S) const {
-      return Monotype::makeCon(S.Name, {}, L);
-    }
-
-    Monotype operator()(const EnumType &C) const {
-      return Monotype::makeCon(C.Name, {}, L);
-    }
-
-    Monotype operator()(const TupleType &T) const {
-      // TODO: Create Type Constructor so that this is more pedantic
-      std::vector<Monotype> Types;
-      Types.reserve(T.Types.size());
-      for (const auto &Arg : T.Types) {
-        Types.push_back(Arg.toMonotype());
-      }
-      return Monotype::makeApp("Tuple", Types, L);
-    }
-
-    Monotype operator()(const ReferenceType &R) const {
-      return Monotype::makeApp("Ref", {R.Pointee->toMonotype()}, L);
-    }
-
-    Monotype operator()(const PointerType &P) const {
-      return Monotype::makeApp("Ptr", {P.Pointee->toMonotype()}, L);
-    }
-
-    Monotype operator()(const GenericType &G) const {
-      std::vector<Monotype> Args;
-      Args.reserve(G.TypeArguments.size());
-      for (const auto &Arg : G.TypeArguments) {
-        Args.push_back(Arg.toMonotype());
-      }
-      return Monotype::makeApp(G.Name, Args, L);
-    }
-
-    Monotype operator()(const FunctionType &F) const {
-      std::vector<Monotype> Params;
-      Params.reserve(F.Parameters.size());
-      for (const auto &Param : F.Parameters)
-        Params.push_back(Param.toMonotype());
-      const Monotype Ret = F.ReturnType->toMonotype();
-      return Monotype::makeFun(Params, Ret, L);
-    }
-  };
-  return std::visit(Visitor{L}, Data);
+std::string TupleTy::toString() const {
+  std::string Elems = "(";
+  if (Elems.empty()) {
+    Elems = "()";
+  }
+  for (uint64_t i = 0; i < ElementTys.size(); i++) {
+    Elems += ElementTys[i].toString();
+    if (i < ElementTys.size() - 1)
+      Elems += ", ";
+    else
+      Elems += ")";
+  }
+  return Elems;
 }
 
-//===----------------------------------------------------------------------===//
-// LLVM Type Conversion Methods
-//===----------------------------------------------------------------------===//
+std::string FunTy::toString() const {
+  std::string Params = "(";
+  if (ParamTys.empty()) {
+    Params = "()";
+  }
+  for (uint64_t i = 0; i < ParamTys.size(); i++) {
+    Params += ParamTys[i].toString();
+    if (i < ParamTys.size() - 1)
+      Params += ", ";
+    else
+      Params += ")";
+  }
+  return std::format("fun{} -> {}", Params, ReturnTy.toString());
+}
 
-llvm::Type *Type::toLLVM(llvm::LLVMContext &Ctx) const {
-  struct Visitor {
-    llvm::LLVMContext &Ctx;
+std::string PtrTy::toString() const { return "*" + Pointee.toString(); }
 
-    llvm::Type *operator()(PrimitiveKind K) const {
-      switch (K) {
-      case PrimitiveKind::I8:
-        return llvm::Type::getInt8Ty(Ctx);
-      case PrimitiveKind::I16:
-        return llvm::Type::getInt16Ty(Ctx);
-      case PrimitiveKind::I32:
-        return llvm::Type::getInt32Ty(Ctx);
-      case PrimitiveKind::I64:
-        return llvm::Type::getInt64Ty(Ctx);
-      case PrimitiveKind::U8:
-        return llvm::Type::getInt8Ty(Ctx);
-      case PrimitiveKind::U16:
-        return llvm::Type::getInt16Ty(Ctx);
-      case PrimitiveKind::U32:
-        return llvm::Type::getInt32Ty(Ctx);
-      case PrimitiveKind::U64:
-        return llvm::Type::getInt64Ty(Ctx);
-      case PrimitiveKind::F32:
-        return llvm::Type::getFloatTy(Ctx);
-      case PrimitiveKind::F64:
-        return llvm::Type::getDoubleTy(Ctx);
-      case PrimitiveKind::Bool:
-        return llvm::Type::getInt1Ty(Ctx);
-      case PrimitiveKind::Char: // Unicode scalar value; change to i8 if ASCII
-        return llvm::Type::getInt32Ty(Ctx);
-      case PrimitiveKind::String:
-        // No native string in LLVM → represent as i8*
-        return llvm::PointerType::getUnqual(Ctx);
-      case PrimitiveKind::Range: {
-        auto *I64 = llvm::Type::getInt64Ty(Ctx);
-        return llvm::StructType::get(Ctx, {I64, I64}); // {start, end}
-      }
-      case PrimitiveKind::Null:
-        // Treat as 'void' (valid only as a function return type)
-        return llvm::Type::getVoidTy(Ctx);
-      }
-      // Should be unreachable, but keep it compile-friendly:
-      assert(false && "Unhandled PrimitiveKind");
-      return llvm::Type::getVoidTy(Ctx);
-    }
+std::string RefTy::toString() const { return "&" + Pointee.toString(); }
 
-    llvm::Type *operator()(const StructType &C) const {
-      // Reuse an existing named struct if it exists; otherwise create opaque.
-      if (auto *T = llvm::StructType::getTypeByName(Ctx, C.Name))
-        return T;
-      return llvm::StructType::create(Ctx, C.Name);
-    }
+std::string VarTy::toString() const { return "T" + std::to_string(N); }
 
-    llvm::Type *operator()(const EnumType &C) const {
-      // Reuse an existing named struct if it exists; otherwise create opaque.
-      if (auto *T = llvm::StructType::getTypeByName(Ctx, C.Name))
-        return T;
-      return llvm::StructType::create(Ctx, C.Name);
-    }
+std::string ErrTy::toString() const { return "Error"; }
 
-    llvm::Type *operator()(const TupleType &T) const {
-      // Empty tuple -> treat as unit. Choose either `void` or an empty struct.
-      if (T.Types.empty()) {
-        assert(false && "A Tuple should never be empty");
-        return llvm::StructType::get(Ctx, {});
-      }
+bool VarTy::occursIn(TypeRef Other) const {
+  return llvm::TypeSwitch<const Type *, bool>(Other.getPtr())
+      .Case<VarTy>([&](auto *Var) { return Var->getN() == getN(); })
+      .Case<TupleTy>([&](auto *Tuple) {
+        for (const auto Element : Tuple->getElementTys()) {
+          if (occursIn(Element))
+            return true;
+        }
+        return false;
+      })
+      .Case<FunTy>([&](auto *Fun) {
+        if (occursIn(Fun->getReturnTy())) {
+          return true;
+        }
 
-      std::vector<llvm::Type *> Types;
-      Types.reserve(T.Types.size());
-      for (const auto &E : T.Types)
-        Types.push_back(E.toLLVM(Ctx));
+        for (const auto Param : Fun->getParamTys()) {
+          if (occursIn(Param))
+            return true;
+        }
+        return false;
+      })
+      .Case<PtrTy>([&](auto *Ptr) { return occursIn(Ptr->getPointee()); })
+      .Case<RefTy>([&](auto *Ref) { return occursIn(Ref->getPointee()); })
+      .Default([](const Type * /*T*/) {
+        return false; // ErrTy, AdtTy, BuiltinTy
+      });
+}
 
-      // Create an anonymous (literal) struct to represent the tuple
-      return llvm::StructType::get(Ctx, Types, /*isPacked=*/false);
-    }
+bool VarTy::accepts(TypeRef T) const {
+  if (T.isVar()) {
+    return unifyDomain(llvm::dyn_cast<VarTy>(T.getPtr())) != std::nullopt;
+  }
 
-    llvm::Type *operator()(const ReferenceType &R) const {
-      llvm::Type *PointeeTy = R.Pointee->toLLVM(Ctx);
-      return llvm::PointerType::getUnqual(PointeeTy);
-    }
+  if (!T.isBuiltin()) {
+    return !occursIn(T);
+  }
 
-    llvm::Type *operator()(const PointerType &P) const {
-      llvm::Type *PointeeTy = P.Pointee->toLLVM(Ctx);
-      return llvm::PointerType::getUnqual(PointeeTy);
-    }
+  auto *B = llvm::dyn_cast<BuiltinTy>(T.getPtr());
+  using K = BuiltinTy::Kind;
 
-    llvm::Type *operator()(const GenericType &G) const {
-      // Fallback: opaque named struct with the generic's base name.
-      if (auto *T = llvm::StructType::getTypeByName(Ctx, G.Name))
-        return T;
-      return llvm::StructType::create(Ctx, G.Name);
-    }
+  switch (TheDomain) {
+  case Domain::Any:
+    return true;
+  case Domain::Int:
+    return llvm::is_contained(
+        {K::i8, K::i16, K::i32, K::i64, K::u8, K::u16, K::u32, K::u64},
+        B->getBuiltinKind());
+  case Domain::Float:
+    return llvm::is_contained({K::f32, K::f64}, B->getBuiltinKind());
+  case Domain::Adt:
+    return T.isAdt();
+  }
+  std::unreachable();
+}
 
-    llvm::Type *operator()(const FunctionType &F) const {
-      std::vector<llvm::Type *> ParamTys;
-      ParamTys.reserve(F.Parameters.size());
-      for (const auto &P : F.Parameters)
-        ParamTys.push_back(P.toLLVM(Ctx));
-
-      llvm::Type *RetTy = F.ReturnType->toLLVM(Ctx);
-      return llvm::FunctionType::get(RetTy, ParamTys, /*isVarArg=*/false);
-    }
-  };
-
-  return std::visit(Visitor{Ctx}, Data);
+std::optional<VarTy::Domain> VarTy::unifyDomain(const VarTy *Var) const {
+  if (this->TheDomain == Domain::Any)
+    return Var->getDomain();
+  if (Var->getDomain() == Domain::Any)
+    return this->TheDomain;
+  if (this->TheDomain == Var->getDomain())
+    return this->TheDomain;
+  return std::nullopt;
 }
 
 } // namespace phi

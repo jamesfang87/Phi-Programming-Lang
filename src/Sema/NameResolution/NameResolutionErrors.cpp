@@ -1,4 +1,4 @@
-#include "Sema/NameResolver.hpp"
+#include "Sema/NameResolution/NameResolver.hpp"
 
 #include <format>
 #include <string>
@@ -49,9 +49,9 @@ void NameResolver::emitTypeNotFound(std::string_view TypeName,
       .emit(*Diags);
 }
 
-void NameResolver::emitCustomTypeNotFound(std::string_view Id,
-                                          const SrcLocation &Loc) {
-  auto *BestMatch = SymbolTab.getClosestCustom(std::string(Id));
+void NameResolver::emitAdtNotFound(std::string_view Id,
+                                   const SrcLocation &Loc) {
+  auto *BestMatch = SymbolTab.getClosestAdt(std::string(Id));
   std::string Hint;
   if (BestMatch) {
     Hint = std::format("Did you mean `{}`?", BestMatch->getId());

@@ -1,122 +1,103 @@
-#include "Sema/TypeInference/Infer.hpp"
+#include "Sema/TypeInference/Inferencer.hpp"
 
-#include "AST/Stmt.hpp"
-#include "Sema/TypeInference/Substitution.hpp"
-#include <cassert>
+#include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/Casting.h>
+
+#include "AST/TypeSystem/Type.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
 
-// ---------------- Block / Stmt ----------------
-TypeInferencer::InferRes TypeInferencer::visit(Block &B) {
-  Substitution AllSubsts;
-  for (const auto &Stmt : B.getStmts()) {
-    auto [StmtSubst, _] = visit(*Stmt);
-    AllSubsts.compose(StmtSubst);
+void TypeInferencer::visit(Stmt &S) {
+  llvm::TypeSwitch<Stmt *>(&S)
+      .Case<ReturnStmt>([&](ReturnStmt *X) { visit(*X); })
+      .Case<DeferStmt>([&](DeferStmt *X) { visit(*X); })
+      .Case<IfStmt>([&](IfStmt *X) { visit(*X); })
+      .Case<WhileStmt>([&](WhileStmt *X) { visit(*X); })
+      .Case<ForStmt>([&](ForStmt *X) { visit(*X); })
+      .Case<DeclStmt>([&](DeclStmt *X) { visit(*X); })
+      .Case<ContinueStmt>([&](ContinueStmt *X) { visit(*X); })
+      .Case<BreakStmt>([&](BreakStmt *X) { visit(*X); })
+      .Case<ExprStmt>([&](ExprStmt *X) { visit(*X); })
+      .Default([&](Stmt *) { std::unreachable(); });
+}
+
+void TypeInferencer::visit(ReturnStmt &S) {
+  if (!S.hasExpr()) {
+    return;
   }
-  return {AllSubsts, Monotype::makeCon("null")};
+
+  Unifier.unify(CurrentFun->getReturnTy(), visit(S.getExpr()));
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(Stmt &S) {
-  return S.accept(*this);
-}
+void TypeInferencer::visit(DeferStmt &S) { visit(S.getDeferred()); }
 
-TypeInferencer::InferRes TypeInferencer::visit(ReturnStmt &S) {
-  const auto ExpectedType =
-      CurFunRetType.empty() ? Monotype::makeCon("null") : CurFunRetType.back();
-  if (S.hasExpr()) {
-    auto [Subst, ActualType] = visit(S.getExpr());
-    unifyInto(Subst, ActualType, ExpectedType);
-    recordSubst(Subst);
-    return {Subst, Monotype::makeCon("null")};
-  } else {
-    auto Subst = Substitution();
-    unifyInto(Subst, Monotype::makeCon("null"), ExpectedType);
-    return {Subst, Monotype::makeCon("null")};
-  }
-}
-
-TypeInferencer::InferRes TypeInferencer::visit(DeferStmt &S) {
-  Substitution Subst;
-  auto [DeferredSubst, _] = visit(S.getDeferred());
-  Subst.compose(DeferredSubst);
-
-  recordSubst(Subst);
-
-  return {Subst, Monotype::makeCon("null")};
-}
-
-TypeInferencer::InferRes TypeInferencer::visit(ForStmt &S) {
+void TypeInferencer::visit(ForStmt &S) {
   // 1) Infer the range expression
-  auto [RangeSubst, RangeType] = visit(S.getRange());
-  Substitution AllSubsts = RangeSubst;
+  auto RangeT = visit(S.getRange());
 
-  // 2) Get the loop variable
-  VarDecl *LoopVar = &S.getLoopVar();
-  assert(LoopVar);
+  // 2) Infer the loop var
+  visit(S.getLoopVar());
 
-  // 3) Create fresh type variable for loop variable, restricted to integer
-  // types
-  assert(RangeType.asCon().Args.size() == 1);
-  auto LoopVarTy = RangeType.asCon().Args[0];
+  // 3) Unify loop var and range
+  if (auto Range = llvm::dyn_cast<RangeLiteral>(&S.getRange())) {
+    auto Res =
+        Unifier.unify(S.getLoopVar().getType(), Range->getStart().getType());
+    if (!Res) {
+      error("Mismatched types")
+          .with_primary_label(S.getLoopVar().getSpan(), "Here")
+          .with_secondary_label(S.getRange().getSpan(), "Here")
+          .emit(*DiagMan);
+    }
+  }
 
-  // 4) Bind loop variable in environment
-  recordSubst(AllSubsts);
-  const auto BoundTy = AllSubsts.apply(LoopVarTy);
-  Env.bind(LoopVar, Polytype{{}, BoundTy});
-  annotate(*LoopVar, BoundTy);
-
-  // 5) Infer the loop body
-  auto [BlockSubst, _] = visit(S.getBody());
-  AllSubsts.compose(BlockSubst);
-  recordSubst(BlockSubst);
-
-  return {AllSubsts, Monotype::makeCon("null")};
+  // 4) Infer the loop body
+  visit(S.getBody());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(DeclStmt &S) {
-  visit(S.getDecl());
-  return {Substitution{}, Monotype::makeCon("null")};
+void TypeInferencer::visit(WhileStmt &S) {
+  auto CondT = visit(S.getCond());
+  auto Res = Unifier.unify(
+      TypeCtx::getBuiltin(BuiltinTy::Bool, S.getCond().getSpan()), CondT);
+  if (!Res) {
+    error("Condition in while statement is not a bool")
+        .with_primary_label(S.getCond().getSpan(),
+                            std::format("expected type `bool`, got type {}",
+                                        toString(S.getCond().getType())))
+        .emit(*DiagMan);
+  }
+
+  visit(S.getBody());
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(WhileStmt &S) {
-  auto [CondSubst, CondType] = visit(S.getCond());
-  Substitution AllSubsts = CondSubst;
+void TypeInferencer::visit(IfStmt &S) {
+  auto CondT = visit(S.getCond());
+  auto Res = Unifier.unify(
+      TypeCtx::getBuiltin(BuiltinTy::Bool, S.getCond().getSpan()), CondT);
+  if (!Res) {
+    error("Condition in if statement is not a bool")
+        .with_primary_label(
+            S.getCond().getSpan(),
+            std::format("expected type `bool`, got type {}", toString(CondT)))
+        .emit(*DiagMan);
+  }
 
-  auto [BlockSubst, _] = visit(S.getBody());
-  AllSubsts.compose(BlockSubst);
-
-  recordSubst(AllSubsts);
-  return {AllSubsts, Monotype::makeCon("null")};
-}
-
-TypeInferencer::InferRes TypeInferencer::visit(IfStmt &S) {
-  auto [CondSubst, CondType] = visit(S.getCond());
-  Substitution AllSubsts = CondSubst;
-
-  auto [ThenBlockSubst, _] = visit(S.getThen());
-  AllSubsts.compose(ThenBlockSubst);
+  visit(S.getThen());
 
   if (S.hasElse()) {
-    auto [ElseBlockSubst, __] = visit(S.getElse());
-    AllSubsts.compose(ElseBlockSubst);
+    visit(S.getElse());
   }
-
-  recordSubst(AllSubsts);
-  return {AllSubsts, Monotype::makeCon("null")};
 }
 
-TypeInferencer::InferRes TypeInferencer::visit(BreakStmt &S) {
-  (void)S;
-  return {Substitution{}, Monotype::makeCon("null")};
-}
+void TypeInferencer::visit(DeclStmt &S) { visit(S.getDecl()); }
+void TypeInferencer::visit(BreakStmt &S) { (void)S; }
+void TypeInferencer::visit(ContinueStmt &S) { (void)S; }
+void TypeInferencer::visit(ExprStmt &S) { visit(S.getExpr()); }
 
-TypeInferencer::InferRes TypeInferencer::visit(ContinueStmt &S) {
-  (void)S;
-  return {Substitution{}, Monotype::makeCon("null")};
-}
-
-TypeInferencer::InferRes TypeInferencer::visit(ExprStmt &S) {
-  return visit(S.getExpr());
+void TypeInferencer::visit(Block &B) {
+  for (const auto &Stmt : B.getStmts()) {
+    visit(*Stmt);
+  }
 }
 
 } // namespace phi
