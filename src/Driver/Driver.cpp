@@ -8,12 +8,9 @@
 #include <vector>
 
 #include "AST/Nodes/Expr.hpp"
-#include "AST/Nodes/Stmt.hpp"
-// #include "CodeGen/CodeGen.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
-// #include "Sema/TypeChecker.hpp"
 #include "Sema/TypeInference/Inferencer.hpp"
 
 namespace phi {
@@ -25,6 +22,9 @@ PhiCompiler::PhiCompiler(std::string Src, std::string Path,
 
 bool PhiCompiler::compile() {
   auto Tokens = Lexer(SrcFile, Path, DiagnosticMan).scan();
+  for (auto Tok : Tokens) {
+    std::println("{}", Tok.toString());
+  }
   if (DiagnosticMan->error_count() > 0) {
     return false;
   }
@@ -37,7 +37,9 @@ bool PhiCompiler::compile() {
 
   auto [NameResolutionSuccess, ResolvedNames] =
       NameResolver(std::move(Ast), DiagnosticMan).resolveNames();
-
+  for (const auto &D : ResolvedNames) {
+    D->emit(0);
+  }
   auto InferredTypes =
       TypeInferencer(std::move(ResolvedNames), DiagnosticMan).infer();
   for (const auto &D : InferredTypes) {

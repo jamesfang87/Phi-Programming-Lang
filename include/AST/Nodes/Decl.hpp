@@ -17,9 +17,6 @@ namespace phi {
 
 // Forward declarations
 class Expr;
-class TypeInferencer;
-class TypeChecker;
-class CodeGen;
 
 class MethodDecl;
 class StructDecl;
@@ -62,14 +59,6 @@ public:
   [[nodiscard]] SrcSpan getSpan() const { return SrcSpan(Location); }
   [[nodiscard]] const std::string &getId() const { return Id; }
   [[nodiscard]] virtual TypeRef getType() const = 0;
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  // virtual void accept(TypeInferencer &I) = 0;
-  // virtual bool accept(TypeChecker &C) = 0;
-  // virtual void accept(CodeGen &G) = 0;
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
@@ -176,14 +165,6 @@ public:
   [[nodiscard]] bool hasInit() const { return Init != nullptr; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  // void accept(TypeInferencer &I) override;
-  // bool accept(TypeChecker &C) override;
-  // void accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -219,14 +200,6 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] bool isConst() const override { return IsConst; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  // void accept(TypeInferencer &I) override;
-  // bool accept(TypeChecker &C) override;
-  // void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -285,14 +258,6 @@ public:
   [[nodiscard]] bool isConst() const override { return false; }
   [[nodiscard]] bool isPrivate() const { return IsPrivate; }
   [[nodiscard]] bool hasInit() const { return Init != nullptr; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  // void accept(TypeInferencer &I) override;
-  // bool accept(TypeChecker &C) override;
-  // void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -423,14 +388,6 @@ public:
   [[nodiscard]] std::string getMangledId() const { return MangledId; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  // void accept(TypeInferencer &I) override;
-  // bool accept(TypeChecker &C) override;
-  // void accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -485,14 +442,6 @@ public:
 
   [[nodiscard]] bool hasType() const { return DeclType != std::nullopt; };
   [[nodiscard]] TypeRef getType() const override { return *DeclType; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  // void accept(TypeInferencer &I) override;
-  // bool accept(TypeChecker &C) override;
-  // void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI

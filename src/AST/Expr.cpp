@@ -9,18 +9,13 @@
 #include <variant>
 #include <vector>
 
-#include "llvm/IR/Value.h"
-
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
 #include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
-// #include "CodeGen/CodeGen.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
-// #include "Sema/TypeChecker.hpp"
-// #include "Sema/TypeInference/Infer.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace {
@@ -70,12 +65,6 @@ namespace phi {
 // Base Expr Implementation
 //===----------------------------------------------------------------------===//
 
-// Default visitor implementations (can be overridden by subclasses)
-bool Expr::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes Expr::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool Expr::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *Expr::accept(CodeGen &G) { return G.visit(*this); }
-
 //===----------------------------------------------------------------------===//
 // IntLiteral Implementation
 //===----------------------------------------------------------------------===//
@@ -84,11 +73,6 @@ IntLiteral::IntLiteral(SrcLocation Location, const int64_t Value)
     : Expr(Expr::Kind::IntLiteralKind, Location,
            TypeCtx::getVar(VarTy::Domain::Int, SrcSpan(std::move(Location)))),
       Value(Value) {}
-
-bool IntLiteral::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes IntLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool IntLiteral::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *IntLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 void IntLiteral::emit(int Level) const {
   std::string TypeStr = Type.toString();
@@ -103,10 +87,6 @@ FloatLiteral::FloatLiteral(SrcLocation Location, const double Value)
     : Expr(Expr::Kind::FloatLiteralKind, Location,
            TypeCtx::getVar(VarTy::Domain::Float, SrcSpan(std::move(Location)))),
       Value(Value) {}
-
-bool FloatLiteral::accept(NameResolver &R) { return R.visit(*this); }
-// bool FloatLiteral::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *FloatLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 void FloatLiteral::emit(int Level) const {
   std::string TypeStr = Type.toString();
@@ -123,11 +103,6 @@ StrLiteral::StrLiteral(SrcLocation Location, std::string Value)
           TypeCtx::getBuiltin(BuiltinTy::String, SrcSpan(std::move(Location)))),
       Value(std::move(Value)) {}
 
-bool StrLiteral::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes StrLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool StrLiteral::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *StrLiteral::accept(CodeGen &G) { return G.visit(*this); }
-
 void StrLiteral::emit(int Level) const {
   std::println("{}StrLiteral: {}", indent(Level), Value);
 }
@@ -141,11 +116,6 @@ CharLiteral::CharLiteral(SrcLocation Location, char Value)
            TypeCtx::getBuiltin(BuiltinTy::Char, SrcSpan(std::move(Location)))),
       Value(Value) {}
 
-bool CharLiteral::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes CharLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool CharLiteral::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *CharLiteral::accept(CodeGen &G) { return G.visit(*this); }
-
 void CharLiteral::emit(int Level) const {
   std::println("{}CharLiteral: {}", indent(Level), Value);
 }
@@ -158,11 +128,6 @@ BoolLiteral::BoolLiteral(SrcLocation Location, bool Value)
     : Expr(Expr::Kind::BoolLiteralKind, Location,
            TypeCtx::getBuiltin(BuiltinTy::Bool, SrcSpan(std::move(Location)))),
       Value(Value) {}
-
-bool BoolLiteral::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes BoolLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool BoolLiteral::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *BoolLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 void BoolLiteral::emit(int Level) const {
   std::println("{}BoolLiteral: {}", indent(Level), Value);
@@ -179,11 +144,6 @@ RangeLiteral::RangeLiteral(SrcLocation Location, std::unique_ptr<Expr> Start,
       Start(std::move(Start)), End(std::move(End)), Inclusive(Inclusive) {}
 
 RangeLiteral::~RangeLiteral() = default;
-
-bool RangeLiteral::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes RangeLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool RangeLiteral::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *RangeLiteral::accept(CodeGen &G) { return G.visit(*this); }
 
 void RangeLiteral::emit(int Level) const {
   std::println("{}RangeLiteral:", indent(Level));
@@ -204,11 +164,6 @@ TupleLiteral::TupleLiteral(SrcLocation Location,
 
 TupleLiteral::~TupleLiteral() = default;
 
-bool TupleLiteral::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes TupleLiteral::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool TupleLiteral::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *TupleLiteral::accept(CodeGen &G) { return G.visit(*this); }
-
 void TupleLiteral::emit(int Level) const {
   std::println("{}TupleLiteral:", indent(Level));
   std::println("{}Type: {}", indent(Level + 1), Type.toString());
@@ -224,11 +179,6 @@ void TupleLiteral::emit(int Level) const {
 
 DeclRefExpr::DeclRefExpr(SrcLocation Location, std::string Id)
     : Expr(Expr::Kind::DeclRefKind, std::move(Location)), Id(std::move(Id)) {}
-
-bool DeclRefExpr::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes DeclRefExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool DeclRefExpr::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *DeclRefExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 void DeclRefExpr::emit(int Level) const {
   if (Id == "val" && DeclPtr == nullptr) {
@@ -261,11 +211,6 @@ FunCallExpr::FunCallExpr(Kind K, SrcLocation Location,
 
 FunCallExpr::~FunCallExpr() = default;
 
-bool FunCallExpr::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes FunCallExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool FunCallExpr::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *FunCallExpr::accept(CodeGen &G) { return G.visit(*this); }
-
 void FunCallExpr::emit(int Level) const {
   std::println("{}FunCallExpr", indent(Level));
   if (getDecl() != nullptr)
@@ -290,11 +235,6 @@ BinaryOp::BinaryOp(std::unique_ptr<Expr> Lhs, std::unique_ptr<Expr> Rhs,
 
 BinaryOp::~BinaryOp() = default;
 
-bool BinaryOp::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes BinaryOp::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool BinaryOp::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *BinaryOp::accept(CodeGen &G) { return G.visit(*this); }
-
 void BinaryOp::emit(int Level) const {
   std::println("{}BinaryOp: {}", indent(Level), Op.toString());
   std::println("{}Type: {} ", indent(Level + 1), Type.toString());
@@ -318,11 +258,6 @@ UnaryOp::UnaryOp(std::unique_ptr<Expr> Operand, const Token &Op,
 
 UnaryOp::~UnaryOp() = default;
 
-bool UnaryOp::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes UnaryOp::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool UnaryOp::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *UnaryOp::accept(CodeGen &G) { return G.visit(*this); }
-
 void UnaryOp::emit(int Level) const {
   std::println("{}UnaryOp: {}", indent(Level), Op.toString());
   std::println("{}Type: {} ", indent(Level + 1), Type.toString());
@@ -340,8 +275,6 @@ MemberInit::MemberInit(SrcLocation Location, std::string FieldId,
       FieldId(std::move(FieldId)), InitValue(std::move(Init)) {}
 
 MemberInit::~MemberInit() = default;
-
-bool MemberInit::accept(NameResolver &R) { return R.visit(*this); }
 
 void MemberInit::emit(int Level) const {
   std::println("{}MemberInit:", indent(Level));
@@ -366,8 +299,6 @@ AdtInit::AdtInit(SrcLocation Location, std::optional<std::string> TypeName,
       TypeName(std::move(TypeName)), Inits(std::move(Inits)) {}
 
 AdtInit::~AdtInit() = default;
-
-bool AdtInit::accept(NameResolver &R) { return R.visit(*this); }
 
 void AdtInit::emit(int Level) const {
   std::println("{}AdtInit:", indent(Level));
@@ -394,11 +325,6 @@ FieldAccessExpr::FieldAccessExpr(SrcLocation Location,
 
 FieldAccessExpr::~FieldAccessExpr() = default;
 
-bool FieldAccessExpr::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes FieldAccessExpr::accept(TypeInferencer &I) { return I.visit(*this);
-// } bool FieldAccessExpr::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *FieldAccessExpr::accept(CodeGen &G) { return G.visit(*this); }
-
 void FieldAccessExpr::emit(int Level) const {
   std::println("{}FieldAccessExpr:", indent(Level));
   std::println("{}Type: {} ", indent(Level + 1), Type.toString());
@@ -424,11 +350,6 @@ MethodCallExpr::MethodCallExpr(FunCallExpr &&Call,
       Base(std::move(BaseExpr)) {}
 
 MethodCallExpr::~MethodCallExpr() = default;
-
-bool MethodCallExpr::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes MethodCallExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool MethodCallExpr::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *MethodCallExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 void MethodCallExpr::emit(int Level) const {
   std::println("{}MethodCallExpr:", indent(Level));
@@ -471,10 +392,5 @@ void MatchExpr::emit(int Level) const {
     Arm.Return->emit(Level + 3);
   }
 }
-
-bool MatchExpr::accept(NameResolver &R) { return R.visit(*this); }
-// InferRes MatchExpr::accept(TypeInferencer &I) { return I.visit(*this); }
-// bool MatchExpr::accept(TypeChecker &C) { return C.visit(*this); }
-// llvm::Value *MatchExpr::accept(CodeGen &G) { return G.visit(*this); }
 
 } // namespace phi

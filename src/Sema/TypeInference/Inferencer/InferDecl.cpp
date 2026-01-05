@@ -1,5 +1,8 @@
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/TypeInference/Inferencer.hpp"
+
+#include <llvm/ADT/TypeSwitch.h>
+
+#include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
 

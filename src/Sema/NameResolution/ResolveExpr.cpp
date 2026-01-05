@@ -1,23 +1,42 @@
-#include "AST/TypeSystem/Type.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
 
 #include <cassert>
-#include <cstddef>
 #include <unordered_set>
 
-#include "llvm/ADT/TypeSwitch.h"
-#include "llvm/Support/Casting.h"
+#include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/Casting.h>
 
 #include "AST/Nodes/Expr.hpp"
 #include "AST/Nodes/Stmt.hpp"
+#include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
 
-bool NameResolver::visit(Expr &E) { return E.accept(*this); }
+bool NameResolver::visit(Expr &E) {
+  return llvm::TypeSwitch<Expr *, bool>(&E)
+      .Case<IntLiteral>([&](IntLiteral *X) { return visit(*X); })
+      .Case<FloatLiteral>([&](FloatLiteral *X) { return visit(*X); })
+      .Case<StrLiteral>([&](StrLiteral *X) { return visit(*X); })
+      .Case<CharLiteral>([&](CharLiteral *X) { return visit(*X); })
+      .Case<BoolLiteral>([&](BoolLiteral *X) { return visit(*X); })
+      .Case<RangeLiteral>([&](RangeLiteral *X) { return visit(*X); })
+      .Case<TupleLiteral>([&](TupleLiteral *X) { return visit(*X); })
+      .Case<DeclRefExpr>([&](DeclRefExpr *X) { return visit(*X); })
+      .Case<FunCallExpr>([&](FunCallExpr *X) { return visit(*X); })
+      .Case<BinaryOp>([&](BinaryOp *X) { return visit(*X); })
+      .Case<UnaryOp>([&](UnaryOp *X) { return visit(*X); })
+      .Case<MemberInit>([&](MemberInit *X) { return visit(*X); })
+      .Case<FieldAccessExpr>([&](FieldAccessExpr *X) { return visit(*X); })
+      .Case<MethodCallExpr>([&](MethodCallExpr *X) { return visit(*X); })
+      .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
+      .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
+      .Default([&](Expr *) {
+        llvm_unreachable("Unhandled Expr kind in TypeInferencer");
+        return false;
+      });
+}
 
-// Literal expression resolution
-// trivial: we don't need any name resolution
 bool NameResolver::visit(IntLiteral &E) {
   (void)E;
   return true;

@@ -1,6 +1,22 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
+#include <llvm/ADT/TypeSwitch.h>
+
 namespace phi {
+
+void TypeInferencer::finalize(Decl &D) {
+  llvm::TypeSwitch<Decl *>(&D)
+      .Case<VarDecl>([&](VarDecl *X) { finalize(*X); })
+      .Case<ParamDecl>([&](ParamDecl *X) { finalize(*X); })
+      .Case<FunDecl>([&](FunDecl *X) { finalize(*X); })
+      .Case<FieldDecl>([&](FieldDecl *X) { finalize(*X); })
+      .Case<MethodDecl>([&](MethodDecl *X) { finalize(*X); })
+      .Case<StructDecl>([&](StructDecl *X) { finalize(*X); })
+      .Case<EnumDecl>([&](EnumDecl *X) { finalize(*X); })
+      .Default([&](Decl *) {
+        llvm_unreachable("Unhandled Decl kind in TypeInferencer");
+      });
+}
 
 void TypeInferencer::finalize(VarDecl &D) {
   if (D.hasInit()) {
@@ -27,20 +43,6 @@ void TypeInferencer::finalize(EnumDecl &D) {
   for (auto &Method : D.getMethods()) {
     finalize(Method);
   }
-}
-
-void TypeInferencer::finalize(Decl &D) {
-  llvm::TypeSwitch<Decl *>(&D)
-      .Case<VarDecl>([&](VarDecl *X) { finalize(*X); })
-      .Case<ParamDecl>([&](ParamDecl *X) { finalize(*X); })
-      .Case<FunDecl>([&](FunDecl *X) { finalize(*X); })
-      .Case<FieldDecl>([&](FieldDecl *X) { finalize(*X); })
-      .Case<MethodDecl>([&](MethodDecl *X) { finalize(*X); })
-      .Case<StructDecl>([&](StructDecl *X) { finalize(*X); })
-      .Case<EnumDecl>([&](EnumDecl *X) { finalize(*X); })
-      .Default([&](Decl *) {
-        llvm_unreachable("Unhandled Decl kind in TypeInferencer");
-      });
 }
 
 } // namespace phi

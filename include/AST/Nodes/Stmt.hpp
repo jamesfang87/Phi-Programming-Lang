@@ -9,14 +9,8 @@
 namespace phi {
 
 // Forward declarations - no includes needed
-class NameResolver;
-class TypeInferencer;
-class TypeChecker;
-class CodeGen;
 class Expr;
 class VarDecl;
-
-using InferRes = std::pair<class Substitution, class Monotype>;
 
 //===----------------------------------------------------------------------===//
 // Stmt - Base class for all statement nodes
@@ -54,15 +48,6 @@ public:
   [[nodiscard]] Kind getKind() const { return StmtKind; }
   [[nodiscard]] SrcLocation &getLocation() { return Location; }
   [[nodiscard]] SrcSpan getSpan() { return SrcSpan(Location); }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  virtual bool accept(NameResolver &R) = 0;
-  //  virtual InferRes accept(TypeInferencer &I) = 0;
-  //  virtual bool accept(TypeChecker &C) = 0;
-  //  virtual void accept(CodeGen &G) = 0;
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
@@ -132,15 +117,6 @@ public:
   [[nodiscard]] bool hasExpr() const { return ReturnExpr != nullptr; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -174,15 +150,6 @@ public:
   [[nodiscard]] Expr &getDeferred() const { return *DeferredExpr; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -210,15 +177,6 @@ public:
   ~BreakStmt() override;
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -241,15 +199,6 @@ public:
 
   ContinueStmt(SrcLocation Location);
   ~ContinueStmt() override;
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -295,15 +244,6 @@ public:
   [[nodiscard]] bool hasElse() const { return ElseBody != nullptr; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -341,15 +281,6 @@ public:
   [[nodiscard]] Block &getBody() const { return *Body; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -385,15 +316,6 @@ public:
   [[nodiscard]] VarDecl &getLoopVar() { return *LoopVar; }
   [[nodiscard]] Expr &getRange() const { return *Range; }
   [[nodiscard]] Block &getBody() const { return *Body; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -435,15 +357,6 @@ public:
   [[nodiscard]] VarDecl &getDecl() const { return *Var; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -476,15 +389,6 @@ public:
 
   std::unique_ptr<Expr> takeExpr() { return std::move(Expression); }
   [[nodiscard]] Expr &getExpr() const { return *Expression; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  void accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI

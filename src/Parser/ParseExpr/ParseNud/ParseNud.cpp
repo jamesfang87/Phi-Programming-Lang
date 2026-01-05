@@ -6,7 +6,6 @@
 #include <cassert>
 #include <memory>
 #include <optional>
-#include <print>
 #include <vector>
 
 namespace phi {
@@ -27,7 +26,6 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
 
   // Identifiers and Kws
   case TokenKind::Identifier:
-    std::println("{}", Tok.toString());
     return std::make_unique<DeclRefExpr>(Tok.getStart(), Tok.getLexeme());
   case TokenKind::ThisKw:
     return std::make_unique<DeclRefExpr>(Tok.getStart(), "this");

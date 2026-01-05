@@ -1,6 +1,5 @@
 #include "AST/Nodes/Stmt.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <print>
 #include <string>
@@ -9,9 +8,6 @@
 
 #include "AST/Nodes/Expr.hpp"
 #include "AST/TypeSystem/Context.hpp"
-// #include "CodeGen/CodeGen.hpp"
-// #include "Sema/TypeChecker.hpp"
-// #include "Sema/TypeInference/Infer.hpp"
 
 namespace {
 
@@ -52,11 +48,6 @@ VarDecl::VarDecl(SrcLocation Loc, std::string Id,
 
 VarDecl::~VarDecl() = default;
 
-// Visitor Methods
-// void VarDecl::accept(TypeInferencer &I) { I.visit(*this); }
-// bool VarDecl::accept(TypeChecker &C) { return C.visit(*this); }
-// void VarDecl::accept(CodeGen &G) { G.visit(*this); }
-
 // Utility Methods
 void VarDecl::emit(int Level) const {
   std::string TypeStr = DeclType.toString();
@@ -70,11 +61,6 @@ void VarDecl::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 // ParamDecl Implementation
 //===----------------------------------------------------------------------===//
-
-// Visitor Methods
-// void ParamDecl::accept(TypeInferencer &I) { I.visit(*this); }
-// bool ParamDecl::accept(TypeChecker &C) { return C.visit(*this); }
-// void ParamDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void ParamDecl::emit(int Level) const {
@@ -94,11 +80,6 @@ FieldDecl::FieldDecl(SrcLocation Loc, std::string Id, TypeRef DeclType,
 
 FieldDecl::~FieldDecl() = default;
 
-// Visitor Methods
-// void FieldDecl::accept(TypeInferencer &I) { I.visit(*this); }
-// bool FieldDecl::accept(TypeChecker &C) { return C.visit(*this); }
-// void FieldDecl::accept(CodeGen &G) { G.visit(*this); }
-
 // Utility Methods
 void FieldDecl::emit(int Level) const {
   std::string TypeStr = DeclType.toString();
@@ -110,11 +91,6 @@ void FieldDecl::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 // FunDecl Implementation
 //===----------------------------------------------------------------------===//
-
-// Visitor Methods
-// void FunDecl::accept(TypeInferencer &I) { I.visit(*this); }
-// bool FunDecl::accept(TypeChecker &C) { return C.visit(*this); }
-// void FunDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void FunDecl::emit(int Level) const {
@@ -129,11 +105,6 @@ void FunDecl::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 // MethodDecl Implementation
 //===----------------------------------------------------------------------===//
-
-// Visitor Methods
-// void MethodDecl::accept(TypeInferencer &I) { I.visit(*this); }
-// bool MethodDecl::accept(TypeChecker &C) { return C.visit(*this); }
-// void MethodDecl::accept(CodeGen &G) { G.visit(*this); }
 
 //===----------------------------------------------------------------------===//
 // StructDecl Implementation
@@ -157,11 +128,6 @@ StructDecl::StructDecl(SrcLocation Loc, const std::string &Id,
     Method.setParent(this);
   }
 }
-
-// Visitor Methods
-// void StructDecl::accept(TypeInferencer &I) { I.visit(*this); }
-// bool StructDecl::accept(TypeChecker &C) { return C.visit(*this); }
-// void StructDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void StructDecl::emit(int Level) const {
@@ -187,11 +153,6 @@ VariantDecl::VariantDecl(SrcLocation Loc, std::string Id,
                          std::optional<TypeRef> DeclType)
     : Decl(Kind::VariantDecl, std::move(Loc), std::move(Id)),
       DeclType(std::move(DeclType)) {}
-
-// Visitor Methods
-// void VariantDecl::accept(TypeInferencer &I) { I.visit(*this); }
-// bool VariantDecl::accept(TypeChecker &C) { return C.visit(*this); }
-// void VariantDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void VariantDecl::emit(int Level) const {
@@ -219,11 +180,6 @@ EnumDecl::EnumDecl(SrcLocation Loc, const std::string &Id,
     Method.setParent(this);
   }
 }
-
-// Visitor Methods
-// void EnumDecl::accept(TypeInferencer &I) { I.visit(*this); }
-// bool EnumDecl::accept(TypeChecker &C) { return C.visit(*this); }
-// void EnumDecl::accept(CodeGen &G) { G.visit(*this); }
 
 // Utility Methods
 void EnumDecl::emit(int Level) const {

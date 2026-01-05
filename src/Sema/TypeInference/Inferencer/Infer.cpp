@@ -16,8 +16,6 @@ std::vector<std::unique_ptr<Decl>> TypeInferencer::infer() {
   for (auto &Decl : Ast)
     finalize(*Decl);
 
-  Unifier.emit();
-
   return std::move(Ast);
 }
 
