@@ -33,8 +33,12 @@ bool TypeUnifier::unify(TypeRef A, TypeRef B) {
   assert(A.getPtr());
   assert(B.getPtr());
 
+  // make sure both are inside the TypeUnifier context
   getNode(A);
   getNode(B);
+
+  A = resolve(A);
+  B = resolve(B);
 
   if (A.isErr() || B.isErr()) {
     return true;
@@ -213,6 +217,7 @@ void TypeUnifier::emit() const {
     if (!N.getSecond().TheType->isVar()) {
       continue;
     }
+
     std::println("Type: {} Parent: {}", N.getSecond().TheType->toString(),
                  N.getSecond().Parent->toString());
   }

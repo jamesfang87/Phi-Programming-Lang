@@ -3,7 +3,6 @@
 #include <cassert>
 #include <memory>
 #include <optional>
-#include <print>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,7 +16,6 @@
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
-#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 
 namespace phi {
@@ -31,9 +29,6 @@ class StructDecl;
 class MethodDecl;
 class EnumDecl;
 class VariantDecl;
-
-class NameResolver;
-class CodeGen;
 
 //===----------------------------------------------------------------------===//
 // Expr - Base class for all Expression nodes
@@ -97,15 +92,6 @@ public:
   [[nodiscard]] virtual bool isAssignable() const = 0;
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  virtual bool accept(NameResolver &R) = 0;
-  //  virtual InferRes accept(TypeInferencer &I) = 0;
-  //  virtual bool accept(TypeChecker &C) = 0;
-  //  virtual llvm::Value *accept(CodeGen &G) = 0;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -153,15 +139,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -198,15 +175,6 @@ public:
   //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -247,15 +215,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===--------------------------------------------------------------------===//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===-----------------------------------------------------------------------//
 
@@ -294,15 +253,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===-----------------------------------------------------------------------//
 
@@ -339,15 +289,6 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -392,15 +333,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  ////  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===-----------------------------------------------------------------------//
 
@@ -436,15 +368,6 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -494,15 +417,6 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] bool isAssignable() const override { return true; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -568,15 +482,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===-----------------------------------------------------------------------//
 
@@ -625,15 +530,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return false; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===-----------------------------------------------------------------------//
 
@@ -675,15 +571,6 @@ public:
   //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -738,15 +625,6 @@ public:
   //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return false; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -824,15 +702,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===--------------------------------------------------------------------===//
 
@@ -891,15 +760,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===-----------------------------------------------------------------------//
 
@@ -956,15 +816,6 @@ public:
   [[nodiscard]] bool isAssignable() const override { return true; }
 
   //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
-
-  //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
   //===-----------------------------------------------------------------------//
 
@@ -1011,15 +862,6 @@ public:
   //===-----------------------------------------------------------------------//
 
   [[nodiscard]] bool isAssignable() const override { return true; }
-
-  //===--------------------------------------------------------------------===//
-  // Visitor Methods
-  //===-----------------------------------------------------------------------//
-
-  bool accept(NameResolver &R) override;
-  //  InferRes accept(TypeInferencer &I) override;
-  //  bool accept(TypeChecker &C) override;
-  //  llvm::Value *accept(CodeGen &G) override;
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI

@@ -1,12 +1,36 @@
-#include "AST/Nodes/Decl.hpp"
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/TypeInference/Inferencer.hpp"
 
+#include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
 
+#include "AST/Nodes/Decl.hpp"
 #include "AST/TypeSystem/Type.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
+
+void TypeInferencer::finalize(Expr &E) {
+  llvm::TypeSwitch<Expr *>(&E)
+      .Case<IntLiteral>([&](IntLiteral *X) { finalize(*X); })
+      .Case<FloatLiteral>([&](FloatLiteral *X) { finalize(*X); })
+      .Case<StrLiteral>([&](StrLiteral *X) { finalize(*X); })
+      .Case<CharLiteral>([&](CharLiteral *X) { finalize(*X); })
+      .Case<BoolLiteral>([&](BoolLiteral *X) { finalize(*X); })
+      .Case<RangeLiteral>([&](RangeLiteral *X) { finalize(*X); })
+      .Case<TupleLiteral>([&](TupleLiteral *X) { finalize(*X); })
+      .Case<DeclRefExpr>([&](DeclRefExpr *X) { finalize(*X); })
+      .Case<FunCallExpr>([&](FunCallExpr *X) { finalize(*X); })
+      .Case<BinaryOp>([&](BinaryOp *X) { finalize(*X); })
+      .Case<UnaryOp>([&](UnaryOp *X) { finalize(*X); })
+      .Case<MemberInit>([&](MemberInit *X) { finalize(*X); })
+      .Case<FieldAccessExpr>([&](FieldAccessExpr *X) { finalize(*X); })
+      .Case<MethodCallExpr>([&](MethodCallExpr *X) { finalize(*X); })
+      .Case<MatchExpr>([&](MatchExpr *X) { finalize(*X); })
+      .Case<AdtInit>([&](AdtInit *X) { finalize(*X); })
+      .Default([&](Expr *) {
+        llvm_unreachable("Unhandled Expr kind in TypeInferencer");
+      });
+}
 
 void TypeInferencer::finalize(IntLiteral &E) {
   auto T = Unifier.resolve(E.getType());
@@ -171,8 +195,8 @@ void TypeInferencer::finalize(MatchExpr &E) {
                     .emit(*DiagMan);
               }
 
-              VariantDecl *Var = Enum->getVariant(P.VariantName);
-              if (!Var) {
+              VariantDecl *Variant = Enum->getVariant(P.VariantName);
+              if (!Variant) {
                 error("unknown enum variant")
                     .with_primary_label(P.Location, "no variant named `" +
                                                         P.VariantName + "`")
@@ -180,8 +204,8 @@ void TypeInferencer::finalize(MatchExpr &E) {
               }
 
               // Check payload arity
-              if (Var->hasType()) {
-                auto PayloadTy = Var->getType();
+              if (Variant->hasType()) {
+                auto PayloadTy = Variant->getType();
 
                 if (P.Vars.size() != 1 && P.Vars.size() != 0) {
                   error("variant payload arity mismatch")
@@ -194,8 +218,9 @@ void TypeInferencer::finalize(MatchExpr &E) {
                   return;
                 }
 
-                // Check bound variable type
                 VarDecl *Binding = P.Vars.front().get();
+                Unifier.unify(Binding->getType(), Variant->getType());
+                // Check bound variable type
                 finalize(*Binding);
                 assert(Binding->hasType());
 
@@ -225,31 +250,6 @@ void TypeInferencer::finalize(MatchExpr &E) {
     finalize(*Arm.Body);
   }
   E.setType(Unifier.resolve(E.getType()));
-  std::println("after: {}", E.getType().toString());
-  std::println("another: {}", Unifier.resolve(E.getType()).toString());
-}
-
-void TypeInferencer::finalize(Expr &E) {
-  llvm::TypeSwitch<Expr *>(&E)
-      .Case<IntLiteral>([&](IntLiteral *X) { finalize(*X); })
-      .Case<FloatLiteral>([&](FloatLiteral *X) { finalize(*X); })
-      .Case<StrLiteral>([&](StrLiteral *X) { finalize(*X); })
-      .Case<CharLiteral>([&](CharLiteral *X) { finalize(*X); })
-      .Case<BoolLiteral>([&](BoolLiteral *X) { finalize(*X); })
-      .Case<RangeLiteral>([&](RangeLiteral *X) { finalize(*X); })
-      .Case<TupleLiteral>([&](TupleLiteral *X) { finalize(*X); })
-      .Case<DeclRefExpr>([&](DeclRefExpr *X) { finalize(*X); })
-      .Case<FunCallExpr>([&](FunCallExpr *X) { finalize(*X); })
-      .Case<BinaryOp>([&](BinaryOp *X) { finalize(*X); })
-      .Case<UnaryOp>([&](UnaryOp *X) { finalize(*X); })
-      .Case<MemberInit>([&](MemberInit *X) { finalize(*X); })
-      .Case<FieldAccessExpr>([&](FieldAccessExpr *X) { finalize(*X); })
-      .Case<MethodCallExpr>([&](MethodCallExpr *X) { finalize(*X); })
-      .Case<MatchExpr>([&](MatchExpr *X) { finalize(*X); })
-      .Case<AdtInit>([&](AdtInit *X) { finalize(*X); })
-      .Default([&](Expr *) {
-        llvm_unreachable("Unhandled Expr kind in TypeInferencer");
-      });
 }
 
 } // namespace phi

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SrcManager/SrcLocation.hpp"
+#include <string>
 
 namespace phi {
 
@@ -29,17 +30,11 @@ struct SrcSpan {
   explicit SrcSpan(const SrcLocation &SinglePos)
       : Start(SinglePos), End(SinglePos) {}
 
-  /**
-   * @brief Checks for multi-line span
-   * @return true if spans multiple lines
-   */
   [[nodiscard]] bool isMultiline() const { return Start.Line != End.Line; }
-
-  /**
-   * @brief Calculates line count
-   * @return Number of lines covered
-   */
   [[nodiscard]] int lineCount() const { return End.Line - Start.Line + 1; }
+  [[nodiscard]] std::string toString() const {
+    return std::format("{} to {}", Start.toString(), End.toString());
+  }
 };
 
 } // namespace phi

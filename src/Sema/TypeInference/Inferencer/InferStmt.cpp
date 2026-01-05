@@ -1,11 +1,26 @@
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Sema/TypeInference/Inferencer.hpp"
 
+#include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
 
 #include "AST/TypeSystem/Type.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
+
+void TypeInferencer::visit(Stmt &S) {
+  llvm::TypeSwitch<Stmt *>(&S)
+      .Case<ReturnStmt>([&](ReturnStmt *X) { visit(*X); })
+      .Case<DeferStmt>([&](DeferStmt *X) { visit(*X); })
+      .Case<IfStmt>([&](IfStmt *X) { visit(*X); })
+      .Case<WhileStmt>([&](WhileStmt *X) { visit(*X); })
+      .Case<ForStmt>([&](ForStmt *X) { visit(*X); })
+      .Case<DeclStmt>([&](DeclStmt *X) { visit(*X); })
+      .Case<ContinueStmt>([&](ContinueStmt *X) { visit(*X); })
+      .Case<BreakStmt>([&](BreakStmt *X) { visit(*X); })
+      .Case<ExprStmt>([&](ExprStmt *X) { visit(*X); })
+      .Default([&](Stmt *) { std::unreachable(); });
+}
 
 void TypeInferencer::visit(ReturnStmt &S) {
   if (!S.hasExpr()) {
@@ -83,20 +98,6 @@ void TypeInferencer::visit(Block &B) {
   for (const auto &Stmt : B.getStmts()) {
     visit(*Stmt);
   }
-}
-
-void TypeInferencer::visit(Stmt &S) {
-  llvm::TypeSwitch<Stmt *>(&S)
-      .Case<ReturnStmt>([&](ReturnStmt *X) { visit(*X); })
-      .Case<DeferStmt>([&](DeferStmt *X) { visit(*X); })
-      .Case<IfStmt>([&](IfStmt *X) { visit(*X); })
-      .Case<WhileStmt>([&](WhileStmt *X) { visit(*X); })
-      .Case<ForStmt>([&](ForStmt *X) { visit(*X); })
-      .Case<DeclStmt>([&](DeclStmt *X) { visit(*X); })
-      .Case<ContinueStmt>([&](ContinueStmt *X) { visit(*X); })
-      .Case<BreakStmt>([&](BreakStmt *X) { visit(*X); })
-      .Case<ExprStmt>([&](ExprStmt *X) { visit(*X); })
-      .Default([&](Stmt *) { std::unreachable(); });
 }
 
 } // namespace phi

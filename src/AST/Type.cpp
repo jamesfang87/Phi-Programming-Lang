@@ -1,14 +1,12 @@
 #include "AST/TypeSystem/Type.hpp"
 
-#include <llvm-18/llvm/ADT/DenseSet.h>
-#include <llvm-18/llvm/ADT/StringExtras.h>
-#include <llvm-18/llvm/ADT/TypeSwitch.h>
-#include <llvm-18/llvm/Support/Casting.h>
+#include <llvm/ADT/DenseSet.h>
+#include <llvm/ADT/StringExtras.h>
+#include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/Casting.h>
 
 #include <cstdint>
 #include <format>
-#include <iterator>
-#include <ranges>
 #include <string>
 
 namespace phi {
