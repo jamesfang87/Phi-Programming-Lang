@@ -1,6 +1,22 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
+#include <llvm/ADT/TypeSwitch.h>
+
 namespace phi {
+
+void TypeInferencer::finalize(Stmt &S) {
+  llvm::TypeSwitch<Stmt *>(&S)
+      .Case<ReturnStmt>([&](ReturnStmt *X) { finalize(*X); })
+      .Case<DeferStmt>([&](DeferStmt *X) { finalize(*X); })
+      .Case<IfStmt>([&](IfStmt *X) { finalize(*X); })
+      .Case<WhileStmt>([&](WhileStmt *X) { finalize(*X); })
+      .Case<ForStmt>([&](ForStmt *X) { finalize(*X); })
+      .Case<DeclStmt>([&](DeclStmt *X) { finalize(*X); })
+      .Case<ContinueStmt>([&](ContinueStmt *X) { finalize(*X); })
+      .Case<BreakStmt>([&](BreakStmt *X) { finalize(*X); })
+      .Case<ExprStmt>([&](ExprStmt *X) { finalize(*X); })
+      .Default([&](Stmt *) { std::unreachable(); });
+}
 
 void TypeInferencer::finalize(ReturnStmt &S) { finalize(S.getExpr()); }
 void TypeInferencer::finalize(DeferStmt &S) { finalize(S.getDeferred()); }
@@ -42,17 +58,4 @@ void TypeInferencer::finalize(Block &B) {
   }
 }
 
-void TypeInferencer::finalize(Stmt &S) {
-  llvm::TypeSwitch<Stmt *>(&S)
-      .Case<ReturnStmt>([&](ReturnStmt *X) { finalize(*X); })
-      .Case<DeferStmt>([&](DeferStmt *X) { finalize(*X); })
-      .Case<IfStmt>([&](IfStmt *X) { finalize(*X); })
-      .Case<WhileStmt>([&](WhileStmt *X) { finalize(*X); })
-      .Case<ForStmt>([&](ForStmt *X) { finalize(*X); })
-      .Case<DeclStmt>([&](DeclStmt *X) { finalize(*X); })
-      .Case<ContinueStmt>([&](ContinueStmt *X) { finalize(*X); })
-      .Case<BreakStmt>([&](BreakStmt *X) { finalize(*X); })
-      .Case<ExprStmt>([&](ExprStmt *X) { finalize(*X); })
-      .Default([&](Stmt *) { std::unreachable(); });
-}
 } // namespace phi

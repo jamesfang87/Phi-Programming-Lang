@@ -1,6 +1,5 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
-#include <print>
 #include <vector>
 
 #include <llvm/ADT/STLExtras.h>
@@ -14,6 +13,30 @@
 #include "Lexer/TokenKind.hpp"
 
 namespace phi {
+
+TypeRef TypeInferencer::visit(Expr &E) {
+  return llvm::TypeSwitch<Expr *, TypeRef>(&E)
+      .Case<IntLiteral>([&](IntLiteral *X) { return visit(*X); })
+      .Case<FloatLiteral>([&](FloatLiteral *X) { return visit(*X); })
+      .Case<StrLiteral>([&](StrLiteral *X) { return visit(*X); })
+      .Case<CharLiteral>([&](CharLiteral *X) { return visit(*X); })
+      .Case<BoolLiteral>([&](BoolLiteral *X) { return visit(*X); })
+      .Case<RangeLiteral>([&](RangeLiteral *X) { return visit(*X); })
+      .Case<TupleLiteral>([&](TupleLiteral *X) { return visit(*X); })
+      .Case<DeclRefExpr>([&](DeclRefExpr *X) { return visit(*X); })
+      .Case<FunCallExpr>([&](FunCallExpr *X) { return visit(*X); })
+      .Case<BinaryOp>([&](BinaryOp *X) { return visit(*X); })
+      .Case<UnaryOp>([&](UnaryOp *X) { return visit(*X); })
+      .Case<MemberInit>([&](MemberInit *X) { return visit(*X); })
+      .Case<FieldAccessExpr>([&](FieldAccessExpr *X) { return visit(*X); })
+      .Case<MethodCallExpr>([&](MethodCallExpr *X) { return visit(*X); })
+      .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
+      .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
+      .Default([&](Expr *) {
+        llvm_unreachable("Unhandled Expr kind in TypeInferencer");
+        return TypeCtx::getErr(E.getSpan());
+      });
+}
 
 TypeRef TypeInferencer::visit(IntLiteral &E) {
   return Unifier.resolve(E.getType());
@@ -221,10 +244,15 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
 }
 
 TypeRef TypeInferencer::visit(MemberInit &E) {
-  if (E.getInitValue()) {
-    return visit(*E.getInitValue());
+  if (!E.getInitValue()) {
+    return TypeCtx::getBuiltin(BuiltinTy::Null, E.getSpan());
   }
-  return TypeCtx::getBuiltin(BuiltinTy::Null, E.getSpan());
+
+  auto T = visit(*E.getInitValue());
+  if (E.getDecl()) {
+    Unifier.unify(E.getDecl()->getType(), T);
+  }
+  return Unifier.resolve(T);
 }
 
 TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
@@ -382,7 +410,6 @@ TypeRef TypeInferencer::visit(MatchExpr &E) {
             for (auto &Var : Pattern.Vars) {
               visit(*Var);
             }
-
             return TypeCtx::getVar(VarTy::Any, E.getSpan());
           }
 
@@ -403,35 +430,10 @@ TypeRef TypeInferencer::visit(MatchExpr &E) {
 
     // does visiting twice do anything bad?
     auto ArmT = visit(*Arm.Return);
-    std::println("{}", ArmT.toString());
     Unifier.unify(E.getType(), ArmT);
   }
 
   return Unifier.resolve(E.getType());
-}
-
-TypeRef TypeInferencer::visit(Expr &E) {
-  return llvm::TypeSwitch<Expr *, TypeRef>(&E)
-      .Case<IntLiteral>([&](IntLiteral *X) { return visit(*X); })
-      .Case<FloatLiteral>([&](FloatLiteral *X) { return visit(*X); })
-      .Case<StrLiteral>([&](StrLiteral *X) { return visit(*X); })
-      .Case<CharLiteral>([&](CharLiteral *X) { return visit(*X); })
-      .Case<BoolLiteral>([&](BoolLiteral *X) { return visit(*X); })
-      .Case<RangeLiteral>([&](RangeLiteral *X) { return visit(*X); })
-      .Case<TupleLiteral>([&](TupleLiteral *X) { return visit(*X); })
-      .Case<DeclRefExpr>([&](DeclRefExpr *X) { return visit(*X); })
-      .Case<FunCallExpr>([&](FunCallExpr *X) { return visit(*X); })
-      .Case<BinaryOp>([&](BinaryOp *X) { return visit(*X); })
-      .Case<UnaryOp>([&](UnaryOp *X) { return visit(*X); })
-      .Case<MemberInit>([&](MemberInit *X) { return visit(*X); })
-      .Case<FieldAccessExpr>([&](FieldAccessExpr *X) { return visit(*X); })
-      .Case<MethodCallExpr>([&](MethodCallExpr *X) { return visit(*X); })
-      .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
-      .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
-      .Default([&](Expr *) {
-        llvm_unreachable("Unhandled Expr kind in TypeInferencer");
-        return TypeCtx::getErr(E.getSpan());
-      });
 }
 
 } // namespace phi

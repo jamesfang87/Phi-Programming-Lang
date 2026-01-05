@@ -19,17 +19,13 @@ namespace phi {
  * @brief Formats the token as a human-readable string for debugging
  *
  * Creates a formatted string representation of the token that includes
- * the token type name, the lexeme (original text), and the source location.
- * This method is primarily used for debugging output and compiler diagnostics.
- *
- * The format is: [TOKEN_KIND] "lexeme" at line N, column M
+ * the token type name, the lexeme (original text), and the source span.
  *
  * @return A formatted string representation of this token
  */
 std::string Token::toString() const {
-  auto [Path, Line, Col] = Span.Start;
-  return std::format("[{}] \"{}\" at {}:{}:{}", this->getName(), Lexeme, Path,
-                     Line, Col);
+  return std::format("[{}] \"{}\" at {}", this->getName(), Lexeme,
+                     Span.toString());
 }
 
 } // namespace phi
