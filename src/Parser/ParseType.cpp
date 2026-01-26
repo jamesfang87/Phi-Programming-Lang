@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
@@ -15,6 +16,10 @@
 namespace phi {
 
 std::optional<TypeRef> Parser::parseType() {
+  if (peekKind() == TokenKind::Bang) {
+    return TypeCtx::getErr(advanceToken().getSpan());
+  }
+
   enum class Indirection : uint8_t { Ptr, Ref, None };
   // Map of primitive type names to their enum representations
   static const std::unordered_map<std::string_view, BuiltinTy::Kind>
@@ -27,7 +32,7 @@ std::optional<TypeRef> Parser::parseType() {
                       {"bool", BuiltinTy::Bool},     {"null", BuiltinTy::Null}};
 
   // a parenthesis indicates a tuple
-  if (peekToken().getKind() == TokenKind::OpenParen) {
+  if (peekKind() == TokenKind::OpenParen) {
     SrcLocation Start = peekToken().getStart();
     std::optional<std::vector<TypeRef>> Temp = parseValueList<TypeRef>(
         TokenKind::OpenParen, TokenKind::CloseParen, &Parser::parseType);
@@ -43,7 +48,7 @@ std::optional<TypeRef> Parser::parseType() {
   // we look for the type of indirection
   Indirection Kind = Indirection::None;
   std::optional<SrcSpan> IndirectionSpan;
-  switch (peekToken().getKind()) {
+  switch (peekKind()) {
   case TokenKind::Amp:
     Kind = Indirection::Ref;
     IndirectionSpan = peekToken().getSpan();
@@ -68,17 +73,15 @@ std::optional<TypeRef> Parser::parseType() {
           .with_note(
               "types must be either primitive types or valid identifiers")
           .with_code("E0030")
-          .emit(*DiagnosticsMan);
+          .emit(*Diags);
       return std::nullopt;
     }
     Kind = Indirection::None;
   }
 
-  const std::string Id = peekToken().getLexeme();
-  const SrcSpan Span = peekToken().getSpan();
+  const auto Id = peekToken().getLexeme();
+  const auto Span = advanceToken().getSpan();
   const auto It = PrimitiveMap.find(Id);
-
-  advanceToken();
 
   TypeRef Base = (It == PrimitiveMap.end())
                      ? TypeCtx::getAdt(Id, nullptr, Span)

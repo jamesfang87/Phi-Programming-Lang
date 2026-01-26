@@ -22,14 +22,14 @@ bool NameResolver::visit(TypeRef T) {
       })
       .Case<TupleTy>([&](auto *Tuple) {
         bool Success = true;
-        for (const auto Element : Tuple->getElementTys()) {
+        for (const auto &Element : Tuple->getElementTys()) {
           Success = visit(Element) && Success;
         }
         return Success;
       })
       .Case<FunTy>([&](auto *Fun) {
         bool Success = visit(Fun->getReturnTy());
-        for (const auto Param : Fun->getParamTys()) {
+        for (const auto &Param : Fun->getParamTys()) {
           Success = visit(Param) && Success;
         }
         return Success;

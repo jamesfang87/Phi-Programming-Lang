@@ -7,6 +7,7 @@
 #include "AST/Nodes/Expr.hpp"
 #include "AST/Nodes/Stmt.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace {
 
@@ -186,11 +187,44 @@ ExprStmt::ExprStmt(SrcLocation Location, std::unique_ptr<Expr> Expression)
 
 ExprStmt::~ExprStmt() = default;
 
+std::unique_ptr<Expr> ExprStmt::takeExpr() { return std::move(Expression); }
+
 // Utility Methods
 void ExprStmt::emit(int Level) const {
   std::println("{}ExprStmt", indent(Level));
   if (Expression)
     Expression->emit(Level + 1);
+}
+
+//===----------------------------------------------------------------------===//
+// ImportStmt Implementation
+//===----------------------------------------------------------------------===//
+
+ImportStmt::ImportStmt(SrcLocation Location, std::string PathStr,
+                       std::vector<std::string> Path)
+    : Stmt(Kind::ImportStmtKind, std::move(Location)),
+      PathStr(std::move(PathStr)), Path(std::move(Path)),
+      ImportedDecl(nullptr) {}
+
+// Out-of-line destructor required for vtable
+ImportStmt::~ImportStmt() = default;
+
+// Utility method to dump AST info
+void ImportStmt::emit(int Level) const {
+  std::string IndentStr(Level * 2, ' ');
+
+  std::println("{}ImportStmt: \"{}\"", IndentStr, PathStr);
+
+  if (!Path.empty()) {
+    std::println("{}Resolved Path:", IndentStr);
+    for (auto &P : Path) {
+      std::println("{}  {}", IndentStr, P);
+    }
+  }
+
+  if (ImportedDecl) {
+    std::println("{}Imported Decl: {}", IndentStr, ImportedDecl->getId());
+  }
 }
 
 } // namespace phi

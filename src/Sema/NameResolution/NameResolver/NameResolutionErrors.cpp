@@ -1,3 +1,4 @@
+#include "AST/Nodes/Decl.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
 
 #include <format>
@@ -8,18 +9,19 @@
 namespace phi {
 
 void NameResolver::emitRedefinitionError(std::string_view SymbolKind,
-                                         Decl *FirstDecl, Decl *Redecl) {
+                                         NamedDecl *FirstDecl,
+                                         NamedDecl *Redecl) {
 
   error(std::format("Redefinition of {} `{}`", SymbolKind, FirstDecl->getId()))
-      .with_primary_label(Redecl->getLocation(), "Redeclaration here.")
-      .with_code_snippet(FirstDecl->getLocation(), "First declared here:")
+      .with_primary_label(Redecl->getSpan(), "Redeclaration here.")
+      .with_code_snippet(FirstDecl->getSpan(), "First declared here:")
       .emit(*Diags);
 }
 
 void NameResolver::emitVariableNotFound(std::string_view VarId,
                                         const SrcLocation &Loc) {
 
-  auto *BestMatch = SymbolTab.getClosestVar(std::string(VarId));
+  auto *BestMatch = SymbolTab.getClosestLocal(std::string(VarId));
   std::string Hint;
   if (BestMatch) {
     Hint = std::format("Did you mean `{}`?", BestMatch->getId());
@@ -110,6 +112,14 @@ void NameResolver::emitFunctionNotFound(std::string_view FunId,
       .with_primary_label(
           Loc, std::format("Declaration for `{}` could not be found. {}", FunId,
                            Hint))
+      .emit(*Diags);
+}
+
+void NameResolver::emitItemPathNotFound(std::string_view Path,
+                                        const SrcSpan Span) {
+  error(std::format("could not find module or item `{}` to import", Path))
+      .with_primary_label(
+          Span, std::format("Declaration for `{}` could not be found", Path))
       .emit(*Diags);
 }
 

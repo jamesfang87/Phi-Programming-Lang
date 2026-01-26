@@ -15,9 +15,9 @@ Type *Type::getUnderlying() {
   Type *Current = this;
 
   while (true) {
-    if (auto Ptr = llvm::dyn_cast<PtrTy>(Current)) {
+    if (auto *Ptr = llvm::dyn_cast<PtrTy>(Current)) {
       Current = Ptr->getPointee().getPtr();
-    } else if (auto Ref = llvm::dyn_cast<RefTy>(Current)) {
+    } else if (auto *Ref = llvm::dyn_cast<RefTy>(Current)) {
       Current = Ref->getPointee().getPtr();
     } else {
       break;
@@ -108,7 +108,7 @@ bool VarTy::occursIn(TypeRef Other) const {
   return llvm::TypeSwitch<const Type *, bool>(Other.getPtr())
       .Case<VarTy>([&](auto *Var) { return Var->getN() == getN(); })
       .Case<TupleTy>([&](auto *Tuple) {
-        for (const auto Element : Tuple->getElementTys()) {
+        for (const auto &Element : Tuple->getElementTys()) {
           if (occursIn(Element))
             return true;
         }
@@ -119,7 +119,7 @@ bool VarTy::occursIn(TypeRef Other) const {
           return true;
         }
 
-        for (const auto Param : Fun->getParamTys()) {
+        for (const auto &Param : Fun->getParamTys()) {
           if (occursIn(Param))
             return true;
         }

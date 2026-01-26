@@ -119,8 +119,8 @@ AdtDecl *SymbolTable::getClosestAdt(const std::string &Undeclared) const {
   return nullptr;
 }
 
-ValueDecl *SymbolTable::getClosestVar(const std::string &Undeclared) const {
-  ValueDecl *Best = nullptr;
+LocalDecl *SymbolTable::getClosestLocal(const std::string &Undeclared) const {
+  LocalDecl *Best = nullptr;
   std::size_t BestDist = std::numeric_limits<std::size_t>::max();
 
   // Prefer innermost scopes first (iterate from back to front)

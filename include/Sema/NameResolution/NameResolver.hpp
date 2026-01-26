@@ -1,13 +1,14 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
 #include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
@@ -28,15 +29,15 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  explicit NameResolver(std::vector<std::unique_ptr<Decl>> Ast,
-                        std::shared_ptr<DiagnosticManager> DiagnosticsMan)
-      : Ast(std::move(Ast)), Diags(std::move(DiagnosticsMan)) {}
+  NameResolver(std::vector<ModuleDecl *> Modules, DiagnosticManager *Diags)
+      : Modules(std::move(Modules)), Diags(std::move(Diags)) {}
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point
   //===--------------------------------------------------------------------===//
 
-  std::pair<bool, std::vector<std::unique_ptr<Decl>>> resolveNames();
+  std::vector<ModuleDecl *> resolve();
+  ModuleDecl *resolveSingleMod(ModuleDecl *Module);
 
   //===--------------------------------------------------------------------===//
   // Type Visitor Method -> return bool (success/failure)
@@ -52,6 +53,7 @@ public:
   bool visit(ParamDecl *D);
   bool visit(StructDecl *D);
   bool visit(FieldDecl *D);
+  bool visit(MethodDecl *D);
   bool visit(EnumDecl *D);
   bool visit(VariantDecl *D);
 
@@ -82,10 +84,13 @@ public:
   bool visit(BinaryOp &E);
   bool visit(UnaryOp &E);
   bool visit(AdtInit &E);
+  bool resolveStructInit(StructDecl *Found, AdtInit &E);
+  bool resolveEnumInit(EnumDecl *Found, AdtInit &E);
   bool visit(MemberInit &E);
   bool visit(FieldAccessExpr &E);
   bool visit(MethodCallExpr &E);
   bool visit(MatchExpr &E);
+  bool visit(IntrinsicCall &E);
 
   //===--------------------------------------------------------------------===//
   // Pattern Resolution Methods
@@ -116,22 +121,18 @@ private:
   // Member Variables
   //===--------------------------------------------------------------------===//
 
-  /// The AST being analyzed (function declarations)
-  std::vector<std::unique_ptr<Decl>> Ast;
+  std::vector<ModuleDecl *> Modules;
   SymbolTable SymbolTab;
-  FunDecl *CurrentFun = nullptr;
-  std::shared_ptr<DiagnosticManager> Diags;
-
-  bool resolveStructCtor(StructDecl *Found, AdtInit &E);
-  bool resolveEnumCtor(EnumDecl *Found, AdtInit &E);
+  std::variant<FunDecl *, MethodDecl *, std::monostate> CurrentFun =
+      std::monostate();
+  DiagnosticManager *Diags;
 
   //===--------------------------------------------------------------------===//
   // Error Reporting Utilities
   //===--------------------------------------------------------------------===//
 
-  void emitError(Diagnostic &Diagnostic) { Diags->emit(Diagnostic); }
-  void emitRedefinitionError(std::string_view SymbolKind, Decl *FirstDecl,
-                             Decl *Redecl);
+  void emitRedefinitionError(std::string_view SymbolKind, NamedDecl *FirstDecl,
+                             NamedDecl *Redecl);
 
   //===--------------------------------------------------------------------===//
   // Error Kind Classification
@@ -144,6 +145,7 @@ private:
     Adt,
     Field,
     Variant,
+    ItemPath
   };
 
   //===--------------------------------------------------------------------===//
@@ -172,6 +174,9 @@ private:
       break;
     case NotFoundErrorKind::Variant:
       emitVariantNotFound(PrimaryId, PrimaryLoc, ContextId);
+      break;
+    case NotFoundErrorKind::ItemPath:
+      break;
     }
   }
 
@@ -188,6 +193,7 @@ private:
   void emitVariantNotFound(std::string_view VariantId,
                            const SrcLocation &RefLoc,
                            const std::optional<std::string> &EnumId);
+  void emitItemPathNotFound(std::string_view Path, const SrcSpan Span);
 };
 
 } // namespace phi
