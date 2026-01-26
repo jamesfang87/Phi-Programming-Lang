@@ -2,7 +2,6 @@
 
 #include <iostream>
 #include <map>
-#include <memory>
 
 #include "Diagnostics/Diagnostic.hpp"
 #include "SrcManager/SrcManager.hpp"
@@ -24,12 +23,12 @@ namespace phi {
  * - Context line count
  */
 struct DiagnosticConfig {
-  bool use_colors = true;               ///< Enable ANSI color codes
-  bool show_line_numbers = true;        ///< Show line numbers in snippets
-  bool show_source_context = true;      ///< Show source code snippets
-  int context_lines = 2;                ///< Lines of context above/below errors
-  int max_line_width = 120;             ///< Maximum line width before wrapping
-  std::string tab_replacement = "    "; ///< Tab expansion string
+  bool UseColors = true;               ///< Enable ANSI color codes
+  bool ShowLineNumbers = true;         ///< Show line numbers in snippets
+  bool ShowSrcContent = true;          ///< Show source code snippets
+  int ContextLines = 2;                ///< Lines of context above/below errors
+  int MaxLineWidth = 120;              ///< Maximum line width before wrapping
+  std::string TabReplacement = "    "; ///< Tab expansion string
 };
 
 //===----------------------------------------------------------------------===//
@@ -59,8 +58,7 @@ public:
    * @param source_manager Source code access system
    * @param config Visual configuration options
    */
-  explicit DiagnosticManager(std::shared_ptr<SrcManager> source_manager,
-                             DiagnosticConfig config = DiagnosticConfig());
+  explicit DiagnosticManager(DiagnosticConfig Config = DiagnosticConfig());
 
   //===--------------------------------------------------------------------===//
   // Main Emission Methods
@@ -71,127 +69,124 @@ public:
    * @param diagnostic Diagnostic to display
    * @param out Output stream (default: stderr)
    */
-  void emit(const Diagnostic &diagnostic, std::ostream &out = std::cerr) const;
+  void emit(const Diagnostic &Diag, std::ostream &Out = std::cerr) const;
 
   /**
    * @brief Renders multiple diagnostics
    * @param diagnostics Diagnostics to display
    * @param out Output stream (default: stderr)
    */
-  void emit_all(const std::vector<Diagnostic> &diagnostics,
-                std::ostream &out = std::cerr) const;
+  void emitAll(const std::vector<Diagnostic> &Diags,
+               std::ostream &Out = std::cerr) const;
 
   //===--------------------------------------------------------------------===//
   // Status & Statistics
   //===--------------------------------------------------------------------===//
 
   /// Gets total error count
-  int error_count() const;
+  int getErrorCount() const;
 
   /// Gets total warning count
-  int warning_count() const;
+  int getWarningCount() const;
 
   /// Checks if any errors were emitted
-  bool has_errors() const;
+  bool hasError() const;
 
   /// Resets error/warning counters
-  void reset_counts() const;
+  void resetCounts() const;
 
   //===--------------------------------------------------------------------===//
   // Configuration Management
   //===--------------------------------------------------------------------===//
 
   /// Updates visual configuration
-  void set_config(const DiagnosticConfig &config);
+  void setConfig(const DiagnosticConfig &NewConfig);
 
   /// Gets source manager instance
-  std::shared_ptr<SrcManager> source_manager() const;
+  SrcManager &getSrcManager();
 
 private:
   //===--------------------------------------------------------------------===//
   // Member Variables
   //===--------------------------------------------------------------------===//
 
-  std::shared_ptr<SrcManager> source_manager_; ///< Source code access
-  DiagnosticConfig config_;                    ///< Visual settings
-  mutable int error_count_ = 0;                ///< Total errors emitted
-  mutable int warning_count_ = 0;              ///< Total warnings emitted
+  class SrcManager Srcs;        ///< Source code access
+  DiagnosticConfig Config;      ///< Visual settings
+  mutable int ErrorCount = 0;   ///< Total errors emitted
+  mutable int WarningCount = 0; ///< Total warnings emitted
 
   //===--------------------------------------------------------------------===//
   // Main Rendering Methods
   //===--------------------------------------------------------------------===//
 
   /// Main rendering entry point
-  void render_diagnostic(const Diagnostic &diagnostic, std::ostream &out) const;
+  void renderDiagnostic(const Diagnostic &Diag, std::ostream &Out) const;
 
   /// Renders diagnostic header (level + message)
-  void render_diagnostic_header(const Diagnostic &diagnostic,
-                                std::ostream &out) const;
+  void renderDiagnosticHeader(const Diagnostic &Diag, std::ostream &Out) const;
 
   /// Renders source code snippets with annotations
-  void render_source_snippets(const Diagnostic &diagnostic,
-                              std::ostream &out) const;
+  void renderSrcSnippets(const Diagnostic &Diag, std::ostream &Out) const;
 
   //===--------------------------------------------------------------------===//
   // Source Code Rendering
   //===--------------------------------------------------------------------===//
 
   /// Renders source file snippet with markers
-  void render_file_snippet(const std::string &file_path,
-                           const std::vector<const DiagnosticLabel *> &labels,
-                           std::ostream &out) const;
+  void renderFileSnippet(const std::string &FilePath,
+                         const std::vector<const DiagnosticLabel *> &Labels,
+                         std::ostream &Out) const;
 
   /// Renders line annotations (arrows/underlines)
-  void
-  render_labels_for_line(int line_num,
-                         const std::vector<const DiagnosticLabel *> &labels,
-                         int gutter_width, const std::string &line_content,
-                         std::ostream &out) const;
+  void renderLabelsForLine(int LineNum,
+                           const std::vector<const DiagnosticLabel *> &Labels,
+                           int GutterWidth, const std::string &LineContent,
+                           std::ostream &Out) const;
 
   /// Renders primary label line (^^^ message)
-  void render_primary_label_line(int start_col, int end_col,
-                                 const DiagnosticLabel &label,
-                                 std::ostream &out) const;
+  void renderPrimaryLabelLine(int StartCol, int EndCol,
+                              const DiagnosticLabel &Label,
+                              std::ostream &Out) const;
 
   /// Renders secondary label line (~~~~ message)
-  void render_secondary_label_line(int start_col, int end_col,
-                                   const DiagnosticLabel &label,
-                                   std::ostream &out) const;
+  void renderSecondaryLabelLine(int StartCol, int EndCol,
+                                const DiagnosticLabel &Label,
+                                std::ostream &Out) const;
 
   //===--------------------------------------------------------------------===//
   // Supplementary Information Rendering
   //===--------------------------------------------------------------------===//
 
   /// Renders supplementary note
-  void render_note(const std::string &note, std::ostream &out) const;
+  void renderNotes(const std::string &Note, std::ostream &Out) const;
 
   /// Renders help suggestion
-  void render_help(const std::string &help, std::ostream &out) const;
+  void renderHelp(const std::string &Help, std::ostream &Out) const;
 
   /// Renders code suggestion
-  void render_suggestion(const DiagnosticSuggestion &suggestion,
-                         std::ostream &out) const;
+  void renderSuggestion(const DiagnosticSuggestion &Suggestion,
+                        std::ostream &Out) const;
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
   //===--------------------------------------------------------------------===//
 
   /// Converts diagnostic level to string ("error", "warning", etc.)
-  static std::string diagnostic_level_to_string(DiagnosticLevel level);
+  static std::string diagnosticLevelToString(DiagnosticLevel Level);
 
   /// Gets default style for diagnostic level
-  static DiagnosticStyle get_style_for_level(DiagnosticLevel level);
+  static DiagnosticStyle getStyleForLevel(DiagnosticLevel Level);
 
   /// Applies ANSI styling to text if enabled
-  std::string format_with_style(const std::string &text,
-                                const DiagnosticStyle &style) const;
+  std::string formatWithStyle(const std::string &Text,
+                              const DiagnosticStyle &Style) const;
 
   /// Replaces tabs with spaces for consistent alignment
-  std::string replace_tabs(std::string_view line) const;
+  std::string replaceTabs(std::string_view Line) const;
 
   /// Groups labels by source file for efficient rendering
   static std::map<std::string, std::vector<const DiagnosticLabel *>>
-  group_labels_by_location(const std::vector<DiagnosticLabel> &labels);
+  groupLabelsByLocation(const std::vector<DiagnosticLabel> &Labels);
 };
 
 } // namespace phi

@@ -6,6 +6,20 @@
 
 namespace phi {
 
+void TypeInferencer::visit(Decl &D) {
+  llvm::TypeSwitch<Decl *>(&D)
+      .Case<VarDecl>([&](VarDecl *X) { visit(*X); })
+      .Case<ParamDecl>([&](ParamDecl *X) { visit(*X); })
+      .Case<FunDecl>([&](FunDecl *X) { visit(*X); })
+      .Case<FieldDecl>([&](FieldDecl *X) { visit(*X); })
+      .Case<MethodDecl>([&](MethodDecl *X) { visit(*X); })
+      .Case<StructDecl>([&](StructDecl *X) { visit(*X); })
+      .Case<EnumDecl>([&](EnumDecl *X) { visit(*X); })
+      .Default([&](Decl *) {
+        llvm_unreachable("Unhandled Decl kind in TypeInferencer");
+      });
+}
+
 void TypeInferencer::visit(VarDecl &D) {
   if (!D.hasInit()) {
     return;
@@ -25,7 +39,6 @@ void TypeInferencer::visit(VarDecl &D) {
 }
 
 void TypeInferencer::visit(ParamDecl &D) {
-  assert(D.hasType() && "ParamDecls must have type annotations");
   assert(!D.getType().isVar() && "ParamDecls cannot be annotated as VarTy");
   assert(!D.getType().isErr() && "ParamDecls cannot be annotated as ErrTy");
 }
@@ -40,7 +53,6 @@ void TypeInferencer::visit(FunDecl &D) {
 }
 
 void TypeInferencer::visit(FieldDecl &D) {
-  assert(D.hasType() && "ParamDecls must have type annotations");
   assert(!D.getType().isVar() && "ParamDecls cannot be annotated as VarTy");
   assert(!D.getType().isErr() && "ParamDecls cannot be annotated as ErrTy");
 
@@ -73,11 +85,11 @@ void TypeInferencer::visit(StructDecl &D) {
   assert(D.getType().isAdt());
 
   for (auto &Field : D.getFields()) {
-    visit(Field);
+    visit(*Field);
   }
 
   for (auto &Method : D.getMethods()) {
-    visit(Method);
+    visit(*Method);
   }
 }
 
@@ -85,28 +97,14 @@ void TypeInferencer::visit(EnumDecl &D) {
   assert(D.getType().isAdt());
 
   for (auto &Variant : D.getVariants()) {
-    visit(Variant);
+    visit(*Variant);
   }
 
   for (auto &Method : D.getMethods()) {
-    visit(Method);
+    visit(*Method);
   }
 }
 
 void TypeInferencer::visit(VariantDecl &D) { (void)D; }
-
-void TypeInferencer::visit(Decl &D) {
-  llvm::TypeSwitch<Decl *>(&D)
-      .Case<VarDecl>([&](VarDecl *X) { visit(*X); })
-      .Case<ParamDecl>([&](ParamDecl *X) { visit(*X); })
-      .Case<FunDecl>([&](FunDecl *X) { visit(*X); })
-      .Case<FieldDecl>([&](FieldDecl *X) { visit(*X); })
-      .Case<MethodDecl>([&](MethodDecl *X) { visit(*X); })
-      .Case<StructDecl>([&](StructDecl *X) { visit(*X); })
-      .Case<EnumDecl>([&](EnumDecl *X) { visit(*X); })
-      .Default([&](Decl *) {
-        llvm_unreachable("Unhandled Decl kind in TypeInferencer");
-      });
-}
 
 } // namespace phi

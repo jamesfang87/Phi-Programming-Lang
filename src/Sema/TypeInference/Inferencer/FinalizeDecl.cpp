@@ -35,13 +35,13 @@ void TypeInferencer::finalize(MethodDecl &D) { finalize(D.getBody()); }
 
 void TypeInferencer::finalize(StructDecl &D) {
   for (auto &Method : D.getMethods()) {
-    finalize(Method);
+    finalize(*Method);
   }
 }
 
 void TypeInferencer::finalize(EnumDecl &D) {
   for (auto &Method : D.getMethods()) {
-    finalize(Method);
+    finalize(*Method);
   }
 }
 

@@ -27,7 +27,17 @@ void TypeInferencer::visit(ReturnStmt &S) {
     return;
   }
 
-  Unifier.unify(CurrentFun->getReturnTy(), visit(S.getExpr()));
+  auto ExprTy = visit(S.getExpr());
+
+  std::visit(
+      [&](auto Fn) {
+        using T = std::decay_t<decltype(Fn)>;
+
+        if constexpr (!std::is_same_v<T, std::monostate>) {
+          Unifier.unify(Fn->getReturnType(), ExprTy);
+        }
+      },
+      CurrentFun);
 }
 
 void TypeInferencer::visit(DeferStmt &S) { visit(S.getDeferred()); }

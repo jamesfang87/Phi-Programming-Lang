@@ -13,6 +13,7 @@ struct TokenKind {
     Error,
 
     // KEYWORDS
+    AsKw,       ///< `as` keyword
     BoolKw,     ///< `bool` keyword
     BreakKw,    ///< `break` keyword
     ConstKw,    ///< `const` keyword
@@ -27,6 +28,7 @@ struct TokenKind {
     ImportKw,   ///< `import` keyword
     InKw,       ///< `in` keyword
     MatchKw,    ///< `match` keyword
+    ModuleKw,   ///< `module` keyword
     PublicKw,   ///< `public` keyword
     ReturnKw,   ///< `return` keyword
     StructKw,   ///< `struct` keyword
@@ -34,6 +36,12 @@ struct TokenKind {
     ThisKw,     ///< `this` keyword
     VarKw,      ///< `let` keyword
     WhileKw,    ///< `while` keyword
+
+    // INTRINSICS
+    Panic,
+    Assert,
+    Unreachable,
+    TypeOf,
 
     // SIGNED INTEGER TYPES
     I8,  ///< `i8` type (8-bit signed)
@@ -75,6 +83,7 @@ struct TokenKind {
     Percent, ///< `%` modulo
     Bang,    ///< `!` logical NOT
     Amp,     ///< `&` references
+    Try,     ///< `?` short-hand for Result/Option
 
     // COMPOUND ASSIGNMENT OPERATORS
     PlusEquals, ///< `+=` add-assign

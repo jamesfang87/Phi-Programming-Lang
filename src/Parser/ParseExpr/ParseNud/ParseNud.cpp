@@ -1,11 +1,15 @@
-#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
 #include "AST/Nodes/Expr.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
+#include "Lexer/TokenKind.hpp"
 #include "Parser/PrecedenceTable.hpp"
+#include "SrcManager/SrcLocation.hpp"
+
 #include <cassert>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace phi {
@@ -14,6 +18,7 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   if (Tok.getKind() != TokenKind::OpenBrace) {
     advanceToken();
   }
+
   switch (Tok.getKind()) {
   // Prefix operators: -a, !b, ++c
   case TokenKind::Minus:       // -
@@ -24,9 +29,76 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   case TokenKind::Star:
     return parsePrefixUnaryOp(Tok);
 
+  // Intrinsics
+  case TokenKind::Panic: {
+    if (!expectToken(TokenKind::OpenParen, "'(' after panic"))
+      return nullptr;
+
+    auto Msg = parseExpr();
+    if (!Msg)
+      return nullptr;
+
+    if (!expectToken(TokenKind::CloseParen, "')' after panic argument"))
+      return nullptr;
+
+    return IntrinsicCall::CreatePanic(Tok.getStart(), std::move(Msg));
+  }
+  case TokenKind::Assert: {
+    if (!expectToken(TokenKind::OpenParen, "'(' after assert"))
+      return nullptr;
+
+    // Required condition
+    auto Cond = parseExpr();
+    if (!Cond)
+      return nullptr;
+
+    std::unique_ptr<Expr> Msg = nullptr;
+
+    // Optional message
+    if (matchToken(TokenKind::Comma)) {
+      Msg = parseExpr();
+      if (!Msg)
+        return nullptr;
+    }
+
+    if (!expectToken(TokenKind::CloseParen, "')' after assert"))
+      return nullptr;
+
+    return IntrinsicCall::CreateAssert(Tok.getStart(), std::move(Cond),
+                                       std::move(Msg));
+  }
+  case TokenKind::Unreachable: {
+    return IntrinsicCall::CreateUnreachable(Tok.getStart());
+  }
+  case TokenKind::TypeOf: {
+    if (!expectToken(TokenKind::OpenParen, "'(' after typeof"))
+      return nullptr;
+
+    auto Operand = parseExpr();
+    if (!Operand)
+      return nullptr;
+
+    if (!expectToken(TokenKind::CloseParen, "')' after typeof operand"))
+      return nullptr;
+
+    return IntrinsicCall::CreateTypeOf(Tok.getStart(), std::move(Operand));
+  }
+
   // Identifiers and Kws
-  case TokenKind::Identifier:
-    return std::make_unique<DeclRefExpr>(Tok.getStart(), Tok.getLexeme());
+  case TokenKind::Identifier: {
+    SrcLocation Location = Tok.getStart();
+    std::string QualId = Tok.getLexeme();
+    while (matchToken(TokenKind::DoubleColon)) {
+      QualId += "::";
+      if (!expectToken(TokenKind(TokenKind::Identifier), "Module path",
+                       false)) {
+        return nullptr;
+      }
+      QualId += advanceToken().getLexeme();
+    }
+
+    return std::make_unique<DeclRefExpr>(Location, QualId);
+  }
   case TokenKind::ThisKw:
     return std::make_unique<DeclRefExpr>(Tok.getStart(), "this");
   case TokenKind::MatchKw:
@@ -36,6 +108,7 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   case TokenKind::OpenParen:
     return parseGroupingOrTupleLiteral();
   case TokenKind::OpenBrace: {
+    // Case of anonymous AdtInit
     auto Inits = parseList<MemberInit>(
         TokenKind::OpenBrace, TokenKind::CloseBrace, &Parser::parseMemberInit);
 
@@ -81,23 +154,15 @@ std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
       Elements.push_back(std::move(Element));
 
       // Check for closing delimiter before comma
-      if (peekToken().getKind() == TokenKind::CloseParen) {
+      if (matchToken(TokenKind::CloseParen)) {
         break;
       }
 
       // Handle comma separator
-      if (peekToken().getKind() == TokenKind::Comma) {
-        advanceToken();
-      } else {
-        error("missing comma in tuple list")
-            .with_primary_label(peekToken().getSpan(), "expected `,` here")
-            .with_help("separate tuple elements with commas")
-            .emit(*DiagnosticsMan);
+      if (!expectToken(TokenKind::Comma, "tuple list")) {
         return nullptr;
       }
-    } while (peekToken().getKind() != TokenKind::CloseParen);
-    assert(peekToken().getKind() == TokenKind::CloseParen);
-    advanceToken(); // Consume the closing parenthesis
+    } while (!matchToken(TokenKind::CloseParen));
     return std::make_unique<TupleLiteral>(Elements[0]->getLocation(),
                                           std::move(Elements));
   }
@@ -106,15 +171,14 @@ std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
     break;
   }
 
-  if (peekToken().getKind() != TokenKind::CloseParen) {
+  if (!matchToken(TokenKind::CloseParen)) {
     error("missing closing parenthesis")
         .with_primary_label(peekToken().getSpan(), "expected `)` here")
         .with_help("parentheses must be properly matched")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
     return nullptr;
   }
 
-  advanceToken(); // consume ')'
   return Lhs;
 }
 
@@ -151,6 +215,9 @@ std::unique_ptr<Expr> Parser::parsePrimitiveLiteral(const Token &Tok) {
   case TokenKind::FalseKw:
     return std::make_unique<BoolLiteral>(Tok.getStart(), false);
   default:
+    error("unexpected token; could not match this token to a literal")
+        .with_primary_label(Tok.getSpan())
+        .emit(*Diags);
     return nullptr;
   }
 }

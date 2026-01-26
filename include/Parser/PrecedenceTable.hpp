@@ -147,6 +147,8 @@ inline std::optional<std::pair<int, int>> postfixBP(const TokenKind &Kind) {
   case TokenKind::OpenParen:   // Function call
   case TokenKind::OpenBrace:   // Struct initializer
     return std::make_pair(19, 0);
+  case TokenKind::Try:
+    return std::make_pair(18, 0);
 
   default:
     return std::nullopt;

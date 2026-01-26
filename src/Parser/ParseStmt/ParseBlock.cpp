@@ -1,5 +1,7 @@
-#include "Lexer/Token.hpp"
 #include "Parser/Parser.hpp"
+
+#include "Lexer/Token.hpp"
+#include "Lexer/TokenKind.hpp"
 
 namespace phi {
 
@@ -20,14 +22,11 @@ namespace phi {
  */
 std::unique_ptr<Block> Parser::parseBlock() {
   // Validate opening brace
-  if (peekToken().getKind() != TokenKind::OpenBrace) {
-    emitExpectedFoundError("{", peekToken());
-  }
-  advanceToken();
+  expectToken(TokenKind::OpenBrace);
 
   // Parse statements until closing brace
   std::vector<std::unique_ptr<Stmt>> Stmts;
-  while (peekToken().getKind() != TokenKind::CloseBrace) {
+  while (!matchToken(TokenKind::CloseBrace)) {
     if (peekToken().getKind() == TokenKind::Eof) {
       emitUnclosedDelimiterError(peekToken(), "}");
       return nullptr;
@@ -41,8 +40,6 @@ std::unique_ptr<Block> Parser::parseBlock() {
 
     syncToStmt();
   }
-
-  advanceToken(); // eat `}`
 
   return std::make_unique<Block>(std::move(Stmts));
 }
