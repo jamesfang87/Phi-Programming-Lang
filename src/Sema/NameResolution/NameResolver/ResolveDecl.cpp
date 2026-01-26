@@ -3,6 +3,7 @@
 #include <cassert>
 #include <string>
 #include <unordered_map>
+#include <variant>
 
 namespace phi {
 
@@ -39,7 +40,7 @@ bool NameResolver::resolveBodies(Decl &D) {
 }
 
 bool NameResolver::resolveHeader(FunDecl &D) {
-  bool Success = visit(D.getReturnTy()); // we visit param types later
+  bool Success = visit(D.getReturnType());
 
   // Resolve parameters
   for (const auto &Param : D.getParams()) {
@@ -74,8 +75,9 @@ bool NameResolver::resolveHeader(EnumDecl &D) {
 }
 
 bool NameResolver::visit(FunDecl *D) {
+  assert(D);
   CurrentFun = D;
-  if (!CurrentFun) {
+  if (std::holds_alternative<std::monostate>(CurrentFun)) {
     return false;
   }
 
@@ -84,7 +86,7 @@ bool NameResolver::visit(FunDecl *D) {
 
   // Add parameters to function scope
   bool Success = true;
-  for (const auto &Param : CurrentFun->getParams()) {
+  for (const auto &Param : D->getParams()) {
     if (!SymbolTab.insert(Param.get())) {
       emitRedefinitionError("Parameter", SymbolTab.lookup(*Param), Param.get());
       Success = false;
@@ -92,10 +94,33 @@ bool NameResolver::visit(FunDecl *D) {
   }
 
   // Resolve function body
-  return visit(CurrentFun->getBody(), true) && Success;
+  return visit(D->getBody(), true) && Success;
 }
 
 bool NameResolver::visit(ParamDecl *D) { return visit(D->getType()); }
+
+bool NameResolver::visit(MethodDecl *D) {
+  assert(D);
+  CurrentFun = D;
+  if (std::holds_alternative<std::monostate>(CurrentFun)) {
+    return false;
+  }
+
+  // Create function scope
+  SymbolTable::ScopeGuard FunctionScope(SymbolTab);
+
+  // Add parameters to function scope
+  bool Success = true;
+  for (const auto &Param : D->getParams()) {
+    if (!SymbolTab.insert(Param.get())) {
+      emitRedefinitionError("Parameter", SymbolTab.lookup(*Param), Param.get());
+      Success = false;
+    }
+  }
+
+  // Resolve function body
+  return visit(D->getBody(), true) && Success;
+}
 
 bool NameResolver::visit(StructDecl *D) {
   SymbolTable::ScopeGuard StructScope(SymbolTab);
@@ -104,16 +129,16 @@ bool NameResolver::visit(StructDecl *D) {
   bool Success = true;
 
   for (auto &Field : D->getFields()) {
-    Success = visit(&Field) && Success;
-    SymbolTab.insert(&Field);
+    Success = visit(Field.get()) && Success;
+    SymbolTab.insert(Field.get());
   }
 
   for (auto &Method : D->getMethods()) {
-    SymbolTab.insert(&Method);
+    SymbolTab.insert(Method.get());
   }
 
   for (auto &Method : D->getMethods()) {
-    Success = visit(&Method) && Success;
+    Success = visit(Method.get()) && Success;
   }
 
   return Success;
@@ -127,9 +152,7 @@ bool NameResolver::visit(FieldDecl *D) {
     Success = visit(D->getInit()) && Success;
   }
 
-  if (D->hasType()) {
-    Success = visit(D->getType()) && Success;
-  }
+  Success = visit(D->getType()) && Success;
 
   return Success;
 }
@@ -138,30 +161,31 @@ bool NameResolver::visit(EnumDecl *D) {
   bool Success = true;
   std::unordered_map<std::string, VariantDecl *> SeenVariants;
   for (auto &Variant : D->getVariants()) {
-    if (SeenVariants.contains(Variant.getId())) {
-      assert(SeenVariants[Variant.getId()]);
-      emitRedefinitionError("Variant", SeenVariants[Variant.getId()], &Variant);
+    if (SeenVariants.contains(Variant->getId())) {
+      assert(SeenVariants[Variant->getId()]);
+      emitRedefinitionError("Variant", SeenVariants[Variant->getId()],
+                            Variant.get());
       Success = false;
     }
-    SeenVariants[Variant.getId()] = &Variant;
+    SeenVariants[Variant->getId()] = Variant.get();
 
-    Success = visit(&Variant) && Success;
+    Success = visit(Variant.get()) && Success;
   }
 
   for (auto &Method : D->getMethods()) {
-    SymbolTab.insert(&Method);
+    SymbolTab.insert(Method.get());
   }
 
   for (auto &Method : D->getMethods()) {
-    Success = visit(&Method) && Success;
+    Success = visit(Method.get()) && Success;
   }
 
   return Success;
 }
 
 bool NameResolver::visit(VariantDecl *D) {
-  if (D->hasType()) {
-    return visit(D->getType());
+  if (D->hasPayload()) {
+    return visit(D->getPayloadType());
   }
   return true;
 }

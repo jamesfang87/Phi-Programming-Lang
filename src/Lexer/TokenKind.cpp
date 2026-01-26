@@ -11,6 +11,8 @@ std::string TokenKind::toString() const {
     return "ERROR";
 
   // Keywords
+  case TokenKind::AsKw:
+    return "AS";
   case TokenKind::BoolKw:
     return "BOOL";
   case TokenKind::BreakKw:
@@ -39,6 +41,8 @@ std::string TokenKind::toString() const {
     return "IN";
   case TokenKind::MatchKw:
     return "MATCH";
+  case TokenKind::ModuleKw:
+    return "MODULE";
   case TokenKind::PublicKw:
     return "PUBLIC";
   case TokenKind::ReturnKw:
@@ -53,6 +57,15 @@ std::string TokenKind::toString() const {
     return "VAR";
   case TokenKind::WhileKw:
     return "WHILE";
+
+  case TokenKind::Panic:
+    return "PANIC";
+  case TokenKind::Assert:
+    return "ASSERT";
+  case TokenKind::Unreachable:
+    return "UNREACHABLE";
+  case TokenKind::TypeOf:
+    return "TYPEOF";
 
   // Signed integer types
   case TokenKind::I8:
@@ -123,6 +136,8 @@ std::string TokenKind::toString() const {
     return "BANG";
   case TokenKind::Amp:
     return "AMP";
+  case TokenKind::Try:
+    return "QUESTION MARK";
 
   // Assignment operators
   case TokenKind::PlusEquals:

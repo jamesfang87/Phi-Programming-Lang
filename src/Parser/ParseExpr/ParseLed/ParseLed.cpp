@@ -14,6 +14,7 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
   // Unary ops
   case TokenKind::DoublePlus:
   case TokenKind::DoubleMinus:
+  case TokenKind::Try:
     advanceToken();
     return std::make_unique<UnaryOp>(std::move(Lhs), Op, false); // postfix
 

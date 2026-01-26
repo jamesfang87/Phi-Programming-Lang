@@ -4,7 +4,6 @@
 #include <cassert>
 #include <initializer_list>
 #include <memory>
-#include <print>
 #include <vector>
 
 #include <llvm/Support/Casting.h>
@@ -27,7 +26,6 @@ std::unique_ptr<Expr> Parser::parseExpr() {
 
   auto Res = pratt(0, Terminators);
   if (!Res) {
-    std::println("Error parsing expression");
     return nullptr;
   }
   return Res;

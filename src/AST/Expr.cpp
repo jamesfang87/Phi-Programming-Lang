@@ -292,7 +292,7 @@ void MemberInit::emit(int Level) const {
 
 AdtInit::AdtInit(SrcLocation Location, std::optional<std::string> TypeName,
                  std::vector<std::unique_ptr<MemberInit>> Inits)
-    : Expr(Expr::Kind::CustomTypeCtorKind, Location,
+    : Expr(Expr::Kind::AdtInitKind, Location,
            TypeName ? TypeCtx::getAdt(*TypeName, nullptr, SrcSpan(Location))
                     : TypeCtx::getVar(VarTy::Domain::Adt,
                                       SrcSpan(std::move(Location)))),
@@ -390,6 +390,80 @@ void MatchExpr::emit(int Level) const {
 
     std::println("{}Return: ", indent(Level + 2));
     Arm.Return->emit(Level + 3);
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// IntrinsicCall Implementation
+//===----------------------------------------------------------------------===//
+
+IntrinsicCall::IntrinsicCall(SrcLocation Location, IntrinsicKind K,
+                             ArgList Args)
+    : Expr(Expr::Kind::IntrinsicCallKind, std::move(Location)), K(K),
+      Args(std::move(Args)) {}
+
+//===----------------------------------------------------------------------===//
+// Named Constructors
+//===----------------------------------------------------------------------===//
+
+std::unique_ptr<IntrinsicCall>
+IntrinsicCall::CreatePanic(SrcLocation Loc, std::unique_ptr<Expr> Message) {
+  ArgList Args;
+  Args.push_back(std::move(Message));
+  return std::unique_ptr<IntrinsicCall>(
+      new IntrinsicCall(std::move(Loc), IntrinsicKind::Panic, std::move(Args)));
+}
+
+std::unique_ptr<IntrinsicCall>
+IntrinsicCall::CreateAssert(SrcLocation Loc, std::unique_ptr<Expr> Condition,
+                            std::unique_ptr<Expr> Message) {
+  ArgList Args;
+  Args.push_back(std::move(Condition));
+  Args.push_back(std::move(Message));
+  return std::unique_ptr<IntrinsicCall>(new IntrinsicCall(
+      std::move(Loc), IntrinsicKind::Assert, std::move(Args)));
+}
+
+std::unique_ptr<IntrinsicCall>
+IntrinsicCall::CreateUnreachable(SrcLocation Loc) {
+  return std::unique_ptr<IntrinsicCall>(
+      new IntrinsicCall(std::move(Loc), IntrinsicKind::Unreachable, {}));
+}
+
+std::unique_ptr<IntrinsicCall>
+IntrinsicCall::CreateTypeOf(SrcLocation Loc, std::unique_ptr<Expr> Operand) {
+  ArgList Args;
+  Args.push_back(std::move(Operand));
+  return std::unique_ptr<IntrinsicCall>(new IntrinsicCall(
+      std::move(Loc), IntrinsicKind::TypeOf, std::move(Args)));
+}
+
+void IntrinsicCall::emit(int Level) const {
+  std::println("{}IntrinsicCall:", indent(Level));
+  std::println("{}Kind: {}", indent(Level + 1), [&] {
+    switch (K) {
+    case IntrinsicKind::Panic:
+      return "panic";
+    case IntrinsicKind::Assert:
+      return "assert";
+    case IntrinsicKind::Unreachable:
+      return "unreachable";
+    case IntrinsicKind::TypeOf:
+      return "typeof";
+    }
+    return "<unknown>";
+  }());
+
+  std::println("{}Type: {}", indent(Level + 1), Type.toString());
+
+  if (Args.empty()) {
+    std::println("{}Args: <none>", indent(Level + 1));
+    return;
+  }
+
+  std::println("{}Args:", indent(Level + 1));
+  for (const auto &Arg : Args) {
+    Arg->emit(Level + 2);
   }
 }
 

@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 
+#include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
 #include "Lexer/TokenKind.hpp"
@@ -99,44 +100,34 @@ optional<Pattern> Parser::parseLiteralPattern() {
 }
 
 optional<Pattern> Parser::parseVariantPattern() {
-  assert(peekKind() == TokenKind::Period);
-  advanceToken();
+  assert(advanceToken().getKind() == TokenKind::Period);
 
-  if (peekKind() != TokenKind::Identifier) {
-    emitUnexpectedTokenError(peekToken());
+  if (!expectToken(TokenKind::Identifier, "variant pattern", false)) {
     return std::nullopt;
   }
-  const std::string Name = peekToken().getLexeme();
-  const SrcLocation Loc = advanceToken().getStart();
+  const SrcLocation Loc = peekToken().getStart();
+  const std::string Name = advanceToken().getLexeme();
 
-  std::vector<std::unique_ptr<VarDecl>> Vars;
-
-  if (peekKind() == TokenKind::OpenParen) {
-    bool ErrorHappened = false;
-
-    auto ParsedVars = parseList<VarDecl>(
-        TokenKind::OpenParen, TokenKind::CloseParen,
-        [&](Parser *P) -> std::unique_ptr<VarDecl> {
-          if (P->peekKind() == TokenKind::Identifier) {
-            return std::make_unique<VarDecl>(P->peekToken().getStart(),
-                                             P->advanceToken().getLexeme(),
-                                             std::nullopt, false, nullptr);
-          }
-          P->emitUnexpectedTokenError(P->peekToken());
-          ErrorHappened = true;
-          return nullptr;
-        });
-
-    if (ErrorHappened || !ParsedVars)
-      return std::nullopt;
-
-    Vars = std::move(*ParsedVars);
+  std::optional<std::vector<std::unique_ptr<VarDecl>>> Vars;
+  if (peekKind() != TokenKind::OpenParen) {
+    return PatternAtomics::Variant(Name, {}, Loc);
   }
 
-  std::optional<Pattern> Result;
-  Result.emplace(std::in_place_type<PatternAtomics::Variant>, Name,
-                 std::move(Vars), Loc);
-  return Result;
+  Vars = parseList<VarDecl>(
+      TokenKind::OpenParen, TokenKind::CloseParen,
+      [&] -> std::unique_ptr<VarDecl> {
+        if (expectToken(TokenKind::Identifier, "", false)) {
+          return std::make_unique<VarDecl>(
+              peekToken().getSpan(), Mutability::Var,
+              advanceToken().getLexeme(), std::nullopt, nullptr);
+        }
+        return nullptr;
+      });
+
+  if (!Vars)
+    return std::nullopt;
+
+  return PatternAtomics::Variant(Name, std::move(*Vars), Loc);
 }
 
 } // namespace phi

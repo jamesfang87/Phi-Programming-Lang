@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "AST/Nodes/Decl.hpp"
@@ -84,7 +85,8 @@ public:
 private:
   std::vector<std::unique_ptr<Decl>> Ast;
   std::shared_ptr<DiagnosticManager> DiagMan;
-  FunDecl *CurrentFun{nullptr};
+  std::variant<FunDecl *, MethodDecl *, std::monostate> CurrentFun =
+      std::monostate();
   TypeUnifier Unifier;
 
   //===--------------------------------------------------------------------===//

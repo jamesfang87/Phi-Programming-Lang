@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -40,10 +39,8 @@ public:
    * @param path File path for error reporting
    * @param diagnostic_manager Diagnostic system for error reporting
    */
-  Lexer(std::string Src, std::string Path,
-        std::shared_ptr<DiagnosticManager> DiagnosticsMan)
-      : Src(std::move(Src)), Path(std::move(Path)),
-        DiagnosticsMan(std::move(DiagnosticsMan)) {
+  Lexer(std::string Src, std::string Path, DiagnosticManager *Diags)
+      : Src(std::move(Src)), Path(std::move(Path)), Diags(std::move(Diags)) {
     CurChar = this->Src.begin();
     CurLexeme = this->Src.begin();
     CurLine = this->Src.begin();
@@ -79,9 +76,9 @@ private:
   // Member Variables
   //===--------------------------------------------------------------------===//
 
-  std::string Src;  ///< Source code being scanned
-  std::string Path; ///< File path for error reporting
-  std::shared_ptr<DiagnosticManager> DiagnosticsMan; ///< Diagnostic system
+  std::string Src;          ///< Source code being scanned
+  std::string Path;         ///< File path for error reporting
+  DiagnosticManager *Diags; ///< Diagnostic system
 
   int LineNum = 1;                  ///< Current line number (1-indexed)
   std::string::iterator CurChar;    ///< Current character position

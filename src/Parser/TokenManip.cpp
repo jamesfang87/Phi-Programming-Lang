@@ -58,17 +58,22 @@ Token Parser::advanceToken() {
  * @param context Optional context string for error messages
  * @return true if token matches, false otherwise (emits error)
  *
- * Automatically advances on match. Emits detailed error on mismatch.
+ * Only advances on match if Advance = true (by default). Emits detailed error
+ * on mismatch.
  */
-bool Parser::expectToken(TokenKind Expected, const std::string &Context) {
-  if (peekToken().getKind() == Expected) {
-    advanceToken();
-    return true;
+bool Parser::expectToken(TokenKind::Kind Expected, const std::string &Context,
+                         bool Advance) {
+  auto Str = TokenKind(Expected).toString();
+  if (peekToken().getKind() != Expected) {
+    const std::string Msg = Context.empty() ? "" : " in " + Context;
+    emitExpectedFoundError(Str + Msg, peekToken());
+    return false;
   }
 
-  const std::string Msg = Context.empty() ? "" : " in " + Context;
-  emitExpectedFoundError(Expected.toString() + Msg, peekToken());
-  return false;
+  if (Advance) {
+    advanceToken();
+  }
+  return true;
 }
 
 /**

@@ -157,3 +157,28 @@ fun print_name(const shape: Shape) {
     };
 }
 ```
+
+## Modules
+
+Phi uses modules for imports and exports. A module is given at the top of a file, and the `public` keyword is used to export a symbol:
+
+```phi
+module math
+
+public struct Vector2D {
+    public x: f64;
+    public y: f64;
+}
+
+```
+
+The contents of the module above can be imported like so:
+
+```phi
+import math.Vector2D as Vec2D
+
+fun main() {
+    const v = Vec2D { x: 1.0, y: 1.0 };
+}
+
+```
