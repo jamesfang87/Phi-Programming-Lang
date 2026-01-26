@@ -1,0 +1,39 @@
+module std::Result;
+
+public enum Result<T, E> {
+    Ok: T;
+    Err: E;
+
+    public fun is_ok(const this) -> bool {
+        return match this {
+            .Ok => true,
+            .Err => false,
+        };
+    }
+
+    public fun is_err(const this) -> bool {
+        return !this.is_ok();
+    }
+
+    fun unwrap(const this) -> T {
+        match this {
+            .Ok(x) => x,
+            .Err => panic("unwrap called on Result in error state"),
+        };
+    }
+
+    public fun unwrap_or(const this, const default: T) -> T {
+        return match this {
+            .Ok(x) => x,
+            .Err => default,
+        };
+    }
+}
+
+public fun Ok<T, E>(const value: T) -> Result<T, E> {
+    return Result<T, E> { Ok: value };
+}
+
+public fun Err<T, E> (const error: E) -> Result<T, E> {
+    return Result<T, E> { Err: error };
+}
