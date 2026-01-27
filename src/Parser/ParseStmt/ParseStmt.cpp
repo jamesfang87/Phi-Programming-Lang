@@ -139,8 +139,8 @@ std::unique_ptr<DeferStmt> Parser::parseDeferStmt() {
  * - if (cond) { ... } else if { ... } (chained)
  */
 std::unique_ptr<IfStmt> Parser::parseIfStmt() {
-  NoStructInit = true;
-  auto _ = std::experimental::scope_exit([&] { NoStructInit = false; });
+  NoAdtInit = true;
+  auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
 
   SrcLocation Loc = advanceToken().getStart();
 
@@ -203,8 +203,8 @@ std::unique_ptr<IfStmt> Parser::parseIfStmt() {
  * Format: while (condition) { body }
  */
 std::unique_ptr<WhileStmt> Parser::parseWhileStmt() {
-  NoStructInit = true;
-  auto _ = std::experimental::scope_exit([&] { NoStructInit = false; });
+  NoAdtInit = true;
+  auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
 
   SrcLocation Loc = peekToken().getStart();
   advanceToken(); // eat 'while'
@@ -234,8 +234,8 @@ std::unique_ptr<WhileStmt> Parser::parseWhileStmt() {
  * Validates loop variable and 'in' keyword syntax.
  */
 std::unique_ptr<ForStmt> Parser::parseForStmt() {
-  NoStructInit = true;
-  auto _ = std::experimental::scope_exit([&] { NoStructInit = false; });
+  NoAdtInit = true;
+  auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
 
   SrcLocation Loc = advanceToken().getStart();
 

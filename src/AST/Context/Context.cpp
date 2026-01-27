@@ -106,6 +106,24 @@ VarTy *TypeCtx::var(VarTy::Domain Domain) {
   return NewInst;
 }
 
+GenericTy *TypeCtx::generic(const std::string &Id, TypeArgDecl *D) {
+  auto *NewInst = Allocate<GenericTy>(Id, D);
+  Generics.push_back(NewInst);
+  return NewInst;
+}
+
+AppliedTy *TypeCtx::applied(TypeRef Base, std::vector<TypeRef> Args) {
+  AppliedKey Key{Base, Args};
+  auto It = Applieds.find(Key);
+  if (It != Applieds.end()) {
+    return It->second;
+  }
+
+  auto *NewInst = Allocate<AppliedTy>(Base, Args);
+  Applieds.emplace(std::move(Key), NewInst);
+  return NewInst;
+}
+
 ErrTy *TypeCtx::err() { return Err; }
 
 TypeRef TypeCtx::getBuiltin(BuiltinTy::Kind K, SrcSpan Span) {
@@ -146,6 +164,18 @@ TypeRef TypeCtx::getVar(uint64_t N, VarTy::Domain Domain, SrcSpan Span) {
 
 TypeRef TypeCtx::getVar(VarTy::Domain Domain, SrcSpan Span) {
   auto *T = inst().var(Domain);
+  return {T, std::move(Span)};
+}
+
+TypeRef TypeCtx::getGeneric(const std::string &Id, TypeArgDecl *D,
+                            SrcSpan Span) {
+  auto *T = inst().generic(Id, D);
+  return {T, std::move(Span)};
+}
+
+TypeRef TypeCtx::getApplied(TypeRef Base, std::vector<TypeRef> Args,
+                            SrcSpan Span) {
+  auto *T = inst().applied(Base, Args);
   return {T, std::move(Span)};
 }
 

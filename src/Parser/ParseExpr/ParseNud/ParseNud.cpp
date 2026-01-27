@@ -9,6 +9,7 @@
 #include <cassert>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 #include <vector>
 
@@ -88,8 +89,17 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   case TokenKind::Identifier: {
     SrcLocation Location = Tok.getStart();
     std::string QualId = Tok.getLexeme();
-    while (matchToken(TokenKind::DoubleColon)) {
+    while (peekKind() == TokenKind::DoubleColon) {
+      // beginning of turbofish operator; we cannot advance the token
+      if (peekToken(1).getKind() == TokenKind::OpenCaret) {
+        break;
+      }
+
+      // it is fine to advance the token
+      advanceToken();
       QualId += "::";
+
+      // otherwise, we expect an Identifier
       if (!expectToken(TokenKind(TokenKind::Identifier), "Module path",
                        false)) {
         return nullptr;
@@ -114,6 +124,7 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
 
     return (!Inits) ? nullptr
                     : std::make_unique<AdtInit>(Tok.getStart(), std::nullopt,
+                                                std::nullopt,
                                                 std::move(Inits.value()));
   }
   // Literals
@@ -128,7 +139,7 @@ std::unique_ptr<Expr> Parser::parseGroupingOrTupleLiteral() {
   std::vector<TokenKind::Kind> Terminators = {
       TokenKind::Eof, TokenKind::Semicolon, TokenKind::Comma,
       TokenKind::CloseParen, TokenKind::CloseBracket};
-  if (!NoStructInit) {
+  if (!NoAdtInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
 
@@ -187,7 +198,7 @@ std::unique_ptr<Expr> Parser::parsePrefixUnaryOp(const Token &Tok) {
   std::vector<TokenKind::Kind> Terminators = {
       TokenKind::Eof, TokenKind::Semicolon, TokenKind::Comma,
       TokenKind::CloseParen, TokenKind::CloseBracket};
-  if (!NoStructInit) {
+  if (!NoAdtInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
 

@@ -53,6 +53,7 @@ public:
     Variant,
     Var,
     Param,
+    TypeArg,
   };
 
   //===--------------------------------------------------------------------===//
@@ -99,6 +100,16 @@ private:
   const std::string Id;
 };
 
+class TypeArgDecl : public NamedDecl {
+public:
+  TypeArgDecl(SrcSpan Span, std::string Id)
+      : NamedDecl(Decl::Kind::TypeArg, std::move(Span), std::move(Id)) {}
+
+  static bool classof(const Decl *D) { return D->getKind() == Kind::TypeArg; }
+
+  void emit(int Level) const override;
+};
+
 //===----------------------------------------------------------------------===//
 // ItemDecl - Top-level declarations
 //===----------------------------------------------------------------------===//
@@ -108,8 +119,10 @@ protected:
   //===--------------------------------------------------------------------===//
   // Constructors
   //===--------------------------------------------------------------------===//
-  ItemDecl(Kind K, SrcSpan Span, Visibility Vis, std::string Id)
-      : NamedDecl(K, Span, std::move(Id)), TheVisibility(Vis) {}
+  ItemDecl(Kind K, SrcSpan Span, Visibility Vis, std::string Id,
+           std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs)
+      : NamedDecl(K, Span, std::move(Id)), TheVisibility(Vis),
+        TypeArgs(std::move(TypeArgs)) {}
 
 public:
   //===--------------------------------------------------------------------===//
@@ -136,6 +149,7 @@ public:
 
 private:
   Visibility TheVisibility;
+  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
 };
 
 //===----------------------------------------------------------------------===//
@@ -303,6 +317,7 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   MethodDecl(SrcSpan Span, Visibility Vis, std::string Id,
+             std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
              std::vector<std::unique_ptr<ParamDecl>> Params, TypeRef ReturnType,
              std::unique_ptr<Block> Body);
 
@@ -324,6 +339,7 @@ public:
   void emit(int Level) const override;
 
 private:
+  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
   std::vector<std::unique_ptr<ParamDecl>> Params;
   TypeRef ReturnType;
   std::unique_ptr<Block> Body;
@@ -370,8 +386,9 @@ protected:
   // Constructors
   //===--------------------------------------------------------------------===//
   AdtDecl(Kind K, SrcSpan Span, Visibility Vis, std::string Id,
+          std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
           std::vector<std::unique_ptr<MethodDecl>> Methods)
-      : ItemDecl(K, Span, Vis, Id),
+      : ItemDecl(K, Span, Vis, Id, std::move(TypeArgs)),
         Type(TypeCtx::getAdt(std::move(Id), this, Span)),
         Methods(std::move(Methods)) {
     for (auto &M : this->Methods) {
@@ -407,6 +424,7 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   StructDecl(SrcSpan Span, Visibility Vis, std::string Id,
+             std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
              std::vector<std::unique_ptr<FieldDecl>> Fields,
              std::vector<std::unique_ptr<MethodDecl>> Methods);
 
@@ -444,6 +462,7 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   EnumDecl(SrcSpan Span, Visibility Vis, std::string Id,
+           std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
            std::vector<std::unique_ptr<VariantDecl>> Variants,
            std::vector<std::unique_ptr<MethodDecl>> Methods);
 
@@ -481,6 +500,7 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   FunDecl(SrcSpan Span, Visibility Vis, std::string Id,
+          std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
           std::vector<std::unique_ptr<ParamDecl>> Params, TypeRef ReturnType,
           std::unique_ptr<Block> Body);
 

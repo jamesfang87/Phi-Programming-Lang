@@ -99,6 +99,8 @@ int PhiBuildSystem::build() {
     Mod->emit(0);
     Modules.push_back(Mod.get());
   }
+
+  return 0;
   auto Res = NameResolver(Modules, &Diags).resolve();
 
   if (!Options.EmitLLVM && !Options.EmitAssembly && !Options.CompileOnly)
