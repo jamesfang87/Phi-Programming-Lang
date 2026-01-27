@@ -16,9 +16,9 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
   const auto Location = peekToken(-1).getStart(); // def safe
 
   // parse the scrutinee
-  NoStructInit = true;
+  NoAdtInit = true;
   auto Scrutinee = parseExpr();
-  NoStructInit = false;
+  NoAdtInit = false;
 
   if (!matchToken(TokenKind::OpenBrace)) {
     emitUnexpectedTokenError(peekToken());

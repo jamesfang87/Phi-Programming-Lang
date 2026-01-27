@@ -4,6 +4,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <stack>
 #include <string>
 #include <utility>
 #include <vector>
@@ -48,8 +49,9 @@ private:
   std::vector<std::unique_ptr<ItemDecl>> Ast;
   DiagnosticManager *Diags;
 
-  bool NoStructInit = false;
+  bool NoAdtInit = false;
   bool FileHasModule = false;
+  std::vector<TypeArgDecl *> ValidGenerics;
 
   //===--------------------------------------------------------------------===//
   // Token Navigation Utilities
@@ -111,12 +113,20 @@ private:
                                             Visibility Vis);
   std::unique_ptr<MethodDecl> parseMethodDecl(std::string ParentName,
                                               Visibility Vis);
+  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> parseTypeArgDecls();
 
   //===--------------------------------------------------------------------===//
   // Type System Parsing
   //===--------------------------------------------------------------------===//
 
   std::optional<TypeRef> parseType();
+
+  enum class Indirection : uint8_t { Ptr, Ref, None };
+  std::pair<Indirection, std::optional<SrcSpan>> parseIndirection();
+  // parses stuff like tuples, adts, builtins; does not handle indirections or
+  // trailing type args
+  std::optional<TypeRef> parseTypeBase();
+  std::optional<std::vector<TypeRef>> parseTypeArgList();
 
   //===--------------------------------------------------------------------===//
   // Function Declaration Parsing
@@ -168,8 +178,12 @@ private:
                                      std::unique_ptr<Expr> Expr);
   std::unique_ptr<Expr> parseInfix(const Token &Op, std::unique_ptr<Expr> Expr,
                                    int RBp);
-  std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
-  std::unique_ptr<AdtInit> parseAdtInit(std::unique_ptr<Expr> Expr);
+  std::unique_ptr<FunCallExpr>
+  parseFunCall(std::unique_ptr<Expr> Callee,
+               std::optional<std::vector<TypeRef>> TypeArgs);
+  std::unique_ptr<AdtInit>
+  parseAdtInit(std::unique_ptr<Expr> Expr,
+               std::optional<std::vector<TypeRef>> TypeArgs);
   std::unique_ptr<MemberInit> parseMemberInit();
   std::unique_ptr<MatchExpr> parseMatchExpr();
 
@@ -277,7 +291,13 @@ private:
     // Parse list elements
     std::vector<T> Content;
     while (!atEOF() && peekToken().getKind() != Closing) {
-      auto Res = std::invoke(Fun, this);
+      std::optional<T> Res;
+      if constexpr (requires { std::invoke(Fun, this); }) {
+        Res = std::invoke(Fun, this);
+      } else {
+        Res = std::invoke(Fun);
+      }
+
       if (Res) {
         Content.push_back(std::move(*Res));
       } else {

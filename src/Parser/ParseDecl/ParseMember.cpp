@@ -1,5 +1,9 @@
 #include "Parser/Parser.hpp"
 
+#include <llvm/ADT/ScopeExit.h>
+
+#include <optional>
+
 namespace phi {
 
 std::optional<Visibility> Parser::parseAdtMemberVisibility() {
@@ -36,6 +40,25 @@ std::unique_ptr<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
   SrcSpan Span = peekToken().getSpan();
   std::string Id = advanceToken().getLexeme();
 
+  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+  if (peekKind() == TokenKind::OpenCaret) {
+    TypeArgs = parseTypeArgDecls();
+    if (!TypeArgs) {
+      return nullptr;
+    }
+
+    for (auto &Arg : *TypeArgs)
+      ValidGenerics.push_back(Arg.get());
+  }
+
+  // Schedule cleanup at the end of this function
+  auto Cleanup = llvm::make_scope_exit([&] {
+    if (TypeArgs) {
+      for (size_t i = 0; i < TypeArgs->size(); ++i)
+        ValidGenerics.pop_back();
+    }
+  });
+
   // Parse parameter list
   auto Params =
       parseList<ParamDecl>(TokenKind::OpenParen, TokenKind::CloseParen, [&] {
@@ -71,8 +94,9 @@ std::unique_ptr<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
   if (!Body)
     return nullptr;
 
-  return std::make_unique<MethodDecl>(Span, Vis, Id, std::move(*Params),
-                                      ReturnTy, std::move(Body));
+  return std::make_unique<MethodDecl>(Span, Vis, Id, std::move(TypeArgs),
+                                      std::move(*Params), ReturnTy,
+                                      std::move(Body));
 }
 
 std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex,
@@ -118,8 +142,8 @@ std::unique_ptr<StructDecl> Parser::parseAnonymousStruct() {
   std::string StructId = std::format("@struct_{}", ++AnonymousStructCounter);
   std::vector<std::unique_ptr<MethodDecl>> Methods;
   return std::make_unique<StructDecl>(SrcSpan(Start, End), Visibility::Public,
-                                      StructId, std::move(*Fields),
-                                      std::move(Methods));
+                                      StructId, std::nullopt,
+                                      std::move(*Fields), std::move(Methods));
 }
 
 std::unique_ptr<VariantDecl> Parser::parseVariantDecl() {
