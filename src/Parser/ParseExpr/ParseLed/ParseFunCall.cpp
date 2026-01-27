@@ -10,7 +10,8 @@ namespace phi {
  *         Errors are emitted to DiagnosticManager.
  */
 std::unique_ptr<FunCallExpr>
-Parser::parseFunCall(std::unique_ptr<Expr> Callee) {
+Parser::parseFunCall(std::unique_ptr<Expr> Callee,
+                     std::optional<std::vector<TypeRef>> TypeArgs) {
   auto Args = parseList<Expr>(TokenKind::OpenParen, TokenKind::CloseParen,
                               &Parser::parseExpr);
 
@@ -19,6 +20,7 @@ Parser::parseFunCall(std::unique_ptr<Expr> Callee) {
     return nullptr;
 
   return std::make_unique<FunCallExpr>(Callee->getLocation(), std::move(Callee),
+                                       std::move(TypeArgs),
                                        std::move(Args.value()));
 }
 

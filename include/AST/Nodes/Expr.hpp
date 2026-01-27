@@ -445,11 +445,13 @@ public:
   //===--------------------------------------------------------------------===//
 
   FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
+              std::optional<std::vector<TypeRef>> TypeArgs,
               std::vector<std::unique_ptr<Expr>> Args);
 
 protected:
   // Constructor for derived classes to specify their own Kind
   FunCallExpr(Kind K, SrcLocation Location, std::unique_ptr<Expr> Callee,
+              std::optional<std::vector<TypeRef>> TypeArgs,
               std::vector<std::unique_ptr<Expr>> Args);
 
   FunCallExpr(FunCallExpr &&Other, Kind K)
@@ -498,6 +500,7 @@ public:
 
 private:
   std::unique_ptr<Expr> Callee;
+  std::optional<std::vector<TypeRef>> TypeArgs;
   std::vector<std::unique_ptr<Expr>> Args;
   FunDecl *Decl = nullptr;
 };
@@ -655,6 +658,7 @@ private:
 class AdtInit final : public Expr {
 public:
   AdtInit(SrcLocation Location, std::optional<std::string> TypeName,
+          std::optional<std::vector<TypeRef>> TypeArgs,
           std::vector<std::unique_ptr<MemberInit>> Inits);
   ~AdtInit() override;
 
@@ -718,6 +722,7 @@ public:
 
 private:
   std::optional<std::string> TypeName;
+  std::optional<std::vector<TypeRef>> TypeArgs;
   std::vector<std::unique_ptr<MemberInit>> Inits;
 
   AdtDecl *Decl = nullptr;
@@ -788,6 +793,7 @@ public:
 
   MethodCallExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
                  std::unique_ptr<Expr> Callee,
+                 std::optional<std::vector<TypeRef>> TypeArgs,
                  std::vector<std::unique_ptr<Expr>> Args);
   MethodCallExpr(FunCallExpr &&Call, std::unique_ptr<Expr> Base);
 

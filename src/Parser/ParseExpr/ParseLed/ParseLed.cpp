@@ -1,8 +1,10 @@
+#include "Lexer/TokenKind.hpp"
 #include "Parser/Parser.hpp"
 
 #include <memory>
 
 #include <llvm/Support/Casting.h>
+#include <optional>
 
 #include "AST/Nodes/Expr.hpp"
 
@@ -17,16 +19,27 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
   case TokenKind::Try:
     advanceToken();
     return std::make_unique<UnaryOp>(std::move(Lhs), Op, false); // postfix
+  case TokenKind::DoubleColon: {
+    advanceToken();
+    auto Res = parseTypeArgList();
+    if (!Res) {
+      return nullptr;
+    }
 
-  // Function call
+    if (peekKind() == TokenKind::OpenParen) {
+      return parseFunCall(std::move(Lhs), std::move(Res));
+    }
+
+    if (peekKind() == TokenKind::OpenBrace && !NoAdtInit) {
+      return parseAdtInit(std::move(Lhs), std::move(Res));
+    }
+  }
   case TokenKind::OpenParen:
-    return parseFunCall(std::move(Lhs));
-
-  // Struct init
+    return parseFunCall(std::move(Lhs), std::nullopt);
   case TokenKind::OpenBrace:
-    if (!NoStructInit)
-      return parseAdtInit(std::move(Lhs));
-
+    if (!NoAdtInit) {
+      return parseAdtInit(std::move(Lhs), std::nullopt);
+    }
   default:
     return Lhs;
   }
@@ -37,7 +50,7 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
   std::vector<TokenKind::Kind> Terminators = {
       TokenKind::Eof, TokenKind::Semicolon, TokenKind::Comma,
       TokenKind::CloseParen, TokenKind::CloseBracket};
-  if (NoStructInit) {
+  if (NoAdtInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
 

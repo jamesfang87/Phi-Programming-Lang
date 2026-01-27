@@ -10,7 +10,9 @@
 
 namespace phi {
 
-std::unique_ptr<AdtInit> Parser::parseAdtInit(std::unique_ptr<Expr> InitExpr) {
+std::unique_ptr<AdtInit>
+Parser::parseAdtInit(std::unique_ptr<Expr> InitExpr,
+                     std::optional<std::vector<TypeRef>> TypeArgs) {
   auto *const DeclRef = llvm::dyn_cast<DeclRefExpr>(InitExpr.get());
   std::string StructId = DeclRef->getId();
 
@@ -19,6 +21,7 @@ std::unique_ptr<AdtInit> Parser::parseAdtInit(std::unique_ptr<Expr> InitExpr) {
 
   return (!Inits) ? nullptr
                   : std::make_unique<AdtInit>(InitExpr->getLocation(), StructId,
+                                              std::move(TypeArgs),
                                               std::move(Inits.value()));
 }
 

@@ -5,6 +5,8 @@
 #include <optional>
 #include <utility>
 
+#include <llvm/ADT/ScopeExit.h>
+
 #include "AST/Nodes/Decl.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/TokenKind.hpp"
@@ -29,6 +31,20 @@ std::optional<Visibility> Parser::parseItemVisibility() {
   }
 }
 
+std::optional<std::vector<std::unique_ptr<TypeArgDecl>>>
+Parser::parseTypeArgDecls() {
+  return parseList<TypeArgDecl>(
+      TokenKind::OpenCaret, TokenKind::CloseCaret,
+      [&] -> std::unique_ptr<TypeArgDecl> {
+        if (!expectToken(TokenKind::Identifier, "type argument", false)) {
+          return nullptr;
+        }
+
+        return std::make_unique<TypeArgDecl>(peekToken().getSpan(),
+                                             advanceToken().getLexeme());
+      });
+}
+
 std::unique_ptr<FunDecl> Parser::parseFunDecl(Visibility Vis) {
   assert(advanceToken().getKind() == TokenKind::FunKw);
 
@@ -45,6 +61,25 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl(Visibility Vis) {
   }
   std::string Id = peekToken().getLexeme();
   SrcSpan Span = advanceToken().getSpan();
+
+  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+
+  if (peekKind() == TokenKind::OpenCaret) {
+    TypeArgs = parseTypeArgDecls();
+    if (!TypeArgs)
+      return nullptr;
+
+    for (auto &Arg : *TypeArgs)
+      ValidGenerics.push_back(Arg.get());
+  }
+
+  // Schedule cleanup at the end of this function
+  auto Cleanup = llvm::make_scope_exit([&] {
+    if (TypeArgs) {
+      for (size_t i = 0; i < TypeArgs->size(); ++i)
+        ValidGenerics.pop_back();
+    }
+  });
 
   // Parse parameter list
   auto Params = parseList<ParamDecl>(TokenKind(TokenKind::OpenParen),
@@ -67,7 +102,8 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl(Visibility Vis) {
   if (!Body)
     return nullptr;
 
-  return std::make_unique<FunDecl>(Span, Vis, std::move(Id), std::move(*Params),
+  return std::make_unique<FunDecl>(Span, Vis, std::move(Id),
+                                   std::move(TypeArgs), std::move(*Params),
                                    ReturnTy, std::move(Body));
 }
 
@@ -76,6 +112,25 @@ std::unique_ptr<EnumDecl> Parser::parseEnumDecl(Visibility Vis) {
   expectToken(TokenKind::Identifier, "", false);
   SrcSpan Span = peekToken().getSpan();
   std::string Id = advanceToken().getLexeme();
+
+  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+  if (peekKind() == TokenKind::OpenCaret) {
+    TypeArgs = parseTypeArgDecls();
+    if (!TypeArgs) {
+      return nullptr;
+    }
+
+    for (auto &Arg : *TypeArgs)
+      ValidGenerics.push_back(Arg.get());
+  }
+
+  // Schedule cleanup at the end of this function
+  auto Cleanup = llvm::make_scope_exit([&] {
+    if (TypeArgs) {
+      for (size_t i = 0; i < TypeArgs->size(); ++i)
+        ValidGenerics.pop_back();
+    }
+  });
 
   expectToken(TokenKind::OpenBrace);
   std::vector<std::unique_ptr<VariantDecl>> Variants;
@@ -112,18 +167,36 @@ std::unique_ptr<EnumDecl> Parser::parseEnumDecl(Visibility Vis) {
     }
   }
 
-  return std::make_unique<EnumDecl>(Span, Vis, Id, std::move(Variants),
-                                    std::move(Methods));
+  return std::make_unique<EnumDecl>(Span, Vis, Id, std::move(TypeArgs),
+                                    std::move(Variants), std::move(Methods));
 }
 
 std::unique_ptr<StructDecl> Parser::parseStructDecl(Visibility Vis) {
   assert(advanceToken().getKind() == TokenKind::StructKw);
-  expectToken(TokenKind::Identifier, "", false);
+  expectToken(TokenKind::Identifier, "struct declaration", false);
   SrcSpan Span = peekToken().getSpan();
   std::string Id = advanceToken().getLexeme();
 
-  expectToken(TokenKind::OpenBrace);
+  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+  if (peekKind() == TokenKind::OpenCaret) {
+    TypeArgs = parseTypeArgDecls();
+    if (!TypeArgs) {
+      return nullptr;
+    }
 
+    for (auto &Arg : *TypeArgs)
+      ValidGenerics.push_back(Arg.get());
+  }
+
+  // Schedule cleanup at the end of this function
+  auto Cleanup = llvm::make_scope_exit([&] {
+    if (TypeArgs) {
+      for (size_t i = 0; i < TypeArgs->size(); ++i)
+        ValidGenerics.pop_back();
+    }
+  });
+
+  expectToken(TokenKind::OpenBrace);
   uint32_t FieldIndex = 0;
   std::vector<std::unique_ptr<FieldDecl>> Fields;
   std::vector<std::unique_ptr<MethodDecl>> Methods;
@@ -152,8 +225,8 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl(Visibility Vis) {
     }
   }
 
-  return std::make_unique<StructDecl>(Span, Vis, Id, std::move(Fields),
-                                      std::move(Methods));
+  return std::make_unique<StructDecl>(Span, Vis, Id, std::move(TypeArgs),
+                                      std::move(Fields), std::move(Methods));
 }
 
 } // namespace phi

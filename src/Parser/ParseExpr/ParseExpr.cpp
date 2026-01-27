@@ -4,6 +4,7 @@
 #include <cassert>
 #include <initializer_list>
 #include <memory>
+#include <print>
 #include <vector>
 
 #include <llvm/Support/Casting.h>
@@ -20,7 +21,7 @@ std::unique_ptr<Expr> Parser::parseExpr() {
       TokenKind::Eof,        TokenKind::Semicolon,    TokenKind::Comma,
       TokenKind::CloseParen, TokenKind::CloseBracket, TokenKind::CloseBrace,
       TokenKind::Colon};
-  if (NoStructInit) {
+  if (NoAdtInit) {
     Terminators.push_back(TokenKind::OpenBrace);
   }
 
