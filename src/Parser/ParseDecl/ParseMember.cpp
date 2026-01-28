@@ -1,8 +1,11 @@
+#include "AST/Nodes/Decl.hpp"
 #include "Parser/Parser.hpp"
 
 #include <llvm/ADT/ScopeExit.h>
 
+#include <memory>
 #include <optional>
+#include <print>
 
 namespace phi {
 
@@ -40,23 +43,22 @@ std::unique_ptr<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
   SrcSpan Span = peekToken().getSpan();
   std::string Id = advanceToken().getLexeme();
 
-  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+  std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs;
   if (peekKind() == TokenKind::OpenCaret) {
-    TypeArgs = parseTypeArgDecls();
-    if (!TypeArgs) {
+    auto Res = parseTypeArgDecls();
+    if (!Res) {
       return nullptr;
     }
 
-    for (auto &Arg : *TypeArgs)
+    TypeArgs = std::move(*Res);
+    for (auto &Arg : TypeArgs)
       ValidGenerics.push_back(Arg.get());
   }
 
   // Schedule cleanup at the end of this function
   auto Cleanup = llvm::make_scope_exit([&] {
-    if (TypeArgs) {
-      for (size_t i = 0; i < TypeArgs->size(); ++i)
-        ValidGenerics.pop_back();
-    }
+    for (size_t i = 0; i < TypeArgs.size(); ++i)
+      ValidGenerics.pop_back();
   });
 
   // Parse parameter list
@@ -74,16 +76,22 @@ std::unique_ptr<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
       });
   if (!Params)
     return nullptr;
-  if (Params->front()->getId() != "this") {
+  if (Params->size() == 0) {
     error("first parameter of method declaration must be `this`")
-        .with_primary_label(Params->front()->getSpan())
+        .with_primary_label(Span, "add `const this` or `var this` to the "
+                                  "parameter list of this function.")
+        .emit(*Diags);
+  } else if (Params->front()->getId() != "this") {
+    error("first parameter of method declaration must be `this`")
+        .with_primary_label(Params->front()->getSpan(),
+                            "issue with this parameter")
         .emit(*Diags);
   }
 
   // Handle optional return type
   TypeRef ReturnTy = TypeCtx::getBuiltin(BuiltinTy::Null, Span);
   if (matchToken(TokenKind::Arrow)) {
-    auto Res = parseType();
+    auto Res = parseType(false);
     if (!Res)
       return nullptr;
     ReturnTy = *Res;
@@ -140,10 +148,10 @@ std::unique_ptr<StructDecl> Parser::parseAnonymousStruct() {
   // Generate a unique name for the desugared anonymous struct
   static uint32_t AnonymousStructCounter = 0;
   std::string StructId = std::format("@struct_{}", ++AnonymousStructCounter);
-  std::vector<std::unique_ptr<MethodDecl>> Methods;
-  return std::make_unique<StructDecl>(SrcSpan(Start, End), Visibility::Public,
-                                      StructId, std::nullopt,
-                                      std::move(*Fields), std::move(Methods));
+  return std::make_unique<StructDecl>(
+      SrcSpan(Start, End), Visibility::Public, StructId,
+      std::vector<std::unique_ptr<TypeArgDecl>>{}, std::move(*Fields),
+      std::vector<std::unique_ptr<MethodDecl>>{});
 }
 
 std::unique_ptr<VariantDecl> Parser::parseVariantDecl() {
@@ -165,7 +173,7 @@ std::unique_ptr<VariantDecl> Parser::parseVariantDecl() {
   // Now the current token must be a Colon
   std::optional<TypeRef> PayloadType = std::nullopt;
   if (peekKind() != TokenKind::OpenBrace) {
-    PayloadType = parseType();
+    PayloadType = parseType(false);
   } else {
     auto Res = parseAnonymousStruct();
     if (!Res)

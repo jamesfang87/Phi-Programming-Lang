@@ -303,7 +303,8 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
   if (!Mutability)
     return nullptr;
 
-  auto Var = parseBinding({.Type = Optional, .Init = Required});
+  auto Var = parseBinding(
+      {.Type = Optional, .Init = Required, .AllowPlaceholderForType = true});
   if (!Var)
     return nullptr;
 

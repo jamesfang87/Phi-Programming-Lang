@@ -1,29 +1,29 @@
 #include "Sema/NameResolution/NameResolver.hpp"
 
+#include <llvm/Support/Casting.h>
+
 #include <cassert>
-#include <string>
-#include <unordered_map>
 #include <variant>
+
+#include "AST/Nodes/Decl.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
 
-bool NameResolver::resolveHeader(Decl &D) {
-  if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
-    return resolveHeader(*Struct);
-  }
-
-  if (auto *Enum = llvm::dyn_cast<EnumDecl>(&D)) {
-    return resolveHeader(*Enum);
+bool NameResolver::resolveHeader(ItemDecl &D) {
+  if (auto *Adt = llvm::dyn_cast<AdtDecl>(&D)) {
+    return resolveHeader(*Adt);
   }
 
   if (auto *Fun = llvm::dyn_cast<FunDecl>(&D)) {
     return resolveHeader(*Fun);
   }
 
-  return true;
+  static_assert("ModuleDecl not yet supported");
+  return false;
 }
 
-bool NameResolver::resolveBodies(Decl &D) {
+bool NameResolver::resolveBodies(ItemDecl &D) {
   if (auto *Struct = llvm::dyn_cast<StructDecl>(&D)) {
     return visit(Struct);
   }
@@ -36,42 +36,37 @@ bool NameResolver::resolveBodies(Decl &D) {
     return visit(Fun);
   }
 
+  static_assert("ModuleDecl not yet supported");
   return true;
 }
 
 bool NameResolver::resolveHeader(FunDecl &D) {
-  bool Success = visit(D.getReturnType());
-
-  // Resolve parameters
-  for (const auto &Param : D.getParams()) {
-    Success = visit(Param.get()) && Success;
-  }
-
   if (!SymbolTab.insert(&D)) {
     emitRedefinitionError("Function", SymbolTab.lookup(D), &D);
+    return false;
   }
 
-  return Success;
+  return true;
 }
 
-bool NameResolver::resolveHeader(StructDecl &D) {
+bool NameResolver::resolveHeader(AdtDecl &D) {
   if (!SymbolTab.insert(&D)) {
-    emitRedefinitionError("Struct", SymbolTab.lookup(D), &D);
+    emitRedefinitionError("Custom type", SymbolTab.lookup(D), &D);
     return false;
   }
   assert(SymbolTab.lookup(D));
 
-  return visit(D.getType());
+  visit(D.getType());
+  return true;
 }
 
-bool NameResolver::resolveHeader(EnumDecl &D) {
+bool NameResolver::resolveHeader(MethodDecl &D) {
   if (!SymbolTab.insert(&D)) {
-    emitRedefinitionError("Enum", SymbolTab.lookup(D), &D);
+    emitRedefinitionError("Method", SymbolTab.lookup(D), &D);
     return false;
   }
-  assert(SymbolTab.lookup(D));
 
-  return visit(D.getType());
+  return true;
 }
 
 bool NameResolver::visit(FunDecl *D) {
@@ -84,9 +79,15 @@ bool NameResolver::visit(FunDecl *D) {
   // Create function scope
   SymbolTable::ScopeGuard FunctionScope(SymbolTab);
 
-  // Add parameters to function scope
-  bool Success = true;
+  bool Success = visit(D->getReturnType());
+
+  for (const auto &TypeArg : D->getTypeArgs()) {
+    SymbolTab.insert(TypeArg.get());
+  }
+
   for (const auto &Param : D->getParams()) {
+    Success = visit(Param.get()) && Success;
+
     if (!SymbolTab.insert(Param.get())) {
       emitRedefinitionError("Parameter", SymbolTab.lookup(*Param), Param.get());
       Success = false;
@@ -109,9 +110,15 @@ bool NameResolver::visit(MethodDecl *D) {
   // Create function scope
   SymbolTable::ScopeGuard FunctionScope(SymbolTab);
 
-  // Add parameters to function scope
-  bool Success = true;
+  bool Success = visit(D->getReturnType());
+
+  for (const auto &TypeArg : D->getTypeArgs()) {
+    SymbolTab.insert(TypeArg.get());
+  }
+
   for (const auto &Param : D->getParams()) {
+    Success = visit(Param.get()) && Success;
+
     if (!SymbolTab.insert(Param.get())) {
       emitRedefinitionError("Parameter", SymbolTab.lookup(*Param), Param.get());
       Success = false;
@@ -123,18 +130,32 @@ bool NameResolver::visit(MethodDecl *D) {
 }
 
 bool NameResolver::visit(StructDecl *D) {
-  SymbolTable::ScopeGuard StructScope(SymbolTab);
   assert(D);
 
-  bool Success = true;
+  SymbolTable::ScopeGuard StructScope(SymbolTab);
+
+  bool Success = visit(D->getType());
+
+  for (const auto &TypeArg : D->getTypeArgs()) {
+    if (!SymbolTab.insert(TypeArg.get())) {
+      error(std::format("Redefinition of type argument `{}`", TypeArg->getId()))
+          .with_primary_label(TypeArg->getSpan(), "here")
+          .emit(*Diags);
+      Success = false;
+    }
+  }
 
   for (auto &Field : D->getFields()) {
+    if (!SymbolTab.insert(Field.get())) {
+      emitRedefinitionError("Field", SymbolTab.lookup(*Field), Field.get());
+      Success = false;
+    }
+
     Success = visit(Field.get()) && Success;
-    SymbolTab.insert(Field.get());
   }
 
   for (auto &Method : D->getMethods()) {
-    SymbolTab.insert(Method.get());
+    Success = resolveHeader(*Method) && Success;
   }
 
   for (auto &Method : D->getMethods()) {
@@ -158,22 +179,33 @@ bool NameResolver::visit(FieldDecl *D) {
 }
 
 bool NameResolver::visit(EnumDecl *D) {
-  bool Success = true;
-  std::unordered_map<std::string, VariantDecl *> SeenVariants;
+  assert(D);
+
+  SymbolTable::ScopeGuard EnumScope(SymbolTab);
+
+  bool Success = visit(D->getType());
+
+  for (const auto &TypeArg : D->getTypeArgs()) {
+    if (!SymbolTab.insert(TypeArg.get())) {
+      error(std::format("Redefinition of type argument `{}`", TypeArg->getId()))
+          .with_primary_label(TypeArg->getSpan(), "here")
+          .emit(*Diags);
+      Success = false;
+    }
+  }
+
   for (auto &Variant : D->getVariants()) {
-    if (SeenVariants.contains(Variant->getId())) {
-      assert(SeenVariants[Variant->getId()]);
-      emitRedefinitionError("Variant", SeenVariants[Variant->getId()],
+    if (!SymbolTab.insert(Variant.get())) {
+      emitRedefinitionError("Variant", SymbolTab.lookup(*Variant),
                             Variant.get());
       Success = false;
     }
-    SeenVariants[Variant->getId()] = Variant.get();
 
     Success = visit(Variant.get()) && Success;
   }
 
   for (auto &Method : D->getMethods()) {
-    SymbolTab.insert(Method.get());
+    Success = resolveHeader(*Method) && Success;
   }
 
   for (auto &Method : D->getMethods()) {

@@ -40,7 +40,7 @@ Parser::parseBinding(const BindingPolicy &Policy) {
       return std::nullopt;
     }
 
-    auto Ty = parseType();
+    auto Ty = parseType(Policy.AllowPlaceholderForType);
     if (!Ty)
       return std::nullopt;
 

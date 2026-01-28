@@ -199,7 +199,7 @@ void DeclRefExpr::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 FunCallExpr::FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
-                         std::optional<std::vector<TypeRef>> TypeArgs,
+                         std::vector<TypeRef> TypeArgs,
                          std::vector<std::unique_ptr<Expr>> Args)
     : Expr(Expr::Kind::FunCallKind, std::move(Location)),
       Callee(std::move(Callee)), TypeArgs(std::move(TypeArgs)),
@@ -207,7 +207,7 @@ FunCallExpr::FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
 
 FunCallExpr::FunCallExpr(Kind K, SrcLocation Location,
                          std::unique_ptr<Expr> Callee,
-                         std::optional<std::vector<TypeRef>> TypeArgs,
+                         std::vector<TypeRef> TypeArgs,
                          std::vector<std::unique_ptr<Expr>> Args)
     : Expr(K, std::move(Location)), Callee(std::move(Callee)),
       TypeArgs(std::move(TypeArgs)), Args(std::move(Args)) {}
@@ -294,7 +294,7 @@ void MemberInit::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 AdtInit::AdtInit(SrcLocation Location, std::optional<std::string> TypeName,
-                 std::optional<std::vector<TypeRef>> TypeArgs,
+                 std::vector<TypeRef> TypeArgs,
                  std::vector<std::unique_ptr<MemberInit>> Inits)
     : Expr(Expr::Kind::AdtInitKind, Location,
            TypeName ? TypeCtx::getAdt(*TypeName, nullptr, SrcSpan(Location))
@@ -313,10 +313,10 @@ void AdtInit::emit(int Level) const {
     std::println("{}Referring to: {}", indent(Level + 1), Decl->getId());
   std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Type Args:", indent(Level + 1));
-  if (!TypeArgs) {
+  if (!hasTypeArgs()) {
     println("{}None.", indent(Level + 2));
   } else {
-    for (const auto &Arg : *TypeArgs) {
+    for (const auto &Arg : TypeArgs) {
       println("{}{}", indent(Level + 2), Arg.toString());
     }
   }
@@ -352,7 +352,7 @@ void FieldAccessExpr::emit(int Level) const {
 
 MethodCallExpr::MethodCallExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
                                std::unique_ptr<Expr> Callee,
-                               std::optional<std::vector<TypeRef>> TypeArgs,
+                               std::vector<TypeRef> TypeArgs,
                                std::vector<std::unique_ptr<Expr>> Args)
     : FunCallExpr(Expr::Kind::MethodCallKind, std::move(Location),
                   std::move(Callee), std::move(TypeArgs), std::move(Args)),

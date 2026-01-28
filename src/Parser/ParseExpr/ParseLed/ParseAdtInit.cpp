@@ -10,9 +10,8 @@
 
 namespace phi {
 
-std::unique_ptr<AdtInit>
-Parser::parseAdtInit(std::unique_ptr<Expr> InitExpr,
-                     std::optional<std::vector<TypeRef>> TypeArgs) {
+std::unique_ptr<AdtInit> Parser::parseAdtInit(std::unique_ptr<Expr> InitExpr,
+                                              std::vector<TypeRef> TypeArgs) {
   auto *const DeclRef = llvm::dyn_cast<DeclRefExpr>(InitExpr.get());
   std::string StructId = DeclRef->getId();
 

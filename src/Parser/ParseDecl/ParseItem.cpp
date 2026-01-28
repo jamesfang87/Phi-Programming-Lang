@@ -40,8 +40,9 @@ Parser::parseTypeArgDecls() {
           return nullptr;
         }
 
-        return std::make_unique<TypeArgDecl>(peekToken().getSpan(),
-                                             advanceToken().getLexeme());
+        auto Span = peekToken().getSpan();
+        auto Id = advanceToken().getLexeme();
+        return std::make_unique<TypeArgDecl>(Span, Id);
       });
 }
 
@@ -62,23 +63,21 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl(Visibility Vis) {
   std::string Id = peekToken().getLexeme();
   SrcSpan Span = advanceToken().getSpan();
 
-  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
-
+  std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs;
   if (peekKind() == TokenKind::OpenCaret) {
-    TypeArgs = parseTypeArgDecls();
-    if (!TypeArgs)
+    auto Res = parseTypeArgDecls();
+    if (!Res)
       return nullptr;
 
-    for (auto &Arg : *TypeArgs)
+    TypeArgs = std::move(*Res);
+    for (auto &Arg : TypeArgs)
       ValidGenerics.push_back(Arg.get());
   }
 
   // Schedule cleanup at the end of this function
   auto Cleanup = llvm::make_scope_exit([&] {
-    if (TypeArgs) {
-      for (size_t i = 0; i < TypeArgs->size(); ++i)
-        ValidGenerics.pop_back();
-    }
+    for (size_t i = 0; i < TypeArgs.size(); ++i)
+      ValidGenerics.pop_back();
   });
 
   // Parse parameter list
@@ -91,7 +90,7 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl(Visibility Vis) {
   // Handle optional return type
   TypeRef ReturnTy = TypeCtx::getBuiltin(BuiltinTy::Null, Span);
   if (matchToken(TokenKind::Arrow)) {
-    auto Res = parseType();
+    auto Res = parseType(false);
     if (!Res)
       return nullptr;
     ReturnTy = *Res;
@@ -113,23 +112,22 @@ std::unique_ptr<EnumDecl> Parser::parseEnumDecl(Visibility Vis) {
   SrcSpan Span = peekToken().getSpan();
   std::string Id = advanceToken().getLexeme();
 
-  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+  std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs;
   if (peekKind() == TokenKind::OpenCaret) {
-    TypeArgs = parseTypeArgDecls();
-    if (!TypeArgs) {
+    auto Res = parseTypeArgDecls();
+    if (!Res) {
       return nullptr;
     }
 
-    for (auto &Arg : *TypeArgs)
+    TypeArgs = std::move(*Res);
+    for (auto &Arg : TypeArgs)
       ValidGenerics.push_back(Arg.get());
   }
 
   // Schedule cleanup at the end of this function
   auto Cleanup = llvm::make_scope_exit([&] {
-    if (TypeArgs) {
-      for (size_t i = 0; i < TypeArgs->size(); ++i)
-        ValidGenerics.pop_back();
-    }
+    for (size_t i = 0; i < TypeArgs.size(); ++i)
+      ValidGenerics.pop_back();
   });
 
   expectToken(TokenKind::OpenBrace);
@@ -177,23 +175,23 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl(Visibility Vis) {
   SrcSpan Span = peekToken().getSpan();
   std::string Id = advanceToken().getLexeme();
 
-  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+  std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs;
   if (peekKind() == TokenKind::OpenCaret) {
-    TypeArgs = parseTypeArgDecls();
-    if (!TypeArgs) {
+    auto Res = parseTypeArgDecls();
+    if (!Res) {
       return nullptr;
     }
 
-    for (auto &Arg : *TypeArgs)
+    TypeArgs = std::move(*Res);
+    for (auto &Arg : TypeArgs) {
       ValidGenerics.push_back(Arg.get());
+    }
   }
 
   // Schedule cleanup at the end of this function
   auto Cleanup = llvm::make_scope_exit([&] {
-    if (TypeArgs) {
-      for (size_t i = 0; i < TypeArgs->size(); ++i)
-        ValidGenerics.pop_back();
-    }
+    for (size_t i = 0; i < TypeArgs.size(); ++i)
+      ValidGenerics.pop_back();
   });
 
   expectToken(TokenKind::OpenBrace);

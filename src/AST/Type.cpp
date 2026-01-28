@@ -115,7 +115,7 @@ std::string RefTy::toString() const { return "&" + Pointee.toString(); }
 
 std::string VarTy::toString() const { return "T" + std::to_string(N); }
 
-std::string GenericTy::toString() const { return Id; };
+std::string GenericTy::toString() const { return "Generic: " + Id; };
 
 std::string ErrTy::toString() const { return "Error"; }
 
