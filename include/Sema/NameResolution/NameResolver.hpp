@@ -61,11 +61,11 @@ public:
   // Declaration Resolution Methods, for Decls with Headers and Bodies
   //===--------------------------------------------------------------------===//
 
-  bool resolveHeader(Decl &D);
-  bool resolveHeader(StructDecl &D);
-  bool resolveHeader(EnumDecl &D);
+  bool resolveHeader(ItemDecl &D);
+  bool resolveHeader(AdtDecl &D);
   bool resolveHeader(FunDecl &D);
-  bool resolveBodies(Decl &D);
+  bool resolveHeader(MethodDecl &D);
+  bool resolveBodies(ItemDecl &D);
 
   //===--------------------------------------------------------------------===//
   // Expression Visitor Methods -> return bool (success/failure)

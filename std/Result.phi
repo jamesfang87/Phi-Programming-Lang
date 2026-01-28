@@ -31,9 +31,9 @@ public enum Result<T, E> {
 }
 
 public fun Ok<T, E>(const value: T) -> Result<T, E> {
-    return Result<T, E> { Ok: value };
+    return Result::<T, E> { Ok: value };
 }
 
 public fun Err<T, E> (const error: E) -> Result<T, E> {
-    return Result<T, E> { Err: error };
+    return Result::<T, E> { Err: error };
 }
