@@ -15,6 +15,7 @@ namespace phi {
 class BuiltinTy;
 class AdtTy;
 class AppliedTy;
+class GenericTy;
 class TupleTy;
 class FunTy;
 class PtrTy;
@@ -46,6 +47,7 @@ public:
   [[nodiscard]] bool isBuiltin() const { return llvm::isa<BuiltinTy>(this); }
   [[nodiscard]] bool isAdt() const { return llvm::isa<AdtTy>(this); }
   [[nodiscard]] bool isApplied() const { return llvm::isa<AppliedTy>(this); }
+  [[nodiscard]] bool isGeneric() const { return llvm::isa<GenericTy>(this); }
   [[nodiscard]] bool isTuple() const { return llvm::isa<TupleTy>(this); }
   [[nodiscard]] bool isFun() const { return llvm::isa<FunTy>(this); }
   [[nodiscard]] bool isPtr() const { return llvm::isa<PtrTy>(this); }
@@ -71,6 +73,7 @@ public:
   [[nodiscard]] bool isBuiltin() const { return llvm::isa<BuiltinTy>(Ptr); }
   [[nodiscard]] bool isAdt() const { return llvm::isa<AdtTy>(Ptr); }
   [[nodiscard]] bool isApplied() const { return llvm::isa<AppliedTy>(Ptr); }
+  [[nodiscard]] bool isGeneric() const { return llvm::isa<GenericTy>(Ptr); }
   [[nodiscard]] bool isTuple() const { return llvm::isa<TupleTy>(Ptr); }
   [[nodiscard]] bool isFun() const { return llvm::isa<FunTy>(Ptr); }
   [[nodiscard]] bool isPtr() const { return llvm::isa<PtrTy>(Ptr); }
@@ -244,7 +247,7 @@ private:
 class GenericTy final : public Type {
 public:
   explicit GenericTy(std::string Id, class TypeArgDecl *D = nullptr)
-      : Type(TypeKind::Adt), Id(std::move(Id)), Decl(D) {}
+      : Type(TypeKind::Generic), Id(std::move(Id)), Decl(D) {}
 
   [[nodiscard]] const std::string &getId() const { return Id; }
   [[nodiscard]] const TypeArgDecl *getDecl() const { return Decl; };

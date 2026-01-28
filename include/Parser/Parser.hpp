@@ -119,14 +119,14 @@ private:
   // Type System Parsing
   //===--------------------------------------------------------------------===//
 
-  std::optional<TypeRef> parseType();
+  std::optional<TypeRef> parseType(bool AllowPlaceholder);
 
   enum class Indirection : uint8_t { Ptr, Ref, None };
   std::pair<Indirection, std::optional<SrcSpan>> parseIndirection();
   // parses stuff like tuples, adts, builtins; does not handle indirections or
   // trailing type args
-  std::optional<TypeRef> parseTypeBase();
-  std::optional<std::vector<TypeRef>> parseTypeArgList();
+  std::optional<TypeRef> parseTypeBase(bool AllowPlaceholder);
+  std::optional<std::vector<TypeRef>> parseTypeArgList(bool AllowPlaceholder);
 
   //===--------------------------------------------------------------------===//
   // Function Declaration Parsing
@@ -178,12 +178,10 @@ private:
                                      std::unique_ptr<Expr> Expr);
   std::unique_ptr<Expr> parseInfix(const Token &Op, std::unique_ptr<Expr> Expr,
                                    int RBp);
-  std::unique_ptr<FunCallExpr>
-  parseFunCall(std::unique_ptr<Expr> Callee,
-               std::optional<std::vector<TypeRef>> TypeArgs);
-  std::unique_ptr<AdtInit>
-  parseAdtInit(std::unique_ptr<Expr> Expr,
-               std::optional<std::vector<TypeRef>> TypeArgs);
+  std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee,
+                                            std::vector<TypeRef> TypeArgs);
+  std::unique_ptr<AdtInit> parseAdtInit(std::unique_ptr<Expr> Expr,
+                                        std::vector<TypeRef> TypeArgs);
   std::unique_ptr<MemberInit> parseMemberInit();
   std::unique_ptr<MatchExpr> parseMatchExpr();
 
@@ -202,6 +200,7 @@ private:
   struct BindingPolicy {
     Policy Type = Parser::Policy::Optional;
     Policy Init = Parser::Policy::Optional;
+    bool AllowPlaceholderForType = false;
   };
 
   std::optional<TypedBinding> parseBinding(const BindingPolicy &Policy);
@@ -292,7 +291,7 @@ private:
     std::vector<T> Content;
     while (!atEOF() && peekToken().getKind() != Closing) {
       std::optional<T> Res;
-      if constexpr (requires { std::invoke(Fun, this); }) {
+      if constexpr (std::is_invocable_v<F, Parser *>) {
         Res = std::invoke(Fun, this);
       } else {
         Res = std::invoke(Fun);

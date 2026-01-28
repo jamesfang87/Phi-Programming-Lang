@@ -120,7 +120,7 @@ protected:
   // Constructors
   //===--------------------------------------------------------------------===//
   ItemDecl(Kind K, SrcSpan Span, Visibility Vis, std::string Id,
-           std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs)
+           std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs)
       : NamedDecl(K, Span, std::move(Id)), TheVisibility(Vis),
         TypeArgs(std::move(TypeArgs)) {}
 
@@ -129,6 +129,8 @@ public:
   // Getters & Setters
   //===--------------------------------------------------------------------===//
 
+  [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
+  [[nodiscard]] auto &getTypeArgs() const { return TypeArgs; }
   [[nodiscard]] Visibility getVisibility() const { return TheVisibility; }
   void setVisibility(Visibility Vis) { TheVisibility = Vis; }
 
@@ -149,7 +151,7 @@ public:
 
 private:
   Visibility TheVisibility;
-  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+  std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs;
 };
 
 //===----------------------------------------------------------------------===//
@@ -317,13 +319,15 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   MethodDecl(SrcSpan Span, Visibility Vis, std::string Id,
-             std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
+             std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
              std::vector<std::unique_ptr<ParamDecl>> Params, TypeRef ReturnType,
              std::unique_ptr<Block> Body);
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
+  [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
+  [[nodiscard]] auto &getTypeArgs() const { return TypeArgs; }
   [[nodiscard]] auto &getParams() const { return Params; }
   [[nodiscard]] auto &getReturnType() const { return ReturnType; }
   [[nodiscard]] auto &getBody() const { return *Body; }
@@ -339,7 +343,7 @@ public:
   void emit(int Level) const override;
 
 private:
-  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs;
+  std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs;
   std::vector<std::unique_ptr<ParamDecl>> Params;
   TypeRef ReturnType;
   std::unique_ptr<Block> Body;
@@ -386,7 +390,7 @@ protected:
   // Constructors
   //===--------------------------------------------------------------------===//
   AdtDecl(Kind K, SrcSpan Span, Visibility Vis, std::string Id,
-          std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
+          std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
           std::vector<std::unique_ptr<MethodDecl>> Methods)
       : ItemDecl(K, Span, Vis, Id, std::move(TypeArgs)),
         Type(TypeCtx::getAdt(std::move(Id), this, Span)),
@@ -401,11 +405,15 @@ public:
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
-  [[nodiscard]] auto getType() const { return Type; }
+  [[nodiscard]] auto &getType() const { return Type; }
   [[nodiscard]] auto &getMethods() const { return Methods; }
   [[nodiscard]] auto *getMethod(const std::string &Id) const {
     auto It = MethodMap.find(Id);
     return It != MethodMap.end() ? It->second : nullptr;
+  }
+
+  static bool classof(const Decl *D) {
+    return D->getKind() == Kind::Struct || D->getKind() == Kind::Enum;
   }
 
 protected:
@@ -424,7 +432,7 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   StructDecl(SrcSpan Span, Visibility Vis, std::string Id,
-             std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
+             std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
              std::vector<std::unique_ptr<FieldDecl>> Fields,
              std::vector<std::unique_ptr<MethodDecl>> Methods);
 
@@ -462,7 +470,7 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   EnumDecl(SrcSpan Span, Visibility Vis, std::string Id,
-           std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
+           std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
            std::vector<std::unique_ptr<VariantDecl>> Variants,
            std::vector<std::unique_ptr<MethodDecl>> Methods);
 
@@ -500,7 +508,7 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   FunDecl(SrcSpan Span, Visibility Vis, std::string Id,
-          std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
+          std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
           std::vector<std::unique_ptr<ParamDecl>> Params, TypeRef ReturnType,
           std::unique_ptr<Block> Body);
 

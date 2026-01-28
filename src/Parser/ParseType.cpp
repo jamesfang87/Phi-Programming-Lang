@@ -16,26 +16,26 @@
 
 namespace phi {
 
-std::optional<TypeRef> Parser::parseType() {
+std::optional<TypeRef> Parser::parseType(bool AllowPlaceholder) {
   // Error type must exist by self
   if (peekKind() == TokenKind::Bang) {
     return TypeCtx::getErr(advanceToken().getSpan());
   }
 
   // Placeholder type
-  if (peekKind() == TokenKind::Wildcard) {
+  if (peekKind() == TokenKind::Wildcard && AllowPlaceholder) {
     return TypeCtx::getVar(VarTy::Any, advanceToken().getSpan());
   }
 
   auto [Kind, IndirectionSpan] = parseIndirection();
 
-  auto Base = parseTypeBase();
+  auto Base = parseTypeBase(AllowPlaceholder);
   if (!Base)
     return std::nullopt;
 
   std::optional<std::vector<TypeRef>> TypeArgs;
   if (peekKind() == TokenKind::OpenCaret) {
-    TypeArgs = parseTypeArgList();
+    TypeArgs = parseTypeArgList(AllowPlaceholder);
     if (!TypeArgs)
       return std::nullopt;
   }
@@ -75,11 +75,12 @@ Parser::parseIndirection() {
   return std::make_pair(Kind, IndirectionSpan);
 }
 
-std::optional<TypeRef> Parser::parseTypeBase() {
+std::optional<TypeRef> Parser::parseTypeBase(bool AllowPlaceholder) {
   if (peekKind() == TokenKind::OpenParen) {
     SrcLocation Start = peekToken().getStart();
-    std::optional<std::vector<TypeRef>> Temp = parseValueList<TypeRef>(
-        TokenKind::OpenParen, TokenKind::CloseParen, &Parser::parseType);
+    std::optional<std::vector<TypeRef>> Temp =
+        parseValueList<TypeRef>(TokenKind::OpenParen, TokenKind::CloseParen,
+                                [&] { return parseType(AllowPlaceholder); });
 
     if (!Temp) {
       return std::nullopt;
@@ -126,9 +127,10 @@ std::optional<TypeRef> Parser::parseTypeBase() {
                                     : TypeCtx::getBuiltin(It->second, Span);
 }
 
-std::optional<std::vector<TypeRef>> Parser::parseTypeArgList() {
+std::optional<std::vector<TypeRef>>
+Parser::parseTypeArgList(bool AllowPlaceholder) {
   return parseValueList<TypeRef>(TokenKind::OpenCaret, TokenKind::CloseCaret,
-                                 &Parser::parseType);
+                                 [&] { return parseType(AllowPlaceholder); });
 }
 
 } // namespace phi

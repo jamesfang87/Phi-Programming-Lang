@@ -11,7 +11,7 @@ namespace phi {
  */
 std::unique_ptr<FunCallExpr>
 Parser::parseFunCall(std::unique_ptr<Expr> Callee,
-                     std::optional<std::vector<TypeRef>> TypeArgs) {
+                     std::vector<TypeRef> TypeArgs) {
   auto Args = parseList<Expr>(TokenKind::OpenParen, TokenKind::CloseParen,
                               &Parser::parseExpr);
 

@@ -7,7 +7,6 @@
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
-#include "AST/Nodes/Stmt.hpp"
 
 namespace phi {
 
@@ -67,18 +66,17 @@ public:
     std::unordered_map<std::string, FunDecl *> Funs;
     std::unordered_map<std::string, AdtDecl *> Adts;
     std::unordered_map<std::string, MemberDecl *> Mems;
+    std::unordered_map<std::string, TypeArgDecl *> TypeArgs;
   };
 
   //===--------------------------------------------------------------------===//
   // Declaration Insertion Methods
   //===--------------------------------------------------------------------===//
 
-  bool insert(ModuleDecl *Mod);
   bool insert(ItemDecl *Item);
-  bool insert(FunDecl *Fun);
-  bool insert(AdtDecl *Struct);
   bool insert(LocalDecl *Var);
   bool insert(MemberDecl *Field);
+  bool insert(TypeArgDecl *TypeArg);
 
   bool insertAsImportable(ModuleDecl *Mod);
   bool insertAsImportable(ItemDecl *Item, ModuleDecl *ParentMod);
@@ -93,14 +91,12 @@ public:
   LocalDecl *lookup(DeclRefExpr &Var);
   AdtDecl *lookup(const std::string &Id);
 
-  FunDecl *lookup(FunDecl &Fun);
-  StructDecl *lookup(StructDecl &Struct);
-  EnumDecl *lookup(EnumDecl &Struct);
-  VarDecl *lookup(VarDecl &Var);
-  ParamDecl *lookup(ParamDecl &Param);
-  FieldDecl *lookup(FieldDecl &Field);
+  ItemDecl *lookup(ItemDecl &Item);
+  LocalDecl *lookup(LocalDecl &Local);
+  MemberDecl *lookup(MemberDecl &Member);
 
-  ItemDecl *lookupImport(const std::string &);
+  TypeArgDecl *lookupTypeArg(const std::string &Id);
+  ItemDecl *lookupImport(const std::string &Id);
 
   //===--------------------------------------------------------------------===//
   // Error Recovery & Suggestion Methods

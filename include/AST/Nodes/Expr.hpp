@@ -445,13 +445,13 @@ public:
   //===--------------------------------------------------------------------===//
 
   FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
-              std::optional<std::vector<TypeRef>> TypeArgs,
+              std::vector<TypeRef> TypeArgs,
               std::vector<std::unique_ptr<Expr>> Args);
 
 protected:
   // Constructor for derived classes to specify their own Kind
   FunCallExpr(Kind K, SrcLocation Location, std::unique_ptr<Expr> Callee,
-              std::optional<std::vector<TypeRef>> TypeArgs,
+              std::vector<TypeRef> TypeArgs,
               std::vector<std::unique_ptr<Expr>> Args);
 
   FunCallExpr(FunCallExpr &&Other, Kind K)
@@ -465,12 +465,12 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] Expr &getCallee() const { return *Callee; }
-  [[nodiscard]] std::vector<std::unique_ptr<Expr>> &getArgs() { return Args; }
-  [[nodiscard]] const std::vector<std::unique_ptr<Expr>> &getArgs() const {
-    return Args;
-  }
-  [[nodiscard]] FunDecl *getDecl() const { return Decl; }
+  [[nodiscard]] auto &getCallee() const { return *Callee; }
+  [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
+  [[nodiscard]] const auto &getTypeArgs() const { return TypeArgs; }
+  [[nodiscard]] auto &getArgs() { return Args; }
+  [[nodiscard]] const auto &getArgs() const { return Args; }
+  [[nodiscard]] auto *getDecl() const { return Decl; }
 
   //===--------------------------------------------------------------------===//
   // Setters
@@ -500,7 +500,7 @@ public:
 
 private:
   std::unique_ptr<Expr> Callee;
-  std::optional<std::vector<TypeRef>> TypeArgs;
+  std::vector<TypeRef> TypeArgs;
   std::vector<std::unique_ptr<Expr>> Args;
   FunDecl *Decl = nullptr;
 };
@@ -658,7 +658,7 @@ private:
 class AdtInit final : public Expr {
 public:
   AdtInit(SrcLocation Location, std::optional<std::string> TypeName,
-          std::optional<std::vector<TypeRef>> TypeArgs,
+          std::vector<TypeRef> TypeArgs,
           std::vector<std::unique_ptr<MemberInit>> Inits);
   ~AdtInit() override;
 
@@ -667,6 +667,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] const auto &getTypeName() const { return *TypeName; }
+  [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
+  [[nodiscard]] const auto &getTypeArgs() const { return TypeArgs; }
   [[nodiscard]] const auto &getInits() const { return Inits; }
   [[nodiscard]] const auto &getDecl() const { return Decl; }
   [[nodiscard]] bool isAnonymous() const { return !TypeName.has_value(); }
@@ -722,7 +724,7 @@ public:
 
 private:
   std::optional<std::string> TypeName;
-  std::optional<std::vector<TypeRef>> TypeArgs;
+  std::vector<TypeRef> TypeArgs;
   std::vector<std::unique_ptr<MemberInit>> Inits;
 
   AdtDecl *Decl = nullptr;
@@ -792,8 +794,7 @@ public:
   //===-----------------------------------------------------------------------//
 
   MethodCallExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
-                 std::unique_ptr<Expr> Callee,
-                 std::optional<std::vector<TypeRef>> TypeArgs,
+                 std::unique_ptr<Expr> Callee, std::vector<TypeRef> TypeArgs,
                  std::vector<std::unique_ptr<Expr>> Args);
   MethodCallExpr(FunCallExpr &&Call, std::unique_ptr<Expr> Base);
 

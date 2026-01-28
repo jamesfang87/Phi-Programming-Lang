@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -31,7 +32,7 @@ public:
                             SrcSpan Span);
   static TypeRef getErr(SrcSpan Span);
 
-  static std::vector<std::unique_ptr<Type>> &getAll();
+  static std::deque<std::unique_ptr<Type>> &getAll();
 
 private:
   // allocate new inst of type if not already present
@@ -56,7 +57,7 @@ private:
   AppliedTy *applied(TypeRef Base, std::vector<TypeRef> Args);
   ErrTy *err();
 
-  std::vector<std::unique_ptr<Type>> Arena;
+  std::deque<std::unique_ptr<Type>> Arena;
 
   // maps
   std::unordered_map<BuiltinTy::Kind, BuiltinTy *> Builtins;

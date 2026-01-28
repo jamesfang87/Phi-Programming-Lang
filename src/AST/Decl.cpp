@@ -94,11 +94,10 @@ void FieldDecl::emit(int Level) const {
 // MethodDecl Implementation
 //===----------------------------------------------------------------------===//
 
-MethodDecl::MethodDecl(
-    SrcSpan Span, Visibility Vis, std::string Id,
-    std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
-    std::vector<std::unique_ptr<ParamDecl>> Params, TypeRef ReturnType,
-    std::unique_ptr<Block> Body)
+MethodDecl::MethodDecl(SrcSpan Span, Visibility Vis, std::string Id,
+                       std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
+                       std::vector<std::unique_ptr<ParamDecl>> Params,
+                       TypeRef ReturnType, std::unique_ptr<Block> Body)
     : MemberDecl(Kind::Method, Span, Vis, std::move(Id)),
       TypeArgs(std::move(TypeArgs)), Params(std::move(Params)),
       ReturnType(ReturnType), Body(std::move(Body)) {}
@@ -106,6 +105,15 @@ MethodDecl::MethodDecl(
 void MethodDecl::emit(int Level) const {
   std::println("{}{} MethodDecl: {} -> {}", indent(Level),
                toString(getVisibility()), getId(), ReturnType.toString());
+
+  std::println("{}Type Arguments:", indent(Level + 1));
+  if (!hasTypeArgs()) {
+    std::println("{}None.", indent(Level + 2));
+  } else {
+    for (auto &T : TypeArgs) {
+      T->emit(Level + 2);
+    }
+  }
 
   std::println("{}Params:", indent(Level + 1));
   for (auto &P : Params) {
@@ -138,11 +146,10 @@ void VariantDecl::emit(int Level) const {
 // StructDecl Implementation
 //===----------------------------------------------------------------------===//
 
-StructDecl::StructDecl(
-    SrcSpan Span, Visibility Vis, std::string Id,
-    std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
-    std::vector<std::unique_ptr<FieldDecl>> Fields,
-    std::vector<std::unique_ptr<MethodDecl>> Methods)
+StructDecl::StructDecl(SrcSpan Span, Visibility Vis, std::string Id,
+                       std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
+                       std::vector<std::unique_ptr<FieldDecl>> Fields,
+                       std::vector<std::unique_ptr<MethodDecl>> Methods)
     : AdtDecl(Kind::Struct, Span, Vis, std::move(Id), std::move(TypeArgs),
               std::move(Methods)),
       Fields(std::move(Fields)) {
@@ -156,6 +163,15 @@ StructDecl::StructDecl(
 void StructDecl::emit(int Level) const {
   std::println("{}StructDecl: {} (type: {})", indent(Level), getId(),
                Type.toString());
+
+  std::println("{}Type Arguments:", indent(Level + 1));
+  if (!hasTypeArgs()) {
+    std::println("{}None.", indent(Level + 2));
+  } else {
+    for (auto &T : getTypeArgs()) {
+      T->emit(Level + 2);
+    }
+  }
 
   std::println("{}Fields:", indent(Level + 1));
   for (auto &F : Fields) {
@@ -172,11 +188,10 @@ void StructDecl::emit(int Level) const {
 // EnumDecl Implementation
 //===----------------------------------------------------------------------===//
 
-EnumDecl::EnumDecl(
-    SrcSpan Span, Visibility Vis, std::string Id,
-    std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
-    std::vector<std::unique_ptr<VariantDecl>> Variants,
-    std::vector<std::unique_ptr<MethodDecl>> Methods)
+EnumDecl::EnumDecl(SrcSpan Span, Visibility Vis, std::string Id,
+                   std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
+                   std::vector<std::unique_ptr<VariantDecl>> Variants,
+                   std::vector<std::unique_ptr<MethodDecl>> Methods)
     : AdtDecl(Kind::Enum, Span, Vis, std::move(Id), std::move(TypeArgs),
               std::move(Methods)),
       Variants(std::move(Variants)) {
@@ -189,7 +204,16 @@ EnumDecl::EnumDecl(
 
 void EnumDecl::emit(int Level) const {
   std::println("{}EnumDecl: {} (type: {})", indent(Level), getId(),
-               Type.toString());
+               getType().toString());
+
+  std::println("{}Type Arguments:", indent(Level + 1));
+  if (!hasTypeArgs()) {
+    std::println("{}None.", indent(Level + 2));
+  } else {
+    for (auto &T : getTypeArgs()) {
+      T->emit(Level + 2);
+    }
+  }
 
   std::println("{}Variants:", indent(Level + 1));
   for (auto &V : Variants) {
@@ -206,11 +230,10 @@ void EnumDecl::emit(int Level) const {
 // FunDecl Implementation
 //===----------------------------------------------------------------------===//
 
-FunDecl::FunDecl(
-    SrcSpan Span, Visibility Vis, std::string Id,
-    std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> TypeArgs,
-    std::vector<std::unique_ptr<ParamDecl>> Params, TypeRef ReturnType,
-    std::unique_ptr<Block> Body)
+FunDecl::FunDecl(SrcSpan Span, Visibility Vis, std::string Id,
+                 std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
+                 std::vector<std::unique_ptr<ParamDecl>> Params,
+                 TypeRef ReturnType, std::unique_ptr<Block> Body)
     : ItemDecl(Kind::Fun, Span, Vis, std::move(Id), std::move(TypeArgs)),
       Params(std::move(Params)), ReturnType(ReturnType), Body(std::move(Body)) {
 }
@@ -218,6 +241,15 @@ FunDecl::FunDecl(
 void FunDecl::emit(int Level) const {
   std::println("{}FunctionDecl: {} -> {}", indent(Level), getId(),
                ReturnType.toString());
+
+  std::println("{}Type Arguments:", indent(Level + 1));
+  if (!hasTypeArgs()) {
+    std::println("{}None.", indent(Level + 2));
+  } else {
+    for (auto &T : getTypeArgs()) {
+      T->emit(Level + 2);
+    }
+  }
 
   std::println("{}Params:", indent(Level + 1));
   for (auto &P : Params) {
@@ -236,7 +268,7 @@ ModuleDecl::ModuleDecl(SrcSpan PathSpan, Visibility Vis, std::string Id,
                        std::vector<std::string> Path,
                        std::vector<std::unique_ptr<ItemDecl>> Items,
                        std::vector<std::unique_ptr<ImportStmt>> Imports)
-    : ItemDecl(Kind::Module, PathSpan, Vis, std::move(Id), std::nullopt),
+    : ItemDecl(Kind::Module, PathSpan, Vis, std::move(Id), {}),
       Path(std::move(Path)), Items(std::move(Items)) {
 
   for (auto &Item : this->Items) {

@@ -21,28 +21,30 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
     return std::make_unique<UnaryOp>(std::move(Lhs), Op, false); // postfix
   case TokenKind::DoubleColon: {
     advanceToken();
-    auto Res = parseTypeArgList();
+    auto Res = parseTypeArgList(true);
     if (!Res) {
       return nullptr;
     }
 
     if (peekKind() == TokenKind::OpenParen) {
-      return parseFunCall(std::move(Lhs), std::move(Res));
+      return parseFunCall(std::move(Lhs), std::move(*Res));
     }
 
     if (peekKind() == TokenKind::OpenBrace && !NoAdtInit) {
-      return parseAdtInit(std::move(Lhs), std::move(Res));
+      return parseAdtInit(std::move(Lhs), std::move(*Res));
     }
+    break;
   }
   case TokenKind::OpenParen:
-    return parseFunCall(std::move(Lhs), std::nullopt);
+    return parseFunCall(std::move(Lhs), {});
   case TokenKind::OpenBrace:
     if (!NoAdtInit) {
-      return parseAdtInit(std::move(Lhs), std::nullopt);
+      return parseAdtInit(std::move(Lhs), {});
     }
   default:
     return Lhs;
   }
+  return Lhs;
 }
 
 std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,

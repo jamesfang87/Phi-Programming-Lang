@@ -119,6 +119,12 @@ bool NameResolver::visit(FunCallExpr &E) {
     Success = false;
   }
 
+  if (E.hasTypeArgs()) {
+    for (auto &TypeArg : E.getTypeArgs()) {
+      Success = visit(TypeArg) && Success;
+    }
+  }
+
   for (auto &Arg : E.getArgs()) {
     Success = visit(*Arg) && Success;
   }
@@ -160,12 +166,21 @@ bool NameResolver::visit(AdtInit &E) {
     emitNotFoundError(NotFoundErrorKind::Adt, E.getTypeName(), E.getLocation());
     return false;
   }
-
   E.setDecl(Decl);
   llvm::dyn_cast<AdtTy>(E.getType().getPtr())->setDecl(Decl);
+
+  bool Success = true;
+  if (E.hasTypeArgs()) {
+    for (const auto &TypeArg : E.getTypeArgs()) {
+      Success = visit(TypeArg) && Success;
+    }
+  }
+
   return llvm::TypeSwitch<AdtDecl *, bool>(SymbolTab.lookup(E.getTypeName()))
-      .Case<StructDecl>([&](auto *D) { return resolveStructInit(D, E); })
-      .Case<EnumDecl>([&](auto *D) { return resolveEnumInit(D, E); });
+      .Case<StructDecl>(
+          [&](auto *D) { return resolveStructInit(D, E) && Success; })
+      .Case<EnumDecl>(
+          [&](auto *D) { return resolveEnumInit(D, E) && Success; });
 }
 
 bool NameResolver::resolveStructInit(StructDecl *Found, AdtInit &E) {
@@ -215,7 +230,8 @@ bool NameResolver::resolveStructInit(StructDecl *Found, AdtInit &E) {
     return Success;
   }
 
-  std::string Err = "Struct " + Found->getId() + "is missing inits for fields ";
+  std::string Err =
+      "Struct `" + Found->getId() + "` is missing inits for fields ";
   for (const std::string &Field : Missing) {
     Err += Field + ", ";
   }
@@ -286,17 +302,23 @@ bool NameResolver::visit(MemberInit &E) {
 }
 
 bool NameResolver::visit(FieldAccessExpr &E) {
-  // We can know with certainty the Field which E is accessing at this point.
+  // We can't know with certainty the Field which E is accessing at this point.
   // Thus, we defer name resolution to after type inference,
-  // where upon we can know the type.
+  // where we can know the type.
   return visit(*E.getBase());
 }
 
 bool NameResolver::visit(MethodCallExpr &E) {
-  // We can know with certainty the Method which E is calling at this point.
+  // We can't know with certainty the Method which E is calling at this point.
   // Thus, we defer name resolution to after type inference,
-  // where upon we can know the type.
+  // where we can know the type.
   bool Success = visit(*E.getBase());
+
+  if (E.hasTypeArgs()) {
+    for (const auto &TypeArgs : E.getTypeArgs()) {
+      Success = visit(TypeArgs) && Success;
+    }
+  }
 
   for (const auto &Args : E.getArgs()) {
     Success = visit(*Args) && Success;
@@ -386,7 +408,6 @@ bool NameResolver::visit(IntrinsicCall &E) {
     assert(E.getArgs().size() == 1);
     return visit(*E.getArgs().front());
   default:
-
     break;
   }
 }

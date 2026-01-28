@@ -1,6 +1,7 @@
 #include "AST/TypeSystem/Context.hpp"
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <utility>
@@ -184,6 +185,6 @@ TypeRef TypeCtx::getErr(SrcSpan Span) {
   return {T, std::move(Span)};
 }
 
-std::vector<std::unique_ptr<Type>> &TypeCtx::getAll() { return inst().Arena; }
+std::deque<std::unique_ptr<Type>> &TypeCtx::getAll() { return inst().Arena; }
 
 } // namespace phi

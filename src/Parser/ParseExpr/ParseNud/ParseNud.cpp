@@ -124,7 +124,7 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
 
     return (!Inits) ? nullptr
                     : std::make_unique<AdtInit>(Tok.getStart(), std::nullopt,
-                                                std::nullopt,
+                                                std::vector<TypeRef>{},
                                                 std::move(Inits.value()));
   }
   // Literals
