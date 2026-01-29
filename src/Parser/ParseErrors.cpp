@@ -19,7 +19,7 @@ void Parser::emitExpectedFoundError(const std::string &Expected,
       std::format("expected {}, found `{}`", Expected, FoundToken.getLexeme()))
       .with_primary_label(FoundToken.getSpan(),
                           std::format("expected {} here", Expected))
-      .emit(*DiagnosticsMan);
+      .emit(*Diags);
 }
 
 /**
@@ -48,7 +48,7 @@ void Parser::emitUnexpectedTokenError(
     Builder.with_help(Suggestion);
   }
 
-  Builder.emit(*DiagnosticsMan);
+  Builder.emit(*Diags);
 }
 
 /**
@@ -71,7 +71,7 @@ void Parser::emitUnclosedDelimiterError(const Token &OpeningToken,
       .with_help(
           std::format("expected `{}` to close this delimiter", ExpectedClosing))
       .with_note("delimiters must be properly matched")
-      .emit(*DiagnosticsMan);
+      .emit(*Diags);
 }
 
 /**
@@ -88,7 +88,8 @@ void Parser::emitUnclosedDelimiterError(const Token &OpeningToken,
  * This minimizes cascading errors by resuming at logical statement boundaries.
  */
 bool Parser::syncToTopLvl() {
-  return syncTo({TokenKind::FunKw, TokenKind::StructKw, TokenKind::EnumKw});
+  return syncTo({TokenKind::FunKw, TokenKind::StructKw, TokenKind::EnumKw,
+                 TokenKind::ImportKw});
 }
 
 /**

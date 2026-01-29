@@ -1,39 +1,101 @@
 #include "Parser/Parser.hpp"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
+#include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "Lexer/TokenKind.hpp"
+#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
-Parser::Parser(const std::string_view Src, const std::string_view Path,
-               std::vector<Token> Tokens,
-               std::shared_ptr<DiagnosticManager> DiagnosticMan)
-    : Path(Path), Tokens(Tokens), TokenIt(Tokens.begin()),
-      DiagnosticsMan(std::move(DiagnosticMan)) {
-
-  // Register source file with diagnostic manager
-  if (this->DiagnosticsMan->source_manager()) {
-    this->DiagnosticsMan->source_manager()->addSrcFile(std::string(Path), Src);
-  }
+Parser::Parser(std::vector<Token> Tokens, DiagnosticManager *DiagnosticMan)
+    : Tokens(Tokens), TokenIt(Tokens.begin()), Diags(std::move(DiagnosticMan)) {
 }
 
-std::vector<std::unique_ptr<Decl>> Parser::parse() {
+std::optional<Parser::ModulePathInfo> Parser::parseModulePath() {
+  SrcLocation PathStart, PathEnd;
+  std::vector<std::string> Path = {"$main"};
+  std::string PathStr;
+  // first ID
+  expectToken(TokenKind(TokenKind::Identifier), "Module path", false);
+  Path = {peekToken().getLexeme()};
+  PathStr += peekToken().getLexeme();
+  PathStart = advanceToken().getSpan().Start;
+
+  // other double colon separated IDs
+  while (matchToken(TokenKind::DoubleColon)) {
+    PathStr += "::";
+    if (!expectToken(TokenKind(TokenKind::Identifier), "Module path", false)) {
+      return std::nullopt;
+    }
+    Path.push_back(peekToken().getLexeme());
+    PathStr += advanceToken().getLexeme();
+  }
+  PathEnd = peekToken(-1).getSpan().End;
+  return ModulePathInfo{PathStr, Path, SrcSpan(PathStart, PathEnd)};
+}
+
+std::unique_ptr<ModuleDecl> Parser::parse() {
+  // if the file is empty, return an empty module
+  static int64_t AnonymousModCounter = 0;
+  std::string PathStr = std::format("@AnonymousModule{}", AnonymousModCounter);
+  std::vector<std::string> Path = {PathStr};
+  SrcSpan Span = Tokens.front().getSpan();
+  if (atEOF()) {
+    std::vector<std::unique_ptr<ImportStmt>> NoImports;
+    return std::make_unique<ModuleDecl>(Span, Visibility::Public,
+                                        std::move(PathStr), std::move(Path),
+                                        std::move(Ast), std::move(NoImports));
+  }
+
+  // otherwise, we check to see if the first token is a module decl.
+  // module decls are optional, so there may not be one
+  // if there isn't then, we create a default module and parse as usual.
+  // Default module information
+  if (matchToken(TokenKind::ModuleKw)) {
+    auto Res = parseModulePath();
+    if (!Res) {
+      syncToTopLvl();
+    } else {
+      auto &[ParsedPathStr, ParsedPath, ParsedSpan] = *Res;
+      Path = std::move(ParsedPath);
+      PathStr = std::move(ParsedPathStr);
+      Span = ParsedSpan;
+    }
+    expectToken(TokenKind::Semicolon);
+  }
+
+  std::vector<std::unique_ptr<ImportStmt>> Imports;
   while (!atEOF()) {
-    std::unique_ptr<Decl> Res = nullptr;
+    auto Visibility = parseItemVisibility();
+    if (!Visibility)
+      continue;
+
+    std::unique_ptr<ItemDecl> Res = nullptr;
     switch (peekKind()) {
     case TokenKind::FunKw:
-      Res = parseFunDecl();
+      Res = parseFunDecl(*Visibility);
       break;
     case TokenKind::StructKw:
-      Res = parseStructDecl();
+      Res = parseStructDecl(*Visibility);
       break;
     case TokenKind::EnumKw:
-      Res = parseEnumDecl();
+      Res = parseEnumDecl(*Visibility);
+      break;
+    case TokenKind::ImportKw:
+      if (auto Import = parseImportStmt())
+        Imports.push_back(std::move(Import));
+      else
+        syncToTopLvl();
       break;
     default:
-      emitUnexpectedTokenError(peekToken(), {"fun", "struct", "enum"});
-      syncToTopLvl(); // Error recovery
+      emitUnexpectedTokenError(peekToken(),
+                               {"fun", "struct", "enum", "import"});
     }
 
     if (Res)
@@ -42,15 +104,9 @@ std::vector<std::unique_ptr<Decl>> Parser::parse() {
       syncToTopLvl(); // Error recovery
   }
 
-  llvm::sort(Ast, [](const std::unique_ptr<Decl> &LHS,
-                     const std::unique_ptr<Decl> &RHS) {
-    if (llvm::isa<StructDecl>(LHS.get()) && !llvm::isa<StructDecl>(RHS.get()))
-      return true;
-
-    return false;
-  });
-
-  return std::move(Ast);
+  return std::make_unique<ModuleDecl>(Span, Visibility::Public,
+                                      std::move(PathStr), std::move(Path),
+                                      std::move(Ast), std::move(Imports));
 }
 
 } // namespace phi

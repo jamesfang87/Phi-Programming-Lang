@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -25,9 +26,13 @@ public:
   static TypeRef getRef(const TypeRef &Pointee, SrcSpan Span);
   static TypeRef getVar(uint64_t N, VarTy::Domain Domain, SrcSpan Span);
   static TypeRef getVar(VarTy::Domain Domain, SrcSpan Span);
+  static TypeRef getGeneric(const std::string &Id, TypeArgDecl *D,
+                            SrcSpan Span);
+  static TypeRef getApplied(TypeRef Base, std::vector<TypeRef> Args,
+                            SrcSpan Span);
   static TypeRef getErr(SrcSpan Span);
 
-  static std::vector<std::unique_ptr<Type>> &getAll();
+  static std::deque<std::unique_ptr<Type>> &getAll();
 
 private:
   // allocate new inst of type if not already present
@@ -48,18 +53,22 @@ private:
   RefTy *ref(const TypeRef &Pointee);
   VarTy *var(uint64_t N, VarTy::Domain Domain);
   VarTy *var(VarTy::Domain Domain);
+  GenericTy *generic(const std::string &Id, TypeArgDecl *D);
+  AppliedTy *applied(TypeRef Base, std::vector<TypeRef> Args);
   ErrTy *err();
 
-  std::vector<std::unique_ptr<Type>> Arena;
+  std::deque<std::unique_ptr<Type>> Arena;
 
   // maps
   std::unordered_map<BuiltinTy::Kind, BuiltinTy *> Builtins;
   std::unordered_map<std::string, AdtTy *> Adts;
   std::unordered_map<TupleKey, TupleTy *, TupleKeyHash> Tuples;
   std::unordered_map<FunKey, FunTy *, FunKeyHash> Funs;
+  std::unordered_map<AppliedKey, AppliedTy *, AppliedKeyHash> Applieds;
   std::unordered_map<const Type *, PtrTy *> Ptrs;
   std::unordered_map<const Type *, RefTy *> Refs;
   std::vector<VarTy *> Vars;
+  std::vector<GenericTy *> Generics;
   ErrTy *Err;
 };
 
