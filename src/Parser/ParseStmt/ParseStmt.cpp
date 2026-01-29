@@ -139,15 +139,19 @@ std::unique_ptr<DeferStmt> Parser::parseDeferStmt() {
  * - if (cond) { ... } else if { ... } (chained)
  */
 std::unique_ptr<IfStmt> Parser::parseIfStmt() {
-  NoAdtInit = true;
-  auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
-
   SrcLocation Loc = advanceToken().getStart();
 
-  auto Cond = parseExpr();
-  if (!Cond) {
-    return nullptr;
-  }
+  std::unique_ptr<Expr> Cond;
+
+  {
+    NoAdtInit = true;
+    auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
+
+    Cond = parseExpr();
+    if (!Cond) {
+      return nullptr;
+    }
+  } // NoAdtInit set back to false here
 
   auto Body = parseBlock();
   if (!Body) {
@@ -166,19 +170,17 @@ std::unique_ptr<IfStmt> Parser::parseIfStmt() {
     if (!ElseBody) {
       return nullptr;
     }
-
     return std::make_unique<IfStmt>(Loc, std::move(Cond), std::move(Body),
                                     std::move(ElseBody));
   }
+
   // Else if: else if ...
   if (peekKind() == TokenKind::IfKw) {
     std::vector<std::unique_ptr<Stmt>> ElifStmt;
-
-    auto Res = parseIfStmt();
+    auto Res = parseIfStmt(); // Recursive call handles its own NoAdtInit
     if (!Res) {
       return nullptr;
     }
-
     ElifStmt.emplace_back(std::move(Res));
     auto ElifBody = std::make_unique<Block>(std::move(ElifStmt));
     return std::make_unique<IfStmt>(Loc, std::move(Cond), std::move(Body),
@@ -203,16 +205,20 @@ std::unique_ptr<IfStmt> Parser::parseIfStmt() {
  * Format: while (condition) { body }
  */
 std::unique_ptr<WhileStmt> Parser::parseWhileStmt() {
-  NoAdtInit = true;
-  auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
-
   SrcLocation Loc = peekToken().getStart();
   advanceToken(); // eat 'while'
 
-  auto Cond = parseExpr();
-  if (!Cond) {
-    return nullptr;
-  }
+  std::unique_ptr<Expr> Cond;
+
+  {
+    NoAdtInit = true;
+    auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
+
+    Cond = parseExpr();
+    if (!Cond) {
+      return nullptr;
+    }
+  } // NoAdtInit set back to false here
 
   auto Body = parseBlock();
   if (!Body) {
@@ -222,63 +228,58 @@ std::unique_ptr<WhileStmt> Parser::parseWhileStmt() {
   return std::make_unique<WhileStmt>(Loc, std::move(Cond), std::move(Body));
 }
 
-/**
- * Parses a for loop statement.
- *
- * @return std::unique_ptr<ForStmt> For loop AST or nullptr on error.
- *         Errors are emitted to DiagnosticManager.
- *
- * Format: for variable in range { body }
- *
- * Creates implicit loop variable declaration (i64 type).
- * Validates loop variable and 'in' keyword syntax.
- */
 std::unique_ptr<ForStmt> Parser::parseForStmt() {
-  NoAdtInit = true;
-  auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
-
   SrcLocation Loc = advanceToken().getStart();
 
-  // Parse loop variable
-  Token LoopVar = advanceToken();
-  if (LoopVar.getKind() != TokenKind::Identifier) {
-    error("for loop must have a loop variable")
-        .with_primary_label(LoopVar.getSpan(), "expected identifier here")
-        .with_help("for loops have the form: `for variable in iterable`")
-        .with_note(
-            "the loop variable will be assigned each value from the iterable")
-        .emit(*Diags);
-    return nullptr;
-  }
+  std::unique_ptr<VarDecl> LoopVarDecl;
+  std::unique_ptr<Expr> Range;
 
-  // Validate 'in' keyword
-  Token InKw = advanceToken();
-  if (InKw.getKind() != TokenKind::InKw) {
-    error("missing `in` keyword in for loop")
-        .with_primary_label(LoopVar.getSpan(), "loop variable")
-        .with_secondary_label(InKw.getSpan(), "expected `in` here")
-        .with_help("for loops have the form: `for variable in iterable`")
-        .with_suggestion(InKw.getSpan(), "in", "add `in` keyword")
-        .emit(*Diags);
-    return nullptr;
-  }
+  {
+    NoAdtInit = true;
+    auto _ = std::experimental::scope_exit([&] { NoAdtInit = false; });
 
-  // Parse range expression
-  auto Range = parseExpr();
-  if (!Range) {
-    return nullptr;
-  }
+    // Parse loop variable
+    Token LoopVar = advanceToken();
+    if (LoopVar.getKind() != TokenKind::Identifier) {
+      error("for loop must have a loop variable")
+          .with_primary_label(LoopVar.getSpan(), "expected identifier here")
+          .with_help("for loops have the form: `for variable in iterable`")
+          .with_note(
+              "the loop variable will be assigned each value from the iterable")
+          .emit(*Diags);
+      return nullptr;
+    }
 
-  // Parse loop body
+    // Validate 'in' keyword
+    Token InKw = advanceToken();
+    if (InKw.getKind() != TokenKind::InKw) {
+      error("missing `in` keyword in for loop")
+          .with_primary_label(LoopVar.getSpan(), "loop variable")
+          .with_secondary_label(InKw.getSpan(), "expected `in` here")
+          .with_help("for loops have the form: `for variable in iterable`")
+          .with_suggestion(InKw.getSpan(), "in", "add `in` keyword")
+          .emit(*Diags);
+      return nullptr;
+    }
+
+    // Parse range expression
+    Range = parseExpr();
+    if (!Range) {
+      return nullptr;
+    }
+
+    // Create loop variable declaration
+    LoopVarDecl = std::make_unique<VarDecl>(
+        LoopVar.getSpan(), Mutability::Var, LoopVar.getLexeme(),
+        TypeCtx::getVar(VarTy::Domain::Int, LoopVar.getSpan()), nullptr);
+  } // scope_exit destructs here, setting NoAdtInit = false
+
+  // Parse loop body (NoAdtInit is now false)
   auto Body = parseBlock();
   if (!Body) {
     return nullptr;
   }
 
-  // Create loop variable declaration
-  auto LoopVarDecl = std::make_unique<VarDecl>(
-      LoopVar.getSpan(), Mutability::Var, LoopVar.getLexeme(),
-      TypeCtx::getVar(VarTy::Domain::Int, LoopVar.getSpan()), nullptr);
   return std::make_unique<ForStmt>(Loc, std::move(LoopVarDecl),
                                    std::move(Range), std::move(Body));
 }

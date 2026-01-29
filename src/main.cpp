@@ -86,7 +86,7 @@ int main(int argc, char *argv[]) {
         Opts.OutputPath = argv[++i];
       } else if (Arg == "--release") {
         Opts.IsRelease = true;
-      } else if (Arg == "-v") {
+      } else if (Arg == "-v" || Arg == "--verbose") {
         Opts.Verbose = true;
       } else {
         llvm::errs() << "Error: Unknown option: " << Arg << "\n";
@@ -108,7 +108,7 @@ int main(int argc, char *argv[]) {
 
       if (Arg == "--release") {
         Opts.IsRelease = true;
-      } else if (Arg == "-v") {
+      } else if (Arg == "-v" || Arg == "--verbose") {
         Opts.Verbose = true;
       } else {
         llvm::errs() << "Error: Unknown option: " << Arg << "\n";
@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
         CollectingArgs = true;
       } else if (Arg == "--release") {
         Opts.IsRelease = true;
-      } else if (Arg == "-v") {
+      } else if (Arg == "-v" || Arg == "--verbose") {
         Opts.Verbose = true;
       } else if (CollectingArgs) {
         RunArgs.push_back(Arg);
