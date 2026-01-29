@@ -54,4 +54,26 @@ std::size_t FunKeyHash::operator()(FunKey const &k) const noexcept {
   return static_cast<std::size_t>(h ^ (h >> 32));
 }
 
+std::size_t AppliedKeyHash::operator()(AppliedKey const &k) const noexcept {
+  uint64_t h = 14695981039346656037ULL;
+  // mix return type pointer first
+  uint64_t rv = reinterpret_cast<uintptr_t>(k.Base.getPtr());
+  h = splitmix64(h ^ rv);
+  // mix params count
+  h = splitmix64(h ^ static_cast<uint64_t>(k.Args.size()));
+
+  uint64_t i = 0;
+  for (const TypeRef &t : k.Args) {
+    uint64_t v = reinterpret_cast<uintptr_t>(t.getPtr());
+    uint64_t mixed =
+        splitmix64(v + 0x9e3779b97f4a7c15ULL + (i << 6) + (i >> 2));
+    h ^= mixed;
+    h = splitmix64(h);
+    ++i;
+  }
+
+  h = splitmix64(h + 0x9e3779b97f4a7c15ULL);
+  return static_cast<std::size_t>(h ^ (h >> 32));
+}
+
 } // namespace phi

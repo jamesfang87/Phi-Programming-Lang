@@ -16,9 +16,9 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
   const auto Location = peekToken(-1).getStart(); // def safe
 
   // parse the scrutinee
-  NoStructInit = true;
+  NoAdtInit = true;
   auto Scrutinee = parseExpr();
-  NoStructInit = false;
+  NoAdtInit = false;
 
   if (!matchToken(TokenKind::OpenBrace)) {
     emitUnexpectedTokenError(peekToken());
@@ -27,9 +27,10 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
   std::vector<MatchExpr::Arm> Arms;
   while (peekKind() != TokenKind::CloseBrace) {
     auto Pattern = parsePattern();
+    assert(Pattern);
 
     if (!matchToken(TokenKind::FatArrow)) {
-      emitUnexpectedTokenError(peekToken());
+      emitUnexpectedTokenError(peekToken(), {"=>"});
     }
 
     std::unique_ptr<Block> Body = nullptr;
@@ -46,7 +47,7 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
         error("Invalid expression as return value in match case")
             .with_primary_label(Body->getStmts().back()->getLocation(),
                                 "Expected this to be a proper expression")
-            .emit(*DiagnosticsMan);
+            .emit(*Diags);
       }
       break;
     default:
@@ -75,9 +76,7 @@ std::unique_ptr<MatchExpr> Parser::parseMatchExpr() {
                                   .Return = Return});
   }
 
-  if (!matchToken(TokenKind::CloseBrace)) {
-    emitUnexpectedTokenError(peekToken());
-  }
+  expectToken(TokenKind::CloseBrace);
 
   return std::make_unique<MatchExpr>(Location, std::move(Scrutinee),
                                      std::move(Arms));

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cassert>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "SrcManager/SrcLocation.hpp"
@@ -8,9 +10,9 @@
 
 namespace phi {
 
-// Forward declarations - no includes needed
+// Forward declarations
 class Expr;
-class VarDecl;
+class NamedDecl;
 
 //===----------------------------------------------------------------------===//
 // Stmt - Base class for all statement nodes
@@ -29,7 +31,8 @@ public:
     DeclStmtKind,
     ContinueStmtKind,
     BreakStmtKind,
-    ExprStmtKind
+    ExprStmtKind,
+    ImportStmtKind,
   };
 
   //===--------------------------------------------------------------------===//
@@ -305,7 +308,7 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  ForStmt(SrcLocation Location, std::unique_ptr<VarDecl> LoopVar,
+  ForStmt(SrcLocation Location, std::unique_ptr<class VarDecl> LoopVar,
           std::unique_ptr<Expr> Range, std::unique_ptr<Block> Body);
   ~ForStmt() override;
 
@@ -387,7 +390,7 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  std::unique_ptr<Expr> takeExpr() { return std::move(Expression); }
+  [[nodiscard]] std::unique_ptr<Expr> takeExpr();
   [[nodiscard]] Expr &getExpr() const { return *Expression; }
 
   //===--------------------------------------------------------------------===//
@@ -406,6 +409,49 @@ public:
 
 private:
   std::unique_ptr<Expr> Expression;
+};
+
+class ImportStmt : public Stmt {
+public:
+  ImportStmt(SrcLocation Location, std::string PathStr,
+             std::vector<std::string> Path);
+  ~ImportStmt() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+  [[nodiscard]] auto &getPathStr() const { return PathStr; }
+  [[nodiscard]] auto &getPath() const { return Path; }
+  [[nodiscard]] auto &getImportedDecl() const { return ImportedDecl; }
+
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===--------------------------------------------------------------------===//
+  void setImportedDecl(NamedDecl *New) {
+    assert(New && "Cannot set to nullptr");
+    assert(ImportedDecl == nullptr &&
+           "Cannot change ImportedModule that is not nullptr");
+    ImportedDecl = New;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::ImportStmtKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+
+  void emit(int Level) const override;
+
+private:
+  std::string PathStr;
+  std::vector<std::string> Path;
+  NamedDecl *ImportedDecl;
 };
 
 } // namespace phi

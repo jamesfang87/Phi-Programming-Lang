@@ -8,21 +8,21 @@
 #include <vector>
 
 #include <llvm/IR/Value.h>
+#include <llvm/Support/Casting.h>
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
+#include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
-#include "llvm/Support/Casting.h"
 
 namespace phi {
 
 // Forward declarations
 class Decl;
-class ValueDecl;
 class FunDecl;
 class FieldDecl;
 class StructDecl;
@@ -53,7 +53,8 @@ public:
     FieldAccessKind,
     MethodCallKind,
     MatchExprKind,
-    CustomTypeCtorKind,
+    AdtInitKind,
+    IntrinsicCallKind,
   };
 
   //===--------------------------------------------------------------------===//
@@ -404,13 +405,13 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] std::string getId() { return Id; }
-  [[nodiscard]] ValueDecl *getDecl() const { return DeclPtr; }
+  [[nodiscard]] LocalDecl *getDecl() const { return DeclPtr; }
 
   //===--------------------------------------------------------------------===//
   // Setters
   //===--------------------------------------------------------------------===//
 
-  void setDecl(ValueDecl *d) { DeclPtr = d; }
+  void setDecl(LocalDecl *D) { DeclPtr = D; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -434,7 +435,7 @@ public:
 
 private:
   std::string Id;
-  ValueDecl *DeclPtr = nullptr;
+  LocalDecl *DeclPtr = nullptr;
 };
 
 class FunCallExpr : public Expr {
@@ -444,11 +445,13 @@ public:
   //===--------------------------------------------------------------------===//
 
   FunCallExpr(SrcLocation Location, std::unique_ptr<Expr> Callee,
+              std::vector<TypeRef> TypeArgs,
               std::vector<std::unique_ptr<Expr>> Args);
 
 protected:
   // Constructor for derived classes to specify their own Kind
   FunCallExpr(Kind K, SrcLocation Location, std::unique_ptr<Expr> Callee,
+              std::vector<TypeRef> TypeArgs,
               std::vector<std::unique_ptr<Expr>> Args);
 
   FunCallExpr(FunCallExpr &&Other, Kind K)
@@ -462,12 +465,12 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] Expr &getCallee() const { return *Callee; }
-  [[nodiscard]] std::vector<std::unique_ptr<Expr>> &getArgs() { return Args; }
-  [[nodiscard]] const std::vector<std::unique_ptr<Expr>> &getArgs() const {
-    return Args;
-  }
-  [[nodiscard]] FunDecl *getDecl() const { return Decl; }
+  [[nodiscard]] auto &getCallee() const { return *Callee; }
+  [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
+  [[nodiscard]] const auto &getTypeArgs() const { return TypeArgs; }
+  [[nodiscard]] auto &getArgs() { return Args; }
+  [[nodiscard]] const auto &getArgs() const { return Args; }
+  [[nodiscard]] auto *getDecl() const { return Decl; }
 
   //===--------------------------------------------------------------------===//
   // Setters
@@ -497,6 +500,7 @@ public:
 
 private:
   std::unique_ptr<Expr> Callee;
+  std::vector<TypeRef> TypeArgs;
   std::vector<std::unique_ptr<Expr>> Args;
   FunDecl *Decl = nullptr;
 };
@@ -611,14 +615,14 @@ public:
   //===-----------------------------------------------------------------------//
 
   [[nodiscard]] const std::string &getId() const { return FieldId; }
-  [[nodiscard]] FieldDecl *getDecl() const { return FieldDecl; }
+  [[nodiscard]] FieldDecl *getDecl() const { return Decl; }
   [[nodiscard]] Expr *getInitValue() const { return InitValue.get(); }
 
   //===--------------------------------------------------------------------===//
   // Setters
   //===--------------------------------------------------------------------===//
 
-  void setDecl(FieldDecl *decl) { FieldDecl = decl; }
+  void setDecl(FieldDecl *decl) { Decl = decl; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -643,17 +647,18 @@ public:
 private:
   std::string FieldId;
   std::unique_ptr<Expr> InitValue;
-  FieldDecl *FieldDecl = nullptr;
+  FieldDecl *Decl = nullptr;
 };
 
 //===----------------------------------------------------------------------===//
-// CustomTypeCtor - new expression which can represent either a struct-like
+// AdtInit - expression which can represent either a struct-like
 // constructor (with named fields) or an enum variant constructor.
 //===----------------------------------------------------------------------===//
 
 class AdtInit final : public Expr {
 public:
   AdtInit(SrcLocation Location, std::optional<std::string> TypeName,
+          std::vector<TypeRef> TypeArgs,
           std::vector<std::unique_ptr<MemberInit>> Inits);
   ~AdtInit() override;
 
@@ -662,6 +667,8 @@ public:
   //===--------------------------------------------------------------------===//
 
   [[nodiscard]] const auto &getTypeName() const { return *TypeName; }
+  [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
+  [[nodiscard]] const auto &getTypeArgs() const { return TypeArgs; }
   [[nodiscard]] const auto &getInits() const { return Inits; }
   [[nodiscard]] const auto &getDecl() const { return Decl; }
   [[nodiscard]] bool isAnonymous() const { return !TypeName.has_value(); }
@@ -706,7 +713,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   static bool classof(const Expr *E) {
-    return E->getKind() == Kind::CustomTypeCtorKind;
+    return E->getKind() == Kind::AdtInitKind;
   }
 
   //===--------------------------------------------------------------------===//
@@ -717,6 +724,7 @@ public:
 
 private:
   std::optional<std::string> TypeName;
+  std::vector<TypeRef> TypeArgs;
   std::vector<std::unique_ptr<MemberInit>> Inits;
 
   AdtDecl *Decl = nullptr;
@@ -786,7 +794,7 @@ public:
   //===-----------------------------------------------------------------------//
 
   MethodCallExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
-                 std::unique_ptr<Expr> Callee,
+                 std::unique_ptr<Expr> Callee, std::vector<TypeRef> TypeArgs,
                  std::vector<std::unique_ptr<Expr>> Args);
   MethodCallExpr(FunCallExpr &&Call, std::unique_ptr<Expr> Base);
 
@@ -804,10 +812,7 @@ public:
   // Setters
   //===-----------------------------------------------------------------------//
 
-  void setMethod(MethodDecl *M) {
-    setDecl(M);
-    Method = M;
-  }
+  void setMethod(MethodDecl *M) { Method = M; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -880,6 +885,51 @@ public:
 private:
   std::unique_ptr<Expr> Scrutinee;
   std::vector<Arm> Arms;
+};
+
+class IntrinsicCall final : public Expr {
+public:
+  enum class IntrinsicKind { Panic, Assert, Unreachable, TypeOf };
+
+  //===--------------------------------------------------------------------===//
+  // Named constructors (the real API)
+  //===--------------------------------------------------------------------===//
+
+  static std::unique_ptr<IntrinsicCall>
+  CreatePanic(SrcLocation Loc, std::unique_ptr<Expr> Message);
+
+  static std::unique_ptr<IntrinsicCall>
+  CreateAssert(SrcLocation Loc, std::unique_ptr<Expr> Condition,
+               std::unique_ptr<Expr> Message);
+
+  static std::unique_ptr<IntrinsicCall> CreateUnreachable(SrcLocation Loc);
+
+  static std::unique_ptr<IntrinsicCall>
+  CreateTypeOf(SrcLocation Loc, std::unique_ptr<Expr> Operand);
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] IntrinsicKind getIntrinsicKind() const { return K; }
+  [[nodiscard]] auto &getArgs() const { return Args; }
+
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::IntrinsicCallKind;
+  }
+
+  void emit(int Level) const override;
+
+private:
+  using ArgList = std::vector<std::unique_ptr<Expr>>;
+
+  IntrinsicCall(SrcLocation Loc, IntrinsicKind K, ArgList Args);
+
+private:
+  IntrinsicKind K;
+  ArgList Args;
 };
 
 } // namespace phi

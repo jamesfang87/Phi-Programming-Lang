@@ -31,6 +31,7 @@ bool NameResolver::visit(Expr &E) {
       .Case<MethodCallExpr>([&](MethodCallExpr *X) { return visit(*X); })
       .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
       .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
+      .Case<IntrinsicCall>([&](IntrinsicCall *X) { return visit(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
         return false;
@@ -83,7 +84,7 @@ bool NameResolver::visit(TupleLiteral &E) {
  * - Not attempting to use function as value
  */
 bool NameResolver::visit(DeclRefExpr &E) {
-  ValueDecl *Decl = SymbolTab.lookup(E);
+  LocalDecl *Decl = SymbolTab.lookup(E);
 
   if (!Decl) {
     emitNotFoundError(NotFoundErrorKind::Variable, E.getId(), E.getLocation());
@@ -116,6 +117,12 @@ bool NameResolver::visit(FunCallExpr &E) {
     emitNotFoundError(NotFoundErrorKind::Function, DeclRef->getId(),
                       E.getLocation());
     Success = false;
+  }
+
+  if (E.hasTypeArgs()) {
+    for (auto &TypeArg : E.getTypeArgs()) {
+      Success = visit(TypeArg) && Success;
+    }
   }
 
   for (auto &Arg : E.getArgs()) {
@@ -159,21 +166,30 @@ bool NameResolver::visit(AdtInit &E) {
     emitNotFoundError(NotFoundErrorKind::Adt, E.getTypeName(), E.getLocation());
     return false;
   }
-
   E.setDecl(Decl);
   llvm::dyn_cast<AdtTy>(E.getType().getPtr())->setDecl(Decl);
+
+  bool Success = true;
+  if (E.hasTypeArgs()) {
+    for (const auto &TypeArg : E.getTypeArgs()) {
+      Success = visit(TypeArg) && Success;
+    }
+  }
+
   return llvm::TypeSwitch<AdtDecl *, bool>(SymbolTab.lookup(E.getTypeName()))
-      .Case<StructDecl>([&](auto *D) { return resolveStructCtor(D, E); })
-      .Case<EnumDecl>([&](auto *D) { return resolveEnumCtor(D, E); });
+      .Case<StructDecl>(
+          [&](auto *D) { return resolveStructInit(D, E) && Success; })
+      .Case<EnumDecl>(
+          [&](auto *D) { return resolveEnumInit(D, E) && Success; });
 }
 
-bool NameResolver::resolveStructCtor(StructDecl *Found, AdtInit &E) {
+bool NameResolver::resolveStructInit(StructDecl *Found, AdtInit &E) {
   assert(Found != nullptr);
 
   std::unordered_set<std::string> Missing;
   for (auto &Field : Found->getFields()) {
-    if (!Field.hasInit())
-      Missing.insert(Field.getId());
+    if (!Field->hasInit())
+      Missing.insert(Field->getId());
   }
 
   bool Success = true;
@@ -214,7 +230,8 @@ bool NameResolver::resolveStructCtor(StructDecl *Found, AdtInit &E) {
     return Success;
   }
 
-  std::string Err = "Struct " + Found->getId() + "is missing inits for fields ";
+  std::string Err =
+      "Struct `" + Found->getId() + "` is missing inits for fields ";
   for (const std::string &Field : Missing) {
     Err += Field + ", ";
   }
@@ -225,7 +242,7 @@ bool NameResolver::resolveStructCtor(StructDecl *Found, AdtInit &E) {
   return false;
 }
 
-bool NameResolver::resolveEnumCtor(EnumDecl *Found, AdtInit &E) {
+bool NameResolver::resolveEnumInit(EnumDecl *Found, AdtInit &E) {
   assert(Found != nullptr);
 
   bool Success = true;
@@ -254,11 +271,11 @@ bool NameResolver::resolveEnumCtor(EnumDecl *Found, AdtInit &E) {
     Success = visit(ActiveVariant) && Success;
   }
 
-  if (VariantDecl->hasType() == (ActiveVariant.getInitValue() != nullptr)) {
+  if (VariantDecl->hasPayload() == (ActiveVariant.getInitValue() != nullptr)) {
     return Success;
   }
 
-  if (VariantDecl->hasType()) {
+  if (VariantDecl->hasPayload()) {
     error(std::format(
               "No payload given for variant `{}`, which requires a payload",
               VariantDecl->getId()))
@@ -285,17 +302,23 @@ bool NameResolver::visit(MemberInit &E) {
 }
 
 bool NameResolver::visit(FieldAccessExpr &E) {
-  // We can know with certainty the Field which E is accessing at this point.
+  // We can't know with certainty the Field which E is accessing at this point.
   // Thus, we defer name resolution to after type inference,
-  // where upon we can know the type.
+  // where we can know the type.
   return visit(*E.getBase());
 }
 
 bool NameResolver::visit(MethodCallExpr &E) {
-  // We can know with certainty the Method which E is calling at this point.
+  // We can't know with certainty the Method which E is calling at this point.
   // Thus, we defer name resolution to after type inference,
-  // where upon we can know the type.
+  // where we can know the type.
   bool Success = visit(*E.getBase());
+
+  if (E.hasTypeArgs()) {
+    for (const auto &TypeArgs : E.getTypeArgs()) {
+      Success = visit(TypeArgs) && Success;
+    }
+  }
 
   for (const auto &Args : E.getArgs()) {
     Success = visit(*Args) && Success;
@@ -366,6 +389,27 @@ bool NameResolver::visit(MatchExpr &E) {
     Success = visit(*Arm.Body, true) && Success;
   }
   return Success;
+}
+
+bool NameResolver::visit(IntrinsicCall &E) {
+  switch (E.getIntrinsicKind()) {
+  case IntrinsicCall::IntrinsicKind::Assert: {
+    assert(E.getArgs().size() == 1 || E.getArgs().size() == 2);
+    bool First = visit(*E.getArgs().front());
+    bool Second = visit(*E.getArgs().back());
+    return First && Second;
+  }
+  case IntrinsicCall::IntrinsicKind::Panic:
+    assert(E.getArgs().size() == 1);
+    return visit(*E.getArgs().front());
+  case IntrinsicCall::IntrinsicKind::Unreachable:
+    return true;
+  case IntrinsicCall::IntrinsicKind::TypeOf:
+    assert(E.getArgs().size() == 1);
+    return visit(*E.getArgs().front());
+  default:
+    break;
+  }
 }
 
 } // namespace phi

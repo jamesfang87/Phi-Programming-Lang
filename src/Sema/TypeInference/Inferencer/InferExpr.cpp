@@ -119,7 +119,7 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
     }
   }
 
-  Errored = Unifier.unify(E.getType(), E.getDecl()->getReturnTy()) && Errored;
+  Errored = Unifier.unify(E.getType(), E.getDecl()->getReturnType()) && Errored;
 
   return Errored ? TypeCtx::getErr(E.getSpan()) : Unifier.resolve(E.getType());
 }
@@ -232,8 +232,8 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
         })
         .Case<EnumDecl>([&](EnumDecl *D) {
           auto *Variant = D->getVariant(Init->getId());
-          if (Variant->hasType()) {
-            auto Declared = Variant->getType();
+          if (Variant->hasPayload()) {
+            auto Declared = Variant->getPayloadType();
             auto Got = Init->getInitValue()->getType();
             Unifier.unify(Declared, Got);
           }
@@ -315,7 +315,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
   // 1. Infer base type
   auto BaseT = visit(*E.getBase()).getUnderlying();
 
-  // 2. Only structs / ADTs / traits can have methods
+  // 2. Only ADTs can have methods
   if (!BaseT.isAdt() && !BaseT.isVar()) {
     error("Cannot call method on non-ADT type")
         .with_primary_label(
@@ -384,7 +384,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
     }
   }
   // 4. Unify return type
-  auto RetT = Method->getReturnTy();
+  auto RetT = Method->getReturnType();
   auto RetRes = Unifier.unify(E.getType(), RetT);
   if (!RetRes)
     Errored = true;

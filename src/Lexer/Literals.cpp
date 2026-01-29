@@ -64,24 +64,45 @@ Token Lexer::parseIdentifierOrKw() {
   const std::string Id(CurLexeme, CurChar);
 
   static const std::unordered_map<std::string, TokenKind::Kind> Kws = {
-      {"bool", TokenKind::BoolKw},     {"break", TokenKind::BreakKw},
-      {"const", TokenKind::ConstKw},   {"continue", TokenKind::ContinueKw},
-      {"defer", TokenKind::DeferKw},   {"else", TokenKind::ElseKw},
-      {"enum", TokenKind::EnumKw},     {"false", TokenKind::FalseKw},
-      {"for", TokenKind::ForKw},       {"fun", TokenKind::FunKw},
-      {"if", TokenKind::IfKw},         {"import", TokenKind::ImportKw},
-      {"match", TokenKind::MatchKw},   {"in", TokenKind::InKw},
-      {"public", TokenKind::PublicKw}, {"return", TokenKind::ReturnKw},
-      {"struct", TokenKind::StructKw}, {"true", TokenKind::TrueKw},
-      {"this", TokenKind::ThisKw},     {"var", TokenKind::VarKw},
-      {"while", TokenKind::WhileKw},   {"i8", TokenKind::I8},
-      {"i16", TokenKind::I16},         {"i32", TokenKind::I32},
-      {"i64", TokenKind::I64},         {"u8", TokenKind::U8},
-      {"u16", TokenKind::U16},         {"u32", TokenKind::U32},
-      {"u64", TokenKind::U64},         {"f32", TokenKind::F32},
-      {"f64", TokenKind::F64},         {"string", TokenKind::String},
+      {"as", TokenKind::AsKw},
+      {"bool", TokenKind::BoolKw},
+      {"break", TokenKind::BreakKw},
+      {"const", TokenKind::ConstKw},
+      {"continue", TokenKind::ContinueKw},
+      {"defer", TokenKind::DeferKw},
+      {"else", TokenKind::ElseKw},
+      {"enum", TokenKind::EnumKw},
+      {"false", TokenKind::FalseKw},
+      {"for", TokenKind::ForKw},
+      {"fun", TokenKind::FunKw},
+      {"if", TokenKind::IfKw},
+      {"import", TokenKind::ImportKw},
+      {"match", TokenKind::MatchKw},
+      {"module", TokenKind::ModuleKw},
+      {"in", TokenKind::InKw},
+      {"public", TokenKind::PublicKw},
+      {"return", TokenKind::ReturnKw},
+      {"struct", TokenKind::StructKw},
+      {"true", TokenKind::TrueKw},
+      {"this", TokenKind::ThisKw},
+      {"var", TokenKind::VarKw},
+      {"while", TokenKind::WhileKw},
+      {"i8", TokenKind::I8},
+      {"i16", TokenKind::I16},
+      {"i32", TokenKind::I32},
+      {"i64", TokenKind::I64},
+      {"u8", TokenKind::U8},
+      {"u16", TokenKind::U16},
+      {"u32", TokenKind::U32},
+      {"u64", TokenKind::U64},
+      {"f32", TokenKind::F32},
+      {"f64", TokenKind::F64},
+      {"string", TokenKind::String},
       {"char", TokenKind::Char},
-  };
+      {"panic", TokenKind::Panic},
+      {"assert", TokenKind::Assert},
+      {"unreachable", TokenKind::Unreachable},
+      {"type_of", TokenKind::TypeOf}};
 
   const auto It = Kws.find(Id);
   return It != Kws.end() ? makeToken(It->second)
@@ -136,7 +157,7 @@ Token Lexer::parseString() {
     error("unterminated string literal")
         .with_primary_label(Span, "string starts here")
         .with_help("add a closing double quote (\") to terminate the string")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
     return makeToken(TokenKind::Error);
   }
   advanceChar();     // consume closing quote
@@ -179,7 +200,7 @@ Token Lexer::parseChar() {
         .with_help("character literals must contain exactly one character")
         .with_note(
             "try using a space character: ' ' or an escape sequence like '\\n'")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
     return makeToken(TokenKind::Error);
   }
 
@@ -213,13 +234,13 @@ Token Lexer::parseChar() {
     error("unterminated character literal")
         .with_primary_label(Span, "character started here")
         .with_help("add a closing single quote (') to terminate the character")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
   } else {
     error("character literal contains too many characters")
         .with_primary_label(getCurSpan(), "too many characters")
         .with_help("character literals must contain exactly one character")
         .with_note("use a string literal (\"\") for multiple characters")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
   }
   return makeToken(TokenKind::Error);
 }
@@ -248,7 +269,7 @@ char Lexer::parseEscapeSeq() {
         .with_help("add a valid escape character after the backslash")
         .with_note("valid escape sequences: \\n, \\t, \\r, \\\\, \\\", \\', "
                    "\\0, \\xNN")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
     return '\0';
   }
 
@@ -279,7 +300,7 @@ char Lexer::parseEscapeSeq() {
         .with_help("use a valid escape sequence")
         .with_note("valid escape sequences: \\n, \\t, \\r, \\\\, \\\", \\', "
                    "\\0, \\xNN")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
     return C; // Return character as-is for error recovery
   }
 }
@@ -300,7 +321,7 @@ char Lexer::parseHexEscape() {
         .with_help(
             "hexadecimal escapes require exactly two digits: \\x00 to \\xFF")
         .with_note("example: \\x41 represents the character 'A'")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
     return '\0';
   }
 
@@ -310,7 +331,7 @@ char Lexer::parseHexEscape() {
       error("incomplete hexadecimal escape sequence")
           .with_primary_label(getCurSpan(), "expected hex digit here")
           .with_help("hexadecimal escapes require exactly two digits")
-          .emit(*DiagnosticsMan);
+          .emit(*Diags);
       return '\0';
     }
     Hex[I] = advanceChar();

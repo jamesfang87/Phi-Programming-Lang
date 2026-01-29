@@ -202,7 +202,7 @@ Token Lexer::scanToken() {
         .with_help("remove this character or use a valid token")
         .with_note("valid characters include letters, digits, operators, and "
                    "punctuation")
-        .emit(*DiagnosticsMan);
+        .emit(*Diags);
 
     return makeToken(TokenKind::Error);
   }
@@ -220,7 +220,7 @@ void Lexer::emitError(std::string_view Msg, std::string_view HelpMsg) {
     Diag.with_help(std::string(HelpMsg));
   }
 
-  Diag.emit(*DiagnosticsMan);
+  Diag.emit(*Diags);
 }
 
 void Lexer::emitUnclosedBlockCommentError(std::string::iterator StartPos,
@@ -241,7 +241,7 @@ void Lexer::emitUnclosedBlockCommentError(std::string::iterator StartPos,
   error("unclosed block comment")
       .with_primary_label(Span, "block comment starts here")
       .with_help("add a closing `*/` to terminate the block comment")
-      .emit(*DiagnosticsMan);
+      .emit(*Diags);
 }
 
 SrcLocation Lexer::getCurLocation() const {

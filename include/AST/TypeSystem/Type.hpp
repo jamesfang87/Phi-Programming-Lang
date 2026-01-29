@@ -14,6 +14,8 @@ namespace phi {
 
 class BuiltinTy;
 class AdtTy;
+class AppliedTy;
+class GenericTy;
 class TupleTy;
 class FunTy;
 class PtrTy;
@@ -26,11 +28,13 @@ public:
   enum class TypeKind : uint8_t {
     Builtin,
     Adt,
+    Applied,
     Tuple,
     Fun,
     Ptr,
     Ref,
     Var,
+    Generic,
     Err,
   };
 
@@ -42,6 +46,8 @@ public:
 
   [[nodiscard]] bool isBuiltin() const { return llvm::isa<BuiltinTy>(this); }
   [[nodiscard]] bool isAdt() const { return llvm::isa<AdtTy>(this); }
+  [[nodiscard]] bool isApplied() const { return llvm::isa<AppliedTy>(this); }
+  [[nodiscard]] bool isGeneric() const { return llvm::isa<GenericTy>(this); }
   [[nodiscard]] bool isTuple() const { return llvm::isa<TupleTy>(this); }
   [[nodiscard]] bool isFun() const { return llvm::isa<FunTy>(this); }
   [[nodiscard]] bool isPtr() const { return llvm::isa<PtrTy>(this); }
@@ -66,6 +72,8 @@ public:
   [[nodiscard]] std::string toString() const { return Ptr->toString(); }
   [[nodiscard]] bool isBuiltin() const { return llvm::isa<BuiltinTy>(Ptr); }
   [[nodiscard]] bool isAdt() const { return llvm::isa<AdtTy>(Ptr); }
+  [[nodiscard]] bool isApplied() const { return llvm::isa<AppliedTy>(Ptr); }
+  [[nodiscard]] bool isGeneric() const { return llvm::isa<GenericTy>(Ptr); }
   [[nodiscard]] bool isTuple() const { return llvm::isa<TupleTy>(Ptr); }
   [[nodiscard]] bool isFun() const { return llvm::isa<FunTy>(Ptr); }
   [[nodiscard]] bool isPtr() const { return llvm::isa<PtrTy>(Ptr); }
@@ -131,6 +139,24 @@ public:
 private:
   const std::string Id;
   mutable const AdtDecl *Decl;
+};
+
+class AppliedTy final : public Type {
+public:
+  AppliedTy(TypeRef Base, std::vector<TypeRef> Args)
+      : Type(TypeKind::Applied), Base(std::move(Base)), Args(std::move(Args)) {}
+
+  [[nodiscard]] TypeRef getBase() const { return Base; }
+  [[nodiscard]] const std::vector<TypeRef> &getArgs() const { return Args; }
+  [[nodiscard]] std::string toString() const override;
+
+  static bool classof(const Type *T) {
+    return T->getKind() == TypeKind::Applied;
+  }
+
+private:
+  TypeRef Base;
+  const std::vector<TypeRef> Args;
 };
 
 class TupleTy final : public Type {
@@ -218,6 +244,30 @@ private:
   Domain TheDomain;
 };
 
+class GenericTy final : public Type {
+public:
+  explicit GenericTy(std::string Id, class TypeArgDecl *D = nullptr)
+      : Type(TypeKind::Generic), Id(std::move(Id)), Decl(D) {}
+
+  [[nodiscard]] const std::string &getId() const { return Id; }
+  [[nodiscard]] const TypeArgDecl *getDecl() const { return Decl; };
+  [[nodiscard]] std::string toString() const override;
+
+  void setDecl(TypeArgDecl *D) const {
+    assert(D != nullptr);
+    assert(Decl == nullptr);
+    Decl = D;
+  }
+
+  static bool classof(const Type *T) {
+    return T->getKind() == TypeKind::Generic;
+  }
+
+private:
+  const std::string Id;
+  mutable const TypeArgDecl *Decl;
+};
+
 class ErrTy final : public Type {
 public:
   ErrTy() : Type(TypeKind::Err) {}
@@ -256,12 +306,32 @@ struct FunKey {
   }
 };
 
+struct AppliedKey {
+  TypeRef Base;
+  const std::vector<TypeRef> Args;
+
+  bool operator==(const AppliedKey &Other) const noexcept {
+    if (Base.getPtr() != Other.Base.getPtr())
+      return false;
+    if (Args.size() != Other.Args.size())
+      return false;
+    for (size_t i = 0; i < Args.size(); ++i)
+      if (Args[i].getPtr() != Other.Args[i].getPtr())
+        return false;
+    return true;
+  }
+};
+
 struct TupleKeyHash {
   std::size_t operator()(TupleKey const &k) const noexcept;
 };
 
 struct FunKeyHash {
   std::size_t operator()(FunKey const &k) const noexcept;
+};
+
+struct AppliedKeyHash {
+  std::size_t operator()(AppliedKey const &k) const noexcept;
 };
 
 } // namespace phi
