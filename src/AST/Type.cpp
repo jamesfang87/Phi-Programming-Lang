@@ -15,10 +15,12 @@ Type *Type::getUnderlying() {
   Type *Current = this;
 
   while (true) {
-    if (auto Ptr = llvm::dyn_cast<PtrTy>(Current)) {
+    if (auto *Ptr = llvm::dyn_cast<PtrTy>(Current)) {
       Current = Ptr->getPointee().getPtr();
-    } else if (auto Ref = llvm::dyn_cast<RefTy>(Current)) {
+    } else if (auto *Ref = llvm::dyn_cast<RefTy>(Current)) {
       Current = Ref->getPointee().getPtr();
+    } else if (auto *Applied = llvm::dyn_cast<AppliedTy>(Current)) {
+      Current = Applied->getBase().getPtr();
     } else {
       break;
     }
@@ -66,6 +68,17 @@ std::string BuiltinTy::toString() const {
 
 std::string AdtTy::toString() const { return getId(); }
 
+std::string AppliedTy::toString() const {
+  std::string Result = Base.toString() + "<";
+  for (size_t i = 0; i < Args.size(); ++i) {
+    Result += Args[i].toString();
+    if (i < Args.size() - 1)
+      Result += ", ";
+  }
+  Result += ">";
+  return Result;
+}
+
 std::string TupleTy::toString() const {
   std::string Elems = "(";
   if (Elems.empty()) {
@@ -102,13 +115,15 @@ std::string RefTy::toString() const { return "&" + Pointee.toString(); }
 
 std::string VarTy::toString() const { return "T" + std::to_string(N); }
 
+std::string GenericTy::toString() const { return "Generic: " + Id; };
+
 std::string ErrTy::toString() const { return "Error"; }
 
 bool VarTy::occursIn(TypeRef Other) const {
   return llvm::TypeSwitch<const Type *, bool>(Other.getPtr())
       .Case<VarTy>([&](auto *Var) { return Var->getN() == getN(); })
       .Case<TupleTy>([&](auto *Tuple) {
-        for (const auto Element : Tuple->getElementTys()) {
+        for (const auto &Element : Tuple->getElementTys()) {
           if (occursIn(Element))
             return true;
         }
@@ -119,7 +134,7 @@ bool VarTy::occursIn(TypeRef Other) const {
           return true;
         }
 
-        for (const auto Param : Fun->getParamTys()) {
+        for (const auto &Param : Fun->getParamTys()) {
           if (occursIn(Param))
             return true;
         }
@@ -127,6 +142,15 @@ bool VarTy::occursIn(TypeRef Other) const {
       })
       .Case<PtrTy>([&](auto *Ptr) { return occursIn(Ptr->getPointee()); })
       .Case<RefTy>([&](auto *Ref) { return occursIn(Ref->getPointee()); })
+      .Case<AppliedTy>([&](auto *Applied) {
+        if (occursIn(Applied->getBase()))
+          return true;
+        for (const auto &Arg : Applied->getArgs()) {
+          if (occursIn(Arg))
+            return true;
+        }
+        return false;
+      })
       .Default([](const Type * /*T*/) {
         return false; // ErrTy, AdtTy, BuiltinTy
       });

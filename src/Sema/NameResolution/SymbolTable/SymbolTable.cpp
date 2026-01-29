@@ -2,9 +2,12 @@
 
 #include <ranges>
 #include <string>
+#include <utility>
 
+#include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
 
+#include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
 #include "AST/Nodes/Stmt.hpp"
 
@@ -25,34 +28,53 @@ void SymbolTable::enterScope() { Scopes.emplace_back(); }
  */
 void SymbolTable::exitScope() { Scopes.pop_back(); }
 
-bool SymbolTable::insert(FunDecl *Fun) {
-  for (auto &Scope : Scopes) {
-    if (Scope.Funs.find(Fun->getId()) != Scope.Funs.end())
-      return false;
+bool SymbolTable::insertAsImportable(ModuleDecl *Mod) {
+  if (ImportableItems.contains(Mod->getId())) {
+    return false;
   }
-  Scopes.back().Funs[Fun->getId()] = Fun;
+
+  ImportableItems[Mod->getId()] = Mod;
   return true;
 }
 
-bool SymbolTable::insert(StructDecl *Struct) {
-  for (auto &Scope : Scopes) {
-    if (Scope.Adts.contains(Struct->getId()))
-      return false;
+bool SymbolTable::insertAsImportable(ItemDecl *Item, ModuleDecl *ParentMod) {
+  auto CanonicalId = ParentMod->getId() + "::" + Item->getId();
+  if (ImportableItems.contains(CanonicalId)) {
+    return false;
   }
-  Scopes.back().Adts[Struct->getId()] = Struct;
+
+  ImportableItems[CanonicalId] = Item;
   return true;
 }
 
-bool SymbolTable::insert(EnumDecl *Enum) {
-  for (auto &Scope : Scopes) {
-    if (Scope.Adts.contains(Enum->getId()))
-      return false;
+bool SymbolTable::insert(ItemDecl *Item) {
+  assert(!llvm::isa<ModuleDecl>(Item) &&
+         "Do not use insert for a ModuleDecl; they cannot be referenced other "
+         "than being imported. In that case, use insertAsImportable");
+
+  if (auto *Fun = llvm::dyn_cast<FunDecl>(Item)) {
+    for (auto &Scope : Scopes) {
+      if (Scope.Funs.find(Fun->getId()) != Scope.Funs.end())
+        return false;
+    }
+    Scopes.back().Funs[Fun->getId()] = Fun;
+    return true;
   }
-  Scopes.back().Adts[Enum->getId()] = Enum;
-  return true;
+
+  if (auto *Adt = llvm::dyn_cast<AdtDecl>(Item)) {
+    for (auto &Scope : Scopes) {
+      if (Scope.Adts.contains(Adt->getId()))
+        return false;
+    }
+    Scopes.back().Adts[Adt->getId()] = Adt;
+    return true;
+  }
+
+  std::unreachable();
+  return false;
 }
 
-bool SymbolTable::insert(VarDecl *Var) {
+bool SymbolTable::insert(LocalDecl *Var) {
   for (auto &Scope : Scopes) {
     if (Scope.Vars.find(Var->getId()) != Scope.Vars.end())
       return false;
@@ -61,25 +83,54 @@ bool SymbolTable::insert(VarDecl *Var) {
   return true;
 }
 
-bool SymbolTable::insert(ParamDecl *Param) {
+bool SymbolTable::insert(MemberDecl *Field) {
   for (auto &Scope : Scopes) {
-    if (Scope.Vars.find(Param->getId()) != Scope.Vars.end())
+    if (Scope.Mems.find(Field->getId()) != Scope.Mems.end())
       return false;
   }
-  Scopes.back().Vars[Param->getId()] = Param;
+  Scopes.back().Mems[Field->getId()] = Field;
   return true;
 }
 
-bool SymbolTable::insert(FieldDecl *Field) {
+bool SymbolTable::insert(TypeArgDecl *TypeArg) {
   for (auto &Scope : Scopes) {
-    if (Scope.Vars.find(Field->getId()) != Scope.Vars.end())
+    if (Scope.TypeArgs.find(TypeArg->getId()) != Scope.TypeArgs.end())
       return false;
   }
-  Scopes.back().Vars[Field->getId()] = Field;
+  Scopes.back().TypeArgs[TypeArg->getId()] = TypeArg;
   return true;
 }
 
-ValueDecl *SymbolTable::lookup(DeclRefExpr &Var) {
+bool SymbolTable::insertWithQual(ItemDecl *Item, const std::string &Qual) {
+  assert(!llvm::isa<ModuleDecl>(Item) &&
+         "Do not use insertWithQual for a ModuleDecl; they cannot be "
+         "referenced other "
+         "than being imported. In that case, use insertAsImportable");
+
+  std::string QualifiedName = std::format("{}::{}", Qual, Item->getId());
+  if (auto *Fun = llvm::dyn_cast<FunDecl>(Item)) {
+    for (auto &Scope : Scopes) {
+      if (Scope.Funs.find(QualifiedName) != Scope.Funs.end())
+        return false;
+    }
+    Scopes.back().Funs[QualifiedName] = Fun;
+    return true;
+  }
+
+  if (auto *Adt = llvm::dyn_cast<AdtDecl>(Item)) {
+    for (auto &Scope : Scopes) {
+      if (Scope.Adts.find(QualifiedName) != Scope.Adts.end())
+        return false;
+    }
+    Scopes.back().Adts[QualifiedName] = Adt;
+    return true;
+  }
+
+  std::unreachable();
+  return false;
+}
+
+LocalDecl *SymbolTable::lookup(DeclRefExpr &Var) {
   for (auto &Scope : std::ranges::reverse_view(Scopes)) {
     if (auto It = Scope.Vars.find(Var.getId()); It != Scope.Vars.end()) {
       return It->second;
@@ -107,48 +158,58 @@ AdtDecl *SymbolTable::lookup(const std::string &Id) {
   return nullptr;
 }
 
-// === Lookup overloads by declaration type ===
-
-FunDecl *SymbolTable::lookup(FunDecl &Fun) {
+TypeArgDecl *SymbolTable::lookupTypeArg(const std::string &Id) {
   for (auto &Scope : std::ranges::reverse_view(Scopes)) {
-    if (auto It = Scope.Funs.find(Fun.getId()); It != Scope.Funs.end()) {
+    if (auto It = Scope.TypeArgs.find(Id); It != Scope.TypeArgs.end()) {
       return It->second;
     }
   }
   return nullptr;
 }
 
-StructDecl *SymbolTable::lookup(StructDecl &Struct) {
-  return llvm::dyn_cast<StructDecl>(lookup(Struct.getId()));
+// === Lookup overloads by declaration type ===
+
+ItemDecl *SymbolTable::lookup(ItemDecl &Item) {
+  assert(!llvm::isa<ModuleDecl>(&Item) &&
+         "Do not use `lookup` on a ModuleDecl; use `lookupImport` with the "
+         "Module's name");
+  if (auto *Fun = llvm::dyn_cast<FunDecl>(&Item)) {
+    for (auto &Scope : std::ranges::reverse_view(Scopes)) {
+      if (auto It = Scope.Funs.find(Fun->getId()); It != Scope.Funs.end()) {
+        return It->second;
+      }
+    }
+    return nullptr;
+  }
+
+  if (auto *Adt = llvm::dyn_cast<AdtDecl>(&Item)) {
+    return lookup(Adt->getId());
+  }
+
+  std::unreachable();
 }
 
-EnumDecl *SymbolTable::lookup(EnumDecl &Enum) {
-  return llvm::dyn_cast<EnumDecl>(lookup(Enum.getId()));
-}
-
-VarDecl *SymbolTable::lookup(VarDecl &Var) {
+LocalDecl *SymbolTable::lookup(LocalDecl &Local) {
   for (auto &Scope : std::ranges::reverse_view(Scopes)) {
-    if (auto It = Scope.Vars.find(Var.getId()); It != Scope.Vars.end()) {
+    if (auto It = Scope.Vars.find(Local.getId()); It != Scope.Vars.end()) {
       return llvm::dyn_cast<VarDecl>(It->second);
     }
   }
   return nullptr;
 }
 
-ParamDecl *SymbolTable::lookup(ParamDecl &Param) {
+MemberDecl *SymbolTable::lookup(MemberDecl &Member) {
   for (auto &Scope : std::ranges::reverse_view(Scopes)) {
-    if (auto It = Scope.Vars.find(Param.getId()); It != Scope.Vars.end()) {
-      return llvm::dyn_cast<ParamDecl>(It->second);
+    if (auto It = Scope.Mems.find(Member.getId()); It != Scope.Mems.end()) {
+      return It->second;
     }
   }
   return nullptr;
 }
 
-FieldDecl *SymbolTable::lookup(FieldDecl &Field) {
-  for (auto &Scope : std::ranges::reverse_view(Scopes)) {
-    if (auto It = Scope.Vars.find(Field.getId()); It != Scope.Vars.end()) {
-      return llvm::dyn_cast<FieldDecl>(It->second);
-    }
+ItemDecl *SymbolTable::lookupImport(const std::string &Id) {
+  if (auto It = ImportableItems.find(Id); It != ImportableItems.end()) {
+    return It->second;
   }
   return nullptr;
 }

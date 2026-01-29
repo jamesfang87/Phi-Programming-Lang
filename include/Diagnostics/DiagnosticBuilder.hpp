@@ -102,6 +102,8 @@ public:
   DiagnosticBuilder &with_code_snippet(const SrcLocation &location,
                                        const std::string &label);
 
+  DiagnosticBuilder &with_code_snippet(const SrcSpan &span,
+                                       const std::string &label);
   DiagnosticBuilder &with_extra_snippet(const SrcSpan &span,
                                         std::string message) {
     diagnostic.with_extra_snippet(span, std::move(message));

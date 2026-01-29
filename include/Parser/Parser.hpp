@@ -4,8 +4,8 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <stack>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -13,14 +13,12 @@
 #include "AST/Nodes/Expr.hpp"
 #include "AST/Nodes/Stmt.hpp"
 #include "AST/Pattern.hpp"
-#include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/Diagnostic.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
-#include "SrcManager/SrcLocation.hpp"
 
 namespace phi {
 
@@ -34,29 +32,26 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  Parser(const std::string_view Src, const std::string_view Path,
-         std::vector<Token> Tokens,
-         std::shared_ptr<DiagnosticManager> DiagnosticManager);
+  Parser(std::vector<Token> Tokens, DiagnosticManager *DiagnosticManager);
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point
   //===--------------------------------------------------------------------===//
 
-  std::vector<std::unique_ptr<Decl>> parse();
+  std::unique_ptr<ModuleDecl> parse();
 
 private:
   //===--------------------------------------------------------------------===//
   // Parser State
   //===--------------------------------------------------------------------===//
-
-  std::string Path;
-  std::vector<std::string_view> Lines;
   std::vector<Token> Tokens;
   std::vector<Token>::iterator TokenIt;
-  std::vector<std::unique_ptr<Decl>> Ast;
-  std::shared_ptr<DiagnosticManager> DiagnosticsMan;
+  std::vector<std::unique_ptr<ItemDecl>> Ast;
+  DiagnosticManager *Diags;
 
-  bool NoStructInit = false;
+  bool NoAdtInit = false;
+  bool FileHasModule = false;
+  std::vector<TypeArgDecl *> ValidGenerics;
 
   //===--------------------------------------------------------------------===//
   // Token Navigation Utilities
@@ -69,14 +64,15 @@ private:
 
   Token advanceToken();
   bool matchToken(TokenKind::Kind Kind);
-  bool expectToken(TokenKind Expected, const std::string &Context = "");
+  bool expectToken(TokenKind::Kind Expected, const std::string &Context = "",
+                   bool Advance = true);
 
   //===--------------------------------------------------------------------===//
   // Diagnostic Reporting
   //===--------------------------------------------------------------------===//
 
-  void emitError(Diagnostic &&Diag) { DiagnosticsMan->emit(Diag); }
-  void emitWarning(Diagnostic &&Diag) const { DiagnosticsMan->emit(Diag); }
+  void emitError(Diagnostic &&Diag) { Diags->emit(Diag); }
+  void emitWarning(Diagnostic &&Diag) const { Diags->emit(Diag); }
   void emitExpectedFoundError(const std::string &Expected,
                               const Token &FoundToken);
   void
@@ -91,37 +87,53 @@ private:
 
   bool syncToTopLvl();
   bool syncToStmt();
-  bool syncTo(const std::initializer_list<TokenKind::Kind> TargetTokens);
   bool syncTo(const TokenKind::Kind TargetToken);
+  bool syncTo(const std::initializer_list<TokenKind::Kind> TargetTokens);
 
   //===--------------------------------------------------------------------===//
-  // Enum Parsing
+  // ADT Parsing
   //===--------------------------------------------------------------------===//
 
-  std::optional<VariantDecl> parseVariantDecl();
-  std::unique_ptr<EnumDecl> parseEnumDecl();
+  struct ModulePathInfo {
+    std::string PathStr;
+    std::vector<std::string> Path;
+    SrcSpan Span;
+  };
+  std::optional<ModulePathInfo> parseModulePath();
+  std::optional<Visibility> parseItemVisibility();
+  std::optional<Mutability> parseMutability();
+  std::optional<Visibility> parseAdtMemberVisibility();
 
-  //===--------------------------------------------------------------------===//
-  // Struct Parsing
-  //===--------------------------------------------------------------------===//
+  std::unique_ptr<EnumDecl> parseEnumDecl(Visibility Vis);
+  std::unique_ptr<StructDecl> parseStructDecl(Visibility Vis);
 
-  std::unique_ptr<StructDecl> parseStructDecl();
-  std::optional<FieldDecl> parseFieldDecl(uint32_t FieldIndex);
-  std::optional<MethodDecl> parseMethodDecl(std::string ParentName);
+  std::unique_ptr<StructDecl> parseAnonymousStruct();
+  std::unique_ptr<VariantDecl> parseVariantDecl();
+  std::unique_ptr<FieldDecl> parseFieldDecl(uint32_t FieldIndex,
+                                            Visibility Vis);
+  std::unique_ptr<MethodDecl> parseMethodDecl(std::string ParentName,
+                                              Visibility Vis);
+  std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> parseTypeArgDecls();
 
   //===--------------------------------------------------------------------===//
   // Type System Parsing
   //===--------------------------------------------------------------------===//
 
-  std::optional<TypeRef> parseType();
+  std::optional<TypeRef> parseType(bool AllowPlaceholder);
+
+  enum class Indirection : uint8_t { Ptr, Ref, None };
+  std::pair<Indirection, std::optional<SrcSpan>> parseIndirection();
+  // parses stuff like tuples, adts, builtins; does not handle indirections or
+  // trailing type args
+  std::optional<TypeRef> parseTypeBase(bool AllowPlaceholder);
+  std::optional<std::vector<TypeRef>> parseTypeArgList(bool AllowPlaceholder);
 
   //===--------------------------------------------------------------------===//
   // Function Declaration Parsing
   //===--------------------------------------------------------------------===//
 
-  std::unique_ptr<FunDecl> parseFunDecl();
+  std::unique_ptr<FunDecl> parseFunDecl(Visibility Vis);
   std::unique_ptr<ParamDecl> parseParamDecl();
-  std::unique_ptr<Block> parseBlock();
 
   //===--------------------------------------------------------------------===//
   // Statement Parsing
@@ -136,6 +148,8 @@ private:
   std::unique_ptr<DeclStmt> parseDeclStmt();
   std::unique_ptr<BreakStmt> parseBreakStmt();
   std::unique_ptr<ContinueStmt> parseContinueStmt();
+  std::unique_ptr<ImportStmt> parseImportStmt();
+  std::unique_ptr<Block> parseBlock();
 
   //===--------------------------------------------------------------------===//
   // Pattern Parsing
@@ -164,8 +178,10 @@ private:
                                      std::unique_ptr<Expr> Expr);
   std::unique_ptr<Expr> parseInfix(const Token &Op, std::unique_ptr<Expr> Expr,
                                    int RBp);
-  std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee);
-  std::unique_ptr<AdtInit> parseAdtInit(std::unique_ptr<Expr> Expr);
+  std::unique_ptr<FunCallExpr> parseFunCall(std::unique_ptr<Expr> Callee,
+                                            std::vector<TypeRef> TypeArgs);
+  std::unique_ptr<AdtInit> parseAdtInit(std::unique_ptr<Expr> Expr,
+                                        std::vector<TypeRef> TypeArgs);
   std::unique_ptr<MemberInit> parseMemberInit();
   std::unique_ptr<MatchExpr> parseMatchExpr();
 
@@ -174,11 +190,20 @@ private:
   //===--------------------------------------------------------------------===//
 
   struct TypedBinding {
-    SrcLocation Loc;
+    SrcSpan Span;
     std::string Name;
     std::optional<TypeRef> Type;
+    std::unique_ptr<Expr> Init;
   };
-  std::optional<TypedBinding> parseTypedBinding();
+
+  enum Policy { Forbidden, Optional, Required };
+  struct BindingPolicy {
+    Policy Type = Parser::Policy::Optional;
+    Policy Init = Parser::Policy::Optional;
+    bool AllowPlaceholderForType = false;
+  };
+
+  std::optional<TypedBinding> parseBinding(const BindingPolicy &Policy);
 
   /**
    * @brief Generic list parsing template
@@ -200,30 +225,30 @@ private:
   std::optional<std::vector<std::unique_ptr<T>>>
   parseList(const TokenKind::Kind Open, const TokenKind::Kind Close, F Fun,
             const std::string &Context = "list") {
-    TokenKind Opening = TokenKind(Open);
-    TokenKind Closing = TokenKind(Close);
-
     // Verify opening delimiter
-    const Token OpeningToken = peekToken();
-    if (OpeningToken.getKind() != Opening) {
-      emitExpectedFoundError(Opening.toString(), OpeningToken);
+    if (!expectToken(Open)) {
       return std::nullopt;
     }
-    advanceToken();
 
     // Parse list elements
     std::vector<std::unique_ptr<T>> Content;
-    while (!atEOF() && peekToken().getKind() != Closing) {
-      auto Result = std::invoke(Fun, this);
+    while (!atEOF() && peekKind() != Close) {
+      std::unique_ptr<T> Result;
+      if constexpr (requires { std::invoke(Fun, this); }) {
+        Result = std::invoke(Fun, this);
+      } else {
+        Result = std::invoke(Fun);
+      }
+
       if (Result) {
         Content.push_back(std::move(Result));
       } else {
         // Recover by syncing to comma or closing delimiter
-        syncTo({Closing, TokenKind::Comma});
+        syncTo({Close, TokenKind::Comma});
       }
 
       // Check for closing delimiter before comma
-      if (peekToken().getKind() == Closing) {
+      if (peekKind() == Close) {
         break;
       }
 
@@ -241,12 +266,9 @@ private:
     }
 
     // Verify closing delimiter
-    if (atEOF() || peekToken().getKind() != Closing) {
-      emitUnclosedDelimiterError(OpeningToken, Closing.toString());
+    if (atEOF() || !expectToken(Close)) {
       return std::nullopt;
     }
-
-    advanceToken(); // Consume closing delimiter
     return Content;
   }
 
@@ -268,7 +290,13 @@ private:
     // Parse list elements
     std::vector<T> Content;
     while (!atEOF() && peekToken().getKind() != Closing) {
-      auto Res = std::invoke(Fun, this);
+      std::optional<T> Res;
+      if constexpr (std::is_invocable_v<F, Parser *>) {
+        Res = std::invoke(Fun, this);
+      } else {
+        Res = std::invoke(Fun);
+      }
+
       if (Res) {
         Content.push_back(std::move(*Res));
       } else {

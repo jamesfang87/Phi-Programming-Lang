@@ -27,7 +27,3 @@ enum Result {
         };
     }
 }
-
-fun main() {
-
-}

@@ -72,6 +72,21 @@ DiagnosticBuilder::with_code_snippet(const SrcLocation &location,
   return *this;
 }
 
+DiagnosticBuilder &
+DiagnosticBuilder::with_code_snippet(const SrcSpan &span,
+                                     const std::string &label) {
+  // Store the snippet as a "note" with location info
+  // so DiagnosticManager can render it consistently.
+
+  // Build a simple span that points just at the given location
+
+  // We encode this as a *secondary label* with the label as its message.
+  // That way, it prints under the main error, with the code context.
+  diagnostic.with_extra_snippet(span, label);
+
+  return *this;
+}
+
 /// Add a note (additional information)
 DiagnosticBuilder &DiagnosticBuilder::with_note(std::string note) {
   diagnostic.with_note(std::move(note));

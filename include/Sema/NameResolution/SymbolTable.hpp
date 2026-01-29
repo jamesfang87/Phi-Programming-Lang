@@ -1,12 +1,12 @@
 #pragma once
 
-#include <cstddef>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
-#include "AST/Nodes/Stmt.hpp"
 
 namespace phi {
 
@@ -62,36 +62,41 @@ public:
   //===--------------------------------------------------------------------===//
 
   struct Scope {
-    std::unordered_map<std::string, ValueDecl *> Vars;
+    std::unordered_map<std::string, LocalDecl *> Vars;
     std::unordered_map<std::string, FunDecl *> Funs;
     std::unordered_map<std::string, AdtDecl *> Adts;
+    std::unordered_map<std::string, MemberDecl *> Mems;
+    std::unordered_map<std::string, TypeArgDecl *> TypeArgs;
   };
 
   //===--------------------------------------------------------------------===//
   // Declaration Insertion Methods
   //===--------------------------------------------------------------------===//
 
-  bool insert(FunDecl *Fun);
-  bool insert(StructDecl *Struct);
-  bool insert(EnumDecl *Struct);
-  bool insert(VarDecl *Var);
-  bool insert(ParamDecl *Param);
-  bool insert(FieldDecl *Field);
+  bool insert(ItemDecl *Item);
+  bool insert(LocalDecl *Var);
+  bool insert(MemberDecl *Field);
+  bool insert(TypeArgDecl *TypeArg);
+
+  bool insertAsImportable(ModuleDecl *Mod);
+  bool insertAsImportable(ItemDecl *Item, ModuleDecl *ParentMod);
+
+  bool insertWithQual(ItemDecl *Item, const std::string &Qual);
 
   //===--------------------------------------------------------------------===//
   // Symbol Lookup Methods
   //===--------------------------------------------------------------------===//
 
   FunDecl *lookup(FunCallExpr &Fun);
-  ValueDecl *lookup(DeclRefExpr &Var);
+  LocalDecl *lookup(DeclRefExpr &Var);
   AdtDecl *lookup(const std::string &Id);
 
-  FunDecl *lookup(FunDecl &Fun);
-  StructDecl *lookup(StructDecl &Struct);
-  EnumDecl *lookup(EnumDecl &Struct);
-  VarDecl *lookup(VarDecl &Var);
-  ParamDecl *lookup(ParamDecl &Param);
-  FieldDecl *lookup(FieldDecl &Field);
+  ItemDecl *lookup(ItemDecl &Item);
+  LocalDecl *lookup(LocalDecl &Local);
+  MemberDecl *lookup(MemberDecl &Member);
+
+  TypeArgDecl *lookupTypeArg(const std::string &Id);
+  ItemDecl *lookupImport(const std::string &Id);
 
   //===--------------------------------------------------------------------===//
   // Error Recovery & Suggestion Methods
@@ -99,7 +104,7 @@ public:
 
   [[nodiscard]] FunDecl *getClosestFun(const std::string &Undeclared) const;
   [[nodiscard]] AdtDecl *getClosestAdt(const std::string &Undeclared) const;
-  [[nodiscard]] ValueDecl *getClosestVar(const std::string &Undeclared) const;
+  [[nodiscard]] LocalDecl *getClosestLocal(const std::string &Undeclared) const;
   [[nodiscard]] std::optional<std::string>
   getClosestType(const std::string &Undeclared) const;
 
@@ -110,6 +115,7 @@ private:
 
   /// Stack of scopes, with the back being the innermost current scope
   std::vector<Scope> Scopes;
+  std::map<std::string, ItemDecl *> ImportableItems;
 
   //===--------------------------------------------------------------------===//
   // Scope Management Methods

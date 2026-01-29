@@ -5,7 +5,6 @@
 #include <llvm/ADT/TypeSwitch.h>
 
 #include "AST/Nodes/Decl.hpp"
-#include "AST/Nodes/Expr.hpp"
 #include "AST/Nodes/Stmt.hpp"
 #include "Sema/NameResolution/SymbolTable.hpp"
 

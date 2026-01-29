@@ -98,7 +98,7 @@ void TypeInferencer::finalize(FunCallExpr &E) {
   }
 
   E.setType(Unifier.resolve(E.getType()));
-  assert(E.getType().getPtr() == E.getDecl()->getReturnTy().getPtr());
+  assert(E.getType().getPtr() == E.getDecl()->getReturnType().getPtr());
 }
 
 void TypeInferencer::finalize(BinaryOp &E) {
@@ -136,7 +136,7 @@ void TypeInferencer::finalize(MethodCallExpr &E) {
   }
 
   E.setType(Unifier.resolve(E.getType()));
-  assert(E.getType().getPtr() == E.getDecl()->getReturnTy().getPtr());
+  assert(E.getType().getPtr() == E.getDecl()->getReturnType().getPtr());
 }
 
 void TypeInferencer::finalize(MatchExpr &E) {
@@ -204,8 +204,8 @@ void TypeInferencer::finalize(MatchExpr &E) {
               }
 
               // Check payload arity
-              if (Variant->hasType()) {
-                auto PayloadTy = Variant->getType();
+              if (Variant->hasPayload()) {
+                auto PayloadTy = Variant->getPayloadType();
 
                 if (P.Vars.size() != 1 && P.Vars.size() != 0) {
                   error("variant payload arity mismatch")
@@ -219,15 +219,14 @@ void TypeInferencer::finalize(MatchExpr &E) {
                 }
 
                 VarDecl *Binding = P.Vars.front().get();
-                Unifier.unify(Binding->getType(), Variant->getType());
+                Unifier.unify(Binding->getType(), Variant->getPayloadType());
                 // Check bound variable type
                 finalize(*Binding);
-                assert(Binding->hasType());
 
                 if (Binding->getType().getPtr() != PayloadTy.getPtr()) {
                   error("variant binding type mismatch")
                       .with_primary_label(
-                          Binding->getLocation(),
+                          Binding->getSpan(),
                           "binding type does not match variant payload")
                       .emit(*DiagMan);
                 }
