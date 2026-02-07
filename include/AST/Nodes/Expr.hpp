@@ -55,6 +55,7 @@ public:
     MatchExprKind,
     AdtInitKind,
     IntrinsicCallKind,
+    IndexKind,
   };
 
   //===--------------------------------------------------------------------===//
@@ -622,7 +623,7 @@ public:
   // Setters
   //===--------------------------------------------------------------------===//
 
-  void setDecl(FieldDecl *decl) { Decl = decl; }
+  void setDecl(FieldDecl *D) { Decl = D; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -668,7 +669,7 @@ public:
 
   [[nodiscard]] const auto &getTypeName() const { return *TypeName; }
   [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
-  [[nodiscard]] const auto &getTypeArgs() const { return TypeArgs; }
+  [[nodiscard]] auto &getTypeArgs() { return TypeArgs; }
   [[nodiscard]] const auto &getInits() const { return Inits; }
   [[nodiscard]] const auto &getDecl() const { return Decl; }
   [[nodiscard]] bool isAnonymous() const { return !TypeName.has_value(); }
@@ -804,7 +805,7 @@ public:
   // Getters
   //===-----------------------------------------------------------------------//
 
-  [[nodiscard]] const MethodDecl &getMethod() const { return *Method; }
+  [[nodiscard]] MethodDecl &getMethod() const { return *Method; }
   [[nodiscard]] Expr *getBase() const { return Base.get(); }
   // Inherited from FunCallExpr: getCallee(), getArgs(), getDecl(), setDecl()
 
@@ -812,7 +813,10 @@ public:
   // Setters
   //===-----------------------------------------------------------------------//
 
-  void setMethod(MethodDecl *M) { Method = M; }
+  void setMethod(MethodDecl *M) {
+    assert(M);
+    Method = M;
+  }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -930,6 +934,47 @@ private:
 private:
   IntrinsicKind K;
   ArgList Args;
+};
+
+class IndexExpr : public Expr {
+public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===-----------------------------------------------------------------------//
+
+  IndexExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
+            std::unique_ptr<Expr> Index)
+      : Expr(Expr::Kind::IndexKind, std::move(Location)), Base(std::move(Base)),
+        Index(std::move(Index)) {};
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] Expr *getBase() const { return Base.get(); }
+  [[nodiscard]] Expr *getIndex() const { return Index.get(); }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] bool isAssignable() const override { return true; }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) { return E->getKind() == Kind::IndexKind; }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::unique_ptr<Expr> Base;
+  std::unique_ptr<Expr> Index;
 };
 
 } // namespace phi

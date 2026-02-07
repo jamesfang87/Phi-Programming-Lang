@@ -4,6 +4,7 @@
 #include <llvm/Support/Casting.h>
 
 #include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Expr.hpp"
 #include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 
@@ -27,6 +28,8 @@ void TypeInferencer::finalize(Expr &E) {
       .Case<MethodCallExpr>([&](MethodCallExpr *X) { finalize(*X); })
       .Case<MatchExpr>([&](MatchExpr *X) { finalize(*X); })
       .Case<AdtInit>([&](AdtInit *X) { finalize(*X); })
+      .Case<IntrinsicCall>([&](IntrinsicCall *X) { finalize(*X); })
+      .Case<IndexExpr>([&](IndexExpr *X) { finalize(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
       });
@@ -89,7 +92,6 @@ void TypeInferencer::finalize(TupleLiteral &E) {
 
 void TypeInferencer::finalize(DeclRefExpr &E) {
   E.setType(Unifier.resolve(E.getType()));
-  assert(E.getType().getPtr() == E.getDecl()->getType().getPtr());
 }
 
 void TypeInferencer::finalize(FunCallExpr &E) {
@@ -98,7 +100,6 @@ void TypeInferencer::finalize(FunCallExpr &E) {
   }
 
   E.setType(Unifier.resolve(E.getType()));
-  assert(E.getType().getPtr() == E.getDecl()->getReturnType().getPtr());
 }
 
 void TypeInferencer::finalize(BinaryOp &E) {
@@ -115,6 +116,22 @@ void TypeInferencer::finalize(UnaryOp &E) {
 
 void TypeInferencer::finalize(AdtInit &E) {
   E.setType(Unifier.resolve(E.getType()));
+
+  std::vector<TypeRef> ResolvedArgs;
+  for (auto &T : E.getTypeArgs()) {
+    ResolvedArgs.push_back(Unifier.resolve(T));
+  }
+
+  TypeRef Base = E.getType();
+  if (auto *App = llvm::dyn_cast<AppliedTy>(E.getType().getPtr())) {
+    Base = App->getBase();
+  }
+
+  if (!ResolvedArgs.empty()) {
+    E.setType(TypeCtx::getApplied(Base, ResolvedArgs, E.getSpan()));
+  }
+
+  // Finalize initializers
   for (auto &Init : E.getInits()) {
     finalize(*Init);
   }
@@ -136,7 +153,6 @@ void TypeInferencer::finalize(MethodCallExpr &E) {
   }
 
   E.setType(Unifier.resolve(E.getType()));
-  assert(E.getType().getPtr() == E.getDecl()->getReturnType().getPtr());
 }
 
 void TypeInferencer::finalize(MatchExpr &E) {
@@ -175,12 +191,8 @@ void TypeInferencer::finalize(MatchExpr &E) {
           [&](auto &P) {
             using PType = std::decay_t<decltype(P)>;
 
-            // --- Wildcard ---
-            if constexpr (std::is_same_v<PType, PatternAtomics::Wildcard>) {
-            }
-
             // --- Literal pattern ---
-            else if constexpr (std::is_same_v<PType, PatternAtomics::Literal>) {
+            if constexpr (std::is_same_v<PType, PatternAtomics::Literal>) {
               assert(P.Value);
               finalize(*P.Value);
               assert(P.Value->getType().getPtr() == ScrutineeT.getPtr());
@@ -219,11 +231,12 @@ void TypeInferencer::finalize(MatchExpr &E) {
                 }
 
                 VarDecl *Binding = P.Vars.front().get();
-                Unifier.unify(Binding->getType(), Variant->getPayloadType());
+                Unifier.unify(Binding->getType(), instantiate(Variant));
                 // Check bound variable type
                 finalize(*Binding);
 
-                if (Binding->getType().getPtr() != PayloadTy.getPtr()) {
+                if (Binding->getType().getPtr() != PayloadTy.getPtr() &&
+                    !PayloadTy.isGeneric()) {
                   error("variant binding type mismatch")
                       .with_primary_label(
                           Binding->getSpan(),
@@ -248,6 +261,21 @@ void TypeInferencer::finalize(MatchExpr &E) {
     assert(Arm.Body);
     finalize(*Arm.Body);
   }
+  E.setType(Unifier.resolve(E.getType()));
+}
+
+void TypeInferencer::finalize(IntrinsicCall &E) {
+  for (auto &Arg : E.getArgs()) {
+    finalize(*Arg);
+  }
+
+  E.setType(Unifier.resolve(E.getType()));
+}
+
+void TypeInferencer::finalize(IndexExpr &E) {
+  finalize(*E.getBase());
+  finalize(*E.getIndex());
+
   E.setType(Unifier.resolve(E.getType()));
 }
 
