@@ -15,7 +15,6 @@
 #include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
 #include "Lexer/TokenKind.hpp"
-#include "Sema/NameResolution/NameResolver.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace {
@@ -181,9 +180,6 @@ DeclRefExpr::DeclRefExpr(SrcLocation Location, std::string Id)
     : Expr(Expr::Kind::DeclRefKind, std::move(Location)), Id(std::move(Id)) {}
 
 void DeclRefExpr::emit(int Level) const {
-  if (Id == "val" && DeclPtr == nullptr) {
-    std::println("This was not found");
-  }
   if (DeclPtr == nullptr) {
     std::println("{}DeclRefExpr: {} ", indent(Level), Id);
     std::println("{}Type: {} ", indent(Level + 1), Type.toString());
@@ -272,10 +268,11 @@ void UnaryOp::emit(int Level) const {
 // MemberInit Implementation
 //===----------------------------------------------------------------------===//
 
-MemberInit::MemberInit(SrcLocation Location, std::string FieldId,
+MemberInit::MemberInit(SrcLocation Location, std::string MemberId,
                        std::unique_ptr<Expr> Init)
-    : Expr(Expr::Kind::MemberInitKind, std::move(Location)),
-      FieldId(std::move(FieldId)), InitValue(std::move(Init)) {}
+    : Expr(Expr::Kind::MemberInitKind, Location,
+           TypeCtx::getBuiltin(BuiltinTy::Null, SrcSpan(Location))),
+      FieldId(std::move(MemberId)), InitValue(std::move(Init)) {}
 
 MemberInit::~MemberInit() = default;
 
@@ -479,6 +476,14 @@ void IntrinsicCall::emit(int Level) const {
   for (const auto &Arg : Args) {
     Arg->emit(Level + 2);
   }
+}
+
+void IndexExpr::emit(int Level) const {
+  std::println("{}IndexExpr:", indent(Level));
+  std::println("{}Indexing:", indent(Level));
+  Base->emit(Level + 1);
+  std::println("{}With Index:", indent(Level));
+  Index->emit(Level + 1);
 }
 
 } // namespace phi

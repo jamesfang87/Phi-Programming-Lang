@@ -1,8 +1,10 @@
 #include "Parser/Parser.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <memory>
 #include <optional>
+#include <print>
 #include <utility>
 
 #include <llvm/ADT/ScopeExit.h>
@@ -75,8 +77,9 @@ std::unique_ptr<FunDecl> Parser::parseFunDecl(Visibility Vis) {
   }
 
   // Schedule cleanup at the end of this function
+  size_t NumTypeArgs = TypeArgs.size();
   auto Cleanup = llvm::make_scope_exit([&] {
-    for (size_t i = 0; i < TypeArgs.size(); ++i)
+    for (size_t i = 0; i < NumTypeArgs; ++i)
       ValidGenerics.pop_back();
   });
 
@@ -120,13 +123,15 @@ std::unique_ptr<EnumDecl> Parser::parseEnumDecl(Visibility Vis) {
     }
 
     TypeArgs = std::move(*Res);
-    for (auto &Arg : TypeArgs)
+    for (auto &Arg : TypeArgs) {
       ValidGenerics.push_back(Arg.get());
+    }
   }
 
+  size_t NumTypeArgs = TypeArgs.size();
   // Schedule cleanup at the end of this function
   auto Cleanup = llvm::make_scope_exit([&] {
-    for (size_t i = 0; i < TypeArgs.size(); ++i)
+    for (size_t i = 0; i < NumTypeArgs; ++i)
       ValidGenerics.pop_back();
   });
 
@@ -189,8 +194,9 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl(Visibility Vis) {
   }
 
   // Schedule cleanup at the end of this function
+  size_t NumTypeArgs = TypeArgs.size();
   auto Cleanup = llvm::make_scope_exit([&] {
-    for (size_t i = 0; i < TypeArgs.size(); ++i)
+    for (size_t i = 0; i < NumTypeArgs; ++i)
       ValidGenerics.pop_back();
   });
 

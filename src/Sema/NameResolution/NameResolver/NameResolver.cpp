@@ -1,7 +1,7 @@
 #include "Sema/NameResolution/NameResolver.hpp"
 
 #include <cassert>
-#include <llvm-18/llvm/ADT/StringRef.h>
+#include <llvm/ADT/StringRef.h>
 #include <llvm/Support/Casting.h>
 #include <memory>
 

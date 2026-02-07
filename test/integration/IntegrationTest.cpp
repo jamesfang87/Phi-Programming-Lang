@@ -36,16 +36,12 @@ protected:
 
     std::vector<ModuleDecl *> Mods = {Mod.get()};
     NameResolver R(std::move(Mods), DiagMgr.get());
-    auto ResolvedMod = R.resolveSingleMod(Mod.get());
-    if (!ResolvedMod || DiagMgr->hasError())
+    auto ResolvedMod = R.resolve();
+    if (DiagMgr->hasError())
       return false;
 
     // Type inference
-    std::vector<std::unique_ptr<Decl>> Decls;
-    for (auto &Item : ResolvedMod->getItems()) {
-      Decls.push_back(std::move(Item));
-    }
-    TypeInferencer TI(std::move(Decls), DiagMgr);
+    TypeInferencer TI(ResolvedMod, DiagMgr.get());
     TI.infer();
 
     return !DiagMgr->hasError();

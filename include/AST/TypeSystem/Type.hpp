@@ -55,6 +55,7 @@ public:
   [[nodiscard]] bool isVar() const { return llvm::isa<VarTy>(this); }
   [[nodiscard]] bool isErr() const { return llvm::isa<ErrTy>(this); }
   [[nodiscard]] Type *getUnderlying();
+  [[nodiscard]] Type *removeIndir();
 
 private:
   TypeKind TheKind;
@@ -81,6 +82,7 @@ public:
   [[nodiscard]] bool isVar() const { return llvm::isa<VarTy>(Ptr); }
   [[nodiscard]] bool isErr() const { return llvm::isa<ErrTy>(Ptr); }
   [[nodiscard]] TypeRef getUnderlying();
+  [[nodiscard]] TypeRef removeIndir();
 
 private:
   Type *Ptr; // cannot be nullptr
