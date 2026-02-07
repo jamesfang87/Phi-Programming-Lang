@@ -32,6 +32,7 @@ bool NameResolver::visit(Expr &E) {
       .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
       .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
       .Case<IntrinsicCall>([&](IntrinsicCall *X) { return visit(*X); })
+      .Case<IndexExpr>([&](IndexExpr *X) { return visit(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
         return false;
@@ -410,6 +411,11 @@ bool NameResolver::visit(IntrinsicCall &E) {
   default:
     break;
   }
+}
+
+bool NameResolver::visit(IndexExpr &E) {
+  bool Success = visit(*E.getBase());
+  return visit(*E.getIndex()) && Success;
 }
 
 } // namespace phi

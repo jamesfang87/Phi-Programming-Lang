@@ -18,15 +18,14 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast,
-                 std::shared_ptr<DiagnosticManager> DiagMan)
-      : Ast(std::move(Ast)), DiagMan(DiagMan) {}
+  TypeInferencer(std::vector<ModuleDecl *> Modules, DiagnosticManager *DiagMan)
+      : Modules(std::move(Modules)), DiagMan(DiagMan) {}
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point
   //===--------------------------------------------------------------------===//
 
-  std::vector<std::unique_ptr<Decl>> infer();
+  std::vector<ModuleDecl *> infer();
 
   //===--------------------------------------------------------------------===//
   // Declaration Visitor Methods
@@ -41,6 +40,12 @@ public:
   void visit(StructDecl &D);
   void visit(EnumDecl &D);
   void visit(VariantDecl &D);
+  void visit(ModuleDecl &D);
+  TypeRef instantiate(Decl *D);
+  std::unordered_map<const TypeArgDecl *, TypeRef> buildGenericSubstMap(
+      const std::vector<std::unique_ptr<TypeArgDecl>> &TypeArgs);
+  TypeRef substituteGenerics(
+      TypeRef Ty, const std::unordered_map<const TypeArgDecl *, TypeRef> &Map);
 
   //===--------------------------------------------------------------------===//
   // Statement Visitor Methods
@@ -79,14 +84,17 @@ public:
   TypeRef visit(FieldAccessExpr &E);
   TypeRef visit(MethodCallExpr &E);
   TypeRef visit(MatchExpr &E);
+  TypeRef visit(IntrinsicCall &E);
+  TypeRef visit(IndexExpr &E);
 
   std::string toString(TypeRef T);
 
 private:
-  std::vector<std::unique_ptr<Decl>> Ast;
-  std::shared_ptr<DiagnosticManager> DiagMan;
+  std::vector<ModuleDecl *> Modules;
+  DiagnosticManager *DiagMan;
   std::variant<FunDecl *, MethodDecl *, std::monostate> CurrentFun =
       std::monostate();
+
   TypeUnifier Unifier;
 
   //===--------------------------------------------------------------------===//
@@ -95,12 +103,11 @@ private:
 
   void finalize(Decl &D);
   void finalize(VarDecl &D);
-  void finalize(ParamDecl &D);
   void finalize(FunDecl &D);
-  void finalize(FieldDecl &D);
   void finalize(MethodDecl &D);
   void finalize(StructDecl &D);
   void finalize(EnumDecl &D);
+  void finalize(ModuleDecl &D);
 
   //===--------------------------------------------------------------------===//
   // Statement Finalize Methods
@@ -139,6 +146,8 @@ private:
   void finalize(FieldAccessExpr &E);
   void finalize(MethodCallExpr &E);
   void finalize(MatchExpr &E);
+  void finalize(IntrinsicCall &E);
+  void finalize(IndexExpr &E);
 };
 
 } // namespace phi

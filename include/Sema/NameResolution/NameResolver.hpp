@@ -91,6 +91,7 @@ public:
   bool visit(MethodCallExpr &E);
   bool visit(MatchExpr &E);
   bool visit(IntrinsicCall &E);
+  bool visit(IndexExpr &E);
 
   //===--------------------------------------------------------------------===//
   // Pattern Resolution Methods

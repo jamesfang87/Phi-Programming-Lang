@@ -6,6 +6,7 @@
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
+#include "Sema/TypeInference/Inferencer.hpp"
 
 namespace phi {
 
@@ -46,11 +47,11 @@ bool PhiBuildSystem::buildProject(const CompilerOptions &Opts) {
   // Find project root
   fs::path ProjectRoot = Opts.ProjectRoot.value_or(fs::current_path());
 
-  // Check for Phi.toml
+  // Check for phi.toml
   auto PhiTomlPath = findPhiToml(ProjectRoot);
   if (!PhiTomlPath.has_value()) {
     llvm::errs()
-        << "Error: No Phi.toml found in current directory or parents\n";
+        << "Error: No phi.toml found in current directory or parents\n";
     llvm::errs()
         << "Run 'phi init' to create one, or 'phi new <n>' for a new project\n";
     return false;
@@ -109,27 +110,17 @@ bool PhiBuildSystem::buildProject(const CompilerOptions &Opts) {
   Modules.reserve(Project.getModules().size());
 
   for (auto &[Name, Mod] : Project.getModules()) {
-    if (Opts.Verbose || Opts.DumpAST) {
-      Mod->emit(0);
-    }
     Modules.push_back(Mod.get());
   }
 
-  // Name resolution across all modules
-  if (Opts.Verbose) {
-    llvm::outs() << "[Phi] Running name resolution on " << Modules.size()
-                 << " modules\n";
-  }
-
   auto Resolved = NameResolver(Modules, &Diags).resolve();
+  auto Checked = TypeInferencer(Modules, &Diags).infer();
+  for (auto &Mod : Checked) {
+    Mod->emit(0);
+  }
 
   if (Diags.hasError()) {
     return false;
-  }
-
-  // TODO: Type checking, code generation
-  if (Opts.Verbose) {
-    llvm::outs() << "[Phi] Name resolution successful\n";
   }
 
   // TODO: Linking (when codegen is done)
@@ -174,8 +165,8 @@ bool PhiBuildSystem::createProject(const std::string &Name) {
   fs::create_directories(ProjectDir / "src");
   fs::create_directories(ProjectDir / "tests");
 
-  // Create Phi.toml
-  std::ofstream TomlFile(ProjectDir / "Phi.toml");
+  // Create phi.toml
+  std::ofstream TomlFile(ProjectDir / "phi.toml");
   TomlFile << "[package]\n";
   TomlFile << "name = \"" << Name << "\"\n";
   TomlFile << "version = \"0.1.0\"\n";
@@ -200,15 +191,15 @@ bool PhiBuildSystem::createProject(const std::string &Name) {
 bool PhiBuildSystem::initProject() {
   fs::path CurrentDir = fs::current_path();
 
-  if (fs::exists("Phi.toml")) {
-    llvm::errs() << "Error: Phi.toml already exists in current directory\n";
+  if (fs::exists("phi.toml")) {
+    llvm::errs() << "Error: phi.toml already exists in current directory\n";
     return false;
   }
 
   std::string ProjectName = CurrentDir.filename().string();
 
-  // Create Phi.toml
-  std::ofstream TomlFile("Phi.toml");
+  // Create phi.toml
+  std::ofstream TomlFile("phi.toml");
   TomlFile << "[package]\n";
   TomlFile << "name = \"" << ProjectName << "\"\n";
   TomlFile << "version = \"0.1.0\"\n";
@@ -324,9 +315,9 @@ void PhiBuildSystem::linkObjects(PhiProject &Project) {
 std::optional<fs::path> PhiBuildSystem::findPhiToml(const fs::path &StartDir) {
   fs::path Current = fs::absolute(StartDir);
 
-  // Search upwards for Phi.toml
+  // Search upwards for phi.toml
   while (true) {
-    fs::path Candidate = Current / "Phi.toml";
+    fs::path Candidate = Current / "phi.toml";
     if (fs::exists(Candidate)) {
       return Candidate;
     }

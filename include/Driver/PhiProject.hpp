@@ -44,7 +44,7 @@ struct ProjectConfig {
 
 class PhiProject {
 public:
-  // Load project from Phi.toml
+  // Load project from phi.toml
   PhiProject(const fs::path &ProjectRoot, bool IsRelease = false);
 
   const auto &getConfig() const { return Config; }

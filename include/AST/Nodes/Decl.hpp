@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <print>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -173,6 +174,10 @@ public:
     return TheMutability == Mutability::Const;
   }
 
+  static bool classof(const Decl *D) {
+    return D->getKind() == Kind::Param || D->getKind() == Kind::Var;
+  }
+
 protected:
   TypeRef Type;
   Mutability TheMutability;
@@ -224,7 +229,7 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
   void setType(TypeRef T) {
-    assert(Type.isVar() &&
+    assert((Type.isVar() || T.getPtr() == Type.getPtr()) &&
            "Cannot change the type of a variable from concrete type");
     Type = T;
   }
@@ -398,6 +403,16 @@ protected:
     for (auto &M : this->Methods) {
       MethodMap.emplace(M->getId(), M.get());
       M->setParent(this);
+    }
+
+    if (hasTypeArgs()) {
+      std::vector<TypeRef> TArgs;
+      TArgs.reserve(getTypeArgs().size());
+      for (auto &Arg : getTypeArgs()) {
+        TArgs.push_back(
+            TypeCtx::getGeneric(Arg->getId(), Arg.get(), Arg->getSpan()));
+      }
+      Type = TypeCtx::getApplied(Type, TArgs, this->getSpan());
     }
   }
 

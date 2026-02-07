@@ -1,5 +1,7 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
+#include <print>
+#include <unordered_map>
 #include <vector>
 
 #include <llvm/ADT/STLExtras.h>
@@ -7,6 +9,7 @@
 #include <llvm/Support/Casting.h>
 
 #include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Expr.hpp"
 #include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
@@ -32,6 +35,8 @@ TypeRef TypeInferencer::visit(Expr &E) {
       .Case<MethodCallExpr>([&](MethodCallExpr *X) { return visit(*X); })
       .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
       .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
+      .Case<IntrinsicCall>([&](IntrinsicCall *X) { return visit(*X); })
+      .Case<IndexExpr>([&](IndexExpr *X) { return visit(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
         return TypeCtx::getErr(E.getSpan());
@@ -90,7 +95,8 @@ TypeRef TypeInferencer::visit(TupleLiteral &E) {
 TypeRef TypeInferencer::visit(DeclRefExpr &E) {
   assert(E.getDecl());
 
-  auto Res = Unifier.unify(E.getDecl()->getType(), E.getType());
+  auto T = instantiate(E.getDecl());
+  auto Res = Unifier.unify(T, E.getType());
   if (!Res) {
     return TypeCtx::getErr(E.getSpan());
   }
@@ -102,15 +108,18 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
   assert(llvm::isa<FunDecl>(E.getDecl()));
 
   bool Errored = false;
-  for (auto [Arg, Param] : llvm::zip(E.getArgs(), E.getDecl()->getParams())) {
+  auto *TheType = llvm::dyn_cast<FunTy>(instantiate(E.getDecl()).getPtr());
+  for (auto [Arg, ParamT, Param] : llvm::zip(
+           E.getArgs(), TheType->getParamTys(), E.getDecl()->getParams())) {
     visit(*Arg);
-    auto Res = Unifier.unify(Arg->getType(), Param->getType());
+
+    auto Res = Unifier.unify(Arg->getType(), ParamT);
     if (!Res) {
       Errored = true;
       error(std::format("Mismatched type for parameter {}", Param->getId()))
           .with_primary_label(Arg->getSpan(),
                               std::format("expected type `{}` instead of `{}`",
-                                          toString(Param->getType()),
+                                          toString(ParamT),
                                           toString(Arg->getType())))
           .with_extra_snippet(
               E.getDecl()->getSpan(),
@@ -119,9 +128,11 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
     }
   }
 
-  Errored = Unifier.unify(E.getType(), E.getDecl()->getReturnType()) && Errored;
-
-  return Errored ? TypeCtx::getErr(E.getSpan()) : Unifier.resolve(E.getType());
+  Errored = Unifier.unify(E.getType(), TheType->getReturnTy()) && Errored;
+  auto Res =
+      Errored ? TypeCtx::getErr(E.getSpan()) : Unifier.resolve(E.getType());
+  E.setType(Res);
+  return Res;
 }
 
 TypeRef TypeInferencer::visit(BinaryOp &E) {
@@ -206,6 +217,8 @@ TypeRef TypeInferencer::visit(UnaryOp &E) {
   case phi::TokenKind::Amp: {
     return TypeCtx::getRef(OperandT, E.getSpan());
   }
+  case phi::TokenKind::Try:
+    // TODO:
   default:
     return E.getType();
   }
@@ -218,29 +231,40 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
 
   // if !E.isAnonymous(), then we already know the type of E
   // after name resolution
+  auto Map = buildGenericSubstMap(E.getDecl()->getTypeArgs());
+
   for (auto &Init : E.getInits()) {
     visit(*Init);
 
-    if (E.isAnonymous())
-      continue;
-
+    assert(!E.isAnonymous());
     llvm::TypeSwitch<AdtDecl *>(E.getDecl())
         .Case<StructDecl>([&](StructDecl *D) {
-          auto Declared = D->getField(Init->getId())->getType();
+          auto *Field = D->getField(Init->getId());
+          auto Declared = substituteGenerics(Field->getType(), Map);
           auto Got = Init->getInitValue()->getType();
           Unifier.unify(Declared, Got);
         })
         .Case<EnumDecl>([&](EnumDecl *D) {
           auto *Variant = D->getVariant(Init->getId());
           if (Variant->hasPayload()) {
-            auto Declared = Variant->getPayloadType();
+            auto Declared = substituteGenerics(Variant->getPayloadType(), Map);
             auto Got = Init->getInitValue()->getType();
             Unifier.unify(Declared, Got);
           }
         });
   }
 
-  return E.getType();
+  if (!E.getDecl()->hasTypeArgs())
+    return E.getType();
+
+  std::vector<TypeRef> InferredTypeArgs;
+  for (auto Pair : Map) {
+    InferredTypeArgs.push_back(Unifier.resolve(Pair.second));
+  }
+
+  auto T = TypeCtx::getApplied(E.getType(), InferredTypeArgs, E.getSpan());
+  E.setType(T);
+  return T;
 }
 
 TypeRef TypeInferencer::visit(MemberInit &E) {
@@ -249,32 +273,30 @@ TypeRef TypeInferencer::visit(MemberInit &E) {
   }
 
   auto T = visit(*E.getInitValue());
-  if (E.getDecl()) {
-    Unifier.unify(E.getDecl()->getType(), T);
-  }
   return Unifier.resolve(T);
 }
 
 TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
   // 1. Infer base type
-  auto BaseT = visit(*E.getBase()).getUnderlying();
+  auto BaseT = visit(*E.getBase());
+  auto UnderlyingBaseT = BaseT.getUnderlying();
 
   // 2. Only structs / ADTs can have fields
-  if (!BaseT.isAdt() && !BaseT.isVar()) {
+  if (!UnderlyingBaseT.isAdt() && !UnderlyingBaseT.isVar()) {
     error("Cannot access field on non-ADT type")
         .with_primary_label(
             E.getBase()->getSpan(),
-            std::format("type `{}` has no fields", toString(BaseT)))
+            std::format("type `{}` has no fields", toString(UnderlyingBaseT)))
         .emit(*DiagMan);
     return TypeCtx::getErr(E.getSpan());
   }
 
   // 3. Resolve ADT
-  if (BaseT.isVar()) {
+  if (UnderlyingBaseT.isVar()) {
     return E.getType();
   }
 
-  auto *Adt = llvm::cast<AdtTy>(BaseT.getPtr());
+  auto *Adt = llvm::cast<AdtTy>(UnderlyingBaseT.getPtr());
   auto *Decl = Adt->getDecl();
   if (!Decl) {
     // Missing declaration should be an error
@@ -306,33 +328,47 @@ TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
   }
   E.setField(Field);
 
-  auto FieldT = Field->getType();
+  auto T = BaseT.removeIndir();
+  if (T.isAdt()) {
+    Unifier.unify(E.getType(), Field->getType());
+    return Field->getType();
+  }
+
+  auto *App = llvm::dyn_cast<AppliedTy>(T.getPtr());
+  std::unordered_map<const TypeArgDecl *, TypeRef> Map;
+  for (const auto &[Arg, Inst] :
+       llvm::zip(Struct->getTypeArgs(), App->getArgs())) {
+    Map.emplace(Arg.get(), Inst);
+  }
+  auto FieldT = substituteGenerics(Field->getType(), Map);
   Unifier.unify(E.getType(), FieldT);
   return FieldT;
 }
 
 TypeRef TypeInferencer::visit(MethodCallExpr &E) {
   // 1. Infer base type
-  auto BaseT = visit(*E.getBase()).getUnderlying();
+  auto BaseT = visit(*E.getBase());
+  auto UnderlyingBaseT = BaseT.getUnderlying();
+  std::println("Base of method call: {}", UnderlyingBaseT.toString());
 
   // 2. Only ADTs can have methods
-  if (!BaseT.isAdt() && !BaseT.isVar()) {
+  if (!UnderlyingBaseT.isAdt() && !UnderlyingBaseT.isVar()) {
     error("Cannot call method on non-ADT type")
         .with_primary_label(
             E.getBase()->getSpan(),
-            std::format("type `{}` has no methods", toString(BaseT)))
+            std::format("type `{}` has no methods", toString(UnderlyingBaseT)))
         .emit(*DiagMan);
     return TypeCtx::getErr(E.getSpan());
   }
 
-  if (BaseT.isVar()) {
+  if (UnderlyingBaseT.isVar()) {
     // Fresh return type for method on type variable
     for (auto &Arg : E.getArgs())
       visit(*Arg); // just visit args, we can't check types yet
     return E.getType();
   }
 
-  auto *Adt = llvm::cast<AdtTy>(BaseT.getPtr());
+  auto *Adt = llvm::cast<AdtTy>(UnderlyingBaseT.getPtr());
   auto *Decl = Adt->getDecl();
   if (!Decl) {
     error("Cannot call method on unknown type")
@@ -342,14 +378,13 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
     return TypeCtx::getErr(E.getSpan());
   }
 
-  auto *Method =
-      Decl->getMethod(llvm::dyn_cast<DeclRefExpr>(&E.getCallee())->getId());
+  std::string Id = llvm::dyn_cast<DeclRefExpr>(&E.getCallee())->getId();
+  auto *Method = Decl->getMethod(Id);
   if (!Method) {
-    error(std::format("Method `{}` not found in `{}`", E.getMethod().getId(),
-                      Adt->getId()))
-        .with_primary_label(E.getBase()->getSpan(),
-                            std::format("type `{}` has no method `{}`",
-                                        Adt->getId(), E.getMethod().getId()))
+    error(std::format("Method `{}` not found in `{}`", Id, Adt->getId()))
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no method `{}`", Adt->getId(), Id))
         .emit(*DiagMan);
     return TypeCtx::getErr(E.getSpan());
   }
@@ -357,7 +392,16 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
 
   bool Errored = false;
 
-  // 3. Unify arguments
+  auto T = BaseT.removeIndir();
+  std::unordered_map<const TypeArgDecl *, TypeRef> Map;
+  if (auto *App = llvm::dyn_cast<AppliedTy>(T.getPtr())) {
+    for (const auto &[Arg, Inst] :
+         llvm::zip(Decl->getTypeArgs(), App->getArgs())) {
+      Map.emplace(Arg.get(), Inst);
+    }
+  }
+
+  // 6. Parameter arity check (method params include 'self' as first param)
   auto &Params = Method->getParams();
   if (Params.size() != E.getArgs().size() + 1) {
     error("Argument count mismatch")
@@ -367,29 +411,32 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
         .emit(*DiagMan);
     Errored = true;
   } else {
-    // Skip the first param (self) when unifying arguments
+    Unifier.unify(T, Params.front()->getType().removeIndir());
+
     for (auto [Arg, Param] :
          llvm::zip(E.getArgs(), llvm::drop_begin(Params, 1))) {
+      // visit arg to compute its type
       auto ArgT = visit(*Arg);
-      auto Res = Unifier.unify(ArgT, Param->getType());
-      if (!Res) {
+      auto ParamT = substituteGenerics(Param->getType(), Map);
+
+      if (!Unifier.unify(ArgT, ParamT)) {
         error(std::format("Mismatched type for parameter `{}`", Param->getId()))
             .with_primary_label(Arg->getSpan(),
                                 std::format("expected type `{}` but got `{}`",
-                                            toString(Param->getType()),
-                                            toString(ArgT)))
+                                            toString(ParamT), toString(ArgT)))
             .emit(*DiagMan);
         Errored = true;
       }
     }
   }
-  // 4. Unify return type
-  auto RetT = Method->getReturnType();
-  auto RetRes = Unifier.unify(E.getType(), RetT);
-  if (!RetRes)
-    Errored = true;
 
-  return Errored ? TypeCtx::getErr(E.getSpan()) : RetT;
+  Errored = Unifier.unify(E.getType(),
+                          substituteGenerics(Method->getReturnType(), Map)) &&
+            Errored;
+  auto Res =
+      Errored ? TypeCtx::getErr(E.getSpan()) : Unifier.resolve(E.getType());
+  E.setType(Res);
+  return Res;
 }
 
 TypeRef TypeInferencer::visit(MatchExpr &E) {
@@ -434,6 +481,84 @@ TypeRef TypeInferencer::visit(MatchExpr &E) {
   }
 
   return Unifier.resolve(E.getType());
+}
+
+TypeRef TypeInferencer::visit(IntrinsicCall &E) {
+  for (auto &Arg : E.getArgs()) {
+    visit(*Arg);
+  }
+
+  switch (E.getIntrinsicKind()) {
+  case IntrinsicCall::IntrinsicKind::Panic:
+  case IntrinsicCall::IntrinsicKind::Assert:
+  case IntrinsicCall::IntrinsicKind::Unreachable:
+  case IntrinsicCall::IntrinsicKind::TypeOf: // TODO: Implement TypeOf
+    E.setType(TypeCtx::getErr(E.getSpan()));
+    return TypeCtx::getErr(E.getSpan());
+  }
+}
+
+TypeRef TypeInferencer::visit(IndexExpr &E) {
+  auto BaseT = visit(*E.getBase());
+  auto IndexT = visit(*E.getIndex());
+
+  auto ExpectedIndexT =
+      TypeCtx::getBuiltin(BuiltinTy::u64, E.getIndex()->getSpan());
+  if (!Unifier.unify(IndexT, ExpectedIndexT)) {
+    error("Index must be an integer type")
+        .with_primary_label(
+            E.getIndex()->getSpan(),
+            std::format("expected integer type, found `{}`", toString(IndexT)))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  // For tuples, the index must be a compile-time constant integer literal
+  // Check if the index expression is an integer literal
+  auto *IndexLit = llvm::dyn_cast<IntLiteral>(E.getIndex());
+  if (!IndexLit) {
+    error("Tuple index must be an integer literal")
+        .with_primary_label(E.getIndex()->getSpan(),
+                            "expected compile-time constant")
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  // Get the constant index value
+  int64_t Index = IndexLit->getValue();
+
+  // Check if base is a tuple type
+  if (auto TupleT = llvm::dyn_cast<TupleTy>(BaseT.getPtr())) {
+    const auto &Elements = TupleT->getElementTys();
+
+    // Check bounds
+    if (Index < 0 || Index >= Elements.size()) {
+      error(std::format("Tuple index out of bounds: the tuple has {} elements "
+                        "but the index is {}",
+                        Elements.size(), Index))
+          .with_primary_label(E.getIndex()->getSpan(), "index out of bounds")
+          .with_primary_label(
+              E.getBase()->getSpan(),
+              std::format("tuple has type `{}`", toString(BaseT)))
+          .emit(*DiagMan);
+      return TypeCtx::getErr(E.getSpan());
+    }
+
+    // Return the type of the element at the given index
+    auto ElemT = Elements[Index];
+    E.setType(ElemT);
+    return ElemT;
+  }
+
+  // Error: base is not a tuple
+  error("Cannot index into non-tuple type")
+      .with_primary_label(
+          E.getBase()->getSpan(),
+          std::format("type `{}` cannot be indexed", toString(BaseT)))
+      .emit(*DiagMan);
+
+  E.setType(TypeCtx::getErr(E.getSpan()));
+  return TypeCtx::getErr(E.getSpan());
 }
 
 } // namespace phi
