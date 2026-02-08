@@ -478,6 +478,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   void setDecl(FunDecl *F) { Decl = F; }
+  void setTypeArgs(std::vector<TypeRef> New) { TypeArgs = std::move(New); }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -709,6 +710,8 @@ public:
     ActiveVariantDecl = Variant;
     ActiveVariantName = Variant->getId();
   }
+
+  void setTypeArgs(std::vector<TypeRef> New) { TypeArgs = std::move(New); }
 
   //===--------------------------------------------------------------------===//
   // Type Queries

@@ -2,6 +2,8 @@
 
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
+#include <optional>
+#include <print>
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
@@ -99,6 +101,18 @@ void TypeInferencer::finalize(FunCallExpr &E) {
     finalize(*Arg);
   }
 
+  std::vector<TypeRef> ResolvedTypeArgs;
+  for (auto &T : E.getTypeArgs()) {
+    auto Resolved = Unifier.resolve(T);
+    if (!Resolved.isVar()) {
+      ResolvedTypeArgs.push_back(Resolved);
+      continue;
+    }
+
+    ResolvedTypeArgs.push_back(defaultVarTy(Resolved).value_or(Resolved));
+  }
+  E.setTypeArgs(ResolvedTypeArgs);
+
   E.setType(Unifier.resolve(E.getType()));
 }
 
@@ -114,13 +128,43 @@ void TypeInferencer::finalize(UnaryOp &E) {
   E.setType(Unifier.resolve(E.getType()));
 }
 
+std::optional<TypeRef> TypeInferencer::defaultVarTy(TypeRef T) {
+  // Otherwise, we can try to default to a i32 or f64 or emit error
+  auto Var = llvm::dyn_cast<VarTy>(T.getPtr());
+  if (Var->getDomain() == VarTy::Int) {
+    Unifier.unify(T, TypeCtx::getBuiltin(BuiltinTy::i32, T.getSpan()));
+    return TypeCtx::getBuiltin(BuiltinTy::i32, T.getSpan());
+  }
+
+  if (Var->getDomain() == VarTy::Float) {
+    Unifier.unify(T, TypeCtx::getBuiltin(BuiltinTy::f64, T.getSpan()));
+    return TypeCtx::getBuiltin(BuiltinTy::f64, T.getSpan());
+  }
+
+  error("Could not infer type for expression")
+      .with_primary_label(T.getSpan(),
+                          "consider adding a type annotation somewhere to "
+                          "help the compiler deduce this expression")
+      .emit(*DiagMan);
+  return std::nullopt;
+}
+
 void TypeInferencer::finalize(AdtInit &E) {
+  std::println("{}", E.getSpan().toString());
+
   E.setType(Unifier.resolve(E.getType()));
 
   std::vector<TypeRef> ResolvedArgs;
   for (auto &T : E.getTypeArgs()) {
-    ResolvedArgs.push_back(Unifier.resolve(T));
+    auto Resolved = Unifier.resolve(T);
+    if (!Resolved.isVar()) {
+      ResolvedArgs.push_back(Resolved);
+      continue;
+    }
+
+    ResolvedArgs.push_back(defaultVarTy(Resolved).value_or(Resolved));
   }
+  E.setTypeArgs(ResolvedArgs);
 
   TypeRef Base = E.getType();
   if (auto *App = llvm::dyn_cast<AppliedTy>(E.getType().getPtr())) {
@@ -213,10 +257,21 @@ void TypeInferencer::finalize(MethodCallExpr &E) {
     finalize(*Arg);
   }
 
+  std::vector<TypeRef> ResolvedTypeArgs;
+  for (auto &T : E.getTypeArgs()) {
+    auto Resolved = Unifier.resolve(T);
+    if (!Resolved.isVar()) {
+      ResolvedTypeArgs.push_back(Resolved);
+      continue;
+    }
+
+    ResolvedTypeArgs.push_back(defaultVarTy(Resolved).value_or(Resolved));
+  }
+  E.setTypeArgs(ResolvedTypeArgs);
+
   E.setType(Unifier.resolve(E.getType()));
 
   if (E.getMethodPtr()) {
-
     return;
   }
 

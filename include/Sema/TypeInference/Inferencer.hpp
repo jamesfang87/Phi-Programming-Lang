@@ -148,6 +148,8 @@ private:
   void finalize(MatchExpr &E);
   void finalize(IntrinsicCall &E);
   void finalize(IndexExpr &E);
+
+  std::optional<TypeRef> defaultVarTy(TypeRef);
 };
 
 } // namespace phi

@@ -36,8 +36,6 @@ void TypeInferencer::visit(ReturnStmt &S) {
 
         if constexpr (!std::is_same_v<T, std::monostate>) {
           Unifier.unify(Fun->getReturnType(), ExprT);
-          std::println("{}", Unifier.resolve(ExprT).toString());
-          std::println("{}", Fun->getReturnType().toString());
         }
       },
       CurrentFun);
