@@ -7,6 +7,10 @@
 #include "Parser/Parser.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
 #include "Sema/TypeInference/Inferencer.hpp"
+#include "CodeGen/LLVMCodeGen.hpp"
+
+#include <cstdlib>
+
 
 namespace phi {
 
@@ -114,7 +118,12 @@ bool PhiBuildSystem::buildProject(const CompilerOptions &Opts) {
   }
 
   auto Resolved = NameResolver(Modules, &Diags).resolve();
-  auto Checked = TypeInferencer(Modules, &Diags).infer();
+  
+  if (Diags.hasError()) {
+    return false;
+  }
+
+  auto Checked = TypeInferencer(Resolved, &Diags).infer();
   for (auto &Mod : Checked) {
     Mod->emit(0);
   }
@@ -123,10 +132,25 @@ bool PhiBuildSystem::buildProject(const CompilerOptions &Opts) {
     return false;
   }
 
-  // TODO: Linking (when codegen is done)
-  // linkObjects(Project);
+  // Code generation
+  LLVMCodeGen CodeGen(Checked);
+  CodeGen.generate();
 
-  std::println("Build successful (codegen not yet implemented)");
+  // Output IR to build dir
+  // For now, output the main module to main.ll
+  std::string IRFilename = (Project.getConfig().OutputDir / "main.ll").string();
+  CodeGen.outputIR(IRFilename);
+
+  std::println("Generated LLVM IR at {}", IRFilename);
+
+  // Compile with clang
+  std::string ClangCmd = "clang " + IRFilename + " -o " + (Project.getConfig().OutputDir / "main").string() + " -Wno-override-module";
+  std::println("Compiling with: {}", ClangCmd);
+  int Ret = std::system(ClangCmd.c_str());
+  if (Ret != 0) {
+    llvm::errs() << "Error: clang compilation failed\n";
+    return false;
+  }
   return true;
 }
 
@@ -269,9 +293,34 @@ bool PhiBuildSystem::compileFile(const fs::path &SourceFile,
     return false;
   }
 
-  // TODO: Type checking, code generation, linking
-  // For now, just report success
-  std::println("Compilation successful (codegen not yet implemented)");
+  // Type inference
+  auto Checked = TypeInferencer(Resolved, &Diags).infer();
+
+  if (Diags.hasError()) {
+    return false;
+  }
+
+  // Code generation
+  LLVMCodeGen CodeGen(Checked);
+  CodeGen.generate();
+
+  // Output IR
+  std::string IRFilename = OutputFile.string();
+  if (fs::path(IRFilename).extension() != ".ll") {
+      IRFilename += ".ll";
+  }
+  CodeGen.outputIR(IRFilename);
+
+  std::println("Generated LLVM IR at {}", IRFilename);
+
+  // Compile with clang
+  std::string ClangCmd = "clang " + IRFilename + " -o " + OutputFile.string() + " -Wno-override-module";
+  std::println("Compiling with: {}", ClangCmd);
+  int Ret = std::system(ClangCmd.c_str());
+  if (Ret != 0) {
+    llvm::errs() << "Error: clang compilation failed\n";
+    return false;
+  }
 
   return true;
 }

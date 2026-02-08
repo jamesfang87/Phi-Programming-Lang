@@ -144,15 +144,127 @@ void TypeInferencer::finalize(MemberInit &E) {
 }
 
 void TypeInferencer::finalize(FieldAccessExpr &E) {
+  finalize(*E.getBase());
+  if (E.getField()) {
+    E.setType(Unifier.resolve(E.getType()));
+  }
+
+  // 1. Infer base type
+  auto BaseT = Unifier.resolve(E.getBase()->getType());
+  auto UnderlyingBaseT = BaseT.getUnderlying();
+
+  // 2. Only structs / ADTs can have fields
+  if (!UnderlyingBaseT.isAdt() && !UnderlyingBaseT.isVar()) {
+    error("Cannot access field on non-ADT type")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no fields", toString(UnderlyingBaseT)))
+        .emit(*DiagMan);
+    return;
+  }
+
+  // 3. Resolve ADT
+  if (UnderlyingBaseT.isVar()) {
+    error("Could not infer type of expression")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("could not infer the type of this expression"))
+        .emit(*DiagMan);
+    return;
+  }
+
+  auto *Adt = llvm::cast<AdtTy>(UnderlyingBaseT.getPtr());
+  auto *Decl = Adt->getDecl();
+  if (!Decl) {
+    // Missing declaration should be an error
+    error("Cannot access field on unknown type")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("unknown ADT `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return;
+  }
+
+  auto *Struct = llvm::dyn_cast<StructDecl>(Decl);
+  if (!Struct) {
+    error("Cannot perform field access on enums")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("this is an enum `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return;
+  }
+
+  auto *Field = Struct->getField(E.getFieldId());
+  if (!Field) {
+    error(std::format("Field `{}` not found in `{}`", E.getFieldId(),
+                      Adt->getId()))
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("type `{}` has no field `{}`",
+                                        Adt->getId(), E.getFieldId()))
+        .emit(*DiagMan);
+    return;
+  }
+  E.setField(Field);
   E.setType(Unifier.resolve(E.getType()));
 }
 
 void TypeInferencer::finalize(MethodCallExpr &E) {
+  finalize(*E.getBase());
   for (auto &Arg : E.getArgs()) {
     finalize(*Arg);
   }
 
   E.setType(Unifier.resolve(E.getType()));
+
+  if (E.getMethodPtr()) {
+
+    return;
+  }
+
+  // 1. Infer base type
+  auto BaseT = E.getBase()->getType();
+  auto UnderlyingBaseT = BaseT.getUnderlying();
+
+  // 2. Only ADTs can have methods
+  if (!UnderlyingBaseT.isAdt() && !UnderlyingBaseT.isVar()) {
+    error("Cannot call method on non-ADT type")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no methods", toString(UnderlyingBaseT)))
+        .emit(*DiagMan);
+    return;
+  }
+
+  if (UnderlyingBaseT.isVar()) {
+    error("Could not infer type of expression")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("could not infer the type of this expression"))
+        .emit(*DiagMan);
+    return;
+  }
+
+  auto *Adt = llvm::cast<AdtTy>(UnderlyingBaseT.getPtr());
+  auto *Decl = Adt->getDecl();
+  if (!Decl) {
+    error("Cannot call method on unknown type")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("unknown ADT `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return;
+  }
+
+  std::string Id = llvm::dyn_cast<DeclRefExpr>(&E.getCallee())->getId();
+  auto *Method = Decl->getMethod(Id);
+  if (!Method) {
+    error(std::format("Method `{}` not found in `{}`", Id, Adt->getId()))
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no method `{}`", Adt->getId(), Id))
+        .emit(*DiagMan);
+    return;
+  }
+  E.setMethod(Method);
+  assert(E.getMethodPtr());
 }
 
 void TypeInferencer::finalize(MatchExpr &E) {

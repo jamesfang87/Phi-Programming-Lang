@@ -1,17 +1,16 @@
 #pragma once
 
-#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
@@ -29,7 +28,7 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  CodeGen(std::vector<std::unique_ptr<Decl>> Ast, std::string_view SourcePath);
+  CodeGen(std::vector<ModuleDecl *> Mods, std::string_view SourcePath);
 
   //===--------------------------------------------------------------------===//
   // Main Pipeline Methods
@@ -56,7 +55,7 @@ public:
   llvm::Value *visit(FunCallExpr &E);
   llvm::Value *visit(BinaryOp &E);
   llvm::Value *visit(UnaryOp &E);
-  llvm::Value *visit(CustomTypeCtor &E);
+  llvm::Value *visit(AdtInit &E);
   llvm::Value *visit(FieldAccessExpr &E);
   llvm::Value *visit(MethodCallExpr &E);
 
@@ -94,7 +93,7 @@ private:
   //===--------------------------------------------------------------------===//
   std::string Path;
 
-  std::vector<std::unique_ptr<Decl>> Ast;
+  std::vector<ModuleDecl *> Ast;
 
   llvm::LLVMContext Context;
   llvm::IRBuilder<> Builder;
@@ -130,9 +129,10 @@ private:
   //===--------------------------------------------------------------------===//
 
   llvm::AllocaInst *stackAlloca(Decl &D);
-  llvm::AllocaInst *stackAlloca(std::string_view Id, const Type &T);
-  llvm::Value *load(llvm::Value *Val, const Type &T);
-  llvm::Value *store(llvm::Value *Val, llvm::Value *Destination, const Type &T);
+  llvm::AllocaInst *stackAlloca(std::string_view Id, const TypeRef &T);
+  llvm::Value *load(llvm::Value *Val, const TypeRef &T);
+  llvm::Value *store(llvm::Value *Val, llvm::Value *Destination,
+                     const TypeRef &T);
 
   //===--------------------------------------------------------------------===//
   // Built-in Function Support

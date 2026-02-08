@@ -337,6 +337,7 @@ FieldAccessExpr::~FieldAccessExpr() = default;
 
 void FieldAccessExpr::emit(int Level) const {
   std::println("{}FieldAccessExpr:", indent(Level));
+  std::println("{}accessing field: {}", indent(Level + 1), getField()->getId());
   std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Base:", indent(Level + 1));
   Base->emit(Level + 2);
