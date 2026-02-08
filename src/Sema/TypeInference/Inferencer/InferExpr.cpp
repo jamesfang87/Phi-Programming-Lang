@@ -278,7 +278,7 @@ TypeRef TypeInferencer::visit(MemberInit &E) {
 
 TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
   // 1. Infer base type
-  auto BaseT = visit(*E.getBase());
+  auto BaseT = Unifier.resolve(visit(*E.getBase()));
   auto UnderlyingBaseT = BaseT.getUnderlying();
 
   // 2. Only structs / ADTs can have fields
@@ -327,6 +327,7 @@ TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
     return TypeCtx::getErr(E.getSpan());
   }
   E.setField(Field);
+  assert(E.getField());
 
   auto T = BaseT.removeIndir();
   if (T.isAdt()) {
@@ -349,7 +350,6 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
   // 1. Infer base type
   auto BaseT = visit(*E.getBase());
   auto UnderlyingBaseT = BaseT.getUnderlying();
-  std::println("Base of method call: {}", UnderlyingBaseT.toString());
 
   // 2. Only ADTs can have methods
   if (!UnderlyingBaseT.isAdt() && !UnderlyingBaseT.isVar()) {
