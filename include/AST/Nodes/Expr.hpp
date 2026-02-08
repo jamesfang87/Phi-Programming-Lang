@@ -684,6 +684,13 @@ public:
     return llvm::dyn_cast<EnumDecl>(Decl);
   }
 
+  [[nodiscard]] bool hasActiveVariant() const {
+    return ActiveVariantName.has_value();
+  }
+  [[nodiscard]] const std::string &getActiveVariantName() const {
+    return *ActiveVariantName;
+  }
+
   //===--------------------------------------------------------------------===//
   // Setters
   //===--------------------------------------------------------------------===//
@@ -805,6 +812,7 @@ public:
   // Getters
   //===-----------------------------------------------------------------------//
 
+  [[nodiscard]] MethodDecl *getMethodPtr() const { return Method; }
   [[nodiscard]] MethodDecl &getMethod() const { return *Method; }
   [[nodiscard]] Expr *getBase() const { return Base.get(); }
   // Inherited from FunCallExpr: getCallee(), getArgs(), getDecl(), setDecl()
