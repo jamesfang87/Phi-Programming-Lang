@@ -4,7 +4,6 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/IR/Verifier.h>
 #include <llvm/TargetParser/Host.h>
 
 #include <system_error>
@@ -17,7 +16,8 @@ using namespace phi;
 // Constructor & Main Entry Points
 //===----------------------------------------------------------------------===//
 
-LLVMCodeGen::LLVMCodeGen(std::vector<ModuleDecl *> Mods, std::string_view SourcePath)
+LLVMCodeGen::LLVMCodeGen(std::vector<ModuleDecl *> Mods,
+                         std::string_view SourcePath)
     : Ast(std::move(Mods)), SourcePath(SourcePath), Context(), Builder(Context),
       Module(std::string(SourcePath), Context) {
   Module.setTargetTriple(llvm::sys::getDefaultTargetTriple());
@@ -32,7 +32,7 @@ void LLVMCodeGen::generate() {
 
   // Phase 3: Desugar method calls to functi  monomorphize();
   desugar();
-  
+
   // Phase 4: IR Generation
   for (auto *M : Ast) {
     codegenModule(M);
@@ -72,7 +72,8 @@ llvm::Type *LLVMCodeGen::getLLVMType(const Type *T) {
   if (It != TypeCache.end())
     return It->second;
 
-  if (!T) return Builder.getVoidTy();
+  if (!T)
+    return Builder.getVoidTy();
 
   llvm::Type *Result = nullptr;
 
@@ -114,7 +115,8 @@ llvm::Type *LLVMCodeGen::getLLVMType(const Type *T) {
       break;
     case BuiltinTy::Range:
       // Range as {i64, i64}
-      Result = llvm::StructType::get(Context, {Builder.getInt64Ty(), Builder.getInt64Ty()});
+      Result = llvm::StructType::get(
+          Context, {Builder.getInt64Ty(), Builder.getInt64Ty()});
       break;
     }
   } else if (auto *TT = llvm::dyn_cast<TupleTy>(T)) {
@@ -129,7 +131,7 @@ llvm::Type *LLVMCodeGen::getLLVMType(const Type *T) {
     Result = Builder.getPtrTy();
   } else if (auto *AT = llvm::dyn_cast<AdtTy>(T)) {
     std::string Name = AT->getId();
-    
+
     // Attempt monomorphization if generic
     if (auto *D = AT->getDecl()) {
       if (D->hasTypeArgs() && !CurrentSubs.empty()) {
@@ -140,7 +142,8 @@ llvm::Type *LLVMCodeGen::getLLVMType(const Type *T) {
           if (It != CurrentSubs.end()) {
             Args.push_back(It->second);
           } else {
-            AllFound = false; break;
+            AllFound = false;
+            break;
           }
         }
         if (AllFound) {
@@ -228,8 +231,9 @@ llvm::StructType *LLVMCodeGen::getOrCreateStructType(const StructDecl *S) {
   return ST;
 }
 
-llvm::StructType *LLVMCodeGen::getOrCreateStructType(
-    const std::string &Name, const std::vector<TypeRef> &FieldTypes) {
+llvm::StructType *
+LLVMCodeGen::getOrCreateStructType(const std::string &Name,
+                                   const std::vector<TypeRef> &FieldTypes) {
   auto It = StructTypes.find(Name);
   if (It != StructTypes.end() && !It->second->isOpaque())
     return It->second;
@@ -272,7 +276,8 @@ llvm::StructType *LLVMCodeGen::getOrCreateEnumType(const EnumDecl *E) {
   // Enum layout: { i32 discriminant, [max_size x i8] }
   std::vector<llvm::Type *> Members = {Builder.getInt32Ty()};
   if (MaxPayloadSize > 0) {
-    Members.push_back(llvm::ArrayType::get(Builder.getInt8Ty(), MaxPayloadSize));
+    Members.push_back(
+        llvm::ArrayType::get(Builder.getInt8Ty(), MaxPayloadSize));
   }
 
   llvm::StructType *ST;
@@ -286,8 +291,9 @@ llvm::StructType *LLVMCodeGen::getOrCreateEnumType(const EnumDecl *E) {
   return ST;
 }
 
-llvm::StructType *LLVMCodeGen::getOrCreateEnumType(
-    const std::string &Name, const std::vector<VariantDecl *> &Variants) {
+llvm::StructType *
+LLVMCodeGen::getOrCreateEnumType(const std::string &Name,
+                                 const std::vector<VariantDecl *> &Variants) {
   auto It = StructTypes.find(Name);
   if (It != StructTypes.end() && !It->second->isOpaque())
     return It->second;
@@ -306,7 +312,8 @@ llvm::StructType *LLVMCodeGen::getOrCreateEnumType(
 
   std::vector<llvm::Type *> Members = {Builder.getInt32Ty()};
   if (MaxPayloadSize > 0) {
-    Members.push_back(llvm::ArrayType::get(Builder.getInt8Ty(), MaxPayloadSize));
+    Members.push_back(
+        llvm::ArrayType::get(Builder.getInt8Ty(), MaxPayloadSize));
   }
 
   llvm::StructType *ST;
@@ -409,7 +416,8 @@ void LLVMCodeGen::discoverInStmt(Stmt *S) {
 }
 
 void LLVMCodeGen::discoverInExpr(Expr *E) {
-  if (!E) return;
+  if (!E)
+    return;
 
   if (auto *AI = llvm::dyn_cast<AdtInit>(E)) {
     // Check if this is a generic type instantiation
@@ -466,7 +474,7 @@ void LLVMCodeGen::recordInstantiation(const NamedDecl *Decl,
 
   if (!HasTypeArgs)
     return;
-  
+
   TypeInstantiation TI{Decl, TypeArgs};
   if (MonomorphizedNames.find(TI) == MonomorphizedNames.end() &&
       PendingInstantiations.find(TI) == PendingInstantiations.end()) {
@@ -552,9 +560,10 @@ void LLVMCodeGen::monomorphizeEnum(const EnumDecl *E,
   // Create enum type
   std::vector<llvm::Type *> Members = {Builder.getInt32Ty()};
   if (MaxPayloadSize > 0) {
-    Members.push_back(llvm::ArrayType::get(Builder.getInt8Ty(), MaxPayloadSize));
+    Members.push_back(
+        llvm::ArrayType::get(Builder.getInt8Ty(), MaxPayloadSize));
   }
-  
+
   auto It = StructTypes.find(MonoName);
   if (It != StructTypes.end()) {
     It->second->setBody(Members);
@@ -571,20 +580,17 @@ void LLVMCodeGen::monomorphizeEnum(const EnumDecl *E,
 
 void LLVMCodeGen::monomorphizeMethod(const MethodDecl *M,
                                      const std::vector<TypeRef> &TypeArgs) {
-  // Methods use the parent's type args + their own (if any).
-  // For now, simpler case: methods on generic structs, but method itself not generic additional args?
-  // The user said: "Structs/Enums, Functions, and Methods are the only decls in this language which can have generic types."
-  
-  // If the method belongs to a generic type, TypeArgs here are the type args for the STRUCT/ENUM.
-  // We need to generate a name that includes these args.
-  
+  // For now, simpler case: methods on generic structs, but method itself not
+  // generic additional args?
+
   std::string ParentName = M->getParent()->getId();
   std::string MonoParentName = generateMonomorphizedName(ParentName, TypeArgs);
   std::string MonoMethodName = MonoParentName + "_" + M->getId();
-  
+
   // Note: we track methods by the method decl + type args of the parent
-  // If the method ALSO has type args, that's a separate level of instantiation we likely fall into via discoverInExpr
-  
+  // If the method ALSO has type args, that's a separate level of instantiation
+  // we likely fall into via discoverInExpr
+
   TypeInstantiation TI{M, TypeArgs};
   MonomorphizedNames[TI] = MonoMethodName;
 
@@ -609,7 +615,8 @@ void LLVMCodeGen::monomorphizeMethod(const MethodDecl *M,
   CurrentSubs = SavedSubs;
 
   auto *FnTy = llvm::FunctionType::get(RetTy, ParamTypes, false);
-  auto *Fn = llvm::Function::Create(FnTy, llvm::Function::ExternalLinkage, MonoMethodName, Module);
+  auto *Fn = llvm::Function::Create(FnTy, llvm::Function::ExternalLinkage,
+                                    MonoMethodName, Module);
 
   unsigned Idx = 0;
   for (auto &Arg : Fn->args()) {
@@ -627,7 +634,7 @@ void LLVMCodeGen::monomorphizeFunction(const FunDecl *F,
 
   // Build the function signature
   SubstitutionMap Subs = buildSubstitutionMap(F, TypeArgs);
-  
+
   // Save current subs and switch to monomorphization subs
   auto SavedSubs = CurrentSubs;
   CurrentSubs = Subs;
@@ -638,11 +645,12 @@ void LLVMCodeGen::monomorphizeFunction(const FunDecl *F,
   }
 
   llvm::Type *RetTy = getLLVMType(F->getReturnType());
-  
+
   CurrentSubs = SavedSubs;
 
   auto *FnTy = llvm::FunctionType::get(RetTy, ParamTypes, false);
-  auto *Fn = llvm::Function::Create(FnTy, llvm::Function::ExternalLinkage, MonoName, Module);
+  auto *Fn = llvm::Function::Create(FnTy, llvm::Function::ExternalLinkage,
+                                    MonoName, Module);
 
   // Name parameters
   unsigned Idx = 0;
@@ -655,7 +663,7 @@ void LLVMCodeGen::monomorphizeFunction(const FunDecl *F,
 
 TypeRef LLVMCodeGen::substituteType(TypeRef T, const SubstitutionMap &Subs) {
   const Type *Ptr = T.getPtr();
-  
+
   if (auto *GT = llvm::dyn_cast<GenericTy>(Ptr)) {
     auto It = Subs.find(GT->getDecl());
     if (It != Subs.end()) {
@@ -663,7 +671,7 @@ TypeRef LLVMCodeGen::substituteType(TypeRef T, const SubstitutionMap &Subs) {
     }
     return T;
   }
-  
+
   if (auto *ApT = llvm::dyn_cast<AppliedTy>(Ptr)) {
     std::vector<TypeRef> SubArgs;
     for (const auto &Arg : ApT->getArgs()) {
@@ -677,15 +685,17 @@ TypeRef LLVMCodeGen::substituteType(TypeRef T, const SubstitutionMap &Subs) {
     }
     return T; // Return original for now, lookup will use MonomorphizedNames
   }
-  
+
   if (auto *PT = llvm::dyn_cast<PtrTy>(Ptr)) {
-    return TypeRef(new PtrTy(substituteType(PT->getPointee(), Subs)), T.getSpan());
+    return TypeRef(new PtrTy(substituteType(PT->getPointee(), Subs)),
+                   T.getSpan());
   }
-  
+
   if (auto *RT = llvm::dyn_cast<RefTy>(Ptr)) {
-    return TypeRef(new RefTy(substituteType(RT->getPointee(), Subs)), T.getSpan());
+    return TypeRef(new RefTy(substituteType(RT->getPointee(), Subs)),
+                   T.getSpan());
   }
-  
+
   if (auto *TT = llvm::dyn_cast<TupleTy>(Ptr)) {
     std::vector<TypeRef> SubElems;
     for (const auto &Elem : TT->getElementTys()) {
@@ -693,7 +703,7 @@ TypeRef LLVMCodeGen::substituteType(TypeRef T, const SubstitutionMap &Subs) {
     }
     return TypeRef(new TupleTy(SubElems), T.getSpan());
   }
-  
+
   return T;
 }
 
@@ -730,8 +740,9 @@ LLVMCodeGen::buildSubstitutionMap(const AdtDecl *Decl,
   return Subs;
 }
 
-std::string LLVMCodeGen::generateMonomorphizedName(
-    const std::string &BaseName, const std::vector<TypeRef> &TypeArgs) {
+std::string
+LLVMCodeGen::generateMonomorphizedName(const std::string &BaseName,
+                                       const std::vector<TypeRef> &TypeArgs) {
   std::string Result = BaseName;
   for (const auto &Arg : TypeArgs) {
     Result += "_" + Arg.toString();
@@ -771,13 +782,9 @@ void LLVMCodeGen::desugarModule(ModuleDecl *M) {
   }
 }
 
-void LLVMCodeGen::desugarFunction(FunDecl *F) {
-  desugarBlock(&F->getBody());
-}
+void LLVMCodeGen::desugarFunction(FunDecl *F) { desugarBlock(&F->getBody()); }
 
-void LLVMCodeGen::desugarMethod(MethodDecl *M) {
-  desugarBlock(&M->getBody());
-}
+void LLVMCodeGen::desugarMethod(MethodDecl *M) { desugarBlock(&M->getBody()); }
 
 void LLVMCodeGen::desugarBlock(Block *B) {
   for (auto &S : B->getStmts()) {
@@ -812,7 +819,8 @@ void LLVMCodeGen::desugarStmt(Stmt *S) {
 }
 
 void LLVMCodeGen::desugarExpr(Expr *E) {
-  if (!E) return;
+  if (!E)
+    return;
 
   // Recursively process child expressions first
   if (auto *AI = llvm::dyn_cast<AdtInit>(E)) {
@@ -840,7 +848,8 @@ void LLVMCodeGen::desugarExpr(Expr *E) {
     desugarExpr(ME->getScrutinee());
     for (auto &Arm : ME->getArms()) {
       desugarBlock(Arm.Body.get());
-      if (Arm.Return) desugarExpr(Arm.Return);
+      if (Arm.Return)
+        desugarExpr(Arm.Return);
     }
   } else if (auto *IE = llvm::dyn_cast<IndexExpr>(E)) {
     desugarExpr(IE->getBase());
@@ -881,13 +890,13 @@ llvm::Value *LLVMCodeGen::getLValuePtr(Expr *E) {
     llvm::Value *BasePtr = getLValuePtr(FA->getBase());
     if (!BasePtr)
       BasePtr = codegenExpr(FA->getBase());
-    
+
     const FieldDecl *Field = FA->getField();
     std::string StructName;
     if (auto *AT = llvm::dyn_cast<AdtTy>(FA->getBase()->getType().getPtr())) {
       StructName = AT->getId();
     }
-    
+
     auto It = FieldIndices.find(StructName);
     if (It != FieldIndices.end()) {
       auto FieldIt = It->second.find(Field->getId());
@@ -917,9 +926,10 @@ void LLVMCodeGen::storeValue(llvm::Value *Val, llvm::Value *Ptr) {
 
 void LLVMCodeGen::declarePrintln() {
   // Declare printf for println support
-  auto *PrintfTy = llvm::FunctionType::get(
-      Builder.getInt32Ty(), {Builder.getPtrTy()}, true);
-  llvm::FunctionCallee PrintfCallee = Module.getOrInsertFunction("printf", PrintfTy);
+  auto *PrintfTy =
+      llvm::FunctionType::get(Builder.getInt32Ty(), {Builder.getPtrTy()}, true);
+  llvm::FunctionCallee PrintfCallee =
+      Module.getOrInsertFunction("printf", PrintfTy);
   if (auto *F = llvm::dyn_cast<llvm::Function>(PrintfCallee.getCallee())) {
     PrintFn = F;
   }
@@ -927,7 +937,7 @@ void LLVMCodeGen::declarePrintln() {
 
 llvm::Value *LLVMCodeGen::generatePrintlnCall(FunCallExpr *Call) {
   std::vector<llvm::Value *> Args;
-  
+
   if (Call->getArgs().empty()) {
     // Just print newline
     llvm::Value *Fmt = Builder.CreateGlobalStringPtr("\n");
@@ -937,7 +947,7 @@ llvm::Value *LLVMCodeGen::generatePrintlnCall(FunCallExpr *Call) {
     auto &FirstArg = Call->getArgs()[0];
     llvm::Value *ArgVal = codegenExpr(FirstArg.get());
     TypeRef ArgTy = FirstArg->getType();
-    
+
     std::string Fmt;
     if (ArgTy.getPtr()->isBuiltin()) {
       auto *BT = llvm::cast<BuiltinTy>(ArgTy.getPtr());
@@ -962,11 +972,11 @@ llvm::Value *LLVMCodeGen::generatePrintlnCall(FunCallExpr *Call) {
     } else {
       Fmt = "%d\n";
     }
-    
+
     Args.push_back(Builder.CreateGlobalStringPtr(Fmt));
     Args.push_back(ArgVal);
   }
-  
+
   return Builder.CreateCall(PrintFn, Args);
 }
 
@@ -1091,7 +1101,7 @@ llvm::Function *LLVMCodeGen::codegenFunctionDecl(FunDecl *F) {
 }
 
 llvm::Function *LLVMCodeGen::codegenMethodDecl(MethodDecl *M,
-                                                const std::string &MangledName) {
+                                               const std::string &MangledName) {
   // Build parameter types (including 'this' as first param)
   std::vector<llvm::Type *> ParamTypes;
   for (const auto &P : M->getParams()) {
@@ -1130,7 +1140,8 @@ void LLVMCodeGen::codegenFunctionBody(FunDecl *F, llvm::Function *Fn) {
     // Get printf
     llvm::FunctionType *PrintfTy = llvm::FunctionType::get(
         Builder.getInt32Ty(), {Builder.getPtrTy()}, true);
-    llvm::FunctionCallee Printf = Module.getOrInsertFunction("printf", PrintfTy);
+    llvm::FunctionCallee Printf =
+        Module.getOrInsertFunction("printf", PrintfTy);
 
     // Get argument
     llvm::Argument *Arg = Fn->getArg(0);
@@ -1143,7 +1154,7 @@ void LLVMCodeGen::codegenFunctionBody(FunDecl *F, llvm::Function *Fn) {
     } else if (ArgTy->isDoubleTy()) {
       Fmt = "%f\n";
     } else if (ArgTy->isIntegerTy(1)) {
-       Fmt = "%d\n";
+      Fmt = "%d\n";
     } else {
       Fmt = "Unknown type\n";
     }
@@ -1273,11 +1284,11 @@ void LLVMCodeGen::codegenReturnStmt(ReturnStmt *S) {
 
 void LLVMCodeGen::codegenIfStmt(IfStmt *S) {
   llvm::Value *Cond = codegenExpr(&S->getCond());
-  
+
   // Convert to i1 if needed
   if (!Cond->getType()->isIntegerTy(1)) {
-    Cond = Builder.CreateICmpNE(Cond, 
-        llvm::Constant::getNullValue(Cond->getType()), "ifcond");
+    Cond = Builder.CreateICmpNE(
+        Cond, llvm::Constant::getNullValue(Cond->getType()), "ifcond");
   }
 
   auto *ThenBB = llvm::BasicBlock::Create(Context, "then", CurrentFunction);
@@ -1304,9 +1315,12 @@ void LLVMCodeGen::codegenIfStmt(IfStmt *S) {
 }
 
 void LLVMCodeGen::codegenWhileStmt(WhileStmt *S) {
-  auto *CondBB = llvm::BasicBlock::Create(Context, "while.cond", CurrentFunction);
-  auto *BodyBB = llvm::BasicBlock::Create(Context, "while.body", CurrentFunction);
-  auto *AfterBB = llvm::BasicBlock::Create(Context, "while.end", CurrentFunction);
+  auto *CondBB =
+      llvm::BasicBlock::Create(Context, "while.cond", CurrentFunction);
+  auto *BodyBB =
+      llvm::BasicBlock::Create(Context, "while.body", CurrentFunction);
+  auto *AfterBB =
+      llvm::BasicBlock::Create(Context, "while.end", CurrentFunction);
 
   Builder.CreateBr(CondBB);
 
@@ -1314,8 +1328,8 @@ void LLVMCodeGen::codegenWhileStmt(WhileStmt *S) {
   Builder.SetInsertPoint(CondBB);
   llvm::Value *Cond = codegenExpr(&S->getCond());
   if (!Cond->getType()->isIntegerTy(1)) {
-    Cond = Builder.CreateICmpNE(Cond,
-        llvm::Constant::getNullValue(Cond->getType()), "whilecond");
+    Cond = Builder.CreateICmpNE(
+        Cond, llvm::Constant::getNullValue(Cond->getType()), "whilecond");
   }
   Builder.CreateCondBr(Cond, BodyBB, AfterBB);
 
@@ -1344,7 +1358,8 @@ void LLVMCodeGen::codegenForStmt(ForStmt *S) {
   Builder.SetInsertPoint(InitBB);
   auto &LoopVar = S->getLoopVar();
   llvm::Type *Ty = getLLVMType(LoopVar.getType());
-  auto *LoopVarAlloca = createEntryBlockAlloca(CurrentFunction, LoopVar.getId(), Ty);
+  auto *LoopVarAlloca =
+      createEntryBlockAlloca(CurrentFunction, LoopVar.getId(), Ty);
   NamedValues[&LoopVar] = LoopVarAlloca;
 
   // Get range bounds
@@ -1400,16 +1415,15 @@ void LLVMCodeGen::codegenContinueStmt(ContinueStmt * /*S*/) {
   }
 }
 
-void LLVMCodeGen::codegenExprStmt(ExprStmt *S) {
-  codegenExpr(&S->getExpr());
-}
+void LLVMCodeGen::codegenExprStmt(ExprStmt *S) { codegenExpr(&S->getExpr()); }
 
 //===----------------------------------------------------------------------===//
 // Phase 4: Expression Codegen
 //===----------------------------------------------------------------------===//
 
 llvm::Value *LLVMCodeGen::codegenExpr(Expr *E) {
-  if (!E) return llvm::Constant::getNullValue(Builder.getInt32Ty());
+  if (!E)
+    return llvm::Constant::getNullValue(Builder.getInt32Ty());
 
   if (auto *IL = llvm::dyn_cast<IntLiteral>(E))
     return codegenIntLiteral(IL);
@@ -1528,37 +1542,50 @@ llvm::Value *LLVMCodeGen::codegenFunCall(FunCallExpr *E) {
 
   // Intercept println
   if (Callee->getId() == "println") {
-      if (E->getArgs().empty()) return llvm::Constant::getNullValue(Builder.getVoidTy());
-      
-      llvm::Value *Val = codegenExpr(E->getArgs()[0].get());
-      llvm::Type *ValTy = Val->getType();
-      
-      std::string Fmt;
-      if (ValTy->isIntegerTy(32)) Fmt = "%d\n";
-      else if (ValTy->isIntegerTy(64)) Fmt = "%ld\n";
-      else if (ValTy->isDoubleTy()) Fmt = "%f\n";
-      else if (ValTy->isIntegerTy(1)) Fmt = "%d\n"; // bool
-      else if (ValTy->isPointerTy()) Fmt = "%s\n"; // string or other ptr
-      else Fmt = "Unknown\n";
-      
-      llvm::Value *FmtStr = Builder.CreateGlobalStringPtr(Fmt, "fmt");
-      
-      llvm::FunctionType *PrintfTy = llvm::FunctionType::get(Builder.getInt32Ty(), {Builder.getPtrTy()}, true);
-      llvm::FunctionCallee Printf = Module.getOrInsertFunction("printf", PrintfTy);
-      return Builder.CreateCall(Printf, {FmtStr, Val});
+    if (E->getArgs().empty())
+      return llvm::Constant::getNullValue(Builder.getVoidTy());
+
+    llvm::Value *Val = codegenExpr(E->getArgs()[0].get());
+    llvm::Type *ValTy = Val->getType();
+
+    std::string Fmt;
+    if (ValTy->isIntegerTy(32))
+      Fmt = "%d\n";
+    else if (ValTy->isIntegerTy(64))
+      Fmt = "%ld\n";
+    else if (ValTy->isDoubleTy())
+      Fmt = "%f\n";
+    else if (ValTy->isIntegerTy(1))
+      Fmt = "%d\n"; // bool
+    else if (ValTy->isPointerTy())
+      Fmt = "%s\n"; // string or other ptr
+    else
+      Fmt = "Unknown\n";
+
+    llvm::Value *FmtStr = Builder.CreateGlobalStringPtr(Fmt, "fmt");
+
+    llvm::FunctionType *PrintfTy = llvm::FunctionType::get(
+        Builder.getInt32Ty(), {Builder.getPtrTy()}, true);
+    llvm::FunctionCallee Printf =
+        Module.getOrInsertFunction("printf", PrintfTy);
+    return Builder.CreateCall(Printf, {FmtStr, Val});
   }
 
   llvm::Function *Fn = nullptr;
-  
+
   // Try to resolve generic function
   if (E->hasTypeArgs()) {
-    std::string MonoName = generateMonomorphizedName(Callee->getId(), E->getTypeArgs());
+    std::string MonoName =
+        generateMonomorphizedName(Callee->getId(), E->getTypeArgs());
     Fn = Module.getFunction(MonoName);
   } else if (!Callee->getTypeArgs().empty()) {
-    // If it's a generic function but no args provided, it might have been monomorphized already
-    // This happens with inferred types or when called from another generic
-    TypeInstantiation TI{Callee, {}}; // Fallback or search in MonomorphizedNames
-    // For now try searching by ID in module if we can't find it in Functions cache
+    // If it's a generic function but no args provided, it might have been
+    // monomorphized already This happens with inferred types or when called
+    // from another generic
+    TypeInstantiation TI{Callee,
+                         {}}; // Fallback or search in MonomorphizedNames
+    // For now try searching by ID in module if we can't find it in Functions
+    // cache
   }
 
   if (!Fn) {
@@ -1574,7 +1601,7 @@ llvm::Value *LLVMCodeGen::codegenFunCall(FunCallExpr *E) {
   }
 
   if (!Fn) {
-      return llvm::Constant::getNullValue(getLLVMType(E->getType()));
+    return llvm::Constant::getNullValue(getLLVMType(E->getType()));
   }
 
   // Generate arguments
@@ -1589,34 +1616,38 @@ llvm::Value *LLVMCodeGen::codegenFunCall(FunCallExpr *E) {
 llvm::Value *LLVMCodeGen::codegenMethodCall(MethodCallExpr *E) {
   // Transform: obj.method(args) -> method(obj, args)
   MethodDecl *Method = &E->getMethod();
-  
+
   llvm::Function *Fn = nullptr;
   if (E->hasTypeArgs() || !Method->getTypeArgs().empty()) {
-     // For methods, desugar phase might have already handled this 
-     // but if not, try resolving name
-     std::string MonoName = Method->getParent()->getId() + "_" + Method->getId();
-     if (E->hasTypeArgs()) {
-         MonoName = generateMonomorphizedName(MonoName, E->getTypeArgs());
-     }
-     Fn = Module.getFunction(MonoName);
+    // For methods, desugar phase might have already handled this
+    // but if not, try resolving name
+    std::string MonoName = Method->getParent()->getId() + "_" + Method->getId();
+    if (E->hasTypeArgs()) {
+      MonoName = generateMonomorphizedName(MonoName, E->getTypeArgs());
+    }
+    Fn = Module.getFunction(MonoName);
   }
 
   // Generic Struct Method Resolution
   if (!Fn && E->getBase()) {
-      TypeRef BaseTy = E->getBase()->getType();
-      while (true) {
-          if (auto *RT = llvm::dyn_cast<RefTy>(BaseTy.getPtr())) BaseTy = RT->getPointee();
-          else if (auto *PT = llvm::dyn_cast<PtrTy>(BaseTy.getPtr())) BaseTy = PT->getPointee();
-          else break;
+    TypeRef BaseTy = E->getBase()->getType();
+    while (true) {
+      if (auto *RT = llvm::dyn_cast<RefTy>(BaseTy.getPtr()))
+        BaseTy = RT->getPointee();
+      else if (auto *PT = llvm::dyn_cast<PtrTy>(BaseTy.getPtr()))
+        BaseTy = PT->getPointee();
+      else
+        break;
+    }
+    if (auto *AppTy = llvm::dyn_cast<AppliedTy>(BaseTy.getPtr())) {
+      if (auto *Adt = llvm::dyn_cast<AdtTy>(AppTy->getBase().getPtr())) {
+        std::string ParentName = Adt->getId();
+        std::string MonoParent =
+            generateMonomorphizedName(ParentName, AppTy->getArgs());
+        std::string MonoMethod = MonoParent + "_" + Method->getId();
+        Fn = Module.getFunction(MonoMethod);
       }
-      if (auto *AppTy = llvm::dyn_cast<AppliedTy>(BaseTy.getPtr())) {
-          if (auto *Adt = llvm::dyn_cast<AdtTy>(AppTy->getBase().getPtr())) {
-               std::string ParentName = Adt->getId();
-               std::string MonoParent = generateMonomorphizedName(ParentName, AppTy->getArgs());
-               std::string MonoMethod = MonoParent + "_" + Method->getId();
-               Fn = Module.getFunction(MonoMethod);
-          }
-      }
+    }
   }
 
   if (!Fn) {
@@ -1633,44 +1664,49 @@ llvm::Value *LLVMCodeGen::codegenMethodCall(MethodCallExpr *E) {
   // First argument is the receiver (self)
   llvm::Value *BaseVal = nullptr;
   bool PassAddress = false;
-  
+
   if (!Method->getParams().empty()) {
-       TypeRef ParamTy = Method->getParams()[0]->getType();
-       if (llvm::dyn_cast<RefTy>(ParamTy.getPtr()) || llvm::dyn_cast<PtrTy>(ParamTy.getPtr())) {
-           // Param expects pointer/reference
-           // Check if Base is Value type
-           TypeRef BaseTy = E->getBase()->getType();
-           if (!llvm::dyn_cast<RefTy>(BaseTy.getPtr()) && !llvm::dyn_cast<PtrTy>(BaseTy.getPtr())) {
-               PassAddress = true;
-           }
-       }
+    TypeRef ParamTy = Method->getParams()[0]->getType();
+    if (llvm::dyn_cast<RefTy>(ParamTy.getPtr()) ||
+        llvm::dyn_cast<PtrTy>(ParamTy.getPtr())) {
+      // Param expects pointer/reference
+      // Check if Base is Value type
+      TypeRef BaseTy = E->getBase()->getType();
+      if (!llvm::dyn_cast<RefTy>(BaseTy.getPtr()) &&
+          !llvm::dyn_cast<PtrTy>(BaseTy.getPtr())) {
+        PassAddress = true;
+      }
+    }
   }
 
   if (PassAddress) {
-       // Optimization: If DeclRef, get Alloca directly
-       if (auto *DRE = llvm::dyn_cast<DeclRefExpr>(E->getBase())) {
-           auto It = NamedValues.find(DRE->getDecl());
-           if (It != NamedValues.end()) {
-               BaseVal = It->second;
-           }
-       }
-       
-       if (!BaseVal) {
-           // Create temporary for RValue
-           llvm::Value *Val = codegenExpr(E->getBase());
-           if (Val) {
-               llvm::Type *Ty = Val->getType();
-               auto *Temp = createEntryBlockAlloca(CurrentFunction, "temp_this", Ty);
-               Builder.CreateStore(Val, Temp);
-               BaseVal = Temp;
-           }
-       }
+    // Optimization: If DeclRef, get Alloca directly
+    if (auto *DRE = llvm::dyn_cast<DeclRefExpr>(E->getBase())) {
+      auto It = NamedValues.find(DRE->getDecl());
+      if (It != NamedValues.end()) {
+        BaseVal = It->second;
+      }
+    }
+
+    if (!BaseVal) {
+      // Create temporary for RValue
+      llvm::Value *Val = codegenExpr(E->getBase());
+      if (Val) {
+        llvm::Type *Ty = Val->getType();
+        auto *Temp = createEntryBlockAlloca(CurrentFunction, "temp_this", Ty);
+        Builder.CreateStore(Val, Temp);
+        BaseVal = Temp;
+      }
+    }
   } else {
-       BaseVal = codegenExpr(E->getBase());
+    BaseVal = codegenExpr(E->getBase());
   }
 
-  if (BaseVal) Args.push_back(BaseVal);
-  else Args.push_back(llvm::UndefValue::get(getLLVMType(E->getBase()->getType()))); // Should not happen
+  if (BaseVal)
+    Args.push_back(BaseVal);
+  else
+    Args.push_back(llvm::UndefValue::get(
+        getLLVMType(E->getBase()->getType()))); // Should not happen
 
   // Remaining arguments
   for (auto &Arg : E->getArgs()) {
@@ -1791,7 +1827,8 @@ llvm::Value *LLVMCodeGen::codegenStructInit(AdtInit *E, const StructDecl *S) {
     return llvm::Constant::getNullValue(Builder.getInt32Ty());
 
   // Create alloca for struct
-  auto *Alloca = createEntryBlockAlloca(CurrentFunction, generateTempVar(), StructTy);
+  auto *Alloca =
+      createEntryBlockAlloca(CurrentFunction, generateTempVar(), StructTy);
 
   // Initialize fields
   for (auto &Init : E->getInits()) {
@@ -1799,7 +1836,8 @@ llvm::Value *LLVMCodeGen::codegenStructInit(AdtInit *E, const StructDecl *S) {
     auto FieldIt = FieldIndices[StructName].find(FieldName);
     if (FieldIt != FieldIndices[StructName].end()) {
       unsigned FieldIdx = FieldIt->second;
-      llvm::Value *FieldPtr = Builder.CreateStructGEP(StructTy, Alloca, FieldIdx);
+      llvm::Value *FieldPtr =
+          Builder.CreateStructGEP(StructTy, Alloca, FieldIdx);
       llvm::Value *Val = codegenExpr(Init->getInitValue());
       Builder.CreateStore(Val, FieldPtr);
     }
@@ -1835,7 +1873,8 @@ llvm::Value *LLVMCodeGen::codegenEnumInit(AdtInit *E, const EnumDecl *En) {
   unsigned Discriminant = DiscIt->second;
 
   // Create alloca for enum
-  auto *Alloca = createEntryBlockAlloca(CurrentFunction, generateTempVar(), EnumTy);
+  auto *Alloca =
+      createEntryBlockAlloca(CurrentFunction, generateTempVar(), EnumTy);
 
   // Store discriminant
   auto *DiscPtr = Builder.CreateStructGEP(EnumTy, Alloca, 0);
@@ -1847,7 +1886,8 @@ llvm::Value *LLVMCodeGen::codegenEnumInit(AdtInit *E, const EnumDecl *En) {
       !E->getInits().empty()) {
     llvm::Type *PayloadTy = PayloadIt->second;
     auto *PayloadPtr = Builder.CreateStructGEP(EnumTy, Alloca, 1);
-    auto *TypedPayloadPtr = Builder.CreateBitCast(PayloadPtr, PayloadTy->getPointerTo());
+    auto *TypedPayloadPtr =
+        Builder.CreateBitCast(PayloadPtr, PayloadTy->getPointerTo());
     llvm::Value *PayloadVal = codegenExpr(E->getInits()[0]->getInitValue());
     Builder.CreateStore(PayloadVal, TypedPayloadPtr);
   }
@@ -1862,7 +1902,8 @@ llvm::Value *LLVMCodeGen::codegenFieldAccess(FieldAccessExpr *E) {
     BasePtr = codegenExpr(E->getBase());
     // For value types, we need to store to a temp first
     llvm::Type *BaseTy = getLLVMType(E->getBase()->getType());
-    auto *Alloca = createEntryBlockAlloca(CurrentFunction, generateTempVar(), BaseTy);
+    auto *Alloca =
+        createEntryBlockAlloca(CurrentFunction, generateTempVar(), BaseTy);
     Builder.CreateStore(BasePtr, Alloca);
     BasePtr = Alloca;
   }
@@ -1872,7 +1913,7 @@ llvm::Value *LLVMCodeGen::codegenFieldAccess(FieldAccessExpr *E) {
   if (auto *RT = llvm::dyn_cast<RefTy>(BaseTyPtr)) {
     BaseTyPtr = RT->getPointee().getPtr();
   }
-  
+
   if (auto *AT = llvm::dyn_cast<AdtTy>(BaseTyPtr)) {
     StructName = AT->getId();
   }
@@ -1883,7 +1924,8 @@ llvm::Value *LLVMCodeGen::codegenFieldAccess(FieldAccessExpr *E) {
     auto FieldIt = It->second.find(Field->getId());
     if (FieldIt != It->second.end()) {
       llvm::Type *StructTy = StructTypes[StructName];
-      auto *FieldPtr = Builder.CreateStructGEP(StructTy, BasePtr, FieldIt->second);
+      auto *FieldPtr =
+          Builder.CreateStructGEP(StructTy, BasePtr, FieldIt->second);
       return Builder.CreateLoad(getLLVMType(E->getType()), FieldPtr);
     }
   }
@@ -1898,7 +1940,8 @@ llvm::Value *LLVMCodeGen::codegenIndexExpr(IndexExpr *E) {
     return llvm::Constant::getNullValue(getLLVMType(E->getType()));
 
   llvm::Type *BaseTy = getLLVMType(E->getBase()->getType());
-  auto *ElemPtr = Builder.CreateGEP(BaseTy, BasePtr, {Builder.getInt32(0), Idx});
+  auto *ElemPtr =
+      Builder.CreateGEP(BaseTy, BasePtr, {Builder.getInt32(0), Idx});
   return Builder.CreateLoad(getLLVMType(E->getType()), ElemPtr);
 }
 
@@ -1912,11 +1955,12 @@ llvm::Value *LLVMCodeGen::codegenIntrinsicCall(IntrinsicCall *E) {
     }
 
     // Declare printf if not exists
-    if (!PrintFn) declarePrintln();
-    
+    if (!PrintFn)
+      declarePrintln();
+
     // Declare abort
-    llvm::FunctionCallee AbortFn = Module.getOrInsertFunction("abort", 
-        llvm::FunctionType::get(Builder.getVoidTy(), false));
+    llvm::FunctionCallee AbortFn = Module.getOrInsertFunction(
+        "abort", llvm::FunctionType::get(Builder.getVoidTy(), false));
 
     // Print "Panic: "
     llvm::Value *Prefix = Builder.CreateGlobalStringPtr("Panic: ");
@@ -1925,65 +1969,74 @@ llvm::Value *LLVMCodeGen::codegenIntrinsicCall(IntrinsicCall *E) {
     // Print message if present
     if (Msg) {
       // Assuming generic print like println
-       llvm::Type *MsgTy = Msg->getType();
-       std::string Fmt;
-       if (MsgTy->isIntegerTy(32)) Fmt = "%d\n";
-       else if (MsgTy->isDoubleTy()) Fmt = "%f\n";
-       else if (MsgTy->isPointerTy()) Fmt = "%s\n";
-       else Fmt = "Unknown\n";
-       
-       llvm::Value *FmtStr = Builder.CreateGlobalStringPtr(Fmt);
-       Builder.CreateCall(PrintFn, {FmtStr, Msg});
+      llvm::Type *MsgTy = Msg->getType();
+      std::string Fmt;
+      if (MsgTy->isIntegerTy(32))
+        Fmt = "%d\n";
+      else if (MsgTy->isDoubleTy())
+        Fmt = "%f\n";
+      else if (MsgTy->isPointerTy())
+        Fmt = "%s\n";
+      else
+        Fmt = "Unknown\n";
+
+      llvm::Value *FmtStr = Builder.CreateGlobalStringPtr(Fmt);
+      Builder.CreateCall(PrintFn, {FmtStr, Msg});
     } else {
-       Builder.CreateCall(PrintFn, {Builder.CreateGlobalStringPtr("\n")});
+      Builder.CreateCall(PrintFn, {Builder.CreateGlobalStringPtr("\n")});
     }
 
     // Call abort
     Builder.CreateCall(AbortFn);
-    
+
     // Return undef as we are aborting
     return llvm::UndefValue::get(getLLVMType(E->getType()));
   }
   case IntrinsicCall::IntrinsicKind::Assert: {
     // Assert(cond, msg)
-    if (E->getArgs().empty()) return llvm::Constant::getNullValue(Builder.getVoidTy());
-    
+    if (E->getArgs().empty())
+      return llvm::Constant::getNullValue(Builder.getVoidTy());
+
     llvm::Value *Cond = codegenExpr(E->getArgs()[0].get());
     if (!Cond->getType()->isIntegerTy(1)) {
-        Cond = Builder.CreateICmpNE(Cond, llvm::Constant::getNullValue(Cond->getType()));
+      Cond = Builder.CreateICmpNE(
+          Cond, llvm::Constant::getNullValue(Cond->getType()));
     }
 
-    llvm::BasicBlock *FailBB = llvm::BasicBlock::Create(Context, "assert.fail", CurrentFunction);
-    llvm::BasicBlock *ContBB = llvm::BasicBlock::Create(Context, "assert.cont", CurrentFunction);
+    llvm::BasicBlock *FailBB =
+        llvm::BasicBlock::Create(Context, "assert.fail", CurrentFunction);
+    llvm::BasicBlock *ContBB =
+        llvm::BasicBlock::Create(Context, "assert.cont", CurrentFunction);
 
     Builder.CreateCondBr(Cond, ContBB, FailBB);
 
     // Fail Block
     Builder.SetInsertPoint(FailBB);
-    
+
     // Declare printf/abort
-    if (!PrintFn) declarePrintln();
-    llvm::FunctionCallee AbortFn = Module.getOrInsertFunction("abort", 
-        llvm::FunctionType::get(Builder.getVoidTy(), false));
+    if (!PrintFn)
+      declarePrintln();
+    llvm::FunctionCallee AbortFn = Module.getOrInsertFunction(
+        "abort", llvm::FunctionType::get(Builder.getVoidTy(), false));
 
     llvm::Value *Msg = Builder.CreateGlobalStringPtr("Assertion failed\n");
     if (E->getArgs().size() > 1) {
-        // Evaluate custom message
-        // Note: strictly this should be evaluated before branch? 
-        // Or we evaluate it only on failure (lazy). 
-        // C assert evaluates macro args? No, standard assert is eval'd before?
-        // Actually usually assert(cond && "msg").
-        // Here we evaluate in fail block.
-        // But codegenExpr might generate side effects / code in current block?
-        // `codegenExpr` appends to `Builder`'s current block.
-        // So we are good.
-        // Evaluate custom message for side effects (though likely none)
-        codegenExpr(E->getArgs()[1].get());
-        
-        // Print user message... simplified for now, just print "Assertion failed"
-        // If we want to print UserMsg we need format logic again
+      // Evaluate custom message
+      // Note: strictly this should be evaluated before branch?
+      // Or we evaluate it only on failure (lazy).
+      // C assert evaluates macro args? No, standard assert is eval'd before?
+      // Actually usually assert(cond && "msg").
+      // Here we evaluate in fail block.
+      // But codegenExpr might generate side effects / code in current block?
+      // `codegenExpr` appends to `Builder`'s current block.
+      // So we are good.
+      // Evaluate custom message for side effects (though likely none)
+      codegenExpr(E->getArgs()[1].get());
+
+      // Print user message... simplified for now, just print "Assertion failed"
+      // If we want to print UserMsg we need format logic again
     }
-    
+
     Builder.CreateCall(PrintFn, {Builder.CreateGlobalStringPtr("%s"), Msg});
     Builder.CreateCall(AbortFn);
     Builder.CreateUnreachable(); // Terminate fail block
@@ -1999,7 +2052,7 @@ llvm::Value *LLVMCodeGen::codegenIntrinsicCall(IntrinsicCall *E) {
   case IntrinsicCall::IntrinsicKind::TypeOf: {
     // Compile-time only, or return string of type name?
     // For now return void/null
-    return llvm::Constant::getNullValue(Builder.getVoidTy()); 
+    return llvm::Constant::getNullValue(Builder.getVoidTy());
   }
   }
   return llvm::Constant::getNullValue(Builder.getVoidTy());
@@ -2013,254 +2066,285 @@ llvm::Value *LLVMCodeGen::codegenMatchExpr(MatchExpr *E) {
   llvm::Value *Scrutinee = codegenExpr(E->getScrutinee());
   TypeRef ASTType = E->getScrutinee()->getType();
   while (true) {
-      if (auto *RT = llvm::dyn_cast<RefTy>(ASTType.getPtr())) {
-          ASTType = RT->getPointee();
-      } else if (auto *PT = llvm::dyn_cast<PtrTy>(ASTType.getPtr())) {
-          ASTType = PT->getPointee();
-      } else {
-          break;
-      }
+    if (auto *RT = llvm::dyn_cast<RefTy>(ASTType.getPtr())) {
+      ASTType = RT->getPointee();
+    } else if (auto *PT = llvm::dyn_cast<PtrTy>(ASTType.getPtr())) {
+      ASTType = PT->getPointee();
+    } else {
+      break;
+    }
   }
   llvm::Type *ScrutineeTy = getLLVMType(ASTType);
   llvm::Value *ScrutineeAlloca = Scrutinee;
 
   // Handles pointer to struct (opaque)
   if (Scrutinee->getType()->isPointerTy()) {
-       if (llvm::isa<llvm::StructType>(ScrutineeTy)) {
-          ScrutineeAlloca = Scrutinee;
-       } else {
-          // If ScrutineeTy is NOT StructType (e.g. integer hidden in ptr? Unlikely).
-          // Allow fallback.
-          ScrutineeAlloca = createEntryBlockAlloca(CurrentFunction, "scrutinee", ScrutineeTy);
-          Builder.CreateStore(Scrutinee, ScrutineeAlloca);
-       }
-  } else {
-      ScrutineeAlloca = createEntryBlockAlloca(CurrentFunction, "scrutinee", ScrutineeTy);
+    if (llvm::isa<llvm::StructType>(ScrutineeTy)) {
+      ScrutineeAlloca = Scrutinee;
+    } else {
+      // If ScrutineeTy is NOT StructType (e.g. integer hidden in ptr?
+      // Unlikely). Allow fallback.
+      ScrutineeAlloca =
+          createEntryBlockAlloca(CurrentFunction, "scrutinee", ScrutineeTy);
       Builder.CreateStore(Scrutinee, ScrutineeAlloca);
+    }
+  } else {
+    ScrutineeAlloca =
+        createEntryBlockAlloca(CurrentFunction, "scrutinee", ScrutineeTy);
+    Builder.CreateStore(Scrutinee, ScrutineeAlloca);
   }
 
   auto *StartBB = Builder.GetInsertBlock();
-  auto *MergeBB = llvm::BasicBlock::Create(Context, "match.end", CurrentFunction);
-  auto *FailBB = llvm::BasicBlock::Create(Context, "match.fail", CurrentFunction);
+  auto *MergeBB =
+      llvm::BasicBlock::Create(Context, "match.end", CurrentFunction);
+  auto *FailBB =
+      llvm::BasicBlock::Create(Context, "match.fail", CurrentFunction);
 
   // PHI for result
   llvm::Type *ResultTy = getLLVMType(E->getType());
   llvm::PHINode *ResultPHI = nullptr;
   if (!ResultTy->isVoidTy()) {
     Builder.SetInsertPoint(MergeBB);
-    ResultPHI = Builder.CreatePHI(ResultTy, E->getArms().size() + 1, "match.result");
+    ResultPHI =
+        Builder.CreatePHI(ResultTy, E->getArms().size() + 1, "match.result");
   }
 
   // --- Attempt Switch Optimization ---
   bool CanUseSwitch = true;
   bool HasWildcard = false;
-  
+
   // Check scrutinee type
   bool IsEnum = false;
   bool IsInteger = ScrutineeTy->isIntegerTy();
   std::string EnumName;
-  
+
   if (auto *ST = llvm::dyn_cast<llvm::StructType>(ScrutineeTy)) {
     if (ST->hasName()) {
-       EnumName = ST->getName().str();
-       llvm::errs() << "DEBUG: codegenMatchExpr EnumName='" << EnumName << "'\n";
-       if (VariantDiscriminants.count(EnumName)) {
-           IsEnum = true;
-       }
+      EnumName = ST->getName().str();
+      llvm::errs() << "DEBUG: codegenMatchExpr EnumName='" << EnumName << "'\n";
+      if (VariantDiscriminants.count(EnumName)) {
+        IsEnum = true;
+      }
     }
   }
 
-  if (!IsEnum && !IsInteger) CanUseSwitch = false;
+  if (!IsEnum && !IsInteger)
+    CanUseSwitch = false;
 
   // Check arms
   for (size_t I = 0; I < E->getArms().size(); ++I) {
-      if (HasWildcard) { 
-          // Wildcard must be last
-          CanUseSwitch = false; break; 
+    if (HasWildcard) {
+      // Wildcard must be last
+      CanUseSwitch = false;
+      break;
+    }
+
+    const auto &Arm = E->getArms()[I];
+    if (Arm.Patterns.empty()) {
+      HasWildcard = true; // Fallback "else"
+      continue;
+    }
+
+    for (const auto &Pat : Arm.Patterns) {
+      if (std::holds_alternative<PatternAtomics::Wildcard>(Pat)) {
+        HasWildcard = true;
+        // If mixed with other patterns or not last arm, abort switch
+        if (Arm.Patterns.size() > 1 || I != E->getArms().size() - 1) {
+          CanUseSwitch = false;
+        }
+        break;
       }
-      
-      const auto &Arm = E->getArms()[I];
-      if (Arm.Patterns.empty()) {
-          HasWildcard = true; // Fallback "else"
-          continue;
+      if (std::holds_alternative<PatternAtomics::Literal>(Pat)) {
+        if (!IsInteger) {
+          CanUseSwitch = false;
+          break;
+        }
+      } else if (std::holds_alternative<PatternAtomics::Variant>(Pat)) {
+        if (!IsEnum) {
+          CanUseSwitch = false;
+          break;
+        }
+      } else {
+        CanUseSwitch = false;
+        break;
       }
-      
-      for (const auto &Pat : Arm.Patterns) {
-          if (std::holds_alternative<PatternAtomics::Wildcard>(Pat)) {
-              HasWildcard = true;
-              // If mixed with other patterns or not last arm, abort switch
-              if (Arm.Patterns.size() > 1 || I != E->getArms().size() - 1) {
-                  CanUseSwitch = false;
-              }
-              break;
-          }
-          if (std::holds_alternative<PatternAtomics::Literal>(Pat)) {
-              if (!IsInteger) { CanUseSwitch = false; break; }
-          } else if (std::holds_alternative<PatternAtomics::Variant>(Pat)) {
-              if (!IsEnum) { CanUseSwitch = false; break; }
-          } else {
-              CanUseSwitch = false; break;
-          }
-      }
-      if (!CanUseSwitch) break;
+    }
+    if (!CanUseSwitch)
+      break;
   }
 
   if (CanUseSwitch && (IsEnum || IsInteger)) {
-      Builder.SetInsertPoint(StartBB);
-      
-      llvm::Value *SwitchVal = nullptr;
-      if (IsInteger) {
-          SwitchVal = Builder.CreateLoad(ScrutineeTy, ScrutineeAlloca);
+    Builder.SetInsertPoint(StartBB);
+
+    llvm::Value *SwitchVal = nullptr;
+    if (IsInteger) {
+      SwitchVal = Builder.CreateLoad(ScrutineeTy, ScrutineeAlloca);
+    } else {
+      // Load discriminant
+      auto *DiscPtr = Builder.CreateStructGEP(
+          llvm::cast<llvm::StructType>(ScrutineeTy), ScrutineeAlloca, 0);
+      SwitchVal = Builder.CreateLoad(Builder.getInt32Ty(), DiscPtr);
+    }
+
+    llvm::BasicBlock *DefaultBB = FailBB;
+
+    // We will create the switch inst at the end
+
+    // Generate bodies and Collect cases
+    std::vector<std::pair<llvm::ConstantInt *, llvm::BasicBlock *>> Cases;
+
+    for (const auto &Arm : E->getArms()) {
+      llvm::BasicBlock *ArmBB = llvm::BasicBlock::Create(
+          Context, "match.arm", CurrentFunction, FailBB);
+
+      bool IsWildcardArm = false;
+      // Add cases
+      if (Arm.Patterns.empty()) {
+        IsWildcardArm = true;
       } else {
-          // Load discriminant
-          auto *DiscPtr = Builder.CreateStructGEP(llvm::cast<llvm::StructType>(ScrutineeTy), ScrutineeAlloca, 0);
-          SwitchVal = Builder.CreateLoad(Builder.getInt32Ty(), DiscPtr);
+        for (const auto &Pat : Arm.Patterns) {
+          if (std::holds_alternative<PatternAtomics::Wildcard>(Pat)) {
+            IsWildcardArm = true;
+            continue;
+          }
+
+          llvm::ConstantInt *CaseVal = nullptr;
+          std::string VariantName;
+
+          if (auto *P = std::get_if<PatternAtomics::Literal>(&Pat)) {
+            // Integer literal
+            // We need to interpret the literal value.
+            // PatternAtomics::Literal has an Expr. We need to evaluate it?
+            // Ideally patterns should have constant values resolved.
+            // codegenExpr on literal returns a ConstantInt if it is a literal.
+            // Let's rely on codegenExpr returning Constant.
+            llvm::Value *V = codegenExpr(P->Value.get());
+            if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V)) {
+              CaseVal = CI;
+            } else {
+              CanUseSwitch = false; // Should not happen for int literal
+            }
+          } else if (auto *P = std::get_if<PatternAtomics::Variant>(&Pat)) {
+            VariantName = P->VariantName;
+            unsigned Disc = VariantDiscriminants[EnumName][VariantName];
+            CaseVal = Builder.getInt32(Disc);
+          }
+
+          if (CaseVal) {
+            Cases.push_back({CaseVal, ArmBB});
+          }
+        }
       }
 
-      llvm::BasicBlock *DefaultBB = FailBB;
-      
-      // We will create the switch inst at the end
-      
-      // Generate bodies and Collect cases
-      std::vector<std::pair<llvm::ConstantInt*, llvm::BasicBlock*>> Cases;
-      
-      for (const auto &Arm : E->getArms()) {
-          llvm::BasicBlock *ArmBB = llvm::BasicBlock::Create(Context, "match.arm", CurrentFunction, FailBB);
-          
-          bool IsWildcardArm = false;
-           // Add cases
-          if (Arm.Patterns.empty()) {
-             IsWildcardArm = true;
-          } else {
-              for (const auto &Pat : Arm.Patterns) {
-                  if (std::holds_alternative<PatternAtomics::Wildcard>(Pat)) {
-                      IsWildcardArm = true; 
-                      continue;
-                  }
-                  
-                  llvm::ConstantInt *CaseVal = nullptr;
-                  std::string VariantName;
-                  
-                  if (auto *P = std::get_if<PatternAtomics::Literal>(&Pat)) {
-                      // Integer literal
-                      // We need to interpret the literal value. 
-                      // PatternAtomics::Literal has an Expr. We need to evaluate it?
-                      // Ideally patterns should have constant values resolved.
-                      // codegenExpr on literal returns a ConstantInt if it is a literal.
-                      // Let's rely on codegenExpr returning Constant.
-                      llvm::Value *V = codegenExpr(P->Value.get());
-                      if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(V)) {
-                          CaseVal = CI;
-                      } else {
-                          CanUseSwitch = false; // Should not happen for int literal
-                      }
-                  } else if (auto *P = std::get_if<PatternAtomics::Variant>(&Pat)) {
-                      VariantName = P->VariantName;
-                      unsigned Disc = VariantDiscriminants[EnumName][VariantName];
-                      CaseVal = Builder.getInt32(Disc);
-                  }
-                  
-                  if (CaseVal) {
-                      Cases.push_back({CaseVal, ArmBB});
-                  }
+      if (IsWildcardArm) {
+        DefaultBB = ArmBB;
+      }
+
+      // Generate Body
+      Builder.SetInsertPoint(ArmBB);
+
+      // Pattern bindings extraction (for Enum Variants)
+      if (IsEnum && !Arm.Patterns.empty()) {
+        // Assuming single pattern for binding or multiple with same bindings?
+        // If multiple patterns, we can't easily bind unless they are identical.
+        // For now assume if Binding exists, there is only 1 pattern or strict
+        // logic. Let's just look at the first pattern that is a Variant with
+        // vars.
+        for (const auto &Pat : Arm.Patterns) {
+          if (auto *P = std::get_if<PatternAtomics::Variant>(&Pat)) {
+            if (!P->Vars.empty()) {
+              // Extract
+              auto PayloadIt =
+                  VariantPayloadTypes[EnumName].find(P->VariantName);
+              if (PayloadIt != VariantPayloadTypes[EnumName].end()) {
+                llvm::Type *PayloadTy = PayloadIt->second;
+                auto *PayloadPtr = Builder.CreateStructGEP(
+                    llvm::cast<llvm::StructType>(ScrutineeTy), ScrutineeAlloca,
+                    1);
+                auto *TypedPayloadPtr = Builder.CreateBitCast(
+                    PayloadPtr, PayloadTy->getPointerTo());
+                llvm::Value *PayloadVal =
+                    Builder.CreateLoad(PayloadTy, TypedPayloadPtr);
+
+                if (!P->Vars.empty()) {
+                  auto &BoundVar = P->Vars[0];
+                  llvm::Type *VarTy = getLLVMType(BoundVar->getType());
+                  auto *VarAlloca = createEntryBlockAlloca(
+                      CurrentFunction, BoundVar->getId(), VarTy);
+                  Builder.CreateStore(PayloadVal, VarAlloca);
+                  NamedValues[BoundVar.get()] = VarAlloca;
+                }
               }
+            }
+            // Only handle first pattern bindings for now (limitation of this
+            // patch)
+            break;
           }
-          
-          if (IsWildcardArm) {
-              DefaultBB = ArmBB;
-          }
-          
-          // Generate Body
-          Builder.SetInsertPoint(ArmBB);
-          
-          // Pattern bindings extraction (for Enum Variants)
-          if (IsEnum && !Arm.Patterns.empty()) {
-               // Assuming single pattern for binding or multiple with same bindings?
-               // If multiple patterns, we can't easily bind unless they are identical.
-               // For now assume if Binding exists, there is only 1 pattern or strict logic.
-               // Let's just look at the first pattern that is a Variant with vars.
-               for (const auto &Pat : Arm.Patterns) {
-                   if (auto *P = std::get_if<PatternAtomics::Variant>(&Pat)) {
-                       if (!P->Vars.empty()) {
-                           // Extract
-                           auto PayloadIt = VariantPayloadTypes[EnumName].find(P->VariantName);
-                           if (PayloadIt != VariantPayloadTypes[EnumName].end()) {
-                               llvm::Type *PayloadTy = PayloadIt->second;
-                               auto *PayloadPtr = Builder.CreateStructGEP(llvm::cast<llvm::StructType>(ScrutineeTy), ScrutineeAlloca, 1);
-                               auto *TypedPayloadPtr = Builder.CreateBitCast(PayloadPtr, PayloadTy->getPointerTo());
-                               llvm::Value *PayloadVal = Builder.CreateLoad(PayloadTy, TypedPayloadPtr);
-
-                               if (!P->Vars.empty()) {
-                                   auto &BoundVar = P->Vars[0];
-                                   llvm::Type *VarTy = getLLVMType(BoundVar->getType());
-                                   auto *VarAlloca = createEntryBlockAlloca(CurrentFunction, BoundVar->getId(), VarTy);
-                                   Builder.CreateStore(PayloadVal, VarAlloca);
-                                   NamedValues[BoundVar.get()] = VarAlloca;
-                               }
-                           }
-                       }
-                       // Only handle first pattern bindings for now (limitation of this patch)
-                       break; 
-                   }
-               }
-          }
-
-          // Manually generate body to capture last expression result
-          llvm::Value *BodyResult = nullptr;
-
-          for (size_t i = 0; i < Arm.Body->getStmts().size(); ++i) {
-             if (hasTerminator()) break;
-             auto &S = Arm.Body->getStmts()[i];
-             // Optimization: capture last expression result
-             if (ResultPHI && i == Arm.Body->getStmts().size() - 1) {
-                  if (auto *ES = llvm::dyn_cast<ExprStmt>(S.get())) {
-                       BodyResult = codegenExpr(&ES->getExpr());
-                       continue;
-                  }
-             }
-             codegenStmt(S.get());
-          }
-
-          if (!hasTerminator()) {
-             if (ResultPHI) {
-                 llvm::Value *Result = BodyResult ? BodyResult : llvm::Constant::getNullValue(ResultPHI->getType());
-                 if (Result->getType() != ResultPHI->getType()) {
-                     Result = llvm::UndefValue::get(ResultPHI->getType());
-                 }
-                 ResultPHI->addIncoming(Result, Builder.GetInsertBlock());
-             }
-             Builder.CreateBr(MergeBB);
-          }
+        }
       }
-      
-      // Emit Switch
-      Builder.SetInsertPoint(StartBB);
-      auto *SI = Builder.CreateSwitch(SwitchVal, DefaultBB, Cases.size());
-      for (auto &Pair : Cases) {
-          SI->addCase(Pair.first, Pair.second);
+
+      // Manually generate body to capture last expression result
+      llvm::Value *BodyResult = nullptr;
+
+      for (size_t i = 0; i < Arm.Body->getStmts().size(); ++i) {
+        if (hasTerminator())
+          break;
+        auto &S = Arm.Body->getStmts()[i];
+        // Optimization: capture last expression result
+        if (ResultPHI && i == Arm.Body->getStmts().size() - 1) {
+          if (auto *ES = llvm::dyn_cast<ExprStmt>(S.get())) {
+            BodyResult = codegenExpr(&ES->getExpr());
+            continue;
+          }
+        }
+        codegenStmt(S.get());
       }
-      
-      // Handle Failure (if DefaultBB is FailBB)
-      if (DefaultBB == FailBB) {
-          Builder.SetInsertPoint(FailBB);
-          if (ResultPHI) ResultPHI->addIncoming(llvm::UndefValue::get(ResultTy), FailBB);
-          Builder.CreateBr(MergeBB);
+
+      if (!hasTerminator()) {
+        if (ResultPHI) {
+          llvm::Value *Result =
+              BodyResult ? BodyResult
+                         : llvm::Constant::getNullValue(ResultPHI->getType());
+          if (Result->getType() != ResultPHI->getType()) {
+            Result = llvm::UndefValue::get(ResultPHI->getType());
+          }
+          ResultPHI->addIncoming(Result, Builder.GetInsertBlock());
+        }
+        Builder.CreateBr(MergeBB);
       }
-      
-      Builder.SetInsertPoint(MergeBB);
-      if (ResultPHI) return ResultPHI;
-      return llvm::Constant::getNullValue(Builder.getInt32Ty());
+    }
+
+    // Emit Switch
+    Builder.SetInsertPoint(StartBB);
+    auto *SI = Builder.CreateSwitch(SwitchVal, DefaultBB, Cases.size());
+    for (auto &Pair : Cases) {
+      SI->addCase(Pair.first, Pair.second);
+    }
+
+    // Handle Failure (if DefaultBB is FailBB)
+    if (DefaultBB == FailBB) {
+      Builder.SetInsertPoint(FailBB);
+      if (ResultPHI)
+        ResultPHI->addIncoming(llvm::UndefValue::get(ResultTy), FailBB);
+      Builder.CreateBr(MergeBB);
+    }
+
+    Builder.SetInsertPoint(MergeBB);
+    if (ResultPHI)
+      return ResultPHI;
+    return llvm::Constant::getNullValue(Builder.getInt32Ty());
   }
-  
+
   // --- End Switch Optimization (Fallback to linear check) ---
 
   // Generate arm blocks first (to allow forward jumps)
   auto &Arms = E->getArms();
   std::vector<llvm::BasicBlock *> ArmBBs;
   for (size_t I = 0; I < Arms.size(); ++I) {
-    ArmBBs.push_back(llvm::BasicBlock::Create(Context, "match.arm", CurrentFunction, FailBB));
+    ArmBBs.push_back(llvm::BasicBlock::Create(Context, "match.arm",
+                                              CurrentFunction, FailBB));
   }
-  
+
   // Jump to first arm
   Builder.SetInsertPoint(StartBB);
   if (!ArmBBs.empty()) {
@@ -2291,11 +2375,12 @@ llvm::Value *LLVMCodeGen::codegenMatchExpr(MatchExpr *E) {
 }
 
 llvm::Value *LLVMCodeGen::codegenMatchArm(const MatchExpr::Arm &Arm,
-                                           llvm::Value *Scrutinee,
-                                           llvm::BasicBlock *NextArmBB,
-                                           llvm::BasicBlock *MergeBB,
-                                           llvm::PHINode *ResultPHI) {
-  auto *MatchBB = llvm::BasicBlock::Create(Context, "match.body", CurrentFunction, NextArmBB);
+                                          llvm::Value *Scrutinee,
+                                          llvm::BasicBlock *NextArmBB,
+                                          llvm::BasicBlock *MergeBB,
+                                          llvm::PHINode *ResultPHI) {
+  auto *MatchBB = llvm::BasicBlock::Create(Context, "match.body",
+                                           CurrentFunction, NextArmBB);
 
   // Pattern match - use first pattern (pattern alternations not yet supported)
   if (!Arm.Patterns.empty()) {
@@ -2332,17 +2417,20 @@ llvm::Value *LLVMCodeGen::codegenMatchArm(const MatchExpr::Arm &Arm,
 }
 
 void LLVMCodeGen::matchPattern(const Pattern &Pat, llvm::Value *Scrutinee,
-                                llvm::BasicBlock *SuccessBB, llvm::BasicBlock *FailBB) {
-  std::visit([&](auto &&P) {
-    using T = std::decay_t<decltype(P)>;
-    if constexpr (std::is_same_v<T, PatternAtomics::Wildcard>) {
-      matchWildcard(SuccessBB);
-    } else if constexpr (std::is_same_v<T, PatternAtomics::Literal>) {
-      matchLiteral(P, Scrutinee, SuccessBB, FailBB);
-    } else if constexpr (std::is_same_v<T, PatternAtomics::Variant>) {
-      matchVariant(P, Scrutinee, SuccessBB, FailBB);
-    }
-  }, Pat);
+                               llvm::BasicBlock *SuccessBB,
+                               llvm::BasicBlock *FailBB) {
+  std::visit(
+      [&](auto &&P) {
+        using T = std::decay_t<decltype(P)>;
+        if constexpr (std::is_same_v<T, PatternAtomics::Wildcard>) {
+          matchWildcard(SuccessBB);
+        } else if constexpr (std::is_same_v<T, PatternAtomics::Literal>) {
+          matchLiteral(P, Scrutinee, SuccessBB, FailBB);
+        } else if constexpr (std::is_same_v<T, PatternAtomics::Variant>) {
+          matchVariant(P, Scrutinee, SuccessBB, FailBB);
+        }
+      },
+      Pat);
 }
 
 void LLVMCodeGen::matchWildcard(llvm::BasicBlock *SuccessBB) {
@@ -2350,9 +2438,9 @@ void LLVMCodeGen::matchWildcard(llvm::BasicBlock *SuccessBB) {
 }
 
 void LLVMCodeGen::matchLiteral(const PatternAtomics::Literal &Lit,
-                                llvm::Value *Scrutinee,
-                                llvm::BasicBlock *SuccessBB,
-                                llvm::BasicBlock *FailBB) {
+                               llvm::Value *Scrutinee,
+                               llvm::BasicBlock *SuccessBB,
+                               llvm::BasicBlock *FailBB) {
   llvm::Value *PatVal = codegenExpr(Lit.Value.get());
   llvm::Type *ScrutineeTy = nullptr;
   if (auto *AllocaInst = llvm::dyn_cast<llvm::AllocaInst>(Scrutinee)) {
@@ -2366,9 +2454,9 @@ void LLVMCodeGen::matchLiteral(const PatternAtomics::Literal &Lit,
 }
 
 void LLVMCodeGen::matchVariant(const PatternAtomics::Variant &Var,
-                                llvm::Value *Scrutinee,
-                                llvm::BasicBlock *SuccessBB,
-                                llvm::BasicBlock *FailBB) {
+                               llvm::Value *Scrutinee,
+                               llvm::BasicBlock *SuccessBB,
+                               llvm::BasicBlock *FailBB) {
   // Get scrutinee type to find enum name
   llvm::Type *ScrutineeTy = nullptr;
   if (auto *AllocaInst = llvm::dyn_cast<llvm::AllocaInst>(Scrutinee)) {
@@ -2402,11 +2490,13 @@ void LLVMCodeGen::matchVariant(const PatternAtomics::Variant &Var,
   auto *ActualDisc = Builder.CreateLoad(Builder.getInt32Ty(), DiscPtr);
 
   // Compare
-  auto *Cmp = Builder.CreateICmpEQ(ActualDisc, Builder.getInt32(ExpectedDisc), "variant.cmp");
+  auto *Cmp = Builder.CreateICmpEQ(ActualDisc, Builder.getInt32(ExpectedDisc),
+                                   "variant.cmp");
 
   // If pattern has bindings, extract payload
   if (!Var.Vars.empty()) {
-    auto *ExtractBB = llvm::BasicBlock::Create(Context, "variant.extract", CurrentFunction, SuccessBB);
+    auto *ExtractBB = llvm::BasicBlock::Create(Context, "variant.extract",
+                                               CurrentFunction, SuccessBB);
     Builder.CreateCondBr(Cmp, ExtractBB, FailBB);
 
     Builder.SetInsertPoint(ExtractBB);
@@ -2416,14 +2506,16 @@ void LLVMCodeGen::matchVariant(const PatternAtomics::Variant &Var,
     if (PayloadIt != VariantPayloadTypes[EnumName].end()) {
       llvm::Type *PayloadTy = PayloadIt->second;
       auto *PayloadPtr = Builder.CreateStructGEP(StructTy, Scrutinee, 1);
-      auto *TypedPayloadPtr = Builder.CreateBitCast(PayloadPtr, PayloadTy->getPointerTo());
+      auto *TypedPayloadPtr =
+          Builder.CreateBitCast(PayloadPtr, PayloadTy->getPointerTo());
       llvm::Value *PayloadVal = Builder.CreateLoad(PayloadTy, TypedPayloadPtr);
 
       // Bind to first variable
       if (!Var.Vars.empty()) {
         auto &BoundVar = Var.Vars[0];
         llvm::Type *VarTy = getLLVMType(BoundVar->getType());
-        auto *VarAlloca = createEntryBlockAlloca(CurrentFunction, BoundVar->getId(), VarTy);
+        auto *VarAlloca =
+            createEntryBlockAlloca(CurrentFunction, BoundVar->getId(), VarTy);
         Builder.CreateStore(PayloadVal, VarAlloca);
         NamedValues[BoundVar.get()] = VarAlloca;
       }
@@ -2436,27 +2528,29 @@ void LLVMCodeGen::matchVariant(const PatternAtomics::Variant &Var,
 }
 
 void LLVMCodeGen::generateMonomorphizedBodies() {
-  while (!MonomorphizedFunctionQueue.empty() || !MonomorphizedMethodQueue.empty()) {
+  while (!MonomorphizedFunctionQueue.empty() ||
+         !MonomorphizedMethodQueue.empty()) {
     // Process functions
     std::vector<MonomorphizedFun> Funs = std::move(MonomorphizedFunctionQueue);
     MonomorphizedFunctionQueue.clear();
     for (auto &MF : Funs) {
       if (GeneratedMonomorphizedBodies.contains(MF.Fn->getName().str()))
         continue;
-      
+
       GeneratedMonomorphizedBodies.insert(MF.Fn->getName().str());
-      
+
       // Save/Restore substitution map
       auto SavedSubs = CurrentSubs;
       CurrentSubs = buildSubstitutionMap(MF.Fun, MF.Args);
-      
+
       codegenFunctionBody(const_cast<FunDecl *>(MF.Fun), MF.Fn);
-      
+
       CurrentSubs = SavedSubs;
     }
 
     // Process methods
-    std::vector<MonomorphizedMethod> Methods = std::move(MonomorphizedMethodQueue);
+    std::vector<MonomorphizedMethod> Methods =
+        std::move(MonomorphizedMethodQueue);
     MonomorphizedMethodQueue.clear();
     for (auto &MM : Methods) {
       if (GeneratedMonomorphizedBodies.contains(MM.Fn->getName().str()))
@@ -2474,6 +2568,4 @@ void LLVMCodeGen::generateMonomorphizedBodies() {
   }
 } // End generateMonomorphizedBodies
 
-
-
- // namespace phi
+// namespace phi
