@@ -28,7 +28,7 @@ namespace phi {
 //===----------------------------------------------------------------------===//
 
 struct TypeInstantiation {
-  const ItemDecl *GenericDecl;
+  const NamedDecl *GenericDecl;
   std::vector<TypeRef> TypeArgs;
 
   bool operator==(const TypeInstantiation &Other) const {
@@ -43,6 +43,7 @@ struct TypeInstantiation {
     return true;
   }
 };
+
 
 struct TypeInstantiationHash {
   std::size_t operator()(const TypeInstantiation &TI) const noexcept {
@@ -184,7 +185,7 @@ private:
   void discoverInExpr(Expr *E);
 
   /// Record a new instantiation to be processed
-  void recordInstantiation(const ItemDecl *Decl,
+  void recordInstantiation(const NamedDecl *Decl,
                            const std::vector<TypeRef> &TypeArgs);
 
   //===--------------------------------------------------------------------===//
@@ -199,6 +200,8 @@ private:
                         const std::vector<TypeRef> &TypeArgs);
   void monomorphizeFunction(const FunDecl *F,
                             const std::vector<TypeRef> &TypeArgs);
+  void monomorphizeMethod(const MethodDecl *M,
+                          const std::vector<TypeRef> &TypeArgs);
 
   /// Substitute type parameters with concrete types
   TypeRef substituteType(TypeRef T, const SubstitutionMap &Subs);
@@ -326,6 +329,7 @@ private:
 
   // Match
   llvm::Value *codegenMatchExpr(MatchExpr *E);
+  llvm::Value *codegenIntrinsicCall(IntrinsicCall *E);
 
   //===--------------------------------------------------------------------===//
   // Phase 4: Pattern Matching Codegen

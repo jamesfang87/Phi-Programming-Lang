@@ -217,9 +217,13 @@ void FunCallExpr::emit(int Level) const {
   std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Callee:", indent(Level + 1));
   Callee->emit(Level + 2);
+  std::println("{}Type Args:", indent(Level + 1));
+  for (const auto &Arg : TypeArgs) {
+    std::println("{}{}", indent(Level + 2), Arg.toString());
+  }
   std::println("{}Args:", indent(Level + 1));
-  for (const auto &arg : Args) {
-    arg->emit(Level + 2);
+  for (const auto &Arg : Args) {
+    Arg->emit(Level + 2);
   }
 }
 
@@ -370,6 +374,11 @@ void MethodCallExpr::emit(int Level) const {
   Base->emit(Level + 2);
   std::println("{}Callee:", indent(Level + 1));
   getCallee().emit(Level + 2);
+  std::println("{}Type Args:", indent(Level + 1));
+  for (const auto &Arg : getTypeArgs()) {
+    std::println("{}", Arg.toString());
+  }
+
   std::println("{}Args:", indent(Level + 1));
   for (const auto &Arg : getArgs()) {
     Arg->emit(Level + 2);

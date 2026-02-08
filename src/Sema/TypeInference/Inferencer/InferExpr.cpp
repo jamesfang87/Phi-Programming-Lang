@@ -108,18 +108,25 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
   assert(llvm::isa<FunDecl>(E.getDecl()));
 
   bool Errored = false;
-  auto *TheType = llvm::dyn_cast<FunTy>(instantiate(E.getDecl()).getPtr());
-  for (auto [Arg, ParamT, Param] : llvm::zip(
-           E.getArgs(), TheType->getParamTys(), E.getDecl()->getParams())) {
+
+  auto Map = buildGenericSubstMap(E.getDecl()->getTypeArgs());
+  std::vector<TypeRef> InferredTypeArgs;
+  for (auto &Pair : Map) {
+    InferredTypeArgs.push_back(Unifier.resolve(Pair.second));
+  }
+  E.setTypeArgs(InferredTypeArgs);
+
+  for (auto [Arg, Param] : llvm::zip(E.getArgs(), E.getDecl()->getParams())) {
     visit(*Arg);
 
-    auto Res = Unifier.unify(Arg->getType(), ParamT);
+    auto Res = Unifier.unify(Arg->getType(),
+                             substituteGenerics(Param->getType(), Map));
     if (!Res) {
       Errored = true;
       error(std::format("Mismatched type for parameter {}", Param->getId()))
           .with_primary_label(Arg->getSpan(),
                               std::format("expected type `{}` instead of `{}`",
-                                          toString(ParamT),
+                                          toString(Param->getType()),
                                           toString(Arg->getType())))
           .with_extra_snippet(
               E.getDecl()->getSpan(),
@@ -128,7 +135,10 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
     }
   }
 
-  Errored = Unifier.unify(E.getType(), TheType->getReturnTy()) && Errored;
+  Errored =
+      Unifier.unify(E.getType(),
+                    substituteGenerics(E.getDecl()->getReturnType(), Map)) &&
+      Errored;
   auto Res =
       Errored ? TypeCtx::getErr(E.getSpan()) : Unifier.resolve(E.getType());
   E.setType(Res);
@@ -258,10 +268,11 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
     return E.getType();
 
   std::vector<TypeRef> InferredTypeArgs;
-  for (auto Pair : Map) {
+  for (auto &Pair : Map) {
     InferredTypeArgs.push_back(Unifier.resolve(Pair.second));
   }
 
+  E.setTypeArgs(InferredTypeArgs);
   auto T = TypeCtx::getApplied(E.getType(), InferredTypeArgs, E.getSpan());
   E.setType(T);
   return T;
@@ -392,14 +403,22 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
 
   bool Errored = false;
 
-  auto T = BaseT.removeIndir();
+  auto BaseNoIndir = BaseT.removeIndir();
   std::unordered_map<const TypeArgDecl *, TypeRef> Map;
-  if (auto *App = llvm::dyn_cast<AppliedTy>(T.getPtr())) {
+  if (auto *App = llvm::dyn_cast<AppliedTy>(BaseNoIndir.getPtr())) {
     for (const auto &[Arg, Inst] :
          llvm::zip(Decl->getTypeArgs(), App->getArgs())) {
       Map.emplace(Arg.get(), Inst);
     }
   }
+
+  auto Temp = buildGenericSubstMap(Method->getTypeArgs());
+  std::vector<TypeRef> InferredTypeArgs;
+  for (auto &Pair : Temp) {
+    InferredTypeArgs.push_back(Unifier.resolve(Pair.second));
+  }
+  Map.merge(Temp);
+  E.setTypeArgs(InferredTypeArgs);
 
   // 6. Parameter arity check (method params include 'self' as first param)
   auto &Params = Method->getParams();
@@ -411,7 +430,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
         .emit(*DiagMan);
     Errored = true;
   } else {
-    Unifier.unify(T, Params.front()->getType().removeIndir());
+    Unifier.unify(BaseNoIndir, Params.front()->getType().removeIndir());
 
     for (auto [Arg, Param] :
          llvm::zip(E.getArgs(), llvm::drop_begin(Params, 1))) {
