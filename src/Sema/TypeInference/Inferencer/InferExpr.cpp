@@ -1,11 +1,13 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
 #include <print>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/TypeSwitch.h>
+#include <llvm/Support/raw_ostream.h> // DEBUG
 #include <llvm/Support/Casting.h>
 
 #include "AST/Nodes/Decl.hpp"
@@ -26,6 +28,7 @@ TypeRef TypeInferencer::visit(Expr &E) {
       .Case<BoolLiteral>([&](BoolLiteral *X) { return visit(*X); })
       .Case<RangeLiteral>([&](RangeLiteral *X) { return visit(*X); })
       .Case<TupleLiteral>([&](TupleLiteral *X) { return visit(*X); })
+      .Case<ArrayLiteral>([&](ArrayLiteral *X) { return visit(*X); })
       .Case<DeclRefExpr>([&](DeclRefExpr *X) { return visit(*X); })
       .Case<FunCallExpr>([&](FunCallExpr *X) { return visit(*X); })
       .Case<BinaryOp>([&](BinaryOp *X) { return visit(*X); })
@@ -36,7 +39,8 @@ TypeRef TypeInferencer::visit(Expr &E) {
       .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
       .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
       .Case<IntrinsicCall>([&](IntrinsicCall *X) { return visit(*X); })
-      .Case<IndexExpr>([&](IndexExpr *X) { return visit(*X); })
+      .Case<TupleIndex>([&](TupleIndex *X) { return visit(*X); })
+      .Case<ArrayIndex>([&](ArrayIndex *X) { return visit(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
         return TypeCtx::getErr(E.getSpan());
@@ -82,13 +86,22 @@ TypeRef TypeInferencer::visit(RangeLiteral &E) {
 }
 
 TypeRef TypeInferencer::visit(TupleLiteral &E) {
-  std::vector<TypeRef> Ts;
+  std::vector<TypeRef> Types;
   for (auto &Elem : E.getElements()) {
-    Ts.push_back(visit(*Elem));
+    Types.push_back(visit(*Elem));
   }
-  return TypeCtx::getTuple(Ts, E.getSpan());
+  auto T = TypeCtx::getTuple(Types, E.getSpan());
+  E.setType(T);
+  return T;
+}
 
-  Unifier.unify(TypeCtx::getTuple(Ts, E.getSpan()), E.getType());
+TypeRef TypeInferencer::visit(ArrayLiteral &E) {
+  TypeRef ContainedTy = E.getElements().front()->getType();
+  for (auto &Elem : llvm::drop_begin(E.getElements(), 1)) {
+    Unifier.unify(ContainedTy, Elem->getType());
+  }
+
+  Unifier.unify(TypeCtx::getArray(ContainedTy, E.getSpan()), E.getType());
   return Unifier.resolve(E.getType());
 }
 
@@ -116,11 +129,21 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
   }
   E.setTypeArgs(InferredTypeArgs);
 
+  if (E.getArgs().size() != E.getDecl()->getParams().size()) {
+     error("Argument count mismatch")
+        .with_primary_label(E.getSpan(), 
+            std::format("expected {} arguments, got {}", 
+                        E.getDecl()->getParams().size(), E.getArgs().size()))
+        .emit(*DiagMan);
+     return TypeCtx::getErr(E.getSpan());
+  }
+
   for (auto [Arg, Param] : llvm::zip(E.getArgs(), E.getDecl()->getParams())) {
     visit(*Arg);
 
     auto Res = Unifier.unify(Arg->getType(),
                              substituteGenerics(Param->getType(), Map));
+
     if (!Res) {
       Errored = true;
       error(std::format("Mismatched type for parameter {}", Param->getId()))
@@ -188,16 +211,31 @@ TypeRef TypeInferencer::visit(BinaryOp &E) {
     return TypeCtx::getErr(E.getSpan());
   }
 
-  if (K.isEquality()) {
-    auto Null = TypeCtx::getBuiltin(BuiltinTy::Null, E.getSpan());
-    Unifier.unify(E.getType(), Null);
-    return Null;
-  }
+
 
   if (K.isComparison() || K.isEquality()) {
     auto Bool = TypeCtx::getBuiltin(BuiltinTy::Bool, E.getSpan());
     Unifier.unify(E.getType(), Bool);
     return Bool;
+  }
+
+  if (K == TokenKind::Equals ||
+      K == TokenKind::PlusEquals ||
+      K == TokenKind::SubEquals ||
+      K == TokenKind::MulEquals ||
+      K == TokenKind::DivEquals ||
+      K == TokenKind::ModEquals) {
+    auto Res = Unifier.unify(LhsType, RhsType);
+    if (!Res) {
+      error("Mismatched types in assignment")
+          .with_primary_label(E.getLhs().getSpan(),
+                              std::format("variable of type `{}`", toString(LhsType)))
+          .with_secondary_label(E.getRhs().getSpan(),
+                                std::format("assigned value of type `{}`", toString(RhsType)))
+          .emit(*DiagMan);
+      return TypeCtx::getErr(E.getSpan());
+    }
+    return LhsType;
   }
 
   assert(K.isArithmetic());
@@ -224,6 +262,30 @@ TypeRef TypeInferencer::visit(UnaryOp &E) {
     Unifier.unify(Bool, E.getType());
     return Bool;
   }
+  case phi::TokenKind::Minus: {
+    // Unary minus
+    Unifier.unify(E.getType(), OperandT);
+    return Unifier.resolve(E.getType());
+  }
+  case phi::TokenKind::DoublePlus:
+  case phi::TokenKind::DoubleMinus: {
+    // Increment/Decrement
+    // Operand must be numeric (or unify with result)
+    // For now assume same type
+    Unifier.unify(E.getType(), OperandT);
+    return Unifier.resolve(E.getType());
+  }
+  case phi::TokenKind::Star: {
+    // Wait, Deref returns Pointee.
+    // PtrTy -> Pointee
+    if (auto Ptr = llvm::dyn_cast<PtrTy>(OperandT.getPtr())) {
+        E.setType(Ptr->getPointee());
+        return Ptr->getPointee();
+    }
+    // If operand is not ptr, can't infer yet or error?
+    // Assuming simple case for now
+    return TypeCtx::getErr(E.getSpan());
+  }
   case phi::TokenKind::Amp: {
     return TypeCtx::getRef(OperandT, E.getSpan());
   }
@@ -243,6 +305,25 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
   // after name resolution
   auto Map = buildGenericSubstMap(E.getDecl()->getTypeArgs());
 
+  // If explicit type arguments are provided, unify them with the generic parameters
+  if (!E.getTypeArgs().empty()) {
+    if (E.getTypeArgs().size() != E.getDecl()->getTypeArgs().size()) {
+       error("Generic argument count mismatch")
+           .with_primary_label(E.getSpan(), 
+               std::format("expected {} generic arguments, got {}", 
+                           E.getDecl()->getTypeArgs().size(), E.getTypeArgs().size()))
+           .emit(*DiagMan);
+    } else {
+        for (auto [Explicit, GenericParam] : 
+             llvm::zip(E.getTypeArgs(), E.getDecl()->getTypeArgs())) {
+          auto It = Map.find(GenericParam.get());
+          assert(It != Map.end());
+          Unifier.unify(It->second, Explicit);
+        }
+    }
+  }
+
+  bool Errored = false;
   for (auto &Init : E.getInits()) {
     visit(*Init);
 
@@ -252,16 +333,34 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
           auto *Field = D->getField(Init->getId());
           auto Declared = substituteGenerics(Field->getType(), Map);
           auto Got = Init->getInitValue()->getType();
-          Unifier.unify(Declared, Got);
+          if (!Unifier.unify(Declared, Got)) {
+              error("Mismatched types in struct initialization")
+                  .with_primary_label(Init->getInitValue()->getSpan(),
+                                      std::format("expected `{}`, got `{}`",
+                                                  toString(Declared), toString(Got)))
+                  .emit(*DiagMan);
+              Errored = true;
+          }
         })
         .Case<EnumDecl>([&](EnumDecl *D) {
           auto *Variant = D->getVariant(Init->getId());
           if (Variant->hasPayload()) {
             auto Declared = substituteGenerics(Variant->getPayloadType(), Map);
             auto Got = Init->getInitValue()->getType();
-            Unifier.unify(Declared, Got);
+            if (!Unifier.unify(Declared, Got)) {
+                error("Mismatched types in enum variant payload")
+                    .with_primary_label(Init->getInitValue()->getSpan(),
+                                        std::format("expected `{}`, got `{}`",
+                                                    toString(Declared), toString(Got)))
+                    .emit(*DiagMan);
+                Errored = true;
+            }
           }
         });
+  }
+
+  if (Errored) {
+      return TypeCtx::getErr(E.getSpan());
   }
 
   if (!E.getDecl()->hasTypeArgs())
@@ -515,9 +614,10 @@ TypeRef TypeInferencer::visit(IntrinsicCall &E) {
     E.setType(TypeCtx::getErr(E.getSpan()));
     return TypeCtx::getErr(E.getSpan());
   }
+  llvm_unreachable("Unhandled intrinsic kind");
 }
 
-TypeRef TypeInferencer::visit(IndexExpr &E) {
+TypeRef TypeInferencer::visit(TupleIndex &E) {
   auto BaseT = visit(*E.getBase());
   auto IndexT = visit(*E.getIndex());
 
@@ -547,11 +647,11 @@ TypeRef TypeInferencer::visit(IndexExpr &E) {
   int64_t Index = IndexLit->getValue();
 
   // Check if base is a tuple type
-  if (auto TupleT = llvm::dyn_cast<TupleTy>(BaseT.getPtr())) {
-    const auto &Elements = TupleT->getElementTys();
+  if (auto Tup = llvm::dyn_cast<TupleTy>(BaseT.getPtr())) {
+    const auto &Elements = Tup->getElementTys();
 
     // Check bounds
-    if (Index < 0 || Index >= Elements.size()) {
+    if (Index < 0 || static_cast<size_t>(Index) >= Elements.size()) {
       error(std::format("Tuple index out of bounds: the tuple has {} elements "
                         "but the index is {}",
                         Elements.size(), Index))
@@ -577,6 +677,36 @@ TypeRef TypeInferencer::visit(IndexExpr &E) {
       .emit(*DiagMan);
 
   E.setType(TypeCtx::getErr(E.getSpan()));
+  return TypeCtx::getErr(E.getSpan());
+}
+
+TypeRef TypeInferencer::visit(ArrayIndex &E) {
+  auto BaseT = visit(*E.getBase());
+  auto IndexT = visit(*E.getIndex());
+
+  auto ExpectedIndexT =
+      TypeCtx::getBuiltin(BuiltinTy::u64, E.getIndex()->getSpan());
+  if (!Unifier.unify(IndexT, ExpectedIndexT)) {
+    error("Index must be an integer type")
+        .with_primary_label(
+            E.getIndex()->getSpan(),
+            std::format("expected integer type, found `{}`", toString(IndexT)))
+        .emit(*DiagMan);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  // Check if base is a tuple type
+  if (auto Arr = llvm::dyn_cast<ArrayTy>(BaseT.getPtr())) {
+    E.setType(Arr->getContainedTy());
+    return Arr->getContainedTy();
+  }
+
+  // Error: base is not an array
+  error("Cannot index into non-array type")
+      .with_primary_label(
+          E.getBase()->getSpan(),
+          std::format("type `{}` cannot be indexed", toString(BaseT)))
+      .emit(*DiagMan);
   return TypeCtx::getErr(E.getSpan());
 }
 

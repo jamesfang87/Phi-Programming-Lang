@@ -1,6 +1,6 @@
 struct Location {
-    public latitude: f32;
-    public longitude: f32;
+    public latitude: f32,
+    public longitude: f32,
 }
 
 fun get_weather() -> (string, (f32, f32, Location)) {

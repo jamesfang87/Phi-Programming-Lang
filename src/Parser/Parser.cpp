@@ -14,7 +14,8 @@
 namespace phi {
 
 Parser::Parser(std::vector<Token> Tokens, DiagnosticManager *DiagnosticMan)
-    : Tokens(Tokens), TokenIt(Tokens.begin()), Diags(std::move(DiagnosticMan)) {
+    : Tokens(std::move(Tokens)), Diags(std::move(DiagnosticMan)) {
+  TokenIt = this->Tokens.begin();
 }
 
 std::optional<Parser::ModulePathInfo> Parser::parseModulePath() {

@@ -61,6 +61,7 @@ bool NameResolver::visit(TypeRef T) {
       })
       .Case<PtrTy>([&](auto *Ptr) { return visit(Ptr->getPointee()); })
       .Case<RefTy>([&](auto *Ref) { return visit(Ref->getPointee()); })
+      .Case<ArrayTy>([&](auto *Arr) { return visit(Arr->getContainedTy()); })
       .Default([&](const Type * /*T*/) {
         return true; // ErrTy, VarTy, BuiltinTy
       });

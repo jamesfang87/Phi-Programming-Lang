@@ -22,6 +22,7 @@ class PtrTy;
 class RefTy;
 class VarTy;
 class ErrTy;
+class ArrayTy;
 
 class Type {
 public:
@@ -36,6 +37,7 @@ public:
     Var,
     Generic,
     Err,
+    Array,
   };
 
   explicit Type(TypeKind K) : TheKind(K) {}
@@ -54,6 +56,7 @@ public:
   [[nodiscard]] bool isRef() const { return llvm::isa<RefTy>(this); }
   [[nodiscard]] bool isVar() const { return llvm::isa<VarTy>(this); }
   [[nodiscard]] bool isErr() const { return llvm::isa<ErrTy>(this); }
+  [[nodiscard]] bool isArray() const { return llvm::isa<ArrayTy>(this); }
   [[nodiscard]] Type *getUnderlying();
   [[nodiscard]] Type *removeIndir();
 
@@ -81,6 +84,7 @@ public:
   [[nodiscard]] bool isRef() const { return llvm::isa<RefTy>(Ptr); }
   [[nodiscard]] bool isVar() const { return llvm::isa<VarTy>(Ptr); }
   [[nodiscard]] bool isErr() const { return llvm::isa<ErrTy>(Ptr); }
+  [[nodiscard]] bool isArray() const { return llvm::isa<ArrayTy>(Ptr); }
   [[nodiscard]] TypeRef getUnderlying();
   [[nodiscard]] TypeRef removeIndir();
 
@@ -277,6 +281,20 @@ public:
   [[nodiscard]] std::string toString() const override;
 
   static bool classof(const Type *T) { return T->getKind() == TypeKind::Err; }
+};
+
+class ArrayTy final : public Type {
+public:
+  explicit ArrayTy(TypeRef ContainedTy)
+      : Type(TypeKind::Array), ContainedTy(ContainedTy) {}
+
+  [[nodiscard]] auto getContainedTy() const { return ContainedTy; }
+  [[nodiscard]] std::string toString() const override;
+
+  static bool classof(const Type *T) { return T->getKind() == TypeKind::Array; }
+
+private:
+  TypeRef ContainedTy;
 };
 
 struct TupleKey {

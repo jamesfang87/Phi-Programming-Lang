@@ -62,6 +62,7 @@ private:
   [[nodiscard]] Token peekToken(int Offset) const;
   [[nodiscard]] TokenKind peekKind() const;
 
+  std::optional<Token> unconsume();
   Token advanceToken();
   bool matchToken(TokenKind::Kind Kind);
   bool expectToken(TokenKind::Kind Expected, const std::string &Context = "",
@@ -113,6 +114,13 @@ private:
                                             Visibility Vis);
   std::unique_ptr<MethodDecl> parseMethodDecl(std::string ParentName,
                                               Visibility Vis);
+  std::unique_ptr<ParamDecl> parseMethodParam(std::string ParentName);
+  void desugarStaticMethod(
+      std::string ParentName, std::string MethodName,
+      const std::vector<std::unique_ptr<TypeArgDecl>> &ParentTypeArgs,
+      std::vector<std::unique_ptr<TypeArgDecl>> MethodTypeArgs,
+      std::vector<std::unique_ptr<ParamDecl>> Params, TypeRef ReturnTy,
+      std::unique_ptr<Block> Body, SrcSpan Span, Visibility Vis);
   std::optional<std::vector<std::unique_ptr<TypeArgDecl>>> parseTypeArgDecls();
 
   //===--------------------------------------------------------------------===//
@@ -134,6 +142,7 @@ private:
 
   std::unique_ptr<FunDecl> parseFunDecl(Visibility Vis);
   std::unique_ptr<ParamDecl> parseParamDecl();
+  std::optional<TypeRef> parseReturnTy(SrcSpan FunSpan);
 
   //===--------------------------------------------------------------------===//
   // Statement Parsing

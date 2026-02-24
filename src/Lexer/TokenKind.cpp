@@ -228,6 +228,7 @@ bool TokenKind::isArithmetic() const noexcept {
   case TokenKind::Minus:
   case TokenKind::Star:
   case TokenKind::Slash:
+  case TokenKind::Percent:
     return true;
   default:
     return false;

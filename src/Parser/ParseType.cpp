@@ -1,7 +1,9 @@
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
 #include <optional>
+#include <print>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -25,6 +27,20 @@ std::optional<TypeRef> Parser::parseType(bool AllowPlaceholder) {
   // Placeholder type
   if (peekKind() == TokenKind::Wildcard && AllowPlaceholder) {
     return TypeCtx::getVar(VarTy::Any, advanceToken().getSpan());
+  }
+
+  if (peekKind() == TokenKind::OpenBracket) {
+    auto Open = advanceToken().getSpan().Start;
+    auto Contained = parseType(AllowPlaceholder);
+    if (!Contained)
+      return std::nullopt;
+
+    if (peekKind() == TokenKind::CloseBracket) {
+      return TypeCtx::getArray(*Contained,
+                               SrcSpan(Open, advanceToken().getSpan().End));
+    }
+    emitUnexpectedTokenError(peekToken());
+    return std::nullopt;
   }
 
   auto [Kind, IndirectionSpan] = parseIndirection();
