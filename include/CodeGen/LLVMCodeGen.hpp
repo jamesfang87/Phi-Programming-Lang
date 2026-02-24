@@ -44,7 +44,6 @@ struct TypeInstantiation {
   }
 };
 
-
 struct TypeInstantiationHash {
   std::size_t operator()(const TypeInstantiation &TI) const noexcept {
     std::size_t H = std::hash<const void *>()(TI.GenericDecl);
@@ -60,14 +59,14 @@ struct TypeInstantiationHash {
 // LLVMCodeGen - LLVM IR code generation with monomorphization
 //===----------------------------------------------------------------------===//
 
-class LLVMCodeGen {
+class CodeGen {
 public:
   //===--------------------------------------------------------------------===//
   // Constructor & Main Entry Points
   //===--------------------------------------------------------------------===//
 
-  explicit LLVMCodeGen(std::vector<ModuleDecl *> Mods,
-                       std::string_view SourcePath = "module");
+  explicit CodeGen(std::vector<ModuleDecl *> Mods,
+                   std::string_view SourcePath = "module");
 
   /// Run the full code generation pipeline
   void generate();
@@ -113,8 +112,7 @@ private:
   std::unordered_map<const MethodDecl *, llvm::Function *> Methods;
 
   /// Cache: Struct name -> (field name -> field index)
-  std::unordered_map<std::string,
-                     std::unordered_map<std::string, unsigned>>
+  std::unordered_map<std::string, std::unordered_map<std::string, unsigned>>
       FieldIndices;
 
   /// Cache: Enum name -> (variant name -> discriminant value)
@@ -122,8 +120,7 @@ private:
       VariantDiscriminants;
 
   /// Cache: Enum name -> (variant name -> payload type)
-  std::unordered_map<std::string,
-                     std::unordered_map<std::string, llvm::Type *>>
+  std::unordered_map<std::string, std::unordered_map<std::string, llvm::Type *>>
       VariantPayloadTypes;
 
   //===--------------------------------------------------------------------===//
@@ -131,8 +128,7 @@ private:
   //===--------------------------------------------------------------------===//
 
   /// Set of instantiations waiting to be processed
-  std::unordered_set<TypeInstantiation, TypeInstantiationHash>
-      PendingInstantiations;
+  std::unordered_set<TypeInstantiation, TypeInstantiationHash> Instantiations;
 
   /// Map: TypeInstantiation -> name of monomorphized declaration
   std::unordered_map<TypeInstantiation, std::string, TypeInstantiationHash>
@@ -164,8 +160,8 @@ private:
   //===--------------------------------------------------------------------===//
 
   struct LoopContext {
-    llvm::BasicBlock *CondBB;   // For continue
-    llvm::BasicBlock *AfterBB;  // For break
+    llvm::BasicBlock *CondBB;  // For continue
+    llvm::BasicBlock *AfterBB; // For break
 
     LoopContext(llvm::BasicBlock *Cond, llvm::BasicBlock *After)
         : CondBB(Cond), AfterBB(After) {}
@@ -183,6 +179,7 @@ private:
   void discoverInBlock(Block *B);
   void discoverInStmt(Stmt *S);
   void discoverInExpr(Expr *E);
+  void discoverInType(TypeRef T);
 
   /// Record a new instantiation to be processed
   void recordInstantiation(const NamedDecl *Decl,
@@ -237,17 +234,21 @@ private:
   /// Convert AST type to LLVM type
   llvm::Type *getLLVMType(TypeRef T);
   llvm::Type *getLLVMType(const Type *T);
+  bool hasGenericType(TypeRef T);
+  bool hasGenericType(const Type *T);
 
   /// Get or create LLVM struct type for a struct declaration
   llvm::StructType *getOrCreateStructType(const StructDecl *S);
-  llvm::StructType *getOrCreateStructType(const std::string &Name,
-                                          const std::vector<TypeRef> &FieldTypes);
+  llvm::StructType *
+  getOrCreateStructType(const std::string &Name,
+                        const std::vector<TypeRef> &FieldTypes);
 
   /// Get or create LLVM struct type for an enum declaration
   /// Enum layout: { i32 discriminant, [largest_payload_size x i8] }
   llvm::StructType *getOrCreateEnumType(const EnumDecl *E);
-  llvm::StructType *getOrCreateEnumType(const std::string &Name,
-                                        const std::vector<VariantDecl *> &Variants);
+  llvm::StructType *
+  getOrCreateEnumType(const std::string &Name,
+                      const std::vector<VariantDecl *> &Variants);
 
   /// Get the size of a type in bytes
   uint64_t getTypeSize(llvm::Type *T);
@@ -275,7 +276,8 @@ private:
 
   /// Create function declaration
   llvm::Function *codegenFunctionDecl(FunDecl *F);
-  llvm::Function *codegenMethodDecl(MethodDecl *M, const std::string &MangledName);
+  llvm::Function *codegenMethodDecl(MethodDecl *M,
+                                    const std::string &MangledName);
 
   /// Generate function body
   void codegenFunctionBody(FunDecl *F, llvm::Function *Fn);
@@ -310,6 +312,7 @@ private:
   llvm::Value *codegenStrLiteral(StrLiteral *E);
   llvm::Value *codegenCharLiteral(CharLiteral *E);
   llvm::Value *codegenTupleLiteral(TupleLiteral *E);
+  llvm::Value *codegenArrayLiteral(ArrayLiteral *E);
 
   // References and Calls
   llvm::Value *codegenDeclRef(DeclRefExpr *E);
@@ -325,7 +328,8 @@ private:
   llvm::Value *codegenStructInit(AdtInit *E, const StructDecl *S);
   llvm::Value *codegenEnumInit(AdtInit *E, const EnumDecl *En);
   llvm::Value *codegenFieldAccess(FieldAccessExpr *E);
-  llvm::Value *codegenIndexExpr(IndexExpr *E);
+  llvm::Value *codegenTupleIndex(TupleIndex *E);
+  llvm::Value *codegenArrayIndex(ArrayIndex *E);
 
   // Match
   llvm::Value *codegenMatchExpr(MatchExpr *E);
@@ -336,7 +340,8 @@ private:
   //===--------------------------------------------------------------------===//
 
   /// Generate code for a match arm, returns the result value
-  llvm::Value *codegenMatchArm(const MatchExpr::Arm &Arm, llvm::Value *Scrutinee,
+  llvm::Value *codegenMatchArm(const MatchExpr::Arm &Arm,
+                               llvm::Value *Scrutinee,
                                llvm::BasicBlock *NextArmBB,
                                llvm::BasicBlock *MergeBB,
                                llvm::PHINode *ResultPHI);

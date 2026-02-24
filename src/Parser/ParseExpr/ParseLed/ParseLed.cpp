@@ -45,8 +45,8 @@ std::unique_ptr<Expr> Parser::parsePostfix(const Token &Op,
     advanceToken();
     auto Index = parseExpr();
     advanceToken();
-    return make_unique<IndexExpr>(Lhs->getLocation(), std::move(Lhs),
-                                  std::move(Index));
+    return make_unique<ArrayIndex>(Lhs->getLocation(), std::move(Lhs),
+                                   std::move(Index));
   }
   default:
     return Lhs;
@@ -83,9 +83,9 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
     if (!Rhs)
       return nullptr;
 
-    if (auto *Member = llvm::dyn_cast<DeclRefExpr>(Rhs.get())) {
-      return std::make_unique<FieldAccessExpr>(Member->getLocation(),
-                                               std::move(Lhs), Member->getId());
+    if (auto *Field = llvm::dyn_cast<DeclRefExpr>(Rhs.get())) {
+      return std::make_unique<FieldAccessExpr>(Field->getLocation(),
+                                               std::move(Lhs), Field->getId());
     }
 
     if (auto *FunCall = llvm::dyn_cast<FunCallExpr>(Rhs.get())) {
@@ -94,8 +94,9 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
     }
 
     if (auto *Int = llvm::dyn_cast<IntLiteral>(Rhs.get())) {
-      return std::make_unique<IndexExpr>(Lhs->getLocation(), std::move(Lhs),
-                                         std::move(Rhs));
+      auto IntPtr = llvm::unique_dyn_cast<IntLiteral>(std::move(Rhs));
+      return std::make_unique<TupleIndex>(Lhs->getLocation(), std::move(Lhs),
+                                          std::move(IntPtr));
     }
 
     return std::make_unique<BinaryOp>(std::move(Lhs), std::move(Rhs), Op);

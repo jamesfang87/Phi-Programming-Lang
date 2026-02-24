@@ -27,7 +27,7 @@ Token Lexer::parseNumber() {
   }
 
   // fractional part, only if the next two chars match .[0-9]
-  std::regex pattern("^.[0-9]$");
+  std::regex pattern("^\\.[0-9]$");
   if (std::regex_match(peekNextN(2), pattern)) {
     advanceChar(); // consume '.'
     while (std::isdigit(peekChar())) {

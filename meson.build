@@ -71,7 +71,8 @@ test_cases = {
   'lexer': ['test/unit/Lexer/LexerTest.cpp', 'test/unit/Lexer/main.cpp'],
   'parser': ['test/unit/Parser/ParserTest.cpp', 'test/unit/Parser/main.cpp'],
   'name_resolver': ['test/unit/NameResolver/NameResolverTest.cpp', 'test/unit/NameResolver/main.cpp'],
-  'integration': ['test/integration/IntegrationTest.cpp', 'test/integration/main.cpp'],
+  'type_inference': ['test/unit/TypeInference/TypeInferenceTest.cpp', 'test/unit/TypeInference/main.cpp'],
+  'integration': ['test/integration/IntegrationTest.cpp', 'test/integration/MonomorphizationTest.cpp', 'test/integration/main.cpp'],
 }
 
 foreach test_name, test_sources : test_cases

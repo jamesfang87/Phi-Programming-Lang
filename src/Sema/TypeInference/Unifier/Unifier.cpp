@@ -197,7 +197,17 @@ bool TypeUnifier::unifyConcretes(TypeRef A, TypeRef B) {
 
         return Res;
       })
-      .Case<GenericTy>([&](const GenericTy *Generic) { return false; })
+      .Case<ArrayTy>([&](const ArrayTy *Arr) {
+        auto Other = llvm::dyn_cast<ArrayTy>(B.getPtr());
+        assert(Other && "Types must be same kind at this point");
+
+        return unify(Arr->getContainedTy(), Other->getContainedTy());
+      })
+      .Case<GenericTy>([&](const GenericTy *Generic) {
+        auto Other = llvm::dyn_cast<GenericTy>(B.getPtr());
+        assert(Other && "Types must be same kind at this point");
+        return Generic->getDecl() == Other->getDecl();
+      })
       .Default([](const Type * /*T*/) {
         llvm_unreachable("Unaccounted for Type* in Unifier");
         return false;

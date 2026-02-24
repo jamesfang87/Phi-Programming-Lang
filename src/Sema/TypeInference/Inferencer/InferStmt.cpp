@@ -35,7 +35,19 @@ void TypeInferencer::visit(ReturnStmt &S) {
         using T = std::decay_t<decltype(Fun)>;
 
         if constexpr (!std::is_same_v<T, std::monostate>) {
-          Unifier.unify(Fun->getReturnType(), ExprT);
+          auto Res = Unifier.unify(Fun->getReturnType(), ExprT);
+          if (!Res) {
+            error("Mismatched return type")
+                .with_primary_label(
+                    S.getExpr().getSpan(),
+                    std::format("expected `{}`, got `{}`",
+                                toString(Fun->getReturnType()), toString(ExprT)))
+                .with_secondary_label(
+                    Fun->getReturnType().getSpan(),
+                    std::format("expected `{}` because of this",
+                                toString(Fun->getReturnType())))
+                .emit(*DiagMan);
+          }
         }
       },
       CurrentFun);

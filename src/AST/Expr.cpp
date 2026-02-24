@@ -173,6 +173,26 @@ void TupleLiteral::emit(int Level) const {
 }
 
 //===----------------------------------------------------------------------===//
+// ArrayLiteral Implementation
+//===----------------------------------------------------------------------===//
+
+ArrayLiteral::ArrayLiteral(SrcLocation Location,
+                           std::vector<std::unique_ptr<Expr>> Elements)
+    : Expr(Expr::Kind::ArrayLiteralKind, std::move(Location)),
+      Elements(std::move(Elements)) {}
+
+ArrayLiteral::~ArrayLiteral() = default;
+
+void ArrayLiteral::emit(int Level) const {
+  std::println("{}ArrayLiteral:", indent(Level));
+  std::println("{}Type: {}", indent(Level + 1), Type.toString());
+  std::println("{}Elements:", indent(Level + 1));
+  for (auto &E : Elements) {
+    E->emit(Level + 2);
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // DeclRefExpr Implementation
 //===----------------------------------------------------------------------===//
 
@@ -488,8 +508,16 @@ void IntrinsicCall::emit(int Level) const {
   }
 }
 
-void IndexExpr::emit(int Level) const {
-  std::println("{}IndexExpr:", indent(Level));
+void TupleIndex::emit(int Level) const {
+  std::println("{}TupleIndex:", indent(Level));
+  std::println("{}Indexing:", indent(Level));
+  Base->emit(Level + 1);
+  std::println("{}With Index:", indent(Level));
+  Index->emit(Level + 1);
+}
+
+void ArrayIndex::emit(int Level) const {
+  std::println("{}ArrayIndex:", indent(Level));
   std::println("{}Indexing:", indent(Level));
   Base->emit(Level + 1);
   std::println("{}With Index:", indent(Level));

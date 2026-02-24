@@ -50,13 +50,20 @@ public:
       return Res;
     }
 
-    if (auto Tuple = llvm::dyn_cast<TupleTy>(Resolved)) {
+    if (auto Tup = llvm::dyn_cast<TupleTy>(Resolved)) {
       std::vector<TypeRef> InferredElems;
-      for (auto &Arg : Tuple->getElementTys()) {
+      for (auto &Arg : Tup->getElementTys()) {
         InferredElems.push_back(resolve(Arg));
       }
 
       auto Res = TypeCtx::getTuple(InferredElems, T.getSpan());
+      getNode(Res);
+      return Res;
+    }
+
+    if (auto Arr = llvm::dyn_cast<ArrayTy>(Resolved)) {
+      TypeRef InferredTy = resolve(Arr->getContainedTy());
+      auto Res = TypeCtx::getArray(InferredTy, T.getSpan());
       getNode(Res);
       return Res;
     }

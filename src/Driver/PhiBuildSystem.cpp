@@ -3,14 +3,12 @@
 #include <fstream>
 #include <print>
 
+#include "CodeGen/LLVMCodeGen.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
-#include "Sema/NameResolution/NameResolver.hpp"
-#include "Sema/TypeInference/Inferencer.hpp"
-#include "CodeGen/LLVMCodeGen.hpp"
+#include "Sema/Sema.hpp"
 
 #include <cstdlib>
-
 
 namespace phi {
 
@@ -112,28 +110,16 @@ bool PhiBuildSystem::buildProject(const CompilerOptions &Opts) {
   // Get all modules
   std::vector<ModuleDecl *> Modules;
   Modules.reserve(Project.getModules().size());
-
   for (auto &[Name, Mod] : Project.getModules()) {
     Modules.push_back(Mod.get());
   }
 
-  auto Resolved = NameResolver(Modules, &Diags).resolve();
-  
-  if (Diags.hasError()) {
-    return false;
-  }
-
-  auto Checked = TypeInferencer(Resolved, &Diags).infer();
-  for (auto &Mod : Checked) {
-    Mod->emit(0);
-  }
-
-  if (Diags.hasError()) {
+  if (!Sema(Modules, &Diags).analyze()) {
     return false;
   }
 
   // Code generation
-  LLVMCodeGen CodeGen(Checked);
+  CodeGen CodeGen(Modules);
   CodeGen.generate();
 
   // Output IR to build dir
@@ -144,7 +130,9 @@ bool PhiBuildSystem::buildProject(const CompilerOptions &Opts) {
   std::println("Generated LLVM IR at {}", IRFilename);
 
   // Compile with clang
-  std::string ClangCmd = "clang " + IRFilename + " -o " + (Project.getConfig().OutputDir / "main").string() + " -Wno-override-module";
+  std::string ClangCmd = "clang " + IRFilename + " -o " +
+                         (Project.getConfig().OutputDir / "main").string() +
+                         " -Wno-override-module";
   std::println("Compiling with: {}", ClangCmd);
   int Ret = std::system(ClangCmd.c_str());
   if (Ret != 0) {
@@ -301,20 +289,21 @@ bool PhiBuildSystem::compileFile(const fs::path &SourceFile,
   }
 
   // Code generation
-  LLVMCodeGen CodeGen(Checked);
+  CodeGen CodeGen(Checked);
   CodeGen.generate();
 
   // Output IR
   std::string IRFilename = OutputFile.string();
   if (fs::path(IRFilename).extension() != ".ll") {
-      IRFilename += ".ll";
+    IRFilename += ".ll";
   }
   CodeGen.outputIR(IRFilename);
 
   std::println("Generated LLVM IR at {}", IRFilename);
 
   // Compile with clang
-  std::string ClangCmd = "clang " + IRFilename + " -o " + OutputFile.string() + " -Wno-override-module";
+  std::string ClangCmd = "clang " + IRFilename + " -o " + OutputFile.string() +
+                         " -Wno-override-module";
   std::println("Compiling with: {}", ClangCmd);
   int Ret = std::system(ClangCmd.c_str());
   if (Ret != 0) {

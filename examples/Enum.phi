@@ -1,14 +1,14 @@
 fun println(const msg: string) {}
 
 struct Rectangle {
-    public l: f64;
-    public w: f64;
+    public l: f64,
+    public w: f64,
 }
 
 enum Shape {
-    Rectangle: Rectangle;
-    Circle: f64;
-    Square: { l: f64 };
+    Rectangle: Rectangle,
+    Circle: f64,
+    Square: { l: f64 },
 
     fun perimeter(const this) -> f64 {
         return match this {
