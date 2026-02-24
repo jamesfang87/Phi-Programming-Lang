@@ -1,7 +1,12 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
+#include <memory>
+#include <unordered_map>
+
 #include <llvm/ADT/TypeSwitch.h>
 
+#include "AST/Nodes/Decl.hpp"
+#include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {
@@ -15,8 +20,120 @@ void TypeInferencer::visit(Decl &D) {
       .Case<MethodDecl>([&](MethodDecl *X) { visit(*X); })
       .Case<StructDecl>([&](StructDecl *X) { visit(*X); })
       .Case<EnumDecl>([&](EnumDecl *X) { visit(*X); })
+      .Case<VariantDecl>([&](VariantDecl *X) { visit(*X); })
+      .Case<ModuleDecl>([&](ModuleDecl *X) { visit(*X); })
       .Default([&](Decl *) {
         llvm_unreachable("Unhandled Decl kind in TypeInferencer");
+      });
+}
+
+std::unordered_map<const TypeArgDecl *, TypeRef>
+TypeInferencer::buildGenericSubstMap(
+    const std::vector<std::unique_ptr<TypeArgDecl>> &TypeArgs) {
+  std::unordered_map<const TypeArgDecl *, TypeRef> Map;
+  for (auto &T : TypeArgs) {
+    Map.emplace(T.get(), TypeCtx::getVar(VarTy::Any, T->getSpan()));
+    assert(Map.contains(T.get()));
+  }
+  return Map;
+}
+
+TypeRef TypeInferencer::substituteGenerics(
+    TypeRef Ty, const std::unordered_map<const TypeArgDecl *, TypeRef> &Map) {
+  if (Map.empty()) {
+    return Ty;
+  }
+
+  if (auto G = llvm::dyn_cast<GenericTy>(Ty.getPtr())) {
+    auto It = Map.find(G->getDecl());
+    if (It != Map.end()) {
+      return It->second;
+    }
+    return Ty;
+  }
+
+  if (auto App = llvm::dyn_cast<AppliedTy>(Ty.getPtr())) {
+    std::vector<TypeRef> SubstitutedArgs;
+    for (auto &ArgTy : App->getArgs()) {
+      SubstitutedArgs.push_back(substituteGenerics(ArgTy, Map));
+    }
+    return TypeCtx::getApplied(App->getBase(), SubstitutedArgs, Ty.getSpan());
+  }
+
+  if (auto Arr = llvm::dyn_cast<ArrayTy>(Ty.getPtr())) {
+    return TypeCtx::getArray(substituteGenerics(Arr->getContainedTy(), Map),
+                             Ty.getSpan());
+  }
+
+  return Ty;
+}
+
+TypeRef TypeInferencer::instantiate(Decl *D) {
+  return llvm::TypeSwitch<Decl *, TypeRef>(D)
+      .Case<LocalDecl>([&](LocalDecl *X) {
+        if (X->getType().isGeneric()) {
+          return TypeCtx::getVar(VarTy::Any, X->getType().getSpan());
+        }
+        return X->getType();
+      })
+      .Case<FunDecl>([&](FunDecl *X) {
+        auto Map = buildGenericSubstMap(X->getTypeArgs());
+
+        std::vector<TypeRef> ParamTs;
+        for (auto &Param : X->getParams()) {
+          ParamTs.emplace_back(substituteGenerics(Param->getType(), Map));
+        }
+        TypeRef ReturnT = substituteGenerics(X->getReturnType(), Map);
+        return TypeCtx::getFun(std::move(ParamTs), std::move(ReturnT),
+                               X->getSpan());
+      })
+      .Case<MethodDecl>([&](MethodDecl *X) {
+        auto Map = buildGenericSubstMap(X->getTypeArgs());
+        Map.merge(buildGenericSubstMap(X->getParent()->getTypeArgs()));
+
+        std::vector<TypeRef> ParamTs;
+        for (auto &Param : X->getParams()) {
+          ParamTs.emplace_back(substituteGenerics(Param->getType(), Map));
+        }
+        TypeRef ReturnT = substituteGenerics(X->getReturnType(), Map);
+        return TypeCtx::getFun(std::move(ParamTs), std::move(ReturnT),
+                               X->getSpan());
+      })
+      .Case<FieldDecl>([&](FieldDecl *X) {
+        if (X->getType().isGeneric()) {
+          return TypeCtx::getVar(VarTy::Any, X->getType().getSpan());
+        }
+        return X->getType();
+      })
+      .Case<VariantDecl>([&](VariantDecl *X) {
+        assert(
+            X->hasPayload() &&
+            "`TypeInferencer::instantiate` called on payload-less VariantDecl");
+
+        if (X->getPayloadType().isGeneric()) {
+          return TypeCtx::getVar(VarTy::Any, X->getPayloadType().getSpan());
+        }
+        return X->getPayloadType();
+      })
+      .Case<AdtDecl>([&](AdtDecl *X) {
+        if (!X->hasTypeArgs()) {
+          return X->getType();
+        }
+
+        std::vector<TypeRef> Vars;
+        for (auto &Generic : X->getTypeArgs()) {
+          Vars.push_back(TypeCtx::getVar(VarTy::Any, Generic->getSpan()));
+        }
+        return TypeCtx::getApplied(X->getType(), std::move(Vars), X->getSpan());
+      })
+      .Case<ModuleDecl>([&](ModuleDecl *X) {
+        static_assert("`TypeInferencer::instantiate called on ModuleDecl, "
+                      "which has no type");
+        return TypeCtx::getErr(X->getSpan());
+      })
+      .Default([&](Decl *X) {
+        llvm_unreachable("Unhandled Decl kind in TypeInferencer");
+        return TypeCtx::getErr(X->getSpan());
       });
 }
 
@@ -25,7 +142,8 @@ void TypeInferencer::visit(VarDecl &D) {
     return;
   }
 
-  auto Res = Unifier.unify(D.getType(), visit(D.getInit()));
+  auto T = instantiate(&D);
+  auto Res = Unifier.unify(T, visit(D.getInit()));
   if (!Res) {
     error("Mismatched types in variable declaration")
         .with_primary_label(D.getInit().getSpan(),
@@ -53,14 +171,15 @@ void TypeInferencer::visit(FunDecl &D) {
 }
 
 void TypeInferencer::visit(FieldDecl &D) {
-  assert(!D.getType().isVar() && "ParamDecls cannot be annotated as VarTy");
-  assert(!D.getType().isErr() && "ParamDecls cannot be annotated as ErrTy");
+  assert(!D.getType().isVar() && "FieldDecls cannot be annotated as VarTy");
+  assert(!D.getType().isErr() && "FieldDecls cannot be annotated as ErrTy");
 
   if (!D.hasInit()) {
     return;
   }
 
-  auto Res = Unifier.unify(D.getType(), D.getInit().getType());
+  auto T = instantiate(&D);
+  auto Res = Unifier.unify(T, D.getInit().getType());
   if (!Res) {
     error("Mismatched types in field declaration")
         .with_primary_label(D.getInit().getSpan(),
@@ -82,8 +201,6 @@ void TypeInferencer::visit(MethodDecl &D) {
 }
 
 void TypeInferencer::visit(StructDecl &D) {
-  assert(D.getType().isAdt());
-
   for (auto &Field : D.getFields()) {
     visit(*Field);
   }
@@ -94,8 +211,6 @@ void TypeInferencer::visit(StructDecl &D) {
 }
 
 void TypeInferencer::visit(EnumDecl &D) {
-  assert(D.getType().isAdt());
-
   for (auto &Variant : D.getVariants()) {
     visit(*Variant);
   }
@@ -105,6 +220,21 @@ void TypeInferencer::visit(EnumDecl &D) {
   }
 }
 
-void TypeInferencer::visit(VariantDecl &D) { (void)D; }
+void TypeInferencer::visit(VariantDecl &D) {
+  if (!D.hasPayload()) {
+    return;
+  }
+
+  assert(!D.getPayloadType().isVar() &&
+         "FieldDecls cannot be annotated as VarTy");
+  assert(!D.getPayloadType().isErr() &&
+         "FieldDecls cannot be annotated as ErrTy");
+}
+
+void TypeInferencer::visit(ModuleDecl &D) {
+  for (auto &Decl : D.getItems()) {
+    visit(*Decl);
+  }
+}
 
 } // namespace phi

@@ -171,6 +171,8 @@ Token Lexer::scanToken() {
     } else {
       return makeToken(TokenKind::Pipe);
     }
+  case '?':
+    return makeToken(TokenKind::Try);
   case '_':
     return makeToken(TokenKind::Wildcard);
 

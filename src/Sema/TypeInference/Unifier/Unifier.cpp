@@ -5,6 +5,7 @@
 
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
+#include <llvm/Support/ErrorHandling.h>
 
 #include "AST/TypeSystem/Type.hpp"
 
@@ -176,8 +177,39 @@ bool TypeUnifier::unifyConcretes(TypeRef A, TypeRef B) {
 
         return Builtin->getBuiltinKind() == Other->getBuiltinKind();
       })
+      .Case<AppliedTy>([&](const AppliedTy *App) {
+        auto Other = llvm::dyn_cast<AppliedTy>(B.getPtr());
+        if (!unify(App->getBase(), Other->getBase())) {
+          return false;
+        }
+
+        const auto &ArgsA = App->getArgs();
+        const auto &ArgsB = Other->getArgs();
+
+        if (ArgsA.size() != ArgsB.size()) {
+          return false;
+        }
+
+        auto Res = true;
+        for (auto [TypeA, TypeB] : llvm::zip(ArgsA, ArgsB)) {
+          Res = unify(TypeA, TypeB) && Res;
+        }
+
+        return Res;
+      })
+      .Case<ArrayTy>([&](const ArrayTy *Arr) {
+        auto Other = llvm::dyn_cast<ArrayTy>(B.getPtr());
+        assert(Other && "Types must be same kind at this point");
+
+        return unify(Arr->getContainedTy(), Other->getContainedTy());
+      })
+      .Case<GenericTy>([&](const GenericTy *Generic) {
+        auto Other = llvm::dyn_cast<GenericTy>(B.getPtr());
+        assert(Other && "Types must be same kind at this point");
+        return Generic->getDecl() == Other->getDecl();
+      })
       .Default([](const Type * /*T*/) {
-        std::unreachable();
+        llvm_unreachable("Unaccounted for Type* in Unifier");
         return false;
       });
 }

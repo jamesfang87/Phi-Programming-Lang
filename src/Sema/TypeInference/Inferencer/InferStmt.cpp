@@ -2,6 +2,7 @@
 
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
+#include <print>
 
 #include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
@@ -27,14 +28,26 @@ void TypeInferencer::visit(ReturnStmt &S) {
     return;
   }
 
-  auto ExprTy = visit(S.getExpr());
+  auto ExprT = visit(S.getExpr());
 
   std::visit(
-      [&](auto Fn) {
-        using T = std::decay_t<decltype(Fn)>;
+      [&](auto Fun) {
+        using T = std::decay_t<decltype(Fun)>;
 
         if constexpr (!std::is_same_v<T, std::monostate>) {
-          Unifier.unify(Fn->getReturnType(), ExprTy);
+          auto Res = Unifier.unify(Fun->getReturnType(), ExprT);
+          if (!Res) {
+            error("Mismatched return type")
+                .with_primary_label(
+                    S.getExpr().getSpan(),
+                    std::format("expected `{}`, got `{}`",
+                                toString(Fun->getReturnType()), toString(ExprT)))
+                .with_secondary_label(
+                    Fun->getReturnType().getSpan(),
+                    std::format("expected `{}` because of this",
+                                toString(Fun->getReturnType())))
+                .emit(*DiagMan);
+          }
         }
       },
       CurrentFun);

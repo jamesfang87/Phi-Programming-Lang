@@ -19,8 +19,8 @@ Type *Type::getUnderlying() {
       Current = Ptr->getPointee().getPtr();
     } else if (auto *Ref = llvm::dyn_cast<RefTy>(Current)) {
       Current = Ref->getPointee().getPtr();
-    } else if (auto *Applied = llvm::dyn_cast<AppliedTy>(Current)) {
-      Current = Applied->getBase().getPtr();
+    } else if (auto *App = llvm::dyn_cast<AppliedTy>(Current)) {
+      Current = App->getBase().getPtr();
     } else {
       break;
     }
@@ -30,6 +30,24 @@ Type *Type::getUnderlying() {
 }
 
 TypeRef TypeRef::getUnderlying() { return TypeRef(Ptr->getUnderlying(), Span); }
+
+Type *Type::removeIndir() {
+  Type *Current = this;
+
+  while (true) {
+    if (auto *Ptr = llvm::dyn_cast<PtrTy>(Current)) {
+      Current = Ptr->getPointee().getPtr();
+    } else if (auto *Ref = llvm::dyn_cast<RefTy>(Current)) {
+      Current = Ref->getPointee().getPtr();
+    } else {
+      break;
+    }
+  }
+
+  return Current;
+}
+
+TypeRef TypeRef::removeIndir() { return TypeRef(Ptr->removeIndir(), Span); }
 
 std::string BuiltinTy::toString() const {
   switch (getBuiltinKind()) {
@@ -118,6 +136,10 @@ std::string VarTy::toString() const { return "T" + std::to_string(N); }
 std::string GenericTy::toString() const { return "Generic: " + Id; };
 
 std::string ErrTy::toString() const { return "Error"; }
+
+std::string ArrayTy::toString() const {
+  return "[" + ContainedTy.toString() + "]";
+}
 
 bool VarTy::occursIn(TypeRef Other) const {
   return llvm::TypeSwitch<const Type *, bool>(Other.getPtr())

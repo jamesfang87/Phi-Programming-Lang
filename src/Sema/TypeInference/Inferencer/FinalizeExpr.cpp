@@ -2,8 +2,11 @@
 
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
+#include <optional>
+#include <print>
 
 #include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Expr.hpp"
 #include "AST/TypeSystem/Type.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 
@@ -18,6 +21,7 @@ void TypeInferencer::finalize(Expr &E) {
       .Case<BoolLiteral>([&](BoolLiteral *X) { finalize(*X); })
       .Case<RangeLiteral>([&](RangeLiteral *X) { finalize(*X); })
       .Case<TupleLiteral>([&](TupleLiteral *X) { finalize(*X); })
+      .Case<ArrayLiteral>([&](ArrayLiteral *X) { finalize(*X); })
       .Case<DeclRefExpr>([&](DeclRefExpr *X) { finalize(*X); })
       .Case<FunCallExpr>([&](FunCallExpr *X) { finalize(*X); })
       .Case<BinaryOp>([&](BinaryOp *X) { finalize(*X); })
@@ -27,6 +31,9 @@ void TypeInferencer::finalize(Expr &E) {
       .Case<MethodCallExpr>([&](MethodCallExpr *X) { finalize(*X); })
       .Case<MatchExpr>([&](MatchExpr *X) { finalize(*X); })
       .Case<AdtInit>([&](AdtInit *X) { finalize(*X); })
+      .Case<IntrinsicCall>([&](IntrinsicCall *X) { finalize(*X); })
+      .Case<TupleIndex>([&](TupleIndex *X) { finalize(*X); })
+      .Case<ArrayIndex>([&](ArrayIndex *X) { finalize(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
       });
@@ -34,6 +41,7 @@ void TypeInferencer::finalize(Expr &E) {
 
 void TypeInferencer::finalize(IntLiteral &E) {
   auto T = Unifier.resolve(E.getType());
+  std::println("finalize: {}", T.toString());
   assert(T.isBuiltin() || T.isVar());
   if (T.isVar()) {
     auto Int = llvm::dyn_cast<VarTy>(T.getPtr());
@@ -52,6 +60,7 @@ void TypeInferencer::finalize(FloatLiteral &E) {
   if (T.isVar()) {
     auto Float = llvm::dyn_cast<VarTy>(T.getPtr());
     assert(Float->getDomain() == VarTy::Float);
+    Unifier.unify(E.getType(), TypeCtx::getBuiltin(BuiltinTy::f64, E.getSpan()));
     E.setType(TypeCtx::getBuiltin(BuiltinTy::f64, E.getSpan()));
   } else {
     E.setType(T);
@@ -87,9 +96,15 @@ void TypeInferencer::finalize(TupleLiteral &E) {
   E.setType(Unifier.resolve(E.getType()));
 }
 
+void TypeInferencer::finalize(ArrayLiteral &E) {
+  for (auto &Elem : E.getElements()) {
+    finalize(*Elem);
+  }
+  E.setType(Unifier.resolve(E.getType()));
+}
+
 void TypeInferencer::finalize(DeclRefExpr &E) {
   E.setType(Unifier.resolve(E.getType()));
-  assert(E.getType().getPtr() == E.getDecl()->getType().getPtr());
 }
 
 void TypeInferencer::finalize(FunCallExpr &E) {
@@ -97,8 +112,19 @@ void TypeInferencer::finalize(FunCallExpr &E) {
     finalize(*Arg);
   }
 
+  std::vector<TypeRef> ResolvedTypeArgs;
+  for (auto &T : E.getTypeArgs()) {
+    auto Resolved = Unifier.resolve(T);
+    if (!Resolved.isVar()) {
+      ResolvedTypeArgs.push_back(Resolved);
+      continue;
+    }
+
+    ResolvedTypeArgs.push_back(defaultVarTy(Resolved).value_or(Resolved));
+  }
+  E.setTypeArgs(ResolvedTypeArgs);
+
   E.setType(Unifier.resolve(E.getType()));
-  assert(E.getType().getPtr() == E.getDecl()->getReturnType().getPtr());
 }
 
 void TypeInferencer::finalize(BinaryOp &E) {
@@ -113,8 +139,54 @@ void TypeInferencer::finalize(UnaryOp &E) {
   E.setType(Unifier.resolve(E.getType()));
 }
 
+std::optional<TypeRef> TypeInferencer::defaultVarTy(TypeRef T) {
+  // Otherwise, we can try to default to a i32 or f64 or emit error
+  auto Var = llvm::dyn_cast<VarTy>(T.getPtr());
+  if (Var->getDomain() == VarTy::Int) {
+    Unifier.unify(T, TypeCtx::getBuiltin(BuiltinTy::i32, T.getSpan()));
+    return TypeCtx::getBuiltin(BuiltinTy::i32, T.getSpan());
+  }
+
+  if (Var->getDomain() == VarTy::Float) {
+    Unifier.unify(T, TypeCtx::getBuiltin(BuiltinTy::f64, T.getSpan()));
+    return TypeCtx::getBuiltin(BuiltinTy::f64, T.getSpan());
+  }
+
+  error("Could not infer type for expression")
+      .with_primary_label(T.getSpan(),
+                          "consider adding a type annotation somewhere to "
+                          "help the compiler deduce this expression")
+      .emit(*DiagMan);
+  return std::nullopt;
+}
+
 void TypeInferencer::finalize(AdtInit &E) {
+  std::println("{}", E.getSpan().toString());
+
   E.setType(Unifier.resolve(E.getType()));
+
+  std::vector<TypeRef> ResolvedArgs;
+  for (auto &T : E.getTypeArgs()) {
+    auto Resolved = Unifier.resolve(T);
+    if (!Resolved.isVar()) {
+      ResolvedArgs.push_back(Resolved);
+      continue;
+    }
+
+    ResolvedArgs.push_back(defaultVarTy(Resolved).value_or(Resolved));
+  }
+  E.setTypeArgs(ResolvedArgs);
+
+  TypeRef Base = E.getType();
+  if (auto *App = llvm::dyn_cast<AppliedTy>(E.getType().getPtr())) {
+    Base = App->getBase();
+  }
+
+  if (!ResolvedArgs.empty()) {
+    E.setType(TypeCtx::getApplied(Base, ResolvedArgs, E.getSpan()));
+  }
+
+  // Finalize initializers
   for (auto &Init : E.getInits()) {
     finalize(*Init);
   }
@@ -127,16 +199,138 @@ void TypeInferencer::finalize(MemberInit &E) {
 }
 
 void TypeInferencer::finalize(FieldAccessExpr &E) {
+  finalize(*E.getBase());
+  if (E.getField()) {
+    E.setType(Unifier.resolve(E.getType()));
+  }
+
+  // 1. Infer base type
+  auto BaseT = Unifier.resolve(E.getBase()->getType());
+  auto UnderlyingBaseT = BaseT.getUnderlying();
+
+  // 2. Only structs / ADTs can have fields
+  if (!UnderlyingBaseT.isAdt() && !UnderlyingBaseT.isVar()) {
+    error("Cannot access field on non-ADT type")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no fields", toString(UnderlyingBaseT)))
+        .emit(*DiagMan);
+    return;
+  }
+
+  // 3. Resolve ADT
+  if (UnderlyingBaseT.isVar()) {
+    error("Could not infer type of expression")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("could not infer the type of this expression"))
+        .emit(*DiagMan);
+    return;
+  }
+
+  auto *Adt = llvm::cast<AdtTy>(UnderlyingBaseT.getPtr());
+  auto *Decl = Adt->getDecl();
+  if (!Decl) {
+    // Missing declaration should be an error
+    error("Cannot access field on unknown type")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("unknown ADT `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return;
+  }
+
+  auto *Struct = llvm::dyn_cast<StructDecl>(Decl);
+  if (!Struct) {
+    error("Cannot perform field access on enums")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("this is an enum `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return;
+  }
+
+  auto *Field = Struct->getField(E.getFieldId());
+  if (!Field) {
+    error(std::format("Field `{}` not found in `{}`", E.getFieldId(),
+                      Adt->getId()))
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("type `{}` has no field `{}`",
+                                        Adt->getId(), E.getFieldId()))
+        .emit(*DiagMan);
+    return;
+  }
+  E.setField(Field);
   E.setType(Unifier.resolve(E.getType()));
 }
 
 void TypeInferencer::finalize(MethodCallExpr &E) {
+  finalize(*E.getBase());
   for (auto &Arg : E.getArgs()) {
     finalize(*Arg);
   }
 
+  std::vector<TypeRef> ResolvedTypeArgs;
+  for (auto &T : E.getTypeArgs()) {
+    auto Resolved = Unifier.resolve(T);
+    if (!Resolved.isVar()) {
+      ResolvedTypeArgs.push_back(Resolved);
+      continue;
+    }
+
+    ResolvedTypeArgs.push_back(defaultVarTy(Resolved).value_or(Resolved));
+  }
+  E.setTypeArgs(ResolvedTypeArgs);
+
   E.setType(Unifier.resolve(E.getType()));
-  assert(E.getType().getPtr() == E.getDecl()->getReturnType().getPtr());
+
+  if (E.getMethodPtr()) {
+    return;
+  }
+
+  // 1. Infer base type
+  auto BaseT = E.getBase()->getType();
+  auto UnderlyingBaseT = BaseT.getUnderlying();
+
+  // 2. Only ADTs can have methods
+  if (!UnderlyingBaseT.isAdt() && !UnderlyingBaseT.isVar()) {
+    error("Cannot call method on non-ADT type")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no methods", toString(UnderlyingBaseT)))
+        .emit(*DiagMan);
+    return;
+  }
+
+  if (UnderlyingBaseT.isVar()) {
+    error("Could not infer type of expression")
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("could not infer the type of this expression"))
+        .emit(*DiagMan);
+    return;
+  }
+
+  auto *Adt = llvm::cast<AdtTy>(UnderlyingBaseT.getPtr());
+  auto *Decl = Adt->getDecl();
+  if (!Decl) {
+    error("Cannot call method on unknown type")
+        .with_primary_label(E.getBase()->getSpan(),
+                            std::format("unknown ADT `{}`", Adt->getId()))
+        .emit(*DiagMan);
+    return;
+  }
+
+  std::string Id = llvm::dyn_cast<DeclRefExpr>(&E.getCallee())->getId();
+  auto *Method = Decl->getMethod(Id);
+  if (!Method) {
+    error(std::format("Method `{}` not found in `{}`", Id, Adt->getId()))
+        .with_primary_label(
+            E.getBase()->getSpan(),
+            std::format("type `{}` has no method `{}`", Adt->getId(), Id))
+        .emit(*DiagMan);
+    return;
+  }
+  E.setMethod(Method);
+  assert(E.getMethodPtr());
 }
 
 void TypeInferencer::finalize(MatchExpr &E) {
@@ -175,12 +369,8 @@ void TypeInferencer::finalize(MatchExpr &E) {
           [&](auto &P) {
             using PType = std::decay_t<decltype(P)>;
 
-            // --- Wildcard ---
-            if constexpr (std::is_same_v<PType, PatternAtomics::Wildcard>) {
-            }
-
             // --- Literal pattern ---
-            else if constexpr (std::is_same_v<PType, PatternAtomics::Literal>) {
+            if constexpr (std::is_same_v<PType, PatternAtomics::Literal>) {
               assert(P.Value);
               finalize(*P.Value);
               assert(P.Value->getType().getPtr() == ScrutineeT.getPtr());
@@ -219,11 +409,12 @@ void TypeInferencer::finalize(MatchExpr &E) {
                 }
 
                 VarDecl *Binding = P.Vars.front().get();
-                Unifier.unify(Binding->getType(), Variant->getPayloadType());
+                Unifier.unify(Binding->getType(), instantiate(Variant));
                 // Check bound variable type
                 finalize(*Binding);
 
-                if (Binding->getType().getPtr() != PayloadTy.getPtr()) {
+                if (Binding->getType().getPtr() != PayloadTy.getPtr() &&
+                    !PayloadTy.isGeneric()) {
                   error("variant binding type mismatch")
                       .with_primary_label(
                           Binding->getSpan(),
@@ -248,6 +439,28 @@ void TypeInferencer::finalize(MatchExpr &E) {
     assert(Arm.Body);
     finalize(*Arm.Body);
   }
+  E.setType(Unifier.resolve(E.getType()));
+}
+
+void TypeInferencer::finalize(IntrinsicCall &E) {
+  for (auto &Arg : E.getArgs()) {
+    finalize(*Arg);
+  }
+
+  E.setType(Unifier.resolve(E.getType()));
+}
+
+void TypeInferencer::finalize(TupleIndex &E) {
+  finalize(*E.getBase());
+  finalize(*E.getIndex());
+
+  E.setType(Unifier.resolve(E.getType()));
+}
+
+void TypeInferencer::finalize(ArrayIndex &E) {
+  finalize(*E.getBase());
+  finalize(*E.getIndex());
+
   E.setType(Unifier.resolve(E.getType()));
 }
 

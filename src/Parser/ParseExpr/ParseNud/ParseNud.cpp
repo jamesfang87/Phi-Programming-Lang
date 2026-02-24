@@ -9,7 +9,6 @@
 #include <cassert>
 #include <memory>
 #include <optional>
-#include <print>
 #include <string>
 #include <vector>
 
@@ -117,16 +116,16 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
   // Grouping: ( expr )
   case TokenKind::OpenParen:
     return parseGroupingOrTupleLiteral();
-  case TokenKind::OpenBrace: {
-    // Case of anonymous AdtInit
-    auto Inits = parseList<MemberInit>(
-        TokenKind::OpenBrace, TokenKind::CloseBrace, &Parser::parseMemberInit);
+  case TokenKind::OpenBracket: {
+    assert(unconsume());
+    auto Elems = parseList<Expr>(TokenKind::OpenBracket,
+                                 TokenKind::CloseBracket, &Parser::parseExpr);
 
-    return (!Inits) ? nullptr
-                    : std::make_unique<AdtInit>(Tok.getStart(), std::nullopt,
-                                                std::vector<TypeRef>{},
-                                                std::move(Inits.value()));
+    return (!Elems) ? nullptr
+                    : std::make_unique<ArrayLiteral>(Tok.getStart(),
+                                                     std::move(Elems.value()));
   }
+
   // Literals
   default:
     return parsePrimitiveLiteral(Tok);

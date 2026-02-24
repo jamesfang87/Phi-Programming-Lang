@@ -9,14 +9,14 @@
 
 namespace phi {
 
-std::vector<std::unique_ptr<Decl>> TypeInferencer::infer() {
-  for (auto &Decl : Ast)
-    visit(*Decl);
+std::vector<ModuleDecl *> TypeInferencer::infer() {
+  for (auto &Mod : Modules)
+    visit(*Mod);
 
-  for (auto &Decl : Ast)
-    finalize(*Decl);
+  for (auto &Mod : Modules)
+    finalize(*Mod);
 
-  return std::move(Ast);
+  return std::move(Modules);
 }
 
 std::string TypeInferencer::toString(TypeRef T) {
