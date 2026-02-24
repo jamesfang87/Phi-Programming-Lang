@@ -75,6 +75,7 @@ public:
   TypeRef visit(StrLiteral &E);
   TypeRef visit(RangeLiteral &E);
   TypeRef visit(TupleLiteral &E);
+  TypeRef visit(ArrayLiteral &E);
   TypeRef visit(DeclRefExpr &E);
   TypeRef visit(FunCallExpr &E);
   TypeRef visit(BinaryOp &E);
@@ -85,7 +86,8 @@ public:
   TypeRef visit(MethodCallExpr &E);
   TypeRef visit(MatchExpr &E);
   TypeRef visit(IntrinsicCall &E);
-  TypeRef visit(IndexExpr &E);
+  TypeRef visit(TupleIndex &E);
+  TypeRef visit(ArrayIndex &E);
 
   std::string toString(TypeRef T);
 
@@ -137,6 +139,7 @@ private:
   void finalize(StrLiteral &E);
   void finalize(RangeLiteral &E);
   void finalize(TupleLiteral &E);
+  void finalize(ArrayLiteral &E);
   void finalize(DeclRefExpr &E);
   void finalize(FunCallExpr &E);
   void finalize(BinaryOp &E);
@@ -147,8 +150,8 @@ private:
   void finalize(MethodCallExpr &E);
   void finalize(MatchExpr &E);
   void finalize(IntrinsicCall &E);
-  void finalize(IndexExpr &E);
-
+  void finalize(TupleIndex &E);
+  void finalize(ArrayIndex &E);
   std::optional<TypeRef> defaultVarTy(TypeRef);
 };
 

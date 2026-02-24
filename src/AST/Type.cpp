@@ -137,6 +137,10 @@ std::string GenericTy::toString() const { return "Generic: " + Id; };
 
 std::string ErrTy::toString() const { return "Error"; }
 
+std::string ArrayTy::toString() const {
+  return "[" + ContainedTy.toString() + "]";
+}
+
 bool VarTy::occursIn(TypeRef Other) const {
   return llvm::TypeSwitch<const Type *, bool>(Other.getPtr())
       .Case<VarTy>([&](auto *Var) { return Var->getN() == getN(); })

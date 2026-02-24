@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -45,6 +46,7 @@ public:
     BoolLiteralKind,
     RangeLiteralKind,
     TupleLiteralKind,
+    ArrayLiteralKind,
     DeclRefKind,
     FunCallKind,
     BinaryOpKind,
@@ -55,7 +57,8 @@ public:
     MatchExprKind,
     AdtInitKind,
     IntrinsicCallKind,
-    IndexKind,
+    TupleIndexKind,
+    ArrayIndexKind,
   };
 
   //===--------------------------------------------------------------------===//
@@ -377,6 +380,42 @@ public:
 
   static bool classof(const Expr *E) {
     return E->getKind() == Kind::TupleLiteralKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::vector<std::unique_ptr<Expr>> Elements;
+};
+
+class ArrayLiteral : public Expr {
+public:
+  ArrayLiteral(SrcLocation Location,
+               std::vector<std::unique_ptr<Expr>> Elements);
+  ~ArrayLiteral() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] const auto &getElements() { return Elements; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::ArrayLiteralKind;
   }
 
   //===--------------------------------------------------------------------===//
@@ -947,16 +986,16 @@ private:
   ArgList Args;
 };
 
-class IndexExpr : public Expr {
+class ArrayIndex : public Expr {
 public:
   //===--------------------------------------------------------------------===//
   // Constructors & Destructors
   //===-----------------------------------------------------------------------//
 
-  IndexExpr(SrcLocation Location, std::unique_ptr<Expr> Base,
-            std::unique_ptr<Expr> Index)
-      : Expr(Expr::Kind::IndexKind, std::move(Location)), Base(std::move(Base)),
-        Index(std::move(Index)) {};
+  ArrayIndex(SrcLocation Location, std::unique_ptr<Expr> Base,
+             std::unique_ptr<Expr> Index)
+      : Expr(Expr::Kind::ArrayIndexKind, std::move(Location)),
+        Base(std::move(Base)), Index(std::move(Index)) {};
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -975,7 +1014,9 @@ public:
   // LLVM-style RTTI
   //===-----------------------------------------------------------------------//
 
-  static bool classof(const Expr *E) { return E->getKind() == Kind::IndexKind; }
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::ArrayIndexKind;
+  }
 
   //===--------------------------------------------------------------------===//
   // Utility Methods
@@ -986,6 +1027,50 @@ public:
 private:
   std::unique_ptr<Expr> Base;
   std::unique_ptr<Expr> Index;
+};
+
+class TupleIndex : public Expr {
+public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===-----------------------------------------------------------------------//
+
+  TupleIndex(SrcLocation Location, std::unique_ptr<Expr> Base,
+             std::unique_ptr<IntLiteral> Index)
+      : Expr(Expr::Kind::TupleIndexKind, std::move(Location)),
+        Base(std::move(Base)), Index(std::move(Index)) {};
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] Expr *getBase() const { return Base.get(); }
+  [[nodiscard]] IntLiteral *getIndex() const { return Index.get(); }
+  [[nodiscard]] int64_t getIndexVal() const { return Index->getValue(); }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] bool isAssignable() const override { return true; }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::TupleIndexKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::unique_ptr<Expr> Base;
+  std::unique_ptr<IntLiteral> Index;
 };
 
 } // namespace phi

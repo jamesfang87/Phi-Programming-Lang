@@ -64,6 +64,7 @@ public:
   struct Scope {
     std::unordered_map<std::string, LocalDecl *> Vars;
     std::unordered_map<std::string, FunDecl *> Funs;
+    std::unordered_map<std::string, MethodDecl *> Statics;
     std::unordered_map<std::string, AdtDecl *> Adts;
     std::unordered_map<std::string, MemberDecl *> Mems;
     std::unordered_map<std::string, TypeArgDecl *> TypeArgs;
@@ -81,7 +82,7 @@ public:
   bool insertAsImportable(ModuleDecl *Mod);
   bool insertAsImportable(ItemDecl *Item, ModuleDecl *ParentMod);
 
-  bool insertWithQual(ItemDecl *Item, const std::string &Qual);
+  bool insertWithQual(ItemDecl *Item, const std::string &Quals);
 
   //===--------------------------------------------------------------------===//
   // Symbol Lookup Methods

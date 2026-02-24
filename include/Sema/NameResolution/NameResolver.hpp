@@ -79,6 +79,7 @@ public:
   bool visit(BoolLiteral &E);
   bool visit(RangeLiteral &E);
   bool visit(TupleLiteral &E);
+  bool visit(ArrayLiteral &E);
   bool visit(DeclRefExpr &E);
   bool visit(FunCallExpr &E);
   bool visit(BinaryOp &E);
@@ -91,7 +92,8 @@ public:
   bool visit(MethodCallExpr &E);
   bool visit(MatchExpr &E);
   bool visit(IntrinsicCall &E);
-  bool visit(IndexExpr &E);
+  bool visit(TupleIndex &E);
+  bool visit(ArrayIndex &E);
 
   //===--------------------------------------------------------------------===//
   // Pattern Resolution Methods

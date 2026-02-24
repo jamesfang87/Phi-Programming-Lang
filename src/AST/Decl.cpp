@@ -32,7 +32,8 @@ static const char *toString(phi::Mutability M) {
 namespace phi {
 
 void TypeArgDecl::emit(int Level) const {
-  std::println("{}Type Argument {}", indent(Level), getId());
+  std::println("{}Type Argument {} @ {}", indent(Level), getId(),
+               getSpan().toString());
 }
 
 //===----------------------------------------------------------------------===//

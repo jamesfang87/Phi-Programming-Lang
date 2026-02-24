@@ -1,9 +1,9 @@
-#include "AST/Nodes/Decl.hpp"
 #include "Sema/NameResolution/NameResolver.hpp"
 
 #include <format>
 #include <string>
 
+#include "AST/Nodes/Decl.hpp"
 #include "Diagnostics/DiagnosticBuilder.hpp"
 
 namespace phi {

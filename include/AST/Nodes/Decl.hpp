@@ -333,9 +333,15 @@ public:
   //===--------------------------------------------------------------------===//
   [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
   [[nodiscard]] auto &getTypeArgs() const { return TypeArgs; }
+  [[nodiscard]] auto &getTypeArgs() { return TypeArgs; }
   [[nodiscard]] auto &getParams() const { return Params; }
+  [[nodiscard]] auto &getParams() { return Params; }
   [[nodiscard]] auto &getReturnType() const { return ReturnType; }
   [[nodiscard]] auto &getBody() const { return *Body; }
+  [[nodiscard]] auto &getBody() { return *Body; }
+  [[nodiscard]] auto isStatic() const {
+    return Params.front()->getId() != "this";
+  }
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI

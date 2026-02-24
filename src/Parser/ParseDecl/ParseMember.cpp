@@ -1,4 +1,3 @@
-#include "AST/Nodes/Decl.hpp"
 #include "Parser/Parser.hpp"
 
 #include <llvm/ADT/ScopeExit.h>
@@ -6,6 +5,10 @@
 #include <memory>
 #include <optional>
 #include <print>
+
+#include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
+#include "Lexer/TokenKind.hpp"
 
 namespace phi {
 
@@ -25,12 +28,24 @@ std::optional<Visibility> Parser::parseAdtMemberVisibility() {
   }
 }
 
+std::unique_ptr<ParamDecl> Parser::parseMethodParam(std::string ParentName) {
+  if (peekToken(1).getKind() != TokenKind::ThisKw) {
+    return parseParamDecl();
+  }
+
+  auto Constness = parseMutability();
+  auto Base = TypeCtx::getAdt(ParentName, nullptr, peekToken().getSpan());
+  auto Ty = TypeCtx::getRef(Base, peekToken().getSpan());
+  return std::make_unique<ParamDecl>(advanceToken().getSpan(), *Constness,
+                                     "this", Ty);
+}
+
 std::unique_ptr<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
                                                     Visibility Vis) {
   assert(advanceToken().getKind() == TokenKind::FunKw);
 
   // Validate function name
-  if (peekToken().getKind() != TokenKind::Identifier) {
+  if (peekKind() != TokenKind::Identifier) {
     error("invalid function name")
         .with_primary_label(peekToken().getSpan(),
                             "expected function name here")
@@ -43,67 +58,34 @@ std::unique_ptr<MethodDecl> Parser::parseMethodDecl(std::string ParentName,
   SrcSpan Span = peekToken().getSpan();
   std::string Id = advanceToken().getLexeme();
 
-  std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs;
-  if (peekKind() == TokenKind::OpenCaret) {
-    auto Res = parseTypeArgDecls();
-    if (!Res) {
-      return nullptr;
-    }
-
-    TypeArgs = std::move(*Res);
-    for (auto &Arg : TypeArgs)
-      ValidGenerics.push_back(Arg.get());
+  auto TypeArgs = parseTypeArgDecls();
+  if (!TypeArgs) {
+    return nullptr;
   }
 
   // Schedule cleanup at the end of this function
+  size_t NumTypeArgs = TypeArgs->size();
   auto Cleanup = llvm::make_scope_exit([&] {
-    for (size_t i = 0; i < TypeArgs.size(); ++i)
+    for (size_t i = 0; i < NumTypeArgs; ++i)
       ValidGenerics.pop_back();
   });
 
-  // Parse parameter list
   auto Params =
-      parseList<ParamDecl>(TokenKind::OpenParen, TokenKind::CloseParen, [&] {
-        if (peekToken(1).getKind() != TokenKind::ThisKw) {
-          return parseParamDecl();
-        }
-
-        auto Constness = parseMutability();
-        auto Base = TypeCtx::getAdt(ParentName, nullptr, peekToken().getSpan());
-        auto Ty = TypeCtx::getRef(Base, peekToken().getSpan());
-        return std::make_unique<ParamDecl>(advanceToken().getSpan(), *Constness,
-                                           "this", Ty);
-      });
+      parseList<ParamDecl>(TokenKind::OpenParen, TokenKind::CloseParen,
+                           [&] { return parseMethodParam(ParentName); });
   if (!Params)
     return nullptr;
-  if (Params->size() == 0) {
-    error("first parameter of method declaration must be `this`")
-        .with_primary_label(Span, "add `const this` or `var this` to the "
-                                  "parameter list of this function.")
-        .emit(*Diags);
-  } else if (Params->front()->getId() != "this") {
-    error("first parameter of method declaration must be `this`")
-        .with_primary_label(Params->front()->getSpan(),
-                            "issue with this parameter")
-        .emit(*Diags);
-  }
 
-  // Handle optional return type
-  TypeRef ReturnTy = TypeCtx::getBuiltin(BuiltinTy::Null, Span);
-  if (matchToken(TokenKind::Arrow)) {
-    auto Res = parseType(false);
-    if (!Res)
-      return nullptr;
-    ReturnTy = *Res;
-  }
+  auto ReturnTy = parseReturnTy(Span);
+  if (!ReturnTy)
+    return nullptr;
 
-  // Parse function body
   auto Body = parseBlock();
   if (!Body)
     return nullptr;
 
-  return std::make_unique<MethodDecl>(Span, Vis, Id, std::move(TypeArgs),
-                                      std::move(*Params), ReturnTy,
+  return std::make_unique<MethodDecl>(Span, Vis, Id, std::move(*TypeArgs),
+                                      std::move(*Params), std::move(*ReturnTy),
                                       std::move(Body));
 }
 
@@ -114,19 +96,17 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex,
     return nullptr;
 
   auto &[Span, Id, Type, Init] = *Field;
-
-  // Validate semicolon terminator
-  if (advanceToken().getKind() != TokenKind::Semicolon) {
-    error("missing semicolon after field declaration")
-        .with_primary_label(peekToken().getSpan(), "expected `;` here")
-        .with_help("field declarations must end with a semicolon")
-        .with_suggestion(peekToken().getSpan(), ";", "add semicolon")
-        .emit(*Diags);
-    return nullptr;
+  if (matchToken(TokenKind::Comma) || peekKind() == TokenKind::CloseBrace) {
+    return std::make_unique<FieldDecl>(Span, FieldIndex, Vis, Id, *Type,
+                                       std::move(Init));
   }
 
-  return std::make_unique<FieldDecl>(Span, FieldIndex, Vis, Id, *Type,
-                                     std::move(Init));
+  error("missing comma after field declaration")
+      .with_primary_label(peekToken().getSpan(), "expected `,` here")
+      .with_help("field declarations must end with a comma")
+      .with_suggestion(peekToken().getSpan(), ";", "add comma")
+      .emit(*Diags);
+  return nullptr;
 }
 
 std::unique_ptr<StructDecl> Parser::parseAnonymousStruct() {
@@ -159,13 +139,13 @@ std::unique_ptr<VariantDecl> Parser::parseVariantDecl() {
   SrcSpan Span = peekToken().getSpan();
   std::string Id = advanceToken().getLexeme();
 
-  // Semicolon indicates a variant with no payload;
+  // Comma or close brace indicates a variant with no payload;
   // parsing is trivial so we return early
-  if (matchToken(TokenKind::Semicolon)) {
+  if (matchToken(TokenKind::Comma) || peekKind() == TokenKind::CloseBrace) {
     return std::make_unique<VariantDecl>(Span, std::move(Id), std::nullopt);
   }
 
-  // anything else is unexpected: variants must be followed by ':' or ';'
+  // anything else is unexpected: variants must be followed by ':' or ','
   if (!expectToken(TokenKind::Colon)) {
     return nullptr;
   }
@@ -183,22 +163,134 @@ std::unique_ptr<VariantDecl> Parser::parseVariantDecl() {
     Ast.push_back(std::move(Res));
   }
 
-  if (matchToken(TokenKind::Semicolon)) {
+  if (matchToken(TokenKind::Comma) || peekKind() == TokenKind::CloseBrace) {
     return (PayloadType) ? std::make_unique<VariantDecl>(
                                VariantDecl(Span, std::move(Id), PayloadType))
                          : nullptr;
   }
 
   // missing comma/brace — emit diagnostic and try to recover
-  error("missing semicolon after enum variant declaration")
-      .with_primary_label(peekToken().getSpan(), "expected `;` here")
-      .with_help("enum variant declarations must end with a semicolon")
-      .with_suggestion(peekToken().getSpan(), ",", "add semicolon")
+  error("missing comma after enum variant declaration")
+      .with_primary_label(peekToken().getSpan(), "expected `,` here")
+      .with_help("enum variant declarations must end with a comma")
+      .with_suggestion(peekToken().getSpan(), ",", "add comma")
       .emit(*Diags);
 
   // consume the unexpected token to avoid infinite loop and recover
   advanceToken();
   return nullptr;
+}
+
+// Helper to recursively replace type declarations in types
+static TypeRef
+replaceTypeDecl(TypeRef T,
+                const std::vector<std::unique_ptr<TypeArgDecl>> &OldDecls,
+                const std::vector<std::unique_ptr<TypeArgDecl>> &NewDecls) {
+  if (T.isGeneric()) {
+    auto *GenTy = (GenericTy *)T.getPtr();
+    for (size_t i = 0; i < OldDecls.size(); ++i) {
+      if (GenTy->getDecl() == OldDecls[i].get()) {
+        return TypeCtx::getGeneric(GenTy->getId(), NewDecls[i].get(),
+                                   T.getSpan());
+      }
+    }
+    return T;
+  }
+
+  if (T.isApplied()) {
+    auto *AppTy = (AppliedTy *)T.getPtr();
+    auto Base = replaceTypeDecl(AppTy->getBase(), OldDecls, NewDecls);
+    std::vector<TypeRef> Args;
+    Args.reserve(AppTy->getArgs().size());
+    for (const auto &Arg : AppTy->getArgs()) {
+      Args.push_back(replaceTypeDecl(Arg, OldDecls, NewDecls));
+    }
+    return TypeCtx::getApplied(Base, Args, T.getSpan());
+  }
+
+  if (T.isTuple()) {
+    auto *TupTy = (TupleTy *)T.getPtr();
+    std::vector<TypeRef> ElemTys;
+    ElemTys.reserve(TupTy->getElementTys().size());
+    for (const auto &Elem : TupTy->getElementTys()) {
+      ElemTys.push_back(replaceTypeDecl(Elem, OldDecls, NewDecls));
+    }
+    return TypeCtx::getTuple(ElemTys, T.getSpan());
+  }
+
+  if (T.isFun()) {
+    auto *FuncTy = (FunTy *)T.getPtr();
+    std::vector<TypeRef> Params;
+    Params.reserve(FuncTy->getParamTys().size());
+    for (const auto &P : FuncTy->getParamTys()) {
+      Params.push_back(replaceTypeDecl(P, OldDecls, NewDecls));
+    }
+    auto Ret = replaceTypeDecl(FuncTy->getReturnTy(), OldDecls, NewDecls);
+    return TypeCtx::getFun(Params, Ret, T.getSpan());
+  }
+
+  if (T.isPtr()) {
+    auto *PointerTy = (PtrTy *)T.getPtr();
+    return TypeCtx::getPtr(
+        replaceTypeDecl(PointerTy->getPointee(), OldDecls, NewDecls),
+        T.getSpan());
+  }
+
+  if (T.isRef()) {
+    auto *ReferenceTy = (RefTy *)T.getPtr();
+    return TypeCtx::getRef(
+        replaceTypeDecl(ReferenceTy->getPointee(), OldDecls, NewDecls),
+        T.getSpan());
+  }
+
+  if (T.isArray()) {
+    auto *ArrTy = (ArrayTy *)T.getPtr();
+    return TypeCtx::getArray(
+        replaceTypeDecl(ArrTy->getContainedTy(), OldDecls, NewDecls),
+        T.getSpan());
+  }
+
+  return T;
+}
+
+void Parser::desugarStaticMethod(
+    std::string ParentName, std::string MethodName,
+    const std::vector<std::unique_ptr<TypeArgDecl>> &ParentTypeArgs,
+    std::vector<std::unique_ptr<TypeArgDecl>> MethodTypeArgs,
+    std::vector<std::unique_ptr<ParamDecl>> Params, TypeRef ReturnTy,
+    std::unique_ptr<Block> Body, SrcSpan Span, Visibility Vis) {
+
+  // Struct::method
+  std::string NewId = ParentName + "::" + MethodName;
+
+  std::vector<std::unique_ptr<TypeArgDecl>> CombinedTypeArgs;
+  // Clone parent type args
+  for (const auto &Arg : ParentTypeArgs) {
+    CombinedTypeArgs.push_back(
+        std::make_unique<TypeArgDecl>(Arg->getSpan(), Arg->getId()));
+  }
+
+  // Move method type args
+  for (auto &Arg : MethodTypeArgs) {
+    CombinedTypeArgs.push_back(std::move(Arg));
+  }
+
+  // Let's adjust updatedParams and updatedReturnTy
+  std::vector<std::unique_ptr<ParamDecl>> UpdatedParams;
+  for (auto &Param : Params) {
+    auto NewType =
+        replaceTypeDecl(Param->getType(), ParentTypeArgs, CombinedTypeArgs);
+    UpdatedParams.push_back(std::make_unique<ParamDecl>(
+        Param->getSpan(), Param->getMutability(), Param->getId(), NewType));
+  }
+
+  auto UpdatedReturnTy =
+      replaceTypeDecl(ReturnTy, ParentTypeArgs, CombinedTypeArgs);
+
+  auto Fun = std::make_unique<FunDecl>(
+      Span, Vis, std::move(NewId), std::move(CombinedTypeArgs),
+      std::move(UpdatedParams), UpdatedReturnTy, std::move(Body));
+  Ast.push_back(std::move(Fun));
 }
 
 } // namespace phi

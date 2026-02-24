@@ -21,6 +21,7 @@ void TypeInferencer::finalize(Expr &E) {
       .Case<BoolLiteral>([&](BoolLiteral *X) { finalize(*X); })
       .Case<RangeLiteral>([&](RangeLiteral *X) { finalize(*X); })
       .Case<TupleLiteral>([&](TupleLiteral *X) { finalize(*X); })
+      .Case<ArrayLiteral>([&](ArrayLiteral *X) { finalize(*X); })
       .Case<DeclRefExpr>([&](DeclRefExpr *X) { finalize(*X); })
       .Case<FunCallExpr>([&](FunCallExpr *X) { finalize(*X); })
       .Case<BinaryOp>([&](BinaryOp *X) { finalize(*X); })
@@ -31,7 +32,8 @@ void TypeInferencer::finalize(Expr &E) {
       .Case<MatchExpr>([&](MatchExpr *X) { finalize(*X); })
       .Case<AdtInit>([&](AdtInit *X) { finalize(*X); })
       .Case<IntrinsicCall>([&](IntrinsicCall *X) { finalize(*X); })
-      .Case<IndexExpr>([&](IndexExpr *X) { finalize(*X); })
+      .Case<TupleIndex>([&](TupleIndex *X) { finalize(*X); })
+      .Case<ArrayIndex>([&](ArrayIndex *X) { finalize(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
       });
@@ -39,6 +41,7 @@ void TypeInferencer::finalize(Expr &E) {
 
 void TypeInferencer::finalize(IntLiteral &E) {
   auto T = Unifier.resolve(E.getType());
+  std::println("finalize: {}", T.toString());
   assert(T.isBuiltin() || T.isVar());
   if (T.isVar()) {
     auto Int = llvm::dyn_cast<VarTy>(T.getPtr());
@@ -57,6 +60,7 @@ void TypeInferencer::finalize(FloatLiteral &E) {
   if (T.isVar()) {
     auto Float = llvm::dyn_cast<VarTy>(T.getPtr());
     assert(Float->getDomain() == VarTy::Float);
+    Unifier.unify(E.getType(), TypeCtx::getBuiltin(BuiltinTy::f64, E.getSpan()));
     E.setType(TypeCtx::getBuiltin(BuiltinTy::f64, E.getSpan()));
   } else {
     E.setType(T);
@@ -86,6 +90,13 @@ void TypeInferencer::finalize(RangeLiteral &E) {
 }
 
 void TypeInferencer::finalize(TupleLiteral &E) {
+  for (auto &Elem : E.getElements()) {
+    finalize(*Elem);
+  }
+  E.setType(Unifier.resolve(E.getType()));
+}
+
+void TypeInferencer::finalize(ArrayLiteral &E) {
   for (auto &Elem : E.getElements()) {
     finalize(*Elem);
   }
@@ -439,7 +450,14 @@ void TypeInferencer::finalize(IntrinsicCall &E) {
   E.setType(Unifier.resolve(E.getType()));
 }
 
-void TypeInferencer::finalize(IndexExpr &E) {
+void TypeInferencer::finalize(TupleIndex &E) {
+  finalize(*E.getBase());
+  finalize(*E.getIndex());
+
+  E.setType(Unifier.resolve(E.getType()));
+}
+
+void TypeInferencer::finalize(ArrayIndex &E) {
   finalize(*E.getBase());
   finalize(*E.getIndex());
 

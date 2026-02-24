@@ -52,12 +52,17 @@ TypeRef TypeInferencer::substituteGenerics(
     return Ty;
   }
 
-  if (auto A = llvm::dyn_cast<AppliedTy>(Ty.getPtr())) {
+  if (auto App = llvm::dyn_cast<AppliedTy>(Ty.getPtr())) {
     std::vector<TypeRef> SubstitutedArgs;
-    for (auto &ArgTy : A->getArgs()) {
+    for (auto &ArgTy : App->getArgs()) {
       SubstitutedArgs.push_back(substituteGenerics(ArgTy, Map));
     }
-    return TypeCtx::getApplied(A->getBase(), SubstitutedArgs, Ty.getSpan());
+    return TypeCtx::getApplied(App->getBase(), SubstitutedArgs, Ty.getSpan());
+  }
+
+  if (auto Arr = llvm::dyn_cast<ArrayTy>(Ty.getPtr())) {
+    return TypeCtx::getArray(substituteGenerics(Arr->getContainedTy(), Map),
+                             Ty.getSpan());
   }
 
   return Ty;
