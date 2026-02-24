@@ -175,10 +175,10 @@ public struct Vector2D {
 The contents of the module above can be imported like so:
 
 ```phi
-import math.Vector2D as Vec2D
+import math::Vector2D
 
 fun main() {
-    const v = Vec2D { x: 1.0, y: 1.0 };
+    const v = Vector2D { x: 1.0, y: 1.0 };
 }
 
 ```
