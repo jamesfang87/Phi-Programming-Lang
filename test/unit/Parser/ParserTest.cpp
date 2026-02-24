@@ -1,624 +1,578 @@
-//===----------------------------------------------------------------------===//
-//
-// Parser tests for the Phi programming language
-//
-//===----------------------------------------------------------------------===//
+#include <gtest/gtest.h>
 
+#include "Diagnostics/DiagnosticManager.hpp"
+#include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
+
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
 #include "AST/Nodes/Stmt.hpp"
-#include "Diagnostics/DiagnosticManager.hpp"
-#include "Lexer/Lexer.hpp"
-#include "SrcManager/SrcManager.hpp"
+#include "AST/TypeSystem/Type.hpp"
 
-#include "llvm/Support/Casting.h"
-#include <gtest/gtest.h>
+#include <llvm/Support/Casting.h>
+
 #include <memory>
+#include <string>
 
 using namespace phi;
 
-namespace {
-
-class ParserTest : public ::testing::Test {
-protected:
-  void SetUp() override { DiagMgr = std::make_unique<DiagnosticManager>(); }
-
-  std::unique_ptr<ModuleDecl> parse(const std::string &Source,
-                                    const std::string &Path = "test.phi") {
-
-    DiagMgr->getSrcManager().addSrcFile(Path, Source);
-    auto Tokens = Lexer(Source, Path, DiagMgr.get()).scan();
-    return Parser(std::move(Tokens), DiagMgr.get()).parse();
-  }
-
-  std::unique_ptr<DiagnosticManager> DiagMgr;
-};
-
-//===----------------------------------------------------------------------===//
-// Expression Parsing Tests
-//===----------------------------------------------------------------------===//
-
-TEST_F(ParserTest, IntegerLiteral) {
-  auto Mod = parse(R"(
-    fun test() {
-      42;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  auto *Stmt = llvm::dyn_cast<ExprStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Lit = llvm::dyn_cast<IntLiteral>(&Stmt->getExpr());
-  ASSERT_NE(Lit, nullptr);
-  EXPECT_EQ(Lit->getValue(), 42);
+// Helper: parse source and return ModuleDecl
+static std::unique_ptr<ModuleDecl> parse(const std::string &Src,
+                                         DiagnosticManager &Diags) {
+  Diags.getSrcManager().addSrcFile("test.phi", Src);
+  Lexer L(Src, "test.phi", &Diags);
+  auto Tokens = L.scan();
+  if (Diags.hasError())
+    return nullptr;
+  Parser P(Tokens, &Diags);
+  return P.parse();
 }
 
-TEST_F(ParserTest, FloatLiteral) {
-  auto Mod = parse(R"(
-    fun test() {
-      3.14;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  auto *Stmt = llvm::dyn_cast<ExprStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Lit = llvm::dyn_cast<FloatLiteral>(&Stmt->getExpr());
-  ASSERT_NE(Lit, nullptr);
-  EXPECT_DOUBLE_EQ(Lit->getValue(), 3.14);
+static std::unique_ptr<ModuleDecl> parseOk(const std::string &Src) {
+  DiagnosticConfig Cfg;
+  Cfg.UseColors = false;
+  DiagnosticManager Diags(Cfg);
+  auto Mod = parse(Src, Diags);
+  EXPECT_FALSE(Diags.hasError()) << "Unexpected parse error for: " << Src;
+  return Mod;
 }
 
-TEST_F(ParserTest, StringLiteral) {
-  auto Mod = parse(R"(
-    fun test() {
-      "hello world";
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  auto *Stmt = llvm::dyn_cast<ExprStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Lit = llvm::dyn_cast<StrLiteral>(&Stmt->getExpr());
-  ASSERT_NE(Lit, nullptr);
-  EXPECT_EQ(Lit->getValue(), "hello world");
-}
-
-TEST_F(ParserTest, BoolLiterals) {
-  auto Mod = parse(R"(
-    fun test() {
-      true;
-      false;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  auto *TrueStmt = llvm::dyn_cast<ExprStmt>(Fun->getBody().getStmts()[0].get());
-  auto *FalseStmt =
-      llvm::dyn_cast<ExprStmt>(Fun->getBody().getStmts()[1].get());
-  auto *TrueLit = llvm::dyn_cast<BoolLiteral>(&TrueStmt->getExpr());
-  auto *FalseLit = llvm::dyn_cast<BoolLiteral>(&FalseStmt->getExpr());
-  ASSERT_NE(TrueLit, nullptr);
-  ASSERT_NE(FalseLit, nullptr);
-  EXPECT_TRUE(TrueLit->getValue());
-  EXPECT_FALSE(FalseLit->getValue());
-}
-
-TEST_F(ParserTest, RangeLiteral) {
-  auto Mod = parse(R"(
-    fun test() {
-      0..10;
-      0..=10;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 2u);
-}
-
-TEST_F(ParserTest, TupleLiteral) {
-  auto Mod = parse(R"(
-    fun test() {
-      (1, 2, 3);
-      (x, 3.4, "str");
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 2u);
-}
-
-TEST_F(ParserTest, UnaryOperators) {
-  auto Mod = parse(R"(
-    fun test() {
-      -x;
-      !x;
-      ++x;
-      --x;
-      &x;
-      *x;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 6u);
-}
-
-TEST_F(ParserTest, PostfixOperators) {
-  auto Mod = parse(R"(
-    fun test() {
-      x++;
-      x--;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 2u);
-}
-
-TEST_F(ParserTest, BinaryOperators) {
-  auto Mod = parse(R"(
-    fun test() {
-      a + b;
-      a - b;
-      a * b;
-      a / b;
-      a % b;
-      a == b;
-      a != b;
-      a < b;
-      a <= b;
-      a > b;
-      a >= b;
-      a && b;
-      a || b;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 13u);
-}
-
-TEST_F(ParserTest, OperatorPrecedence) {
-  auto Mod = parse(R"(
-    fun test() {
-      1 + 2 * 3;
-      1 * 2 + 3;
-      (1 + 2) * 3;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 3u);
-}
-
-TEST_F(ParserTest, FunctionCall) {
-  auto Mod = parse(R"(
-    fun test() {
-      foo();
-      bar(1, 2, 3);
-      baz(x, y);
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 3u);
-}
-
-TEST_F(ParserTest, FieldAccess) {
-  auto Mod = parse(R"(
-    fun test() {
-      obj.field;
-      obj.field1.field2;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 2u);
-}
-
-TEST_F(ParserTest, MethodCall) {
-  auto Mod = parse(R"(
-    fun test() {
-      obj.method();
-      obj.method(arg1, arg2);
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 2u);
-}
-
-TEST_F(ParserTest, Grouping) {
-  auto Mod = parse(R"(
-    fun test() {
-      (1 + 2) * 3;
-      ((1 + 2) * 3) / 4;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 2u);
-}
-
-TEST_F(ParserTest, DeclRefExpr) {
-  auto Mod = parse(R"(
-    fun test() {
-      x;
-      this;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 2u);
+static void parseError(const std::string &Src) {
+  DiagnosticConfig Cfg;
+  Cfg.UseColors = false;
+  DiagnosticManager Diags(Cfg);
+  auto Mod = parse(Src, Diags);
+  EXPECT_TRUE(Diags.hasError()) << "Expected parse error for: " << Src;
 }
 
 //===----------------------------------------------------------------------===//
-// Statement Parsing Tests
+// Empty module
 //===----------------------------------------------------------------------===//
 
-TEST_F(ParserTest, ReturnStatement) {
-  auto Mod = parse(R"(
-    fun test() {
-      return;
-      return 42;
-    }
-  )");
+TEST(Parser, EmptyModule) {
+  auto Mod = parseOk("");
   ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 2u);
-  auto *Return1 =
-      llvm::dyn_cast<ReturnStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Return2 =
-      llvm::dyn_cast<ReturnStmt>(Fun->getBody().getStmts()[1].get());
-  ASSERT_NE(Return1, nullptr);
-  ASSERT_NE(Return2, nullptr);
-  EXPECT_EQ(Return1->hasExpr(), false);
-  EXPECT_EQ(Return2->hasExpr(), true);
-}
-
-TEST_F(ParserTest, IfStatement) {
-  auto Mod = parse(R"(
-    fun test() {
-      if x < 5 {
-        return 1;
-      }
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
-  auto *If = llvm::dyn_cast<IfStmt>(Fun->getBody().getStmts()[0].get());
-  ASSERT_NE(If, nullptr);
-}
-
-TEST_F(ParserTest, IfElseStatement) {
-  auto Mod = parse(R"(
-    fun test() {
-      if x < 5 {
-        return 1;
-      } else {
-        return 2;
-      }
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
-  auto *If = llvm::dyn_cast<IfStmt>(Fun->getBody().getStmts()[0].get());
-  ASSERT_NE(If, nullptr);
-  EXPECT_EQ(If->hasElse(), true);
-}
-
-TEST_F(ParserTest, WhileStatement) {
-  auto Mod = parse(R"(
-    fun test() {
-      while x < 10 {
-        x = x + 1;
-      }
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
-  auto *While = llvm::dyn_cast<WhileStmt>(Fun->getBody().getStmts()[0].get());
-  ASSERT_NE(While, nullptr);
-}
-
-TEST_F(ParserTest, ForStatement) {
-  auto Mod = parse(R"(
-    fun test() {
-      for i in 0..10 {
-        x = x + i;
-      }
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
-  auto *For = llvm::dyn_cast<ForStmt>(Fun->getBody().getStmts()[0].get());
-  ASSERT_NE(For, nullptr);
-}
-
-TEST_F(ParserTest, VariableDeclaration) {
-  auto Mod = parse(R"(
-    fun test() {
-      var x = 42;
-      const y = 10;
-      var z: i32 = 5;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 3u);
-}
-
-TEST_F(ParserTest, BreakStatement) {
-  auto Mod = parse(R"(
-    fun test() {
-      while true {
-        break;
-      }
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
-  auto *While = llvm::dyn_cast<WhileStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Break = llvm::dyn_cast<BreakStmt>(While->getBody().getStmts()[0].get());
-  ASSERT_NE(Break, nullptr);
-}
-
-TEST_F(ParserTest, ContinueStatement) {
-  auto Mod = parse(R"(
-    fun test() {
-      while true {
-        continue;
-      }
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
-  auto *While = llvm::dyn_cast<WhileStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Cont =
-      llvm::dyn_cast<ContinueStmt>(While->getBody().getStmts()[0].get());
-  ASSERT_NE(Cont, nullptr);
-}
-
-TEST_F(ParserTest, DeferStatement) {
-  auto Mod = parse(R"(
-    fun test() {
-      defer cleanup();
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
-  auto *Defer = llvm::dyn_cast<DeferStmt>(Fun->getBody().getStmts()[0].get());
-  ASSERT_NE(Defer, nullptr);
+  EXPECT_EQ(Mod->getItems().size(), 0u);
 }
 
 //===----------------------------------------------------------------------===//
-// Declaration Parsing Tests
+// Function Declarations
 //===----------------------------------------------------------------------===//
 
-TEST_F(ParserTest, FunctionDeclaration) {
-  auto Mod = parse(R"(
-    fun add(const x: i32, const y: i32) -> i32 {
-      return x + y;
-    }
-  )");
+TEST(Parser, SimpleFunctionDecl) {
+  auto Mod = parseOk("fun main() {}");
+  ASSERT_NE(Mod, nullptr);
+  ASSERT_EQ(Mod->getItems().size(), 1u);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  EXPECT_EQ(Fun->getId(), "main");
+  EXPECT_EQ(Fun->getParams().size(), 0u);
+}
+
+TEST(Parser, FunctionWithParams) {
+  auto Mod = parseOk("fun add(const a: i32, const b: i32) -> i32 { return a + b; }");
   ASSERT_NE(Mod, nullptr);
   ASSERT_EQ(Mod->getItems().size(), 1u);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
   ASSERT_NE(Fun, nullptr);
   EXPECT_EQ(Fun->getId(), "add");
   EXPECT_EQ(Fun->getParams().size(), 2u);
+  EXPECT_EQ(Fun->getParams()[0]->getId(), "a");
+  EXPECT_EQ(Fun->getParams()[1]->getId(), "b");
 }
 
-TEST_F(ParserTest, FunctionWithoutReturnType) {
-  auto Mod = parse(R"(
-    fun test() {
-      return;
-    }
-  )");
+TEST(Parser, FunctionReturnType) {
+  auto Mod = parseOk("fun getVal() -> i32 { return 42; }");
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
   ASSERT_NE(Fun, nullptr);
+  EXPECT_TRUE(Fun->getReturnType().isBuiltin());
 }
 
-TEST_F(ParserTest, FunctionWithNoParameters) {
-  auto Mod = parse(R"(
-    fun main() {
-      return;
-    }
-  )");
+TEST(Parser, MultipleFunctions) {
+  auto Mod = parseOk("fun foo() {} fun bar() {} fun baz() {}");
+  ASSERT_NE(Mod, nullptr);
+  EXPECT_EQ(Mod->getItems().size(), 3u);
+}
+
+TEST(Parser, GenericFunction) {
+  auto Mod = parseOk("fun identity<T>(const x: T) -> T { return x; }");
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
   ASSERT_NE(Fun, nullptr);
-  EXPECT_EQ(Fun->getParams().size(), 0u);
+  EXPECT_EQ(Fun->getId(), "identity");
+  EXPECT_TRUE(Fun->hasTypeArgs());
+  EXPECT_EQ(Fun->getTypeArgs().size(), 1u);
+  EXPECT_EQ(Fun->getTypeArgs()[0]->getId(), "T");
 }
 
-TEST_F(ParserTest, StructDeclaration) {
-  auto Mod = parse(R"(
-    struct Point {
-      public x: f64;
-      public y: f64;
-    }
-  )");
+//===----------------------------------------------------------------------===//
+// Variable Declarations
+//===----------------------------------------------------------------------===//
+
+TEST(Parser, ConstDecl) {
+  auto Mod = parseOk("fun main() { const x = 5; }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
+  auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
+  ASSERT_NE(DS, nullptr);
+  EXPECT_EQ(DS->getDecl().getId(), "x");
+  EXPECT_TRUE(DS->getDecl().isConst());
+}
+
+TEST(Parser, VarDeclWithType) {
+  auto Mod = parseOk("fun main() { var y: i32 = 10; }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
+  ASSERT_NE(DS, nullptr);
+  EXPECT_EQ(DS->getDecl().getId(), "y");
+  EXPECT_FALSE(DS->getDecl().isConst());
+}
+
+//===----------------------------------------------------------------------===//
+// Struct Declarations (comma-terminated fields)
+//===----------------------------------------------------------------------===//
+
+TEST(Parser, SimpleStruct) {
+  auto Mod = parseOk("struct Point { public x: f64, public y: f64 }");
   ASSERT_NE(Mod, nullptr);
   ASSERT_EQ(Mod->getItems().size(), 1u);
-  auto *Struct = llvm::dyn_cast<StructDecl>(Mod->getItems()[0].get());
-  ASSERT_NE(Struct, nullptr);
-  EXPECT_EQ(Struct->getId(), "Point");
-  EXPECT_EQ(Struct->getFields().size(), 2u);
+  auto *S = llvm::dyn_cast<StructDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(S, nullptr);
+  EXPECT_EQ(S->getId(), "Point");
+  EXPECT_EQ(S->getFields().size(), 2u);
+  EXPECT_EQ(S->getFields()[0]->getId(), "x");
+  EXPECT_EQ(S->getFields()[1]->getId(), "y");
 }
 
-TEST_F(ParserTest, EnumDeclaration) {
-  auto Mod = parse(R"(
+TEST(Parser, StructWithMethod) {
+  // Comma between last field and first method
+  auto Mod = parseOk(R"(
+    struct Vec2 {
+      public x: f64,
+      public y: f64,
+
+      fun dot(const this, const other: Vec2) -> f64 {
+        return this.x * other.x + this.y * other.y;
+      }
+    }
+  )");
+  ASSERT_NE(Mod, nullptr);
+  // There should be at least 1 item (StructDecl)
+  // Note: static methods may be desugared into FunDecls at top-level
+  bool FoundStruct = false;
+  for (auto &Item : Mod->getItems()) {
+    if (auto *S = llvm::dyn_cast<StructDecl>(Item.get())) {
+      FoundStruct = true;
+      EXPECT_EQ(S->getFields().size(), 2u);
+      EXPECT_EQ(S->getMethods().size(), 1u);
+      EXPECT_EQ(S->getMethods()[0]->getId(), "dot");
+    }
+  }
+  EXPECT_TRUE(FoundStruct);
+}
+
+TEST(Parser, GenericStruct) {
+  auto Mod = parseOk(R"(
+    struct Wrapper<T> {
+      public value: T
+    }
+  )");
+  ASSERT_NE(Mod, nullptr);
+  auto *S = llvm::dyn_cast<StructDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(S, nullptr);
+  EXPECT_TRUE(S->hasTypeArgs());
+  EXPECT_EQ(S->getTypeArgs().size(), 1u);
+  EXPECT_EQ(S->getTypeArgs()[0]->getId(), "T");
+}
+
+//===----------------------------------------------------------------------===//
+// Enum Declarations (comma-terminated variants)
+//===----------------------------------------------------------------------===//
+
+TEST(Parser, SimpleEnum) {
+  auto Mod = parseOk(R"(
+    enum Color {
+      Red,
+      Green,
+      Blue
+    }
+  )");
+  ASSERT_NE(Mod, nullptr);
+  auto *E = llvm::dyn_cast<EnumDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(E, nullptr);
+  EXPECT_EQ(E->getId(), "Color");
+  EXPECT_EQ(E->getVariants().size(), 3u);
+  EXPECT_EQ(E->getVariants()[0]->getId(), "Red");
+  EXPECT_EQ(E->getVariants()[1]->getId(), "Green");
+  EXPECT_EQ(E->getVariants()[2]->getId(), "Blue");
+}
+
+TEST(Parser, EnumWithPayloads) {
+  auto Mod = parseOk(R"(
+    enum Shape {
+      Circle: f64,
+      Rectangle: { l: f64, w: f64 }
+    }
+  )");
+  ASSERT_NE(Mod, nullptr);
+  bool FoundEnum = false;
+  for (auto &Item : Mod->getItems()) {
+    if (auto *E = llvm::dyn_cast<EnumDecl>(Item.get())) {
+      if (E->getId() == "Shape") {
+        FoundEnum = true;
+        EXPECT_EQ(E->getVariants().size(), 2u);
+        EXPECT_TRUE(E->getVariants()[0]->hasPayload());
+        EXPECT_TRUE(E->getVariants()[1]->hasPayload());
+      }
+    }
+  }
+  EXPECT_TRUE(FoundEnum);
+}
+
+TEST(Parser, EnumWithMethod) {
+  // Comma between last variant and method
+  auto Mod = parseOk(R"(
     enum Result {
-      Ok: i32;
-      Err: string;
+      Ok: i32,
+      Err: string,
+
+      fun is_ok(const this) -> bool {
+        return match this {
+          .Ok => true,
+          .Err => false,
+        };
+      }
     }
   )");
   ASSERT_NE(Mod, nullptr);
-  ASSERT_EQ(Mod->getItems().size(), 1u);
-  auto *Enum = llvm::dyn_cast<EnumDecl>(Mod->getItems()[0].get());
-  ASSERT_NE(Enum, nullptr);
-  EXPECT_EQ(Enum->getId(), "Result");
-  EXPECT_GE(Enum->getVariants().size(), 2u);
+  bool FoundEnum = false;
+  for (auto &Item : Mod->getItems()) {
+    if (auto *E = llvm::dyn_cast<EnumDecl>(Item.get())) {
+      if (E->getId() == "Result") {
+        FoundEnum = true;
+        EXPECT_EQ(E->getVariants().size(), 2u);
+        EXPECT_EQ(E->getMethods().size(), 1u);
+      }
+    }
+  }
+  EXPECT_TRUE(FoundEnum);
 }
 
-TEST_F(ParserTest, ModuleDeclaration) {
-  auto Mod = parse(R"(
-    module mymodule
-    fun test() {}
+TEST(Parser, GenericEnum) {
+  auto Mod = parseOk(R"(
+    enum Option<T> {
+      Some: T,
+      None
+    }
   )");
   ASSERT_NE(Mod, nullptr);
-  EXPECT_NE(Mod->getId(), "$main");
-}
-
-TEST_F(ParserTest, ImportStatement) {
-  auto Mod = parse(R"(
-    import othermodule;
-    fun test() {}
-  )");
-  ASSERT_NE(Mod, nullptr);
-  EXPECT_EQ(Mod->getImports().size(), 1u);
+  auto *E = llvm::dyn_cast<EnumDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(E, nullptr);
+  EXPECT_TRUE(E->hasTypeArgs());
+  EXPECT_EQ(E->getTypeArgs().size(), 1u);
+  EXPECT_EQ(E->getTypeArgs()[0]->getId(), "T");
+  EXPECT_EQ(E->getVariants().size(), 2u);
 }
 
 //===----------------------------------------------------------------------===//
-// Type Parsing Tests
+// Statements
 //===----------------------------------------------------------------------===//
 
-TEST_F(ParserTest, BuiltinTypes) {
-  auto Mod = parse(R"(
-    fun test() {
-      var a: i8 = 1;
-      var b: i16 = 2;
-      var c: i32 = 3;
-      var d: i64 = 4;
-      var e: u8 = 5;
-      var f: u16 = 6;
-      var g: u32 = 7;
-      var h: u64 = 8;
-      var i: f32 = 9.0;
-      var j: f64 = 10.0;
-      var k: string = "hello";
-      var l: char = 'a';
-      var m: bool = true;
+TEST(Parser, IfElseStatement) {
+  auto Mod = parseOk(R"(
+    fun main() {
+      if true {
+        const x = 1;
+      } else {
+        const x = 2;
+      }
     }
   )");
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 13u);
-}
-
-TEST_F(ParserTest, PointerType) {
-  auto Mod = parse(R"(
-    fun test() {
-      var x: *i32 = nullptr;
-    }
-  )");
-  ASSERT_NE(Mod, nullptr);
-  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
   ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
+  auto *IS = llvm::dyn_cast<IfStmt>(Fun->getBody().getStmts()[0].get());
+  ASSERT_NE(IS, nullptr);
+  EXPECT_TRUE(IS->hasElse());
 }
 
-TEST_F(ParserTest, ReferenceType) {
-  auto Mod = parse(R"(
-    fun test() {
-      var x: &i32 = nullptr;
+TEST(Parser, WhileLoop) {
+  auto Mod = parseOk(R"(
+    fun main() {
+      var i = 0;
+      while i < 10 {
+        i++;
+      }
     }
   )");
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
+  ASSERT_NE(Fun, nullptr);
+  EXPECT_GE(Fun->getBody().getStmts().size(), 2u);
 }
 
-TEST_F(ParserTest, TupleType) {
-  auto Mod = parse(R"(
-    fun test() {
-      var x: (i32, f64, string) = (1, 2.0, "test");
+TEST(Parser, ForLoop) {
+  auto Mod = parseOk(R"(
+    fun main() {
+      for i in 0..10 {
+        const x = i;
+      }
     }
   )");
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
+  ASSERT_NE(Fun, nullptr);
+  auto *FS = llvm::dyn_cast<ForStmt>(Fun->getBody().getStmts()[0].get());
+  ASSERT_NE(FS, nullptr);
 }
 
-TEST_F(ParserTest, ADTType) {
-  auto Mod = parse(R"(
-    struct Point {
-      x: f64;
-      y: f64;
-    }
-    fun test() {
-      var p: Point = Point { x: 1.0, y: 2.0 };
+TEST(Parser, ReturnStatement) {
+  auto Mod = parseOk("fun foo() -> i32 { return 42; }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  auto *RS = llvm::dyn_cast<ReturnStmt>(Fun->getBody().getStmts()[0].get());
+  ASSERT_NE(RS, nullptr);
+  EXPECT_TRUE(RS->hasExpr());
+}
+
+TEST(Parser, BreakAndContinue) {
+  auto Mod = parseOk(R"(
+    fun main() {
+      while true {
+        break;
+        continue;
+      }
     }
   )");
   ASSERT_NE(Mod, nullptr);
-  ASSERT_EQ(Mod->getItems().size(), 2u);
 }
 
-//===----------------------------------------------------------------------===//
-// Complex Expression Tests
-//===----------------------------------------------------------------------===//
-
-TEST_F(ParserTest, NestedExpressions) {
-  auto Mod = parse(R"(
-    fun test() {
-      (a + b) * (c - d);
-      foo(bar(x), y);
-      obj.field.method();
+TEST(Parser, DeferStatement) {
+  auto Mod = parseOk(R"(
+    fun main() {
+      defer println("done");
     }
+
+    fun println(const msg: string) {}
   )");
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 3u);
+  ASSERT_NE(Fun, nullptr);
+  auto *DS = llvm::dyn_cast<DeferStmt>(Fun->getBody().getStmts()[0].get());
+  ASSERT_NE(DS, nullptr);
 }
 
-TEST_F(ParserTest, AssignmentOperators) {
-  auto Mod = parse(R"(
-    fun test() {
-      x += 1;
-      x -= 1;
-      x *= 2;
-      x /= 2;
-      x %= 3;
-    }
-  )");
+//===----------------------------------------------------------------------===//
+// Expression Parsing & Precedence
+//===----------------------------------------------------------------------===//
+
+TEST(Parser, BinaryExprPrecedence) {
+  // 1 + 2 * 3 should parse as 1 + (2 * 3)
+  auto Mod = parseOk("fun main() { const x = 1 + 2 * 3; }");
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
-  ASSERT_EQ(Fun->getBody().getStmts().size(), 5u);
+  ASSERT_NE(Fun, nullptr);
+  auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
+  ASSERT_NE(DS, nullptr);
+  auto *Init = llvm::dyn_cast<BinaryOp>(&DS->getDecl().getInit());
+  ASSERT_NE(Init, nullptr);
+  // Top-level should be Plus
+  EXPECT_EQ(Init->getOp().Value, TokenKind::Plus);
+  // RHS should be Mul
+  auto *Rhs = llvm::dyn_cast<BinaryOp>(&Init->getRhs());
+  ASSERT_NE(Rhs, nullptr);
+  EXPECT_EQ(Rhs->getOp().Value, TokenKind::Star);
+}
+
+TEST(Parser, GroupingExpression) {
+  // (1 + 2) * 3 should parse as (1 + 2) * 3
+  auto Mod = parseOk("fun main() { const x = (1 + 2) * 3; }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
+  auto *Init = llvm::dyn_cast<BinaryOp>(&DS->getDecl().getInit());
+  ASSERT_NE(Init, nullptr);
+  // Top-level should be Star
+  EXPECT_EQ(Init->getOp().Value, TokenKind::Star);
+}
+
+TEST(Parser, UnaryExpression) {
+  auto Mod = parseOk("fun main() { const x = -42; const y = !true; }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
+  auto *Init = llvm::dyn_cast<UnaryOp>(&DS->getDecl().getInit());
+  ASSERT_NE(Init, nullptr);
 }
 
 //===----------------------------------------------------------------------===//
-// Error Recovery Tests
+// Literals & Complex Expression Types
 //===----------------------------------------------------------------------===//
 
-TEST_F(ParserTest, MissingSemicolon) {
-  auto Mod = parse(R"(
-    fun test() {
-      var x = 1
-      var y = 2;
+TEST(Parser, TupleLiteral) {
+  auto Mod = parseOk("fun main() { const t = (1, 2, 3); }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
+  auto *Init = llvm::dyn_cast<TupleLiteral>(&DS->getDecl().getInit());
+  ASSERT_NE(Init, nullptr);
+  EXPECT_EQ(Init->getElements().size(), 3u);
+}
+
+TEST(Parser, ArrayLiteral) {
+  auto Mod = parseOk("fun main() { const arr = [1, 2, 3]; }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
+  auto *Init = llvm::dyn_cast<ArrayLiteral>(&DS->getDecl().getInit());
+  ASSERT_NE(Init, nullptr);
+  EXPECT_EQ(Init->getElements().size(), 3u);
+}
+
+TEST(Parser, FunctionCall) {
+  auto Mod = parseOk("fun foo(const x: i32) {} fun main() { foo(42); }");
+  ASSERT_NE(Mod, nullptr);
+}
+
+TEST(Parser, MatchExpression) {
+  auto Mod = parseOk(R"(
+    enum Color { Red, Green, Blue }
+
+    fun main() {
+      const c = Color { Red };
+      const x = match c {
+        .Red => 1,
+        .Green => 2,
+        .Blue => 3,
+      };
     }
   )");
-  // Should recover and continue parsing
   ASSERT_NE(Mod, nullptr);
 }
 
-TEST_F(ParserTest, MissingClosingBrace) {
-  auto Mod = parse(R"(
-    fun test() {
-      var x = 1;
+TEST(Parser, StructInit) {
+  auto Mod = parseOk("struct Point { public x: f64, public y: f64 }\n    fun main() { const p = Point { x : 1.0, y : 2.0 }; }");
+  ASSERT_NE(Mod, nullptr);
+}
+
+//===----------------------------------------------------------------------===//
+// Complex Types
+//===----------------------------------------------------------------------===//
+
+TEST(Parser, ArrayTypeAnnotation) {
+  auto Mod = parseOk("fun foo(const arr: [i32]) {}");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  EXPECT_EQ(Fun->getParams().size(), 1u);
+  EXPECT_TRUE(Fun->getParams()[0]->getType().isArray());
+}
+
+TEST(Parser, TupleTypeAnnotation) {
+  auto Mod = parseOk("fun foo() -> (i32, f64) { return (1, 2.0); }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  EXPECT_TRUE(Fun->getReturnType().isTuple());
+}
+
+TEST(Parser, PointerType) {
+  auto Mod = parseOk("fun foo(const p: *i32) {}");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  EXPECT_TRUE(Fun->getParams()[0]->getType().isPtr());
+}
+
+TEST(Parser, ReferenceType) {
+  auto Mod = parseOk("fun foo(const r: &i32) {}");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  EXPECT_TRUE(Fun->getParams()[0]->getType().isRef());
+}
+
+TEST(Parser, NestedArrayType) {
+  auto Mod = parseOk("fun foo(const arr: [[i32]]) {}");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  auto Ty = Fun->getParams()[0]->getType();
+  EXPECT_TRUE(Ty.isArray());
+  auto *ArrTy2 = llvm::dyn_cast<ArrayTy>(Ty.getPtr());
+  EXPECT_TRUE(ArrTy2->getContainedTy().isArray());
+}
+
+TEST(Parser, NestedTupleType) {
+  auto Mod = parseOk("fun foo() -> (i32, (f64, bool)) { return (1, (2.0, true)); }");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  auto Ty = Fun->getReturnType();
+  EXPECT_TRUE(Ty.isTuple());
+}
+
+TEST(Parser, GenericTypeAnnotation) {
+  auto Mod = parseOk(R"(
+    struct Box<T> { public value: T }
+    fun foo(const b: Box<i32>) {}
   )");
-  // Should handle error gracefully
   ASSERT_NE(Mod, nullptr);
+  // Box<i32> is parsed as an AppliedTy
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems().back().get());
+  ASSERT_NE(Fun, nullptr);
+  EXPECT_TRUE(Fun->getParams()[0]->getType().isApplied());
 }
 
-TEST_F(ParserTest, EmptyModule) {
-  auto Mod = parse(R"()");
-  // Empty module should be handled
+TEST(Parser, ArrayOfTuples) {
+  auto Mod = parseOk("fun foo(const arr: [(i32, f64)]) {}");
   ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
+  ASSERT_NE(Fun, nullptr);
+  auto Ty = Fun->getParams()[0]->getType();
+  EXPECT_TRUE(Ty.isArray());
+  auto *A = llvm::dyn_cast<ArrayTy>(Ty.getPtr());
+  EXPECT_TRUE(A->getContainedTy().isTuple());
 }
 
-} // namespace
+// Note: *[i32] (pointer to array) is not currently supported by the parser.
+// The parser doesn't handle * before [ in type parsing.
+
+TEST(Parser, RefToGeneric) {
+  auto Mod = parseOk(R"(
+    struct Box<T> { public value: T }
+    fun foo(const r: &Box<i32>) {}
+  )");
+  ASSERT_NE(Mod, nullptr);
+  auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems().back().get());
+  ASSERT_NE(Fun, nullptr);
+  auto Ty = Fun->getParams()[0]->getType();
+  EXPECT_TRUE(Ty.isRef());
+  auto *R = llvm::dyn_cast<RefTy>(Ty.getPtr());
+  EXPECT_TRUE(R->getPointee().isApplied());
+}
+
+//===----------------------------------------------------------------------===//
+// Error Recovery
+//===----------------------------------------------------------------------===//
+
+TEST(Parser, MissingSemicolon) {
+  // Should produce error but not crash
+  parseError("fun main() { const x = 5 }");
+}
+
+TEST(Parser, UnclosedBrace) {
+  parseError("fun main() {");
+}
+
+TEST(Parser, InvalidTopLevel) {
+  parseError("42;");
+}

@@ -18,15 +18,14 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  TypeInferencer(std::vector<std::unique_ptr<Decl>> Ast,
-                 std::shared_ptr<DiagnosticManager> DiagMan)
-      : Ast(std::move(Ast)), DiagMan(DiagMan) {}
+  TypeInferencer(std::vector<ModuleDecl *> Modules, DiagnosticManager *DiagMan)
+      : Modules(std::move(Modules)), DiagMan(DiagMan) {}
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point
   //===--------------------------------------------------------------------===//
 
-  std::vector<std::unique_ptr<Decl>> infer();
+  std::vector<ModuleDecl *> infer();
 
   //===--------------------------------------------------------------------===//
   // Declaration Visitor Methods
@@ -41,6 +40,12 @@ public:
   void visit(StructDecl &D);
   void visit(EnumDecl &D);
   void visit(VariantDecl &D);
+  void visit(ModuleDecl &D);
+  TypeRef instantiate(Decl *D);
+  std::unordered_map<const TypeArgDecl *, TypeRef> buildGenericSubstMap(
+      const std::vector<std::unique_ptr<TypeArgDecl>> &TypeArgs);
+  TypeRef substituteGenerics(
+      TypeRef Ty, const std::unordered_map<const TypeArgDecl *, TypeRef> &Map);
 
   //===--------------------------------------------------------------------===//
   // Statement Visitor Methods
@@ -70,6 +75,7 @@ public:
   TypeRef visit(StrLiteral &E);
   TypeRef visit(RangeLiteral &E);
   TypeRef visit(TupleLiteral &E);
+  TypeRef visit(ArrayLiteral &E);
   TypeRef visit(DeclRefExpr &E);
   TypeRef visit(FunCallExpr &E);
   TypeRef visit(BinaryOp &E);
@@ -79,14 +85,18 @@ public:
   TypeRef visit(FieldAccessExpr &E);
   TypeRef visit(MethodCallExpr &E);
   TypeRef visit(MatchExpr &E);
+  TypeRef visit(IntrinsicCall &E);
+  TypeRef visit(TupleIndex &E);
+  TypeRef visit(ArrayIndex &E);
 
   std::string toString(TypeRef T);
 
 private:
-  std::vector<std::unique_ptr<Decl>> Ast;
-  std::shared_ptr<DiagnosticManager> DiagMan;
+  std::vector<ModuleDecl *> Modules;
+  DiagnosticManager *DiagMan;
   std::variant<FunDecl *, MethodDecl *, std::monostate> CurrentFun =
       std::monostate();
+
   TypeUnifier Unifier;
 
   //===--------------------------------------------------------------------===//
@@ -95,12 +105,11 @@ private:
 
   void finalize(Decl &D);
   void finalize(VarDecl &D);
-  void finalize(ParamDecl &D);
   void finalize(FunDecl &D);
-  void finalize(FieldDecl &D);
   void finalize(MethodDecl &D);
   void finalize(StructDecl &D);
   void finalize(EnumDecl &D);
+  void finalize(ModuleDecl &D);
 
   //===--------------------------------------------------------------------===//
   // Statement Finalize Methods
@@ -130,6 +139,7 @@ private:
   void finalize(StrLiteral &E);
   void finalize(RangeLiteral &E);
   void finalize(TupleLiteral &E);
+  void finalize(ArrayLiteral &E);
   void finalize(DeclRefExpr &E);
   void finalize(FunCallExpr &E);
   void finalize(BinaryOp &E);
@@ -139,6 +149,10 @@ private:
   void finalize(FieldAccessExpr &E);
   void finalize(MethodCallExpr &E);
   void finalize(MatchExpr &E);
+  void finalize(IntrinsicCall &E);
+  void finalize(TupleIndex &E);
+  void finalize(ArrayIndex &E);
+  std::optional<TypeRef> defaultVarTy(TypeRef);
 };
 
 } // namespace phi

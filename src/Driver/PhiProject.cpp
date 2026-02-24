@@ -10,9 +10,9 @@ PhiProject::PhiProject(const fs::path &ProjectRoot, bool IsRelease) {
   Config.IsRelease = IsRelease;
   Config.OutputDir = ProjectRoot / ".phi" / (IsRelease ? "release" : "debug");
 
-  fs::path PhiTomlPath = ProjectRoot / "Phi.toml";
+  fs::path PhiTomlPath = ProjectRoot / "phi.toml";
   if (!fs::exists(PhiTomlPath)) {
-    llvm::errs() << "Error: Phi.toml not found in " << ProjectRoot << "\n";
+    llvm::errs() << "Error: phi.toml not found in " << ProjectRoot << "\n";
     std::exit(1);
   }
 
@@ -24,7 +24,7 @@ PhiProject::PhiProject(const fs::path &ProjectRoot, bool IsRelease) {
 void PhiProject::loadConfig(const fs::path &PhiTomlPath) {
   std::ifstream File(PhiTomlPath);
   if (!File) {
-    llvm::errs() << "Error: Cannot read Phi.toml\n";
+    llvm::errs() << "Error: Cannot read phi.toml\n";
     std::exit(1);
   }
 

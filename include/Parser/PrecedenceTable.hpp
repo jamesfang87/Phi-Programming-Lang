@@ -146,6 +146,7 @@ inline std::optional<std::pair<int, int>> postfixBP(const TokenKind &Kind) {
   case TokenKind::DoubleMinus: // Post-decrement
   case TokenKind::OpenParen:   // Function call
   case TokenKind::OpenBrace:   // Struct initializer
+  case TokenKind::OpenBracket: // Indexing
     return std::make_pair(19, 0);
   case TokenKind::DoubleColon:
     return std::make_pair(18, 0);

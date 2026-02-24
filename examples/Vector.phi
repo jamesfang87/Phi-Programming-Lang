@@ -1,8 +1,8 @@
 fun println(const msg: f64) {}
 
 struct Vector2D {
-    public x: f64; // made public for demo of field access
-    public y: f64; // made public for demo of field access
+    public x: f64, // made public for demo of field access
+    public y: f64, // made public for demo of field access
 
     fun get_x(const this) -> f64 {
         return this.x;

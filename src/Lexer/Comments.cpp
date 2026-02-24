@@ -20,7 +20,7 @@ void Lexer::skipComment() {
   advanceChar(); // first consume the first '/' to decide what to do next
   if (matchNext('/')) {
     // skip until we reach the end of line
-    while (peekChar() != '\n') {
+    while (!atEOF() && peekChar() != '\n') {
       advanceChar();
     }
   } else if (matchNext('*')) {

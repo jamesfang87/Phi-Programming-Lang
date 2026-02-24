@@ -15,7 +15,6 @@
 #include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
 #include "Lexer/TokenKind.hpp"
-#include "Sema/NameResolution/NameResolver.hpp"
 #include "SrcManager/SrcLocation.hpp"
 
 namespace {
@@ -174,6 +173,26 @@ void TupleLiteral::emit(int Level) const {
 }
 
 //===----------------------------------------------------------------------===//
+// ArrayLiteral Implementation
+//===----------------------------------------------------------------------===//
+
+ArrayLiteral::ArrayLiteral(SrcLocation Location,
+                           std::vector<std::unique_ptr<Expr>> Elements)
+    : Expr(Expr::Kind::ArrayLiteralKind, std::move(Location)),
+      Elements(std::move(Elements)) {}
+
+ArrayLiteral::~ArrayLiteral() = default;
+
+void ArrayLiteral::emit(int Level) const {
+  std::println("{}ArrayLiteral:", indent(Level));
+  std::println("{}Type: {}", indent(Level + 1), Type.toString());
+  std::println("{}Elements:", indent(Level + 1));
+  for (auto &E : Elements) {
+    E->emit(Level + 2);
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // DeclRefExpr Implementation
 //===----------------------------------------------------------------------===//
 
@@ -181,9 +200,6 @@ DeclRefExpr::DeclRefExpr(SrcLocation Location, std::string Id)
     : Expr(Expr::Kind::DeclRefKind, std::move(Location)), Id(std::move(Id)) {}
 
 void DeclRefExpr::emit(int Level) const {
-  if (Id == "val" && DeclPtr == nullptr) {
-    std::println("This was not found");
-  }
   if (DeclPtr == nullptr) {
     std::println("{}DeclRefExpr: {} ", indent(Level), Id);
     std::println("{}Type: {} ", indent(Level + 1), Type.toString());
@@ -221,9 +237,13 @@ void FunCallExpr::emit(int Level) const {
   std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Callee:", indent(Level + 1));
   Callee->emit(Level + 2);
+  std::println("{}Type Args:", indent(Level + 1));
+  for (const auto &Arg : TypeArgs) {
+    std::println("{}{}", indent(Level + 2), Arg.toString());
+  }
   std::println("{}Args:", indent(Level + 1));
-  for (const auto &arg : Args) {
-    arg->emit(Level + 2);
+  for (const auto &Arg : Args) {
+    Arg->emit(Level + 2);
   }
 }
 
@@ -272,10 +292,11 @@ void UnaryOp::emit(int Level) const {
 // MemberInit Implementation
 //===----------------------------------------------------------------------===//
 
-MemberInit::MemberInit(SrcLocation Location, std::string FieldId,
+MemberInit::MemberInit(SrcLocation Location, std::string MemberId,
                        std::unique_ptr<Expr> Init)
-    : Expr(Expr::Kind::MemberInitKind, std::move(Location)),
-      FieldId(std::move(FieldId)), InitValue(std::move(Init)) {}
+    : Expr(Expr::Kind::MemberInitKind, Location,
+           TypeCtx::getBuiltin(BuiltinTy::Null, SrcSpan(Location))),
+      FieldId(std::move(MemberId)), InitValue(std::move(Init)) {}
 
 MemberInit::~MemberInit() = default;
 
@@ -340,6 +361,7 @@ FieldAccessExpr::~FieldAccessExpr() = default;
 
 void FieldAccessExpr::emit(int Level) const {
   std::println("{}FieldAccessExpr:", indent(Level));
+  std::println("{}accessing field: {}", indent(Level + 1), getField()->getId());
   std::println("{}Type: {} ", indent(Level + 1), Type.toString());
   std::println("{}Base:", indent(Level + 1));
   Base->emit(Level + 2);
@@ -372,6 +394,11 @@ void MethodCallExpr::emit(int Level) const {
   Base->emit(Level + 2);
   std::println("{}Callee:", indent(Level + 1));
   getCallee().emit(Level + 2);
+  std::println("{}Type Args:", indent(Level + 1));
+  for (const auto &Arg : getTypeArgs()) {
+    std::println("{}", Arg.toString());
+  }
+
   std::println("{}Args:", indent(Level + 1));
   for (const auto &Arg : getArgs()) {
     Arg->emit(Level + 2);
@@ -479,6 +506,22 @@ void IntrinsicCall::emit(int Level) const {
   for (const auto &Arg : Args) {
     Arg->emit(Level + 2);
   }
+}
+
+void TupleIndex::emit(int Level) const {
+  std::println("{}TupleIndex:", indent(Level));
+  std::println("{}Indexing:", indent(Level));
+  Base->emit(Level + 1);
+  std::println("{}With Index:", indent(Level));
+  Index->emit(Level + 1);
+}
+
+void ArrayIndex::emit(int Level) const {
+  std::println("{}ArrayIndex:", indent(Level));
+  std::println("{}Indexing:", indent(Level));
+  Base->emit(Level + 1);
+  std::println("{}With Index:", indent(Level));
+  Index->emit(Level + 1);
 }
 
 } // namespace phi
