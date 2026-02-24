@@ -3,9 +3,12 @@
 #include <fstream>
 #include <print>
 
+#include "CodeGen/LLVMCodeGen.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
-#include "Sema/NameResolution/NameResolver.hpp"
+#include "Sema/Sema.hpp"
+
+#include <cstdlib>
 
 namespace phi {
 
@@ -46,11 +49,11 @@ bool PhiBuildSystem::buildProject(const CompilerOptions &Opts) {
   // Find project root
   fs::path ProjectRoot = Opts.ProjectRoot.value_or(fs::current_path());
 
-  // Check for Phi.toml
+  // Check for phi.toml
   auto PhiTomlPath = findPhiToml(ProjectRoot);
   if (!PhiTomlPath.has_value()) {
     llvm::errs()
-        << "Error: No Phi.toml found in current directory or parents\n";
+        << "Error: No phi.toml found in current directory or parents\n";
     llvm::errs()
         << "Run 'phi init' to create one, or 'phi new <n>' for a new project\n";
     return false;
@@ -107,35 +110,35 @@ bool PhiBuildSystem::buildProject(const CompilerOptions &Opts) {
   // Get all modules
   std::vector<ModuleDecl *> Modules;
   Modules.reserve(Project.getModules().size());
-
   for (auto &[Name, Mod] : Project.getModules()) {
-    if (Opts.Verbose || Opts.DumpAST) {
-      Mod->emit(0);
-    }
     Modules.push_back(Mod.get());
   }
 
-  // Name resolution across all modules
-  if (Opts.Verbose) {
-    llvm::outs() << "[Phi] Running name resolution on " << Modules.size()
-                 << " modules\n";
-  }
-
-  auto Resolved = NameResolver(Modules, &Diags).resolve();
-
-  if (Diags.hasError()) {
+  if (!Sema(Modules, &Diags).analyze()) {
     return false;
   }
 
-  // TODO: Type checking, code generation
-  if (Opts.Verbose) {
-    llvm::outs() << "[Phi] Name resolution successful\n";
+  // Code generation
+  CodeGen CodeGen(Modules);
+  CodeGen.generate();
+
+  // Output IR to build dir
+  // For now, output the main module to main.ll
+  std::string IRFilename = (Project.getConfig().OutputDir / "main.ll").string();
+  CodeGen.outputIR(IRFilename);
+
+  std::println("Generated LLVM IR at {}", IRFilename);
+
+  // Compile with clang
+  std::string ClangCmd = "clang " + IRFilename + " -o " +
+                         (Project.getConfig().OutputDir / "main").string() +
+                         " -Wno-override-module";
+  std::println("Compiling with: {}", ClangCmd);
+  int Ret = std::system(ClangCmd.c_str());
+  if (Ret != 0) {
+    llvm::errs() << "Error: clang compilation failed\n";
+    return false;
   }
-
-  // TODO: Linking (when codegen is done)
-  // linkObjects(Project);
-
-  std::println("Build successful (codegen not yet implemented)");
   return true;
 }
 
@@ -174,8 +177,8 @@ bool PhiBuildSystem::createProject(const std::string &Name) {
   fs::create_directories(ProjectDir / "src");
   fs::create_directories(ProjectDir / "tests");
 
-  // Create Phi.toml
-  std::ofstream TomlFile(ProjectDir / "Phi.toml");
+  // Create phi.toml
+  std::ofstream TomlFile(ProjectDir / "phi.toml");
   TomlFile << "[package]\n";
   TomlFile << "name = \"" << Name << "\"\n";
   TomlFile << "version = \"0.1.0\"\n";
@@ -200,15 +203,15 @@ bool PhiBuildSystem::createProject(const std::string &Name) {
 bool PhiBuildSystem::initProject() {
   fs::path CurrentDir = fs::current_path();
 
-  if (fs::exists("Phi.toml")) {
-    llvm::errs() << "Error: Phi.toml already exists in current directory\n";
+  if (fs::exists("phi.toml")) {
+    llvm::errs() << "Error: phi.toml already exists in current directory\n";
     return false;
   }
 
   std::string ProjectName = CurrentDir.filename().string();
 
-  // Create Phi.toml
-  std::ofstream TomlFile("Phi.toml");
+  // Create phi.toml
+  std::ofstream TomlFile("phi.toml");
   TomlFile << "[package]\n";
   TomlFile << "name = \"" << ProjectName << "\"\n";
   TomlFile << "version = \"0.1.0\"\n";
@@ -278,9 +281,35 @@ bool PhiBuildSystem::compileFile(const fs::path &SourceFile,
     return false;
   }
 
-  // TODO: Type checking, code generation, linking
-  // For now, just report success
-  std::println("Compilation successful (codegen not yet implemented)");
+  // Type inference
+  auto Checked = TypeInferencer(Resolved, &Diags).infer();
+
+  if (Diags.hasError()) {
+    return false;
+  }
+
+  // Code generation
+  CodeGen CodeGen(Checked);
+  CodeGen.generate();
+
+  // Output IR
+  std::string IRFilename = OutputFile.string();
+  if (fs::path(IRFilename).extension() != ".ll") {
+    IRFilename += ".ll";
+  }
+  CodeGen.outputIR(IRFilename);
+
+  std::println("Generated LLVM IR at {}", IRFilename);
+
+  // Compile with clang
+  std::string ClangCmd = "clang " + IRFilename + " -o " + OutputFile.string() +
+                         " -Wno-override-module";
+  std::println("Compiling with: {}", ClangCmd);
+  int Ret = std::system(ClangCmd.c_str());
+  if (Ret != 0) {
+    llvm::errs() << "Error: clang compilation failed\n";
+    return false;
+  }
 
   return true;
 }
@@ -324,9 +353,9 @@ void PhiBuildSystem::linkObjects(PhiProject &Project) {
 std::optional<fs::path> PhiBuildSystem::findPhiToml(const fs::path &StartDir) {
   fs::path Current = fs::absolute(StartDir);
 
-  // Search upwards for Phi.toml
+  // Search upwards for phi.toml
   while (true) {
-    fs::path Candidate = Current / "Phi.toml";
+    fs::path Candidate = Current / "phi.toml";
     if (fs::exists(Candidate)) {
       return Candidate;
     }

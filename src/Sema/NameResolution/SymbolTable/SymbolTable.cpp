@@ -101,13 +101,13 @@ bool SymbolTable::insert(TypeArgDecl *TypeArg) {
   return true;
 }
 
-bool SymbolTable::insertWithQual(ItemDecl *Item, const std::string &Qual) {
+bool SymbolTable::insertWithQual(ItemDecl *Item, const std::string &Quals) {
   assert(!llvm::isa<ModuleDecl>(Item) &&
          "Do not use insertWithQual for a ModuleDecl; they cannot be "
          "referenced other "
          "than being imported. In that case, use insertAsImportable");
 
-  std::string QualifiedName = std::format("{}::{}", Qual, Item->getId());
+  std::string QualifiedName = std::format("{}::{}", Quals, Item->getId());
   if (auto *Fun = llvm::dyn_cast<FunDecl>(Item)) {
     for (auto &Scope : Scopes) {
       if (Scope.Funs.find(QualifiedName) != Scope.Funs.end())

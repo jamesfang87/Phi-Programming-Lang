@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -45,6 +46,7 @@ public:
     BoolLiteralKind,
     RangeLiteralKind,
     TupleLiteralKind,
+    ArrayLiteralKind,
     DeclRefKind,
     FunCallKind,
     BinaryOpKind,
@@ -55,6 +57,8 @@ public:
     MatchExprKind,
     AdtInitKind,
     IntrinsicCallKind,
+    TupleIndexKind,
+    ArrayIndexKind,
   };
 
   //===--------------------------------------------------------------------===//
@@ -388,6 +392,42 @@ private:
   std::vector<std::unique_ptr<Expr>> Elements;
 };
 
+class ArrayLiteral : public Expr {
+public:
+  ArrayLiteral(SrcLocation Location,
+               std::vector<std::unique_ptr<Expr>> Elements);
+  ~ArrayLiteral() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] const auto &getElements() { return Elements; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===--------------------------------------------------------------------===//
+
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::ArrayLiteralKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::vector<std::unique_ptr<Expr>> Elements;
+};
+
 //===----------------------------------------------------------------------===//
 // Reference and Call Expression Classes
 //===----------------------------------------------------------------------===//
@@ -477,6 +517,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   void setDecl(FunDecl *F) { Decl = F; }
+  void setTypeArgs(std::vector<TypeRef> New) { TypeArgs = std::move(New); }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -622,7 +663,7 @@ public:
   // Setters
   //===--------------------------------------------------------------------===//
 
-  void setDecl(FieldDecl *decl) { Decl = decl; }
+  void setDecl(FieldDecl *D) { Decl = D; }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -668,7 +709,7 @@ public:
 
   [[nodiscard]] const auto &getTypeName() const { return *TypeName; }
   [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
-  [[nodiscard]] const auto &getTypeArgs() const { return TypeArgs; }
+  [[nodiscard]] auto &getTypeArgs() { return TypeArgs; }
   [[nodiscard]] const auto &getInits() const { return Inits; }
   [[nodiscard]] const auto &getDecl() const { return Decl; }
   [[nodiscard]] bool isAnonymous() const { return !TypeName.has_value(); }
@@ -681,6 +722,13 @@ public:
   [[nodiscard]] auto *getAsEnum() {
     assert(llvm::isa<EnumDecl>(Decl));
     return llvm::dyn_cast<EnumDecl>(Decl);
+  }
+
+  [[nodiscard]] bool hasActiveVariant() const {
+    return ActiveVariantName.has_value();
+  }
+  [[nodiscard]] const std::string &getActiveVariantName() const {
+    return *ActiveVariantName;
   }
 
   //===--------------------------------------------------------------------===//
@@ -701,6 +749,8 @@ public:
     ActiveVariantDecl = Variant;
     ActiveVariantName = Variant->getId();
   }
+
+  void setTypeArgs(std::vector<TypeRef> New) { TypeArgs = std::move(New); }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -804,7 +854,8 @@ public:
   // Getters
   //===-----------------------------------------------------------------------//
 
-  [[nodiscard]] const MethodDecl &getMethod() const { return *Method; }
+  [[nodiscard]] MethodDecl *getMethodPtr() const { return Method; }
+  [[nodiscard]] MethodDecl &getMethod() const { return *Method; }
   [[nodiscard]] Expr *getBase() const { return Base.get(); }
   // Inherited from FunCallExpr: getCallee(), getArgs(), getDecl(), setDecl()
 
@@ -812,7 +863,10 @@ public:
   // Setters
   //===-----------------------------------------------------------------------//
 
-  void setMethod(MethodDecl *M) { Method = M; }
+  void setMethod(MethodDecl *M) {
+    assert(M);
+    Method = M;
+  }
 
   //===--------------------------------------------------------------------===//
   // Type Queries
@@ -930,6 +984,93 @@ private:
 private:
   IntrinsicKind K;
   ArgList Args;
+};
+
+class ArrayIndex : public Expr {
+public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===-----------------------------------------------------------------------//
+
+  ArrayIndex(SrcLocation Location, std::unique_ptr<Expr> Base,
+             std::unique_ptr<Expr> Index)
+      : Expr(Expr::Kind::ArrayIndexKind, std::move(Location)),
+        Base(std::move(Base)), Index(std::move(Index)) {};
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] Expr *getBase() const { return Base.get(); }
+  [[nodiscard]] Expr *getIndex() const { return Index.get(); }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] bool isAssignable() const override { return true; }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::ArrayIndexKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::unique_ptr<Expr> Base;
+  std::unique_ptr<Expr> Index;
+};
+
+class TupleIndex : public Expr {
+public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===-----------------------------------------------------------------------//
+
+  TupleIndex(SrcLocation Location, std::unique_ptr<Expr> Base,
+             std::unique_ptr<IntLiteral> Index)
+      : Expr(Expr::Kind::TupleIndexKind, std::move(Location)),
+        Base(std::move(Base)), Index(std::move(Index)) {};
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] Expr *getBase() const { return Base.get(); }
+  [[nodiscard]] IntLiteral *getIndex() const { return Index.get(); }
+  [[nodiscard]] int64_t getIndexVal() const { return Index->getValue(); }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] bool isAssignable() const override { return true; }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) {
+    return E->getKind() == Kind::TupleIndexKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::unique_ptr<Expr> Base;
+  std::unique_ptr<IntLiteral> Index;
 };
 
 } // namespace phi

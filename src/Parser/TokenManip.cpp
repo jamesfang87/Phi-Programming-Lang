@@ -1,4 +1,5 @@
 #include "Parser/Parser.hpp"
+#include <optional>
 
 namespace phi {
 
@@ -48,6 +49,15 @@ Token Parser::advanceToken() {
   if (TokenIt < Tokens.end()) {
     ++TokenIt;
   }
+  return Ret;
+}
+
+std::optional<Token> Parser::unconsume() {
+  Token Ret = peekToken();
+  if (TokenIt == Tokens.begin()) {
+    return std::nullopt;
+  }
+  --TokenIt;
   return Ret;
 }
 

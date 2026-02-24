@@ -22,6 +22,7 @@ bool NameResolver::visit(Expr &E) {
       .Case<BoolLiteral>([&](BoolLiteral *X) { return visit(*X); })
       .Case<RangeLiteral>([&](RangeLiteral *X) { return visit(*X); })
       .Case<TupleLiteral>([&](TupleLiteral *X) { return visit(*X); })
+      .Case<ArrayLiteral>([&](ArrayLiteral *X) { return visit(*X); })
       .Case<DeclRefExpr>([&](DeclRefExpr *X) { return visit(*X); })
       .Case<FunCallExpr>([&](FunCallExpr *X) { return visit(*X); })
       .Case<BinaryOp>([&](BinaryOp *X) { return visit(*X); })
@@ -32,6 +33,8 @@ bool NameResolver::visit(Expr &E) {
       .Case<MatchExpr>([&](MatchExpr *X) { return visit(*X); })
       .Case<AdtInit>([&](AdtInit *X) { return visit(*X); })
       .Case<IntrinsicCall>([&](IntrinsicCall *X) { return visit(*X); })
+      .Case<TupleIndex>([&](TupleIndex *X) { return visit(*X); })
+      .Case<ArrayIndex>([&](ArrayIndex *X) { return visit(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
         return false;
@@ -69,6 +72,14 @@ bool NameResolver::visit(RangeLiteral &E) {
 }
 
 bool NameResolver::visit(TupleLiteral &E) {
+  bool Success = true;
+  for (auto &Element : E.getElements()) {
+    Success = visit(*Element) && Success;
+  }
+  return Success;
+}
+
+bool NameResolver::visit(ArrayLiteral &E) {
   bool Success = true;
   for (auto &Element : E.getElements()) {
     Success = visit(*Element) && Success;
@@ -410,6 +421,16 @@ bool NameResolver::visit(IntrinsicCall &E) {
   default:
     break;
   }
+}
+
+bool NameResolver::visit(TupleIndex &E) {
+  bool Success = visit(*E.getBase());
+  return visit(*E.getIndex()) && Success;
+}
+
+bool NameResolver::visit(ArrayIndex &E) {
+  bool Success = visit(*E.getBase());
+  return visit(*E.getIndex()) && Success;
 }
 
 } // namespace phi

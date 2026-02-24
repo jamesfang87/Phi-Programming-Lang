@@ -125,6 +125,17 @@ AppliedTy *TypeCtx::applied(TypeRef Base, std::vector<TypeRef> Args) {
   return NewInst;
 }
 
+ArrayTy *TypeCtx::array(const TypeRef &ContainedTy) {
+  auto It = Arrays.find(ContainedTy.getPtr());
+  if (It != Arrays.end()) {
+    return It->second;
+  }
+
+  auto *NewInst = Allocate<ArrayTy>(ContainedTy);
+  Arrays[ContainedTy.getPtr()] = NewInst;
+  return NewInst;
+}
+
 ErrTy *TypeCtx::err() { return Err; }
 
 TypeRef TypeCtx::getBuiltin(BuiltinTy::Kind K, SrcSpan Span) {
@@ -177,6 +188,11 @@ TypeRef TypeCtx::getGeneric(const std::string &Id, TypeArgDecl *D,
 TypeRef TypeCtx::getApplied(TypeRef Base, std::vector<TypeRef> Args,
                             SrcSpan Span) {
   auto *T = inst().applied(Base, Args);
+  return {T, std::move(Span)};
+}
+
+TypeRef TypeCtx::getArray(const TypeRef &ContainedTy, SrcSpan Span) {
+  auto *T = inst().array(ContainedTy);
   return {T, std::move(Span)};
 }
 

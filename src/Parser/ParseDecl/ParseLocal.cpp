@@ -73,7 +73,7 @@ Parser::parseBinding(const BindingPolicy &Policy) {
     Init = std::move(Expr);
   } else if (Policy.Init == Required) {
     error("missing initializer")
-        .with_primary_label(Span, "initializer required here")
+        .with_primary_label(Span, "initializer for this binding")
         .with_help("add `= <expr>` to initialize this binding")
         .emit(*Diags);
     return std::nullopt;
