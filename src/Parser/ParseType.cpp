@@ -1,4 +1,3 @@
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
@@ -12,6 +11,7 @@
 
 #include "AST/TypeSystem/Context.hpp"
 #include "AST/TypeSystem/Type.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/Token.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcLocation.hpp"
@@ -136,6 +136,10 @@ std::optional<TypeRef> Parser::parseTypeBase(bool AllowPlaceholder) {
       if (Gen->getId() == Id) {
         return TypeCtx::getGeneric(Gen->getId(), Gen, Span);
       }
+    }
+
+    if (BuiltinTyAliases.contains(Id)) {
+      return TypeRef(BuiltinTyAliases[Id], Span);
     }
   }
 

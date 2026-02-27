@@ -268,7 +268,8 @@ void FunDecl::emit(int Level) const {
 ModuleDecl::ModuleDecl(SrcSpan PathSpan, Visibility Vis, std::string Id,
                        std::vector<std::string> Path,
                        std::vector<std::unique_ptr<ItemDecl>> Items,
-                       std::vector<std::unique_ptr<ImportStmt>> Imports)
+                       std::vector<std::unique_ptr<ImportStmt>> Imports,
+                       std::vector<std::unique_ptr<UseStmt>> Uses)
     : ItemDecl(Kind::Module, PathSpan, Vis, std::move(Id), {}),
       Path(std::move(Path)), Items(std::move(Items)) {
 
@@ -280,6 +281,10 @@ ModuleDecl::ModuleDecl(SrcSpan PathSpan, Visibility Vis, std::string Id,
 
   for (auto &I : Imports) {
     this->Imports.push_back(std::move(*I));
+  }
+
+  for (auto &U : Uses) {
+    this->Uses.push_back(std::move(*U));
   }
 }
 

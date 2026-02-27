@@ -33,6 +33,7 @@ public:
     BreakStmtKind,
     ExprStmtKind,
     ImportStmtKind,
+    UseStmtKind,
   };
 
   //===--------------------------------------------------------------------===//
@@ -414,15 +415,18 @@ private:
 class ImportStmt : public Stmt {
 public:
   ImportStmt(SrcLocation Location, std::string PathStr,
-             std::vector<std::string> Path);
+             std::vector<std::string> Path, std::optional<std::string> Alias);
   ~ImportStmt() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
+  [[nodiscard]] auto hasAlias() const { return Alias.has_value(); }
   [[nodiscard]] auto &getPathStr() const { return PathStr; }
   [[nodiscard]] auto &getPath() const { return Path; }
   [[nodiscard]] auto &getImportedDecl() const { return ImportedDecl; }
+  [[nodiscard]] auto &getAlias() const { return Alias; }
+  [[nodiscard]] auto &getAliasVal() const { return *Alias; }
 
   //===--------------------------------------------------------------------===//
   // Setters
@@ -452,6 +456,52 @@ private:
   std::string PathStr;
   std::vector<std::string> Path;
   NamedDecl *ImportedDecl;
+  std::optional<std::string> Alias;
+};
+
+class UseStmt : public Stmt {
+public:
+  UseStmt(SrcLocation Location, std::string PathStr,
+          std::vector<std::string> Path, std::string Alias);
+  ~UseStmt() override;
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===--------------------------------------------------------------------===//
+  [[nodiscard]] auto &getPathStr() const { return PathStr; }
+  [[nodiscard]] auto &getPath() const { return Path; }
+  [[nodiscard]] auto &getAliasedDecl() const { return AliasedDecl; }
+  [[nodiscard]] auto &getAlias() const { return Alias; }
+
+  //===--------------------------------------------------------------------===//
+  // Setters
+  //===--------------------------------------------------------------------===//
+  void setAliasedDecl(NamedDecl *New) {
+    assert(New && "Cannot set to nullptr");
+    assert(AliasedDecl == nullptr &&
+           "Cannot change ImportedModule that is not nullptr");
+    AliasedDecl = New;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+
+  static bool classof(const Stmt *S) {
+    return S->getKind() == Kind::UseStmtKind;
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+
+  void emit(int Level) const override;
+
+private:
+  std::string PathStr;
+  std::vector<std::string> Path;
+  NamedDecl *AliasedDecl;
+  std::string Alias;
 };
 
 } // namespace phi

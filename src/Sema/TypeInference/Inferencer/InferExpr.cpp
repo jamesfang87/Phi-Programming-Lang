@@ -7,8 +7,8 @@
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/TypeSwitch.h>
-#include <llvm/Support/raw_ostream.h> // DEBUG
 #include <llvm/Support/Casting.h>
+#include <llvm/Support/raw_ostream.h> // DEBUG
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Expr.hpp"
@@ -130,12 +130,13 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
   E.setTypeArgs(InferredTypeArgs);
 
   if (E.getArgs().size() != E.getDecl()->getParams().size()) {
-     error("Argument count mismatch")
-        .with_primary_label(E.getSpan(), 
-            std::format("expected {} arguments, got {}", 
-                        E.getDecl()->getParams().size(), E.getArgs().size()))
+    error("Argument count mismatch")
+        .with_primary_label(E.getSpan(),
+                            std::format("expected {} arguments, got {}",
+                                        E.getDecl()->getParams().size(),
+                                        E.getArgs().size()))
         .emit(*DiagMan);
-     return TypeCtx::getErr(E.getSpan());
+    return TypeCtx::getErr(E.getSpan());
   }
 
   for (auto [Arg, Param] : llvm::zip(E.getArgs(), E.getDecl()->getParams())) {
@@ -211,27 +212,24 @@ TypeRef TypeInferencer::visit(BinaryOp &E) {
     return TypeCtx::getErr(E.getSpan());
   }
 
-
-
   if (K.isComparison() || K.isEquality()) {
     auto Bool = TypeCtx::getBuiltin(BuiltinTy::Bool, E.getSpan());
     Unifier.unify(E.getType(), Bool);
     return Bool;
   }
 
-  if (K == TokenKind::Equals ||
-      K == TokenKind::PlusEquals ||
-      K == TokenKind::SubEquals ||
-      K == TokenKind::MulEquals ||
-      K == TokenKind::DivEquals ||
-      K == TokenKind::ModEquals) {
+  if (K == TokenKind::Equals || K == TokenKind::PlusEquals ||
+      K == TokenKind::SubEquals || K == TokenKind::MulEquals ||
+      K == TokenKind::DivEquals || K == TokenKind::ModEquals) {
     auto Res = Unifier.unify(LhsType, RhsType);
     if (!Res) {
       error("Mismatched types in assignment")
-          .with_primary_label(E.getLhs().getSpan(),
-                              std::format("variable of type `{}`", toString(LhsType)))
-          .with_secondary_label(E.getRhs().getSpan(),
-                                std::format("assigned value of type `{}`", toString(RhsType)))
+          .with_primary_label(
+              E.getLhs().getSpan(),
+              std::format("variable of type `{}`", toString(LhsType)))
+          .with_secondary_label(
+              E.getRhs().getSpan(),
+              std::format("assigned value of type `{}`", toString(RhsType)))
           .emit(*DiagMan);
       return TypeCtx::getErr(E.getSpan());
     }
@@ -279,8 +277,8 @@ TypeRef TypeInferencer::visit(UnaryOp &E) {
     // Wait, Deref returns Pointee.
     // PtrTy -> Pointee
     if (auto Ptr = llvm::dyn_cast<PtrTy>(OperandT.getPtr())) {
-        E.setType(Ptr->getPointee());
-        return Ptr->getPointee();
+      E.setType(Ptr->getPointee());
+      return Ptr->getPointee();
     }
     // If operand is not ptr, can't infer yet or error?
     // Assuming simple case for now
@@ -305,21 +303,23 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
   // after name resolution
   auto Map = buildGenericSubstMap(E.getDecl()->getTypeArgs());
 
-  // If explicit type arguments are provided, unify them with the generic parameters
+  // If explicit type arguments are provided, unify them with the generic
+  // parameters
   if (!E.getTypeArgs().empty()) {
     if (E.getTypeArgs().size() != E.getDecl()->getTypeArgs().size()) {
-       error("Generic argument count mismatch")
-           .with_primary_label(E.getSpan(), 
-               std::format("expected {} generic arguments, got {}", 
-                           E.getDecl()->getTypeArgs().size(), E.getTypeArgs().size()))
-           .emit(*DiagMan);
+      error("Generic argument count mismatch")
+          .with_primary_label(
+              E.getSpan(), std::format("expected {} generic arguments, got {}",
+                                       E.getDecl()->getTypeArgs().size(),
+                                       E.getTypeArgs().size()))
+          .emit(*DiagMan);
     } else {
-        for (auto [Explicit, GenericParam] : 
-             llvm::zip(E.getTypeArgs(), E.getDecl()->getTypeArgs())) {
-          auto It = Map.find(GenericParam.get());
-          assert(It != Map.end());
-          Unifier.unify(It->second, Explicit);
-        }
+      for (auto [Explicit, GenericParam] :
+           llvm::zip(E.getTypeArgs(), E.getDecl()->getTypeArgs())) {
+        auto It = Map.find(GenericParam.get());
+        assert(It != Map.end());
+        Unifier.unify(It->second, Explicit);
+      }
     }
   }
 
@@ -334,12 +334,13 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
           auto Declared = substituteGenerics(Field->getType(), Map);
           auto Got = Init->getInitValue()->getType();
           if (!Unifier.unify(Declared, Got)) {
-              error("Mismatched types in struct initialization")
-                  .with_primary_label(Init->getInitValue()->getSpan(),
-                                      std::format("expected `{}`, got `{}`",
-                                                  toString(Declared), toString(Got)))
-                  .emit(*DiagMan);
-              Errored = true;
+            error("Mismatched types in struct initialization")
+                .with_primary_label(Init->getInitValue()->getSpan(),
+                                    std::format("expected `{}`, got `{}`",
+                                                toString(Declared),
+                                                toString(Got)))
+                .emit(*DiagMan);
+            Errored = true;
           }
         })
         .Case<EnumDecl>([&](EnumDecl *D) {
@@ -348,19 +349,20 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
             auto Declared = substituteGenerics(Variant->getPayloadType(), Map);
             auto Got = Init->getInitValue()->getType();
             if (!Unifier.unify(Declared, Got)) {
-                error("Mismatched types in enum variant payload")
-                    .with_primary_label(Init->getInitValue()->getSpan(),
-                                        std::format("expected `{}`, got `{}`",
-                                                    toString(Declared), toString(Got)))
-                    .emit(*DiagMan);
-                Errored = true;
+              error("Mismatched types in enum variant payload")
+                  .with_primary_label(Init->getInitValue()->getSpan(),
+                                      std::format("expected `{}`, got `{}`",
+                                                  toString(Declared),
+                                                  toString(Got)))
+                  .emit(*DiagMan);
+              Errored = true;
             }
           }
         });
   }
 
   if (Errored) {
-      return TypeCtx::getErr(E.getSpan());
+    return TypeCtx::getErr(E.getSpan());
   }
 
   if (!E.getDecl()->hasTypeArgs())
