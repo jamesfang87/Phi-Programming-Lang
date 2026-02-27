@@ -47,31 +47,35 @@ bool SymbolTable::insertAsImportable(ItemDecl *Item, ModuleDecl *ParentMod) {
   return true;
 }
 
-bool SymbolTable::insert(ItemDecl *Item) {
+bool SymbolTable::insertAs(ItemDecl *Item, const std::string &Alias) {
   assert(!llvm::isa<ModuleDecl>(Item) &&
          "Do not use insert for a ModuleDecl; they cannot be referenced other "
          "than being imported. In that case, use insertAsImportable");
 
   if (auto *Fun = llvm::dyn_cast<FunDecl>(Item)) {
     for (auto &Scope : Scopes) {
-      if (Scope.Funs.find(Fun->getId()) != Scope.Funs.end())
+      if (Scope.Funs.contains(Alias))
         return false;
     }
-    Scopes.back().Funs[Fun->getId()] = Fun;
+    Scopes.back().Funs[Alias] = Fun;
     return true;
   }
 
   if (auto *Adt = llvm::dyn_cast<AdtDecl>(Item)) {
     for (auto &Scope : Scopes) {
-      if (Scope.Adts.contains(Adt->getId()))
+      if (Scope.Adts.contains(Alias))
         return false;
     }
-    Scopes.back().Adts[Adt->getId()] = Adt;
+    Scopes.back().Adts[Alias] = Adt;
     return true;
   }
 
   std::unreachable();
   return false;
+}
+
+bool SymbolTable::insert(ItemDecl *Item) {
+  return insertAs(Item, Item->getId());
 }
 
 bool SymbolTable::insert(LocalDecl *Var) {
