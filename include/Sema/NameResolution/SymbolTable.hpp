@@ -78,6 +78,7 @@ public:
   bool insert(LocalDecl *Var);
   bool insert(MemberDecl *Field);
   bool insert(TypeArgDecl *TypeArg);
+  bool insertAs(ItemDecl *Item, const std::string &Alias);
 
   bool insertAsImportable(ModuleDecl *Mod);
   bool insertAsImportable(ItemDecl *Item, ModuleDecl *ParentMod);

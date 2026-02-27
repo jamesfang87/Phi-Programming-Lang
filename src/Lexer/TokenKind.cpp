@@ -53,6 +53,8 @@ std::string TokenKind::toString() const {
     return "TRUE";
   case TokenKind::ThisKw:
     return "THIS";
+  case TokenKind::UseKw:
+    return "Use";
   case TokenKind::VarKw:
     return "VAR";
   case TokenKind::WhileKw:
