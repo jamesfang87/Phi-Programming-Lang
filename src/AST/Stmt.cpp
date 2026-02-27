@@ -201,10 +201,11 @@ void ExprStmt::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 ImportStmt::ImportStmt(SrcLocation Location, std::string PathStr,
-                       std::vector<std::string> Path)
+                       std::vector<std::string> Path,
+                       std::optional<std::string> Alias)
     : Stmt(Kind::ImportStmtKind, std::move(Location)),
-      PathStr(std::move(PathStr)), Path(std::move(Path)),
-      ImportedDecl(nullptr) {}
+      PathStr(std::move(PathStr)), Path(std::move(Path)), ImportedDecl(nullptr),
+      Alias(std::move(Alias)) {}
 
 // Out-of-line destructor required for vtable
 ImportStmt::~ImportStmt() = default;
@@ -222,8 +223,44 @@ void ImportStmt::emit(int Level) const {
     }
   }
 
+  if (hasAlias()) {
+    std::println("{}Alias: {}", IndentStr, *Alias);
+  }
+
   if (ImportedDecl) {
     std::println("{}Imported Decl: {}", IndentStr, ImportedDecl->getId());
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// UseStmt Implementation
+//===----------------------------------------------------------------------===//
+
+UseStmt::UseStmt(SrcLocation Location, std::string PathStr,
+                 std::vector<std::string> Path, std::string Alias)
+    : Stmt(Kind::UseStmtKind, std::move(Location)), PathStr(std::move(PathStr)),
+      Path(std::move(Path)), AliasedDecl(nullptr), Alias(std::move(Alias)) {}
+
+// Out-of-line destructor required for vtable
+UseStmt::~UseStmt() = default;
+
+// Utility method to dump AST info
+void UseStmt::emit(int Level) const {
+  std::string IndentStr(Level * 2, ' ');
+
+  std::println("{}UseStmt: \"{}\"", IndentStr, PathStr);
+
+  if (!Path.empty()) {
+    std::println("{}Resolved Path:", IndentStr);
+    for (auto &P : Path) {
+      std::println("{}  {}", IndentStr, P);
+    }
+  }
+
+  std::println("{}Alias: {}", IndentStr, Alias);
+
+  if (AliasedDecl) {
+    std::println("{}Aliased Decl: {}", IndentStr, AliasedDecl->getId());
   }
 }
 

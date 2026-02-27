@@ -34,6 +34,7 @@ struct TokenKind {
     StructKw,   ///< `struct` keyword
     TrueKw,     ///< `true` literal
     ThisKw,     ///< `this` keyword
+    UseKw,      ///< `use` keyword
     VarKw,      ///< `let` keyword
     WhileKw,    ///< `while` keyword
 
