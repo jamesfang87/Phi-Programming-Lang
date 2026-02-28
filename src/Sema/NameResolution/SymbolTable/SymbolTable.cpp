@@ -162,6 +162,22 @@ AdtDecl *SymbolTable::lookup(const std::string &Id) {
   return nullptr;
 }
 
+ItemDecl *SymbolTable::lookupAll(const std::string &Id) {
+  for (auto &Scope : std::ranges::reverse_view(Scopes)) {
+    if (auto It = Scope.Adts.find(Id); It != Scope.Adts.end()) {
+      return It->second;
+    }
+  }
+
+  for (auto &Scope : std::ranges::reverse_view(Scopes)) {
+    if (auto It = Scope.Funs.find(Id); It != Scope.Funs.end()) {
+      return It->second;
+    }
+  }
+
+  return nullptr;
+}
+
 TypeArgDecl *SymbolTable::lookupTypeArg(const std::string &Id) {
   for (auto &Scope : std::ranges::reverse_view(Scopes)) {
     if (auto It = Scope.TypeArgs.find(Id); It != Scope.TypeArgs.end()) {

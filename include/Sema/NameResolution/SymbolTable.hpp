@@ -99,6 +99,7 @@ public:
 
   TypeArgDecl *lookupTypeArg(const std::string &Id);
   ItemDecl *lookupImport(const std::string &Id);
+  ItemDecl *lookupAll(const std::string &Id);
 
   //===--------------------------------------------------------------------===//
   // Error Recovery & Suggestion Methods
