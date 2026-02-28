@@ -1,8 +1,10 @@
 #include "AST/Nodes/Stmt.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
 #include <experimental/scope>
+#include <format>
 #include <memory>
 #include <optional>
 #include <string>
@@ -47,6 +49,9 @@ std::unique_ptr<Stmt> Parser::parseStmt() {
     return parseBreakStmt();
   case TokenKind::ContinueKw:
     return parseContinueStmt();
+  case TokenKind::UseKw:
+    return parseUseStmt();
+
   default:
     auto Res = parseExpr();
     if (!Res)
@@ -305,7 +310,7 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
     return nullptr;
 
   auto Var = parseBinding(
-      {.Type = Optional, .Init = Required, .AllowPlaceholderForType = true});
+      {.Type = Optional, .Init = Optional, .AllowPlaceholderForType = true});
   if (!Var)
     return nullptr;
 
@@ -360,8 +365,139 @@ std::unique_ptr<ImportStmt> Parser::parseImportStmt() {
   if (!Res)
     return nullptr;
 
+  std::optional<std::string> Alias = std::nullopt;
+  if (matchToken(TokenKind::AsKw)) {
+    if (expectToken(TokenKind::Identifier)) {
+      Alias = peekToken(-1).getLexeme();
+    }
+  }
+
+  if (!matchToken(TokenKind::Semicolon)) {
+    error("missing semicolon after import statement")
+        .with_primary_label(SrcSpan(peekToken(-1).getEnd()),
+                            "expected `;` here")
+        .with_help("import statements must end with a semicolon")
+        .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
+        .emit(*Diags);
+    return nullptr;
+  }
+
   auto &[PathStr, Path, Span] = *Res;
-  return std::make_unique<ImportStmt>(Loc, PathStr, Path);
+  return std::make_unique<ImportStmt>(Loc, PathStr, Path, Alias);
+}
+
+std::unique_ptr<UseStmt> Parser::parseUseStmt() {
+  SrcLocation Loc = peekToken().getStart();
+  assert(advanceToken().getKind() == TokenKind::UseKw);
+
+  Type *T = nullptr;
+
+  switch (peekKind()) {
+  case TokenKind::I8:
+    T = TypeCtx::getBuiltin(BuiltinTy::i8, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::I16:
+    T = TypeCtx::getBuiltin(BuiltinTy::i16, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::I32:
+    T = TypeCtx::getBuiltin(BuiltinTy::i32, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::I64:
+    T = TypeCtx::getBuiltin(BuiltinTy::i64, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::U8:
+    T = TypeCtx::getBuiltin(BuiltinTy::u8, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::U16:
+    T = TypeCtx::getBuiltin(BuiltinTy::u16, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::U32:
+    T = TypeCtx::getBuiltin(BuiltinTy::u32, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::U64:
+    T = TypeCtx::getBuiltin(BuiltinTy::u64, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::F32:
+    T = TypeCtx::getBuiltin(BuiltinTy::f32, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::F64:
+    T = TypeCtx::getBuiltin(BuiltinTy::f64, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::String:
+    T = TypeCtx::getBuiltin(BuiltinTy::String, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::Char:
+    T = TypeCtx::getBuiltin(BuiltinTy::Char, peekToken().getSpan()).getPtr();
+    break;
+  case TokenKind::BoolKw:
+    T = TypeCtx::getBuiltin(BuiltinTy::Bool, peekToken().getSpan()).getPtr();
+    break;
+  default:
+    break;
+  }
+
+  if (T) {
+    auto TypeTok = advanceToken(); // consume the type token
+    std::string Alias;
+    if (peekKind() == TokenKind::AsKw) {
+      advanceToken(); // consume 'as'
+      if (expectToken(TokenKind::Identifier)) {
+        Alias = peekToken(-1).getLexeme();
+      } else {
+        return nullptr;
+      }
+    }
+
+    if (!Alias.empty() && BuiltinTyAliases.contains(Alias)) {
+      error(std::format("Redefinition of type alias `{}`", Alias))
+          .with_primary_label(peekToken(-1).getSpan(), "redefinition here")
+          .emit(*Diags);
+      return nullptr;
+    }
+
+    if (!matchToken(TokenKind::Semicolon)) {
+      error("missing semicolon after use statement")
+          .with_primary_label(SrcSpan(peekToken(-1).getEnd()),
+                              "expected `;` here")
+          .with_help("use statements must end with a semicolon")
+          .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";",
+                           "add semicolon")
+          .emit(*Diags);
+      return nullptr;
+    }
+
+    if (!Alias.empty())
+      BuiltinTyAliases[Alias] = T;
+
+    return std::make_unique<UseStmt>(
+        Loc, TypeTok.getLexeme(), std::vector<std::string>{TypeTok.getLexeme()},
+        Alias);
+  }
+
+  // Module path import
+  auto Res = parseModulePath();
+  if (!Res)
+    return nullptr;
+
+  std::string Alias;
+  if (matchToken(TokenKind::AsKw)) {
+    if (expectToken(TokenKind::Identifier)) {
+      Alias = peekToken(-1).getLexeme();
+    }
+  }
+
+  if (!matchToken(TokenKind::Semicolon)) {
+    error("missing semicolon after use statement")
+        .with_primary_label(SrcSpan(peekToken(-1).getEnd()),
+                            "expected `;` here")
+        .with_help("use statements must end with a semicolon")
+        .with_suggestion(SrcSpan(peekToken(-1).getEnd()), ";", "add semicolon")
+        .emit(*Diags);
+    return nullptr;
+  }
+
+  auto &[PathStr, Path, Span] = *Res;
+  return std::make_unique<UseStmt>(Loc, PathStr, Path, Alias);
 }
 
 } // namespace phi

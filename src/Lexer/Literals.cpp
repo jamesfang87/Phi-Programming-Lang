@@ -85,6 +85,7 @@ Token Lexer::parseIdentifierOrKw() {
       {"struct", TokenKind::StructKw},
       {"true", TokenKind::TrueKw},
       {"this", TokenKind::ThisKw},
+      {"use", TokenKind::UseKw},
       {"var", TokenKind::VarKw},
       {"while", TokenKind::WhileKw},
       {"i8", TokenKind::I8},

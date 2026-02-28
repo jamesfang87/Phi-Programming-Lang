@@ -568,7 +568,8 @@ public:
   ModuleDecl(SrcSpan PathSpan, Visibility Vis, std::string Id,
              std::vector<std::string> Path,
              std::vector<std::unique_ptr<ItemDecl>> Items,
-             std::vector<std::unique_ptr<ImportStmt>> Imports);
+             std::vector<std::unique_ptr<ImportStmt>> Imports,
+             std::vector<std::unique_ptr<UseStmt>> Uses);
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -577,6 +578,7 @@ public:
   auto &getItems() { return Items; }
   auto &getPublicItems() { return PublicItems; }
   auto &getImports() { return Imports; }
+  auto &getUses() { return Uses; }
   auto contains(const ItemDecl *Query) {
     for (auto &Item : Items) {
       if (Query == Item.get()) {
@@ -611,6 +613,7 @@ private:
   std::vector<std::unique_ptr<ItemDecl>> Items;
   std::vector<ItemDecl *> PublicItems;
   std::vector<ImportStmt> Imports;
+  std::vector<UseStmt> Uses;
 };
 
 } // namespace phi

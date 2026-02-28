@@ -49,9 +49,10 @@ std::unique_ptr<ModuleDecl> Parser::parse() {
   SrcSpan Span = Tokens.front().getSpan();
   if (atEOF()) {
     std::vector<std::unique_ptr<ImportStmt>> NoImports;
+    std::vector<std::unique_ptr<UseStmt>> NoUses;
     return std::make_unique<ModuleDecl>(Span, Visibility::Public,
                                         std::move(PathStr), std::move(Path),
-                                        std::move(Ast), std::move(NoImports));
+                                        std::move(Ast), std::move(NoImports), std::move(NoUses));
   }
 
   // otherwise, we check to see if the first token is a module decl.
@@ -72,6 +73,7 @@ std::unique_ptr<ModuleDecl> Parser::parse() {
   }
 
   std::vector<std::unique_ptr<ImportStmt>> Imports;
+  std::vector<std::unique_ptr<UseStmt>> Uses;
   while (!atEOF()) {
     auto Visibility = parseItemVisibility();
     if (!Visibility)
@@ -94,9 +96,15 @@ std::unique_ptr<ModuleDecl> Parser::parse() {
       else
         syncToTopLvl();
       break;
+    case TokenKind::UseKw:
+      if (auto Use = parseUseStmt())
+        Uses.push_back(std::move(Use));
+      else
+        syncToTopLvl();
+      break;
     default:
       emitUnexpectedTokenError(peekToken(),
-                               {"fun", "struct", "enum", "import"});
+                               {"fun", "struct", "enum", "import", "use"});
     }
 
     if (Res)
@@ -107,7 +115,7 @@ std::unique_ptr<ModuleDecl> Parser::parse() {
 
   return std::make_unique<ModuleDecl>(Span, Visibility::Public,
                                       std::move(PathStr), std::move(Path),
-                                      std::move(Ast), std::move(Imports));
+                                      std::move(Ast), std::move(Imports), std::move(Uses));
 }
 
 } // namespace phi
