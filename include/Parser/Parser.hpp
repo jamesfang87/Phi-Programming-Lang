@@ -6,6 +6,7 @@
 #include <optional>
 #include <stack>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -52,6 +53,7 @@ private:
   bool NoAdtInit = false;
   bool FileHasModule = false;
   std::vector<TypeArgDecl *> ValidGenerics;
+  std::unordered_map<std::string, Type *> BuiltinTyAliases;
 
   //===--------------------------------------------------------------------===//
   // Token Navigation Utilities
@@ -158,6 +160,7 @@ private:
   std::unique_ptr<BreakStmt> parseBreakStmt();
   std::unique_ptr<ContinueStmt> parseContinueStmt();
   std::unique_ptr<ImportStmt> parseImportStmt();
+  std::unique_ptr<UseStmt> parseUseStmt();
   std::unique_ptr<Block> parseBlock();
 
   //===--------------------------------------------------------------------===//
