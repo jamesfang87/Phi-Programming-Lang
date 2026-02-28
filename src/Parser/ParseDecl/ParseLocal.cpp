@@ -24,12 +24,11 @@ Parser::parseBinding(const BindingPolicy &Policy) {
   SrcSpan Span = peekToken().getSpan();
   std::string Name = advanceToken().getLexeme();
 
-  std::optional<TypeRef> DeclType;
-  std::unique_ptr<Expr> Init;
-
   //===------------------------------------------------------------------===//
   // Parse type annotation
   //===------------------------------------------------------------------===//
+
+  std::optional<TypeRef> DeclType;
 
   if (matchToken(TokenKind::Colon)) {
     if (Policy.Type == Forbidden) {
@@ -56,6 +55,8 @@ Parser::parseBinding(const BindingPolicy &Policy) {
   //===------------------------------------------------------------------===//
   // Parse initializer
   //===------------------------------------------------------------------===//
+
+  std::unique_ptr<Expr> Init;
 
   if (matchToken(TokenKind::Equals)) {
     if (Policy.Init == Forbidden) {
