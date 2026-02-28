@@ -86,6 +86,10 @@ ModuleDecl *NameResolver::resolveSingleMod(ModuleDecl *Module) {
     }
   }
 
+  for (auto &Decl : Module->getItems()) {
+    resolveHeader(*Decl);
+  }
+
   for (auto &Use : Module->getUses()) {
     static const std::unordered_map<std::string_view, BuiltinTy::Kind>
         PrimitiveMap = {
@@ -99,7 +103,7 @@ ModuleDecl *NameResolver::resolveSingleMod(ModuleDecl *Module) {
         };
 
     if (PrimitiveMap.contains(Use.getPathStr())) {
-      if (auto *D = SymbolTab.lookupImport(Use.getAlias())) {
+      if (auto *D = SymbolTab.lookup(Use.getAlias())) {
         error(
             std::format("Naming conflict with type alias `{}`", Use.getAlias()))
             .with_extra_snippet(D->getSpan(), "with this declaration here")
@@ -108,7 +112,7 @@ ModuleDecl *NameResolver::resolveSingleMod(ModuleDecl *Module) {
       continue;
     }
 
-    auto *Decl = SymbolTab.lookupImport(Use.getPathStr());
+    auto *Decl = SymbolTab.lookupAll(Use.getPathStr());
     if (!Decl) {
       emitItemPathNotFound(Use.getPathStr(), Use.getSpan());
       continue;
@@ -134,10 +138,6 @@ ModuleDecl *NameResolver::resolveSingleMod(ModuleDecl *Module) {
             .emit(*Diags);
       }
     }
-  }
-
-  for (auto &Decl : Module->getItems()) {
-    resolveHeader(*Decl);
   }
 
   // Phase 2: Resolve function bodies
