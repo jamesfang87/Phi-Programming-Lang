@@ -47,7 +47,15 @@ void TypeInferencer::finalize(IfStmt &S) {
     finalize(S.getElse());
 }
 
-void TypeInferencer::finalize(DeclStmt &S) { finalize(S.getDecl()); }
+void TypeInferencer::finalize(DeclStmt &S) {
+  if (S.hasInit()) {
+    finalize(S.getInit());
+  }
+  for (auto &D : S.getDecls()) {
+    finalize(*D);
+  }
+}
+
 void TypeInferencer::finalize(BreakStmt &S) { (void)S; }
 void TypeInferencer::finalize(ContinueStmt &S) { (void)S; }
 void TypeInferencer::finalize(ExprStmt &S) { finalize(S.getExpr()); }

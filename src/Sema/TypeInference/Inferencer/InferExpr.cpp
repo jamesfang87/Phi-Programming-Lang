@@ -78,7 +78,7 @@ TypeRef TypeInferencer::visit(RangeLiteral &E) {
                             std::format("of type {}", toString(StartT)))
         .with_secondary_label(E.getEnd().getSpan(),
                               std::format("of type {}", toString(EndT)))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -133,7 +133,7 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
               E.getSpan(), std::format("expected {} generic arguments, got {}",
                                        E.getDecl()->getTypeArgs().size(),
                                        E.getTypeArgs().size()))
-          .emit(*DiagMan);
+          .emit(*Diags);
     } else {
       for (auto [Explicit, GenericParam] :
            llvm::zip(E.getTypeArgs(), E.getDecl()->getTypeArgs())) {
@@ -156,7 +156,7 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
                             std::format("expected {} arguments, got {}",
                                         E.getDecl()->getParams().size(),
                                         E.getArgs().size()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -176,7 +176,7 @@ TypeRef TypeInferencer::visit(FunCallExpr &E) {
           .with_extra_snippet(
               E.getDecl()->getSpan(),
               std::format("{} declared here", E.getDecl()->getId()))
-          .emit(*DiagMan);
+          .emit(*Diags);
     }
   }
 
@@ -204,7 +204,7 @@ TypeRef TypeInferencer::visit(BinaryOp &E) {
           .with_primary_label(E.getLhs().getSpan(),
                               std::format("expected type `bool`, got type {}",
                                           toString(LhsType)))
-          .emit(*DiagMan);
+          .emit(*Diags);
     }
 
     Res = Unifier.unify(
@@ -214,7 +214,7 @@ TypeRef TypeInferencer::visit(BinaryOp &E) {
           .with_primary_label(E.getRhs().getSpan(),
                               std::format("expected type `bool`, got type {}",
                                           toString(RhsType)))
-          .emit(*DiagMan);
+          .emit(*Diags);
     }
 
     Unifier.unify(TypeCtx::getBuiltin(BuiltinTy::Bool, E.getSpan()),
@@ -229,7 +229,7 @@ TypeRef TypeInferencer::visit(BinaryOp &E) {
                             std::format("type `{}`", toString(LhsType)))
         .with_secondary_label(E.getRhs().getSpan(),
                               std::format("type `{}`", toString(RhsType)))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -251,7 +251,7 @@ TypeRef TypeInferencer::visit(BinaryOp &E) {
           .with_secondary_label(
               E.getRhs().getSpan(),
               std::format("assigned value of type `{}`", toString(RhsType)))
-          .emit(*DiagMan);
+          .emit(*Diags);
       return TypeCtx::getErr(E.getSpan());
     }
     return LhsType;
@@ -274,7 +274,7 @@ TypeRef TypeInferencer::visit(UnaryOp &E) {
           .with_primary_label(E.getOperand().getSpan(),
                               std::format("expected type `bool`, got type {}",
                                           toString(OperandT)))
-          .emit(*DiagMan);
+          .emit(*Diags);
 
       return TypeCtx::getErr(E.getSpan());
     }
@@ -333,7 +333,7 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
               E.getSpan(), std::format("expected {} generic arguments, got {}",
                                        E.getDecl()->getTypeArgs().size(),
                                        E.getTypeArgs().size()))
-          .emit(*DiagMan);
+          .emit(*Diags);
     } else {
       for (auto [Explicit, GenericParam] :
            llvm::zip(E.getTypeArgs(), E.getDecl()->getTypeArgs())) {
@@ -360,7 +360,7 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
                                     std::format("expected `{}`, got `{}`",
                                                 toString(Declared),
                                                 toString(Got)))
-                .emit(*DiagMan);
+                .emit(*Diags);
             Errored = true;
           }
         })
@@ -375,7 +375,7 @@ TypeRef TypeInferencer::visit(AdtInit &E) {
                                       std::format("expected `{}`, got `{}`",
                                                   toString(Declared),
                                                   toString(Got)))
-                  .emit(*DiagMan);
+                  .emit(*Diags);
               Errored = true;
             }
           }
@@ -420,7 +420,7 @@ TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
         .with_primary_label(
             E.getBase()->getSpan(),
             std::format("type `{}` has no fields", toString(UnderlyingBaseT)))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -436,7 +436,7 @@ TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
     error("Cannot access field on unknown type")
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("unknown ADT `{}`", Adt->getId()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -445,7 +445,7 @@ TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
     error("Cannot perform field access on enums")
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("this is an enum `{}`", Adt->getId()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -456,7 +456,7 @@ TypeRef TypeInferencer::visit(FieldAccessExpr &E) {
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("type `{}` has no field `{}`",
                                         Adt->getId(), E.getFieldId()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
   E.setField(Field);
@@ -490,7 +490,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
         .with_primary_label(
             E.getBase()->getSpan(),
             std::format("type `{}` has no methods", toString(UnderlyingBaseT)))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -507,7 +507,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
     error("Cannot call method on unknown type")
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("unknown ADT `{}`", Adt->getId()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -518,7 +518,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
         .with_primary_label(
             E.getBase()->getSpan(),
             std::format("type `{}` has no method `{}`", Adt->getId(), Id))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
   E.setMethod(Method);
@@ -544,7 +544,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
               E.getSpan(),
               std::format("expected {} generic arguments, got {}",
                           Method->getTypeArgs().size(), E.getTypeArgs().size()))
-          .emit(*DiagMan);
+          .emit(*Diags);
     } else {
       for (auto [Explicit, GenericParam] :
            llvm::zip(E.getTypeArgs(), Method->getTypeArgs())) {
@@ -569,7 +569,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("expected {} argument(s), got {}",
                                         Params.size(), E.getArgs().size() + 1))
-        .emit(*DiagMan);
+        .emit(*Diags);
     Errored = true;
   } else {
     Unifier.unify(BaseNoIndir, Params.front()->getType().removeIndir());
@@ -585,7 +585,7 @@ TypeRef TypeInferencer::visit(MethodCallExpr &E) {
             .with_primary_label(Arg->getSpan(),
                                 std::format("expected type `{}` but got `{}`",
                                             toString(ParamT), toString(ArgT)))
-            .emit(*DiagMan);
+            .emit(*Diags);
         Errored = true;
       }
     }
@@ -671,7 +671,7 @@ TypeRef TypeInferencer::visit(TupleIndex &E) {
         .with_primary_label(
             E.getIndex()->getSpan(),
             std::format("expected integer type, found `{}`", toString(IndexT)))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -682,7 +682,7 @@ TypeRef TypeInferencer::visit(TupleIndex &E) {
     error("Tuple index must be an integer literal")
         .with_primary_label(E.getIndex()->getSpan(),
                             "expected compile-time constant")
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -702,7 +702,7 @@ TypeRef TypeInferencer::visit(TupleIndex &E) {
           .with_primary_label(
               E.getBase()->getSpan(),
               std::format("tuple has type `{}`", toString(BaseT)))
-          .emit(*DiagMan);
+          .emit(*Diags);
       return TypeCtx::getErr(E.getSpan());
     }
 
@@ -717,7 +717,7 @@ TypeRef TypeInferencer::visit(TupleIndex &E) {
       .with_primary_label(
           E.getBase()->getSpan(),
           std::format("type `{}` cannot be indexed", toString(BaseT)))
-      .emit(*DiagMan);
+      .emit(*Diags);
 
   E.setType(TypeCtx::getErr(E.getSpan()));
   return TypeCtx::getErr(E.getSpan());
@@ -734,7 +734,7 @@ TypeRef TypeInferencer::visit(ArrayIndex &E) {
         .with_primary_label(
             E.getIndex()->getSpan(),
             std::format("expected integer type, found `{}`", toString(IndexT)))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return TypeCtx::getErr(E.getSpan());
   }
 
@@ -749,7 +749,7 @@ TypeRef TypeInferencer::visit(ArrayIndex &E) {
       .with_primary_label(
           E.getBase()->getSpan(),
           std::format("type `{}` cannot be indexed", toString(BaseT)))
-      .emit(*DiagMan);
+      .emit(*Diags);
   return TypeCtx::getErr(E.getSpan());
 }
 

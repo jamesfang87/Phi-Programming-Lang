@@ -5,6 +5,7 @@
 #include <llvm/ADT/TypeSwitch.h>
 
 #include <iostream>
+#include <print>
 
 namespace phi {
 
@@ -17,6 +18,7 @@ bool NameResolver::visit(TypeRef T) {
       .Case<AdtTy>([&](auto *Adt) {
         auto *Decl = SymbolTab.lookup(Adt->getId());
         if (!Decl) {
+          std::println("this");
           emitTypeNotFound(Adt->getId(), T.getSpan().Start);
           return false;
         }
@@ -36,7 +38,7 @@ bool NameResolver::visit(TypeRef T) {
           return true;
         }
 
-        std::cerr << "Generic type fall back to lookup";
+        std::cout << "Generic type fall back to lookup";
         auto *Decl = SymbolTab.lookupTypeArg(Generic->getId());
         if (!Decl) {
           emitTypeNotFound(Generic->getId(), T.getSpan().Start);

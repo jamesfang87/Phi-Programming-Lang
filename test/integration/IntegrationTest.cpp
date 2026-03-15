@@ -1,12 +1,11 @@
 #include <gtest/gtest.h>
 
+#include "AST/Nodes/Decl.hpp"
+#include "CodeGen/LLVMCodeGen.hpp"
 #include "Diagnostics/DiagnosticManager.hpp"
 #include "Lexer/Lexer.hpp"
 #include "Parser/Parser.hpp"
 #include "Sema/Sema.hpp"
-#include "CodeGen/LLVMCodeGen.hpp"
-
-#include "AST/Nodes/Decl.hpp"
 
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
@@ -78,9 +77,7 @@ static bool fullPipeline(const std::string &Src) {
 // Simple Programs (full pipeline with codegen)
 //===----------------------------------------------------------------------===//
 
-TEST(Integration, EmptyMain) {
-  EXPECT_TRUE(fullPipeline("fun main() {}"));
-}
+TEST(Integration, EmptyMain) { EXPECT_TRUE(fullPipeline("fun main() {}")); }
 
 TEST(Integration, ReturnValue) {
   EXPECT_TRUE(fullPipeline(R"(
@@ -361,6 +358,112 @@ TEST(Integration, TupleIndex) {
     fun main() -> i32 {
       const t = (10, 20, 30);
       return t.0 + t.1 + t.2;
+    }
+  )"));
+}
+
+//===----------------------------------------------------------------------===//
+// Variable Destructuring
+//===----------------------------------------------------------------------===//
+
+TEST(Integration, TupleDestructureBasic) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() {
+      const (a, b) = (1, 2);
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureTriple) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() {
+      const (a, b, c) = (1, 2, 3);
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureUseValues) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i32 {
+      const (a, b) = (10, 20);
+      return a + b;
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureFromFunction) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun swap(const a: i32, const b: i32) -> (i32, i32) {
+      return (b, a);
+    }
+
+    fun main() -> i32 {
+      const (x, y) = swap(1, 2);
+      return x + y;
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureMutable) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i32 {
+      var (a, b) = (1, 2);
+      a = a + 10;
+      b = b + 20;
+      return a + b;
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureWithTypeAnnotation) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i32 {
+      const (a: i32, b: i32) = (10, 20);
+      return a + b;
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureNested) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i32 {
+      const (a, b) = (1, (2, 3));
+      return a + b.0 + b.1;
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureMixedTypes) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() {
+      const (x, y, z) = (42, 3.14, true);
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureChained) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i32 {
+      const (a, b) = (1, 2);
+      const (c, d) = (a + b, a * b);
+      return c + d;
+    }
+  )"));
+}
+
+// Error cases
+TEST(Integration, TupleDestructureWrongArity) {
+  EXPECT_FALSE(frontendOk(R"(
+    fun main() {
+      const (a, b, c) = (1, 2);
+    }
+  )"));
+}
+
+TEST(Integration, TupleDestructureNonTuple) {
+  EXPECT_FALSE(frontendOk(R"(
+    fun main() {
+      const (a, b) = 42;
     }
   )"));
 }

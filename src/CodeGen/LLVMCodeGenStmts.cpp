@@ -45,8 +45,8 @@ void CodeGen::desugarBlock(Block *B) {
 
 void CodeGen::desugarStmt(Stmt *S) {
   if (auto *DS = llvm::dyn_cast<DeclStmt>(S)) {
-    if (DS->getDecl().hasInit()) {
-      desugarExpr(&DS->getDecl().getInit());
+    if (DS->hasInit()) {
+      desugarExpr(&DS->getInit());
     }
   } else if (auto *RS = llvm::dyn_cast<ReturnStmt>(S)) {
     if (RS->hasExpr()) {
@@ -146,19 +146,33 @@ void CodeGen::codegenStmt(Stmt *S) {
 }
 
 void CodeGen::codegenDeclStmt(DeclStmt *S) {
-  auto &Decl = S->getDecl();
-  llvm::Type *Ty = getLLVMType(Decl.getType());
+  auto &Decls = S->getDecls();
+  bool IsDestructure = Decls.size() > 1;
 
-  auto *Alloca = createEntryBlockAlloca(CurrentFunction, Decl.getId(), Ty);
-  NamedValues[&Decl] = Alloca;
+  // Codegen the initializer once (shared across all vars)
+  llvm::Value *InitVal = nullptr;
+  if (S->hasInit()) {
+    InitVal = codegenExpr(&S->getInit());
+  }
 
-  if (Decl.hasInit()) {
-    llvm::Value *InitVal = codegenExpr(&Decl.getInit());    
-    if (InitVal->getType() != Alloca->getAllocatedType()) {
+  for (unsigned I = 0; I < Decls.size(); ++I) {
+    auto &Decl = *Decls[I];
+    llvm::Type *Ty = getLLVMType(Decl.getType());
+
+    auto *Alloca = createEntryBlockAlloca(CurrentFunction, Decl.getId(), Ty);
+    NamedValues[&Decl] = Alloca;
+
+    if (InitVal) {
+      llvm::Value *Val = IsDestructure
+          ? Builder.CreateExtractValue(InitVal, I)
+          : InitVal;
+
+      if (Val->getType() != Alloca->getAllocatedType()) {
         llvm::errs() << "TYPE MISMATCH IN STORE!\n";
-    }
+      }
 
-    Builder.CreateStore(InitVal, Alloca);
+      Builder.CreateStore(Val, Alloca);
+    }
   }
 }
 
@@ -275,7 +289,8 @@ void CodeGen::codegenForStmt(ForStmt *S) {
     // Increment
     Builder.SetInsertPoint(IncBB);
     Current = Builder.CreateLoad(Ty, LoopVarAlloca);
-    llvm::Value *Next = Builder.CreateAdd(Current, llvm::ConstantInt::get(Ty, 1), "inc");
+    llvm::Value *Next =
+        Builder.CreateAdd(Current, llvm::ConstantInt::get(Ty, 1), "inc");
     Builder.CreateStore(Next, LoopVarAlloca);
     Builder.CreateBr(CondBB);
   } else {

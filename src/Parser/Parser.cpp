@@ -50,9 +50,9 @@ std::unique_ptr<ModuleDecl> Parser::parse() {
   if (atEOF()) {
     std::vector<std::unique_ptr<ImportStmt>> NoImports;
     std::vector<std::unique_ptr<UseStmt>> NoUses;
-    return std::make_unique<ModuleDecl>(Span, Visibility::Public,
-                                        std::move(PathStr), std::move(Path),
-                                        std::move(Ast), std::move(NoImports), std::move(NoUses));
+    return std::make_unique<ModuleDecl>(
+        Span, Visibility::Public, std::move(PathStr), std::move(Path),
+        std::move(Ast), std::move(NoImports), std::move(NoUses));
   }
 
   // otherwise, we check to see if the first token is a module decl.
@@ -113,9 +113,9 @@ std::unique_ptr<ModuleDecl> Parser::parse() {
       syncToTopLvl(); // Error recovery
   }
 
-  return std::make_unique<ModuleDecl>(Span, Visibility::Public,
-                                      std::move(PathStr), std::move(Path),
-                                      std::move(Ast), std::move(Imports), std::move(Uses));
+  return std::make_unique<ModuleDecl>(
+      Span, Visibility::Public, std::move(PathStr), std::move(Path),
+      std::move(Ast), std::move(Imports), std::move(Uses));
 }
 
 } // namespace phi

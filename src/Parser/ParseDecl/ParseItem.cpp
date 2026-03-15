@@ -41,12 +41,13 @@ Parser::parseTypeArgDecls() {
   auto Res = parseList<TypeArgDecl>(
       TokenKind::OpenCaret, TokenKind::CloseCaret,
       [&] -> std::unique_ptr<TypeArgDecl> {
-        if (!expectToken(TokenKind::Identifier, "type argument", false)) {
+        auto Tok = expectToken(TokenKind::Identifier, "type argument");
+        if (!Tok) {
           return nullptr;
         }
 
-        auto Span = peekToken().getSpan();
-        auto Id = advanceToken().getLexeme();
+        auto Span = Tok->getSpan();
+        auto Id = Tok->getLexeme();
         return std::make_unique<TypeArgDecl>(Span, Id);
       });
   if (!Res)

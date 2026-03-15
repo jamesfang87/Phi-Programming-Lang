@@ -351,14 +351,17 @@ public:
   // Constructors & Destructors
   //===--------------------------------------------------------------------===//
 
-  DeclStmt(SrcLocation Location, std::unique_ptr<VarDecl> Var);
+  DeclStmt(SrcLocation Location, std::vector<std::unique_ptr<VarDecl>> Vars,
+           std::unique_ptr<Expr> Init);
   ~DeclStmt() override;
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
 
-  [[nodiscard]] VarDecl &getDecl() const { return *Var; }
+  [[nodiscard]] auto &getDecls() const { return Vars; }
+  [[nodiscard]] auto &getInit() const { return *Init; }
+  [[nodiscard]] bool hasInit() const { return Init != nullptr; }
 
   //===--------------------------------------------------------------------===//
   // LLVM-style RTTI
@@ -375,7 +378,8 @@ public:
   void emit(int Level) const override;
 
 private:
-  std::unique_ptr<VarDecl> Var;
+  std::vector<std::unique_ptr<VarDecl>> Vars;
+  std::unique_ptr<Expr> Init;
 };
 
 class ExprStmt final : public Stmt {

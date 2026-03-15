@@ -164,17 +164,24 @@ void ForStmt::emit(int Level) const {
 // DeclStmt Implementation
 //===----------------------------------------------------------------------===//
 
-DeclStmt::DeclStmt(SrcLocation Location, std::unique_ptr<VarDecl> Var)
-    : Stmt(Stmt::Kind::DeclStmtKind, std::move(Location)), Var(std::move(Var)) {
-}
+DeclStmt::DeclStmt(SrcLocation Location,
+                   std::vector<std::unique_ptr<VarDecl>> Var,
+                   std::unique_ptr<Expr> Init)
+    : Stmt(Stmt::Kind::DeclStmtKind, std::move(Location)), Vars(std::move(Var)),
+      Init(std::move(Init)) {}
 
 DeclStmt::~DeclStmt() = default;
 
 // Utility Methods
 void DeclStmt::emit(int Level) const {
   std::println("{}DeclStmt", indent(Level));
-  if (Var)
-    Var->emit(Level + 1);
+  for (auto &Var : Vars) {
+    if (Var)
+      Var->emit(Level + 1);
+  }
+
+  if (Init)
+    Init->emit(Level + 1);
 }
 
 //===----------------------------------------------------------------------===//

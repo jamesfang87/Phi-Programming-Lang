@@ -55,21 +55,15 @@ void ParamDecl::emit(int Level) const {
 //===----------------------------------------------------------------------===//
 
 VarDecl::VarDecl(SrcSpan Span, Mutability M, std::string Id,
-                 std::optional<TypeRef> DeclType, std::unique_ptr<Expr> Init)
+                 std::optional<TypeRef> DeclType)
     : LocalDecl(Kind::Var, Span, std::move(Id),
-                DeclType.value_or(TypeCtx::getVar(VarTy::Any, Span))),
-      Init(std::move(Init)) {
+                DeclType.value_or(TypeCtx::getVar(VarTy::Any, Span))) {
   TheMutability = M;
 }
 
 void VarDecl::emit(int Level) const {
   std::println("{}VarDecl: {} ({} : {})", indent(Level), getId(),
                toString(TheMutability), Type.toString());
-
-  if (Init) {
-    std::println("{}Initializer:", indent(Level + 1));
-    Init->emit(Level + 2);
-  }
 }
 
 //===----------------------------------------------------------------------===//

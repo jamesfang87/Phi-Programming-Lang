@@ -54,7 +54,6 @@ bool NameResolver::resolveHeader(AdtDecl &D) {
     emitRedefinitionError("Custom type", SymbolTab.lookup(D), &D);
     return false;
   }
-  assert(SymbolTab.lookup(D));
 
   visit(D.getType());
   return true;
@@ -134,8 +133,7 @@ bool NameResolver::visit(StructDecl *D) {
 
   SymbolTable::ScopeGuard StructScope(SymbolTab);
 
-  bool Success = visit(D->getType());
-
+  bool Success = true;
   for (const auto &TypeArg : D->getTypeArgs()) {
     if (!SymbolTab.insert(TypeArg.get())) {
       error(std::format("Redefinition of type argument `{}`", TypeArg->getId()))
@@ -144,6 +142,8 @@ bool NameResolver::visit(StructDecl *D) {
       Success = false;
     }
   }
+
+  Success = visit(D->getType()) && Success;
 
   for (auto &Field : D->getFields()) {
     if (!SymbolTab.insert(Field.get())) {
@@ -183,8 +183,7 @@ bool NameResolver::visit(EnumDecl *D) {
 
   SymbolTable::ScopeGuard EnumScope(SymbolTab);
 
-  bool Success = visit(D->getType());
-
+  bool Success = true;
   for (const auto &TypeArg : D->getTypeArgs()) {
     if (!SymbolTab.insert(TypeArg.get())) {
       error(std::format("Redefinition of type argument `{}`", TypeArg->getId()))
@@ -193,6 +192,8 @@ bool NameResolver::visit(EnumDecl *D) {
       Success = false;
     }
   }
+
+  Success = visit(D->getType()) && Success;
 
   for (auto &Variant : D->getVariants()) {
     if (!SymbolTab.insert(Variant.get())) {

@@ -70,7 +70,8 @@ TEST(Parser, SimpleFunctionDecl) {
 }
 
 TEST(Parser, FunctionWithParams) {
-  auto Mod = parseOk("fun add(const a: i32, const b: i32) -> i32 { return a + b; }");
+  auto Mod =
+      parseOk("fun add(const a: i32, const b: i32) -> i32 { return a + b; }");
   ASSERT_NE(Mod, nullptr);
   ASSERT_EQ(Mod->getItems().size(), 1u);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
@@ -118,8 +119,8 @@ TEST(Parser, ConstDecl) {
   ASSERT_EQ(Fun->getBody().getStmts().size(), 1u);
   auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
   ASSERT_NE(DS, nullptr);
-  EXPECT_EQ(DS->getDecl().getId(), "x");
-  EXPECT_TRUE(DS->getDecl().isConst());
+  EXPECT_EQ(DS->getDecls()[0]->getId(), "x");
+  EXPECT_TRUE(DS->getDecls()[0]->isConst());
 }
 
 TEST(Parser, VarDeclWithType) {
@@ -129,8 +130,8 @@ TEST(Parser, VarDeclWithType) {
   ASSERT_NE(Fun, nullptr);
   auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
   ASSERT_NE(DS, nullptr);
-  EXPECT_EQ(DS->getDecl().getId(), "y");
-  EXPECT_FALSE(DS->getDecl().isConst());
+  EXPECT_EQ(DS->getDecls()[0]->getId(), "y");
+  EXPECT_FALSE(DS->getDecls()[0]->isConst());
 }
 
 //===----------------------------------------------------------------------===//
@@ -381,7 +382,7 @@ TEST(Parser, BinaryExprPrecedence) {
   ASSERT_NE(Fun, nullptr);
   auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
   ASSERT_NE(DS, nullptr);
-  auto *Init = llvm::dyn_cast<BinaryOp>(&DS->getDecl().getInit());
+  auto *Init = llvm::dyn_cast<BinaryOp>(&DS->getInit());
   ASSERT_NE(Init, nullptr);
   // Top-level should be Plus
   EXPECT_EQ(Init->getOp().Value, TokenKind::Plus);
@@ -397,7 +398,7 @@ TEST(Parser, GroupingExpression) {
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
   auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Init = llvm::dyn_cast<BinaryOp>(&DS->getDecl().getInit());
+  auto *Init = llvm::dyn_cast<BinaryOp>(&DS->getInit());
   ASSERT_NE(Init, nullptr);
   // Top-level should be Star
   EXPECT_EQ(Init->getOp().Value, TokenKind::Star);
@@ -409,7 +410,7 @@ TEST(Parser, UnaryExpression) {
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
   ASSERT_NE(Fun, nullptr);
   auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Init = llvm::dyn_cast<UnaryOp>(&DS->getDecl().getInit());
+  auto *Init = llvm::dyn_cast<UnaryOp>(&DS->getInit());
   ASSERT_NE(Init, nullptr);
 }
 
@@ -422,7 +423,7 @@ TEST(Parser, TupleLiteral) {
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
   auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Init = llvm::dyn_cast<TupleLiteral>(&DS->getDecl().getInit());
+  auto *Init = llvm::dyn_cast<TupleLiteral>(&DS->getInit());
   ASSERT_NE(Init, nullptr);
   EXPECT_EQ(Init->getElements().size(), 3u);
 }
@@ -432,7 +433,7 @@ TEST(Parser, ArrayLiteral) {
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
   auto *DS = llvm::dyn_cast<DeclStmt>(Fun->getBody().getStmts()[0].get());
-  auto *Init = llvm::dyn_cast<ArrayLiteral>(&DS->getDecl().getInit());
+  auto *Init = llvm::dyn_cast<ArrayLiteral>(&DS->getInit());
   ASSERT_NE(Init, nullptr);
   EXPECT_EQ(Init->getElements().size(), 3u);
 }
@@ -459,7 +460,8 @@ TEST(Parser, MatchExpression) {
 }
 
 TEST(Parser, StructInit) {
-  auto Mod = parseOk("struct Point { public x: f64, public y: f64 }\n    fun main() { const p = Point { x : 1.0, y : 2.0 }; }");
+  auto Mod = parseOk("struct Point { public x: f64, public y: f64 }\n    fun "
+                     "main() { const p = Point { x : 1.0, y : 2.0 }; }");
   ASSERT_NE(Mod, nullptr);
 }
 
@@ -512,7 +514,8 @@ TEST(Parser, NestedArrayType) {
 }
 
 TEST(Parser, NestedTupleType) {
-  auto Mod = parseOk("fun foo() -> (i32, (f64, bool)) { return (1, (2.0, true)); }");
+  auto Mod =
+      parseOk("fun foo() -> (i32, (f64, bool)) { return (1, (2.0, true)); }");
   ASSERT_NE(Mod, nullptr);
   auto *Fun = llvm::dyn_cast<FunDecl>(Mod->getItems()[0].get());
   ASSERT_NE(Fun, nullptr);
@@ -569,10 +572,6 @@ TEST(Parser, MissingSemicolon) {
   parseError("fun main() { const x = 5 }");
 }
 
-TEST(Parser, UnclosedBrace) {
-  parseError("fun main() {");
-}
+TEST(Parser, UnclosedBrace) { parseError("fun main() {"); }
 
-TEST(Parser, InvalidTopLevel) {
-  parseError("42;");
-}
+TEST(Parser, InvalidTopLevel) { parseError("42;"); }

@@ -216,14 +216,12 @@ public:
   // Constructors
   //===--------------------------------------------------------------------===//
   VarDecl(SrcSpan Span, Mutability TheMutability, std::string Id,
-          std::optional<TypeRef> Type, std::unique_ptr<Expr> Init);
+          std::optional<TypeRef> Type);
 
   //===--------------------------------------------------------------------===//
   // Getters
   //===--------------------------------------------------------------------===//
   [[nodiscard]] auto hasType() const { return !Type.isVar(); }
-  [[nodiscard]] auto hasInit() const { return Init != nullptr; }
-  [[nodiscard]] auto &getInit() const { return *Init; }
 
   //===--------------------------------------------------------------------===//
   // Getters
@@ -243,9 +241,6 @@ public:
   // Utility Methods
   //===--------------------------------------------------------------------===//
   void emit(int Level) const override;
-
-private:
-  std::unique_ptr<Expr> Init;
 };
 
 //===----------------------------------------------------------------------===//
