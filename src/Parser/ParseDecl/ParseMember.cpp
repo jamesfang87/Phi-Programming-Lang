@@ -96,8 +96,9 @@ std::unique_ptr<FieldDecl> Parser::parseFieldDecl(uint32_t FieldIndex,
     return nullptr;
 
   auto &[Span, Id, Type, Init] = *Field;
+  assert(Id.size() > 0 && Type.size() > 0); // make sure that we can index
   if (matchToken(TokenKind::Comma) || peekKind() == TokenKind::CloseBrace) {
-    return std::make_unique<FieldDecl>(Span, FieldIndex, Vis, Id, *Type,
+    return std::make_unique<FieldDecl>(Span, FieldIndex, Vis, Id[0], *Type[0],
                                        std::move(Init));
   }
 
@@ -119,9 +120,10 @@ std::unique_ptr<StructDecl> Parser::parseAnonymousStruct() {
         if (!Field)
           return nullptr;
 
-        auto &[Span, Name, Type, _] = *Field;
+        auto &[Span, Id, Type, _] = *Field;
+        assert(Id.size() > 0 && Type.size() > 0); // make sure that we can index
         return std::make_unique<FieldDecl>(
-            Span, FieldIndex++, Visibility::Public, Name, *Type, nullptr);
+            Span, FieldIndex++, Visibility::Public, Id[0], *Type[0], nullptr);
       });
   SrcLocation End = peekToken(-1).getEnd();
 

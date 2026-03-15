@@ -71,19 +71,21 @@ std::optional<Token> Parser::unconsume() {
  * Only advances on match if Advance = true (by default). Emits detailed error
  * on mismatch.
  */
-bool Parser::expectToken(TokenKind::Kind Expected, const std::string &Context,
-                         bool Advance) {
+std::optional<Token> Parser::expectToken(TokenKind::Kind Expected,
+                                         const std::string &Context,
+                                         bool Advance) {
   auto Str = TokenKind(Expected).toString();
   if (peekToken().getKind() != Expected) {
     const std::string Msg = Context.empty() ? "" : " in " + Context;
     emitExpectedFoundError(Str + Msg, peekToken());
-    return false;
+    return std::nullopt;
   }
 
   if (Advance) {
-    advanceToken();
+    return advanceToken();
+  } else {
+    return std::nullopt;
   }
-  return true;
 }
 
 /**

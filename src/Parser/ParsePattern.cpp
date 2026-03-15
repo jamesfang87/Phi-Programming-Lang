@@ -50,8 +50,7 @@ optional<Pattern> Parser::parseSingularPattern() {
 }
 
 optional<Pattern> Parser::parseWildcardPattern() {
-  assert(peekKind() == TokenKind::Wildcard);
-  advanceToken();
+  advanceToken(); // consume wildcard token
 
   std::optional<Pattern> Result;
   Result.emplace(std::in_place_type<PatternAtomics::Wildcard>);
@@ -102,11 +101,13 @@ optional<Pattern> Parser::parseLiteralPattern() {
 optional<Pattern> Parser::parseVariantPattern() {
   assert(advanceToken().getKind() == TokenKind::Period);
 
-  if (!expectToken(TokenKind::Identifier, "variant pattern", false)) {
+  auto Tok = expectToken(TokenKind::Identifier);
+  if (!Tok) {
     return std::nullopt;
   }
-  const SrcLocation Loc = peekToken().getStart();
-  const std::string Name = advanceToken().getLexeme();
+
+  const SrcLocation Loc = Tok->getStart();
+  const std::string Name = Tok->getLexeme();
 
   std::optional<std::vector<std::unique_ptr<VarDecl>>> Vars;
   if (peekKind() != TokenKind::OpenParen) {
@@ -116,10 +117,9 @@ optional<Pattern> Parser::parseVariantPattern() {
   Vars = parseList<VarDecl>(
       TokenKind::OpenParen, TokenKind::CloseParen,
       [&] -> std::unique_ptr<VarDecl> {
-        if (expectToken(TokenKind::Identifier, "", false)) {
-          return std::make_unique<VarDecl>(
-              peekToken().getSpan(), Mutability::Var,
-              advanceToken().getLexeme(), std::nullopt, nullptr);
+        if (auto Tok = expectToken(TokenKind::Identifier)) {
+          return std::make_unique<VarDecl>(Tok->getSpan(), Mutability::Var,
+                                           Tok->getLexeme(), std::nullopt);
         }
         return nullptr;
       });

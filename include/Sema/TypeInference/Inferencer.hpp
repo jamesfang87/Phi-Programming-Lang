@@ -19,7 +19,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   TypeInferencer(std::vector<ModuleDecl *> Modules, DiagnosticManager *DiagMan)
-      : Modules(std::move(Modules)), DiagMan(DiagMan) {}
+      : Modules(std::move(Modules)), Diags(DiagMan) {}
 
   //===--------------------------------------------------------------------===//
   // Main Entry Point
@@ -93,7 +93,7 @@ public:
 
 private:
   std::vector<ModuleDecl *> Modules;
-  DiagnosticManager *DiagMan;
+  DiagnosticManager *Diags;
   std::variant<FunDecl *, MethodDecl *, std::monostate> CurrentFun =
       std::monostate();
 

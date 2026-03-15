@@ -1,17 +1,18 @@
-#include "AST/Nodes/Stmt.hpp"
-#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Parser/Parser.hpp"
 
 #include <cassert>
 #include <experimental/scope>
 #include <format>
+#include <llvm-18/llvm/ADT/STLExtras.h>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "AST/Nodes/Decl.hpp"
+#include "AST/Nodes/Stmt.hpp"
 #include "AST/TypeSystem/Type.hpp"
+#include "Diagnostics/DiagnosticBuilder.hpp"
 #include "Lexer/TokenKind.hpp"
 #include "SrcManager/SrcSpan.hpp"
 
@@ -276,7 +277,7 @@ std::unique_ptr<ForStmt> Parser::parseForStmt() {
     // Create loop variable declaration
     LoopVarDecl = std::make_unique<VarDecl>(
         LoopVar.getSpan(), Mutability::Var, LoopVar.getLexeme(),
-        TypeCtx::getVar(VarTy::Domain::Int, LoopVar.getSpan()), nullptr);
+        TypeCtx::getVar(VarTy::Domain::Int, LoopVar.getSpan()));
   } // scope_exit destructs here, setting NoAdtInit = false
 
   // Parse loop body (NoAdtInit is now false)
@@ -310,16 +311,24 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
     return nullptr;
 
   auto Var = parseBinding(
-      {.Type = Optional, .Init = Optional, .AllowPlaceholderForType = true});
+      {.Type = Optional, .Init = Optional, .AllowDestructuring = true,
+       .AllowPlaceholderForType = true});
   if (!Var)
     return nullptr;
 
   expectToken(TokenKind::Semicolon);
 
-  auto &[Span, Id, Type, Init] = *Var;
-  return std::make_unique<DeclStmt>(
-      StartLoc,
-      std::make_unique<VarDecl>(Span, *Mutability, Id, Type, std::move(Init)));
+  auto &[Span, Ids, Types, Init] = *Var;
+  assert(Ids.size() > 0 && Types.size() > 0);
+  assert(Ids.size() == Types.size());
+
+  std::vector<std::unique_ptr<VarDecl>> Vars;
+  Vars.reserve(Ids.size());
+  for (auto [Id, Type] : llvm::zip(Ids, Types)) {
+    Vars.emplace_back(std::make_unique<VarDecl>(Span, *Mutability, Id, Type));
+  }
+
+  return std::make_unique<DeclStmt>(StartLoc, std::move(Vars), std::move(Init));
 }
 
 std::unique_ptr<BreakStmt> Parser::parseBreakStmt() {

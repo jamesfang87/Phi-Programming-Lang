@@ -99,11 +99,11 @@ std::unique_ptr<Expr> Parser::parseNud(const Token &Tok) {
       QualId += "::";
 
       // otherwise, we expect an Identifier
-      if (!expectToken(TokenKind(TokenKind::Identifier), "Module path",
-                       false)) {
+      auto Tok = expectToken(TokenKind::Identifier, "Module path");
+      if (!Tok) {
         return nullptr;
       }
-      QualId += advanceToken().getLexeme();
+      QualId += Tok->getLexeme();
     }
 
     return std::make_unique<DeclRefExpr>(Location, QualId);

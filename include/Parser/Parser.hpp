@@ -67,8 +67,9 @@ private:
   std::optional<Token> unconsume();
   Token advanceToken();
   bool matchToken(TokenKind::Kind Kind);
-  bool expectToken(TokenKind::Kind Expected, const std::string &Context = "",
-                   bool Advance = true);
+  std::optional<Token> expectToken(TokenKind::Kind Expected,
+                                   const std::string &Context = "",
+                                   bool Advance = true);
 
   //===--------------------------------------------------------------------===//
   // Diagnostic Reporting
@@ -203,8 +204,8 @@ private:
 
   struct TypedBinding {
     SrcSpan Span;
-    std::string Name;
-    std::optional<TypeRef> Type;
+    std::vector<std::string> Names;
+    std::vector<std::optional<TypeRef>> Type;
     std::unique_ptr<Expr> Init;
   };
 
@@ -212,9 +213,11 @@ private:
   struct BindingPolicy {
     Policy Type = Parser::Policy::Optional;
     Policy Init = Parser::Policy::Optional;
+    bool AllowDestructuring = false;
     bool AllowPlaceholderForType = false;
   };
 
+  std::optional<TypeRef> parseOptTypeAnnotation(const BindingPolicy &Policy);
   std::optional<TypedBinding> parseBinding(const BindingPolicy &Policy);
 
   /**

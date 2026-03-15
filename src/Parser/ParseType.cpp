@@ -131,8 +131,11 @@ std::optional<TypeRef> Parser::parseTypeBase(bool AllowPlaceholder) {
     return std::nullopt;
   }
 
+  std::println("{}", peekToken().toString());
   if (advanceToken().getKind() == TokenKind::Identifier) {
+    std::println("this runs");
     for (const auto &Gen : ValidGenerics) {
+      Gen->emit(0);
       if (Gen->getId() == Id) {
         return TypeCtx::getGeneric(Gen->getId(), Gen, Span);
       }

@@ -25,11 +25,12 @@ std::unique_ptr<AdtInit> Parser::parseAdtInit(std::unique_ptr<Expr> InitExpr,
 }
 
 std::unique_ptr<MemberInit> Parser::parseMemberInit() {
-  if (!expectToken(TokenKind::Identifier, "Member Init", false)) {
+  auto Tok = expectToken(TokenKind::Identifier, "member init");
+  if (!Tok) {
     return nullptr;
   }
-  SrcLocation Loc = peekToken().getStart();
-  std::string FieldId = advanceToken().getLexeme();
+  SrcLocation Loc = Tok->getStart();
+  std::string FieldId = Tok->getLexeme();
 
   // MemberInitExprs can be for data-less enum variants, so an equal sign
   // is not required, as it would be if they were only representing fields
