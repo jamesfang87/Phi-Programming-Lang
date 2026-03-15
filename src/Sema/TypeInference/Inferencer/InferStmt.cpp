@@ -1,5 +1,7 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
+#include <cassert>
+#include <llvm-18/llvm/ADT/STLExtras.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
 #include <print>
@@ -38,15 +40,15 @@ void TypeInferencer::visit(ReturnStmt &S) {
           auto Res = Unifier.unify(Fun->getReturnType(), ExprT);
           if (!Res) {
             error("Mismatched return type")
-                .with_primary_label(
-                    S.getExpr().getSpan(),
-                    std::format("expected `{}`, got `{}`",
-                                toString(Fun->getReturnType()), toString(ExprT)))
+                .with_primary_label(S.getExpr().getSpan(),
+                                    std::format("expected `{}`, got `{}`",
+                                                toString(Fun->getReturnType()),
+                                                toString(ExprT)))
                 .with_secondary_label(
                     Fun->getReturnType().getSpan(),
                     std::format("expected `{}` because of this",
                                 toString(Fun->getReturnType())))
-                .emit(*DiagMan);
+                .emit(*Diags);
           }
         }
       },
@@ -70,7 +72,7 @@ void TypeInferencer::visit(ForStmt &S) {
       error("Mismatched types")
           .with_primary_label(S.getLoopVar().getSpan(), "Here")
           .with_secondary_label(S.getRange().getSpan(), "Here")
-          .emit(*DiagMan);
+          .emit(*Diags);
     }
   }
 
@@ -87,7 +89,7 @@ void TypeInferencer::visit(WhileStmt &S) {
         .with_primary_label(S.getCond().getSpan(),
                             std::format("expected type `bool`, got type {}",
                                         toString(S.getCond().getType())))
-        .emit(*DiagMan);
+        .emit(*Diags);
   }
 
   visit(S.getBody());
@@ -102,7 +104,7 @@ void TypeInferencer::visit(IfStmt &S) {
         .with_primary_label(
             S.getCond().getSpan(),
             std::format("expected type `bool`, got type {}", toString(CondT)))
-        .emit(*DiagMan);
+        .emit(*Diags);
   }
 
   visit(S.getThen());
@@ -112,7 +114,60 @@ void TypeInferencer::visit(IfStmt &S) {
   }
 }
 
-void TypeInferencer::visit(DeclStmt &S) { visit(S.getDecl()); }
+void TypeInferencer::visit(DeclStmt &S) {
+  assert(S.getDecls().size() > 0);
+
+  if (!S.hasInit()) {
+    return;
+  }
+
+  visit(S.getInit());
+  auto InitT = Unifier.resolve(S.getInit().getType());
+  if (S.getDecls().size() > 1 && !InitT.isTuple()) {
+    error("cannot destructure non-tuple type")
+        .with_primary_label(
+            S.getInit().getSpan(),
+            std::format("expected this to be a tuple type, not {}",
+                        toString(S.getInit().getType())))
+        .emit(*Diags);
+    return;
+  }
+
+  if (S.getDecls().size() > 1) {
+    auto Tuple = llvm::dyn_cast<TupleTy>(InitT.getPtr());
+    if (Tuple->getElementTys().size() != S.getDecls().size()) {
+      error("incorret arity between destructing variables and tuple type")
+          .with_primary_label(
+              S.getInit().getSpan(),
+              std::format(
+                  "expected this to be a tuple type of arity {}, not {}",
+                  S.getDecls().size(), Tuple->getElementTys().size()))
+          .emit(*Diags);
+      return;
+    }
+  }
+
+  for (auto [i, D] : llvm::enumerate(S.getDecls())) {
+    auto T = instantiate(D.get());
+    auto InitT = S.getInit().getType();
+    if (S.getDecls().size() > 1) {
+      InitT = llvm::dyn_cast<TupleTy>(InitT.getPtr())->getElementTys()[i];
+    }
+
+    auto Res = Unifier.unify(T, InitT);
+    if (!Res) {
+      error("Mismatched types in variable declaration")
+          .with_primary_label(S.getInit().getSpan(),
+                              std::format("expected this to be {}, not {}",
+                                          toString(D->getType()),
+                                          toString(S.getInit().getType())))
+          .with_secondary_label(D->getType().getSpan(), "due to this")
+          .emit(*Diags);
+      return;
+    }
+  }
+}
+
 void TypeInferencer::visit(BreakStmt &S) { (void)S; }
 void TypeInferencer::visit(ContinueStmt &S) { (void)S; }
 void TypeInferencer::visit(ExprStmt &S) { visit(S.getExpr()); }

@@ -1,7 +1,7 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
-#include <llvm/ADT/TypeSwitch.h>
 #include "Diagnostics/DiagnosticBuilder.hpp"
+#include <llvm/ADT/TypeSwitch.h>
 
 namespace phi {
 
@@ -17,15 +17,11 @@ void TypeInferencer::finalize(Decl &D) {
 }
 
 void TypeInferencer::finalize(VarDecl &D) {
-  if (D.hasInit()) {
-    finalize(D.getInit());
-  }
-
   TypeRef ResolvedT = Unifier.resolve(D.getType());
   if (ResolvedT.isVar()) {
     error("type annotations needed")
         .with_primary_label(D.getSpan(), "cannot infer type for this variable")
-        .emit(*DiagMan);
+        .emit(*Diags);
   }
   D.setType(ResolvedT);
 }

@@ -137,24 +137,7 @@ TypeRef TypeInferencer::instantiate(Decl *D) {
       });
 }
 
-void TypeInferencer::visit(VarDecl &D) {
-  if (!D.hasInit()) {
-    return;
-  }
-
-  auto T = instantiate(&D);
-  auto Res = Unifier.unify(T, visit(D.getInit()));
-  if (!Res) {
-    error("Mismatched types in variable declaration")
-        .with_primary_label(D.getInit().getSpan(),
-                            std::format("expected this to be {}, not {}",
-                                        toString(D.getType()),
-                                        toString(D.getInit().getType())))
-        .with_secondary_label(D.getType().getSpan(), "due to this")
-        .emit(*DiagMan);
-    return;
-  }
-}
+void TypeInferencer::visit(VarDecl &D) {}
 
 void TypeInferencer::visit(ParamDecl &D) {
   assert(!D.getType().isVar() && "ParamDecls cannot be annotated as VarTy");
@@ -187,7 +170,7 @@ void TypeInferencer::visit(FieldDecl &D) {
                                         toString(D.getType()),
                                         toString(D.getInit().getType())))
         .with_secondary_label(D.getSpan(), "due to this")
-        .emit(*DiagMan);
+        .emit(*Diags);
   }
 }
 

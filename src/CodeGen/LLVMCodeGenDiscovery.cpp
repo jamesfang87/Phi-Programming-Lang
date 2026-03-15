@@ -47,12 +47,14 @@ void CodeGen::discoverInBlock(Block *B) {
 
 void CodeGen::discoverInStmt(Stmt *S) {
   if (auto *DS = llvm::dyn_cast<DeclStmt>(S)) {
-    if (DS->getDecl().hasType()) {
-      discoverInType(DS->getDecl().getType());
+    for (auto &Var : DS->getDecls()) {
+      if (Var->hasType()) {
+        discoverInType(Var->getType());
+      }
     }
 
-    if (DS->getDecl().hasInit()) {
-      discoverInExpr(&DS->getDecl().getInit());
+    if (DS->hasInit()) {
+      discoverInExpr(&DS->getInit());
     }
   }
 

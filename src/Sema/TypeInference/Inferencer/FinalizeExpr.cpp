@@ -60,7 +60,8 @@ void TypeInferencer::finalize(FloatLiteral &E) {
   if (T.isVar()) {
     auto Float = llvm::dyn_cast<VarTy>(T.getPtr());
     assert(Float->getDomain() == VarTy::Float);
-    Unifier.unify(E.getType(), TypeCtx::getBuiltin(BuiltinTy::f64, E.getSpan()));
+    Unifier.unify(E.getType(),
+                  TypeCtx::getBuiltin(BuiltinTy::f64, E.getSpan()));
     E.setType(TypeCtx::getBuiltin(BuiltinTy::f64, E.getSpan()));
   } else {
     E.setType(T);
@@ -156,7 +157,7 @@ std::optional<TypeRef> TypeInferencer::defaultVarTy(TypeRef T) {
       .with_primary_label(T.getSpan(),
                           "consider adding a type annotation somewhere to "
                           "help the compiler deduce this expression")
-      .emit(*DiagMan);
+      .emit(*Diags);
   return std::nullopt;
 }
 
@@ -214,7 +215,7 @@ void TypeInferencer::finalize(FieldAccessExpr &E) {
         .with_primary_label(
             E.getBase()->getSpan(),
             std::format("type `{}` has no fields", toString(UnderlyingBaseT)))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -224,7 +225,7 @@ void TypeInferencer::finalize(FieldAccessExpr &E) {
         .with_primary_label(
             E.getBase()->getSpan(),
             std::format("could not infer the type of this expression"))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -235,7 +236,7 @@ void TypeInferencer::finalize(FieldAccessExpr &E) {
     error("Cannot access field on unknown type")
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("unknown ADT `{}`", Adt->getId()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -244,7 +245,7 @@ void TypeInferencer::finalize(FieldAccessExpr &E) {
     error("Cannot perform field access on enums")
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("this is an enum `{}`", Adt->getId()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -255,7 +256,7 @@ void TypeInferencer::finalize(FieldAccessExpr &E) {
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("type `{}` has no field `{}`",
                                         Adt->getId(), E.getFieldId()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
   E.setField(Field);
@@ -296,7 +297,7 @@ void TypeInferencer::finalize(MethodCallExpr &E) {
         .with_primary_label(
             E.getBase()->getSpan(),
             std::format("type `{}` has no methods", toString(UnderlyingBaseT)))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -305,7 +306,7 @@ void TypeInferencer::finalize(MethodCallExpr &E) {
         .with_primary_label(
             E.getBase()->getSpan(),
             std::format("could not infer the type of this expression"))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -315,7 +316,7 @@ void TypeInferencer::finalize(MethodCallExpr &E) {
     error("Cannot call method on unknown type")
         .with_primary_label(E.getBase()->getSpan(),
                             std::format("unknown ADT `{}`", Adt->getId()))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -326,7 +327,7 @@ void TypeInferencer::finalize(MethodCallExpr &E) {
         .with_primary_label(
             E.getBase()->getSpan(),
             std::format("type `{}` has no method `{}`", Adt->getId(), Id))
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
   E.setMethod(Method);
@@ -348,7 +349,7 @@ void TypeInferencer::finalize(MatchExpr &E) {
   if (Enum == nullptr && !ScrutineeT.isBuiltin()) {
     error("expression is not matchable")
         .with_primary_label(E.getSpan(), "cannot match on this type")
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -357,7 +358,7 @@ void TypeInferencer::finalize(MatchExpr &E) {
   if (Arms.empty()) {
     error("match expression must have at least one arm")
         .with_primary_label(E.getSpan(), "empty match")
-        .emit(*DiagMan);
+        .emit(*Diags);
     return;
   }
 
@@ -382,7 +383,7 @@ void TypeInferencer::finalize(MatchExpr &E) {
                 error("variant pattern used on non-enum type")
                     .with_primary_label(P.Location,
                                         "variant patterns require an enum")
-                    .emit(*DiagMan);
+                    .emit(*Diags);
               }
 
               VariantDecl *Variant = Enum->getVariant(P.VariantName);
@@ -390,7 +391,7 @@ void TypeInferencer::finalize(MatchExpr &E) {
                 error("unknown enum variant")
                     .with_primary_label(P.Location, "no variant named `" +
                                                         P.VariantName + "`")
-                    .emit(*DiagMan);
+                    .emit(*Diags);
               }
 
               // Check payload arity
@@ -401,7 +402,7 @@ void TypeInferencer::finalize(MatchExpr &E) {
                   error("variant payload arity mismatch")
                       .with_primary_label(
                           P.Location, "expected 1 binding for variant payload")
-                      .emit(*DiagMan);
+                      .emit(*Diags);
                 }
 
                 if (P.Vars.size() == 0) {
@@ -419,7 +420,7 @@ void TypeInferencer::finalize(MatchExpr &E) {
                       .with_primary_label(
                           Binding->getSpan(),
                           "binding type does not match variant payload")
-                      .emit(*DiagMan);
+                      .emit(*Diags);
                 }
               } else {
                 // Unit-like variant
@@ -427,7 +428,7 @@ void TypeInferencer::finalize(MatchExpr &E) {
                   error("variant has no payload")
                       .with_primary_label(P.Location,
                                           "this variant carries no data")
-                      .emit(*DiagMan);
+                      .emit(*Diags);
                 }
               }
             }

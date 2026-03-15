@@ -94,22 +94,24 @@ bool NameResolver::visit(ForStmt &S) {
 }
 
 bool NameResolver::visit(DeclStmt &S) {
-  VarDecl &Var = S.getDecl();
   bool Success = true;
 
+  for (auto &Var : S.getDecls()) {
+    // Add to symbol table
+    if (!SymbolTab.insert(Var.get())) {
+      emitRedefinitionError("variable", SymbolTab.lookup(*Var), Var.get());
+      Success = false;
+    }
+
+    // Resolve type annotation if present
+    if (Var->hasType()) {
+      Success = visit(Var->getType()) && Success;
+    }
+  }
+
   // Resolve initializer if present
-  if (Var.hasInit()) {
-    Success = visit(Var.getInit()) && Success;
-  }
-
-  if (Var.hasType()) {
-    Success = visit(Var.getType()) && Success;
-  }
-
-  // Add to symbol table
-  if (!SymbolTab.insert(&Var)) {
-    emitRedefinitionError("variable", SymbolTab.lookup(Var), &Var);
-    Success = false;
+  if (S.hasInit()) {
+    Success = visit(S.getInit()) && Success;
   }
 
   return Success;
