@@ -51,7 +51,7 @@ fun add(x: i32, y: i32) -> i32 {
     return x + y;
 }
 ```
-For trivally copyable types, parameters are passed by value. Returns are not guaranteed to be this way due to RVO. Functions are required to have their parameter types and return types annotated.
+For trivally copyable types, parameters are passed by value. However, returns are not guaranteed to be this way due to RVO. Functions are required to have their parameter types and return types annotated.
 For non-trivially copyable types, parameters can be passed through a variety of methods:
 
 1. We can pass the parameters through immutable borrow. This works the same as it does in Rust.
@@ -112,7 +112,7 @@ fun min(x: any T, y: any T): &mut T { // note that we can also use mutable proje
 }
 
 fun min(x: any T, y: any T): T { // and we can return a yielded value, 
-    if x < y {                   // although this isn't really the job or projecting functions
+    if x < y {                   // although this isn't really the job of projecting functions
         yield x; 
     } else { 
         yield y; 
@@ -180,7 +180,7 @@ struct Vector2D {
 }
 ```
 
-Here we define an `Vector2D` struct with two float fields. Methods are declared inside structs, and the first parameter is always `self`, which refers to the instance. As with regular function parameters, `self` can be a mutable reference, immutable reference, or take ownership of the instance. Note that methods can also be projecting.
+Here we define an `Vector2D` struct with two float fields. Methods are declared inside structs. For non-static methods, the first parameter is always `self`, which refers to the instance; static methods are differentiated through their lack of a `self` parameter. As with regular function parameters, `self` can be a mutable reference, immutable reference, or take ownership of the instance. Note that methods can also be projecting.
 
 You can construct a struct with field initializers:
 
@@ -280,7 +280,6 @@ public struct Vector2D {
     public x: f64;
     public y: f64;
 }
-
 ```
 
 The contents of the module above can be imported like so:
@@ -291,7 +290,6 @@ import math::Vector2D;
 fun main() {
     let v = Vector2D { x: 1.0, y: 1.0 };
 }
-
 ```
 
 ## Operator overloading
