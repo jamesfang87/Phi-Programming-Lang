@@ -34,6 +34,19 @@ Phi uses **type inference**: the compiler figures out the type of `foo` and `bar
 
 ---
 
+## Copies, Moves, and Drops
+As with Rust, trivially copyable types are implicitly copied. Every other type moves by default. A moved-from variable cannot be used, and values are destroyed at the end of their lifetime- which is importantly *the last time they are used*.
+
+A type which owns a resource implements the `Drop` trait:
+
+```phi 
+impl Drop for TempFile {
+    fun drop(self) {
+        fs::remove(self.path);
+    }
+}
+```
+
 ## Functions
 
 Functions are declared with the `fun` keyword:
@@ -82,7 +95,7 @@ let title = framed(greeting)         // greeting is gone now (String isn't Trivi
 Phi's restriction of references mean that references cannot be returned from functions nor stored into variables. Indeed, functions must own the value which it attempts to return, and variables must own the value they store.
 However, it is often use to be able to store and return references and. To accomplish this, Phi has projections and projecting functions.
 
-Projections offer a way to borrow a value or part of a value. While the projection lives, the original variable cannot be mutated or destroyed. If the projection is mutable, we cannot read the source anymore until the projection's lifetime ends. If the projection is immutable, we cannot use it to write to the source variable, but we can read the source variable elsewhere.
+Projections offer a way to borrow a value or part of a value. While the projection lives, the original variable cannot be mutated or destroyed. If the projection is mutable, we cannot read, mutate, or destroy the source anymore until the projection's lifetime ends. If the projection is immutable, we cannot use it to write to the source variable, but we can read the source variable elsewhere. In general, values can have either many readers or one writer. Note that projections of disjoint parts such as different fields of a struct may coexist. A projection's lifetime ends at its last use, like any variable's.
 
 ```phi
 fun main() {
@@ -92,35 +105,36 @@ fun main() {
 }
 ```
 
-Projecting functions then allow us to use logic to assign projections, basically allowing us to return references. 
+Projecting functions then allow us to use logic to assign projections, basically allowing us to return references. They are declared with `:` rather than `->`. Note the use of `yield` rather than `return` below:
 
 ```phi
-fun min(x: any T, y: any T): &T { // note that we use `:` instead of `->`
+// the `any` keyword allows the projecting function to change between 
+// &T, &mut T, and T (a move) based on the use of the function at the call site
+fun min(x: any T, y: any T): any T { 
     if x < y { 
-        yield &x; 
+        yield x; // we simply call yield on the name
     } else { 
-        yield &y; 
+        yield y; 
     }
 }
 
-fun min(x: any T, y: any T): &mut T { // note that we can also use mutable projections
+// note that we can also use fix the use of parameters and how they are returned
+fun min(x: &mut T, y: &mut T): &mut T { 
     if x < y { 
         yield &mut x; 
     } else { 
         yield &mut y; 
     }
 }
-
-fun min(x: any T, y: any T): T { // and we can return a yielded value, 
-    if x < y {                   // although this isn't really the job of projecting functions
-        yield x; 
-    } else { 
-        yield y; 
-    }
-}
 ```
 As long as the projected value lives (which can be only for a line if used inline), the source variables are subject to the same rules as local projections.
 Note that code can also run after the yield, making clean ups easy.
+
+However, there are a couple rules with using projecting functions to keep in mind:
+1. The projection kind cannot give more access than the parameter. That is, we cannot yield an immutable parameter mutably. However, the reverse is allowed, as the relationship is flipped.
+2. While this is not strictly a compile error, the use of `any` for a parameter is only valid when the parameter is only read. You must use `&mut` if the parameter must be written to. This is because `any` will always be forced to bind to `&mut`, meaning that code which explicitly specifies this behavior is more clear.
+3. `any` is only allowed in projecting functions.
+4. There is no overloading of projecting functions as with ordinary functions.
 
 ## Control Flow
 
@@ -152,8 +166,11 @@ for x in &a {
 for x in &mut a {
     // mutable projection
 }
-```
 
+for x in a {
+    // consumes a
+}
+```
 
 ### If statements
 
@@ -195,6 +212,27 @@ force.x;                 // field access
 force.dot(other_force);  // method call
 ```
 
+### Projecting methods
+
+Methods can also be projecting:
+
+```phi
+struct Pair {   
+    public first: String;
+    public second: String;
+    public fun longer(&self): &String {
+        if self.first.len() > self.second.len() {
+            yield &self.first;
+        } else {
+            yield &self.second;
+        }
+    }
+}
+```
+
+`any` on `self` works on projecting methods exactly as any works on projecting functions.
+
+
 ## Enums
 
 Phi is not an object oriented programming language. There is no inheritance. Instead, polymorphism can be achieved through sum types. This is done in phi through enums and pattern matching.
@@ -214,7 +252,7 @@ enum Shape {
     Parallelogram: (f64, f64);
 
     fun perimeter(&self) -> f64 {
-        return match &self {
+        return match self { // there is no need to use &self, since self is already a borrow
             .Rectangle(rect)     => 2 * (rect.l + rect.w),
             .Circle(r)           => 2 * 3.14 * r,
             .Square(l)           => 4 * l,
@@ -224,7 +262,7 @@ enum Shape {
 }
 
 fun print_name(shape: &Shape) {
-    match &shape {
+    match shape {
         .Rectangle     => println("rectangle"),
         .Circle        => println("circle"),
         .Square        => println("square"),
@@ -232,6 +270,7 @@ fun print_name(shape: &Shape) {
     };
 }
 ```
+How you match determines what the arms receive, mirroring parameter passing. Matches must be exhaustive; _ is the wildcard pattern.
 
 ## 9. Traits, generics, and `dyn`
 
@@ -301,3 +340,5 @@ trait Add {
     fun add(&self, other: &Self) -> Self {}
 }
 ```
+
+Indexing works the same way. However, the three modes can only work on existing values, so Phi defines two traits, `Index` and `IndexSet`. The latter is used in cases where there is no value present, e.g. a missing key in a hashmap.
