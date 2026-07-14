@@ -1,16 +1,11 @@
 //! A chumsky-based parser over the lexer's token stream.
-//!
-//! Only a basic subset of the language is implemented so far: free functions, all statements
-//! and expressions built from literals, names, calls, unary/binary operators and parens.
-//! Everything else (structs, enums, traits, `match`, `if` as an expression, method calls,
-//! field access, indexing, generics, types, ...) is left for later.
 
 use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
 use chumsky::extra;
 use chumsky::prelude::*;
 
-use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Path, SrcUnit};
+use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Item, ItemKind, Path, SrcUnit};
 use crate::diag::DiagCtx;
 use crate::driver::src_map::SrcMap;
 use crate::interner::Interner;
@@ -18,16 +13,12 @@ use crate::lexer::src_span::SrcSpan;
 use crate::lexer::token::{Token, TokenKind};
 
 type Extra<'a> = extra::Err<Rich<'a, Token>>;
-
-/// Type-erased parser: every sub-grammar returns this instead of an `impl Parser<...>` so the
-/// concrete combinator type never grows across a `.then()`/`choice()`/`recursive()` boundary.
-/// This is a compile-time-only tradeoff (one vtable indirection per boxed point at parse time)
-/// that keeps rustc from having to type-check one enormous nested generic for the whole grammar.
 type BoxedP<'a, O> = Boxed<'a, 'a, &'a [Token], O, Extra<'a>>;
 
 mod block_parser;
 mod expr_parser;
 mod item_parser;
+mod pattern_parser;
 mod type_parser;
 
 pub struct Parser {
@@ -98,10 +89,57 @@ impl Parser {
             .boxed()
     }
 
+    /// Builds an error-recovery parser: skip at least one token, then keep skipping until the
+    /// next token that looks like it could start a new instance of whatever just failed to
+    /// parse (`boundary`) — or until input runs out — then produce `fallback`.
+    ///
+    /// Used via `some_parser.recover_with(via_parser(self.recover_to_boundary(...)))`.
+    ///
+    /// The mandatory first skip matters: every well-formed construct we recover for begins with
+    /// a `boundary` token, so the position where the primary parser just failed always matches
+    /// `boundary` too. Without forcing at least one token of progress, "recovery" would succeed
+    /// without consuming anything, and `.repeated()` around it would loop forever — chumsky's
+    /// no-progress guard turns that into a panic rather than a hang, but either way it's wrong.
+    fn recover_to_boundary<'a, O: Clone + 'a>(
+        &'a self,
+        boundary: impl ChumskyParser<'a, &'a [Token], (), Extra<'a>> + Clone + 'a,
+        fallback: O,
+    ) -> impl ChumskyParser<'a, &'a [Token], O, Extra<'a>> + Clone + 'a {
+        any()
+            .ignored()
+            .then(any().and_is(boundary.not()).ignored().repeated())
+            .to(fallback)
+    }
+
     /// Builds the whole grammar for a single file: a sequence of items followed by end-of-input.
+    ///
+    /// A malformed item doesn't take the rest of the file down with it: if `item_parser()` fails,
+    /// recovery skips tokens up to the next token that plausibly starts a new item (or to
+    /// end-of-input) and yields an `ItemKind::Error` in its place, so parsing resumes there and
+    /// every other item in the file still gets reported.
     fn grammar<'a>(&'a self) -> impl ChumskyParser<'a, &'a [Token], SrcUnit, Extra<'a>> + Clone {
-        self.item_parser()
-            .repeated()
+        let item_start = choice((
+            self.kind(TokenKind::PublicKw).ignored(),
+            self.kind(TokenKind::FunKw).ignored(),
+            self.kind(TokenKind::StructKw).ignored(),
+            self.kind(TokenKind::EnumKw).ignored(),
+            self.kind(TokenKind::TraitKw).ignored(),
+            self.kind(TokenKind::ExtendKw).ignored(),
+            self.kind(TokenKind::ModuleKw).ignored(),
+            self.kind(TokenKind::ImportKw).ignored(),
+        ));
+
+        let item = self.item_parser().recover_with(via_parser(
+            self.recover_to_boundary(
+                item_start,
+                Item {
+                    kind: ItemKind::Error,
+                    span: SrcSpan::new(0, 0),
+                },
+            ),
+        ));
+
+        item.repeated()
             .collect::<Vec<_>>()
             .then(end())
             .map(|(items, _)| {
@@ -164,6 +202,18 @@ mod tests {
         let tokens = Lexer::new(&chars, offset).tokenize();
         let _ = Parser::new(tokens, offset).parse();
         DiagCtx::diagnostics().len()
+    }
+
+    /// Like [`diagnostic_count`], but also returns the (best-effort, possibly error-containing)
+    /// parsed unit — for exercising recovery.
+    fn parse_with_errors(src: &str) -> (SrcUnit, usize) {
+        DiagCtx::clear();
+        Interner::clear();
+        let chars: Vec<char> = src.chars().collect();
+        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let tokens = Lexer::new(&chars, offset).tokenize();
+        let unit = Parser::new(tokens, offset).parse();
+        (unit, DiagCtx::diagnostics().len())
     }
 
     fn text(ident: Ident) -> String {
@@ -464,5 +514,35 @@ mod tests {
     #[test]
     fn reports_diagnostic_on_unclosed_brace() {
         assert_eq!(diagnostic_count("fun main() { return 1;"), 1);
+    }
+
+    #[test]
+    fn recovers_from_a_malformed_item_and_keeps_parsing_later_items() {
+        // `1 + 2;` isn't a valid item at all; the well-formed function after it should still
+        // come through.
+        let (unit, error_count) = parse_with_errors("1 + 2; fun ok() {}");
+        assert_eq!(error_count, 1);
+        assert_eq!(unit.items.len(), 2);
+        assert!(matches!(unit.items[0].kind, ItemKind::Error));
+        match &unit.items[1].kind {
+            ItemKind::Function(f) => assert_eq!(text(f.name), "ok"),
+            other => panic!("expected a function item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recovers_from_multiple_malformed_items() {
+        let (unit, error_count) = parse_with_errors("fun a() {} ???; fun b() {} !!!; fun c() {}");
+        assert_eq!(error_count, 2);
+        assert_eq!(unit.items.len(), 5);
+        let function_names: Vec<String> = unit
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ItemKind::Function(f) => Some(text(f.name)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(function_names, vec!["a", "b", "c"]);
     }
 }
