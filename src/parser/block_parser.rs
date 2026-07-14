@@ -1,7 +1,7 @@
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
-use crate::ast::{Block, DeclStmt, Mutability, Pattern, PatternKind, Stmt, StmtKind};
+use crate::ast::{Block, DeclStmt, Mutability, Pattern, PatternKind, Stmt, StmtKind, WithStmtLend};
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -15,6 +15,63 @@ impl Parser {
 
         recursive(
             |block: Recursive<dyn ChumskyParser<'a, &'a [Token], Block, Extra<'a>>>| {
+                let while_stmt = self
+                    .kind(TokenKind::WhileKw)
+                    .then(expr.clone())
+                    .then(block.clone())
+                    .map(|((while_tok, cond), body)| {
+                        let span = while_tok.span.merge(body.span);
+                        Stmt {
+                            kind: StmtKind::While { cond, body },
+                            span,
+                        }
+                    })
+                    .boxed();
+
+                let for_stmt = self
+                    .kind(TokenKind::ForKw)
+                    .then(ident.clone())
+                    .then_ignore(self.kind(TokenKind::InKw))
+                    .then(expr.clone())
+                    .then(block.clone())
+                    .map(|(((for_tok, name), iter), body)| {
+                        let span = for_tok.span.merge(body.span);
+                        Stmt {
+                            kind: StmtKind::For {
+                                name: Pattern {
+                                    kind: PatternKind::Binding(name),
+                                    span: name.span,
+                                },
+                                iter,
+                                body,
+                            },
+                            span,
+                        }
+                    })
+                    .boxed();
+
+                let break_stmt = self
+                    .kind(TokenKind::BreakKw)
+                    .then(self.kind(TokenKind::Semicolon))
+                    .map(|(break_tok, semi_tok)| {
+                        let span = break_tok.span.merge(semi_tok.span);
+                        Stmt {
+                            kind: StmtKind::Break,
+                            span,
+                        }
+                    });
+
+                let continue_stmt = self
+                    .kind(TokenKind::BreakKw)
+                    .then(self.kind(TokenKind::Semicolon))
+                    .map(|(break_tok, semi_tok)| {
+                        let span = break_tok.span.merge(semi_tok.span);
+                        Stmt {
+                            kind: StmtKind::Break,
+                            span,
+                        }
+                    });
+
                 let return_stmt = self
                     .kind(TokenKind::ReturnKw)
                     .then(expr.clone())
@@ -22,7 +79,20 @@ impl Parser {
                     .map(|((ret_tok, value), semi_tok)| {
                         let span = ret_tok.span.merge(semi_tok.span);
                         Stmt {
-                            kind: StmtKind::Return(value),
+                            kind: StmtKind::Return { ret: value },
+                            span,
+                        }
+                    })
+                    .boxed();
+
+                let defer_stmt = self
+                    .kind(TokenKind::DeferKw)
+                    .then(expr.clone())
+                    .then(self.kind(TokenKind::Semicolon))
+                    .map(|((ret_tok, value), semi_tok)| {
+                        let span = ret_tok.span.merge(semi_tok.span);
+                        Stmt {
+                            kind: StmtKind::Defer { defer: value },
                             span,
                         }
                     })
@@ -64,14 +134,45 @@ impl Parser {
                     })
                     .boxed();
 
-                let while_stmt = self
-                    .kind(TokenKind::WhileKw)
+                // with x = &mut, y = &a {
+                //
+                // }
+
+                let lend_decl = ident
+                    .then(
+                        self.kind(TokenKind::Colon)
+                            .ignore_then(type_p.clone())
+                            .or_not(),
+                    )
+                    .then_ignore(self.kind(TokenKind::Equals))
                     .then(expr.clone())
-                    .then(block.clone())
-                    .map(|((while_tok, cond), body)| {
-                        let span = while_tok.span.merge(body.span);
+                    .map(|((name, ty), value)| {
+                        let span = name.span.merge(value.span);
+                        WithStmtLend {
+                            name: Pattern {
+                                kind: PatternKind::Binding(name),
+                                span: name.span,
+                            },
+                            ty,
+                            expr: value,
+                            span,
+                        }
+                    })
+                    .boxed();
+
+                let with_stmt = self
+                    .kind(TokenKind::WithKw)
+                    .then(
+                        lend_decl
+                            .separated_by(self.kind(TokenKind::Comma))
+                            .at_least(1)
+                            .collect::<Vec<_>>(),
+                    )
+                    .then(block)
+                    .map(|((with_tok, lends), body)| {
+                        let span = with_tok.span.merge(body.span);
                         Stmt {
-                            kind: StmtKind::While { cond, body },
+                            kind: StmtKind::With { lends, body },
                             span,
                         }
                     })
@@ -89,7 +190,18 @@ impl Parser {
                     })
                     .boxed();
 
-                let stmt = choice((return_stmt, decl_stmt, while_stmt, expr_stmt)).boxed();
+                let stmt = choice((
+                    while_stmt,
+                    for_stmt,
+                    break_stmt,
+                    continue_stmt,
+                    return_stmt,
+                    defer_stmt,
+                    decl_stmt,
+                    with_stmt,
+                    expr_stmt,
+                ))
+                .boxed();
 
                 self.kind(TokenKind::OpenBrace)
                     .then(stmt.repeated().collect::<Vec<_>>())

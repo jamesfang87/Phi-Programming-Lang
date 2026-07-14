@@ -1,20 +1,16 @@
 //! A chumsky-based parser over the lexer's token stream.
 //!
-//! Only a basic subset of the language is implemented so far: free functions with simple
-//! (non-generic) parameter/return types, `let`, `return`, `while`, and expression statements,
+//! Only a basic subset of the language is implemented so far: free functions, all statements
 //! and expressions built from literals, names, calls, unary/binary operators and parens.
 //! Everything else (structs, enums, traits, `match`, `if` as an expression, method calls,
-//! field access, indexing, `with`, `for`, generics, ...) is left for later.
+//! field access, indexing, generics, types, ...) is left for later.
 
 use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
 use chumsky::extra;
 use chumsky::prelude::*;
 
-use crate::ast::{
-    BinaryOp, Block, DeclStmt, Expr, ExprKind, Function, Ident, Item, ItemKind, Mutability, Param,
-    Path, Pattern, PatternKind, SrcUnit, Stmt, StmtKind, Ty, Type, Visibility,
-};
+use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Path, SrcUnit};
 use crate::diag::DiagCtx;
 use crate::driver::src_map::SrcMap;
 use crate::interner::Interner;
@@ -31,6 +27,7 @@ type BoxedP<'a, O> = Boxed<'a, 'a, &'a [Token], O, Extra<'a>>;
 
 mod block_parser;
 mod expr_parser;
+mod item_parser;
 mod type_parser;
 
 pub struct Parser {
@@ -77,19 +74,15 @@ impl Parser {
         any().filter(move |t: &Token| t.kind == k)
     }
 
-    fn make_ident(&self, tok: Token) -> Ident {
-        Ident {
-            text: Interner::intern(
-                &SrcMap::text_of(tok.span)
-                    .expect("lexer token span should always resolve to a source file"),
-            ),
-            span: tok.span,
-        }
-    }
-
     fn ident_parser<'a>(&'a self) -> BoxedP<'a, Ident> {
         self.kind(TokenKind::Identifier)
-            .map(|t: Token| self.make_ident(t))
+            .map(|t: Token| Ident {
+                text: Interner::intern(
+                    &SrcMap::text_of(t.span)
+                        .expect("lexer token span should always resolve to a source file"),
+                ),
+                span: t.span,
+            })
             .boxed()
     }
 
@@ -105,75 +98,9 @@ impl Parser {
             .boxed()
     }
 
-    fn function_parser<'a>(&'a self) -> BoxedP<'a, Item> {
-        let ident = self.ident_parser();
-        let type_p = self.type_parser();
-        let block = self.block_parser();
-
-        let visibility = self
-            .kind(TokenKind::PublicKw)
-            .or_not()
-            .map(|opt| {
-                if opt.is_some() {
-                    Visibility::Public
-                } else {
-                    Visibility::Private
-                }
-            })
-            .boxed();
-
-        let param = ident
-            .clone()
-            .then_ignore(self.kind(TokenKind::Colon))
-            .then(type_p.clone())
-            .map(|(name, ty)| {
-                let span = name.span.merge(ty.span);
-                Param { name, ty, span }
-            })
-            .boxed();
-
-        let params = param
-            .separated_by(self.kind(TokenKind::Comma))
-            .allow_trailing()
-            .collect::<Vec<_>>();
-
-        let ret_ty = self
-            .kind(TokenKind::Arrow)
-            .ignore_then(type_p.clone())
-            .or_not();
-
-        visibility
-            .then(self.kind(TokenKind::FunKw))
-            .then(ident.clone())
-            .then_ignore(self.kind(TokenKind::OpenParen))
-            .then(params)
-            .then_ignore(self.kind(TokenKind::CloseParen))
-            .then(ret_ty)
-            .then(block.clone())
-            .map(|(((((vis, fun_tok), name), params), ret), body)| {
-                let span = fun_tok.span.merge(body.span);
-                let func = Function {
-                    visibility: vis,
-                    name,
-                    generics: Vec::new(),
-                    self_param: None,
-                    params,
-                    ret,
-                    body: Some(body),
-                    span,
-                };
-                Item {
-                    kind: ItemKind::Function(func),
-                    span,
-                }
-            })
-            .boxed()
-    }
-
-    /// Builds the whole grammar for a single file: a sequence of functions (the only item kind
-    /// this subset parses) followed by end-of-input.
+    /// Builds the whole grammar for a single file: a sequence of items followed by end-of-input.
     fn grammar<'a>(&'a self) -> impl ChumskyParser<'a, &'a [Token], SrcUnit, Extra<'a>> + Clone {
-        self.function_parser()
+        self.item_parser()
             .repeated()
             .collect::<Vec<_>>()
             .then(end())
@@ -287,7 +214,7 @@ mod tests {
         let body = f.body.as_ref().unwrap();
         assert_eq!(body.stmts.len(), 1);
         match &body.stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return { ret: expr } => match &expr.kind {
                 ExprKind::Binary { op, lhs, rhs } => {
                     assert_eq!(*op, BinaryOp::Add);
                     assert!(matches!(lhs.kind, ExprKind::DeclRef(_)));
@@ -397,7 +324,7 @@ mod tests {
         let unit = parse_ok("fun main() { return 1 + 2 * 3; }");
         let f = only_function(&unit);
         match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return { ret: expr } => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Add,
                     rhs,
@@ -423,7 +350,7 @@ mod tests {
         let unit = parse_ok("fun main() { return (1 + 2) * 3; }");
         let f = only_function(&unit);
         match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return { ret: expr } => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Mul,
                     lhs,
@@ -448,7 +375,7 @@ mod tests {
         let unit = parse_ok("fun main() { return -1 + 2; }");
         let f = only_function(&unit);
         match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return { ret: expr } => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Add,
                     lhs,
@@ -473,7 +400,7 @@ mod tests {
         let unit = parse_ok("fun main() { return true || false && true; }");
         let f = only_function(&unit);
         match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return { ret: expr } => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Or,
                     rhs,
@@ -507,7 +434,7 @@ mod tests {
         let unit = parse_ok("fun main() { return 'a'; }");
         let f = only_function(&unit);
         match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => {
+            StmtKind::Return { ret: expr } => {
                 assert!(matches!(expr.kind, ExprKind::Literal(Literal::Char('a'))));
             }
             other => panic!("expected a return statement, got {other:?}"),
@@ -519,7 +446,7 @@ mod tests {
         let unit = parse_ok(r#"fun main() { return "a\nb"; }"#);
         let f = only_function(&unit);
         match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return { ret: expr } => match &expr.kind {
                 ExprKind::Literal(Literal::Str(sym)) => {
                     assert_eq!(Interner::resolve(*sym), "a\nb")
                 }

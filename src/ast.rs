@@ -98,9 +98,6 @@ pub enum ItemKind {
     Struct(Struct),
     Enum(Enum),
     Trait(Trait),
-    // NOTE: added here — `Extend` was defined below but never reachable from `ItemKind` in the
-    // original, even though it's clearly a top-level declaration (`extend Foo: Bar { ... }`).
-    // Remove this if that omission was intentional rather than an oversight.
     Extend(Extend),
     Error,
 }
@@ -121,7 +118,7 @@ pub struct Function {
 pub struct Struct {
     pub visibility: Visibility,
     pub name: Ident,
-    pub generics: Vec<Generic>,
+    pub generics: Option<Vec<Generic>>,
     pub fields: Vec<Field>,
     pub span: SrcSpan,
 }
@@ -130,8 +127,8 @@ pub struct Struct {
 pub struct Enum {
     pub visibility: Visibility,
     pub name: Ident,
-    pub generics: Vec<Generic>,
-    pub fields: Vec<Variant>,
+    pub generics: Option<Vec<Generic>>,
+    pub variants: Vec<Variant>,
     pub span: SrcSpan,
 }
 
@@ -174,7 +171,7 @@ pub enum SelfMode {
 #[derive(Clone, Debug)]
 pub struct Generic {
     pub name: Ident,
-    pub bounds: Vec<Trait>,
+    pub bounds: Option<Vec<Path>>,
     pub span: SrcSpan,
 }
 
@@ -203,7 +200,7 @@ pub struct Variant {
 #[derive(Clone, Debug)]
 pub enum VariantPayload {
     Unit,
-    Type,
+    Type(Type),
     Record(Vec<Field>),
 }
 
@@ -271,13 +268,17 @@ pub enum StmtKind {
         iter: Expr,
         body: Block,
     },
-    Continue,
     Break,
-    Return(Expr),
-    Defer(Expr),
+    Continue,
+    Return {
+        ret: Expr,
+    },
+    Defer {
+        defer: Expr,
+    },
     Decl(DeclStmt),
     With {
-        lends: Vec<DeclStmt>,
+        lends: Vec<WithStmtLend>,
         body: Block,
     },
     Expr(Expr),
@@ -289,6 +290,14 @@ pub enum StmtKind {
 #[derive(Clone, Debug)]
 pub struct DeclStmt {
     pub mutability: Mutability,
+    pub name: Pattern,
+    pub ty: Option<Type>,
+    pub expr: Expr,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct WithStmtLend {
     pub name: Pattern,
     pub ty: Option<Type>,
     pub expr: Expr,
