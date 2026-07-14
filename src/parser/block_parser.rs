@@ -1,217 +1,304 @@
-use chumsky::Parser as ChumskyParser;
-use chumsky::prelude::*;
+use crate::ast::Block;
 
-use crate::ast::{Block, DeclStmt, Mutability, Pattern, PatternKind, Stmt, StmtKind, WithStmtLend};
-
-use crate::lexer::token::{Token, TokenKind};
-
-use super::{BoxedP, Extra, Parser};
+use super::{BoxedP, Parser};
 
 impl Parser {
     pub fn block_parser<'a>(&'a self) -> BoxedP<'a, Block> {
-        let ident = self.ident_parser();
-        let expr = self.expr_parser();
-        let type_p = self.type_parser();
+        self.expr_and_block_parsers().1
+    }
+}
 
-        recursive(
-            |block: Recursive<dyn ChumskyParser<'a, &'a [Token], Block, Extra<'a>>>| {
-                let while_stmt = self
-                    .kind(TokenKind::WhileKw)
-                    .then(expr.clone())
-                    .then(block.clone())
-                    .map(|((while_tok, cond), body)| {
-                        let span = while_tok.span.merge(body.span);
-                        Stmt {
-                            kind: StmtKind::While { cond, body },
-                            span,
-                        }
-                    })
-                    .boxed();
+#[cfg(test)]
+mod tests {
+    use chumsky::Parser as ChumskyParser;
 
-                let for_stmt = self
-                    .kind(TokenKind::ForKw)
-                    .then(ident.clone())
-                    .then_ignore(self.kind(TokenKind::InKw))
-                    .then(expr.clone())
-                    .then(block.clone())
-                    .map(|(((for_tok, name), iter), body)| {
-                        let span = for_tok.span.merge(body.span);
-                        Stmt {
-                            kind: StmtKind::For {
-                                name: Pattern {
-                                    kind: PatternKind::Binding(name),
-                                    span: name.span,
-                                },
-                                iter,
-                                body,
-                            },
-                            span,
-                        }
-                    })
-                    .boxed();
+    use super::*;
+    use crate::ast::{BinaryOp, DeclStmt, ExprKind, Literal, Mutability, PatternKind, Stmt, StmtKind};
+    use crate::diag::DiagCtx;
+    use crate::driver::src_map::SrcMap;
+    use crate::interner::Interner;
+    use crate::lexer::Lexer;
 
-                let break_stmt = self
-                    .kind(TokenKind::BreakKw)
-                    .then(self.kind(TokenKind::Semicolon))
-                    .map(|(break_tok, semi_tok)| {
-                        let span = break_tok.span.merge(semi_tok.span);
-                        Stmt {
-                            kind: StmtKind::Break,
-                            span,
-                        }
-                    });
+    fn parse_block(src: &str) -> Block {
+        DiagCtx::clear();
+        Interner::clear();
+        let chars: Vec<char> = src.chars().collect();
+        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let tokens = Lexer::new(&chars, offset).tokenize();
+        let parser = Parser::new(tokens.clone(), offset);
+        let (output, errors) = parser
+            .block_parser()
+            .parse(&tokens[..])
+            .into_output_errors();
+        assert!(
+            errors.is_empty(),
+            "unexpected parse errors for {src:?}: {errors:?}"
+        );
+        output.expect("expected a successfully parsed block")
+    }
 
-                let continue_stmt = self
-                    .kind(TokenKind::BreakKw)
-                    .then(self.kind(TokenKind::Semicolon))
-                    .map(|(break_tok, semi_tok)| {
-                        let span = break_tok.span.merge(semi_tok.span);
-                        Stmt {
-                            kind: StmtKind::Break,
-                            span,
-                        }
-                    });
-
-                let return_stmt = self
-                    .kind(TokenKind::ReturnKw)
-                    .then(expr.clone())
-                    .then(self.kind(TokenKind::Semicolon))
-                    .map(|((ret_tok, value), semi_tok)| {
-                        let span = ret_tok.span.merge(semi_tok.span);
-                        Stmt {
-                            kind: StmtKind::Return { ret: value },
-                            span,
-                        }
-                    })
-                    .boxed();
-
-                let defer_stmt = self
-                    .kind(TokenKind::DeferKw)
-                    .then(expr.clone())
-                    .then(self.kind(TokenKind::Semicolon))
-                    .map(|((ret_tok, value), semi_tok)| {
-                        let span = ret_tok.span.merge(semi_tok.span);
-                        Stmt {
-                            kind: StmtKind::Defer { defer: value },
-                            span,
-                        }
-                    })
-                    .boxed();
-
-                let decl_stmt = self
-                    .kind(TokenKind::LetKw)
-                    .then(self.kind(TokenKind::MutKw).or_not())
-                    .then(ident.clone())
-                    .then(
-                        self.kind(TokenKind::Colon)
-                            .ignore_then(type_p.clone())
-                            .or_not(),
-                    )
-                    .then_ignore(self.kind(TokenKind::Equals))
-                    .then(expr.clone())
-                    .then(self.kind(TokenKind::Semicolon))
-                    .map(|(((((let_tok, mut_tok), name), ty), value), semi_tok)| {
-                        let mutability = if mut_tok.is_some() {
-                            Mutability::Mutable
-                        } else {
-                            Mutability::Immutable
-                        };
-                        let span = let_tok.span.merge(semi_tok.span);
-                        let decl = DeclStmt {
-                            mutability,
-                            name: Pattern {
-                                kind: PatternKind::Binding(name),
-                                span: name.span,
-                            },
-                            ty,
-                            expr: value,
-                            span,
-                        };
-                        Stmt {
-                            kind: StmtKind::Decl(decl),
-                            span,
-                        }
-                    })
-                    .boxed();
-
-                // with x = &mut, y = &a {
-                //
-                // }
-
-                let lend_decl = ident
-                    .then(
-                        self.kind(TokenKind::Colon)
-                            .ignore_then(type_p.clone())
-                            .or_not(),
-                    )
-                    .then_ignore(self.kind(TokenKind::Equals))
-                    .then(expr.clone())
-                    .map(|((name, ty), value)| {
-                        let span = name.span.merge(value.span);
-                        WithStmtLend {
-                            name: Pattern {
-                                kind: PatternKind::Binding(name),
-                                span: name.span,
-                            },
-                            ty,
-                            expr: value,
-                            span,
-                        }
-                    })
-                    .boxed();
-
-                let with_stmt = self
-                    .kind(TokenKind::WithKw)
-                    .then(
-                        lend_decl
-                            .separated_by(self.kind(TokenKind::Comma))
-                            .at_least(1)
-                            .collect::<Vec<_>>(),
-                    )
-                    .then(block)
-                    .map(|((with_tok, lends), body)| {
-                        let span = with_tok.span.merge(body.span);
-                        Stmt {
-                            kind: StmtKind::With { lends, body },
-                            span,
-                        }
-                    })
-                    .boxed();
-
-                let expr_stmt = expr
-                    .clone()
-                    .then(self.kind(TokenKind::Semicolon))
-                    .map(|(value, semi_tok)| {
-                        let span = value.span.merge(semi_tok.span);
-                        Stmt {
-                            kind: StmtKind::Expr(value),
-                            span,
-                        }
-                    })
-                    .boxed();
-
-                let stmt = choice((
-                    while_stmt,
-                    for_stmt,
-                    break_stmt,
-                    continue_stmt,
-                    return_stmt,
-                    defer_stmt,
-                    decl_stmt,
-                    with_stmt,
-                    expr_stmt,
-                ))
-                .boxed();
-
-                self.kind(TokenKind::OpenBrace)
-                    .then(stmt.repeated().collect::<Vec<_>>())
-                    .then(self.kind(TokenKind::CloseBrace))
-                    .map(|((open_tok, stmts), close_tok)| Block {
-                        stmts,
-                        span: open_tok.span.merge(close_tok.span),
-                    })
-            },
+    /// Like [`parse_block`], but doesn't assert the parse was clean — for exercising recovery.
+    fn parse_block_with_errors(src: &str) -> (Block, usize) {
+        DiagCtx::clear();
+        Interner::clear();
+        let chars: Vec<char> = src.chars().collect();
+        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let tokens = Lexer::new(&chars, offset).tokenize();
+        let parser = Parser::new(tokens.clone(), offset);
+        let (output, errors) = parser
+            .block_parser()
+            .parse(&tokens[..])
+            .into_output_errors();
+        (
+            output.expect("expected recovery to still produce a block"),
+            errors.len(),
         )
-        .boxed()
+    }
+
+    fn only_stmt(block: &Block) -> &Stmt {
+        assert_eq!(block.stmts.len(), 1);
+        &block.stmts[0]
+    }
+
+    #[test]
+    fn parses_while_stmt() {
+        let block = parse_block("{ while x < 5 { foo(); } }");
+        match &only_stmt(&block).kind {
+            StmtKind::While { cond, body } => {
+                assert!(matches!(
+                    cond.kind,
+                    ExprKind::Binary {
+                        op: BinaryOp::Lt,
+                        ..
+                    }
+                ));
+                assert_eq!(body.stmts.len(), 1);
+            }
+            other => panic!("expected a while statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_for_stmt_with_binding_pattern() {
+        let block = parse_block("{ for x in xs { foo(x); } }");
+        match &only_stmt(&block).kind {
+            StmtKind::For { name, iter, body } => {
+                assert!(matches!(name.kind, PatternKind::Binding(_)));
+                assert!(matches!(iter.kind, ExprKind::DeclRef(_)));
+                assert_eq!(body.stmts.len(), 1);
+            }
+            other => panic!("expected a for statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_for_stmt_with_tuple_pattern() {
+        let block = parse_block("{ for (a, b) in pairs { foo(); } }");
+        match &only_stmt(&block).kind {
+            StmtKind::For { name, .. } => {
+                assert!(matches!(name.kind, PatternKind::Tuple(_)));
+            }
+            other => panic!("expected a for statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_break_stmt() {
+        let block = parse_block("{ break; }");
+        assert!(matches!(only_stmt(&block).kind, StmtKind::Break));
+    }
+
+    #[test]
+    fn parses_continue_stmt() {
+        let block = parse_block("{ continue; }");
+        assert!(matches!(only_stmt(&block).kind, StmtKind::Continue));
+    }
+
+    #[test]
+    fn parses_return_stmt() {
+        let block = parse_block("{ return 1 + 2; }");
+        match &only_stmt(&block).kind {
+            StmtKind::Return { ret } => {
+                assert!(matches!(
+                    ret.kind,
+                    ExprKind::Binary {
+                        op: BinaryOp::Add,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected a return statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_defer_stmt() {
+        let block = parse_block("{ defer cleanup(); }");
+        match &only_stmt(&block).kind {
+            StmtKind::Defer { defer } => {
+                assert!(matches!(defer.kind, ExprKind::FunCall { .. }));
+            }
+            other => panic!("expected a defer statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_immutable_decl_stmt() {
+        let block = parse_block("{ let x = 1; }");
+        match &only_stmt(&block).kind {
+            StmtKind::Decl(DeclStmt {
+                mutability,
+                name,
+                ty,
+                ..
+            }) => {
+                assert!(matches!(mutability, Mutability::Immutable));
+                assert!(matches!(name.kind, PatternKind::Binding(_)));
+                assert!(ty.is_none());
+            }
+            other => panic!("expected a let statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mutable_decl_stmt_with_type_annotation() {
+        let block = parse_block("{ let mut x: i32 = 1; }");
+        match &only_stmt(&block).kind {
+            StmtKind::Decl(DeclStmt {
+                mutability, ty, ..
+            }) => {
+                assert!(matches!(mutability, Mutability::Mutable));
+                assert!(ty.is_some());
+            }
+            other => panic!("expected a let statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_decl_stmt_with_tuple_pattern() {
+        let block = parse_block("{ let (x, y) = point; }");
+        match &only_stmt(&block).kind {
+            StmtKind::Decl(DeclStmt { name, .. }) => {
+                assert!(matches!(name.kind, PatternKind::Tuple(_)));
+            }
+            other => panic!("expected a let statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_with_stmt_with_single_lend() {
+        let block = parse_block("{ with x = &y { foo(x); } }");
+        match &only_stmt(&block).kind {
+            StmtKind::With { lends, body } => {
+                assert_eq!(lends.len(), 1);
+                assert!(matches!(lends[0].name.kind, PatternKind::Binding(_)));
+                assert!(matches!(lends[0].expr.kind, ExprKind::Borrow { .. }));
+                assert_eq!(body.stmts.len(), 1);
+            }
+            other => panic!("expected a with statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_with_stmt_with_multiple_lends() {
+        let block = parse_block("{ with x = &a, y = &mut b { foo(); } }");
+        match &only_stmt(&block).kind {
+            StmtKind::With { lends, .. } => {
+                assert_eq!(lends.len(), 2);
+                match &lends[0].expr.kind {
+                    ExprKind::Borrow { mutability, .. } => {
+                        assert!(matches!(mutability, Mutability::Immutable))
+                    }
+                    other => panic!("expected a borrow expr, got {other:?}"),
+                }
+                match &lends[1].expr.kind {
+                    ExprKind::Borrow { mutability, .. } => {
+                        assert!(matches!(mutability, Mutability::Mutable))
+                    }
+                    other => panic!("expected a borrow expr, got {other:?}"),
+                }
+            }
+            other => panic!("expected a with statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_expr_stmt() {
+        let block = parse_block(r#"{ println("hi"); }"#);
+        match &only_stmt(&block).kind {
+            StmtKind::Expr(expr) => {
+                assert!(matches!(expr.kind, ExprKind::FunCall { .. }));
+            }
+            other => panic!("expected an expr statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_nested_block_inside_while_body() {
+        // Exercises the block parser's recursion: a `while` whose body contains a `let` and a
+        // nested `while`.
+        let block = parse_block("{ while true { let x = 1; while x < 2 { x; } } }");
+        match &only_stmt(&block).kind {
+            StmtKind::While { body, .. } => {
+                assert_eq!(body.stmts.len(), 2);
+                assert!(matches!(body.stmts[0].kind, StmtKind::Decl(_)));
+                assert!(matches!(body.stmts[1].kind, StmtKind::While { .. }));
+            }
+            other => panic!("expected a while statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_multiple_statements_in_order() {
+        let block = parse_block("{ let x = 1; let y = 2; return x + y; }");
+        assert_eq!(block.stmts.len(), 3);
+        assert!(matches!(block.stmts[0].kind, StmtKind::Decl(_)));
+        assert!(matches!(block.stmts[1].kind, StmtKind::Decl(_)));
+        assert!(matches!(block.stmts[2].kind, StmtKind::Return { .. }));
+    }
+
+    #[test]
+    fn parses_decl_with_literal_pattern_expr_value() {
+        let block = parse_block(r#"{ let s = "hi\n"; }"#);
+        match &only_stmt(&block).kind {
+            StmtKind::Decl(DeclStmt { expr, .. }) => match &expr.kind {
+                ExprKind::Literal(Literal::Str(sym)) => {
+                    assert_eq!(Interner::resolve(*sym), "hi\n")
+                }
+                other => panic!("expected a string literal, got {other:?}"),
+            },
+            other => panic!("expected a let statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recovers_from_a_malformed_statement_and_keeps_parsing_later_ones() {
+        // `1 +;` is broken (a dangling `+` with no right-hand side before the `;`); the `let`
+        // and `return` statements on either side of it should still show up in the tree.
+        let (block, error_count) = parse_block_with_errors("{ let a = 1; 1 +; return a; }");
+        assert_eq!(error_count, 1);
+        assert_eq!(block.stmts.len(), 3);
+        assert!(matches!(block.stmts[0].kind, StmtKind::Decl(_)));
+        assert!(matches!(block.stmts[1].kind, StmtKind::Error));
+        assert!(matches!(block.stmts[2].kind, StmtKind::Return { .. }));
+    }
+
+    #[test]
+    fn recovers_from_a_missing_semicolon_and_keeps_parsing_later_statements() {
+        let (block, error_count) = parse_block_with_errors("{ let x = 1 let y = 2; }");
+        assert_eq!(error_count, 1);
+        assert_eq!(block.stmts.len(), 2);
+        assert!(matches!(block.stmts[0].kind, StmtKind::Error));
+        assert!(matches!(block.stmts[1].kind, StmtKind::Decl(_)));
+    }
+
+    #[test]
+    fn recovery_does_not_disturb_a_trailing_tail_expression() {
+        // A semicolon-less tail expression must still come through as the block's final
+        // statement, not get swallowed by statement-recovery.
+        let block = parse_block("{ let x = 1; x }");
+        assert_eq!(block.stmts.len(), 2);
+        assert!(matches!(block.stmts[0].kind, StmtKind::Decl(_)));
+        assert!(matches!(block.stmts[1].kind, StmtKind::Expr(_)));
     }
 }

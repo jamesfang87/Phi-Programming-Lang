@@ -180,6 +180,24 @@ fun framed(base: String) -> String {
 let title = framed(greeting);  // greeting is gone now (String isn't trivial)
 ```
 
+### Closures
+
+Closures are written the same way as in Rust — parameters between `|...|`, followed by the body:
+
+```phi
+let add = |x: i32, y: i32| -> i32 { x + y };
+let double = |x| x * 2;      // parameter and return types are inferred when omitted
+let answer = || 42;          // no parameters
+```
+
+The body is any expression: a `{ ... }` block whose final, semicolon-less expression is the result (exactly like a function body without `return`), or a single bare expression for short closures. Parameter types and the return type are optional and inferred from context; annotate them the same way a function's parameters and return type are annotated when inference isn't enough or clarity is wanted.
+
+Closures are ordinary values and are most often passed directly to a function that takes one:
+
+```phi
+let doubled = xs.map(|x| x * 2);
+```
+
 ---
 
 ## 7. Projections
@@ -416,7 +434,7 @@ fun print_name(shape: &Shape) {
 }
 
 fun main() {
-    const rect = Shape { Rectangle: .{ l = 4.0, w = 6.0 } }; // we can elide in cases where it's clear what the type of the ctor is
+    const rect = Shape { Rectangle: { l = 4.0, w = 6.0 } }; // we can elide in cases where it's clear what the type of the ctor is
     const circle = Shape { Circle: 4.0 };
     const square = Shape { Square: .{ l = 4.0 } };
 

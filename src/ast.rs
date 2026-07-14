@@ -1,5 +1,3 @@
-//! # Phi surface AST
-
 #![allow(dead_code)]
 
 mod expr_impls;
@@ -50,16 +48,6 @@ pub struct Path {
     pub span: SrcSpan,
 }
 
-/// A literal. Leaf data only — the span lives on whatever wraps it (`Expr`, `Pattern`).
-#[derive(Clone, Copy, Debug)]
-pub enum Literal {
-    Int { value: Symbol, suffix: Symbol },
-    Float { value: Symbol, suffix: Symbol },
-    Str(Symbol),
-    Bool(bool),
-    Char(char),
-}
-
 // ===========================================================================
 // Items
 // ===========================================================================
@@ -73,16 +61,33 @@ pub struct SrcUnit {
 }
 
 #[derive(Clone, Debug)]
+pub enum ItemKind {
+    Module(ModuleDecl),
+    Import(Import),
+    Function(Function),
+    Struct(Struct),
+    Enum(Enum),
+    Trait(Trait),
+    Extend(Extend),
+    Error,
+}
+
+/// `module math::vector;`
+#[derive(Clone, Debug)]
 pub struct ModuleDecl {
     pub path: Path,
     pub span: SrcSpan,
 }
 
+/// import math as m;
+/// import math::Vector2D;
+/// import math::*;
 #[derive(Clone, Debug)]
 pub struct Import {
     pub path: Path,
     /// `true` for a glob import, `import math::*;`.
     pub glob: bool,
+    pub alias: Option<Ident>,
     pub span: SrcSpan,
 }
 
@@ -90,16 +95,6 @@ pub struct Import {
 pub struct Item {
     pub kind: ItemKind,
     pub span: SrcSpan,
-}
-
-#[derive(Clone, Debug)]
-pub enum ItemKind {
-    Function(Function),
-    Struct(Struct),
-    Enum(Enum),
-    Trait(Trait),
-    Extend(Extend),
-    Error,
 }
 
 #[derive(Clone, Debug)]
@@ -136,15 +131,17 @@ pub struct Enum {
 pub struct Trait {
     pub visibility: Visibility,
     pub name: Ident,
-    pub generics: Vec<Generic>,
+    pub generics: Option<Vec<Generic>>,
     pub functions: Vec<Function>,
     pub span: SrcSpan,
 }
 
 #[derive(Clone, Debug)]
 pub struct Extend {
-    pub generics: Vec<Generic>,
-    pub ty: Type,
+    pub extend_generics: Option<Vec<Type>>,
+    pub adt_generics: Option<Vec<Type>>,
+    pub trait_generics: Option<Vec<Type>>,
+    pub adt_path: Path,
     pub trait_path: Option<Path>,
     pub methods: Vec<Function>,
     pub span: SrcSpan,
@@ -228,9 +225,9 @@ pub enum Ty {
     },
     Any(Box<Ty>),
     Tuple(Vec<Ty>),
-    Slice {
+    Array {
         elem: Box<Ty>,
-        len: Box<Expr>,
+        len: Option<Box<Expr>>,
     },
     SelfType,
     Dyn(Path),
@@ -285,8 +282,6 @@ pub enum StmtKind {
     Error,
 }
 
-/// Kept as its own struct (rather than inlined into `StmtKind::Decl { .. }`) since it's reused
-/// verbatim inside `StmtKind::With`'s `lends: Vec<DeclStmt>`.
 #[derive(Clone, Debug)]
 pub struct DeclStmt {
     pub mutability: Mutability,
@@ -350,7 +345,7 @@ pub enum ExprKind {
     },
     Ctor {
         path: Path,
-        payload: CtorPayload,
+        payload: Vec<CtorPayload>,
     },
     Tuple(Vec<Expr>),
     Range {
@@ -371,7 +366,30 @@ pub enum ExprKind {
     Spawn(Block),
     Concurrent(Block),
     Block(Block),
+    Closure {
+        params: Vec<ClosureParam>,
+        ret: Option<Type>,
+        body: Box<Expr>,
+    },
     Error,
+}
+
+/// A closure parameter. Unlike a function's [`Param`], the type annotation is optional — Rust-like
+/// closures infer unannotated parameter types from context.
+#[derive(Clone, Debug)]
+pub struct ClosureParam {
+    pub name: Ident,
+    pub ty: Option<Type>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Literal {
+    Int { value: Symbol, suffix: Symbol },
+    Float { value: Symbol, suffix: Symbol },
+    Str(Symbol),
+    Bool(bool),
+    Char(char),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -397,9 +415,6 @@ pub enum BinaryOp {
     Or, // && ||
 }
 
-/// Kept as its own struct (rather than inlined into `ExprKind::Ctor { .. }`) since a ctor payload
-/// has its own internal span independent of the surrounding `Expr`'s span — e.g. `Circle { r: 1 }`
-/// vs. the payload `{ r: 1 }` alone.
 #[derive(Clone, Debug)]
 pub struct CtorPayload {
     pub name: Ident,
@@ -407,8 +422,6 @@ pub struct CtorPayload {
     pub span: SrcSpan,
 }
 
-/// Kept as its own struct for the same reason: a match arm's span (pattern + `=>` + body) is
-/// distinct from the `Expr::Match` wrapper's span (which covers the whole `match { ... }`).
 #[derive(Clone, Debug)]
 pub struct MatchArm {
     pub pat: Pattern,
