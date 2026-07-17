@@ -1,8 +1,8 @@
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
+use crate::ast::interner::Interner;
 use crate::ast::{Expr, ExprKind, Literal, Pattern, PatternKind};
-use crate::interner::Interner;
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -104,9 +104,7 @@ impl Parser {
                         }
 
                         let (payload, span) = match payload {
-                            Some((payload, close_span)) => {
-                                (payload, path.span.merge(close_span))
-                            }
+                            Some((payload, close_span)) => (payload, path.span.merge(close_span)),
                             None => (Vec::new(), path.span),
                         };
 
@@ -194,10 +192,7 @@ mod tests {
     #[test]
     fn parses_char_literal_pattern() {
         let pat = parse_pattern("'a'");
-        assert!(matches!(
-            pat.kind,
-            PatternKind::Literal(Literal::Char('a'))
-        ));
+        assert!(matches!(pat.kind, PatternKind::Literal(Literal::Char('a'))));
     }
 
     #[test]

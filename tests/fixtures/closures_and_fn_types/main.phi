@@ -1,0 +1,8 @@
+fun apply_twice(f: fun(i32) -> i32, x: i32) -> i32 {
+    return f(f(x));
+}
+
+fun main() {
+    let double = |x| x * 2;
+    apply_twice(double, 5);
+}

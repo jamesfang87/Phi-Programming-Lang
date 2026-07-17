@@ -144,11 +144,39 @@ impl Parser {
                     })
                     .boxed();
 
+                // `fun(i32, i32) -> i32`, `fun(&str)` (no `->` means no return value).
+                let fn_ty = self
+                    .kind(TokenKind::FunKw)
+                    .then_ignore(self.kind(TokenKind::OpenParen))
+                    .then(
+                        ty.clone()
+                            .separated_by(self.kind(TokenKind::Comma))
+                            .allow_trailing()
+                            .collect::<Vec<_>>(),
+                    )
+                    .then(self.kind(TokenKind::CloseParen))
+                    .then(self.kind(TokenKind::Arrow).ignore_then(ty.clone()).or_not())
+                    .map(|(((fun_tok, params), close_tok), ret)| {
+                        let end_span = match &ret {
+                            Some(ret) => ret.span,
+                            None => close_tok.span,
+                        };
+                        Type {
+                            span: fun_tok.span.merge(end_span),
+                            kind: Ty::Fn {
+                                params: params.into_iter().map(|t| t.kind).collect(),
+                                ret: ret.map(|t| Box::new(t.kind)),
+                            },
+                        }
+                    })
+                    .boxed();
+
                 choice((
                     self_ty,
                     dyn_ty,
                     any_ty,
                     ref_ty,
+                    fn_ty,
                     primitive_ty,
                     tuple_ty,
                     array_ty,
@@ -164,10 +192,10 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::interner::Interner;
     use crate::ast::{ExprKind, Literal};
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
-    use crate::interner::Interner;
     use crate::lexer::Lexer;
 
     fn parse_ty(src: &str) -> Type {
@@ -177,11 +205,11 @@ mod tests {
         let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
         let tokens = Lexer::new(&chars, offset).tokenize();
         let parser = Parser::new(tokens.clone(), offset);
-        let (output, errors) = parser
-            .type_parser()
-            .parse(&tokens[..])
-            .into_output_errors();
-        assert!(errors.is_empty(), "unexpected parse errors for {src:?}: {errors:?}");
+        let (output, errors) = parser.type_parser().parse(&tokens[..]).into_output_errors();
+        assert!(
+            errors.is_empty(),
+            "unexpected parse errors for {src:?}: {errors:?}"
+        );
         output.expect("expected a successfully parsed type")
     }
 
@@ -437,5 +465,65 @@ mod tests {
     #[test]
     fn rejects_any_wrapping_another_any_type() {
         assert_eq!(diagnostic_count("any any i32"), 1);
+    }
+
+    #[test]
+    fn parses_fn_type_with_params_and_return_type() {
+        let ty = parse_ty("fun(i32, i32) -> i32");
+        match &ty.kind {
+            Ty::Fn { params, ret } => {
+                assert_eq!(params.len(), 2);
+                assert!(matches!(params[0], Ty::Base { .. }));
+                assert!(ret.is_some());
+                assert!(matches!(**ret.as_ref().unwrap(), Ty::Base { .. }));
+            }
+            other => panic!("expected a fn type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_fn_type_with_no_params_and_no_return_type() {
+        let ty = parse_ty("fun()");
+        match &ty.kind {
+            Ty::Fn { params, ret } => {
+                assert!(params.is_empty());
+                assert!(ret.is_none());
+            }
+            other => panic!("expected a fn type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_fn_type_with_ref_param() {
+        let ty = parse_ty("fun(&str)");
+        match &ty.kind {
+            Ty::Fn { params, .. } => {
+                assert_eq!(params.len(), 1);
+                assert!(matches!(params[0], Ty::Ref { .. }));
+            }
+            other => panic!("expected a fn type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_higher_order_fn_type() {
+        // A fn type whose parameter and return type are themselves fn types.
+        let ty = parse_ty("fun(fun(i32) -> i32) -> fun() -> bool");
+        match &ty.kind {
+            Ty::Fn { params, ret } => {
+                assert_eq!(params.len(), 1);
+                assert!(matches!(params[0], Ty::Fn { .. }));
+                match ret.as_deref() {
+                    Some(Ty::Fn { .. }) => {}
+                    other => panic!("expected a fn return type, got {other:?}"),
+                }
+            }
+            other => panic!("expected a fn type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_any_wrapping_a_fn_type() {
+        assert_eq!(diagnostic_count("any fun(i32) -> i32"), 1);
     }
 }

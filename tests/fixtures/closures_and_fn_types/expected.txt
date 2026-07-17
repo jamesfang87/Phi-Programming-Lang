@@ -1,0 +1,524 @@
+=== status ===
+0
+=== stdout ===
+// ./main.phi
+SrcUnit {
+    module: None,
+    imports: [],
+    items: [
+        Item {
+            kind: Function(
+                Function {
+                    visibility: Private,
+                    name: Ident {
+                        text: Symbol(
+                            0,
+                        ),
+                        span: SrcSpan {
+                            begin: 4,
+                            end: 15,
+                        },
+                    },
+                    generics: [],
+                    self_param: None,
+                    params: [
+                        Param {
+                            name: Ident {
+                                text: Symbol(
+                                    1,
+                                ),
+                                span: SrcSpan {
+                                    begin: 16,
+                                    end: 17,
+                                },
+                            },
+                            ty: Type {
+                                kind: Fn {
+                                    params: [
+                                        Base {
+                                            base: Path {
+                                                segments: [
+                                                    Ident {
+                                                        text: Symbol(
+                                                            2,
+                                                        ),
+                                                        span: SrcSpan {
+                                                            begin: 23,
+                                                            end: 26,
+                                                        },
+                                                    },
+                                                ],
+                                                span: SrcSpan {
+                                                    begin: 23,
+                                                    end: 26,
+                                                },
+                                            },
+                                            args: [],
+                                        },
+                                    ],
+                                    ret: Some(
+                                        Base {
+                                            base: Path {
+                                                segments: [
+                                                    Ident {
+                                                        text: Symbol(
+                                                            2,
+                                                        ),
+                                                        span: SrcSpan {
+                                                            begin: 31,
+                                                            end: 34,
+                                                        },
+                                                    },
+                                                ],
+                                                span: SrcSpan {
+                                                    begin: 31,
+                                                    end: 34,
+                                                },
+                                            },
+                                            args: [],
+                                        },
+                                    ),
+                                },
+                                span: SrcSpan {
+                                    begin: 19,
+                                    end: 34,
+                                },
+                            },
+                            span: SrcSpan {
+                                begin: 16,
+                                end: 34,
+                            },
+                        },
+                        Param {
+                            name: Ident {
+                                text: Symbol(
+                                    3,
+                                ),
+                                span: SrcSpan {
+                                    begin: 36,
+                                    end: 37,
+                                },
+                            },
+                            ty: Type {
+                                kind: Base {
+                                    base: Path {
+                                        segments: [
+                                            Ident {
+                                                text: Symbol(
+                                                    2,
+                                                ),
+                                                span: SrcSpan {
+                                                    begin: 39,
+                                                    end: 42,
+                                                },
+                                            },
+                                        ],
+                                        span: SrcSpan {
+                                            begin: 39,
+                                            end: 42,
+                                        },
+                                    },
+                                    args: [],
+                                },
+                                span: SrcSpan {
+                                    begin: 39,
+                                    end: 42,
+                                },
+                            },
+                            span: SrcSpan {
+                                begin: 36,
+                                end: 42,
+                            },
+                        },
+                    ],
+                    ret: Some(
+                        Type {
+                            kind: Base {
+                                base: Path {
+                                    segments: [
+                                        Ident {
+                                            text: Symbol(
+                                                2,
+                                            ),
+                                            span: SrcSpan {
+                                                begin: 47,
+                                                end: 50,
+                                            },
+                                        },
+                                    ],
+                                    span: SrcSpan {
+                                        begin: 47,
+                                        end: 50,
+                                    },
+                                },
+                                args: [],
+                            },
+                            span: SrcSpan {
+                                begin: 47,
+                                end: 50,
+                            },
+                        },
+                    ),
+                    body: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: Return {
+                                        ret: Expr {
+                                            kind: FunCall {
+                                                callee: Expr {
+                                                    kind: DeclRef(
+                                                        Path {
+                                                            segments: [
+                                                                Ident {
+                                                                    text: Symbol(
+                                                                        1,
+                                                                    ),
+                                                                    span: SrcSpan {
+                                                                        begin: 64,
+                                                                        end: 65,
+                                                                    },
+                                                                },
+                                                            ],
+                                                            span: SrcSpan {
+                                                                begin: 64,
+                                                                end: 65,
+                                                            },
+                                                        },
+                                                    ),
+                                                    span: SrcSpan {
+                                                        begin: 64,
+                                                        end: 65,
+                                                    },
+                                                },
+                                                args: [
+                                                    Expr {
+                                                        kind: FunCall {
+                                                            callee: Expr {
+                                                                kind: DeclRef(
+                                                                    Path {
+                                                                        segments: [
+                                                                            Ident {
+                                                                                text: Symbol(
+                                                                                    1,
+                                                                                ),
+                                                                                span: SrcSpan {
+                                                                                    begin: 66,
+                                                                                    end: 67,
+                                                                                },
+                                                                            },
+                                                                        ],
+                                                                        span: SrcSpan {
+                                                                            begin: 66,
+                                                                            end: 67,
+                                                                        },
+                                                                    },
+                                                                ),
+                                                                span: SrcSpan {
+                                                                    begin: 66,
+                                                                    end: 67,
+                                                                },
+                                                            },
+                                                            args: [
+                                                                Expr {
+                                                                    kind: DeclRef(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident {
+                                                                                    text: Symbol(
+                                                                                        3,
+                                                                                    ),
+                                                                                    span: SrcSpan {
+                                                                                        begin: 68,
+                                                                                        end: 69,
+                                                                                    },
+                                                                                },
+                                                                            ],
+                                                                            span: SrcSpan {
+                                                                                begin: 68,
+                                                                                end: 69,
+                                                                            },
+                                                                        },
+                                                                    ),
+                                                                    span: SrcSpan {
+                                                                        begin: 68,
+                                                                        end: 69,
+                                                                    },
+                                                                },
+                                                            ],
+                                                        },
+                                                        span: SrcSpan {
+                                                            begin: 66,
+                                                            end: 70,
+                                                        },
+                                                    },
+                                                ],
+                                            },
+                                            span: SrcSpan {
+                                                begin: 64,
+                                                end: 71,
+                                            },
+                                        },
+                                    },
+                                    span: SrcSpan {
+                                        begin: 57,
+                                        end: 72,
+                                    },
+                                },
+                            ],
+                            span: SrcSpan {
+                                begin: 51,
+                                end: 74,
+                            },
+                        },
+                    ),
+                    span: SrcSpan {
+                        begin: 0,
+                        end: 74,
+                    },
+                },
+            ),
+            span: SrcSpan {
+                begin: 0,
+                end: 74,
+            },
+        },
+        Item {
+            kind: Function(
+                Function {
+                    visibility: Private,
+                    name: Ident {
+                        text: Symbol(
+                            4,
+                        ),
+                        span: SrcSpan {
+                            begin: 80,
+                            end: 84,
+                        },
+                    },
+                    generics: [],
+                    self_param: None,
+                    params: [],
+                    ret: None,
+                    body: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: Decl(
+                                        DeclStmt {
+                                            mutability: Immutable,
+                                            name: Pattern {
+                                                kind: Binding(
+                                                    Ident {
+                                                        text: Symbol(
+                                                            5,
+                                                        ),
+                                                        span: SrcSpan {
+                                                            begin: 97,
+                                                            end: 103,
+                                                        },
+                                                    },
+                                                ),
+                                                span: SrcSpan {
+                                                    begin: 97,
+                                                    end: 103,
+                                                },
+                                            },
+                                            ty: None,
+                                            expr: Expr {
+                                                kind: Closure {
+                                                    params: [
+                                                        ClosureParam {
+                                                            name: Ident {
+                                                                text: Symbol(
+                                                                    3,
+                                                                ),
+                                                                span: SrcSpan {
+                                                                    begin: 107,
+                                                                    end: 108,
+                                                                },
+                                                            },
+                                                            ty: None,
+                                                            span: SrcSpan {
+                                                                begin: 107,
+                                                                end: 108,
+                                                            },
+                                                        },
+                                                    ],
+                                                    ret: None,
+                                                    body: Expr {
+                                                        kind: Binary {
+                                                            op: Mul,
+                                                            lhs: Expr {
+                                                                kind: DeclRef(
+                                                                    Path {
+                                                                        segments: [
+                                                                            Ident {
+                                                                                text: Symbol(
+                                                                                    3,
+                                                                                ),
+                                                                                span: SrcSpan {
+                                                                                    begin: 110,
+                                                                                    end: 111,
+                                                                                },
+                                                                            },
+                                                                        ],
+                                                                        span: SrcSpan {
+                                                                            begin: 110,
+                                                                            end: 111,
+                                                                        },
+                                                                    },
+                                                                ),
+                                                                span: SrcSpan {
+                                                                    begin: 110,
+                                                                    end: 111,
+                                                                },
+                                                            },
+                                                            rhs: Expr {
+                                                                kind: Literal(
+                                                                    Int {
+                                                                        value: Symbol(
+                                                                            6,
+                                                                        ),
+                                                                        suffix: Symbol(
+                                                                            6,
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: SrcSpan {
+                                                                    begin: 114,
+                                                                    end: 115,
+                                                                },
+                                                            },
+                                                        },
+                                                        span: SrcSpan {
+                                                            begin: 110,
+                                                            end: 115,
+                                                        },
+                                                    },
+                                                },
+                                                span: SrcSpan {
+                                                    begin: 106,
+                                                    end: 115,
+                                                },
+                                            },
+                                            span: SrcSpan {
+                                                begin: 93,
+                                                end: 116,
+                                            },
+                                        },
+                                    ),
+                                    span: SrcSpan {
+                                        begin: 93,
+                                        end: 116,
+                                    },
+                                },
+                                Stmt {
+                                    kind: Expr(
+                                        Expr {
+                                            kind: FunCall {
+                                                callee: Expr {
+                                                    kind: DeclRef(
+                                                        Path {
+                                                            segments: [
+                                                                Ident {
+                                                                    text: Symbol(
+                                                                        0,
+                                                                    ),
+                                                                    span: SrcSpan {
+                                                                        begin: 121,
+                                                                        end: 132,
+                                                                    },
+                                                                },
+                                                            ],
+                                                            span: SrcSpan {
+                                                                begin: 121,
+                                                                end: 132,
+                                                            },
+                                                        },
+                                                    ),
+                                                    span: SrcSpan {
+                                                        begin: 121,
+                                                        end: 132,
+                                                    },
+                                                },
+                                                args: [
+                                                    Expr {
+                                                        kind: DeclRef(
+                                                            Path {
+                                                                segments: [
+                                                                    Ident {
+                                                                        text: Symbol(
+                                                                            5,
+                                                                        ),
+                                                                        span: SrcSpan {
+                                                                            begin: 133,
+                                                                            end: 139,
+                                                                        },
+                                                                    },
+                                                                ],
+                                                                span: SrcSpan {
+                                                                    begin: 133,
+                                                                    end: 139,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: SrcSpan {
+                                                            begin: 133,
+                                                            end: 139,
+                                                        },
+                                                    },
+                                                    Expr {
+                                                        kind: Literal(
+                                                            Int {
+                                                                value: Symbol(
+                                                                    7,
+                                                                ),
+                                                                suffix: Symbol(
+                                                                    7,
+                                                                ),
+                                                            },
+                                                        ),
+                                                        span: SrcSpan {
+                                                            begin: 141,
+                                                            end: 142,
+                                                        },
+                                                    },
+                                                ],
+                                            },
+                                            span: SrcSpan {
+                                                begin: 121,
+                                                end: 143,
+                                            },
+                                        },
+                                    ),
+                                    span: SrcSpan {
+                                        begin: 121,
+                                        end: 144,
+                                    },
+                                },
+                            ],
+                            span: SrcSpan {
+                                begin: 87,
+                                end: 146,
+                            },
+                        },
+                    ),
+                    span: SrcSpan {
+                        begin: 76,
+                        end: 146,
+                    },
+                },
+            ),
+            span: SrcSpan {
+                begin: 76,
+                end: 146,
+            },
+        },
+    ],
+    span: SrcSpan {
+        begin: 0,
+        end: 146,
+    },
+}
+=== stderr ===

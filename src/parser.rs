@@ -5,10 +5,10 @@ use chumsky::error::Rich;
 use chumsky::extra;
 use chumsky::prelude::*;
 
+use crate::ast::interner::Interner;
 use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Item, ItemKind, Path, SrcUnit};
 use crate::diag::DiagCtx;
 use crate::driver::src_map::SrcMap;
-use crate::interner::Interner;
 use crate::lexer::src_span::SrcSpan;
 use crate::lexer::token::{Token, TokenKind};
 
@@ -129,15 +129,15 @@ impl Parser {
             self.kind(TokenKind::ImportKw).ignored(),
         ));
 
-        let item = self.item_parser().recover_with(via_parser(
-            self.recover_to_boundary(
+        let item = self
+            .item_parser()
+            .recover_with(via_parser(self.recover_to_boundary(
                 item_start,
                 Item {
                     kind: ItemKind::Error,
                     span: SrcSpan::new(0, 0),
                 },
-            ),
-        ));
+            )));
 
         item.repeated()
             .collect::<Vec<_>>()

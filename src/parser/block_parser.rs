@@ -13,10 +13,12 @@ mod tests {
     use chumsky::Parser as ChumskyParser;
 
     use super::*;
-    use crate::ast::{BinaryOp, DeclStmt, ExprKind, Literal, Mutability, PatternKind, Stmt, StmtKind};
+    use crate::ast::interner::Interner;
+    use crate::ast::{
+        BinaryOp, DeclStmt, ExprKind, Literal, Mutability, PatternKind, Stmt, StmtKind,
+    };
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
-    use crate::interner::Interner;
     use crate::lexer::Lexer;
 
     fn parse_block(src: &str) -> Block {
@@ -164,9 +166,7 @@ mod tests {
     fn parses_mutable_decl_stmt_with_type_annotation() {
         let block = parse_block("{ let mut x: i32 = 1; }");
         match &only_stmt(&block).kind {
-            StmtKind::Decl(DeclStmt {
-                mutability, ty, ..
-            }) => {
+            StmtKind::Decl(DeclStmt { mutability, ty, .. }) => {
                 assert!(matches!(mutability, Mutability::Mutable));
                 assert!(ty.is_some());
             }

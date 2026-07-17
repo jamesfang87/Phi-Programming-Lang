@@ -1,4 +1,4 @@
-# The Phi Programming Language — Language Reference
+# The Phi Programming Language
 
 Phi is a modern programming language written in C++23. To guarantee memory safety and data-race freedom, Phi uses *mutable value semantics (MVS)*.
 
@@ -6,7 +6,6 @@ For trivially copyable types such as integers, floating-point numbers, booleans,
 
 References are treated as **second-class objects** and cannot be stored. Phi has a variety of constructs — projections, functions that return them, and the `any` keyword — that make programming with this restriction ergonomic.
 
-This document is a complete reference to the language: its syntax and its semantics.
 
 ---
 
@@ -197,6 +196,20 @@ Closures are ordinary values and are most often passed directly to a function th
 ```phi
 let doubled = xs.map(|x| x * 2);
 ```
+
+### Function types
+
+The type of a function or closure is written `fun(ParamType, ...) -> ReturnType`, and is used anywhere a closure or function is passed or stored as a value — most commonly a higher-order function's parameter type:
+
+```phi
+fun apply_twice(f: fun(i32) -> i32, x: i32) -> i32 {
+    return f(f(x));
+}
+
+apply_twice(|x| x + 1, 5);
+```
+
+A function type with no `->` — `fun(String)` — describes a function that doesn't return a value. Function types nest like any other type, so `fun(fun(i32) -> i32) -> fun() -> bool` is the type of a function that takes an `i32 -> i32` function and returns a `() -> bool` function.
 
 ---
 

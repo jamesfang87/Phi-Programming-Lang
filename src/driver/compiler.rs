@@ -49,12 +49,24 @@ impl Compiler {
     /// Runs the full pipeline over every `.phi` file under `root`: collect sources, lex, parse,
     /// and (eventually) typecheck, etc. Prints any diagnostics collected and reports whether
     /// compilation succeeded.
-    pub fn build(&mut self, root: &Path) -> io::Result<bool> {
+    ///
+    /// If `print_ast` is set, the parsed AST for every file is pretty-printed to stdout (in
+    /// `SrcMap` order, which `FileCollector` sorts to be reproducible) before diagnostics are
+    /// reported — this is the hook `phi build --ast` uses, and what the golden tests under
+    /// `tests/` snapshot.
+    pub fn build(&mut self, root: &Path, print_ast: bool) -> io::Result<bool> {
         self.collect_sources(root)?;
         let token_streams = self.lex();
-        let _asts = self.parse(token_streams);
+        let asts = self.parse(token_streams);
 
-        // TODO: typecheck `_asts` and continue the pipeline.
+        if print_ast {
+            for (file, ast) in SrcMap::files().iter().zip(asts.iter()) {
+                println!("// {}", file.name);
+                println!("{ast:#?}");
+            }
+        }
+
+        // TODO: typecheck `asts` and continue the pipeline.
 
         DiagCtx::report();
         Ok(!DiagCtx::has_errors())

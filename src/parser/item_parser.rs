@@ -503,9 +503,9 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::ast::SelfMode;
+    use crate::ast::interner::Interner;
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
-    use crate::interner::Interner;
     use crate::lexer::Lexer;
 
     fn parse_item(src: &str) -> Item {
@@ -515,10 +515,7 @@ mod tests {
         let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
         let tokens = Lexer::new(&chars, offset).tokenize();
         let parser = Parser::new(tokens.clone(), offset);
-        let (output, errors) = parser
-            .item_parser()
-            .parse(&tokens[..])
-            .into_output_errors();
+        let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
         assert!(
             errors.is_empty(),
             "unexpected parse errors for {src:?}: {errors:?}"
