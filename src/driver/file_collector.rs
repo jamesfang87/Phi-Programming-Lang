@@ -17,8 +17,12 @@ impl FileCollector {
             return Ok(());
         }
 
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
+        // `read_dir`'s order is OS-dependent; sort so file collection (and therefore every
+        // downstream stage, including diagnostic and `--ast` output) is reproducible.
+        let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in entries {
             let path = entry.path();
             if path.is_dir() {
                 Self::visit_dir(&path)?;

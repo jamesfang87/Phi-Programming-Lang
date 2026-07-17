@@ -1,7 +1,7 @@
 // ast/expr_impls.rs
 use super::*;
+use crate::ast::interner::Interner;
 use crate::driver::src_map::SrcMap;
-use crate::interner::Interner;
 use crate::lexer::{src_span::SrcSpan, token::Token, unescape};
 
 impl Expr {

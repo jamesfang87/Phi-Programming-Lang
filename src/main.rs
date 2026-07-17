@@ -1,7 +1,6 @@
 mod ast;
 mod diag;
 mod driver;
-mod interner;
 mod lexer;
 mod parser;
 
@@ -52,13 +51,15 @@ fn main() {
         }
 
         "build" => {
-            if args.len() != 2 {
-                eprintln!("error: extra argument after 'build'");
+            let extra = &args[2..];
+            let print_ast = extra.iter().any(|a| a == "--ast");
+            if extra.iter().any(|a| a != "--ast") {
+                eprintln!("error: unknown argument after 'build' (only '--ast' is accepted)");
                 std::process::exit(1);
             }
 
             let mut compiler = Compiler::new();
-            match compiler.build(Path::new(".")) {
+            match compiler.build(Path::new("."), print_ast) {
                 Ok(true) => {}
                 Ok(false) => std::process::exit(1),
                 Err(e) => {

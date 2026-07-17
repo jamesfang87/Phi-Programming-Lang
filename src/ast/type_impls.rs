@@ -1,5 +1,5 @@
 use super::*;
-use crate::interner::Interner;
+use crate::ast::interner::Interner;
 use crate::lexer::token::Token;
 
 impl Type {

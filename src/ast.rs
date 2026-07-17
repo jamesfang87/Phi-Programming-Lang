@@ -3,6 +3,8 @@
 mod expr_impls;
 mod type_impls;
 
+pub mod interner;
+
 use crate::lexer::src_span::SrcSpan;
 
 // ===========================================================================
@@ -228,6 +230,11 @@ pub enum Ty {
     Array {
         elem: Box<Ty>,
         len: Option<Box<Expr>>,
+    },
+    /// `fun(i32, i32) -> i32`, `fun(&str)` (no `->` means no return value).
+    Fn {
+        params: Vec<Ty>,
+        ret: Option<Box<Ty>>,
     },
     SelfType,
     Dyn(Path),

@@ -1,0 +1,8 @@
+fun broken() {
+    let x = 1
+    let y = 2;
+}
+
+fun ok() {
+    return 1;
+}

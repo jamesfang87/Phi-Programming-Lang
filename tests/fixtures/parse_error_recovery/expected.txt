@@ -1,0 +1,178 @@
+=== status ===
+1
+=== stdout ===
+// ./main.phi
+SrcUnit {
+    module: None,
+    imports: [],
+    items: [
+        Item {
+            kind: Function(
+                Function {
+                    visibility: Private,
+                    name: Ident {
+                        text: Symbol(
+                            0,
+                        ),
+                        span: SrcSpan {
+                            begin: 4,
+                            end: 10,
+                        },
+                    },
+                    generics: [],
+                    self_param: None,
+                    params: [],
+                    ret: None,
+                    body: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: Error,
+                                    span: SrcSpan {
+                                        begin: 0,
+                                        end: 0,
+                                    },
+                                },
+                                Stmt {
+                                    kind: Decl(
+                                        DeclStmt {
+                                            mutability: Immutable,
+                                            name: Pattern {
+                                                kind: Binding(
+                                                    Ident {
+                                                        text: Symbol(
+                                                            3,
+                                                        ),
+                                                        span: SrcSpan {
+                                                            begin: 37,
+                                                            end: 38,
+                                                        },
+                                                    },
+                                                ),
+                                                span: SrcSpan {
+                                                    begin: 37,
+                                                    end: 38,
+                                                },
+                                            },
+                                            ty: None,
+                                            expr: Expr {
+                                                kind: Literal(
+                                                    Int {
+                                                        value: Symbol(
+                                                            4,
+                                                        ),
+                                                        suffix: Symbol(
+                                                            4,
+                                                        ),
+                                                    },
+                                                ),
+                                                span: SrcSpan {
+                                                    begin: 41,
+                                                    end: 42,
+                                                },
+                                            },
+                                            span: SrcSpan {
+                                                begin: 33,
+                                                end: 43,
+                                            },
+                                        },
+                                    ),
+                                    span: SrcSpan {
+                                        begin: 33,
+                                        end: 43,
+                                    },
+                                },
+                            ],
+                            span: SrcSpan {
+                                begin: 13,
+                                end: 45,
+                            },
+                        },
+                    ),
+                    span: SrcSpan {
+                        begin: 0,
+                        end: 45,
+                    },
+                },
+            ),
+            span: SrcSpan {
+                begin: 0,
+                end: 45,
+            },
+        },
+        Item {
+            kind: Function(
+                Function {
+                    visibility: Private,
+                    name: Ident {
+                        text: Symbol(
+                            5,
+                        ),
+                        span: SrcSpan {
+                            begin: 51,
+                            end: 53,
+                        },
+                    },
+                    generics: [],
+                    self_param: None,
+                    params: [],
+                    ret: None,
+                    body: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: Return {
+                                        ret: Expr {
+                                            kind: Literal(
+                                                Int {
+                                                    value: Symbol(
+                                                        2,
+                                                    ),
+                                                    suffix: Symbol(
+                                                        2,
+                                                    ),
+                                                },
+                                            ),
+                                            span: SrcSpan {
+                                                begin: 69,
+                                                end: 70,
+                                            },
+                                        },
+                                    },
+                                    span: SrcSpan {
+                                        begin: 62,
+                                        end: 71,
+                                    },
+                                },
+                            ],
+                            span: SrcSpan {
+                                begin: 56,
+                                end: 73,
+                            },
+                        },
+                    ),
+                    span: SrcSpan {
+                        begin: 47,
+                        end: 73,
+                    },
+                },
+            ),
+            span: SrcSpan {
+                begin: 47,
+                end: 73,
+            },
+        },
+    ],
+    span: SrcSpan {
+        begin: 0,
+        end: 73,
+    },
+}
+=== stderr ===
+Error: found 'let' expected something else
+   ╭─[ ./main.phi:3:5 ]
+   │
+ 3 │     let y = 2;
+   │     ─┬─  
+   │      ╰─── found 'let' expected something else
+───╯

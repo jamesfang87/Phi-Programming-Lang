@@ -1,6 +1,7 @@
 use std::cell::RefCell;
+use std::io::IsTerminal;
 
-use ariadne::{Color, Label, Report, ReportKind, Source};
+use ariadne::{Color, Config, Label, Report, ReportKind, Source};
 
 use crate::driver::src_map::SrcMap;
 use crate::lexer::src_span::SrcSpan;
@@ -87,10 +88,16 @@ impl Diagnostic {
         let start = byte_offsets[local_begin];
         let end = byte_offsets[local_end];
 
+        // Colored escape codes are only useful (and only correctly interpreted) by an actual
+        // terminal — emit plain text when stderr is redirected to a file, a pipe, or (as in the
+        // golden tests under `tests/`) captured from a child process.
+        let config = Config::new().with_color(std::io::stderr().is_terminal());
+
         let mut report = Report::build(
             self.severity.report_kind(),
             (file.name.as_str(), start..end),
         )
+        .with_config(config)
         .with_message(&self.message);
 
         report = report.with_label(
