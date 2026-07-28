@@ -1,15 +1,24 @@
+//! This file introduces the command-line entry point for the `phi` compiler.
+//!
+//! It parses the subcommand from the terminal arguments and dispatches to either `Driver`
+//! or `Compiler`, depending on the task. Project-creation tasks, such as `phi new` or
+//! `phi init`, are dispatched to `Driver`. Compilation tasks, such as `phi build`, are
+//! dispatched to `Compiler`.
+
 mod ast;
 mod diag;
 mod driver;
+mod hir;
 mod lexer;
+mod name_res;
 mod parser;
+mod typeck;
 
 use crate::driver::Driver;
 use crate::driver::compiler::Compiler;
 use std::env;
 use std::path::Path;
 
-// Main entry point that parses command‑line arguments and runs the requested command.
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -34,7 +43,8 @@ fn main() {
         }
 
         "init" => {
-            // Default to current directory if no path given
+            // With no extra argument, initialize the current directory rather than requiring
+            // `phi init .`.
             let path = if args.len() == 2 {
                 Path::new(".")
             } else if args.len() == 3 {

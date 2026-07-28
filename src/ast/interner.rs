@@ -1,8 +1,11 @@
 //! A trivial string interner backing [`crate::ast::Symbol`].
 //!
-//! Thread-local, mirroring [`crate::diag::DiagCtx`]: pipeline stages call its associated
-//! functions directly rather than threading an interner instance through every parser/lexer
-//! constructor, and tests get isolation for free via [`Interner::clear`].
+//! The interner is thread-local, mirroring [`crate::diag::DiagCtx`].
+//!
+//! Pipeline stages call its associated functions directly, rather than threading an interner
+//! instance through every parser and lexer constructor.
+//!
+//! Tests get isolation for free via [`Interner::clear`].
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -49,8 +52,9 @@ impl Interner {
         INTERNER.with(|interner| interner.borrow().strings[sym.id() as usize].clone())
     }
 
-    /// Discards every interned string on this thread. Tests use this for isolation, exactly
-    /// like [`crate::diag::DiagCtx::clear`].
+    /// Discards every interned string on this thread.
+    ///
+    /// Tests use this for isolation, exactly like [`crate::diag::DiagCtx::clear`].
     pub fn clear() {
         INTERNER.with(|interner| *interner.borrow_mut() = InternerData::new());
     }

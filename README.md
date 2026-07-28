@@ -215,7 +215,7 @@ A function type with no `->` — `fun(String)` — describes a function that doe
 
 ## 7. Projections
 
-References cannot be returned from ordinary functions or stored into variables — a function must own any value it returns, and a variable must own any value it holds. **Projections** are the construct that makes it possible to still borrow, and to return borrowed data, without lifting that restriction.
+References cannot be returned from ordinary functions or stored into variables — a function must own any value it returns, and a variable must own any value it holds. **Projections**, like the ones in the Hylo programming language, are the construct that makes it possible to still borrow, and to return borrowed data, without lifting that restriction.
 
 ### Projections
 
@@ -331,6 +331,36 @@ let label = if x < 5 { "small" } else { "large" };
 
 `if`, `match`,`spawn`, and `concurrent` are the only constructs usable as expressions. `while` and `for` are always statements and never produce a value.
 
+### `if let` and `while let`
+
+`if let` runs its branch only when a value matches a pattern, binding whatever the pattern names:
+
+```phi
+if let .some(n) = lookup(key) {
+    println(n);
+} else {
+    println("missing");
+}
+```
+
+It chains with `else if let`, and — like `if` — is usable as an expression when every branch produces a value.
+
+`while let` loops for as long as the value keeps matching, which is the usual way to drain something that reports its own end:
+
+```phi
+while let .some(line) = reader.next_line() {
+    process(line);
+}
+```
+
+Both are shorthands for a `match`: `if let` for a two-arm match whose second arm is `_`, and `while let` for a `loop` around one whose second arm breaks.
+
+A `{` directly after the condition of an `if`/`while`, the value of an `if let`/`while let`, or the subject of a `match` always opens the body. A struct literal or a record payload there has to be parenthesized:
+
+```phi
+if (Config { verbose: true }).verbose { ... }
+```
+
 ---
 
 ## 9. Structs and Methods
@@ -420,46 +450,92 @@ struct Rectangle {
 }
 
 enum Shape {
-    Rectangle: Rectangle,
-    Circle: f64,
-    Square: { l: f64 },
-    Parallelogram: (f64, f64),
+    rectangle: Rectangle,
+    circle: f64,
+    square: { l: f64 },
+    parallelogram: (f64, f64),
 }
 
-extend {
+extend Shape {
     fun perimeter(&self) -> f64 {
         return match self {
-            Rectangle(rect)     => 2 * (rect.l + rect.w),
-            Circle(r)           => 2 * 3.14 * r,
-            Square(l)           => 4 * l,
-            Parallelogram(b, h) => 2 * (b + h),
+            .rectangle(rect)       => 2.0 * (rect.l + rect.w),
+            .circle(r)             => 2.0 * 3.14 * r,
+            .square { l }          => 4.0 * l,
+            .parallelogram((b, h)) => 2.0 * (b + h),
         };
     }
 }
 
 fun print_name(shape: &Shape) {
     match shape {
-        Rectangle     => println("rectangle"),
-        Circle        => println("circle"),
-        Square        => println("square"),
-        Parallelogram => println("parallelogram"),
+        .rectangle     => println("rectangle"),
+        .circle        => println("circle"),
+        .square        => println("square"),
+        .parallelogram => println("parallelogram"),
     };
 }
 
 fun main() {
-    const rect = Shape { Rectangle: { l = 4.0, w = 6.0 } }; // we can elide in cases where it's clear what the type of the ctor is
-    const circle = Shape { Circle: 4.0 };
-    const square = Shape { Square: .{ l = 4.0 } };
-
+    let rect          = .rectangle(.{ l: 4.0, w: 6.0 });
+    let circle        = .circle(1.24);
+    let square        = .square { l: 4.0 };
+    let parallelogram = .parallelogram((1.0, 1.0));
+}
 ```
 
-A variant is written `Name: Type,` (a payload of an existing type), `Name: { field: Type },` (an inline struct-like payload), `Name: (T, U),` (a tuple payload), or bare `Name,` (no payload).
+An enum is a struct that can only have one field set at a time, and it's declared like one: a variant is written `name: Type` — a name and the single type of its payload. That type may be an existing one (`rectangle: Rectangle`), an anonymous struct declared inline (`square: { l: f64 }`), or a tuple (`parallelogram: (f64, f64)`). A variant with no payload at all is written bare (`nothing,`).
 
-How you match a variant determines what its arms receive, mirroring the by-value / by-`&`/ by-`&mut` distinction used for function parameters: matching `shape: &Shape` against `Rectangle(rect)` gives `rect: &Rectangle`, while matching an owned `Shape` would give an owned `Rectangle`.
+### Building a variant
+
+A variant is built by naming it after a `.`, and the payload is written the way its *type* is written:
+
+| Declaration | Construction |
+|---|---|
+| `circle: f64` | `.circle(1.24)` |
+| `rectangle: Rectangle` | `.rectangle(.{ l: 4.0, w: 6.0 })` |
+| `parallelogram: (f64, f64)` | `.parallelogram((1.0, 1.0))` |
+| `square: { l: f64 }` | `.square { l: 4.0 }` |
+| `nothing,` | `.nothing` |
+
+Parentheses hold exactly one value, whatever its type — a tuple payload is a single tuple, not several arguments. Braces are only for a payload declared inline as an anonymous struct, because only then do the field names belong to the variant's own declaration. `.square { l }` is shorthand for `.square { l: l }`.
+
+The leading `.` means the enum is taken from context — the expected type of a parameter, a `let` with an annotation, or the value being returned. Name it explicitly when there's no such context, or when you want to be explicit:
+
+```phi
+let s = Shape.circle(1.24);
+let s = math::Shape.circle(1.24);   // `::` walks modules, `.` reaches a member
+```
+
+`.circle(1.24)` is exactly that with the type deleted. The same `.` marks an elided struct literal, `.{ l: 4.0, w: 6.0 }`, which is why a named payload is built with one inside the parentheses.
+
+Enums with no payloads anywhere are written and used the same way, which covers the C-style case:
+
+```phi
+enum Color { red, green, blue }
+
+let c = Color.red;
+```
+
+### Matching a variant
+
+A pattern mirrors construction exactly, with bindings in place of values:
+
+```phi
+.circle(r)                 // r: f64
+.rectangle(rect)           // rect: Rectangle
+.parallelogram((b, h))     // a tuple pattern inside the single payload slot
+.square { l }              // `{ l: inner }` to destructure further
+.nothing                   // no payload
+```
+
+The leading `.` is also what separates a variant from a binding: a bare name in a pattern always binds, so a variant and a local may share a name without ambiguity.
+
+How you match a variant determines what its arms receive, mirroring the by-value / by-`&` / by-`&mut` distinction used for function parameters: matching `shape: &Shape` against `.rectangle(rect)` gives `rect: &Rectangle`, while matching an owned `Shape` would give an owned `Rectangle`.
 
 Matches must be **exhaustive** — every variant must be handled, either explicitly or through the wildcard pattern `_`.
 
-`match` is also usable as an expression, as shown by `perimeter` returning the result of its own `match` directly.
+`match` is also usable as an expression, as shown by `perimeter` returning the result of its own `match` directly. For the common case of caring about one variant only, use [`if let`](#if-let-and-while-let).
 
 ---
 
@@ -549,13 +625,13 @@ Phi has no exceptions. Failure is represented as an ordinary value, using two st
 
 ```phi
 enum Option<T> {
-    Some: T,
-    None,
+    some: T,
+    none,
 }
 
 enum Result<T, E> {
-    Ok: T,
-    Err: E,
+    ok: T,
+    err: E,
 }
 ```
 
@@ -568,18 +644,29 @@ fun read_config(path: &str) -> Result<Config, IoError> {
 }
 ```
 
-The `?` operator, applied to a `Result`-valued expression, unwraps the `Ok` payload if present; if the value is `Err(e)`, it immediately returns `Err(e)` from the enclosing function. This requires the enclosing function's own return type to be a compatible `Result`.
+The `?` operator, applied to a `Result`-valued expression, unwraps the `ok` payload if present; if the value is `.err(e)`, it immediately returns `.err(e)` from the enclosing function. This requires the enclosing function's own return type to be a compatible `Result`.
 
 At the boundary where an error should actually be handled rather than propagated further, match it explicitly:
 
 ```phi
 match read_config("phi.toml") {
-    Ok(cfg)  => start(cfg),
-    Err(err) => println("couldn't start: " + err.message()),
+    .ok(cfg)  => start(cfg),
+    .err(err) => println("couldn't start: " + err.message()),
 };
 ```
 
-`Option<T>` is used for absence rather than failure, and is matched the same way, with `Some(value)` and `None` in place of `Ok`/`Err`.
+Returning one is the ordinary elided form, since the function's return type supplies the enum:
+
+```phi
+fun parse_port(text: &str) -> Result<u16, ParseError> {
+    if text.is_empty() {
+        return .err(.empty);
+    }
+    return .ok(80);
+}
+```
+
+`Option<T>` is used for absence rather than failure, and is matched the same way, with `.some(value)` and `.none` in place of `.ok`/`.err`. When only one variant matters, [`if let`](#if-let-and-while-let) reads better than a full `match`.
 
 ---
 
@@ -654,10 +741,12 @@ A few types are available without an explicit `import`:
 |---|---|
 | `Array<T>` | A growable, owned sequence of `T`. Indexing (`a[i]`), slicing (`a[..n]`, `a[n..]`), and iteration all go through the projection rules from section 7. |
 | `String` | An owned, growable, UTF-8 text buffer. `+` concatenates; `&str` is the borrowed view used for parameters that only read text. |
-| `Option<T>` | Introduced in section 13: presence (`Some(value)`) or absence (`None`). |
-| `Result<T, E>` | Introduced in section 13: success (`Ok(value)`) or failure (`Err(err)`). |
+| `Option<T>` | Introduced in section 13: presence (`.some(value)`) or absence (`.none`). |
+| `Result<T, E>` | Introduced in section 13: success (`.ok(value)`) or failure (`.err(err)`). |
 | `HashMap<K, V>` | A hash-based associative map. Reads use `Index`; writes to a possibly-absent key use `IndexSet` (section 12). |
 
 Common trait conformances are provided for these types out of the box — `Array<T>` and `String` both conform to `Drop`, and any `T: Comparable` type can be sorted or compared without additional code.
 
 ---
+
+test line

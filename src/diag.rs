@@ -1,3 +1,10 @@
+//! This file defines the compiler's diagnostic system: `Diagnostic`, `Severity`, and the
+//! `DiagCtx` singleton that collects and renders them.
+//!
+//! Diagnostics are addressed by global char offset into the `SrcMap`, so a pipeline stage can
+//! raise one without knowing which file it came from, or worrying about the byte-versus-char
+//! offset scheme it will eventually be rendered against.
+
 use std::cell::RefCell;
 use std::io::IsTerminal;
 
@@ -6,7 +13,9 @@ use ariadne::{Color, Config, Label, Report, ReportKind, Source};
 use crate::driver::src_map::SrcMap;
 use crate::lexer::src_span::SrcSpan;
 
-/// How serious a diagnostic is; controls both the `ariadne` report kind and its color.
+/// How serious a diagnostic is.
+///
+/// Controls both the `ariadne` report kind used to render it and the color it's shown in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -29,10 +38,11 @@ impl Severity {
     }
 }
 
-/// A single diagnostic produced by any pipeline stage (lexer, parser, ...), ready to be
-/// rendered with `ariadne`. `span` holds *global* char offsets into the `SrcMap`'s combined
-/// address space, so a diagnostic doesn't need to know which file it came from until it's
-/// actually rendered.
+/// A single diagnostic produced by any pipeline stage, such as the lexer or parser, ready to
+/// be rendered with `ariadne`.
+///
+/// `span` holds *global* char offsets into the `SrcMap`'s combined address space, so a
+/// diagnostic doesn't need to know which file it came from until it's actually rendered.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -63,21 +73,23 @@ impl Diagnostic {
         }
     }
 
-    /// Text shown right under the highlighted span, instead of just repeating the message.
+    /// Sets the text shown right under the highlighted span, so it doesn't just repeat the
+    /// diagnostic message.
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self
     }
 
-    /// A trailing "help:" note.
+    /// Sets a trailing "help:" note shown after the diagnostic.
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
         self
     }
 
-    /// Render this diagnostic to stderr via `ariadne`, using `src_map` to figure out which
-    /// file `self.span` belongs to and to translate its global char offsets into the
-    /// byte-indexed spans `ariadne` expects.
+    /// Renders this diagnostic to stderr via `ariadne`.
+    ///
+    /// Uses `SrcMap` to figure out which file `self.span` belongs to, and translates its
+    /// global char offsets into the byte-indexed spans `ariadne` expects.
     fn eprint(&self) {
         let file = SrcMap::file_containing(self.span.get_begin())
             .expect("diagnostic span does not belong to any file in the SrcMap");
@@ -88,9 +100,11 @@ impl Diagnostic {
         let start = byte_offsets[local_begin];
         let end = byte_offsets[local_end];
 
-        // Colored escape codes are only useful (and only correctly interpreted) by an actual
-        // terminal — emit plain text when stderr is redirected to a file, a pipe, or (as in the
-        // golden tests under `tests/`) captured from a child process.
+        // Colored escape codes are only useful, and only correctly interpreted, by an actual
+        // terminal.
+        //
+        // Emit plain text instead when stderr is redirected to a file, a pipe, or, as in the
+        // golden tests under `tests/`, captured from a child process.
         let config = Config::new().with_color(std::io::stderr().is_terminal());
 
         let mut report = Report::build(
@@ -118,9 +132,11 @@ impl Diagnostic {
 }
 
 /// Builds the UTF-8 text of a `char` source together with a lookup table from `char` index to
-/// byte offset, so a `char`-indexed [`SrcSpan`] can be translated into the byte-indexed spans
-/// `ariadne` expects. `byte_offsets` has `src.len() + 1` entries so that both a span's start and
-/// its (exclusive) end can always be looked up.
+/// byte offset.
+///
+/// This lets a `char`-indexed [`SrcSpan`] be translated into the byte-indexed spans `ariadne`
+/// expects. `byte_offsets` has `src.len() + 1` entries, so that both a span's start and its
+/// (exclusive) end can always be looked up.
 fn byte_source(src: &[char]) -> (String, Vec<usize>) {
     let mut text = String::with_capacity(src.len());
     let mut byte_offsets = Vec::with_capacity(src.len() + 1);
@@ -133,36 +149,45 @@ fn byte_source(src: &[char]) -> (String, Vec<usize>) {
 }
 
 thread_local! {
-    /// The actual diagnostic storage backing the [`DiagCtx`] singleton. Thread-local rather than
-    /// a single process-wide global so that compiling on different threads (and running tests,
-    /// which execute on a pool of worker threads) never lets diagnostics from one compilation
-    /// bleed into another.
+    /// The actual diagnostic storage for the [`DiagCtx`] singleton.
+    ///
+    /// It's thread-local rather than a single process-wide global, so that compiling on
+    /// different threads, and running tests, which execute on a pool of worker threads, never
+    /// lets diagnostics from one compilation bleed into another.
     static DIAGNOSTICS: RefCell<Vec<Diagnostic>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Collects and renders every diagnostic raised while compiling, regardless of which pipeline
-/// stage (lexer, parser, ...) raised it. There is exactly one of these per thread — pipeline
-/// stages call its associated functions directly instead of threading a `&mut DiagCtx` through
-/// every constructor.
+/// stage, such as the lexer or parser, raised it.
+///
+/// There is exactly one of these per thread. Pipeline stages call its associated functions
+/// directly instead of threading a `&mut DiagCtx` through every constructor.
 pub struct DiagCtx;
 
 impl DiagCtx {
+    /// Records `diagnostic` on the current thread. It isn't rendered until [`DiagCtx::report`]
+    /// is called.
     pub fn emit(diagnostic: Diagnostic) {
         DIAGNOSTICS.with(|d| d.borrow_mut().push(diagnostic));
     }
 
+    /// Records an error-severity diagnostic. See [`DiagCtx::emit`].
     pub fn error(message: impl Into<String>, span: SrcSpan) {
         Self::emit(Diagnostic::error(message, span));
     }
 
+    /// Records a warning-severity diagnostic. See [`DiagCtx::emit`].
     pub fn warning(message: impl Into<String>, span: SrcSpan) {
         Self::emit(Diagnostic::warning(message, span));
     }
 
+    /// Returns every diagnostic recorded so far on this thread, in the order they were
+    /// recorded.
     pub fn diagnostics() -> Vec<Diagnostic> {
         DIAGNOSTICS.with(|d| d.borrow().clone())
     }
 
+    /// Returns whether any diagnostic recorded so far on this thread is error-severity.
     pub fn has_errors() -> bool {
         DIAGNOSTICS.with(|d| {
             d.borrow()
@@ -176,7 +201,7 @@ impl DiagCtx {
         DIAGNOSTICS.with(|d| d.borrow_mut().clear());
     }
 
-    /// Render every diagnostic collected so far to stderr, in the order they were recorded.
+    /// Renders every diagnostic collected so far to stderr, in the order they were recorded.
     pub fn report() {
         DIAGNOSTICS.with(|d| {
             for diag in d.borrow().iter() {

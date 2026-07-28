@@ -1,3 +1,9 @@
+//! Turns source text into a flat stream of [`Token`]s for the parser to consume.
+//!
+//! The lexer does not stop on bad input. If it finds an unexpected character or an unterminated
+//! literal, it records a diagnostic through [`DiagCtx`]. Then it keeps scanning. This way the
+//! parser still gets a full token stream to work with.
+
 use crate::diag::DiagCtx;
 use crate::lexer::{
     src_span::SrcSpan,
@@ -7,6 +13,10 @@ use crate::lexer::{
 pub mod src_span;
 pub mod token;
 
+/// Scans UTF-8 source text (already decoded to `char`s) into tokens.
+///
+/// `file_offset` gives the position of `src` in the compiler's global source map. Spans
+/// produced by this lexer are absolute offsets across the whole compilation, not just this file.
 pub struct Lexer<'a> {
     src: &'a Vec<char>,
     file_offset: usize,
@@ -33,6 +43,7 @@ impl<'a> Lexer<'a> {
         DiagCtx::error(message, span);
     }
 
+    /// Scans the whole source and returns its tokens as one list.
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut token_stream = Vec::new();
 
@@ -49,8 +60,10 @@ impl<'a> Lexer<'a> {
         token_stream
     }
 
-    /// Consumes whitespace and comments. Used both between tokens and to resynchronize after
-    /// an unexpected character, so trivia is never accidentally re-lexed as a token.
+    /// Consumes whitespace and comments.
+    ///
+    /// `scan` calls this before each token. The error-recovery path in `scan` also calls this
+    /// after a bad character, so trivia is never re-lexed as a token by mistake.
     fn skip_trivia(&mut self) {
         loop {
             if self.peek().is_ascii_whitespace() {
@@ -80,8 +93,8 @@ impl<'a> Lexer<'a> {
                     }
 
                     if self.peek() == '*' && self.next() == '/' {
-                        self.eat(); // consume '*'
-                        self.eat(); // consume '/'
+                        self.eat();
+                        self.eat();
                         break;
                     }
                     self.eat();
@@ -93,6 +106,10 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Scans and returns one token, starting at `self.cursor`.
+    ///
+    /// Callers must call `skip_trivia` first. This method assumes the cursor sits at the start
+    /// of a real token, not at whitespace or a comment.
     pub fn scan(&mut self) -> Token {
         match self.eat() {
             '(' => self.make_token(TokenKind::OpenParen),
@@ -214,8 +231,8 @@ impl<'a> Lexer<'a> {
             }
             '?' => self.make_token(TokenKind::Try),
             '_' => {
-                // A lone `_` is the wildcard token, but `_foo` is an identifier —
-                // only decide once we know whether more identifier chars follow.
+                // A lone `_` is the wildcard token, but `_foo` is an identifier. Thus we check
+                // the next character before deciding which one this is.
                 if self.peek().is_ascii_alphanumeric() || self.peek() == '_' {
                     self.parse_identifier_or_kw()
                 } else {
@@ -233,8 +250,8 @@ impl<'a> Lexer<'a> {
                     self.parse_number()
                 } else {
                     self.error(format!("unexpected character '{}'", c));
-                    // Skip the bad character (and any trivia after it) and keep scanning so a
-                    // single stray byte doesn't stop the whole file from being lexed.
+                    // Skip the bad character and any trivia after it, then keep scanning. Thus a
+                    // single stray byte does not stop the whole file from being lexed.
                     self.skip_trivia();
                     self.lexeme_pos = self.cursor;
                     if self.at_eof() {
@@ -247,20 +264,26 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Returns the current character without consuming it. Returns `'\0'` at end of input.
     pub fn peek(&self) -> char {
         self.src.get(self.cursor).copied().unwrap_or('\0')
     }
 
+    /// Returns the character after the current one, without consuming anything. Returns `'\0'`
+    /// at or past end of input.
     pub fn next(&self) -> char {
         self.src.get(self.cursor + 1).copied().unwrap_or('\0')
     }
 
+    /// Consumes and returns the current character.
     pub fn eat(&mut self) -> char {
         let temp = self.peek();
         self.cursor += 1;
         temp
     }
 
+    /// Consumes the current character if it equals `next`, and returns it. Returns `None`
+    /// without consuming anything otherwise.
     pub fn match_next(&mut self, next: char) -> Option<char> {
         if self.at_eof() || self.peek() != next {
             None
@@ -288,6 +311,8 @@ impl<'a> Lexer<'a> {
         self.cursor >= self.src.len()
     }
 
+    /// Builds a token of `kind` whose span covers everything consumed since `lexeme_pos` was
+    /// last set. Callers must set `lexeme_pos` to the cursor at the start of each lexeme.
     pub fn make_token(&self, kind: TokenKind) -> Token {
         Token {
             kind,
@@ -299,14 +324,14 @@ impl<'a> Lexer<'a> {
     }
 
     fn parse_number(&mut self) -> Token {
-        // integer part
         while self.peek().is_ascii_digit() || self.peek() == '_' {
             self.eat();
         }
 
-        // fractional part: require "." followed by at least one digit
+        // A `.` only starts a fractional part if a digit follows it. Thus `1.` lexes as an int
+        // literal followed by a separate `.` token, rather than an incomplete float.
         if self.peek() == '.' && self.next().is_ascii_digit() {
-            self.eat(); // consume '.'
+            self.eat();
             while self.peek().is_ascii_digit() {
                 self.eat();
             }
@@ -323,10 +348,8 @@ impl<'a> Lexer<'a> {
             self.eat();
         }
 
-        // extract the identifier lexeme
         let ident: String = self.src[self.lexeme_pos..self.cursor].iter().collect();
 
-        // keyword table
         let kind = match ident.as_str() {
             "any" => TokenKind::AnyKw,
             "as" => TokenKind::AsKw,
@@ -382,6 +405,7 @@ impl<'a> Lexer<'a> {
         self.make_token(kind)
     }
 
+    // The opening quote is already consumed by `scan`.
     fn parse_string(&mut self) -> Token {
         loop {
             if self.at_eof() || self.peek() == '"' {
@@ -389,7 +413,7 @@ impl<'a> Lexer<'a> {
             }
 
             if self.peek() == '\\' {
-                self.eat(); // consume the backslash
+                self.eat();
                 self.parse_escape_seq();
                 continue;
             }
@@ -402,15 +426,15 @@ impl<'a> Lexer<'a> {
             return self.make_token(TokenKind::StrLiteral);
         }
 
-        // consume the closing quote
-        self.eat();
+        self.eat(); // the closing quote
         self.make_token(TokenKind::StrLiteral)
     }
 
+    // The opening quote is already consumed by `scan`.
     fn parse_char(&mut self) -> Token {
-        // empty character literal: `''` (opening quote already consumed by scan())
+        // `''` has no content, so we check for the closing quote before reading a character.
         if self.peek() == '\'' {
-            self.eat(); // closing quote
+            self.eat();
             self.error("empty character literal");
             return self.make_token(TokenKind::CharLiteral);
         }
@@ -418,18 +442,19 @@ impl<'a> Lexer<'a> {
         if self.peek() != '\\' {
             self.eat();
         } else {
-            self.eat(); // consume backslash
+            self.eat();
             self.parse_escape_seq();
         }
 
         if self.peek() == '\'' {
-            self.eat(); // closing quote
+            self.eat();
             self.make_token(TokenKind::CharLiteral)
         } else if self.at_eof() || self.peek() == '\n' || self.peek() == ';' {
             self.error("unterminated character literal");
             self.make_token(TokenKind::CharLiteral)
         } else {
-            // too many characters; consume until closing quote for recovery
+            // More than one character is present. Consume up to the closing quote so lexing
+            // can recover and continue past this literal.
             while !self.at_eof() && self.peek() != '\'' {
                 self.eat();
             }
@@ -450,8 +475,8 @@ impl<'a> Lexer<'a> {
     }
 }
 
-/// Maps the character following a `\` to the value it escapes. Unrecognized characters are
-/// returned as-is, for error recovery.
+/// Maps the character following a `\` to the value it escapes. Returns unrecognized characters
+/// unchanged, so an unknown escape does not stop lexing.
 fn escape_char(c: char) -> char {
     match c {
         '\'' => '\'',
@@ -465,8 +490,9 @@ fn escape_char(c: char) -> char {
     }
 }
 
-/// Un-escapes the contents of a string/char literal (quotes already stripped), using the same
-/// escape-sequence mapping the lexer itself validates against.
+/// The lexer only checks that a string or char literal's escapes are valid. It does not convert
+/// them to their real values, since it works with spans, not owned strings. Later stages need
+/// the actual value, so this function does that conversion.
 pub(crate) fn unescape(chars: &[char]) -> String {
     let mut out = String::with_capacity(chars.len());
     let mut i = 0;

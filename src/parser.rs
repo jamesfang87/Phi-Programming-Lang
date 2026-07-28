@@ -1,4 +1,8 @@
-//! A chumsky-based parser over the lexer's token stream.
+//! Parses the lexer's token stream into an AST, using the `chumsky` parser-combinator library.
+//!
+//! This module holds the helpers the other parser submodules share: token matching, path
+//! parsing, and error recovery. [`Parser::parse`] parses one file and reports errors through
+//! [`DiagCtx`].
 
 use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
@@ -6,7 +10,7 @@ use chumsky::extra;
 use chumsky::prelude::*;
 
 use crate::ast::interner::Interner;
-use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Item, ItemKind, Path, SrcUnit};
+use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Item, ItemKind, ParsedSrcFile, Path};
 use crate::diag::DiagCtx;
 use crate::driver::src_map::SrcMap;
 use crate::lexer::src_span::SrcSpan;
@@ -21,12 +25,15 @@ mod item_parser;
 mod pattern_parser;
 mod type_parser;
 
+/// Parses one source file's worth of tokens into an AST.
 pub struct Parser {
     tokens: Vec<Token>,
     file_offset: usize,
 }
 
 impl Parser {
+    /// Builds a parser over `tokens`. `file_offset` is the token stream's start position in the
+    /// global [`SrcMap`]. It becomes the span of the fallback empty file if parsing fails.
     pub fn new(tokens: Vec<Token>, file_offset: usize) -> Self {
         Parser {
             tokens,
@@ -34,14 +41,19 @@ impl Parser {
         }
     }
 
-    pub fn parse(&self) -> SrcUnit {
+    /// The entry point for parsing a file.
+    ///
+    /// Parses the token stream into a [`ParsedSrcFile`] and reports errors through [`DiagCtx`].
+    ///
+    /// If the grammar fails completely, this returns an empty file instead of panicking.
+    pub fn parse(&self) -> ParsedSrcFile {
         let (output, errors) = self.grammar().parse(&self.tokens[..]).into_output_errors();
 
         for err in &errors {
             self.report_error(err);
         }
 
-        output.unwrap_or_else(|| SrcUnit {
+        output.unwrap_or_else(|| ParsedSrcFile {
             module: None,
             imports: Vec::new(),
             items: Vec::new(),
@@ -89,17 +101,23 @@ impl Parser {
             .boxed()
     }
 
-    /// Builds an error-recovery parser: skip at least one token, then keep skipping until the
-    /// next token that looks like it could start a new instance of whatever just failed to
-    /// parse (`boundary`) — or until input runs out — then produce `fallback`.
+    /// A parser that never matches.
+    ///
+    /// Use it to turn off one alternative of a `choice` without changing the choice's shape.
+    fn never<'a, O: 'a>(&'a self) -> BoxedP<'a, O> {
+        any()
+            .filter(|_: &Token| false)
+            .map(|_| unreachable!("`never` matches nothing, so nothing is ever mapped"))
+            .boxed()
+    }
+
+    /// Builds an error-recovery parser.
+    ///
+    /// It skips at least one token, then keeps skipping until it finds a token that could
+    /// start a new instance of whatever failed to parse (`boundary`), or until input runs out.
+    /// Then it produces `fallback`.
     ///
     /// Used via `some_parser.recover_with(via_parser(self.recover_to_boundary(...)))`.
-    ///
-    /// The mandatory first skip matters: every well-formed construct we recover for begins with
-    /// a `boundary` token, so the position where the primary parser just failed always matches
-    /// `boundary` too. Without forcing at least one token of progress, "recovery" would succeed
-    /// without consuming anything, and `.repeated()` around it would loop forever — chumsky's
-    /// no-progress guard turns that into a panic rather than a hang, but either way it's wrong.
     fn recover_to_boundary<'a, O: Clone + 'a>(
         &'a self,
         boundary: impl ChumskyParser<'a, &'a [Token], (), Extra<'a>> + Clone + 'a,
@@ -112,12 +130,9 @@ impl Parser {
     }
 
     /// Builds the whole grammar for a single file: a sequence of items followed by end-of-input.
-    ///
-    /// A malformed item doesn't take the rest of the file down with it: if `item_parser()` fails,
-    /// recovery skips tokens up to the next token that plausibly starts a new item (or to
-    /// end-of-input) and yields an `ItemKind::Error` in its place, so parsing resumes there and
-    /// every other item in the file still gets reported.
-    fn grammar<'a>(&'a self) -> impl ChumskyParser<'a, &'a [Token], SrcUnit, Extra<'a>> + Clone {
+    fn grammar<'a>(
+        &'a self,
+    ) -> impl ChumskyParser<'a, &'a [Token], ParsedSrcFile, Extra<'a>> + Clone {
         let item_start = choice((
             self.kind(TokenKind::PublicKw).ignored(),
             self.kind(TokenKind::FunKw).ignored(),
@@ -147,7 +162,7 @@ impl Parser {
                     (Some(first), Some(last)) => first.span.merge(last.span),
                     _ => SrcSpan::new(self.file_offset, self.file_offset),
                 };
-                SrcUnit {
+                ParsedSrcFile {
                     module: None,
                     imports: Vec::new(),
                     items,
@@ -177,7 +192,7 @@ mod tests {
     use crate::lexer::Lexer;
 
     /// Lexes and parses `src`, asserting there were no diagnostics along the way.
-    fn parse_ok(src: &str) -> SrcUnit {
+    fn parse_ok(src: &str) -> ParsedSrcFile {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
@@ -205,8 +220,8 @@ mod tests {
     }
 
     /// Like [`diagnostic_count`], but also returns the (best-effort, possibly error-containing)
-    /// parsed unit — for exercising recovery.
-    fn parse_with_errors(src: &str) -> (SrcUnit, usize) {
+    /// parsed unit, for exercising recovery.
+    fn parse_with_errors(src: &str) -> (ParsedSrcFile, usize) {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
@@ -220,7 +235,7 @@ mod tests {
         Interner::resolve(ident.text)
     }
 
-    fn only_function(unit: &SrcUnit) -> &Function {
+    fn only_function(unit: &ParsedSrcFile) -> &Function {
         assert_eq!(unit.items.len(), 1);
         match &unit.items[0].kind {
             ItemKind::Function(f) => f,
@@ -283,7 +298,7 @@ mod tests {
         let body = f.body.as_ref().unwrap();
         assert_eq!(body.stmts.len(), 1);
         match &body.stmts[0].kind {
-            StmtKind::Expr(expr) => match &expr.kind {
+            StmtKind::Expr { expr, .. } => match &expr.kind {
                 ExprKind::FunCall { callee, args } => {
                     match &callee.kind {
                         ExprKind::DeclRef(path) => assert_eq!(text(path.segments[0]), "println"),

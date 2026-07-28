@@ -1,5 +1,12 @@
 #![allow(dead_code)]
 
+//! The abstract syntax tree the parser builds from a token stream.
+//!
+//! Every node carries a [`SrcSpan`] so diagnostics and later passes can point back at the
+//! source text that produced it. This tree is purely syntactic: paths aren't resolved, types
+//! aren't checked, and `Error` variants stand in for anything the parser recovered from. Name
+//! resolution and typechecking happen on the HIR the tree gets lowered to, in [`crate::hir`].
+
 mod expr_impls;
 mod type_impls;
 
@@ -11,6 +18,11 @@ use crate::lexer::src_span::SrcSpan;
 // Identifiers, paths, literals
 // ===========================================================================
 
+/// An interned string.
+///
+/// Comparing two `Symbol`s is a cheap integer comparison.
+///
+/// Use [`interner::Interner::resolve`] to get the underlying text back.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Symbol(u32);
 
@@ -30,20 +42,20 @@ pub enum Visibility {
     Private,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Mutability {
     Immutable,
     Mutable,
 }
 
-/// An identifier.
+/// A single identifier token, such as a variable, function, or type name.
 #[derive(Clone, Copy, Debug)]
 pub struct Ident {
     pub text: Symbol,
     pub span: SrcSpan,
 }
 
-/// A (possibly qualified) name.
+/// A name that may be qualified with `::`, such as `math::Vector2D`.
 #[derive(Clone, Debug)]
 pub struct Path {
     pub segments: Vec<Ident>,
@@ -54,9 +66,11 @@ pub struct Path {
 // Items
 // ===========================================================================
 
+/// The parsed contents of one source file.
 #[derive(Clone, Debug)]
-pub struct SrcUnit {
-    pub module: Option<ModuleDecl>, // `module math::vector;`
+pub struct ParsedSrcFile {
+    /// The file's `module math::vector;` declaration, if it has one.
+    pub module: Option<ModuleDecl>,
     pub imports: Vec<Import>,
     pub items: Vec<Item>,
     pub span: SrcSpan,
@@ -74,20 +88,19 @@ pub enum ItemKind {
     Error,
 }
 
-/// `module math::vector;`
+/// A module declaration, such as `module math::vector;`.
 #[derive(Clone, Debug)]
 pub struct ModuleDecl {
     pub path: Path,
     pub span: SrcSpan,
 }
 
-/// import math as m;
-/// import math::Vector2D;
-/// import math::*;
+/// An import statement, such as `import math as m;`, `import math::Vector2D;`, or
+/// `import math::*;`.
 #[derive(Clone, Debug)]
 pub struct Import {
     pub path: Path,
-    /// `true` for a glob import, `import math::*;`.
+    /// This is `true` when the import is a glob import, such as `import math::*;`.
     pub glob: bool,
     pub alias: Option<Ident>,
     pub span: SrcSpan,
@@ -138,10 +151,14 @@ pub struct Trait {
     pub span: SrcSpan,
 }
 
+/// An `extend` block, such as `extend<T> Foo<T> with Bar<T> { ... }`.
 #[derive(Clone, Debug)]
 pub struct Extend {
+    /// The generics the `extend` block itself introduces, from `extend<T>`.
     pub extend_generics: Option<Vec<Type>>,
+    /// The extended type's own generic arguments, from `Foo<T>`.
     pub adt_generics: Option<Vec<Type>>,
+    /// The optional `with`-clause trait's generic arguments, from `with Bar<T>`.
     pub trait_generics: Option<Vec<Type>>,
     pub adt_path: Path,
     pub trait_path: Option<Path>,
@@ -159,11 +176,16 @@ pub struct SelfParam {
     pub span: SrcSpan,
 }
 
+/// The way a method binds `self`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SelfMode {
+    /// `&self` borrows `self` immutably.
     Immutable,
+    /// `&mut self` borrows `self` mutably.
     Mutable,
+    /// Bare `self` takes ownership of it.
     Move,
+    /// `any self` accepts `self` bound in any of the other three ways.
     Any,
 }
 
@@ -198,8 +220,11 @@ pub struct Variant {
 
 #[derive(Clone, Debug)]
 pub enum VariantPayload {
+    /// The variant carries no payload, such as `.none`.
     Unit,
+    /// The variant carries a single unnamed value, such as `.circle(f64)`.
     Type(Type),
+    /// The variant carries named fields, such as `.square { l: f64 }`.
     Record(Vec<Field>),
 }
 
@@ -207,8 +232,6 @@ pub enum VariantPayload {
 // Type
 // ===========================================================================
 
-/// Already in the wrapper-struct shape (`kind` + `span`) — no change needed here, this is what
-/// `Item`/`Stmt`/`Expr`/`Pattern` are now converging on.
 #[derive(Clone, Debug)]
 pub struct Type {
     pub kind: Ty,
@@ -225,13 +248,21 @@ pub enum Ty {
         base: Box<Ty>,
         mutability: Mutability,
     },
+    /// `any T`. Only meaningful as a parameter or return type.
+    ///
+    /// It lets the callee hand back a projection into that parameter.
+    ///
+    /// Monomorphization picks a concrete `&T`, `&mut T`, or owned `T` for each call site at
+    /// compile time.
     Any(Box<Ty>),
     Tuple(Vec<Ty>),
     Array {
         elem: Box<Ty>,
         len: Option<Box<Expr>>,
     },
-    /// `fun(i32, i32) -> i32`, `fun(&str)` (no `->` means no return value).
+    /// A function type, such as `fun(i32, i32) -> i32`.
+    ///
+    /// `ret` is `None` when there's no `->`. That means the function returns no value.
     Fn {
         params: Vec<Ty>,
         ret: Option<Box<Ty>>,
@@ -267,6 +298,11 @@ pub enum StmtKind {
         cond: Expr,
         body: Block,
     },
+    WhileLet {
+        pat: Pattern,
+        scrutinee: Expr,
+        body: Block,
+    },
     For {
         name: Pattern,
         iter: Expr,
@@ -277,15 +313,24 @@ pub enum StmtKind {
     Return {
         ret: Expr,
     },
+    /// `defer expr;`. `expr` runs just before the enclosing scope exits.
     Defer {
         defer: Expr,
     },
+    /// A `let` binding.
     Decl(DeclStmt),
+    /// A `with` block, such as `with px = &mut point.x, py = &mut point.y { ... }`.
+    ///
+    /// Each binding in `lends` is scoped to `body` and stops projecting its source at the
+    /// closing brace, regardless of where its last use inside the block falls.
     With {
         lends: Vec<WithStmtLend>,
         body: Block,
     },
-    Expr(Expr),
+    Expr {
+        expr: Expr,
+        semi: bool,
+    },
     Error,
 }
 
@@ -298,6 +343,7 @@ pub struct DeclStmt {
     pub span: SrcSpan,
 }
 
+/// One binding in a `with` block, such as `px = &mut point.x`.
 #[derive(Clone, Debug)]
 pub struct WithStmtLend {
     pub name: Pattern,
@@ -329,6 +375,19 @@ pub enum ExprKind {
         lhs: Box<Expr>,
         rhs: Box<Expr>,
     },
+    /// `lhs = rhs`.
+    Assign {
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    /// A compound assignment, such as `lhs += rhs` or `lhs -= rhs`.
+    ///
+    /// `op` names the underlying binary operator, `+` or `-` in those examples.
+    AssignOp {
+        op: BinaryOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
     Borrow {
         mutability: Mutability,
         operand: Box<Expr>,
@@ -337,32 +396,47 @@ pub enum ExprKind {
         callee: Box<Expr>,
         args: Vec<Expr>,
     },
-    MethodCall {
-        receiver: Box<Expr>,
-        method: Ident,
-        args: Vec<Expr>,
-    },
-    Field {
+    /// A `.` access, such as `base.member` or `base.member(args)`.
+    ///
+    /// `args` records how it was written; see [`AccessArgs`] for why that's needed.
+    Access {
         base: Box<Expr>,
-        field: Ident,
+        member: Ident,
+        args: AccessArgs,
     },
     Index {
         base: Box<Expr>,
         index: Box<Expr>,
     },
+    /// A struct literal, such as `Foo { a: 1 }`.
+    ///
+    /// `path` is `None` for the elided form, `.{ a: 1 }`, which takes its type from context.
     Ctor {
-        path: Path,
+        path: Option<Path>,
         payload: Vec<CtorPayload>,
     },
+    /// An enum variant construction, such as `.circle(1.24)` or `Shape.circle(1.24)`.
+    Variant {
+        variant: Ident,
+        payload: Payload<Expr>,
+    },
     Tuple(Vec<Expr>),
+    /// `lo..hi` or, when `inclusive` is set, `lo..=hi`. Either bound may be omitted.
     Range {
         lo: Option<Box<Expr>>,
         hi: Option<Box<Expr>>,
         inclusive: bool,
     },
+    /// The `?` operator: propagates an error result out of the enclosing function.
     Try(Box<Expr>),
     If {
         cond: Box<Expr>,
+        then_branch: Block,
+        else_branch: Option<Box<Expr>>,
+    },
+    IfLet {
+        pat: Pattern,
+        scrutinee: Box<Expr>,
         then_branch: Block,
         else_branch: Option<Box<Expr>>,
     },
@@ -370,7 +444,10 @@ pub enum ExprKind {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+    /// `spawn { ... }`. Launches the block as a concurrent task and evaluates to a handle for it.
     Spawn(Block),
+    /// `concurrent { ... }`. Runs the block, then waits for every task it `spawn`ed before
+    /// producing a value.
     Concurrent(Block),
     Block(Block),
     Closure {
@@ -381,8 +458,11 @@ pub enum ExprKind {
     Error,
 }
 
-/// A closure parameter. Unlike a function's [`Param`], the type annotation is optional — Rust-like
-/// closures infer unannotated parameter types from context.
+/// A closure parameter.
+///
+/// Unlike a function's [`Param`], the type annotation is optional.
+///
+/// An unannotated parameter has its type inferred from context.
 #[derive(Clone, Debug)]
 pub struct ClosureParam {
     pub name: Ident,
@@ -401,8 +481,10 @@ pub enum Literal {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnaryOp {
-    Neg, // -
-    Not, // !
+    /// Numeric negation, `-x`.
+    Neg,
+    /// Logical negation, `!x`.
+    Not,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -411,21 +493,82 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
-    Rem, // + - * / %
+    Rem,
     Eq,
     Ne,
     Lt,
     Le,
     Gt,
-    Ge, // == != < <= > >=
+    Ge,
     And,
-    Or, // && ||
+    Or,
 }
 
+impl ExprKind {
+    /// Reports whether this expression already ends in a `}`, such as `if`, `match`, or a
+    /// bare block.
+    ///
+    /// The parser uses this to decide whether an expression statement needs a trailing `;`:
+    /// block-bodied expressions don't.
+    pub fn is_block_bodied(&self) -> bool {
+        matches!(
+            self,
+            ExprKind::If { .. }
+                | ExprKind::IfLet { .. }
+                | ExprKind::Match { .. }
+                | ExprKind::Spawn(_)
+                | ExprKind::Concurrent(_)
+                | ExprKind::Block(_)
+        )
+    }
+}
+
+/// One `name: expr` field initializer inside a [`ExprKind::Ctor`] struct literal.
 #[derive(Clone, Debug)]
 pub struct CtorPayload {
     pub name: Ident,
     pub expr: Box<Expr>,
+    pub span: SrcSpan,
+}
+
+/// The payload an enum variant carries, shared between constructing a variant
+/// ([`ExprKind::Variant`]) and matching one ([`PatternKind::Variant`]).
+#[derive(Clone, Debug)]
+pub enum Payload<T> {
+    /// The variant has no payload at all, such as bare `.none`.
+    None,
+    /// The variant has one unnamed value, such as `.circle(1.24)`.
+    Single(Box<T>),
+    /// The variant has named fields, declared inline as `{ l: f64 }` and written as
+    /// `.square { l: 4.0 }`.
+    Record(Vec<PayloadField<T>>),
+}
+
+/// `AccessArgs` describes how an access was written.
+///
+/// As the grammar is ambiguous in this case, the parser can't yet tell a field access, a
+/// method call, and a payload-carrying variant construction apart.
+///
+/// Later analysis resolves this distinction, once `base`'s type is known.
+#[derive(Clone, Debug)]
+pub enum AccessArgs {
+    /// `base.member`. This could be a field, a payload-less variant, or a method referenced as
+    /// a value.
+    None,
+    /// `base.member(a, b)`. This could be a method call, or a variant whose single payload is
+    /// `a`.
+    Call(Vec<Expr>),
+    /// `base.member { f: v }`. This can only be a variant with a record payload.
+    Record(Vec<PayloadField<Expr>>),
+}
+
+#[derive(Clone, Debug)]
+pub struct PayloadField<T> {
+    pub name: Ident,
+    /// `value` is `None` for the field shorthand `{ l }`.
+    ///
+    /// In a pattern, the shorthand binds `l` to that field.
+    pub value: Option<T>,
     pub span: SrcSpan,
 }
 
@@ -451,13 +594,12 @@ pub enum PatternKind {
     Wildcard,
     Binding(Ident),
     Literal(Literal),
-    /// PascalCase constructor pattern — enum variant or struct destructure:
-    /// `Circle(r)`, `Parallelogram(b, h)`, bare `Rectangle`.
-    Ctor {
-        path: Path,
-        payload: Vec<Ident>,
+    /// An enum variant pattern, such as `.circle(r)`, `.square { l }`, or bare `.none`.
+    Variant {
+        variant: Ident,
+        payload: Payload<Pattern>,
     },
-    /// `(x, y)` — tuple destructuring (`let (x, y) = point;`).
+    /// A tuple destructuring pattern, such as the `(x, y)` in `let (x, y) = point;`.
     Tuple(Vec<Pattern>),
     Error,
 }
