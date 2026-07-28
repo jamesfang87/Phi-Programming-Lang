@@ -1,10 +1,25 @@
+//! Parses expressions, blocks, and statements.
+//!
+//! These three grammars recurse into each other (an expression can hold a block, a block holds
+//! statements, and a statement can hold an expression), so `chumsky` builds them together as one
+//! set of mutually recursive parsers. [`Parser::expr_and_block_parsers`] returns both halves.
+//!
+//! Expression precedence goes from tightest to loosest as the file reads top to bottom: postfix
+//! operators, then prefix operators, then the binary operators in the usual arithmetic order,
+//! then ranges, then assignment.
+//!
+//! [`BraceForms`] controls whether a bare `{` after an expression opens a struct literal or a
+//! record payload. Condition and scrutinee positions (`if cond { ... }`, `match x { ... }`) turn
+//! this off, so the `{` there always starts the following block instead.
+
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 use chumsky::recursive::Indirect;
 
 use crate::ast::{
-    BinaryOp, Block, ClosureParam, CtorPayload, DeclStmt, Expr, ExprKind, Ident, Literal, MatchArm,
-    Mutability, Path, Stmt, StmtKind, UnaryOp, WithStmtLend,
+    AccessArgs, BinaryOp, Block, ClosureParam, CtorPayload, DeclStmt, Expr, ExprKind, Ident,
+    Literal, MatchArm, Mutability, Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp,
+    WithStmtLend,
 };
 
 use crate::ast::interner::Interner;
@@ -18,21 +33,40 @@ use super::{BoxedP, Extra, Parser};
 type ExprRec<'a> = Recursive<Indirect<'a, 'a, &'a [Token], Expr, Extra<'a>>>;
 type BlockRec<'a> = Recursive<Indirect<'a, 'a, &'a [Token], Block, Extra<'a>>>;
 
+/// Whether a bare `{` after an expression may open a struct literal or record payload.
+///
+/// `Deny` is used for condition and scrutinee positions, where a `{` must instead start the
+/// following block (e.g. `if Foo { x }` treats `Foo` as a value, not a struct literal).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BraceForms {
+    Allow,
+    Deny,
+}
+
 impl Parser {
+    /// Parses a single expression.
     pub fn expr_parser<'a>(&'a self) -> BoxedP<'a, Expr> {
         self.expr_and_block_parsers().0
     }
 
+    /// Builds the mutually recursive expression and block parsers together, returning
+    /// `(expr_parser, block_parser)`.
+    ///
+    /// They have to be built together because each recurses into the other: an expression can
+    /// hold a block, and a block's statements can hold expressions.
     pub(crate) fn expr_and_block_parsers<'a>(&'a self) -> (BoxedP<'a, Expr>, BoxedP<'a, Block>) {
         let mut expr: ExprRec<'a> = Recursive::declare();
+        // `expr` with brace forms denied. Used for condition and scrutinee positions.
+        let mut expr_ns: ExprRec<'a> = Recursive::declare();
         let mut block: BlockRec<'a> = Recursive::declare();
 
         let path = self.path_parser();
         let ident = self.ident_parser();
         let pattern = self.pattern_parser();
 
-        let expr_body = {
+        let expr_body = |braces: BraceForms| {
             let expr = expr.clone();
+            let expr_ns = expr_ns.clone();
             let block = block.clone();
             let type_p = self.type_parser_with_expr(expr.clone().boxed());
 
@@ -53,7 +87,7 @@ impl Parser {
             ))
             .boxed();
 
-            // `self` used as a value, e.g. `self.x` inside a method body.
+            // Uses `self` as a value, e.g. the `self` in `self.x` inside a method body.
             let self_expr = self
                 .kind(TokenKind::LowerSelfKw)
                 .map(|t: Token| {
@@ -100,14 +134,7 @@ impl Parser {
                 })
                 .boxed();
 
-            // `Path { field: expr, ... }` — struct/enum-variant construction.
-            //
-            // NOTE: like Rust, this makes a bare `Path { ... }` ambiguous with the body of an
-            // `if`/`while`/`match` whose condition is that same bare path (`if Foo { ... }`
-            // could be read as the ctor `Foo { ... }` used as the condition, or as a
-            // condition `Foo` followed by an empty `if` body). We don't special-case
-            // condition position the way Rust's parser does, so callers should parenthesize
-            // a ctor expression used directly as a condition/scrutinee to avoid this.
+            // This parses one field of a `Path { field: expr, ... }` struct literal.
             let ctor_field = ident
                 .clone()
                 .then_ignore(self.kind(TokenKind::Colon))
@@ -122,23 +149,106 @@ impl Parser {
                 })
                 .boxed();
 
-            let ctor = path
+            let ctor_fields = ctor_field
                 .clone()
+                .separated_by(self.kind(TokenKind::Comma))
+                .allow_trailing()
+                .collect::<Vec<_>>()
+                .boxed();
+
+            // This parses a struct literal, `Path { field: expr, ... }`, but only when
+            // `BraceForms::Allow`.
+            let ctor = match braces {
+                BraceForms::Allow => path
+                    .clone()
+                    .then_ignore(self.kind(TokenKind::OpenBrace))
+                    .then(ctor_fields.clone())
+                    .then(self.kind(TokenKind::CloseBrace))
+                    .map(|((ctor_path, payload), close_tok)| {
+                        let span = ctor_path.span.merge(close_tok.span);
+                        Expr {
+                            kind: ExprKind::Ctor {
+                                path: Some(ctor_path),
+                                payload,
+                            },
+                            span,
+                        }
+                    })
+                    .boxed(),
+                BraceForms::Deny => self.never(),
+            };
+
+            // This parses `.{ x: 1.0, y: 2.0 }`, a struct literal with the type elided.
+            let elided_ctor = self
+                .kind(TokenKind::Period)
                 .then_ignore(self.kind(TokenKind::OpenBrace))
-                .then(
-                    ctor_field
+                .then(ctor_fields)
+                .then(self.kind(TokenKind::CloseBrace))
+                .map(|((dot_tok, payload), close_tok)| Expr {
+                    kind: ExprKind::Ctor {
+                        path: None,
+                        payload,
+                    },
+                    span: dot_tok.span.merge(close_tok.span),
+                })
+                .boxed();
+
+            // A record payload's fields look like `{ l: 4.0 }`, or `{ l }` as shorthand for
+            // `{ l: l }`. This mirrors the pattern side.
+            let record_payload = self
+                .kind(TokenKind::OpenBrace)
+                .ignore_then(
+                    ident
+                        .clone()
+                        .then(
+                            self.kind(TokenKind::Colon)
+                                .ignore_then(expr.clone())
+                                .or_not(),
+                        )
+                        .map(|(name, value)| {
+                            let span = match &value {
+                                Some(e) => name.span.merge(e.span),
+                                None => name.span,
+                            };
+                            PayloadField { name, value, span }
+                        })
                         .separated_by(self.kind(TokenKind::Comma))
                         .allow_trailing()
                         .collect::<Vec<_>>(),
                 )
                 .then(self.kind(TokenKind::CloseBrace))
-                .map(|((ctor_path, payload), close_tok)| {
-                    let span = ctor_path.span.merge(close_tok.span);
+                .boxed();
+
+            // This parses the record-shaped payload of a variant, e.g. the `{ l: 4.0 }` in
+            // `.square { l: 4.0 }`.
+            let record_variant_payload = match braces {
+                BraceForms::Allow => record_payload
+                    .clone()
+                    .map(|(fields, close_tok)| (Payload::Record(fields), close_tok.span))
+                    .boxed(),
+                BraceForms::Deny => self.never(),
+            };
+
+            let variant_payload = choice((
+                self.kind(TokenKind::OpenParen)
+                    .ignore_then(expr.clone())
+                    .then(self.kind(TokenKind::CloseParen))
+                    .map(|(value, close_tok)| (Payload::Single(Box::new(value)), close_tok.span)),
+                record_variant_payload,
+            ))
+            .boxed();
+
+            let variant = self
+                .kind(TokenKind::Period)
+                .then(ident.clone())
+                .then(variant_payload.or_not())
+                .map(|((dot_tok, variant), payload)| {
+                    let (payload, span) = match payload {
+                        Some((payload, close_span)) => (payload, dot_tok.span.merge(close_span)),
+                        None => (Payload::None, dot_tok.span.merge(variant.span)),
+                    };
                     Expr {
-                        kind: ExprKind::Ctor {
-                            path: ctor_path,
-                            payload,
-                        },
+                        kind: ExprKind::Variant { variant, payload },
                         span,
                     }
                 })
@@ -152,7 +262,8 @@ impl Parser {
                 }
             });
 
-            // `(expr)` groups; `(expr, expr, ...)` (zero or ≥2 elements) is a tuple.
+            // `(expr)` is a grouped expression. `(expr, expr, ...)` with zero or at least two
+            // elements is a tuple.
             let tuple_or_group = self
                 .kind(TokenKind::OpenParen)
                 .then(
@@ -174,7 +285,7 @@ impl Parser {
                 })
                 .boxed();
 
-            // A bare `{ ... }` used directly as an expression.
+            // A bare `{ ... }` block can also stand alone as an expression.
             let block_expr = block
                 .clone()
                 .map(|b: Block| {
@@ -186,24 +297,54 @@ impl Parser {
                 })
                 .boxed();
 
+            // `else` takes either a block or another expression (`else if ..`), and is shared by
+            // `if` and `if let`.
+            let else_branch = self
+                .kind(TokenKind::ElseKw)
+                .ignore_then(choice((
+                    block.clone().map(|b: Block| {
+                        let span = b.span;
+                        Expr {
+                            kind: ExprKind::Block(b),
+                            span,
+                        }
+                    }),
+                    expr.clone(),
+                )))
+                .or_not()
+                .boxed();
+
+            // Parses `if let pat = scrutinee { .. }`.
+            let if_let_expr = self
+                .kind(TokenKind::IfKw)
+                .then_ignore(self.kind(TokenKind::LetKw))
+                .then(pattern.clone())
+                .then_ignore(self.kind(TokenKind::Equals))
+                .then(expr_ns.clone())
+                .then(block.clone())
+                .then(else_branch.clone())
+                .map(|((((if_tok, pat), scrutinee), then_branch), else_branch)| {
+                    let span = match &else_branch {
+                        Some(e) => if_tok.span.merge(e.span),
+                        None => if_tok.span.merge(then_branch.span),
+                    };
+                    Expr {
+                        kind: ExprKind::IfLet {
+                            pat,
+                            scrutinee: Box::new(scrutinee),
+                            then_branch,
+                            else_branch: else_branch.map(Box::new),
+                        },
+                        span,
+                    }
+                })
+                .boxed();
+
             let if_expr = self
                 .kind(TokenKind::IfKw)
-                .then(expr.clone())
+                .then(expr_ns.clone())
                 .then(block.clone())
-                .then(
-                    self.kind(TokenKind::ElseKw)
-                        .ignore_then(choice((
-                            block.clone().map(|b: Block| {
-                                let span = b.span;
-                                Expr {
-                                    kind: ExprKind::Block(b),
-                                    span,
-                                }
-                            }),
-                            expr.clone(),
-                        )))
-                        .or_not(),
-                )
+                .then(else_branch)
                 .map(|(((if_tok, cond), then_branch), else_branch)| {
                     let span = match &else_branch {
                         Some(e) => if_tok.span.merge(e.span),
@@ -236,7 +377,7 @@ impl Parser {
 
             let match_expr = self
                 .kind(TokenKind::MatchKw)
-                .then(expr.clone())
+                .then(expr_ns.clone())
                 .then_ignore(self.kind(TokenKind::OpenBrace))
                 .then(
                     match_arm
@@ -281,9 +422,9 @@ impl Parser {
                 })
                 .boxed();
 
-            // Rust-like closures: `|x: i32, y: i32| -> i32 { x + y }`, `|x| x + 1`, `|| 42`.
-            // Parameter types and the return type are optional (inferred). The body is any
-            // expr, so a `{ ... }` block body falls out of `block_expr` for free.
+            // Closures look like `|x: i32, y: i32| -> i32 { x + y }`, `|x| x + 1`, or `|| 42`.
+            // Parameter types and the return type are optional and get inferred later. The
+            // body is any expr, so a `{ ... }` block body works the same as a bare expression.
             let closure_param = ident
                 .clone()
                 .then(
@@ -300,8 +441,7 @@ impl Parser {
                 });
 
             // `||` lexes as a single `DoublePipe` token, so an empty parameter list can't be
-            // spelled as two `Pipe` tokens — it has to be special-cased, exactly like Rust's
-            // own parser does for the same reason.
+            // spelled as two `Pipe` tokens. It needs its own case.
             let closure_params = choice((
                 self.kind(TokenKind::DoublePipe)
                     .map(|t: Token| (Vec::new(), t.span)),
@@ -341,12 +481,17 @@ impl Parser {
             let atom = choice((
                 closure,
                 literal,
+                if_let_expr,
                 if_expr,
                 match_expr,
                 spawn_expr,
                 concurrent_expr,
                 call,
                 ctor,
+                // `elided_ctor` and `variant` both start with `.`. Try `elided_ctor` first: it
+                // needs a `{` right after the `.`, while `variant` needs an identifier.
+                elided_ctor,
+                variant,
                 self_expr,
                 decl_ref,
                 tuple_or_group,
@@ -354,34 +499,45 @@ impl Parser {
             ))
             .boxed();
 
-            // Postfix operators: `.field`, `.method(args)`, `[index]`, `?`. These bind
-            // tighter than any prefix operator, so `-x.y` is `-(x.y)`.
+            // Postfix operators (`.member`, `.member(args)`, `[index]`, `?`) bind tighter than
+            // any prefix operator, so `-x.y` parses as `-(x.y)`.
             enum Postfix {
-                Field(Ident),
-                Method(Ident, Vec<Expr>),
+                Access(Ident, AccessArgs),
                 Index(Expr),
                 Try,
             }
 
-            let method_or_field = self
+            let access_record = match braces {
+                BraceForms::Allow => record_payload
+                    .clone()
+                    .map(|(fields, close_tok)| (AccessArgs::Record(fields), close_tok.span))
+                    .boxed(),
+                BraceForms::Deny => self.never(),
+            };
+
+            let access_op = self
                 .kind(TokenKind::Period)
                 .ignore_then(ident.clone())
                 .then(
-                    self.kind(TokenKind::OpenParen)
-                        .ignore_then(
-                            expr.clone()
-                                .separated_by(self.kind(TokenKind::Comma))
-                                .allow_trailing()
-                                .collect::<Vec<_>>(),
-                        )
-                        .then(self.kind(TokenKind::CloseParen))
-                        .or_not(),
+                    choice((
+                        self.kind(TokenKind::OpenParen)
+                            .ignore_then(
+                                expr.clone()
+                                    .separated_by(self.kind(TokenKind::Comma))
+                                    .allow_trailing()
+                                    .collect::<Vec<_>>(),
+                            )
+                            .then(self.kind(TokenKind::CloseParen))
+                            .map(|(args, close_tok)| (AccessArgs::Call(args), close_tok.span)),
+                        access_record,
+                    ))
+                    .or_not(),
                 )
-                .map(|(name, call_part)| match call_part {
-                    Some((args, close_tok)) => (Postfix::Method(name, args), close_tok.span),
+                .map(|(name, args)| match args {
+                    Some((args, close_span)) => (Postfix::Access(name, args), close_span),
                     None => {
                         let span = name.span;
-                        (Postfix::Field(name), span)
+                        (Postfix::Access(name, AccessArgs::None), span)
                     }
                 });
 
@@ -395,23 +551,16 @@ impl Parser {
                 .kind(TokenKind::Try)
                 .map(|t: Token| (Postfix::Try, t.span));
 
-            let postfix_op = choice((method_or_field, index_op, try_op));
+            let postfix_op = choice((access_op, index_op, try_op));
 
             let postfix = atom
                 .foldl(postfix_op.repeated(), |receiver, (op, op_span)| {
                     let span = receiver.span.merge(op_span);
                     match op {
-                        Postfix::Field(field) => Expr {
-                            kind: ExprKind::Field {
+                        Postfix::Access(member, args) => Expr {
+                            kind: ExprKind::Access {
                                 base: Box::new(receiver),
-                                field,
-                            },
-                            span,
-                        },
-                        Postfix::Method(method, args) => Expr {
-                            kind: ExprKind::MethodCall {
-                                receiver: Box::new(receiver),
-                                method,
+                                member,
                                 args,
                             },
                             span,
@@ -431,8 +580,6 @@ impl Parser {
                 })
                 .boxed();
 
-            // Prefix operators: `-`, `!`, `&`, `&mut`. `&`/`&mut` build a `Borrow` rather
-            // than a `Unary`, so we fold over a small local enum instead of `UnaryOp` alone.
             enum Prefix {
                 Unary(UnaryOp),
                 Borrow(Mutability),
@@ -524,8 +671,8 @@ impl Parser {
                 .foldl(or_op.then(logical_and.clone()).repeated(), combine_binary)
                 .boxed();
 
-            // Ranges: `a..b`, `a..=b`, `a..`, `..b`, `..=b`, `..`. Lowest precedence, and
-            // non-associative — `a..b..c` isn't meaningful and isn't accepted.
+            // A range can look like `a..b`, `a..=b`, `a..`, `..b`, `..=b`, or `..`; either bound
+            // is optional.
             let range_op = choice((
                 self.kind(TokenKind::InclRange)
                     .map(|t: Token| (true, t.span)),
@@ -572,18 +719,82 @@ impl Parser {
                     }
                 });
 
-            choice((range_without_lo, range_with_lo)).boxed()
+            let range = choice((range_without_lo, range_with_lo)).boxed();
+
+            // Assignment (`place = value`, `place += value`, etc.) has the lowest precedence
+            // of all.
+            let assign_op = choice((
+                self.kind(TokenKind::Equals).map(|t: Token| (None, t.span)),
+                self.kind(TokenKind::PlusEquals)
+                    .map(|t: Token| (Some(BinaryOp::Add), t.span)),
+                self.kind(TokenKind::SubEquals)
+                    .map(|t: Token| (Some(BinaryOp::Sub), t.span)),
+                self.kind(TokenKind::MulEquals)
+                    .map(|t: Token| (Some(BinaryOp::Mul), t.span)),
+                self.kind(TokenKind::DivEquals)
+                    .map(|t: Token| (Some(BinaryOp::Div), t.span)),
+                self.kind(TokenKind::ModEquals)
+                    .map(|t: Token| (Some(BinaryOp::Rem), t.span)),
+            ));
+
+            range
+                .clone()
+                .then(assign_op.then(expr.clone()).or_not())
+                .map(|(lhs, rest)| match rest {
+                    None => lhs,
+                    Some(((op, _op_span), rhs)) => {
+                        let span = lhs.span.merge(rhs.span);
+                        let kind = match op {
+                            None => ExprKind::Assign {
+                                lhs: Box::new(lhs),
+                                rhs: Box::new(rhs),
+                            },
+                            Some(op) => ExprKind::AssignOp {
+                                op,
+                                lhs: Box::new(lhs),
+                                rhs: Box::new(rhs),
+                            },
+                        };
+                        Expr { kind, span }
+                    }
+                })
+                .boxed()
         };
-        expr.define(expr_body);
+        let full = expr_body(BraceForms::Allow);
+        let restricted = expr_body(BraceForms::Deny);
+        expr.define(full);
+        expr_ns.define(restricted);
 
         let block_body = {
             let expr = expr.clone();
+            let expr_ns = expr_ns.clone();
             let block = block.clone();
             let type_p = self.type_parser_with_expr(expr.clone().boxed());
 
+            // Parses `while let pat = scrutinee { .. }`.
+            let while_let_stmt = self
+                .kind(TokenKind::WhileKw)
+                .then_ignore(self.kind(TokenKind::LetKw))
+                .then(pattern.clone())
+                .then_ignore(self.kind(TokenKind::Equals))
+                .then(expr_ns.clone())
+                .then(block.clone())
+                .map(|(((while_tok, pat), scrutinee), body)| {
+                    let span = while_tok.span.merge(body.span);
+                    Stmt {
+                        kind: StmtKind::WhileLet {
+                            pat,
+                            scrutinee,
+                            body,
+                        },
+                        span,
+                    }
+                })
+                .boxed();
+
             let while_stmt = self
                 .kind(TokenKind::WhileKw)
-                .then(expr.clone())
+                .then(expr_ns.clone())
                 .then(block.clone())
                 .map(|((while_tok, cond), body)| {
                     let span = while_tok.span.merge(body.span);
@@ -598,7 +809,7 @@ impl Parser {
                 .kind(TokenKind::ForKw)
                 .then(pattern.clone())
                 .then_ignore(self.kind(TokenKind::InKw))
-                .then(expr.clone())
+                .then(expr_ns.clone())
                 .then(block.clone())
                 .map(|(((for_tok, name), iter), body)| {
                     let span = for_tok.span.merge(body.span);
@@ -730,19 +941,28 @@ impl Parser {
 
             let expr_stmt = expr
                 .clone()
-                .then(self.kind(TokenKind::Semicolon))
-                .map(|(value, semi_tok)| {
-                    let span = value.span.merge(semi_tok.span);
-                    Stmt {
-                        kind: StmtKind::Expr(value),
-                        span,
+                .then(self.kind(TokenKind::Semicolon).or_not())
+                .try_map(|(value, semi_tok), span| {
+                    if semi_tok.is_none() && !value.kind.is_block_bodied() {
+                        return Err(Rich::custom(
+                            span,
+                            "expected `;` after this expression statement",
+                        ));
                     }
+                    let span = match semi_tok {
+                        Some(semi_tok) => value.span.merge(semi_tok.span),
+                        None => value.span,
+                    };
+                    Ok(Stmt {
+                        kind: StmtKind::Expr {
+                            expr: value,
+                            semi: semi_tok.is_some(),
+                        },
+                        span,
+                    })
                 })
                 .boxed();
 
-            // Recover from a malformed statement by skipping to the next token that plausibly
-            // starts a new statement, or to the block's closing `}` (left unconsumed, so the
-            // enclosing `.then(CloseBrace)` below still sees it), producing `StmtKind::Error`.
             let stmt_start = choice((
                 self.kind(TokenKind::WhileKw).ignored(),
                 self.kind(TokenKind::ForKw).ignored(),
@@ -755,12 +975,9 @@ impl Parser {
                 self.kind(TokenKind::CloseBrace).ignored(),
             ));
 
-            // Recovery must not fire when there's nothing actually broken left to parse: either
-            // we're already sitting at `}` (`stmt.repeated()` legitimately has no more
-            // statements), or what's ahead is a semicolon-less tail expression immediately
-            // followed by `}` (the block's value, not a statement — see below). Forcing a skip
-            // in either case would eat tokens that a later part of the grammar still needs, so we
-            // only fall into the skip-at-least-one-token recovery once both checks fail.
+            // Recovery must not fire once the block is really at its end (just the closing
+            // `}`, or a valid tail expression followed by `}`). Otherwise it would eat the
+            // `}` or the tail expression as if they were part of a broken statement.
             let at_terminal_position = choice((
                 self.kind(TokenKind::CloseBrace).ignored(),
                 expr.clone()
@@ -780,6 +997,7 @@ impl Parser {
                 ));
 
             let stmt = choice((
+                while_let_stmt,
                 while_stmt,
                 for_stmt,
                 break_stmt,
@@ -793,10 +1011,6 @@ impl Parser {
             .recover_with(via_parser(stmt_recovery))
             .boxed();
 
-            // A block's final statement may be a bare expression with no trailing `;` — that's
-            // the block's value when the block is used as an expression (`if`/`match`/`spawn`/
-            // `concurrent` bodies, or a bare `{ ... }`). It's still just a `StmtKind::Expr` in
-            // the tree; there's no separate "tail expr" slot on `Block`.
             self.kind(TokenKind::OpenBrace)
                 .then(stmt.repeated().collect::<Vec<_>>())
                 .then(expr.clone().or_not())
@@ -805,7 +1019,10 @@ impl Parser {
                     if let Some(tail) = tail {
                         let span = tail.span;
                         stmts.push(Stmt {
-                            kind: StmtKind::Expr(tail),
+                            kind: StmtKind::Expr {
+                                expr: tail,
+                                semi: false,
+                            },
                             span,
                         });
                     }
@@ -905,11 +1122,12 @@ mod tests {
     fn parses_field_access() {
         let expr = parse_expr("self.x");
         match &expr.kind {
-            ExprKind::Field { base, field } => {
+            ExprKind::Access { base, member, args } => {
                 assert!(matches!(base.kind, ExprKind::DeclRef(_)));
-                assert_eq!(Interner::resolve(field.text), "x");
+                assert_eq!(Interner::resolve(member.text), "x");
+                assert!(matches!(args, AccessArgs::None));
             }
-            other => panic!("expected a field access expr, got {other:?}"),
+            other => panic!("expected an access expr, got {other:?}"),
         }
     }
 
@@ -917,39 +1135,164 @@ mod tests {
     fn parses_method_call() {
         let expr = parse_expr("self.dot(other)");
         match &expr.kind {
-            ExprKind::MethodCall {
-                receiver,
-                method,
-                args,
-            } => {
-                assert!(matches!(receiver.kind, ExprKind::DeclRef(_)));
-                assert_eq!(Interner::resolve(method.text), "dot");
-                assert_eq!(args.len(), 1);
+            ExprKind::Access { base, member, args } => {
+                assert!(matches!(base.kind, ExprKind::DeclRef(_)));
+                assert_eq!(Interner::resolve(member.text), "dot");
+                assert!(matches!(args, AccessArgs::Call(args) if args.len() == 1));
             }
-            other => panic!("expected a method call expr, got {other:?}"),
+            other => panic!("expected an access expr, got {other:?}"),
         }
     }
 
     #[test]
-    fn parses_chained_field_and_method_postfix() {
-        // `a.b.c(1)` exercises chaining field access into a method call.
+    fn parses_chained_access_postfix() {
+        // `a.b.c(1)` exercises chaining one access into another.
         let expr = parse_expr("a.b.c(1)");
         match &expr.kind {
-            ExprKind::MethodCall {
-                receiver,
-                method,
-                args,
-            } => {
-                assert_eq!(Interner::resolve(method.text), "c");
-                assert_eq!(args.len(), 1);
-                match &receiver.kind {
-                    ExprKind::Field { field, .. } => {
-                        assert_eq!(Interner::resolve(field.text), "b")
+            ExprKind::Access { base, member, args } => {
+                assert_eq!(Interner::resolve(member.text), "c");
+                assert!(matches!(args, AccessArgs::Call(args) if args.len() == 1));
+                match &base.kind {
+                    ExprKind::Access { member, args, .. } => {
+                        assert_eq!(Interner::resolve(member.text), "b");
+                        assert!(matches!(args, AccessArgs::None));
                     }
-                    other => panic!("expected a field access expr, got {other:?}"),
+                    other => panic!("expected an access expr, got {other:?}"),
                 }
             }
-            other => panic!("expected a method call expr, got {other:?}"),
+            other => panic!("expected an access expr, got {other:?}"),
+        }
+    }
+
+    /// This tests a variant named through its type, with a record payload. It is the one
+    /// access shape the grammar pins down on its own, since neither a field nor a method has
+    /// a brace form.
+    #[test]
+    fn parses_qualified_variant_with_record_payload() {
+        let expr = parse_expr("Expr.int { value: 3 }");
+        match &expr.kind {
+            ExprKind::Access { base, member, args } => {
+                assert!(matches!(base.kind, ExprKind::DeclRef(_)));
+                assert_eq!(Interner::resolve(member.text), "int");
+                match args {
+                    AccessArgs::Record(fields) => {
+                        assert_eq!(fields.len(), 1);
+                        assert_eq!(Interner::resolve(fields[0].name.text), "value");
+                    }
+                    other => panic!("expected a record payload, got {other:?}"),
+                }
+            }
+            other => panic!("expected an access expr, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Brace forms in condition position (`BraceForms::Deny`)
+    // -----------------------------------------------------------------
+
+    /// `if a.b { x }` must keep its body: the `{` is the block, not a record payload.
+    #[test]
+    fn record_payload_is_denied_in_condition_position() {
+        let expr = parse_expr("if a.b { x } else { 0 }");
+        match &expr.kind {
+            ExprKind::If {
+                cond, else_branch, ..
+            } => {
+                assert!(matches!(
+                    cond.kind,
+                    ExprKind::Access {
+                        args: AccessArgs::None,
+                        ..
+                    }
+                ));
+                assert!(else_branch.is_some());
+            }
+            other => panic!("expected an if expr, got {other:?}"),
+        }
+    }
+
+    /// This tests the same restriction on struct literals, the case that used to require
+    /// parenthesizing.
+    #[test]
+    fn struct_literal_is_denied_in_condition_position() {
+        let expr = parse_expr("if Foo { x } else { 0 }");
+        match &expr.kind {
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                assert!(matches!(cond.kind, ExprKind::DeclRef(_)));
+                assert_eq!(then_branch.stmts.len(), 1);
+                assert!(else_branch.is_some());
+            }
+            other => panic!("expected an if expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn brace_forms_are_denied_in_a_match_scrutinee() {
+        let expr = parse_expr("match Foo { x => 1, _ => 0 }");
+        match &expr.kind {
+            ExprKind::Match { scrutinee, arms } => {
+                assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
+                assert_eq!(arms.len(), 2);
+            }
+            other => panic!("expected a match expr, got {other:?}"),
+        }
+    }
+
+    /// The restriction covers the whole top-level spine but stops at any bracketing, so a
+    /// parenthesized or argument-position brace form is still fine in a condition.
+    #[test]
+    fn brace_forms_are_allowed_inside_brackets_in_a_condition() {
+        let expr = parse_expr("if (Foo { a: 1 }).b { x } else { 0 }");
+        match &expr.kind {
+            ExprKind::If { cond, .. } => match &cond.kind {
+                ExprKind::Access { base, args, .. } => {
+                    assert!(matches!(base.kind, ExprKind::Ctor { .. }));
+                    assert!(matches!(args, AccessArgs::None));
+                }
+                other => panic!("expected an access expr, got {other:?}"),
+            },
+            other => panic!("expected an if expr, got {other:?}"),
+        }
+
+        let expr = parse_expr("if f(Foo { a: 1 }) { x } else { 0 }");
+        match &expr.kind {
+            ExprKind::If { cond, .. } => match &cond.kind {
+                ExprKind::FunCall { args, .. } => {
+                    assert!(matches!(args[0].kind, ExprKind::Ctor { .. }));
+                }
+                other => panic!("expected a call expr, got {other:?}"),
+            },
+            other => panic!("expected an if expr, got {other:?}"),
+        }
+    }
+
+    /// Forms that open with `.` are never ambiguous, since a block can't start with `.`.
+    #[test]
+    fn dot_prefixed_forms_survive_in_condition_position() {
+        let expr = parse_expr("if .{ a: 1 } { x } else { 0 }");
+        match &expr.kind {
+            ExprKind::If { cond, .. } => {
+                assert!(matches!(cond.kind, ExprKind::Ctor { path: None, .. }));
+            }
+            other => panic!("expected an if expr, got {other:?}"),
+        }
+
+        let expr = parse_expr("if .none { x } else { 0 }");
+        match &expr.kind {
+            ExprKind::If { cond, .. } => {
+                assert!(matches!(
+                    cond.kind,
+                    ExprKind::Variant {
+                        payload: Payload::None,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected an if expr, got {other:?}"),
         }
     }
 
@@ -983,7 +1326,7 @@ mod tests {
                 op: UnaryOp::Neg,
                 operand,
             } => {
-                assert!(matches!(operand.kind, ExprKind::Field { .. }));
+                assert!(matches!(operand.kind, ExprKind::Access { .. }));
             }
             other => panic!("expected a unary expr, got {other:?}"),
         }
@@ -994,6 +1337,7 @@ mod tests {
         let expr = parse_expr("Vector2D { x: 1.0, y: 2.0 }");
         match &expr.kind {
             ExprKind::Ctor { path, payload } => {
+                let path = path.as_ref().expect("`Vector2D { .. }` names its type");
                 assert_eq!(Interner::resolve(path.segments[0].text), "Vector2D");
                 assert_eq!(payload.len(), 2);
                 assert_eq!(Interner::resolve(payload[0].name.text), "x");
@@ -1117,7 +1461,7 @@ mod tests {
 
     #[test]
     fn parses_range_with_arithmetic_bounds() {
-        // `a..b+1` should be `a..(b+1)` — range binds looser than `+`.
+        // `a..b+1` should be `a..(b+1)`, since range binds looser than `+`.
         let expr = parse_expr("a..b+1");
         match &expr.kind {
             ExprKind::Range { hi: Some(hi), .. } => {
@@ -1181,13 +1525,70 @@ mod tests {
     }
 
     #[test]
+    fn parses_if_let() {
+        let expr = parse_expr("if let .some(x) = o { x } else { 0 }");
+        match &expr.kind {
+            ExprKind::IfLet {
+                pat,
+                scrutinee,
+                else_branch,
+                ..
+            } => {
+                assert!(matches!(pat.kind, PatternKind::Variant { .. }));
+                assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
+                assert!(else_branch.is_some());
+            }
+            other => panic!("expected an if-let expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_if_let_without_else() {
+        let expr = parse_expr("if let .some(x) = o { x }");
+        match &expr.kind {
+            ExprKind::IfLet { else_branch, .. } => assert!(else_branch.is_none()),
+            other => panic!("expected an if-let expr, got {other:?}"),
+        }
+    }
+
+    /// `else` after an `if let` takes the same branch parser as a plain `if`, so chaining works.
+    #[test]
+    fn parses_else_if_let_chain() {
+        let expr = parse_expr("if let .some(a) = o { a } else if let .none = o { 1 } else { 2 }");
+        match &expr.kind {
+            ExprKind::IfLet { else_branch, .. } => {
+                let else_branch = else_branch.as_ref().expect("expected an else branch");
+                assert!(matches!(else_branch.kind, ExprKind::IfLet { .. }));
+            }
+            other => panic!("expected an if-let expr, got {other:?}"),
+        }
+    }
+
+    /// The scrutinee sits in condition position, so brace forms are denied there too.
+    #[test]
+    fn if_let_scrutinee_denies_brace_forms() {
+        let expr = parse_expr("if let .some(x) = Foo { x } else { 0 }");
+        match &expr.kind {
+            ExprKind::IfLet {
+                scrutinee,
+                then_branch,
+                ..
+            } => {
+                assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
+                assert_eq!(then_branch.stmts.len(), 1);
+            }
+            other => panic!("expected an if-let expr, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_match_expr_with_multiple_arms() {
-        let expr = parse_expr("match shape { Circle(r) => 1, Rectangle(w, h) => 2, _ => 0 }");
+        let expr = parse_expr("match shape { .circle(r) => 1, .rectangle((w, h)) => 2, _ => 0 }");
         match &expr.kind {
             ExprKind::Match { scrutinee, arms } => {
                 assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
                 assert_eq!(arms.len(), 3);
-                assert!(matches!(arms[0].pat.kind, PatternKind::Ctor { .. }));
+                assert!(matches!(arms[0].pat.kind, PatternKind::Variant { .. }));
                 assert!(matches!(arms[2].pat.kind, PatternKind::Wildcard));
             }
             other => panic!("expected a match expr, got {other:?}"),
@@ -1232,7 +1633,7 @@ mod tests {
                 match &args[0].kind {
                     ExprKind::Ctor { payload, .. } => {
                         assert_eq!(payload.len(), 1);
-                        assert!(matches!(payload[0].expr.kind, ExprKind::MethodCall { .. }));
+                        assert!(matches!(payload[0].expr.kind, ExprKind::Access { .. }));
                     }
                     other => panic!("expected a ctor expr, got {other:?}"),
                 }
@@ -1303,6 +1704,80 @@ mod tests {
                 assert!(matches!(args[1].kind, ExprKind::Closure { .. }));
             }
             other => panic!("expected a call expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_plain_assignment() {
+        let expr = parse_expr("i = i + 1");
+        match &expr.kind {
+            ExprKind::Assign { lhs, rhs } => {
+                assert!(matches!(lhs.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(
+                    rhs.kind,
+                    ExprKind::Binary {
+                        op: BinaryOp::Add,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected an assign expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_compound_assignment_operators() {
+        for (src, op) in [
+            ("x += 1", BinaryOp::Add),
+            ("x -= 1", BinaryOp::Sub),
+            ("x *= 1", BinaryOp::Mul),
+            ("x /= 1", BinaryOp::Div),
+            ("x %= 1", BinaryOp::Rem),
+        ] {
+            let expr = parse_expr(src);
+            match &expr.kind {
+                ExprKind::AssignOp { op: got, lhs, .. } => {
+                    assert_eq!(*got, op, "wrong op for {src:?}");
+                    assert!(matches!(lhs.kind, ExprKind::DeclRef(_)));
+                }
+                other => panic!("expected an assign-op expr for {src:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn assignment_is_right_associative() {
+        // `a = b = c` should be `a = (b = c)`, not `(a = b) = c`.
+        let expr = parse_expr("a = b = c");
+        match &expr.kind {
+            ExprKind::Assign { rhs, .. } => {
+                assert!(matches!(rhs.kind, ExprKind::Assign { .. }));
+            }
+            other => panic!("expected an assign expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assignment_binds_looser_than_range() {
+        // `x = a..b` should parse the whole range as the RHS, not `(x = a)..b`.
+        let expr = parse_expr("x = a..b");
+        match &expr.kind {
+            ExprKind::Assign { rhs, .. } => {
+                assert!(matches!(rhs.kind, ExprKind::Range { .. }));
+            }
+            other => panic!("expected an assign expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_assignment_through_a_field_place() {
+        // The left-hand side of an assignment need not be a bare name.
+        let expr = parse_expr("point.x = 1");
+        match &expr.kind {
+            ExprKind::Assign { lhs, .. } => {
+                assert!(matches!(lhs.kind, ExprKind::Access { .. }));
+            }
+            other => panic!("expected an assign expr, got {other:?}"),
         }
     }
 }

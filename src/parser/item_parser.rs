@@ -1,3 +1,6 @@
+//! Parses top-level items: functions, structs, enums, traits, `extend` blocks, modules, and
+//! imports.
+
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
@@ -15,6 +18,7 @@ use crate::lexer::token::TokenKind;
 use super::{BoxedP, Parser};
 
 impl Parser {
+    /// Parses a single top-level item.
     pub fn item_parser<'a>(&'a self) -> BoxedP<'a, Item> {
         let ident = self.ident_parser();
         let type_p = self.type_parser();
@@ -83,7 +87,7 @@ impl Parser {
             .allow_trailing()
             .collect::<Vec<_>>();
 
-        // `self`, `&self`, `&mut self`, `any self`.
+        // The receiver parameter takes four forms: `self`, `&self`, `&mut self`, or `any self`.
         let self_param = choice((
             self.kind(TokenKind::Amp)
                 .then(self.kind(TokenKind::MutKw))
@@ -116,6 +120,8 @@ impl Parser {
             .ignore_then(type_p.clone())
             .or_not();
 
+        // This is shared by free functions, trait methods, and `extend` methods. `allow_no_impl`
+        // lets a trait method end in `;` instead of a body, declaring it without providing it.
         let function_decl = |allow_no_impl: bool| {
             visibility
                 .clone()
@@ -165,7 +171,7 @@ impl Parser {
                         }
                     },
                 )
-                .boxed() // BoxedP<'a, Function> now, not Item
+                .boxed() // Note: this produces a `Function`, not yet wrapped in an `Item`.
         };
 
         let field = self
@@ -203,7 +209,7 @@ impl Parser {
             .then(self.kind(TokenKind::StructKw))
             .then(ident.clone())
             .then(
-                self.kind(TokenKind::OpenCaret) // <
+                self.kind(TokenKind::OpenCaret)
                     .ignore_then(generics.clone())
                     .then_ignore(self.kind(TokenKind::CloseCaret))
                     .or_not(),
@@ -297,7 +303,7 @@ impl Parser {
             .then(self.kind(TokenKind::EnumKw))
             .then(ident.clone())
             .then(
-                self.kind(TokenKind::OpenCaret) // <
+                self.kind(TokenKind::OpenCaret)
                     .ignore_then(generics.clone())
                     .then_ignore(self.kind(TokenKind::CloseCaret))
                     .or_not(),
@@ -333,7 +339,7 @@ impl Parser {
             .then(self.kind(TokenKind::TraitKw))
             .then(ident.clone())
             .then(
-                self.kind(TokenKind::OpenCaret) // <
+                self.kind(TokenKind::OpenCaret)
                     .ignore_then(generics.clone())
                     .then_ignore(self.kind(TokenKind::CloseCaret))
                     .or_not(),
@@ -363,6 +369,10 @@ impl Parser {
                 }
             });
 
+        // An `extend` block looks like `extend<T> Adt<T> with Trait<T> { methods }`, or
+        // `extend Adt<T> { methods }` to add inherent methods without implementing a trait.
+        // Each of the three angle-bracket groups (the `extend` block's own generics, the
+        // ADT's, and the trait's) is independent and optional.
         let extend = self
             .kind(TokenKind::ExtendKw)
             .then(

@@ -1,11 +1,18 @@
+//! This file defines `SrcMap`, the compiler's process-wide source map.
+//!
+//! Every source file the compiler reads is registered here under a shared, monotonically
+//! increasing char-offset space. This lets a `SrcSpan` be resolved back to its owning file
+//! and text without threading a source reference through every stage of the pipeline.
+
 use crate::driver::src_file::SrcFile;
 use crate::lexer::src_span::SrcSpan;
 use std::sync::{Mutex, OnceLock};
 
-/// Mutable state backing the global source map: every file added so far, plus the running
-/// offset new files get appended at. Files are never removed, and each `SrcFile` is leaked to
-/// `'static` when added, so handing out `&'static SrcFile` references remains sound even as
-/// this list grows.
+/// Mutable state for the global source map.
+///
+/// Tracks every file added so far, plus the running offset at which the next file gets
+/// appended. Files are never removed, and each `SrcFile` is leaked to `'static` when added,
+/// so handing out `&'static SrcFile` references stays sound even as this list grows.
 struct SrcMapState {
     files: Vec<&'static SrcFile>,
     cur_offset: usize,
@@ -22,16 +29,22 @@ fn state() -> &'static Mutex<SrcMapState> {
     })
 }
 
-/// Namespace for the process-wide source map: every source file the compiler has read, indexed
-/// by a shared global char-offset space so spans can be resolved back to text without threading
-/// a source reference through every stage of the pipeline.
+/// Namespace for the process-wide source map.
+///
+/// Every source file the compiler has read is indexed here by a shared global char-offset
+/// space, so spans can be resolved back to text without threading a source reference through
+/// every stage of the pipeline.
 pub struct SrcMap;
 
 impl SrcMap {
+    /// Returns every registered file, in the order it was added.
     pub fn files() -> Vec<&'static SrcFile> {
         state().lock().unwrap().files.clone()
     }
 
+    /// Returns the file whose global offset range contains `offset`.
+    ///
+    /// Returns `None` if no registered file covers that offset.
     pub fn file_containing(offset: usize) -> Option<&'static SrcFile> {
         state()
             .lock()
@@ -42,10 +55,16 @@ impl SrcMap {
             .copied()
     }
 
+    /// Returns the source text covered by `span` as an owned `String`.
+    ///
+    /// Returns `None` if `span` doesn't fall within any registered file.
     pub fn text_of(span: SrcSpan) -> Option<String> {
         Self::chars_of(span).map(|chars| chars.iter().collect())
     }
 
+    /// Returns the chars covered by `span`, borrowed from the owning file's stored content.
+    ///
+    /// Returns `None` if `span` doesn't fall within any registered file.
     pub fn chars_of(span: SrcSpan) -> Option<&'static [char]> {
         let file = Self::file_containing(span.get_begin())?;
         let begin = span.get_begin() - file.global_offset;
@@ -65,8 +84,10 @@ impl SrcMap {
     }
 }
 
-/// A builder for assembling files into the global `SrcMap`. Each `add_file` call registers the
-/// file immediately; `finish` is a no-op kept for call-site readability.
+/// A builder for assembling files into the global `SrcMap`.
+///
+/// Each `add_file` call registers the file immediately, so `finish` is a no-op kept only for
+/// call-site readability.
 pub struct SrcMapBuilder;
 
 impl SrcMapBuilder {

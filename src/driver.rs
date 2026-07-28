@@ -1,19 +1,29 @@
+//! This file defines `Driver`, which handles the project-scaffolding commands: `new` and
+//! `init`.
+//!
+//! It creates new Phi projects and initializes existing directories with the files a Phi
+//! project needs, namely a `src/main.phi` entry point and a `phi.toml` manifest. This is
+//! separate from `Compiler`, which drives actual compilation of an existing project.
+
 pub mod compiler;
 pub mod file_collector;
 pub mod src_file;
 pub mod src_map;
 
-use crate::driver::src_map::SrcMap;
 use std::env;
 use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
+/// Namespace for the project-scaffolding commands: `new` and `init`.
 pub struct Driver;
 
 impl Driver {
-    /// Create a new Phi project directory.
+    /// Creates a new Phi project directory named `name` and populates it via
+    /// [`Driver::init_project`].
+    ///
+    /// Fails if `name` already exists.
     pub fn new_project(name: &str) -> io::Result<PathBuf> {
         let path = Path::new(name);
         if path.exists() {
@@ -27,7 +37,10 @@ impl Driver {
         Ok(path.to_path_buf())
     }
 
-    /// Initialise a project in an existing directory.
+    /// Initializes an existing directory as a Phi project. Writes a `src/main.phi` stub and
+    /// a `phi.toml` manifest into `path`.
+    ///
+    /// Fails if `path` is not a directory.
     pub fn init_project(path: &Path) -> io::Result<()> {
         if !path.is_dir() {
             return Err(io::Error::new(
@@ -39,7 +52,7 @@ impl Driver {
         fs::create_dir_all(&src_dir)?;
 
         let main_phi = src_dir.join("main.phi");
-        let template = b"// Hello, Phi!\nfn main() {\n    println(\"Hello, world!\");\n}\n";
+        let template = b"// Hello, Phi!\nfun main() {\n    println(\"Hello, world!\");\n}\n";
         fs::write(&main_phi, template)?;
 
         let manifest_name = path

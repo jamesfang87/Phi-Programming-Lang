@@ -1,42 +1,52 @@
+//! Defines the token types the lexer produces and the [`Token`] that pairs a [`TokenKind`]
+//! with its [`SrcSpan`].
+//!
+//! The parser matches on `TokenKind` directly. Keywords, operators, and delimiters each get
+//! their own variant rather than a generic "punctuation" or "keyword" variant with a string
+//! payload, so the parser gets exhaustiveness checking from the compiler instead of relying on
+//! string comparisons.
+
 use crate::lexer::src_span::SrcSpan;
 
+/// The kind of a single token. See [`TokenKind::to_string`] for the exact source text each
+/// variant corresponds to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
-    Eof, // End of file marker
+    Eof,
 
     // KEYWORDS
-    AnyKw,        // `any` keyword
-    AsKw,         // `as` keyword
-    BoolKw,       // `bool` keyword
-    BreakKw,      // `break` keyword
-    ConcurrentKw, // `concurrent` keyword
-    ContinueKw,   // `continue` keyword
-    DeferKw,      // `defer` keyword
-    DynKw,        // `dyn` keyword
-    ElseKw,       // `else` keyword
-    EnumKw,       // `enum` keyword
-    ExtendKw,     // `extend` keyword
-    FalseKw,      // `false` literal
-    ForKw,        // `for` keyword
-    FunKw,        // `fun` keyword
-    IfKw,         // `if` keyword
-    ImportKw,     // `import` keyword
-    InKw,         // `in` keyword
-    LetKw,        // `let` keyword
-    MatchKw,      // `match` keyword
-    ModuleKw,     // `module` keyword
-    MutKw,        // `mut` keyword
-    PublicKw,     // `public` keyword
-    ReturnKw,     // `return` keyword
-    LowerSelfKw,  // `self` keyword
-    UpperSelfKw,  // `Self` keyword
-    SpawnKw,      // `spawn` keyword
-    StructKw,     // `struct` keyword
-    TraitKw,      // `trait`keyword
-    TrueKw,       // `true` literal
-    UseKw,        // `use` keyword
-    WhileKw,      // `while` keyword
-    WithKw,       // `with` keyword
+    AnyKw,
+    AsKw,
+    BoolKw,
+    BreakKw,
+    ConcurrentKw,
+    ContinueKw,
+    DeferKw,
+    DynKw,
+    ElseKw,
+    EnumKw,
+    ExtendKw,
+    FalseKw,
+    ForKw,
+    FunKw,
+    IfKw,
+    ImportKw,
+    InKw,
+    LetKw,
+    MatchKw,
+    ModuleKw,
+    MutKw,
+    PublicKw,
+    ReturnKw,
+    LowerSelfKw, // `self`
+    UpperSelfKw, // `Self`
+    SpawnKw,
+    StructKw,
+    TraitKw,
+    TrueKw,
+    UseKw,
+    WhileKw,
+    WithKw,
 
     // INTRINSICS
     Panic,
@@ -45,95 +55,100 @@ pub enum TokenKind {
     TypeOf,
 
     // SIGNED INTEGER TYPES
-    I8,  // `i8` type (8-bit signed)
-    I16, // `i16` type (16-bit signed)
-    I32, // `i32` type (32-bit signed)
-    I64, // `i64` type (64-bit signed)
+    I8,
+    I16,
+    I32,
+    I64,
     // UNSIGNED INTEGER TYPES
-    U8,  // `u8` type (8-bit unsigned)
-    U16, // `u16` type (16-bit unsigned)
-    U32, // `u32` type (32-bit unsigned)
-    U64, // `u64` type (64-bit unsigned)
+    U8,
+    U16,
+    U32,
+    U64,
     // FLOATING-POINT TYPES
-    F32, // `f32` type (32-bit float)
-    F64, // `f64` type (64-bit float)
+    F32,
+    F64,
     // TEXT TYPES
     String, // `str` type keyword
-    Char,   // `char` type keyword
+    Char,
+
     // SYNTAX DELIMITERS
-    OpenParen,    // `(` parenthesis
-    CloseParen,   // `)` parenthesis
-    OpenBrace,    // `{` brace
-    CloseBrace,   // `}` brace
-    OpenBracket,  // `[` bracket
-    CloseBracket, // `]` bracket
-    Arrow,        // `->` function return
-    FatArrow,     // `=>` as in the match stmt
-    Comma,        // `,` separator
-    Semicolon,    // `;` statement terminator
+    OpenParen,
+    CloseParen,
+    OpenBrace,
+    CloseBrace,
+    OpenBracket,
+    CloseBracket,
+    Arrow,     // `->`, function return type
+    FatArrow,  // `=>`, match arms
+    Comma,
+    Semicolon,
 
     // OPERATORS
-    Plus,    // `+` addition
-    Minus,   // `-` subtraction/negation
-    Star,    // `*` multiplication
-    Slash,   // `/` division
-    Percent, // `%` modulo
-    Bang,    // `!` logical NOT
-    Amp,     // `&` references
-    Try,     // `?` short-hand for Result/Option
+    Plus,
+    Minus, // subtraction or unary negation
+    Star,
+    Slash,
+    Percent,
+    Bang, // logical NOT
+    Amp,  // references
+    Try,  // `?`, Result/Option short-circuit
 
     // COMPOUND ASSIGNMENT OPERATORS
-    PlusEquals, // `+=` add-assign
-    SubEquals,  // `-=` subtract-assign
-    MulEquals,  // `*=` multiply-assign
-    DivEquals,  // `/=` divide-assign
-    ModEquals,  // `%=` modulo-assign
+    PlusEquals,
+    SubEquals,
+    MulEquals,
+    DivEquals,
+    ModEquals,
 
     // MEMBER ACCESS
-    Period,      // `.` member access
-    DoubleColon, // `::` namespace/enum access
+    Period,
+    DoubleColon, // namespace or enum variant access
 
     // INCREMENT/DECREMENT
-    DoublePlus,  // `++` increment
-    DoubleMinus, // `--` decrement
+    DoublePlus,
+    DoubleMinus,
 
     // EQUALITY
-    DoubleEquals, // `==` equality
-    BangEquals,   // `!=` inequality
+    DoubleEquals,
+    BangEquals,
 
     // LOGICAL
-    DoubleAmp,  // `&&` logical AND
-    DoublePipe, // `||` logical OR
+    DoubleAmp,
+    DoublePipe,
 
     // ALTERNATION
-    Pipe, // `|` alternation in patterns
+    Pipe, // pattern alternation, e.g. `1 | 2 | 3`
 
     // RELATIONAL
-    OpenCaret,    // `<` less than
-    LessEqual,    // `<=` less than or equal
-    CloseCaret,   // `>` greater than
-    GreaterEqual, // `>=` greater than or equal
+    OpenCaret, // `<`
+    LessEqual,
+    CloseCaret, // `>`
+    GreaterEqual,
 
     // ASSIGNMENT AND TYPE
-    Equals, // `=` assignment
-    Colon,  // `:` type annotation
+    Equals,
+    Colon,
 
     // RANGE OPERATORS
-    ExclRange, // `..` exclusive range
-    InclRange, // `..=` inclusive range
+    ExclRange, // `..`
+    InclRange, // `..=`
 
     // WILDCARD
     Wildcard, // `_`
 
     // LITERALS
-    IntLiteral,   // Integer literal (e.g., 42)
-    FloatLiteral, // Float literal (e.g., 3.14)
-    StrLiteral,   // String literal (e.g., "text")
-    CharLiteral,  // Char literal (e.g., 'a')
-    Identifier,   // Identifier (user-defined names)
+    IntLiteral,
+    FloatLiteral,
+    StrLiteral,
+    CharLiteral,
+    Identifier,
 }
 
 impl TokenKind {
+    /// Returns the source text this kind corresponds to, or a short description for kinds that
+    /// stand for a class of lexemes rather than one fixed spelling (e.g. `"identifier"`).
+    ///
+    /// Used to build diagnostic messages like "expected `;`, found `foo`".
     pub fn to_string(self) -> &'static str {
         match self {
             TokenKind::Eof => "end of file",
@@ -273,14 +288,15 @@ impl TokenKind {
 
 impl std::fmt::Display for TokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // NB: `self.to_string()` here would resolve to the blanket
-        // `ToString::to_string(&self)` (an exact match on `&TokenKind`) instead
-        // of the inherent by-value `to_string` above, calling back into this
-        // `fmt` and recursing forever. The explicit UFCS call sidesteps that.
+        // Do not call `self.to_string()` here. Rust would resolve it to the blanket
+        // `ToString::to_string(&self)` instead of the inherent method above, because it is an
+        // exact match on `&TokenKind`. That calls back into this `fmt` and recurses forever.
+        // The explicit UFCS call below picks the inherent method and avoids the loop.
         f.write_str(TokenKind::to_string(*self))
     }
 }
 
+/// Token represents a single, lexed token. It includes the type of token and its source span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,

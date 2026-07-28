@@ -1,17 +1,22 @@
+//! This file defines `Compiler`, the central compilation pipeline.
+//!
+//! It collects source files, then drives them through the lexer, parser, and name resolver,
+//! with type checking and further stages to follow. Diagnostics raised along the way go
+//! straight to the `DiagCtx` singleton rather than being threaded through this pipeline.
+
 use std::io;
 use std::path::Path;
 
-use crate::ast::SrcUnit;
+use crate::ast::ParsedSrcFile;
 use crate::diag::DiagCtx;
 use crate::driver::file_collector::FileCollector;
 use crate::driver::src_map::SrcMap;
+use crate::hir::lower::lower_unit;
 use crate::lexer::Lexer;
 use crate::lexer::token::Token;
+use crate::name_res::resolve;
 use crate::parser::Parser;
 
-/// The central pipeline: collects source files, then drives them through the lexer, parser,
-/// and (eventually) later compilation stages. Diagnostics raised along the way go straight to
-/// the [`DiagCtx`] singleton rather than being threaded through here.
 pub struct Compiler;
 
 impl Compiler {
@@ -19,12 +24,12 @@ impl Compiler {
         Compiler {}
     }
 
-    /// Collect every `.phi` file under `root` into the source map.
+    /// Collects every `.phi` file under `root` into the source map.
     pub fn collect_sources(&mut self, root: &Path) -> io::Result<()> {
         FileCollector::collect(root)
     }
 
-    /// Lex every collected file, in `SrcMap` order.
+    /// Lexes every collected file, in `SrcMap` order.
     pub fn lex(&mut self) -> Vec<Vec<Token>> {
         let mut token_streams = Vec::with_capacity(SrcMap::files().len());
         for file in SrcMap::files() {
@@ -34,8 +39,8 @@ impl Compiler {
         token_streams
     }
 
-    /// Parse every collected file's token stream into an AST.
-    pub fn parse(&mut self, token_streams: Vec<Vec<Token>>) -> Vec<SrcUnit> {
+    /// Parses every collected file's token stream into an AST.
+    pub fn parse(&mut self, token_streams: Vec<Vec<Token>>) -> Vec<ParsedSrcFile> {
         token_streams
             .into_iter()
             .zip(SrcMap::files().iter())
@@ -46,13 +51,14 @@ impl Compiler {
             .collect()
     }
 
-    /// Runs the full pipeline over every `.phi` file under `root`: collect sources, lex, parse,
-    /// and (eventually) typecheck, etc. Prints any diagnostics collected and reports whether
-    /// compilation succeeded.
+    /// Runs the full pipeline over every `.phi` file under `root`: collects sources, lexes,
+    /// parses, and resolves names, with type checking and further stages to follow.
     ///
-    /// If `print_ast` is set, the parsed AST for every file is pretty-printed to stdout (in
-    /// `SrcMap` order, which `FileCollector` sorts to be reproducible) before diagnostics are
-    /// reported — this is the hook `phi build --ast` uses, and what the golden tests under
+    /// Prints any diagnostics collected and reports whether compilation succeeded.
+    ///
+    /// If `print_ast` is set, the parsed AST for every file is pretty-printed to stdout before
+    /// diagnostics are reported, in `SrcMap` order, which `FileCollector` sorts to be
+    /// reproducible. This is the hook `phi build --ast` uses, and what the golden tests under
     /// `tests/` snapshot.
     pub fn build(&mut self, root: &Path, print_ast: bool) -> io::Result<bool> {
         self.collect_sources(root)?;
@@ -66,7 +72,15 @@ impl Compiler {
             }
         }
 
-        // TODO: typecheck `asts` and continue the pipeline.
+        // Desugars every file's AST into one HIR.
+        let hir = lower_unit(&asts);
+
+        // Resolves names within the HIR. The result isn't consumed yet.
+        //
+        // Type checking will need it once it's wired up.
+        let _name_res = resolve(&hir);
+
+        // TODO: typecheck `hir` using `_name_res`, and continue the pipeline.
 
         DiagCtx::report();
         Ok(!DiagCtx::has_errors())

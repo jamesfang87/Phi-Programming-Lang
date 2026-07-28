@@ -1,17 +1,26 @@
+//! Parses patterns. A pattern shows up in a few places:
+//!
+//! - `let (x, y) = point;`
+//! - `for item in items { ... }`
+//! - `match shape { .circle(r) => ..., _ => ... }`
+//!
+//! A pattern is its own small recursive grammar, separate from expressions, but it reuses the
+//! expression literal parsers so `match x { 1 => ... }` accepts the same literal forms as an
+//! expression would.
+
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
-use crate::ast::interner::Interner;
-use crate::ast::{Expr, ExprKind, Literal, Pattern, PatternKind};
+use crate::ast::{Expr, ExprKind, Ident, Literal, Pattern, PatternKind, Payload, PayloadField};
 
 use crate::lexer::token::{Token, TokenKind};
 
 use super::{BoxedP, Extra, Parser};
 
 impl Parser {
+    /// Parses a single pattern: a wildcard, a literal, a tuple, a variant, or a binding.
     pub fn pattern_parser<'a>(&'a self) -> BoxedP<'a, Pattern> {
         let ident = self.ident_parser();
-        let path = self.path_parser();
 
         recursive(
             |pattern: Recursive<dyn ChumskyParser<'a, &'a [Token], Pattern, Extra<'a>>>| {
@@ -66,56 +75,73 @@ impl Parser {
                     })
                     .boxed();
 
-                // `Circle(r)`, `Parallelogram(b, h)` — a ctor payload is a parenthesized list of
-                // bindings, distinct from `tuple` above only in that it always follows a path.
-                let ctor_payload = self
-                    .kind(TokenKind::OpenParen)
-                    .ignore_then(
-                        ident
-                            .clone()
-                            .separated_by(self.kind(TokenKind::Comma))
-                            .allow_trailing()
-                            .collect::<Vec<_>>(),
+                // `{ l }` binds the field to its own name. `{ l: <pat> }` destructures it
+                // further with a nested pattern.
+                let payload_field = ident
+                    .clone()
+                    .then(
+                        self.kind(TokenKind::Colon)
+                            .ignore_then(pattern.clone())
+                            .or_not(),
                     )
-                    .then(self.kind(TokenKind::CloseParen))
-                    .map(|(payload, close_tok)| (payload, close_tok.span))
+                    .map(|(name, value)| {
+                        let span = match &value {
+                            Some(pat) => name.span.merge(pat.span),
+                            None => name.span,
+                        };
+                        PayloadField { name, value, span }
+                    })
                     .boxed();
 
-                // A single bare identifier is ambiguous between a binding (`x`) and a unit ctor
-                // pattern (`Rectangle`) at the grammar level, so — matching the PascalCase
-                // convention called out on `PatternKind::Ctor` — we resolve it by the identifier's
-                // first character: lowercase/underscore is a binding, uppercase is a ctor. A
-                // qualified path (`Shape::Circle`) or a path with a payload is always a ctor.
-                let ctor_or_binding = path
-                    .clone()
-                    .then(ctor_payload.or_not())
-                    .map(|(path, payload)| {
-                        let starts_uppercase = Interner::resolve(path.segments[0].text)
-                            .chars()
-                            .next()
-                            .is_some_and(|c| c.is_uppercase());
+                // A variant's payload can look like `.circle(r)`, `.parallelogram((b, h))`, or
+                // `.square { l }`.
+                let variant_payload = choice((
+                    self.kind(TokenKind::OpenParen)
+                        .ignore_then(pattern.clone())
+                        .then(self.kind(TokenKind::CloseParen))
+                        .map(|(inner, close_tok)| {
+                            (Payload::Single(Box::new(inner)), close_tok.span)
+                        }),
+                    self.kind(TokenKind::OpenBrace)
+                        .ignore_then(
+                            payload_field
+                                .separated_by(self.kind(TokenKind::Comma))
+                                .allow_trailing()
+                                .collect::<Vec<_>>(),
+                        )
+                        .then(self.kind(TokenKind::CloseBrace))
+                        .map(|(fields, close_tok)| (Payload::Record(fields), close_tok.span)),
+                ))
+                .boxed();
 
-                        if path.segments.len() == 1 && !starts_uppercase && payload.is_none() {
-                            let name = path.segments[0];
-                            return Pattern {
-                                kind: PatternKind::Binding(name),
-                                span: name.span,
-                            };
-                        }
-
+                // A leading `.` starts a variant pattern.
+                let variant = self
+                    .kind(TokenKind::Period)
+                    .then(ident.clone())
+                    .then(variant_payload.or_not())
+                    .map(|((dot_tok, variant), payload)| {
                         let (payload, span) = match payload {
-                            Some((payload, close_span)) => (payload, path.span.merge(close_span)),
-                            None => (Vec::new(), path.span),
+                            Some((payload, close_span)) => {
+                                (payload, dot_tok.span.merge(close_span))
+                            }
+                            None => (Payload::None, dot_tok.span.merge(variant.span)),
                         };
-
                         Pattern {
-                            kind: PatternKind::Ctor { path, payload },
+                            kind: PatternKind::Variant { variant, payload },
                             span,
                         }
                     })
                     .boxed();
 
-                choice((wildcard, literal, tuple, ctor_or_binding))
+                let binding = ident
+                    .clone()
+                    .map(|name: Ident| Pattern {
+                        kind: PatternKind::Binding(name),
+                        span: name.span,
+                    })
+                    .boxed();
+
+                choice((wildcard, literal, tuple, variant, binding))
             },
         )
         .boxed()
@@ -125,9 +151,25 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::interner::Interner;
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;
+
+    /// The single pattern a `Payload::Single` holds, or a panic.
+    fn single(payload: &Payload<Pattern>) -> &Pattern {
+        match payload {
+            Payload::Single(inner) => inner,
+            other => panic!("expected a single payload, got {other:?}"),
+        }
+    }
+
+    fn record(payload: &Payload<Pattern>) -> &[PayloadField<Pattern>] {
+        match payload {
+            Payload::Record(fields) => fields,
+            other => panic!("expected a record payload, got {other:?}"),
+        }
+    }
 
     fn parse_pattern(src: &str) -> Pattern {
         DiagCtx::clear();
@@ -211,69 +253,95 @@ mod tests {
     }
 
     #[test]
-    fn parses_bare_ctor_pattern() {
+    fn parses_bare_variant_pattern() {
+        let pat = parse_pattern(".rectangle");
+        match &pat.kind {
+            PatternKind::Variant { variant, payload } => {
+                assert_eq!(Interner::resolve(variant.text), "rectangle");
+                assert!(matches!(payload, Payload::None));
+            }
+            other => panic!("expected a variant pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_variant_pattern_with_single_payload() {
+        let pat = parse_pattern(".circle(r)");
+        match &pat.kind {
+            PatternKind::Variant { variant, payload } => {
+                assert_eq!(Interner::resolve(variant.text), "circle");
+                match &single(payload).kind {
+                    PatternKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "r"),
+                    other => panic!("expected a binding, got {other:?}"),
+                }
+            }
+            other => panic!("expected a variant pattern, got {other:?}"),
+        }
+    }
+
+    /// A tuple payload is one value, so a tuple pattern nested inside the variant's single
+    /// payload slot destructures it, not several comma-separated bindings.
+    #[test]
+    fn parses_variant_pattern_with_tuple_payload() {
+        let pat = parse_pattern(".parallelogram((b, h))");
+        match &pat.kind {
+            PatternKind::Variant { variant, payload } => {
+                assert_eq!(Interner::resolve(variant.text), "parallelogram");
+                match &single(payload).kind {
+                    PatternKind::Tuple(elems) => assert_eq!(elems.len(), 2),
+                    other => panic!("expected a tuple pattern, got {other:?}"),
+                }
+            }
+            other => panic!("expected a variant pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_variant_pattern_with_nested_payload() {
+        let pat = parse_pattern(".some(.ok(x))");
+        match &pat.kind {
+            PatternKind::Variant { variant, payload } => {
+                assert_eq!(Interner::resolve(variant.text), "some");
+                match &single(payload).kind {
+                    PatternKind::Variant { variant, .. } => {
+                        assert_eq!(Interner::resolve(variant.text), "ok")
+                    }
+                    other => panic!("expected a nested variant pattern, got {other:?}"),
+                }
+            }
+            other => panic!("expected a variant pattern, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_variant_pattern_with_record_payload() {
+        let pat = parse_pattern(".square { l: inner, w }");
+        match &pat.kind {
+            PatternKind::Variant { variant, payload } => {
+                assert_eq!(Interner::resolve(variant.text), "square");
+                let fields = record(payload);
+                assert_eq!(fields.len(), 2);
+                assert_eq!(Interner::resolve(fields[0].name.text), "l");
+                match &fields[0].value.as_ref().expect("`l:` has a pattern").kind {
+                    PatternKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "inner"),
+                    other => panic!("expected a binding, got {other:?}"),
+                }
+                // `w` is the field shorthand: no pattern of its own, it binds `w`.
+                assert_eq!(Interner::resolve(fields[1].name.text), "w");
+                assert!(fields[1].value.is_none());
+            }
+            other => panic!("expected a variant pattern, got {other:?}"),
+        }
+    }
+
+    /// The leading `.` is the only thing that makes a variant pattern, so a PascalCase bare
+    /// identifier is a binding like any other. The old capitalization heuristic is gone.
+    #[test]
+    fn bare_pascal_case_identifier_is_a_binding() {
         let pat = parse_pattern("Rectangle");
         match &pat.kind {
-            PatternKind::Ctor { path, payload } => {
-                assert_eq!(path.segments.len(), 1);
-                assert_eq!(Interner::resolve(path.segments[0].text), "Rectangle");
-                assert!(payload.is_empty());
-            }
-            other => panic!("expected a ctor pattern, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_ctor_pattern_with_single_payload() {
-        let pat = parse_pattern("Circle(r)");
-        match &pat.kind {
-            PatternKind::Ctor { path, payload } => {
-                assert_eq!(Interner::resolve(path.segments[0].text), "Circle");
-                assert_eq!(payload.len(), 1);
-                assert_eq!(Interner::resolve(payload[0].text), "r");
-            }
-            other => panic!("expected a ctor pattern, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_ctor_pattern_with_multiple_payload() {
-        let pat = parse_pattern("Parallelogram(b, h)");
-        match &pat.kind {
-            PatternKind::Ctor { path, payload } => {
-                assert_eq!(Interner::resolve(path.segments[0].text), "Parallelogram");
-                assert_eq!(payload.len(), 2);
-                assert_eq!(Interner::resolve(payload[0].text), "b");
-                assert_eq!(Interner::resolve(payload[1].text), "h");
-            }
-            other => panic!("expected a ctor pattern, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_qualified_ctor_pattern() {
-        let pat = parse_pattern("Shape::Circle");
-        match &pat.kind {
-            PatternKind::Ctor { path, payload } => {
-                assert_eq!(path.segments.len(), 2);
-                assert_eq!(Interner::resolve(path.segments[0].text), "Shape");
-                assert_eq!(Interner::resolve(path.segments[1].text), "Circle");
-                assert!(payload.is_empty());
-            }
-            other => panic!("expected a ctor pattern, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_qualified_ctor_pattern_with_payload() {
-        let pat = parse_pattern("Shape::Circle(r)");
-        match &pat.kind {
-            PatternKind::Ctor { path, payload } => {
-                assert_eq!(path.segments.len(), 2);
-                assert_eq!(payload.len(), 1);
-                assert_eq!(Interner::resolve(payload[0].text), "r");
-            }
-            other => panic!("expected a ctor pattern, got {other:?}"),
+            PatternKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "Rectangle"),
+            other => panic!("expected a binding pattern, got {other:?}"),
         }
     }
 
@@ -312,18 +380,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_tuple_pattern_with_ctor_and_wildcard_elements() {
-        // `(Circle(r), _)` exercises tuple + ctor + wildcard nesting together.
-        let pat = parse_pattern("(Circle(r), _)");
+    fn parses_tuple_pattern_with_variant_and_wildcard_elements() {
+        // `(.circle(r), _)` exercises tuple + variant + wildcard nesting together.
+        let pat = parse_pattern("(.circle(r), _)");
         match &pat.kind {
             PatternKind::Tuple(pats) => {
                 assert_eq!(pats.len(), 2);
                 match &pats[0].kind {
-                    PatternKind::Ctor { path, payload } => {
-                        assert_eq!(Interner::resolve(path.segments[0].text), "Circle");
-                        assert_eq!(payload.len(), 1);
+                    PatternKind::Variant { variant, payload } => {
+                        assert_eq!(Interner::resolve(variant.text), "circle");
+                        assert!(matches!(payload, Payload::Single(_)));
                     }
-                    other => panic!("expected a ctor pattern, got {other:?}"),
+                    other => panic!("expected a variant pattern, got {other:?}"),
                 }
                 assert!(matches!(pats[1].kind, PatternKind::Wildcard));
             }

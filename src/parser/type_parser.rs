@@ -1,3 +1,14 @@
+//! Parses types. A type shows up in a few places:
+//!
+//! - `let x: i32 = 0;`
+//! - `fun add(x: i32, y: i32) -> i32 { ... }`
+//! - `struct Foo { field: any Shape }`
+//!
+//! Array types can carry a length expression (`[i32; 5]`), so this grammar needs an expression
+//! parser. [`Parser::type_parser_with_expr`] takes one as a parameter instead of building its
+//! own, since `expr_parser` needs a type parser back for closures, and the two would otherwise
+//! have no way to be built together.
+
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
@@ -9,16 +20,17 @@ use crate::lexer::token::{Token, TokenKind};
 use super::{BoxedP, Extra, Parser};
 
 impl Parser {
+    /// Parses a single type, using this parser's own expression parser for array lengths.
     pub fn type_parser<'a>(&'a self) -> BoxedP<'a, Type> {
         self.type_parser_with_expr(self.expr_parser())
     }
 
-    /// The real implementation, parameterized over the expr parser used for array lengths.
+    /// Parses a single type, using `expr` for array-length expressions (`[i32; N]`) instead of
+    /// building a fresh expression parser.
     ///
-    /// `type_parser()` builds its own (via `self.expr_parser()`); `expr_and_block_parsers()` uses
-    /// this directly instead, passing in the `expr` handle it already tied together with `block`
-    /// — calling `self.expr_parser()` from there would recurse infinitely at grammar-construction
-    /// time, since that in turn builds a block parser whose `let` statements need a type parser.
+    /// Callers that already have an expression parser in hand (like `expr_parser`, which needs
+    /// a type parser for closure parameter types) pass it in here so the two grammars share one
+    /// underlying parser instead of each building their own.
     pub(crate) fn type_parser_with_expr<'a>(&'a self, expr: BoxedP<'a, Expr>) -> BoxedP<'a, Type> {
         recursive(
             |ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Type, Extra<'a>>>| {
@@ -94,8 +106,8 @@ impl Parser {
                     })
                     .boxed();
 
-                // `any` may only wrap a base (primitive or path), tuple, array, or `Self` type —
-                // never a reference, `dyn`, or another `any`.
+                // `any` may only wrap a base (primitive or path), tuple, array, or `Self` type.
+                // It can never wrap a reference, `dyn`, or another `any`.
                 let any_target = choice((
                     self_ty.clone(),
                     primitive_ty.clone(),
@@ -144,7 +156,8 @@ impl Parser {
                     })
                     .boxed();
 
-                // `fun(i32, i32) -> i32`, `fun(&str)` (no `->` means no return value).
+                // A function type looks like `fun(i32, i32) -> i32` or `fun(&str)`. Omitting
+                // `->` means the function returns no value.
                 let fn_ty = self
                     .kind(TokenKind::FunKw)
                     .then_ignore(self.kind(TokenKind::OpenParen))
@@ -342,8 +355,8 @@ mod tests {
 
     #[test]
     fn parses_ref_to_ref_type() {
-        // `&mut &i32` — a mutable reference to an immutable reference. (`&&i32` can't be spelled
-        // this way since the lexer tokenizes `&&` as a single `DoubleAmp` token.)
+        // `&mut &i32` is a mutable reference to an immutable reference. `&&i32` can't be
+        // spelled this way, since the lexer tokenizes `&&` as a single `DoubleAmp` token.
         let ty = parse_ty("&mut &i32");
         match &ty.kind {
             Ty::Ref { mutability, base } => {

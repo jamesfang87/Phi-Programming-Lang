@@ -1,8 +1,15 @@
+//! Exposes the block parser on its own.
+//!
+//! The real block grammar lives in `expr_parser`, next to the expression grammar it recurses
+//! with (a block holds statements, and statements hold expressions, and expressions can hold
+//! blocks). This file just gives that parser its own name and its own tests.
+
 use crate::ast::Block;
 
 use super::{BoxedP, Parser};
 
 impl Parser {
+    /// Parses a `{ ... }` block: a sequence of statements plus an optional tail expression.
     pub fn block_parser<'a>(&'a self) -> BoxedP<'a, Block> {
         self.expr_and_block_parsers().1
     }
@@ -15,7 +22,7 @@ mod tests {
     use super::*;
     use crate::ast::interner::Interner;
     use crate::ast::{
-        BinaryOp, DeclStmt, ExprKind, Literal, Mutability, PatternKind, Stmt, StmtKind,
+        BinaryOp, DeclStmt, Expr, ExprKind, Literal, Mutability, PatternKind, Stmt, StmtKind,
     };
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
@@ -39,7 +46,7 @@ mod tests {
         output.expect("expected a successfully parsed block")
     }
 
-    /// Like [`parse_block`], but doesn't assert the parse was clean — for exercising recovery.
+    /// Like [`parse_block`], but doesn't assert the parse was clean, for exercising recovery.
     fn parse_block_with_errors(src: &str) -> (Block, usize) {
         DiagCtx::clear();
         Interner::clear();
@@ -77,6 +84,81 @@ mod tests {
                 assert_eq!(body.stmts.len(), 1);
             }
             other => panic!("expected a while statement, got {other:?}"),
+        }
+    }
+
+    /// A `}` already ends these unambiguously, so no `;` is needed to make one a statement.
+    #[test]
+    fn block_bodied_expressions_are_statements_without_a_semicolon() {
+        for src in [
+            "{ if c { g(); } g(); }",
+            "{ if let .some(x) = o { g(); } g(); }",
+            "{ match c { _ => 1 } g(); }",
+            "{ { g(); } g(); }",
+            "{ concurrent { g(); } g(); }",
+            "{ spawn { g(); } g(); }",
+        ] {
+            let block = parse_block(src);
+            assert_eq!(block.stmts.len(), 2, "for {src:?}");
+            assert!(
+                matches!(block.stmts[0].kind, StmtKind::Expr { .. }),
+                "for {src:?}"
+            );
+        }
+    }
+
+    /// Everything else still needs one. A `;`-less trailing expression is the block's value,
+    /// not a statement, so it must stay the last thing in the block.
+    #[test]
+    fn other_expressions_still_need_a_semicolon_to_be_statements() {
+        let block = parse_block("{ g(); h() }");
+        assert_eq!(block.stmts.len(), 2);
+
+        let (_, errors) = parse_block_with_errors("{ g() h(); }");
+        assert!(errors > 0, "a bare call statement should still want a `;`");
+    }
+
+    /// A block-bodied statement doesn't consume the block's value.
+    #[test]
+    fn block_bodied_statement_leaves_the_tail_expression_alone() {
+        let block = parse_block("{ if c { 1 } else { 2 } 5 }");
+        assert_eq!(block.stmts.len(), 2);
+        assert!(matches!(
+            block.stmts[0].kind,
+            StmtKind::Expr {
+                expr: Expr {
+                    kind: ExprKind::If { .. },
+                    ..
+                },
+                semi: false,
+            }
+        ));
+        assert!(matches!(
+            block.stmts[1].kind,
+            StmtKind::Expr {
+                expr: Expr {
+                    kind: ExprKind::Literal(_),
+                    ..
+                },
+                semi: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_while_let_stmt() {
+        let block = parse_block("{ while let .some(x) = next() { foo(x); } }");
+        match &only_stmt(&block).kind {
+            StmtKind::WhileLet {
+                pat,
+                scrutinee,
+                body,
+            } => {
+                assert!(matches!(pat.kind, PatternKind::Variant { .. }));
+                assert!(matches!(scrutinee.kind, ExprKind::FunCall { .. }));
+                assert_eq!(body.stmts.len(), 1);
+            }
+            other => panic!("expected a while-let statement, got {other:?}"),
         }
     }
 
@@ -226,7 +308,7 @@ mod tests {
     fn parses_expr_stmt() {
         let block = parse_block(r#"{ println("hi"); }"#);
         match &only_stmt(&block).kind {
-            StmtKind::Expr(expr) => {
+            StmtKind::Expr { expr, .. } => {
                 assert!(matches!(expr.kind, ExprKind::FunCall { .. }));
             }
             other => panic!("expected an expr statement, got {other:?}"),
@@ -299,6 +381,6 @@ mod tests {
         let block = parse_block("{ let x = 1; x }");
         assert_eq!(block.stmts.len(), 2);
         assert!(matches!(block.stmts[0].kind, StmtKind::Decl(_)));
-        assert!(matches!(block.stmts[1].kind, StmtKind::Expr(_)));
+        assert!(matches!(block.stmts[1].kind, StmtKind::Expr { .. }));
     }
 }
