@@ -59,6 +59,7 @@ public:
     IntrinsicCallKind,
     TupleIndexKind,
     ArrayIndexKind,
+    CastKind,
   };
 
   //===--------------------------------------------------------------------===//
@@ -1071,6 +1072,45 @@ public:
 private:
   std::unique_ptr<Expr> Base;
   std::unique_ptr<IntLiteral> Index;
+};
+
+class CastExpr : public Expr {
+public:
+  //===--------------------------------------------------------------------===//
+  // Constructors & Destructors
+  //===-----------------------------------------------------------------------//
+  CastExpr(SrcLocation Location, std::unique_ptr<Expr> From, TypeRef CastTo)
+      : Expr(Expr::Kind::CastKind, std::move(Location)),
+        FromValue(std::move(From)), CastTo(std::move(CastTo)) {};
+
+  //===--------------------------------------------------------------------===//
+  // Getters
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] Expr *getFrom() const { return FromValue.get(); }
+  [[nodiscard]] TypeRef getTo() const { return CastTo; }
+
+  //===--------------------------------------------------------------------===//
+  // Type Queries
+  //===-----------------------------------------------------------------------//
+
+  [[nodiscard]] bool isAssignable() const override { return false; }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===-----------------------------------------------------------------------//
+
+  static bool classof(const Expr *E) { return E->getKind() == Kind::CastKind; }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===-----------------------------------------------------------------------//
+
+  void emit(int Level) const override;
+
+private:
+  std::unique_ptr<Expr> FromValue;
+  TypeRef CastTo;
 };
 
 } // namespace phi

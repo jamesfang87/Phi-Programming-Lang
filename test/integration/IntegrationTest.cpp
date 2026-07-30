@@ -702,3 +702,164 @@ TEST(Integration, WrongArgCount) {
     }
   )"));
 }
+
+//===----------------------------------------------------------------------===//
+// Casts
+//===----------------------------------------------------------------------===//
+
+TEST(Integration, CastIntToInt) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i64 {
+      const x: i32 = 42;
+      return x as i64;
+    }
+  )"));
+}
+
+TEST(Integration, CastIntToFloat) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> f64 {
+      const x: i32 = 42;
+      return x as f64;
+    }
+  )"));
+}
+
+TEST(Integration, CastFloatToInt) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i32 {
+      const x: f64 = 3.14;
+      return x as i32;
+    }
+  )"));
+}
+
+TEST(Integration, CastFloatToFloat) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> f32 {
+      const x: f64 = 3.14;
+      return x as f32;
+    }
+  )"));
+}
+
+TEST(Integration, CastBoolToInt) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i32 {
+      const x = true;
+      return x as i32;
+    }
+  )"));
+}
+
+TEST(Integration, CastIntToBool) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> bool {
+      const x: i32 = 1;
+      return x as bool;
+    }
+  )"));
+}
+
+TEST(Integration, CastCharToInt) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i32 {
+      const c: char = 'A';
+      return c as i32;
+    }
+  )"));
+}
+
+TEST(Integration, CastIntToChar) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> char {
+      const x: i32 = 65;
+      return x as char;
+    }
+  )"));
+}
+
+TEST(Integration, CastIntToString) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() {
+      const x: i32 = 42;
+      const y = x as string;
+    }
+  )"));
+}
+
+TEST(Integration, CastBoolToString) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() {
+      const x = true;
+      const y = x as string;
+    }
+  )"));
+}
+
+TEST(Integration, CastFloatToString) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() {
+      const x: f64 = 3.14;
+      const y = x as string;
+    }
+  )"));
+}
+
+TEST(Integration, CastCharToString) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() {
+      const c: char = 'A';
+      const y = c as string;
+    }
+  )"));
+}
+
+TEST(Integration, CastIntWiden) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i64 {
+      const x: i8 = 127;
+      const y = x as i16;
+      const z = y as i32;
+      return z as i64;
+    }
+  )"));
+}
+
+TEST(Integration, CastIntTruncate) {
+  EXPECT_TRUE(fullPipeline(R"(
+    fun main() -> i8 {
+      const x: i64 = 255;
+      return x as i8;
+    }
+  )"));
+}
+
+// Negative tests: disallowed casts
+
+TEST(Integration, CastStringToIntDisallowed) {
+  EXPECT_FALSE(frontendOk(R"(
+    fun main() {
+      const x = "hello";
+      const y = x as i32;
+    }
+  )"));
+}
+
+TEST(Integration, CastFloatToBoolDisallowed) {
+  EXPECT_FALSE(frontendOk(R"(
+    fun main() {
+      const x: f64 = 1.0;
+      const y = x as bool;
+    }
+  )"));
+}
+
+TEST(Integration, CastBoolToFloatDisallowed) {
+  EXPECT_FALSE(frontendOk(R"(
+    fun main() {
+      const x = true;
+      const y = x as f64;
+    }
+  )"));
+}

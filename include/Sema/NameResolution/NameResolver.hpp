@@ -94,6 +94,7 @@ public:
   bool visit(IntrinsicCall &E);
   bool visit(TupleIndex &E);
   bool visit(ArrayIndex &E);
+  bool visit(CastExpr &E);
 
   //===--------------------------------------------------------------------===//
   // Pattern Resolution Methods

@@ -53,6 +53,8 @@ llvm::Value *CodeGen::codegenExpr(Expr *E) {
     return codegenArrayIndex(AE);
   if (auto *AL = llvm::dyn_cast<ArrayLiteral>(E))
     return codegenArrayLiteral(AL);
+  if (auto *CE = llvm::dyn_cast<CastExpr>(E))
+    return codegenCastExpr(CE);
 
   return llvm::Constant::getNullValue(Builder.getInt32Ty());
 }
@@ -602,6 +604,178 @@ llvm::Value *CodeGen::codegenIntrinsicCall(IntrinsicCall *E) {
   }
   }
   return llvm::Constant::getNullValue(Builder.getVoidTy());
+}
+
+//===----------------------------------------------------------------------===//
+// Phase 4: Cast Expression Codegen
+//===----------------------------------------------------------------------===//
+
+llvm::Value *CodeGen::codegenCastToString(llvm::Value *Val,
+                                          BuiltinTy::Kind FromKind) {
+  // Declare snprintf if not declared
+  auto *SnprintfTy = llvm::FunctionType::get(
+      Builder.getInt32Ty(),
+      {Builder.getPtrTy(), Builder.getInt64Ty(), Builder.getPtrTy()}, true);
+  llvm::FunctionCallee SnprintfFn =
+      Module.getOrInsertFunction("snprintf", SnprintfTy);
+
+  // Allocate a buffer on the stack (64 bytes is enough for any primitive)
+  auto *BufTy = llvm::ArrayType::get(Builder.getInt8Ty(), 64);
+  auto *Buf = createEntryBlockAlloca(CurrentFunction, "cast_buf", BufTy);
+  auto *BufPtr =
+      Builder.CreateBitCast(Buf, Builder.getPtrTy());
+  auto *BufSize = Builder.getInt64(64);
+
+  // Determine format string based on source kind
+  std::string Fmt;
+  llvm::Value *PrintVal = Val;
+
+  auto isSigned = [](BuiltinTy::Kind K) -> bool {
+    return K == BuiltinTy::i8 || K == BuiltinTy::i16 ||
+           K == BuiltinTy::i32 || K == BuiltinTy::i64;
+  };
+
+  auto isInteger = [](BuiltinTy::Kind K) -> bool {
+    return K == BuiltinTy::i8 || K == BuiltinTy::i16 ||
+           K == BuiltinTy::i32 || K == BuiltinTy::i64 ||
+           K == BuiltinTy::u8 || K == BuiltinTy::u16 ||
+           K == BuiltinTy::u32 || K == BuiltinTy::u64;
+  };
+
+  if (isInteger(FromKind)) {
+    if (isSigned(FromKind)) {
+      Fmt = "%ld";
+      // Extend to i64 for printf
+      PrintVal = Builder.CreateSExt(Val, Builder.getInt64Ty());
+    } else {
+      Fmt = "%lu";
+      PrintVal = Builder.CreateZExt(Val, Builder.getInt64Ty());
+    }
+  } else if (FromKind == BuiltinTy::f32) {
+    Fmt = "%f";
+    PrintVal = Builder.CreateFPExt(Val, Builder.getDoubleTy());
+  } else if (FromKind == BuiltinTy::f64) {
+    Fmt = "%f";
+  } else if (FromKind == BuiltinTy::Bool) {
+    // For bool, print "true" or "false" using ternary via select
+    auto *TrueStr = Builder.CreateGlobalStringPtr("true");
+    auto *FalseStr = Builder.CreateGlobalStringPtr("false");
+    auto *Selected = Builder.CreateSelect(Val, TrueStr, FalseStr);
+    Fmt = "%s";
+    PrintVal = Selected;
+  } else if (FromKind == BuiltinTy::Char) {
+    Fmt = "%c";
+    // char is i8, needs to be passed by value
+  } else {
+    // Fallback
+    Fmt = "%s";
+  }
+
+  auto *FmtStr = Builder.CreateGlobalStringPtr(Fmt);
+  Builder.CreateCall(SnprintfFn, {BufPtr, BufSize, FmtStr, PrintVal});
+
+  return BufPtr;
+}
+
+llvm::Value *CodeGen::codegenCastExpr(CastExpr *E) {
+  llvm::Value *Val = codegenExpr(E->getFrom());
+
+  auto *FromBT =
+      llvm::dyn_cast<BuiltinTy>(E->getFrom()->getType().getPtr());
+  auto *ToBT = llvm::dyn_cast<BuiltinTy>(E->getTo().getPtr());
+  if (!FromBT || !ToBT)
+    return Val; // Should not happen after type inference
+
+  auto FromK = FromBT->getBuiltinKind();
+  auto ToK = ToBT->getBuiltinKind();
+
+  // Identity cast
+  if (FromK == ToK)
+    return Val;
+
+  llvm::Type *ToLLVM = getLLVMType(E->getTo());
+
+  // Cast to string
+  if (ToK == BuiltinTy::String) {
+    return codegenCastToString(Val, FromK);
+  }
+
+  auto isSigned = [](BuiltinTy::Kind K) -> bool {
+    return K == BuiltinTy::i8 || K == BuiltinTy::i16 ||
+           K == BuiltinTy::i32 || K == BuiltinTy::i64;
+  };
+
+  auto isInteger = [](BuiltinTy::Kind K) -> bool {
+    return K == BuiltinTy::i8 || K == BuiltinTy::i16 ||
+           K == BuiltinTy::i32 || K == BuiltinTy::i64 ||
+           K == BuiltinTy::u8 || K == BuiltinTy::u16 ||
+           K == BuiltinTy::u32 || K == BuiltinTy::u64;
+  };
+
+  auto isFloat = [](BuiltinTy::Kind K) -> bool {
+    return K == BuiltinTy::f32 || K == BuiltinTy::f64;
+  };
+
+  // int -> int
+  if (isInteger(FromK) && isInteger(ToK)) {
+    unsigned FromBits = Val->getType()->getIntegerBitWidth();
+    unsigned ToBits = ToLLVM->getIntegerBitWidth();
+    if (ToBits < FromBits)
+      return Builder.CreateTrunc(Val, ToLLVM, "cast");
+    if (ToBits > FromBits) {
+      if (isSigned(FromK))
+        return Builder.CreateSExt(Val, ToLLVM, "cast");
+      return Builder.CreateZExt(Val, ToLLVM, "cast");
+    }
+    return Val; // same width, different signedness
+  }
+
+  // int -> float
+  if (isInteger(FromK) && isFloat(ToK)) {
+    if (isSigned(FromK))
+      return Builder.CreateSIToFP(Val, ToLLVM, "cast");
+    return Builder.CreateUIToFP(Val, ToLLVM, "cast");
+  }
+
+  // float -> int
+  if (isFloat(FromK) && isInteger(ToK)) {
+    if (isSigned(ToK))
+      return Builder.CreateFPToSI(Val, ToLLVM, "cast");
+    return Builder.CreateFPToUI(Val, ToLLVM, "cast");
+  }
+
+  // float -> float
+  if (isFloat(FromK) && isFloat(ToK)) {
+    unsigned FromBits = Val->getType()->getPrimitiveSizeInBits();
+    unsigned ToBits = ToLLVM->getPrimitiveSizeInBits();
+    if (ToBits < FromBits)
+      return Builder.CreateFPTrunc(Val, ToLLVM, "cast");
+    return Builder.CreateFPExt(Val, ToLLVM, "cast");
+  }
+
+  // bool -> int
+  if (FromK == BuiltinTy::Bool && isInteger(ToK)) {
+    return Builder.CreateZExt(Val, ToLLVM, "cast");
+  }
+
+  // int -> bool
+  if (isInteger(FromK) && ToK == BuiltinTy::Bool) {
+    return Builder.CreateICmpNE(
+        Val, llvm::Constant::getNullValue(Val->getType()), "cast");
+  }
+
+  // char -> int (char is i8, treat as unsigned)
+  if (FromK == BuiltinTy::Char && isInteger(ToK)) {
+    return Builder.CreateZExt(Val, ToLLVM, "cast");
+  }
+
+  // int -> char (truncate to i8)
+  if (isInteger(FromK) && ToK == BuiltinTy::Char) {
+    return Builder.CreateTrunc(Val, ToLLVM, "cast");
+  }
+
+  // Fallback (should not reach here after type inference)
+  return Val;
 }
 
 //===----------------------------------------------------------------------===//

@@ -65,7 +65,6 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
 
   advanceToken(); // consume operator
 
-  // Special handling for range operators
   if (Op.getKind() == TokenKind::ExclRange ||
       Op.getKind() == TokenKind::InclRange) {
 
@@ -78,28 +77,43 @@ std::unique_ptr<Expr> Parser::parseInfix(const Token &Op,
                                           std::move(Rhs), Inclusive);
   }
 
+  // A period can mean several things
   if (Op.getKind() == TokenKind::Period) {
     auto Rhs = pratt(RBp, Terminators);
     if (!Rhs)
       return nullptr;
 
+    // field access
     if (auto *Field = llvm::dyn_cast<DeclRefExpr>(Rhs.get())) {
       return std::make_unique<FieldAccessExpr>(Field->getLocation(),
                                                std::move(Lhs), Field->getId());
     }
 
+    // method call
     if (auto *FunCall = llvm::dyn_cast<FunCallExpr>(Rhs.get())) {
       return std::make_unique<MethodCallExpr>(std::move(*FunCall),
                                               std::move(Lhs));
     }
 
-    if (auto *Int = llvm::dyn_cast<IntLiteral>(Rhs.get())) {
+    // tuple access
+    if (auto *_ = llvm::dyn_cast<IntLiteral>(Rhs.get())) {
       auto IntPtr = llvm::unique_dyn_cast<IntLiteral>(std::move(Rhs));
       return std::make_unique<TupleIndex>(Lhs->getLocation(), std::move(Lhs),
                                           std::move(IntPtr));
     }
 
+    // TODO: Change this to error and see if it breaks anything
     return std::make_unique<BinaryOp>(std::move(Lhs), std::move(Rhs), Op);
+  }
+
+  // casting
+  if (Op.getKind() == TokenKind::AsKw) {
+    auto Rhs = parseType(false); // Type to cast to
+    if (!Rhs)
+      return nullptr;
+
+    return std::make_unique<CastExpr>(Lhs->getLocation(), std::move(Lhs),
+                                      std::move(*Rhs));
   }
 
   // Regular binary operators

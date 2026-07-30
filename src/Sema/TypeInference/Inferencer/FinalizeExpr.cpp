@@ -34,6 +34,7 @@ void TypeInferencer::finalize(Expr &E) {
       .Case<IntrinsicCall>([&](IntrinsicCall *X) { finalize(*X); })
       .Case<TupleIndex>([&](TupleIndex *X) { finalize(*X); })
       .Case<ArrayIndex>([&](ArrayIndex *X) { finalize(*X); })
+      .Case<CastExpr>([&](CastExpr *X) { finalize(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
       });
@@ -462,6 +463,11 @@ void TypeInferencer::finalize(ArrayIndex &E) {
   finalize(*E.getBase());
   finalize(*E.getIndex());
 
+  E.setType(Unifier.resolve(E.getType()));
+}
+
+void TypeInferencer::finalize(CastExpr &E) {
+  finalize(*E.getFrom());
   E.setType(Unifier.resolve(E.getType()));
 }
 

@@ -25,6 +25,7 @@ struct TokenKind {
     ForKw,      ///< `for` keyword
     FunKw,      ///< `fun` keyword
     IfKw,       ///< `if` keyword
+    ImplKw,     ///< `impl` keyword
     ImportKw,   ///< `import` keyword
     InKw,       ///< `in` keyword
     MatchKw,    ///< `match` keyword
@@ -32,6 +33,7 @@ struct TokenKind {
     PublicKw,   ///< `public` keyword
     ReturnKw,   ///< `return` keyword
     StructKw,   ///< `struct` keyword
+    TraitKw,    ///< `trait` keyword
     TrueKw,     ///< `true` literal
     ThisKw,     ///< `this` keyword
     UseKw,      ///< `use` keyword
