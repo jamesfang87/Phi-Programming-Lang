@@ -243,4 +243,43 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl(Visibility Vis) {
                                       std::move(Methods));
 }
 
+std::unique_ptr<TraitDecl> Parser::parseTraitDecl() {
+  assert(advanceToken().getKind() == TokenKind::TraitKw);
+
+  // Identifier
+  auto Tok = expectToken(TokenKind::Identifier);
+  auto Id = Tok->getLexeme();
+
+  // Type Arguments
+  auto TypeArgs = parseTypeArgDecls();
+  if (!TypeArgs) {
+    return nullptr;
+  }
+
+  // Schedule cleanup at the end of this function
+  size_t NumTypeArgs = TypeArgs->size();
+  auto Cleanup = llvm::make_scope_exit([&] {
+    for (size_t i = 0; i < NumTypeArgs; ++i)
+      ValidGenerics.pop_back();
+  });
+
+  expectToken(TokenKind::OpenBrace);
+
+  std::vector<std::unique_ptr<MethodDecl>> Methods;
+  while (!atEOF() && !matchToken(TokenKind::CloseBrace)) {
+    switch (peekKind()) {
+    case TokenKind::FunKw:
+      if (auto Res = parseMethodDecl(Id, Visibility::Public)) {
+        Methods.push_back(std::move(Res));
+        continue;
+      }
+      goto recover;
+    default:
+    recover:
+      syncTo({TokenKind::FunKw, TokenKind::Identifier, TokenKind::CloseBrace});
+      continue;
+    }
+  }
+}
+
 } // namespace phi

@@ -1,6 +1,5 @@
 #include "Sema/TypeInference/Inferencer.hpp"
 
-#include <print>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -41,6 +40,7 @@ TypeRef TypeInferencer::visit(Expr &E) {
       .Case<IntrinsicCall>([&](IntrinsicCall *X) { return visit(*X); })
       .Case<TupleIndex>([&](TupleIndex *X) { return visit(*X); })
       .Case<ArrayIndex>([&](ArrayIndex *X) { return visit(*X); })
+      .Case<CastExpr>([&](CastExpr *X) { return visit(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
         return TypeCtx::getErr(E.getSpan());
@@ -751,6 +751,110 @@ TypeRef TypeInferencer::visit(ArrayIndex &E) {
           std::format("type `{}` cannot be indexed", toString(BaseT)))
       .emit(*Diags);
   return TypeCtx::getErr(E.getSpan());
+}
+
+TypeRef TypeInferencer::visit(CastExpr &E) {
+  auto FromT = visit(*E.getFrom());
+  auto ToT = E.getTo();
+
+  // Target must be a builtin type
+  if (!ToT.isBuiltin()) {
+    error("Cannot cast to non-primitive type")
+        .with_primary_label(
+            ToT.getSpan(),
+            std::format("type `{}` cannot be casted to using `as`",
+                        toString(ToT)))
+        .emit(*Diags);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  // Source must be a builtin type
+  if (!FromT.isBuiltin()) {
+    error("Cannot cast from non-primitive type")
+        .with_primary_label(
+            E.getFrom()->getSpan(),
+            std::format("type `{}` cannot be casted using `as`",
+                        toString(FromT)))
+        .emit(*Diags);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  auto *FromBT = llvm::cast<BuiltinTy>(FromT.getPtr());
+  auto *ToBT = llvm::cast<BuiltinTy>(ToT.getPtr());
+  auto FromK = FromBT->getBuiltinKind();
+  auto ToK = ToBT->getBuiltinKind();
+
+  // Classify builtin kinds
+  auto isInteger = [](BuiltinTy::Kind K) -> bool {
+    return K == BuiltinTy::i8 || K == BuiltinTy::i16 ||
+           K == BuiltinTy::i32 || K == BuiltinTy::i64 ||
+           K == BuiltinTy::u8 || K == BuiltinTy::u16 ||
+           K == BuiltinTy::u32 || K == BuiltinTy::u64;
+  };
+
+  auto isFloat = [](BuiltinTy::Kind K) -> bool {
+    return K == BuiltinTy::f32 || K == BuiltinTy::f64;
+  };
+
+  // Identity cast warning
+  if (FromK == ToK) {
+    warning("Useless cast to the same type")
+        .with_primary_label(
+            E.getSpan(),
+            std::format("casting `{}` to `{}` is a no-op",
+                        toString(FromT), toString(ToT)))
+        .emit(*Diags);
+    return ToT;
+  }
+
+  // Cast to string is always allowed from any primitive
+  if (ToK == BuiltinTy::String) {
+    Unifier.unify(E.getType(), ToT);
+    E.setType(ToT);
+    return ToT;
+  }
+
+  bool Allowed = false;
+
+  if (isInteger(FromK) && isInteger(ToK)) {
+    // int -> int: truncation or extension
+    Allowed = true;
+  } else if (isInteger(FromK) && isFloat(ToK)) {
+    // int -> float
+    Allowed = true;
+  } else if (isFloat(FromK) && isInteger(ToK)) {
+    // float -> int: truncation
+    Allowed = true;
+  } else if (isFloat(FromK) && isFloat(ToK)) {
+    // float -> float: f32 <-> f64
+    Allowed = true;
+  } else if (FromK == BuiltinTy::Bool && isInteger(ToK)) {
+    // bool -> int: true=1, false=0
+    Allowed = true;
+  } else if (isInteger(FromK) && ToK == BuiltinTy::Bool) {
+    // int -> bool: nonzero = true
+    Allowed = true;
+  } else if (FromK == BuiltinTy::Char && isInteger(ToK)) {
+    // char -> int: codepoint
+    Allowed = true;
+  } else if (isInteger(FromK) && ToK == BuiltinTy::Char) {
+    // int -> char
+    Allowed = true;
+  }
+
+  if (!Allowed) {
+    error("Invalid cast")
+        .with_primary_label(
+            E.getSpan(),
+            std::format("cannot cast `{}` to `{}`",
+                        toString(FromT), toString(ToT)))
+        .emit(*Diags);
+    return TypeCtx::getErr(E.getSpan());
+  }
+
+  Unifier.unify(E.getType(), ToT);
+  E.setType(ToT);
+  return ToT;
 }
 
 } // namespace phi

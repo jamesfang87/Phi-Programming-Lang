@@ -331,6 +331,10 @@ private:
   llvm::Value *codegenTupleIndex(TupleIndex *E);
   llvm::Value *codegenArrayIndex(ArrayIndex *E);
 
+  // Casts
+  llvm::Value *codegenCastExpr(CastExpr *E);
+  llvm::Value *codegenCastToString(llvm::Value *Val, BuiltinTy::Kind FromKind);
+
   // Match
   llvm::Value *codegenMatchExpr(MatchExpr *E);
   llvm::Value *codegenIntrinsicCall(IntrinsicCall *E);
