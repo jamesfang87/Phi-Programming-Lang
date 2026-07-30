@@ -5,6 +5,7 @@
 #include <optional>
 #include <print>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -55,6 +56,7 @@ public:
     Var,
     Param,
     TypeArg,
+    Trait,
   };
 
   //===--------------------------------------------------------------------===//
@@ -327,6 +329,7 @@ public:
   // Getters
   //===--------------------------------------------------------------------===//
   [[nodiscard]] auto hasTypeArgs() const { return !TypeArgs.empty(); }
+  [[nodiscard]] auto hasBody() const { return Body != nullptr; }
   [[nodiscard]] auto &getTypeArgs() const { return TypeArgs; }
   [[nodiscard]] auto &getTypeArgs() { return TypeArgs; }
   [[nodiscard]] auto &getParams() const { return Params; }
@@ -609,6 +612,37 @@ private:
   std::vector<ItemDecl *> PublicItems;
   std::vector<ImportStmt> Imports;
   std::vector<UseStmt> Uses;
+};
+
+class TraitDecl : public ItemDecl {
+public:
+  TraitDecl(SrcSpan Span, Visibility Vis, std::string Id,
+            std::vector<std::unique_ptr<TypeArgDecl>> TypeArgs,
+            std::vector<std::unique_ptr<MethodDecl>> Behaviors);
+
+  auto &getBehaviors() { return Behaviors; }
+  auto *getBehavior(std::string_view Id) { return BehaviorsMap[Id]; }
+  bool hasDefaultImpl(std::string_view Id) {
+    if (!BehaviorsMap.contains(Id)) {
+      return false;
+    }
+
+    return BehaviorsMap[Id]->hasBody();
+  }
+
+  //===--------------------------------------------------------------------===//
+  // LLVM-style RTTI
+  //===--------------------------------------------------------------------===//
+  static bool classof(const Decl *D) { return D->getKind() == Kind::Trait; }
+
+  //===--------------------------------------------------------------------===//
+  // Utility Methods
+  //===--------------------------------------------------------------------===//
+  void emit(int Level) const override;
+
+private:
+  std::vector<std::unique_ptr<MethodDecl>> Behaviors;
+  std::unordered_map<std::string_view, MethodDecl *> BehaviorsMap;
 };
 
 } // namespace phi

@@ -524,4 +524,11 @@ void ArrayIndex::emit(int Level) const {
   Index->emit(Level + 1);
 }
 
+void CastExpr::emit(int Level) const {
+  std::println("{}CastExpr:", indent(Level));
+  std::println("{}Cast from:", indent(Level));
+  FromValue->emit(Level + 1);
+  std::println("{}To:{}", indent(Level), CastTo.toString());
+}
+
 } // namespace phi

@@ -1,6 +1,7 @@
 #include "Sema/NameResolution/NameResolver.hpp"
 
 #include <cassert>
+#include <llvm-18/llvm/Support/ErrorHandling.h>
 #include <unordered_set>
 
 #include <llvm/ADT/TypeSwitch.h>
@@ -35,6 +36,7 @@ bool NameResolver::visit(Expr &E) {
       .Case<IntrinsicCall>([&](IntrinsicCall *X) { return visit(*X); })
       .Case<TupleIndex>([&](TupleIndex *X) { return visit(*X); })
       .Case<ArrayIndex>([&](ArrayIndex *X) { return visit(*X); })
+      .Case<CastExpr>([&](CastExpr *X) { return visit(*X); })
       .Default([&](Expr *) {
         llvm_unreachable("Unhandled Expr kind in TypeInferencer");
         return false;
@@ -419,6 +421,7 @@ bool NameResolver::visit(IntrinsicCall &E) {
     assert(E.getArgs().size() == 1);
     return visit(*E.getArgs().front());
   default:
+    llvm_unreachable("Invalid instrinsic encountered");
     break;
   }
 }
@@ -431,6 +434,11 @@ bool NameResolver::visit(TupleIndex &E) {
 bool NameResolver::visit(ArrayIndex &E) {
   bool Success = visit(*E.getBase());
   return visit(*E.getIndex()) && Success;
+}
+
+bool NameResolver::visit(CastExpr &E) {
+  bool Success = visit(*E.getFrom());
+  return visit(E.getTo()) && Success;
 }
 
 } // namespace phi

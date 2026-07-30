@@ -91,6 +91,12 @@ inline std::optional<std::pair<int, int>> infixBP(const TokenKind &Kind) {
     return std::make_pair(15, 16);
 
   //===--------------------------------------------------------------------===//
+  // Cast Operator
+  //===--------------------------------------------------------------------===//
+  case TokenKind::AsKw:
+    return std::make_pair(16, 17);
+
+  //===--------------------------------------------------------------------===//
   // Member Access (highest precedence)
   //===--------------------------------------------------------------------===//
   case TokenKind::Period:

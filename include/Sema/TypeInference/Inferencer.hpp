@@ -88,6 +88,7 @@ public:
   TypeRef visit(IntrinsicCall &E);
   TypeRef visit(TupleIndex &E);
   TypeRef visit(ArrayIndex &E);
+  TypeRef visit(CastExpr &E);
 
   std::string toString(TypeRef T);
 
@@ -152,6 +153,7 @@ private:
   void finalize(IntrinsicCall &E);
   void finalize(TupleIndex &E);
   void finalize(ArrayIndex &E);
+  void finalize(CastExpr &E);
   std::optional<TypeRef> defaultVarTy(TypeRef);
 };
 

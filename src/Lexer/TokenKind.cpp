@@ -35,6 +35,8 @@ std::string TokenKind::toString() const {
     return "FUN";
   case TokenKind::IfKw:
     return "IF";
+  case TokenKind::ImplKw:
+    return "IMPL";
   case TokenKind::ImportKw:
     return "IMPORT";
   case TokenKind::InKw:
@@ -49,6 +51,8 @@ std::string TokenKind::toString() const {
     return "RETURN";
   case TokenKind::StructKw:
     return "STRUCT";
+  case TokenKind::TraitKw:
+    return "TRAIT";
   case TokenKind::TrueKw:
     return "TRUE";
   case TokenKind::ThisKw:

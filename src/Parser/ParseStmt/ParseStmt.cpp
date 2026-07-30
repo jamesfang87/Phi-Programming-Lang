@@ -3,11 +3,12 @@
 #include <cassert>
 #include <experimental/scope>
 #include <format>
-#include <llvm-18/llvm/ADT/STLExtras.h>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include <llvm/ADT/STLExtras.h>
 
 #include "AST/Nodes/Decl.hpp"
 #include "AST/Nodes/Stmt.hpp"
@@ -310,9 +311,10 @@ std::unique_ptr<DeclStmt> Parser::parseDeclStmt() {
   if (!Mutability)
     return nullptr;
 
-  auto Var = parseBinding(
-      {.Type = Optional, .Init = Optional, .AllowDestructuring = true,
-       .AllowPlaceholderForType = true});
+  auto Var = parseBinding({.Type = Optional,
+                           .Init = Optional,
+                           .AllowDestructuring = true,
+                           .AllowPlaceholderForType = true});
   if (!Var)
     return nullptr;
 
