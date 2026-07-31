@@ -2,7 +2,7 @@
 0
 === stdout ===
 // ./main.phi
-SrcUnit {
+ParsedSrcFile {
     module: None,
     imports: [],
     items: [
@@ -406,6 +406,7 @@ SrcUnit {
                                                 begin: 93,
                                                 end: 116,
                                             },
+                                            else_block: None,
                                         },
                                     ),
                                     span: SrcSpan {
@@ -414,8 +415,8 @@ SrcUnit {
                                     },
                                 },
                                 Stmt {
-                                    kind: Expr(
-                                        Expr {
+                                    kind: Expr {
+                                        expr: Expr {
                                             kind: FunCall {
                                                 callee: Expr {
                                                     kind: DeclRef(
@@ -491,7 +492,8 @@ SrcUnit {
                                                 end: 143,
                                             },
                                         },
-                                    ),
+                                        semi: true,
+                                    },
                                     span: SrcSpan {
                                         begin: 121,
                                         end: 144,

@@ -1,22 +1,20 @@
-use crate::ast::Ident;
 use crate::ast::interner::Interner;
-use crate::hir::{DefId, HirId, Import, Node, OwnerNode, VariantPayload};
-use crate::name_res::NameResolver;
+use crate::ast::Ident;
+use crate::hir::{DefId, HirId, Node, OwnerNode, VariantPayload};
 use crate::name_res::resolve_results::Res;
+use crate::name_res::NameResolver;
 
 impl<'hir> NameResolver<'hir> {
+    /// A module's imports are resolved earlier, while [`SymbolTable`](crate::name_res::symbol_table::SymbolTable)
+    /// is being built -- see [`SymbolTable::resolve_imports`](crate::name_res::symbol_table::SymbolTable::resolve_imports).
+    /// By the time this walk runs, an imported name is already sitting in the importing module's
+    /// own namespace, indistinguishable from a name the module declared itself, so this walk
+    /// never has to look at `module.imports` at all.
     pub fn resolve_module(&mut self, module_id: DefId) {
         let arena = self.hir.arena(module_id);
         let OwnerNode::Module(module) = arena.owner() else {
             unreachable!("root of a Module owner is always OwnerNode::Module");
         };
-
-        for &import_id in &module.imports {
-            let Node::Import(import) = arena.get(import_id) else {
-                unreachable!("Node that is not an import found in a module's import list");
-            };
-            self.resolve_import(import);
-        }
 
         for &item in &module.items {
             match self.hir.owner(item) {
@@ -34,8 +32,6 @@ impl<'hir> NameResolver<'hir> {
             }
         }
     }
-
-    fn resolve_import(&mut self, import: &Import) {}
 
     pub fn resolve_function(&mut self, fun_id: DefId) {
         let hir = self.hir;

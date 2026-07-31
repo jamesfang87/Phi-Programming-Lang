@@ -2,9 +2,9 @@
 //! (modules, functions, structs, enums, traits, `extend` blocks, closures) and the smaller
 //! declarations nested inside them (imports, fields, variants, params, generics).
 
-use std::collections::HashMap;
+#![allow(dead_code)]
 
-use crate::ast::{Ident, Path, SelfMode, Symbol, Visibility};
+use crate::ast::{Ident, Path, SelfMode, Visibility};
 use crate::hir::ids::{DefId, HirId, LocalId};
 use crate::lexer::src_span::SrcSpan;
 

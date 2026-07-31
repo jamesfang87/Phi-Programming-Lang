@@ -2,7 +2,7 @@
 1
 === stdout ===
 // ./main.phi
-SrcUnit {
+ParsedSrcFile {
     module: None,
     imports: [],
     items: [
@@ -75,6 +75,7 @@ SrcUnit {
                                                 begin: 33,
                                                 end: 43,
                                             },
+                                            else_block: None,
                                         },
                                     ),
                                     span: SrcSpan {

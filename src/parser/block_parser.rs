@@ -230,7 +230,7 @@ mod tests {
     fn parses_immutable_decl_stmt() {
         let block = parse_block("{ let x = 1; }");
         match &only_stmt(&block).kind {
-            StmtKind::Decl(DeclStmt {
+            StmtKind::Let(DeclStmt {
                 mutability,
                 name,
                 ty,
@@ -248,7 +248,7 @@ mod tests {
     fn parses_mutable_decl_stmt_with_type_annotation() {
         let block = parse_block("{ let mut x: i32 = 1; }");
         match &only_stmt(&block).kind {
-            StmtKind::Decl(DeclStmt { mutability, ty, .. }) => {
+            StmtKind::Let(DeclStmt { mutability, ty, .. }) => {
                 assert!(matches!(mutability, Mutability::Mutable));
                 assert!(ty.is_some());
             }
@@ -260,7 +260,7 @@ mod tests {
     fn parses_decl_stmt_with_tuple_pattern() {
         let block = parse_block("{ let (x, y) = point; }");
         match &only_stmt(&block).kind {
-            StmtKind::Decl(DeclStmt { name, .. }) => {
+            StmtKind::Let(DeclStmt { name, .. }) => {
                 assert!(matches!(name.kind, PatternKind::Tuple(_)));
             }
             other => panic!("expected a let statement, got {other:?}"),
@@ -323,7 +323,7 @@ mod tests {
         match &only_stmt(&block).kind {
             StmtKind::While { body, .. } => {
                 assert_eq!(body.stmts.len(), 2);
-                assert!(matches!(body.stmts[0].kind, StmtKind::Decl(_)));
+                assert!(matches!(body.stmts[0].kind, StmtKind::Let(_)));
                 assert!(matches!(body.stmts[1].kind, StmtKind::While { .. }));
             }
             other => panic!("expected a while statement, got {other:?}"),
@@ -334,8 +334,8 @@ mod tests {
     fn parses_multiple_statements_in_order() {
         let block = parse_block("{ let x = 1; let y = 2; return x + y; }");
         assert_eq!(block.stmts.len(), 3);
-        assert!(matches!(block.stmts[0].kind, StmtKind::Decl(_)));
-        assert!(matches!(block.stmts[1].kind, StmtKind::Decl(_)));
+        assert!(matches!(block.stmts[0].kind, StmtKind::Let(_)));
+        assert!(matches!(block.stmts[1].kind, StmtKind::Let(_)));
         assert!(matches!(block.stmts[2].kind, StmtKind::Return { .. }));
     }
 
@@ -343,7 +343,7 @@ mod tests {
     fn parses_decl_with_literal_pattern_expr_value() {
         let block = parse_block(r#"{ let s = "hi\n"; }"#);
         match &only_stmt(&block).kind {
-            StmtKind::Decl(DeclStmt { expr, .. }) => match &expr.kind {
+            StmtKind::Let(DeclStmt { expr, .. }) => match &expr.kind {
                 ExprKind::Literal(Literal::Str(sym)) => {
                     assert_eq!(Interner::resolve(*sym), "hi\n")
                 }
@@ -360,7 +360,7 @@ mod tests {
         let (block, error_count) = parse_block_with_errors("{ let a = 1; 1 +; return a; }");
         assert_eq!(error_count, 1);
         assert_eq!(block.stmts.len(), 3);
-        assert!(matches!(block.stmts[0].kind, StmtKind::Decl(_)));
+        assert!(matches!(block.stmts[0].kind, StmtKind::Let(_)));
         assert!(matches!(block.stmts[1].kind, StmtKind::Error));
         assert!(matches!(block.stmts[2].kind, StmtKind::Return { .. }));
     }
@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(error_count, 1);
         assert_eq!(block.stmts.len(), 2);
         assert!(matches!(block.stmts[0].kind, StmtKind::Error));
-        assert!(matches!(block.stmts[1].kind, StmtKind::Decl(_)));
+        assert!(matches!(block.stmts[1].kind, StmtKind::Let(_)));
     }
 
     #[test]
@@ -380,7 +380,7 @@ mod tests {
         // statement, not get swallowed by statement-recovery.
         let block = parse_block("{ let x = 1; x }");
         assert_eq!(block.stmts.len(), 2);
-        assert!(matches!(block.stmts[0].kind, StmtKind::Decl(_)));
+        assert!(matches!(block.stmts[0].kind, StmtKind::Let(_)));
         assert!(matches!(block.stmts[1].kind, StmtKind::Expr { .. }));
     }
 }
