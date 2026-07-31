@@ -6,6 +6,8 @@
 //! - Lowering converts `while`, `for`, and `while let` loops into [`ExprKind::Loop`], and
 //!   converts `if let` into [`ExprKind::Match`].
 
+#![allow(dead_code)]
+
 use crate::ast::{BinaryOp, Ident, Literal, Mutability, Path, UnaryOp};
 use crate::hir::ids::{DefId, HirId, LocalId};
 use crate::lexer::src_span::SrcSpan;

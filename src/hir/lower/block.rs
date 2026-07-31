@@ -48,7 +48,7 @@ impl OwnerLowerer<'_> {
             ast::StmtKind::Continue => StmtKind::Continue,
             ast::StmtKind::Return { ret } => StmtKind::Return(Some(low.lower_expr(ret))),
             ast::StmtKind::Defer { defer } => StmtKind::Defer(low.lower_expr(defer)),
-            ast::StmtKind::Decl(decl) => StmtKind::Let(low.lower_decl(decl)),
+            ast::StmtKind::Let(decl) => StmtKind::Let(low.lower_decl(decl)),
             ast::StmtKind::With { lends, body } => {
                 let lends = lends.iter().map(|l| low.lower_with_lend(l)).collect();
                 let body = low.lower_block(body);
@@ -63,11 +63,17 @@ impl OwnerLowerer<'_> {
         let pat = self.lower_pat(&d.name);
         let ty = d.ty.as_ref().map(|t| self.lower_ty(t));
         let init = self.lower_expr(&d.expr);
+        let else_branch = d
+            .else_branch
+            .clone()
+            .map(|branch| self.lower_block(&branch));
+
         LetStmt {
             mutability: d.mutability,
             pat,
             ty,
             init,
+            else_branch,
         }
     }
 

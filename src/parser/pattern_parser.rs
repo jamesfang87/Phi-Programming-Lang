@@ -8,8 +8,8 @@
 //! expression literal parsers so `match x { 1 => ... }` accepts the same literal forms as an
 //! expression would.
 
-use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
+use chumsky::Parser as ChumskyParser;
 
 use crate::ast::{Expr, ExprKind, Ident, Literal, Pattern, PatternKind, Payload, PayloadField};
 
@@ -334,8 +334,7 @@ mod tests {
         }
     }
 
-    /// The leading `.` is the only thing that makes a variant pattern, so a PascalCase bare
-    /// identifier is a binding like any other. The old capitalization heuristic is gone.
+    /// The leading `.` is the only thing that makes a variant pattern
     #[test]
     fn bare_pascal_case_identifier_is_a_binding() {
         let pat = parse_pattern("Rectangle");

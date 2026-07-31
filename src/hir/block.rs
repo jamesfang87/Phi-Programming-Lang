@@ -41,7 +41,7 @@ pub enum StmtKind {
     /// `defer expr;`. Schedules `expr` to run when the enclosing scope exits, no matter how it
     /// exits.
     Defer(LocalId), // -> Node::Expr
-    Expr(LocalId), // -> Node::Expr
+    Expr(LocalId),           // -> Node::Expr
     /// A statement that failed to parse. Lowering carries it through rather than aborting.
     Error,
 }
@@ -50,9 +50,10 @@ pub enum StmtKind {
 #[derive(Debug)]
 pub struct LetStmt {
     pub mutability: Mutability,
-    pub pat: LocalId,        // -> Node::Pat
-    pub ty: Option<LocalId>, // -> Node::Ty
-    pub init: LocalId,       // -> Node::Expr
+    pub pat: LocalId,                 // -> Node::Pat
+    pub ty: Option<LocalId>,          // -> Node::Ty
+    pub init: LocalId,                // -> Node::Expr
+    pub else_branch: Option<LocalId>, // -> Node::Block
 }
 
 /// One binding inside a `with` statement's lend list, such as `a = lend x` in

@@ -4,10 +4,10 @@
 //! parsing, and error recovery. [`Parser::parse`] parses one file and reports errors through
 //! [`DiagCtx`].
 
-use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
 use chumsky::extra;
 use chumsky::prelude::*;
+use chumsky::Parser as ChumskyParser;
 
 use crate::ast::interner::Interner;
 use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Item, ItemKind, ParsedSrcFile, Path};
@@ -324,7 +324,7 @@ mod tests {
         let f = only_function(&unit);
         let body = f.body.as_ref().unwrap();
         match &body.stmts[0].kind {
-            StmtKind::Decl(DeclStmt {
+            StmtKind::Let(DeclStmt {
                 mutability,
                 name,
                 ty,
@@ -356,7 +356,7 @@ mod tests {
         let unit = parse_ok("fun main() { let foo = 0; }");
         let f = only_function(&unit);
         match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Decl(DeclStmt { mutability, ty, .. }) => {
+            StmtKind::Let(DeclStmt { mutability, ty, .. }) => {
                 assert!(matches!(mutability, Mutability::Immutable));
                 assert!(ty.is_none());
             }
