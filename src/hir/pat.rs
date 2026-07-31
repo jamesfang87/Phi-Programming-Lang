@@ -1,6 +1,8 @@
 //! HIR representation of patterns: what appears on the left of a `let`, a `with` lend, or a
 //! `match` arm.
 
+#![allow(dead_code)]
+
 use crate::ast::{Ident, Literal};
 use crate::hir::expr::Payload;
 use crate::hir::ids::{HirId, LocalId};

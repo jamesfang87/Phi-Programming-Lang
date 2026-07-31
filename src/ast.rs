@@ -318,7 +318,7 @@ pub enum StmtKind {
         defer: Expr,
     },
     /// A `let` binding.
-    Decl(DeclStmt),
+    Let(DeclStmt),
     /// A `with` block, such as `with px = &mut point.x, py = &mut point.y { ... }`.
     ///
     /// Each binding in `lends` is scoped to `body` and stops projecting its source at the
@@ -341,6 +341,7 @@ pub struct DeclStmt {
     pub ty: Option<Type>,
     pub expr: Expr,
     pub span: SrcSpan,
+    pub else_branch: Option<Block>,
 }
 
 /// One binding in a `with` block, such as `px = &mut point.x`.

@@ -12,9 +12,9 @@
 //! record payload. Condition and scrutinee positions (`if cond { ... }`, `match x { ... }`) turn
 //! this off, so the `{` there always starts the following block instead.
 
-use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 use chumsky::recursive::Indirect;
+use chumsky::Parser as ChumskyParser;
 
 use crate::ast::{
     AccessArgs, BinaryOp, Block, ClosureParam, CtorPayload, DeclStmt, Expr, ExprKind, Ident,
@@ -63,6 +63,23 @@ impl Parser {
         let path = self.path_parser();
         let ident = self.ident_parser();
         let pattern = self.pattern_parser();
+
+        // The else branch is used for both statements (let-else) and exprs
+        // (if expr)
+        let else_branch = self
+            .kind(TokenKind::ElseKw)
+            .ignore_then(choice((
+                block.clone().map(|b: Block| {
+                    let span = b.span;
+                    Expr {
+                        kind: ExprKind::Block(b),
+                        span,
+                    }
+                }),
+                expr.clone(),
+            )))
+            .or_not()
+            .boxed();
 
         let expr_body = |braces: BraceForms| {
             let expr = expr.clone();
@@ -297,23 +314,6 @@ impl Parser {
                 })
                 .boxed();
 
-            // `else` takes either a block or another expression (`else if ..`), and is shared by
-            // `if` and `if let`.
-            let else_branch = self
-                .kind(TokenKind::ElseKw)
-                .ignore_then(choice((
-                    block.clone().map(|b: Block| {
-                        let span = b.span;
-                        Expr {
-                            kind: ExprKind::Block(b),
-                            span,
-                        }
-                    }),
-                    expr.clone(),
-                )))
-                .or_not()
-                .boxed();
-
             // Parses `if let pat = scrutinee { .. }`.
             let if_let_expr = self
                 .kind(TokenKind::IfKw)
@@ -344,7 +344,7 @@ impl Parser {
                 .kind(TokenKind::IfKw)
                 .then(expr_ns.clone())
                 .then(block.clone())
-                .then(else_branch)
+                .then(else_branch.clone())
                 .map(|(((if_tok, cond), then_branch), else_branch)| {
                     let span = match &else_branch {
                         Some(e) => if_tok.span.merge(e.span),
@@ -879,26 +879,34 @@ impl Parser {
                 )
                 .then_ignore(self.kind(TokenKind::Equals))
                 .then(expr.clone())
+                .then(
+                    self.kind(TokenKind::ElseKw)
+                        .ignore_then(block.clone())
+                        .or_not(),
+                )
                 .then(self.kind(TokenKind::Semicolon))
-                .map(|(((((let_tok, mut_tok), name), ty), value), semi_tok)| {
-                    let mutability = if mut_tok.is_some() {
-                        Mutability::Mutable
-                    } else {
-                        Mutability::Immutable
-                    };
-                    let span = let_tok.span.merge(semi_tok.span);
-                    let decl = DeclStmt {
-                        mutability,
-                        name,
-                        ty,
-                        expr: value,
-                        span,
-                    };
-                    Stmt {
-                        kind: StmtKind::Decl(decl),
-                        span,
-                    }
-                })
+                .map(
+                    |((((((let_tok, mut_tok), name), ty), value), else_block), semi_tok)| {
+                        let mutability = if mut_tok.is_some() {
+                            Mutability::Mutable
+                        } else {
+                            Mutability::Immutable
+                        };
+                        let span = let_tok.span.merge(semi_tok.span);
+                        let decl = DeclStmt {
+                            mutability,
+                            name,
+                            ty,
+                            expr: value,
+                            span,
+                            else_branch: else_block,
+                        };
+                        Stmt {
+                            kind: StmtKind::Let(decl),
+                            span,
+                        }
+                    },
+                )
                 .boxed();
 
             let lend_decl = pattern
@@ -1042,8 +1050,8 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::PatternKind;
     use crate::ast::interner::Interner;
+    use crate::ast::PatternKind;
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;

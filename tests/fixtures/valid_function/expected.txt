@@ -2,7 +2,7 @@
 0
 === stdout ===
 // ./main.phi
-SrcUnit {
+ParsedSrcFile {
     module: None,
     imports: [],
     items: [

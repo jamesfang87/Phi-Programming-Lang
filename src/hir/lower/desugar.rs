@@ -1,8 +1,8 @@
 //! Desugars `while`/`for` loops into [`ExprKind::Loop`], and the `let` forms of `if`/`while`
 //! into [`ExprKind::Match`].
 
-use crate::ast;
 use crate::ast::interner::Interner;
+use crate::ast::{self, Ty};
 use crate::ast::{Ident, Mutability, Path};
 use crate::hir::ids::LocalId;
 use crate::hir::lower::owner::OwnerLowerer;
@@ -172,6 +172,7 @@ impl OwnerLowerer<'_> {
                         pat: iter_pat,
                         ty: None,
                         init: iter_init,
+                        else_branch: None,
                     })
                 });
 
