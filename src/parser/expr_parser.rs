@@ -17,9 +17,8 @@ use chumsky::recursive::Indirect;
 use chumsky::Parser as ChumskyParser;
 
 use crate::ast::{
-    AccessArgs, BinaryOp, Block, ClosureParam, CtorPayload, DeclStmt, Expr, ExprKind, Ident,
-    Literal, MatchArm, Mutability, Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp,
-    WithStmtLend,
+    AccessArgs, Arm, BinaryOp, Block, ClosureParam, CtorPayload, DeclStmt, Expr, ExprKind, Ident,
+    Literal, Mutability, Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp, WithStmtLend,
 };
 
 use crate::ast::interner::Interner;
@@ -367,7 +366,7 @@ impl Parser {
                 .then(expr.clone())
                 .map(|(pat, body)| {
                     let span = pat.span.merge(body.span);
-                    MatchArm {
+                    Arm {
                         pat,
                         body: Box::new(body),
                         span,
@@ -1051,7 +1050,7 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::ast::interner::Interner;
-    use crate::ast::PatternKind;
+    use crate::ast::PatKind;
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;
@@ -1542,7 +1541,7 @@ mod tests {
                 else_branch,
                 ..
             } => {
-                assert!(matches!(pat.kind, PatternKind::Variant { .. }));
+                assert!(matches!(pat.kind, PatKind::Variant { .. }));
                 assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
                 assert!(else_branch.is_some());
             }
@@ -1596,8 +1595,8 @@ mod tests {
             ExprKind::Match { scrutinee, arms } => {
                 assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
                 assert_eq!(arms.len(), 3);
-                assert!(matches!(arms[0].pat.kind, PatternKind::Variant { .. }));
-                assert!(matches!(arms[2].pat.kind, PatternKind::Wildcard));
+                assert!(matches!(arms[0].pat.kind, PatKind::Variant { .. }));
+                assert!(matches!(arms[2].pat.kind, PatKind::Wildcard));
             }
             other => panic!("expected a match expr, got {other:?}"),
         }

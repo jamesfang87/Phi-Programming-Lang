@@ -1,0 +1,6 @@
+module option;
+
+public enum Option<T> {
+    some: T,
+    none,
+}

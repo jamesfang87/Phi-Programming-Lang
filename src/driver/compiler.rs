@@ -60,7 +60,10 @@ impl Compiler {
     /// diagnostics are reported, in `SrcMap` order, which `FileCollector` sorts to be
     /// reproducible. This is the hook `phi build --ast` uses, and what the golden tests under
     /// `tests/` snapshot.
-    pub fn build(&mut self, root: &Path, print_ast: bool) -> io::Result<bool> {
+    ///
+    /// If `print_hir` is set, the lowered HIR for the whole unit is pretty-printed to stdout
+    /// once lowering finishes. This is the hook `phi build --hir` uses.
+    pub fn build(&mut self, root: &Path, print_ast: bool, print_hir: bool) -> io::Result<bool> {
         self.collect_sources(root)?;
         let token_streams = self.lex();
         let asts = self.parse(token_streams);
@@ -74,6 +77,10 @@ impl Compiler {
 
         // Desugars every file's AST into one HIR.
         let hir = lower_unit(&asts);
+
+        if print_hir {
+            println!("{hir:#?}");
+        }
 
         // Resolves names within the HIR. The result isn't consumed yet.
         //

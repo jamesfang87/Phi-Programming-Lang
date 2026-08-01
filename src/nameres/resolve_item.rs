@@ -1,8 +1,43 @@
+use std::collections::HashMap;
+
 use crate::ast::interner::Interner;
 use crate::ast::Ident;
-use crate::hir::{DefId, HirId, Node, OwnerNode, VariantPayload};
+use crate::diag::{DiagCtx, Diagnostic};
+use crate::hir::{DefId, HirId, LocalId, Node, OwnerNode, TyKind, VariantPayload};
+use crate::lexer::src_span::SrcSpan;
 use crate::nameres::resolve_results::Res;
 use crate::nameres::NameResolver;
+
+/// Where an owner's own generic type parameter comes from.
+///
+/// A `fun`, `struct`, `enum`, or `trait` declares its generics as proper [`Node::Generic`]s,
+/// each with a name and its own bounds. An `extend` block instead reuses type syntax for its
+/// `<T>` list -- `extend<T> Foo<T> with Bar<T>` parses all three bracket groups as plain type
+/// lists, because a type is exactly what the ADT's and trait's groups (`Foo<T>`, `Bar<T>`)
+/// actually hold, and the grammar doesn't distinguish that from the block's own group without
+/// looking at where it sits. Only the first group, right after `extend`, is ever treated as a
+/// declaration (see [`NameResolver::resolve_extend`]); its entries have no bounds and must each
+/// be a single bare name, so [`NameResolver::resolve_generics`] still has to validate that shape
+/// before it can bind one.
+#[derive(Clone, Copy)]
+enum GenericDecl {
+    Generic(LocalId),
+    BareTy(LocalId),
+}
+
+impl GenericDecl {
+    /// Wraps a `fun`/`struct`/`enum`/`trait`'s own `Vec<LocalId>` of [`Node::Generic`]s, as
+    /// [`NameResolver::resolve_generics`] expects.
+    fn generics(ids: &[LocalId]) -> Vec<GenericDecl> {
+        ids.iter().map(|&id| GenericDecl::Generic(id)).collect()
+    }
+
+    /// Wraps an `extend` block's own `<T>` list -- a `Vec<LocalId>` of bare [`Node::Ty`]s -- as
+    /// [`NameResolver::resolve_generics`] expects.
+    fn bare_tys(ids: &[LocalId]) -> Vec<GenericDecl> {
+        ids.iter().map(|&id| GenericDecl::BareTy(id)).collect()
+    }
+}
 
 impl<'hir> NameResolver<'hir> {
     /// A module's imports are resolved earlier, while [`SymbolTable`](crate::name_res::symbol_table::SymbolTable)
@@ -33,12 +68,81 @@ impl<'hir> NameResolver<'hir> {
         }
     }
 
+    /// Binds each generic type parameter `owner_id` declares for itself -- `function.generics`,
+    /// `struct_.generics`, an `extend` block's own `<T>` list, and so on -- into the type
+    /// namespace visible inside its own body, and resolves each parameter's trait bounds (if it
+    /// has any) against the outer type namespace.
+    ///
+    /// Must run before anything else in `owner_id`'s own declaration is resolved, since a
+    /// parameter list, return type, field, or variant payload may name one of these parameters.
+    /// [`NameResolver::generic_ty`] is what later lookups read this table through.
+    fn resolve_generics(&mut self, owner_id: DefId, decls: &[GenericDecl]) {
+        let arena = self.hir.arena(owner_id);
+        let mut params = HashMap::new();
+        for &decl in decls {
+            let local_id = match decl {
+                GenericDecl::Generic(id) | GenericDecl::BareTy(id) => id,
+            };
+            let hir_id = HirId {
+                owner: owner_id,
+                local_id,
+            };
+
+            let name = match decl {
+                GenericDecl::Generic(id) => {
+                    let Node::Generic(generic) = arena.get(id) else {
+                        unreachable!("Node that is not a generic found in a generics list");
+                    };
+                    for bound in &generic.bounds {
+                        self.resolve_ty_path(owner_id, bound);
+                    }
+                    generic.name
+                }
+                GenericDecl::BareTy(id) => {
+                    let Node::Ty(ty) = arena.get(id) else {
+                        unreachable!("Node that is not a ty found in a bare generics list");
+                    };
+                    let TyKind::Base { path, args } = &ty.kind else {
+                        Self::report_expected_generic_param(ty.span);
+                        continue;
+                    };
+                    let ([name], true) = (path.segments.as_slice(), args.is_empty()) else {
+                        Self::report_expected_generic_param(ty.span);
+                        continue;
+                    };
+                    *name
+                }
+            };
+
+            let res = Res::TyParam(hir_id);
+            self.results.add(hir_id, res);
+            params.insert(name.text, res);
+        }
+        self.results.add_generics(owner_id, params);
+    }
+
+    /// Reports an `extend` block's own `<...>` list containing something other than a bare type
+    /// parameter name, such as `extend<i32> Foo<i32>` -- that group declares fresh parameters,
+    /// unlike `Foo<T>`'s and `Bar<T>`'s, which apply existing types (see [`GenericDecl`]).
+    fn report_expected_generic_param(span: SrcSpan) {
+        DiagCtx::emit(
+            Diagnostic::error("expected a generic type parameter name here", span)
+                .with_label("not a valid parameter name")
+                .with_help(
+                    "an `extend` block's own `<...>` list declares fresh type parameters, so \
+                     each entry must be a single bare name, such as `T`",
+                ),
+        );
+    }
+
     pub fn resolve_function(&mut self, fun_id: DefId) {
         let hir = self.hir;
         let arena = hir.arena(fun_id);
         let OwnerNode::Function(function) = arena.owner() else {
             unreachable!("root of a Function owner is always OwnerNode::Function");
         };
+
+        self.resolve_generics(fun_id, &GenericDecl::generics(&function.generics));
 
         self.symbol_tab.push_scope();
         if let Some(self_param_id) = function.self_param {
@@ -127,6 +231,8 @@ impl<'hir> NameResolver<'hir> {
             unreachable!("root of a Struct owner is always OwnerNode::Struct");
         };
 
+        self.resolve_generics(struct_id, &GenericDecl::generics(&struct_.generics));
+
         self.results.add_self_ty(
             struct_id,
             Res::SelfTy {
@@ -148,6 +254,8 @@ impl<'hir> NameResolver<'hir> {
         let OwnerNode::Enum(enum_) = arena.owner() else {
             unreachable!("root of an Enum owner is always OwnerNode::Enum");
         };
+
+        self.resolve_generics(enum_id, &GenericDecl::generics(&enum_.generics));
 
         self.results.add_self_ty(
             enum_id,
@@ -184,6 +292,8 @@ impl<'hir> NameResolver<'hir> {
             unreachable!("root of a Trait owner is always OwnerNode::Trait");
         };
 
+        self.resolve_generics(trait_id, &GenericDecl::generics(&trait_.generics));
+
         // Inside a trait's own default methods, `Self` stands for whatever type eventually
         // implements it -- there's no concrete adt yet, so the trait's own id stands in for both
         // halves of `Res::SelfTy`.
@@ -205,9 +315,10 @@ impl<'hir> NameResolver<'hir> {
             unreachable!("root of an Extend owner is always OwnerNode::Extend");
         };
 
-        for &ty_id in &extend.extend_generics {
-            self.resolve_ty(extend_id, ty_id);
-        }
+        // Only this first bracket group -- the block's own `<T>` -- declares fresh type
+        // parameters; `Foo<T>` and `Bar<T>` below apply existing types (possibly these ones)
+        // and are resolved as ordinary types, not declarations. See `GenericDecl`.
+        self.resolve_generics(extend_id, &GenericDecl::bare_tys(&extend.extend_generics));
 
         let adt_res = self.resolve_ty_path(extend_id, &extend.adt_path);
 
