@@ -1,8 +1,8 @@
 //! Parses top-level items: functions, structs, enums, traits, `extend` blocks, modules, and
 //! imports.
 
-use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
+use chumsky::Parser as ChumskyParser;
 
 use crate::ast::Ident;
 use crate::ast::Import;
@@ -265,13 +265,28 @@ impl Parser {
             })
             .boxed();
 
+        let record_field = ident
+            .clone()
+            .then_ignore(self.kind(TokenKind::Colon))
+            .then(type_p.clone())
+            .map(|(name, ty)| {
+                let span = name.span.merge(ty.span);
+
+                Field {
+                    visibility: Visibility::Public,
+                    name,
+                    ty,
+                    span,
+                }
+            })
+            .boxed();
+
         let record_payload = ident
             .clone()
             .then_ignore(self.kind(TokenKind::Colon))
             .then_ignore(self.kind(TokenKind::OpenBrace))
             .then(
-                field
-                    .clone()
+                record_field
                     .separated_by(self.kind(TokenKind::Comma))
                     .allow_trailing()
                     .at_least(1)
@@ -512,8 +527,8 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::SelfMode;
     use crate::ast::interner::Interner;
+    use crate::ast::SelfMode;
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;

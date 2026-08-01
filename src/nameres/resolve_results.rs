@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::ast::Symbol;
 use crate::hir::{DefId, HirId};
 
 /// A primitive, built-in type such as `i32` or `bool` -- these never get a `DefId` of their own.
@@ -45,6 +46,9 @@ pub enum Res {
     /// when the enclosing trait is known too (inside a trait's own body, or an
     /// `extend ... with Trait`).
     SelfTy { adt: DefId, trait_: Option<DefId> },
+    /// A generic type parameter, such as `T` in `fun identity<T>(x: T) -> T`, addressed by the
+    /// [`HirId`] of its [`Node::Generic`](crate::hir::Node::Generic).
+    TyParam(HirId),
     /// Resolution failed; a diagnostic has already been reported.
     Err,
 }
@@ -61,6 +65,14 @@ pub struct NameResolverResults {
     ///
     /// [`NameResolver::self_ty`]: crate::name_res::NameResolver::self_ty
     self_tys: HashMap<DefId, Res>,
+
+    /// The generic type parameters each definition declares for itself, keyed by name. A
+    /// definition that declares no generics of its own is absent -- a reference inside one of
+    /// those (or inside a definition nested in it, such as a method's body) looks the answer up
+    /// by walking its parent chain, see [`NameResolver::generic_ty`].
+    ///
+    /// [`NameResolver::generic_ty`]: crate::nameres::NameResolver::generic_ty
+    generics: HashMap<DefId, HashMap<Symbol, Res>>,
 }
 
 impl NameResolverResults {
@@ -68,6 +80,7 @@ impl NameResolverResults {
         Self {
             res: HashMap::new(),
             self_tys: HashMap::new(),
+            generics: HashMap::new(),
         }
     }
 
@@ -87,6 +100,19 @@ impl NameResolverResults {
     /// What `Self` means inside `def_id`'s own body, if `def_id` introduces one at all.
     pub fn self_ty(&self, def_id: DefId) -> Option<Res> {
         self.self_tys.get(&def_id).copied()
+    }
+
+    /// Records the generic type parameters `def_id` declares for itself, keyed by name.
+    pub fn add_generics(&mut self, def_id: DefId, params: HashMap<Symbol, Res>) {
+        self.generics.insert(def_id, params);
+    }
+
+    /// Looks `name` up among the generic type parameters `def_id` declares for itself -- not
+    /// those of any enclosing definition, see [`NameResolver::generic_ty`].
+    ///
+    /// [`NameResolver::generic_ty`]: crate::nameres::NameResolver::generic_ty
+    pub fn generic(&self, def_id: DefId, name: Symbol) -> Option<Res> {
+        self.generics.get(&def_id)?.get(&name).copied()
     }
 }
 

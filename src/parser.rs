@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(text(f.params[1].name), "y");
         for param in &f.params {
             match &param.ty.kind {
-                Ty::Base { base, args } => {
+                TyKind::Base { base, args } => {
                     assert_eq!(text(base.segments[0]), "i32");
                     assert!(args.is_empty());
                 }
@@ -272,7 +272,7 @@ mod tests {
             }
         }
         match &f.ret.as_ref().unwrap().kind {
-            Ty::Base { base, .. } => assert_eq!(text(base.segments[0]), "i32"),
+            TyKind::Base { base, .. } => assert_eq!(text(base.segments[0]), "i32"),
             other => panic!("expected a base type, got {other:?}"),
         }
 
@@ -333,11 +333,11 @@ mod tests {
             }) => {
                 assert!(matches!(mutability, Mutability::Mutable));
                 match &name.kind {
-                    PatternKind::Binding(name) => assert_eq!(text(*name), "phi"),
+                    PatKind::Binding(name) => assert_eq!(text(*name), "phi"),
                     other => panic!("expected a binding pattern, got {other:?}"),
                 }
                 match &ty.as_ref().unwrap().kind {
-                    Ty::Base { base, .. } => assert_eq!(text(base.segments[0]), "f64"),
+                    TyKind::Base { base, .. } => assert_eq!(text(base.segments[0]), "f64"),
                     other => panic!("expected a base type, got {other:?}"),
                 }
                 match &expr.kind {

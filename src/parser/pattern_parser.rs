@@ -11,7 +11,7 @@
 use chumsky::prelude::*;
 use chumsky::Parser as ChumskyParser;
 
-use crate::ast::{Expr, ExprKind, Ident, Literal, Pattern, PatternKind, Payload, PayloadField};
+use crate::ast::{Expr, ExprKind, Ident, Literal, Pat, PatKind, Payload, PayloadField};
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -19,15 +19,15 @@ use super::{BoxedP, Extra, Parser};
 
 impl Parser {
     /// Parses a single pattern: a wildcard, a literal, a tuple, a variant, or a binding.
-    pub fn pattern_parser<'a>(&'a self) -> BoxedP<'a, Pattern> {
+    pub fn pattern_parser<'a>(&'a self) -> BoxedP<'a, Pat> {
         let ident = self.ident_parser();
 
         recursive(
-            |pattern: Recursive<dyn ChumskyParser<'a, &'a [Token], Pattern, Extra<'a>>>| {
+            |pattern: Recursive<dyn ChumskyParser<'a, &'a [Token], Pat, Extra<'a>>>| {
                 let wildcard = self
                     .kind(TokenKind::Wildcard)
-                    .map(|t: Token| Pattern {
-                        kind: PatternKind::Wildcard,
+                    .map(|t: Token| Pat {
+                        kind: PatKind::Wildcard,
                         span: t.span,
                     })
                     .boxed();
@@ -52,8 +52,8 @@ impl Parser {
                         ExprKind::Literal(lit) => lit,
                         _ => unreachable!("literal parsers only ever produce `ExprKind::Literal`"),
                     };
-                    Pattern {
-                        kind: PatternKind::Literal(lit),
+                    Pat {
+                        kind: PatKind::Literal(lit),
                         span: e.span,
                     }
                 })
@@ -69,8 +69,8 @@ impl Parser {
                             .collect::<Vec<_>>(),
                     )
                     .then(self.kind(TokenKind::CloseParen))
-                    .map(|((open_tok, pats), close_tok)| Pattern {
-                        kind: PatternKind::Tuple(pats),
+                    .map(|((open_tok, pats), close_tok)| Pat {
+                        kind: PatKind::Tuple(pats),
                         span: open_tok.span.merge(close_tok.span),
                     })
                     .boxed();
@@ -126,8 +126,8 @@ impl Parser {
                             }
                             None => (Payload::None, dot_tok.span.merge(variant.span)),
                         };
-                        Pattern {
-                            kind: PatternKind::Variant { variant, payload },
+                        Pat {
+                            kind: PatKind::Variant { variant, payload },
                             span,
                         }
                     })
@@ -135,8 +135,8 @@ impl Parser {
 
                 let binding = ident
                     .clone()
-                    .map(|name: Ident| Pattern {
-                        kind: PatternKind::Binding(name),
+                    .map(|name: Ident| Pat {
+                        kind: PatKind::Binding(name),
                         span: name.span,
                     })
                     .boxed();
@@ -157,21 +157,21 @@ mod tests {
     use crate::lexer::Lexer;
 
     /// The single pattern a `Payload::Single` holds, or a panic.
-    fn single(payload: &Payload<Pattern>) -> &Pattern {
+    fn single(payload: &Payload<Pat>) -> &Pat {
         match payload {
             Payload::Single(inner) => inner,
             other => panic!("expected a single payload, got {other:?}"),
         }
     }
 
-    fn record(payload: &Payload<Pattern>) -> &[PayloadField<Pattern>] {
+    fn record(payload: &Payload<Pat>) -> &[PayloadField<Pat>] {
         match payload {
             Payload::Record(fields) => fields,
             other => panic!("expected a record payload, got {other:?}"),
         }
     }
 
-    fn parse_pattern(src: &str) -> Pattern {
+    fn parse_pattern(src: &str) -> Pat {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
@@ -192,14 +192,14 @@ mod tests {
     #[test]
     fn parses_wildcard_pattern() {
         let pat = parse_pattern("_");
-        assert!(matches!(pat.kind, PatternKind::Wildcard));
+        assert!(matches!(pat.kind, PatKind::Wildcard));
     }
 
     #[test]
     fn parses_binding_pattern() {
         let pat = parse_pattern("x");
         match &pat.kind {
-            PatternKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "x"),
+            PatKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "x"),
             other => panic!("expected a binding pattern, got {other:?}"),
         }
     }
@@ -207,26 +207,20 @@ mod tests {
     #[test]
     fn parses_int_literal_pattern() {
         let pat = parse_pattern("42");
-        assert!(matches!(
-            pat.kind,
-            PatternKind::Literal(Literal::Int { .. })
-        ));
+        assert!(matches!(pat.kind, PatKind::Literal(Literal::Int { .. })));
     }
 
     #[test]
     fn parses_float_literal_pattern() {
         let pat = parse_pattern("1.618");
-        assert!(matches!(
-            pat.kind,
-            PatternKind::Literal(Literal::Float { .. })
-        ));
+        assert!(matches!(pat.kind, PatKind::Literal(Literal::Float { .. })));
     }
 
     #[test]
     fn parses_string_literal_pattern() {
         let pat = parse_pattern(r#""hi""#);
         match &pat.kind {
-            PatternKind::Literal(Literal::Str(sym)) => assert_eq!(Interner::resolve(*sym), "hi"),
+            PatKind::Literal(Literal::Str(sym)) => assert_eq!(Interner::resolve(*sym), "hi"),
             other => panic!("expected a string literal pattern, got {other:?}"),
         }
     }
@@ -234,29 +228,23 @@ mod tests {
     #[test]
     fn parses_char_literal_pattern() {
         let pat = parse_pattern("'a'");
-        assert!(matches!(pat.kind, PatternKind::Literal(Literal::Char('a'))));
+        assert!(matches!(pat.kind, PatKind::Literal(Literal::Char('a'))));
     }
 
     #[test]
     fn parses_bool_literal_patterns() {
         let pat = parse_pattern("true");
-        assert!(matches!(
-            pat.kind,
-            PatternKind::Literal(Literal::Bool(true))
-        ));
+        assert!(matches!(pat.kind, PatKind::Literal(Literal::Bool(true))));
 
         let pat = parse_pattern("false");
-        assert!(matches!(
-            pat.kind,
-            PatternKind::Literal(Literal::Bool(false))
-        ));
+        assert!(matches!(pat.kind, PatKind::Literal(Literal::Bool(false))));
     }
 
     #[test]
     fn parses_bare_variant_pattern() {
         let pat = parse_pattern(".rectangle");
         match &pat.kind {
-            PatternKind::Variant { variant, payload } => {
+            PatKind::Variant { variant, payload } => {
                 assert_eq!(Interner::resolve(variant.text), "rectangle");
                 assert!(matches!(payload, Payload::None));
             }
@@ -268,10 +256,10 @@ mod tests {
     fn parses_variant_pattern_with_single_payload() {
         let pat = parse_pattern(".circle(r)");
         match &pat.kind {
-            PatternKind::Variant { variant, payload } => {
+            PatKind::Variant { variant, payload } => {
                 assert_eq!(Interner::resolve(variant.text), "circle");
                 match &single(payload).kind {
-                    PatternKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "r"),
+                    PatKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "r"),
                     other => panic!("expected a binding, got {other:?}"),
                 }
             }
@@ -285,10 +273,10 @@ mod tests {
     fn parses_variant_pattern_with_tuple_payload() {
         let pat = parse_pattern(".parallelogram((b, h))");
         match &pat.kind {
-            PatternKind::Variant { variant, payload } => {
+            PatKind::Variant { variant, payload } => {
                 assert_eq!(Interner::resolve(variant.text), "parallelogram");
                 match &single(payload).kind {
-                    PatternKind::Tuple(elems) => assert_eq!(elems.len(), 2),
+                    PatKind::Tuple(elems) => assert_eq!(elems.len(), 2),
                     other => panic!("expected a tuple pattern, got {other:?}"),
                 }
             }
@@ -300,10 +288,10 @@ mod tests {
     fn parses_variant_pattern_with_nested_payload() {
         let pat = parse_pattern(".some(.ok(x))");
         match &pat.kind {
-            PatternKind::Variant { variant, payload } => {
+            PatKind::Variant { variant, payload } => {
                 assert_eq!(Interner::resolve(variant.text), "some");
                 match &single(payload).kind {
-                    PatternKind::Variant { variant, .. } => {
+                    PatKind::Variant { variant, .. } => {
                         assert_eq!(Interner::resolve(variant.text), "ok")
                     }
                     other => panic!("expected a nested variant pattern, got {other:?}"),
@@ -317,13 +305,13 @@ mod tests {
     fn parses_variant_pattern_with_record_payload() {
         let pat = parse_pattern(".square { l: inner, w }");
         match &pat.kind {
-            PatternKind::Variant { variant, payload } => {
+            PatKind::Variant { variant, payload } => {
                 assert_eq!(Interner::resolve(variant.text), "square");
                 let fields = record(payload);
                 assert_eq!(fields.len(), 2);
                 assert_eq!(Interner::resolve(fields[0].name.text), "l");
                 match &fields[0].value.as_ref().expect("`l:` has a pattern").kind {
-                    PatternKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "inner"),
+                    PatKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "inner"),
                     other => panic!("expected a binding, got {other:?}"),
                 }
                 // `w` is the field shorthand: no pattern of its own, it binds `w`.
@@ -339,7 +327,7 @@ mod tests {
     fn bare_pascal_case_identifier_is_a_binding() {
         let pat = parse_pattern("Rectangle");
         match &pat.kind {
-            PatternKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "Rectangle"),
+            PatKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "Rectangle"),
             other => panic!("expected a binding pattern, got {other:?}"),
         }
     }
@@ -348,10 +336,10 @@ mod tests {
     fn parses_tuple_pattern() {
         let pat = parse_pattern("(x, y)");
         match &pat.kind {
-            PatternKind::Tuple(pats) => {
+            PatKind::Tuple(pats) => {
                 assert_eq!(pats.len(), 2);
-                assert!(matches!(pats[0].kind, PatternKind::Binding(_)));
-                assert!(matches!(pats[1].kind, PatternKind::Binding(_)));
+                assert!(matches!(pats[0].kind, PatKind::Binding(_)));
+                assert!(matches!(pats[1].kind, PatKind::Binding(_)));
             }
             other => panic!("expected a tuple pattern, got {other:?}"),
         }
@@ -362,14 +350,14 @@ mod tests {
         // `(a, (b, c))` exercises tuple nesting.
         let pat = parse_pattern("(a, (b, c))");
         match &pat.kind {
-            PatternKind::Tuple(pats) => {
+            PatKind::Tuple(pats) => {
                 assert_eq!(pats.len(), 2);
-                assert!(matches!(pats[0].kind, PatternKind::Binding(_)));
+                assert!(matches!(pats[0].kind, PatKind::Binding(_)));
                 match &pats[1].kind {
-                    PatternKind::Tuple(inner) => {
+                    PatKind::Tuple(inner) => {
                         assert_eq!(inner.len(), 2);
-                        assert!(matches!(inner[0].kind, PatternKind::Binding(_)));
-                        assert!(matches!(inner[1].kind, PatternKind::Binding(_)));
+                        assert!(matches!(inner[0].kind, PatKind::Binding(_)));
+                        assert!(matches!(inner[1].kind, PatKind::Binding(_)));
                     }
                     other => panic!("expected a nested tuple pattern, got {other:?}"),
                 }
@@ -383,16 +371,16 @@ mod tests {
         // `(.circle(r), _)` exercises tuple + variant + wildcard nesting together.
         let pat = parse_pattern("(.circle(r), _)");
         match &pat.kind {
-            PatternKind::Tuple(pats) => {
+            PatKind::Tuple(pats) => {
                 assert_eq!(pats.len(), 2);
                 match &pats[0].kind {
-                    PatternKind::Variant { variant, payload } => {
+                    PatKind::Variant { variant, payload } => {
                         assert_eq!(Interner::resolve(variant.text), "circle");
                         assert!(matches!(payload, Payload::Single(_)));
                     }
                     other => panic!("expected a variant pattern, got {other:?}"),
                 }
-                assert!(matches!(pats[1].kind, PatternKind::Wildcard));
+                assert!(matches!(pats[1].kind, PatKind::Wildcard));
             }
             other => panic!("expected a tuple pattern, got {other:?}"),
         }

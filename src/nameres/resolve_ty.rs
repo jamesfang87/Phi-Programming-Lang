@@ -67,6 +67,9 @@ impl<'hir> NameResolver<'hir> {
             if let Some(prim) = Self::prim_ty(name.text) {
                 return Res::PrimTy(prim);
             }
+            if let Some(res) = self.generic_ty(owner_id, name.text) {
+                return res;
+            }
         }
 
         if let Some(def_id) = self.symbol_tab.lookup_type_path(owner_id, path) {
