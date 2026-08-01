@@ -10,12 +10,12 @@ mod diag;
 mod driver;
 mod hir;
 mod lexer;
-mod name_res;
+mod nameres;
 mod parser;
 mod typeck;
 
-use crate::driver::Driver;
 use crate::driver::compiler::Compiler;
+use crate::driver::Driver;
 use std::env;
 use std::path::Path;
 
