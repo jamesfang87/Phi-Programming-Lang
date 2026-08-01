@@ -2,7 +2,7 @@
 //! into [`ExprKind::Match`].
 
 use crate::ast::interner::Interner;
-use crate::ast::{self, Ty};
+use crate::ast::{self, TyKind};
 use crate::ast::{Ident, Mutability, Path};
 use crate::hir::ids::LocalId;
 use crate::hir::lower::owner::OwnerLowerer;
@@ -15,7 +15,7 @@ impl OwnerLowerer<'_> {
     /// `match scrutinee { pat => { then }, _ => { else } }`.
     pub(super) fn lower_if_let(
         &mut self,
-        pat: &ast::Pattern,
+        pat: &ast::Pat,
         scrutinee: &ast::Expr,
         then_branch: &ast::Block,
         else_branch: &Option<Box<ast::Expr>>,
@@ -57,7 +57,7 @@ impl OwnerLowerer<'_> {
     /// runs when the pattern matches -- so it stays nested inside the matching arm.
     pub(super) fn lower_while_let(
         &mut self,
-        pat: &ast::Pattern,
+        pat: &ast::Pat,
         scrutinee: &ast::Expr,
         body: &ast::Block,
     ) -> LocalId {
@@ -149,7 +149,7 @@ impl OwnerLowerer<'_> {
     /// See `LoopSource::For`.
     pub(super) fn lower_for(
         &mut self,
-        pat: &ast::Pattern,
+        pat: &ast::Pat,
         iter: &ast::Expr,
         body: &ast::Block,
     ) -> LocalId {

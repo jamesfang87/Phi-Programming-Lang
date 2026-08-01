@@ -119,7 +119,7 @@ pub struct Function {
     pub generics: Vec<Generic>,
     pub self_param: Option<SelfParam>,
     pub params: Vec<Param>,
-    pub ret: Option<Type>,
+    pub ret: Option<Ty>,
     pub body: Option<Block>,
     pub span: SrcSpan,
 }
@@ -155,11 +155,11 @@ pub struct Trait {
 #[derive(Clone, Debug)]
 pub struct Extend {
     /// The generics the `extend` block itself introduces, from `extend<T>`.
-    pub extend_generics: Option<Vec<Type>>,
+    pub extend_generics: Option<Vec<Ty>>,
     /// The extended type's own generic arguments, from `Foo<T>`.
-    pub adt_generics: Option<Vec<Type>>,
+    pub adt_generics: Option<Vec<Ty>>,
     /// The optional `with`-clause trait's generic arguments, from `with Bar<T>`.
-    pub trait_generics: Option<Vec<Type>>,
+    pub trait_generics: Option<Vec<Ty>>,
     pub adt_path: Path,
     pub trait_path: Option<Path>,
     pub methods: Vec<Function>,
@@ -199,15 +199,15 @@ pub struct Generic {
 #[derive(Clone, Debug)]
 pub struct Param {
     pub name: Ident,
-    pub ty: Type,
+    pub ty: Ty,
     pub span: SrcSpan,
 }
 
 #[derive(Clone, Debug)]
 pub struct Field {
-    pub name: Ident,
-    pub ty: Type,
     pub visibility: Visibility,
+    pub name: Ident,
+    pub ty: Ty,
     pub span: SrcSpan,
 }
 
@@ -223,9 +223,16 @@ pub enum VariantPayload {
     /// The variant carries no payload, such as `.none`.
     Unit,
     /// The variant carries a single unnamed value, such as `.circle(f64)`.
-    Type(Type),
+    Type(Ty),
     /// The variant carries named fields, such as `.square { l: f64 }`.
     Record(Vec<Field>),
+}
+
+#[derive(Clone, Debug)]
+pub struct ClosureParam {
+    pub name: Ident,
+    pub ty: Option<Ty>,
+    pub span: SrcSpan,
 }
 
 // ===========================================================================
@@ -233,13 +240,13 @@ pub enum VariantPayload {
 // ===========================================================================
 
 #[derive(Clone, Debug)]
-pub struct Type {
-    pub kind: Ty,
+pub struct Ty {
+    pub kind: TyKind,
     pub span: SrcSpan,
 }
 
 #[derive(Clone, Debug)]
-pub enum Ty {
+pub enum TyKind {
     Base {
         base: Path,
         args: Vec<Ty>,
@@ -263,7 +270,7 @@ pub enum Ty {
     /// A function type, such as `fun(i32, i32) -> i32`.
     ///
     /// `ret` is `None` when there's no `->`. That means the function returns no value.
-    Fn {
+    Function {
         params: Vec<Ty>,
         ret: Option<Box<Ty>>,
     },
@@ -299,12 +306,12 @@ pub enum StmtKind {
         body: Block,
     },
     WhileLet {
-        pat: Pattern,
+        pat: Pat,
         scrutinee: Expr,
         body: Block,
     },
     For {
-        name: Pattern,
+        name: Pat,
         iter: Expr,
         body: Block,
     },
@@ -337,8 +344,8 @@ pub enum StmtKind {
 #[derive(Clone, Debug)]
 pub struct DeclStmt {
     pub mutability: Mutability,
-    pub name: Pattern,
-    pub ty: Option<Type>,
+    pub name: Pat,
+    pub ty: Option<Ty>,
     pub expr: Expr,
     pub span: SrcSpan,
     pub else_branch: Option<Block>,
@@ -347,8 +354,8 @@ pub struct DeclStmt {
 /// One binding in a `with` block, such as `px = &mut point.x`.
 #[derive(Clone, Debug)]
 pub struct WithStmtLend {
-    pub name: Pattern,
-    pub ty: Option<Type>,
+    pub name: Pat,
+    pub ty: Option<Ty>,
     pub expr: Expr,
     pub span: SrcSpan,
 }
@@ -436,14 +443,14 @@ pub enum ExprKind {
         else_branch: Option<Box<Expr>>,
     },
     IfLet {
-        pat: Pattern,
+        pat: Pat,
         scrutinee: Box<Expr>,
         then_branch: Block,
         else_branch: Option<Box<Expr>>,
     },
     Match {
         scrutinee: Box<Expr>,
-        arms: Vec<MatchArm>,
+        arms: Vec<Arm>,
     },
     /// `spawn { ... }`. Launches the block as a concurrent task and evaluates to a handle for it.
     Spawn(Block),
@@ -453,22 +460,10 @@ pub enum ExprKind {
     Block(Block),
     Closure {
         params: Vec<ClosureParam>,
-        ret: Option<Type>,
+        ret: Option<Ty>,
         body: Box<Expr>,
     },
     Error,
-}
-
-/// A closure parameter.
-///
-/// Unlike a function's [`Param`], the type annotation is optional.
-///
-/// An unannotated parameter has its type inferred from context.
-#[derive(Clone, Debug)]
-pub struct ClosureParam {
-    pub name: Ident,
-    pub ty: Option<Type>,
-    pub span: SrcSpan,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -574,8 +569,8 @@ pub struct PayloadField<T> {
 }
 
 #[derive(Clone, Debug)]
-pub struct MatchArm {
-    pub pat: Pattern,
+pub struct Arm {
+    pub pat: Pat,
     pub body: Box<Expr>,
     pub span: SrcSpan,
 }
@@ -585,22 +580,22 @@ pub struct MatchArm {
 // ===========================================================================
 
 #[derive(Clone, Debug)]
-pub struct Pattern {
-    pub kind: PatternKind,
+pub struct Pat {
+    pub kind: PatKind,
     pub span: SrcSpan,
 }
 
 #[derive(Clone, Debug)]
-pub enum PatternKind {
+pub enum PatKind {
     Wildcard,
     Binding(Ident),
     Literal(Literal),
     /// An enum variant pattern, such as `.circle(r)`, `.square { l }`, or bare `.none`.
     Variant {
         variant: Ident,
-        payload: Payload<Pattern>,
+        payload: Payload<Pat>,
     },
     /// A tuple destructuring pattern, such as the `(x, y)` in `let (x, y) = point;`.
-    Tuple(Vec<Pattern>),
+    Tuple(Vec<Pat>),
     Error,
 }

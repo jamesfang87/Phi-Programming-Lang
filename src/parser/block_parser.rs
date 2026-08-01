@@ -22,7 +22,7 @@ mod tests {
     use super::*;
     use crate::ast::interner::Interner;
     use crate::ast::{
-        BinaryOp, DeclStmt, Expr, ExprKind, Literal, Mutability, PatternKind, Stmt, StmtKind,
+        BinaryOp, DeclStmt, Expr, ExprKind, Literal, Mutability, PatKind, Stmt, StmtKind,
     };
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
@@ -154,7 +154,7 @@ mod tests {
                 scrutinee,
                 body,
             } => {
-                assert!(matches!(pat.kind, PatternKind::Variant { .. }));
+                assert!(matches!(pat.kind, PatKind::Variant { .. }));
                 assert!(matches!(scrutinee.kind, ExprKind::FunCall { .. }));
                 assert_eq!(body.stmts.len(), 1);
             }
@@ -167,7 +167,7 @@ mod tests {
         let block = parse_block("{ for x in xs { foo(x); } }");
         match &only_stmt(&block).kind {
             StmtKind::For { name, iter, body } => {
-                assert!(matches!(name.kind, PatternKind::Binding(_)));
+                assert!(matches!(name.kind, PatKind::Binding(_)));
                 assert!(matches!(iter.kind, ExprKind::DeclRef(_)));
                 assert_eq!(body.stmts.len(), 1);
             }
@@ -180,7 +180,7 @@ mod tests {
         let block = parse_block("{ for (a, b) in pairs { foo(); } }");
         match &only_stmt(&block).kind {
             StmtKind::For { name, .. } => {
-                assert!(matches!(name.kind, PatternKind::Tuple(_)));
+                assert!(matches!(name.kind, PatKind::Tuple(_)));
             }
             other => panic!("expected a for statement, got {other:?}"),
         }
@@ -237,7 +237,7 @@ mod tests {
                 ..
             }) => {
                 assert!(matches!(mutability, Mutability::Immutable));
-                assert!(matches!(name.kind, PatternKind::Binding(_)));
+                assert!(matches!(name.kind, PatKind::Binding(_)));
                 assert!(ty.is_none());
             }
             other => panic!("expected a let statement, got {other:?}"),
@@ -261,7 +261,7 @@ mod tests {
         let block = parse_block("{ let (x, y) = point; }");
         match &only_stmt(&block).kind {
             StmtKind::Let(DeclStmt { name, .. }) => {
-                assert!(matches!(name.kind, PatternKind::Tuple(_)));
+                assert!(matches!(name.kind, PatKind::Tuple(_)));
             }
             other => panic!("expected a let statement, got {other:?}"),
         }
@@ -273,7 +273,7 @@ mod tests {
         match &only_stmt(&block).kind {
             StmtKind::With { lends, body } => {
                 assert_eq!(lends.len(), 1);
-                assert!(matches!(lends[0].name.kind, PatternKind::Binding(_)));
+                assert!(matches!(lends[0].name.kind, PatKind::Binding(_)));
                 assert!(matches!(lends[0].expr.kind, ExprKind::Borrow { .. }));
                 assert_eq!(body.stmts.len(), 1);
             }

@@ -9,11 +9,11 @@
 //! own, since `expr_parser` needs a type parser back for closures, and the two would otherwise
 //! have no way to be built together.
 
-use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
+use chumsky::Parser as ChumskyParser;
 
 use crate::ast::Mutability;
-use crate::ast::{Expr, Path, Ty, Type};
+use crate::ast::{Expr, Path, Ty, TyKind};
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -21,7 +21,7 @@ use super::{BoxedP, Extra, Parser};
 
 impl Parser {
     /// Parses a single type, using this parser's own expression parser for array lengths.
-    pub fn type_parser<'a>(&'a self) -> BoxedP<'a, Type> {
+    pub fn type_parser<'a>(&'a self) -> BoxedP<'a, Ty> {
         self.type_parser_with_expr(self.expr_parser())
     }
 
@@ -31,9 +31,9 @@ impl Parser {
     /// Callers that already have an expression parser in hand (like `expr_parser`, which needs
     /// a type parser for closure parameter types) pass it in here so the two grammars share one
     /// underlying parser instead of each building their own.
-    pub(crate) fn type_parser_with_expr<'a>(&'a self, expr: BoxedP<'a, Expr>) -> BoxedP<'a, Type> {
+    pub(crate) fn type_parser_with_expr<'a>(&'a self, expr: BoxedP<'a, Expr>) -> BoxedP<'a, Ty> {
         recursive(
-            |ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Type, Extra<'a>>>| {
+            |ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Ty, Extra<'a>>>| {
                 let primitive_ty = choice((
                     self.kind(TokenKind::I8),
                     self.kind(TokenKind::I16),
@@ -49,14 +49,14 @@ impl Parser {
                     self.kind(TokenKind::Char),
                     self.kind(TokenKind::String),
                 ))
-                .map(|t: Token| Type::primitive(t))
+                .map(|t: Token| Ty::primitive(t))
                 .boxed();
 
                 let path_ty = self
                     .path_parser()
-                    .map(|p: Path| Type {
+                    .map(|p: Path| Ty {
                         span: p.span,
-                        kind: Ty::Base {
+                        kind: TyKind::Base {
                             base: p,
                             args: Vec::new(),
                         },
@@ -65,9 +65,9 @@ impl Parser {
 
                 let self_ty = self
                     .kind(TokenKind::UpperSelfKw)
-                    .map(|self_tok| Type {
+                    .map(|self_tok| Ty {
                         span: self_tok.span,
-                        kind: Ty::SelfType,
+                        kind: TyKind::SelfType,
                     })
                     .boxed();
 
@@ -80,11 +80,9 @@ impl Parser {
                             .collect::<Vec<_>>(),
                     )
                     .then(self.kind(TokenKind::CloseParen))
-                    .map(|((open_tok, inside_types), close_tok)| Type {
+                    .map(|((open_tok, inside_types), close_tok)| Ty {
                         span: open_tok.span.merge(close_tok.span),
-                        kind: Ty::Tuple(
-                            (inside_types.into_iter().map(|t| t.kind)).collect::<Vec<_>>(),
-                        ),
+                        kind: TyKind::Tuple(inside_types.into_iter().collect::<Vec<_>>()),
                     })
                     .boxed();
 
@@ -97,10 +95,10 @@ impl Parser {
                             .or_not(),
                     )
                     .then(self.kind(TokenKind::CloseBracket))
-                    .map(|(((open_tok, elem_ty), len), close_tok)| Type {
+                    .map(|(((open_tok, elem_ty), len), close_tok)| Ty {
                         span: open_tok.span.merge(close_tok.span),
-                        kind: Ty::Array {
-                            elem: Box::new(elem_ty.kind),
+                        kind: TyKind::Array {
+                            elem: Box::new(elem_ty),
                             len: len.map(Box::new),
                         },
                     })
@@ -120,9 +118,9 @@ impl Parser {
                 let any_ty = self
                     .kind(TokenKind::AnyKw)
                     .then(any_target)
-                    .map(|(any_tok, inner_ty)| Type {
+                    .map(|(any_tok, inner_ty)| Ty {
                         span: any_tok.span.merge(inner_ty.span),
-                        kind: Ty::Any(Box::new(inner_ty.kind)),
+                        kind: TyKind::Any(Box::new(inner_ty)),
                     })
                     .boxed();
 
@@ -137,10 +135,10 @@ impl Parser {
                             Mutability::Immutable
                         };
 
-                        Type {
+                        Ty {
                             span: amp_tok.span.merge(ty.span),
-                            kind: Ty::Ref {
-                                base: Box::new(ty.kind),
+                            kind: TyKind::Ref {
+                                base: Box::new(ty),
                                 mutability,
                             },
                         }
@@ -150,9 +148,9 @@ impl Parser {
                 let dyn_ty = self
                     .kind(TokenKind::DynKw)
                     .then(self.path_parser())
-                    .map(|(dyn_tok, path)| Type {
+                    .map(|(dyn_tok, path)| Ty {
                         span: dyn_tok.span.merge(path.span),
-                        kind: Ty::Dyn(path),
+                        kind: TyKind::Dyn(path),
                     })
                     .boxed();
 
@@ -174,11 +172,11 @@ impl Parser {
                             Some(ret) => ret.span,
                             None => close_tok.span,
                         };
-                        Type {
+                        Ty {
                             span: fun_tok.span.merge(end_span),
-                            kind: Ty::Fn {
-                                params: params.into_iter().map(|t| t.kind).collect(),
-                                ret: ret.map(|t| Box::new(t.kind)),
+                            kind: TyKind::Function {
+                                params: params.into_iter().collect(),
+                                ret: ret.map(|t| Box::new(t)),
                             },
                         }
                     })
@@ -211,7 +209,7 @@ mod tests {
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;
 
-    fn parse_ty(src: &str) -> Type {
+    fn parse_ty(src: &str) -> Ty {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
@@ -241,9 +239,9 @@ mod tests {
         errors.len()
     }
 
-    fn base_name(ty: &Type) -> String {
+    fn base_name(ty: &Ty) -> String {
         match &ty.kind {
-            Ty::Base { base, .. } => Interner::resolve(base.segments[0].text),
+            TyKind::Base { base, .. } => Interner::resolve(base.segments[0].text),
             other => panic!("expected a base type, got {other:?}"),
         }
     }
@@ -260,7 +258,7 @@ mod tests {
     fn parses_qualified_path_type() {
         let ty = parse_ty("math::Vector2D");
         match &ty.kind {
-            Ty::Base { base, args } => {
+            TyKind::Base { base, args } => {
                 assert_eq!(base.segments.len(), 2);
                 assert_eq!(Interner::resolve(base.segments[0].text), "math");
                 assert_eq!(Interner::resolve(base.segments[1].text), "Vector2D");
@@ -274,7 +272,7 @@ mod tests {
     fn parses_immutable_ref_type() {
         let ty = parse_ty("&i32");
         match &ty.kind {
-            Ty::Ref { mutability, .. } => assert!(matches!(mutability, Mutability::Immutable)),
+            TyKind::Ref { mutability, .. } => assert!(matches!(mutability, Mutability::Immutable)),
             other => panic!("expected a ref type, got {other:?}"),
         }
     }
@@ -283,9 +281,9 @@ mod tests {
     fn parses_mutable_ref_type() {
         let ty = parse_ty("&mut i32");
         match &ty.kind {
-            Ty::Ref { mutability, base } => {
+            TyKind::Ref { mutability, base } => {
                 assert!(matches!(mutability, Mutability::Mutable));
-                assert!(matches!(**base, Ty::Base { .. }));
+                assert!(matches!(base.kind, TyKind::Base { .. }));
             }
             other => panic!("expected a ref type, got {other:?}"),
         }
@@ -295,7 +293,7 @@ mod tests {
     fn parses_any_type() {
         let ty = parse_ty("any i32");
         match &ty.kind {
-            Ty::Any(inner) => assert!(matches!(**inner, Ty::Base { .. })),
+            TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::Base { .. })),
             other => panic!("expected an any type, got {other:?}"),
         }
     }
@@ -304,7 +302,7 @@ mod tests {
     fn parses_dyn_type() {
         let ty = parse_ty("dyn Shape");
         match &ty.kind {
-            Ty::Dyn(path) => assert_eq!(Interner::resolve(path.segments[0].text), "Shape"),
+            TyKind::Dyn(path) => assert_eq!(Interner::resolve(path.segments[0].text), "Shape"),
             other => panic!("expected a dyn type, got {other:?}"),
         }
     }
@@ -312,17 +310,17 @@ mod tests {
     #[test]
     fn parses_self_type() {
         let ty = parse_ty("Self");
-        assert!(matches!(ty.kind, Ty::SelfType));
+        assert!(matches!(ty.kind, TyKind::SelfType));
     }
 
     #[test]
     fn parses_tuple_type() {
         let ty = parse_ty("(i32, bool)");
         match &ty.kind {
-            Ty::Tuple(types) => {
+            TyKind::Tuple(types) => {
                 assert_eq!(types.len(), 2);
-                assert!(matches!(types[0], Ty::Base { .. }));
-                assert!(matches!(types[1], Ty::Base { .. }));
+                assert!(matches!(types[0].kind, TyKind::Base { .. }));
+                assert!(matches!(types[1].kind, TyKind::Base { .. }));
             }
             other => panic!("expected a tuple type, got {other:?}"),
         }
@@ -332,8 +330,8 @@ mod tests {
     fn parses_array_type_without_length() {
         let ty = parse_ty("[i32]");
         match &ty.kind {
-            Ty::Array { elem, len } => {
-                assert!(matches!(**elem, Ty::Base { .. }));
+            TyKind::Array { elem, len } => {
+                assert!(matches!(elem.kind, TyKind::Base { .. }));
                 assert!(len.is_none());
             }
             other => panic!("expected an array type, got {other:?}"),
@@ -344,8 +342,8 @@ mod tests {
     fn parses_array_type_with_length() {
         let ty = parse_ty("[i32; 5]");
         match &ty.kind {
-            Ty::Array { elem, len } => {
-                assert!(matches!(**elem, Ty::Base { .. }));
+            TyKind::Array { elem, len } => {
+                assert!(matches!(elem.kind, TyKind::Base { .. }));
                 let len = len.as_ref().expect("expected an array length");
                 assert!(matches!(len.kind, ExprKind::Literal(Literal::Int { .. })));
             }
@@ -359,12 +357,12 @@ mod tests {
         // spelled this way, since the lexer tokenizes `&&` as a single `DoubleAmp` token.
         let ty = parse_ty("&mut &i32");
         match &ty.kind {
-            Ty::Ref { mutability, base } => {
+            TyKind::Ref { mutability, base } => {
                 assert!(matches!(mutability, Mutability::Mutable));
-                match base.as_ref() {
-                    Ty::Ref { mutability, base } => {
+                match &base.kind {
+                    TyKind::Ref { mutability, base } => {
                         assert!(matches!(mutability, Mutability::Immutable));
-                        assert!(matches!(**base, Ty::Base { .. }));
+                        assert!(matches!(base.kind, TyKind::Base { .. }));
                     }
                     other => panic!("expected a nested ref type, got {other:?}"),
                 }
@@ -377,9 +375,9 @@ mod tests {
     fn parses_mutable_ref_to_array_type() {
         let ty = parse_ty("&mut [i32]");
         match &ty.kind {
-            Ty::Ref { mutability, base } => {
+            TyKind::Ref { mutability, base } => {
                 assert!(matches!(mutability, Mutability::Mutable));
-                assert!(matches!(**base, Ty::Array { .. }));
+                assert!(matches!(base.kind, TyKind::Array { .. }));
             }
             other => panic!("expected a ref type, got {other:?}"),
         }
@@ -389,14 +387,14 @@ mod tests {
     fn parses_nested_tuple_type() {
         let ty = parse_ty("(i32, (bool, char))");
         match &ty.kind {
-            Ty::Tuple(types) => {
+            TyKind::Tuple(types) => {
                 assert_eq!(types.len(), 2);
-                assert!(matches!(types[0], Ty::Base { .. }));
-                match &types[1] {
-                    Ty::Tuple(inner) => {
+                assert!(matches!(types[0].kind, TyKind::Base { .. }));
+                match &types[1].kind {
+                    TyKind::Tuple(inner) => {
                         assert_eq!(inner.len(), 2);
-                        assert!(matches!(inner[0], Ty::Base { .. }));
-                        assert!(matches!(inner[1], Ty::Base { .. }));
+                        assert!(matches!(inner[0].kind, TyKind::Base { .. }));
+                        assert!(matches!(inner[1].kind, TyKind::Base { .. }));
                     }
                     other => panic!("expected a nested tuple type, got {other:?}"),
                 }
@@ -409,8 +407,8 @@ mod tests {
     fn parses_array_of_arrays_type() {
         let ty = parse_ty("[[i32]]");
         match &ty.kind {
-            Ty::Array { elem, len } => {
-                assert!(matches!(**elem, Ty::Array { .. }));
+            TyKind::Array { elem, len } => {
+                assert!(matches!(elem.kind, TyKind::Array { .. }));
                 assert!(len.is_none());
             }
             other => panic!("expected an array type, got {other:?}"),
@@ -422,12 +420,12 @@ mod tests {
         // `[(&i32, bool); 3]` exercises array + tuple + ref nesting together.
         let ty = parse_ty("[(&i32, bool); 3]");
         match &ty.kind {
-            Ty::Array { elem, len } => {
-                match elem.as_ref() {
-                    Ty::Tuple(types) => {
+            TyKind::Array { elem, len } => {
+                match &elem.kind {
+                    TyKind::Tuple(types) => {
                         assert_eq!(types.len(), 2);
-                        assert!(matches!(types[0], Ty::Ref { .. }));
-                        assert!(matches!(types[1], Ty::Base { .. }));
+                        assert!(matches!(types[0].kind, TyKind::Ref { .. }));
+                        assert!(matches!(types[1].kind, TyKind::Base { .. }));
                     }
                     other => panic!("expected a tuple element type, got {other:?}"),
                 }
@@ -442,7 +440,7 @@ mod tests {
     fn parses_any_tuple_type() {
         let ty = parse_ty("any (i32, bool)");
         match &ty.kind {
-            Ty::Any(inner) => assert!(matches!(**inner, Ty::Tuple(_))),
+            TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::Tuple(_))),
             other => panic!("expected an any type, got {other:?}"),
         }
     }
@@ -451,7 +449,7 @@ mod tests {
     fn parses_any_array_type() {
         let ty = parse_ty("any [i32; 4]");
         match &ty.kind {
-            Ty::Any(inner) => assert!(matches!(**inner, Ty::Array { .. })),
+            TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::Array { .. })),
             other => panic!("expected an any type, got {other:?}"),
         }
     }
@@ -460,7 +458,7 @@ mod tests {
     fn parses_any_self_type() {
         let ty = parse_ty("any Self");
         match &ty.kind {
-            Ty::Any(inner) => assert!(matches!(**inner, Ty::SelfType)),
+            TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::SelfType)),
             other => panic!("expected an any type, got {other:?}"),
         }
     }
@@ -484,11 +482,11 @@ mod tests {
     fn parses_fn_type_with_params_and_return_type() {
         let ty = parse_ty("fun(i32, i32) -> i32");
         match &ty.kind {
-            Ty::Fn { params, ret } => {
+            TyKind::Function { params, ret } => {
                 assert_eq!(params.len(), 2);
-                assert!(matches!(params[0], Ty::Base { .. }));
+                assert!(matches!(params[0].kind, TyKind::Base { .. }));
                 assert!(ret.is_some());
-                assert!(matches!(**ret.as_ref().unwrap(), Ty::Base { .. }));
+                assert!(matches!(ret.clone().unwrap().kind, TyKind::Base { .. }));
             }
             other => panic!("expected a fn type, got {other:?}"),
         }
@@ -498,7 +496,7 @@ mod tests {
     fn parses_fn_type_with_no_params_and_no_return_type() {
         let ty = parse_ty("fun()");
         match &ty.kind {
-            Ty::Fn { params, ret } => {
+            TyKind::Function { params, ret } => {
                 assert!(params.is_empty());
                 assert!(ret.is_none());
             }
@@ -510,9 +508,9 @@ mod tests {
     fn parses_fn_type_with_ref_param() {
         let ty = parse_ty("fun(&str)");
         match &ty.kind {
-            Ty::Fn { params, .. } => {
+            TyKind::Function { params, .. } => {
                 assert_eq!(params.len(), 1);
-                assert!(matches!(params[0], Ty::Ref { .. }));
+                assert!(matches!(params[0].kind, TyKind::Ref { .. }));
             }
             other => panic!("expected a fn type, got {other:?}"),
         }
@@ -523,11 +521,11 @@ mod tests {
         // A fn type whose parameter and return type are themselves fn types.
         let ty = parse_ty("fun(fun(i32) -> i32) -> fun() -> bool");
         match &ty.kind {
-            Ty::Fn { params, ret } => {
+            TyKind::Function { params, ret } => {
                 assert_eq!(params.len(), 1);
-                assert!(matches!(params[0], Ty::Fn { .. }));
-                match ret.as_deref() {
-                    Some(Ty::Fn { .. }) => {}
+                assert!(matches!(params[0].kind, TyKind::Function { .. }));
+                match &ret.clone().map(|t| t.kind) {
+                    Some(TyKind::Function { .. }) => {}
                     other => panic!("expected a fn return type, got {other:?}"),
                 }
             }

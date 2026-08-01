@@ -20,6 +20,7 @@ pub mod resolve_results;
 pub mod resolve_ty;
 pub mod symbol_table;
 
+use crate::ast::Symbol;
 use crate::hir::{DefId, Hir};
 use crate::nameres::resolve_results::{NameResolverResults, Res};
 use crate::nameres::symbol_table::SymbolTable;
@@ -58,6 +59,25 @@ impl<'hir> NameResolver<'hir> {
         let mut current = owner_id;
         loop {
             if let Some(res) = self.results.self_ty(current) {
+                return Some(res);
+            }
+            current = self.hir.parent(current)?;
+        }
+    }
+
+    /// What `name` resolves to as a generic type parameter visible inside `owner_id`: `name`
+    /// itself if `owner_id` declares a generic by that name, otherwise the same lookup against
+    /// each enclosing definition in turn, so a method (or a closure nested inside one) can name
+    /// a type parameter its enclosing `extend` block or trait declares. `None` if no enclosing
+    /// definition declares a generic named `name`.
+    ///
+    /// This reads the table [`resolve_generics`](Self::resolve_generics) fills in, which is
+    /// safe for the same reason [`Self::self_ty`] is: a definition's generics are recorded
+    /// before its body is walked, and its body is the only place they can be named from.
+    fn generic_ty(&self, owner_id: DefId, name: Symbol) -> Option<Res> {
+        let mut current = owner_id;
+        loop {
+            if let Some(res) = self.results.generic(current, name) {
                 return Some(res);
             }
             current = self.hir.parent(current)?;

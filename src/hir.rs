@@ -38,6 +38,7 @@ pub use items::{
 pub use pat::{Arm, BindingMode, Pat, PatKind};
 pub use types::{Ty, TyKind};
 
+#[derive(Debug)]
 pub struct Hir {
     /// Maps each definition, indexed by its (global) [`DefId`], to the [`Arena`] holding its
     /// nodes.

@@ -63,13 +63,16 @@ fn main() {
         "build" => {
             let extra = &args[2..];
             let print_ast = extra.iter().any(|a| a == "--ast");
-            if extra.iter().any(|a| a != "--ast") {
-                eprintln!("error: unknown argument after 'build' (only '--ast' is accepted)");
+            let print_hir = extra.iter().any(|a| a == "--hir");
+            if extra.iter().any(|a| a != "--ast" && a != "--hir") {
+                eprintln!(
+                    "error: unknown argument after 'build' (only '--ast' and '--hir' are accepted)"
+                );
                 std::process::exit(1);
             }
 
             let mut compiler = Compiler::new();
-            match compiler.build(Path::new("."), print_ast) {
+            match compiler.build(Path::new("."), print_ast, print_hir) {
                 Ok(true) => {}
                 Ok(false) => std::process::exit(1),
                 Err(e) => {

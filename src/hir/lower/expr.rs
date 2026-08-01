@@ -153,7 +153,7 @@ impl OwnerLowerer<'_> {
         &mut self,
         span: SrcSpan,
         params: &[ast::ClosureParam],
-        ret: &Option<ast::Type>,
+        ret: &Option<ast::Ty>,
         body: &ast::Expr,
     ) -> DefId {
         let item_id = self.cx.items.alloc(Some(self.def_id()));
@@ -176,7 +176,7 @@ impl OwnerLowerer<'_> {
         ow.finish()
     }
 
-    pub(super) fn lower_arm(&mut self, a: &ast::MatchArm) -> LocalId {
+    pub(super) fn lower_arm(&mut self, a: &ast::Arm) -> LocalId {
         self.synth_arm(a.span, |low, _id| {
             let pat = low.lower_pat(&a.pat);
             let body = low.lower_expr(&a.body);
