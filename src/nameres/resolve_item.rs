@@ -1,8 +1,8 @@
 use crate::ast::interner::Interner;
 use crate::ast::Ident;
 use crate::hir::{DefId, HirId, Node, OwnerNode, VariantPayload};
-use crate::name_res::resolve_results::Res;
-use crate::name_res::NameResolver;
+use crate::nameres::resolve_results::Res;
+use crate::nameres::NameResolver;
 
 impl<'hir> NameResolver<'hir> {
     /// A module's imports are resolved earlier, while [`SymbolTable`](crate::name_res::symbol_table::SymbolTable)

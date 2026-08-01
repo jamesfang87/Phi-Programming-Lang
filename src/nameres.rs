@@ -21,8 +21,8 @@ pub mod resolve_ty;
 pub mod symbol_table;
 
 use crate::hir::{DefId, Hir};
-use crate::name_res::resolve_results::{NameResolverResults, Res};
-use crate::name_res::symbol_table::SymbolTable;
+use crate::nameres::resolve_results::{NameResolverResults, Res};
+use crate::nameres::symbol_table::SymbolTable;
 
 /// Note that the resolver carries no "where am I?" state of its own. Every `resolve_*` method
 /// already takes the [`DefId`] of the owner it is walking, and the HIR records each owner's

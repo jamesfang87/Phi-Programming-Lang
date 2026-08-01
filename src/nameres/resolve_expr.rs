@@ -1,8 +1,8 @@
 use crate::ast::{Ident, Path};
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, LocalId, Node, OwnerNode, Payload};
-use crate::name_res::NameResolver;
-use crate::name_res::resolve_results::Res;
-use crate::name_res::symbol_table::SymbolTable;
+use crate::nameres::resolve_results::Res;
+use crate::nameres::symbol_table::SymbolTable;
+use crate::nameres::NameResolver;
 
 impl<'hir> NameResolver<'hir> {
     pub fn resolve_expr(&mut self, owner_id: DefId, expr_id: LocalId) {
