@@ -1,9 +1,9 @@
 use crate::ast::interner::Interner;
 use crate::ast::{Path, Symbol};
 use crate::hir::{DefId, HirId, LocalId, Node, TyKind};
-use crate::name_res::NameResolver;
-use crate::name_res::resolve_results::{PrimTy, Res};
-use crate::name_res::symbol_table::SymbolTable;
+use crate::nameres::resolve_results::{PrimTy, Res};
+use crate::nameres::symbol_table::SymbolTable;
+use crate::nameres::NameResolver;
 
 impl<'hir> NameResolver<'hir> {
     pub fn resolve_ty(&mut self, owner_id: DefId, ty_id: LocalId) {

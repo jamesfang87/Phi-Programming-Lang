@@ -12,9 +12,9 @@ use crate::diag::DiagCtx;
 use crate::driver::file_collector::FileCollector;
 use crate::driver::src_map::SrcMap;
 use crate::hir::lower::lower_unit;
-use crate::lexer::Lexer;
 use crate::lexer::token::Token;
-use crate::name_res::resolve;
+use crate::lexer::Lexer;
+use crate::nameres::resolve;
 use crate::parser::Parser;
 
 pub struct Compiler;

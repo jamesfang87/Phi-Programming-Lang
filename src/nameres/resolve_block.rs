@@ -2,7 +2,7 @@
 //! through to the statements and expressions that follow it.
 
 use crate::hir::{DefId, HirId, LocalId, Node, StmtKind};
-use crate::name_res::NameResolver;
+use crate::nameres::NameResolver;
 
 impl<'hir> NameResolver<'hir> {
     pub fn resolve_block(&mut self, owner_id: DefId, block_id: LocalId) {

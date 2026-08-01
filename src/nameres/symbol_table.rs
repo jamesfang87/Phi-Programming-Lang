@@ -4,7 +4,7 @@ use crate::ast::interner::Interner;
 use crate::ast::{Ident, Path, Symbol};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::hir::{DefId, Hir, HirId, Import, Node, OwnerNode};
-use crate::name_res::resolve_results::Res;
+use crate::nameres::resolve_results::Res;
 use std::collections::hash_map::Entry;
 
 struct Scope {

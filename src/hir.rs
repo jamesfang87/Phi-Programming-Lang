@@ -25,7 +25,7 @@ pub mod lower;
 mod pat;
 mod types;
 
-pub use crate::name_res::resolve_results::NameResolverResults;
+pub use crate::nameres::resolve_results::NameResolverResults;
 pub use arena::{Arena, Node, OwnerNode};
 pub use block::{Block, LetStmt, Stmt, StmtKind, WithLend};
 pub use builder::{ArenaBuilder, DefIdAllocator};
