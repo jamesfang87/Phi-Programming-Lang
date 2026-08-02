@@ -6,6 +6,7 @@
 //! separate from `Compiler`, which drives actual compilation of an existing project.
 
 pub mod compiler;
+pub mod core_lib;
 pub mod file_collector;
 pub mod src_file;
 pub mod src_map;

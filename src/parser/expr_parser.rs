@@ -12,9 +12,9 @@
 //! record payload. Condition and scrutinee positions (`if cond { ... }`, `match x { ... }`) turn
 //! this off, so the `{` there always starts the following block instead.
 
+use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 use chumsky::recursive::Indirect;
-use chumsky::Parser as ChumskyParser;
 
 use crate::ast::{
     AccessArgs, Arm, BinaryOp, Block, ClosureParam, CtorPayload, DeclStmt, Expr, ExprKind, Ident,
@@ -1049,8 +1049,8 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::interner::Interner;
     use crate::ast::PatKind;
+    use crate::ast::interner::Interner;
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;
@@ -1059,7 +1059,11 @@ mod tests {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let parser = Parser::new(tokens.clone(), offset);
         let (output, errors) = parser.expr_parser().parse(&tokens[..]).into_output_errors();

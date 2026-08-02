@@ -4,11 +4,25 @@
 //! space, and precomputed line-start offsets. Together these let a global offset be turned
 //! back into a line/column position without rescanning the file.
 
+/// Where a source file came from.
+///
+/// The core library is compiled into every unit alongside the user's own files, so the two are
+/// otherwise indistinguishable by the time they reach the `SrcMap`. Stages that report on "the
+/// program" -- `--ast` dumping it, for one -- use this to tell them apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FileOrigin {
+    /// A file the user wrote, found under the project root by the `FileCollector`.
+    User,
+    /// A file of the core library, embedded in the compiler binary itself.
+    Core,
+}
+
 /// A single source file the compiler has read, addressed within the shared `SrcMap` offset
 /// space rather than at file-local offsets.
 pub struct SrcFile {
     pub name: String,
     pub content: Vec<char>,
+    pub origin: FileOrigin,
     /// The offset of this file's first char within the whole `SrcMap`'s global address space.
     pub global_offset: usize,
     /// The global offset at which each line of this file starts.
@@ -20,7 +34,7 @@ impl SrcFile {
     ///
     /// Precomputing lets [`SrcFile::line_col`] locate a position with a binary search instead
     /// of rescanning the file on every call.
-    pub fn new(name: String, content: Vec<char>, global_offset: usize) -> Self {
+    pub fn new(name: String, content: Vec<char>, origin: FileOrigin, global_offset: usize) -> Self {
         // Line 1 starts at the file's own global offset.
         let mut line_starts = vec![global_offset];
 
@@ -35,6 +49,7 @@ impl SrcFile {
         SrcFile {
             name,
             content,
+            origin,
             global_offset,
             line_starts,
         }

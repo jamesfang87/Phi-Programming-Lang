@@ -1,0 +1,16 @@
+module app;
+
+import app::helper::Direction;
+import core::ops::Comparable;
+
+fun missing() -> Option<i32> {
+    return .none;
+}
+
+fun nested() -> Result<Option<i32>, bool> {
+    return .ok(.none);
+}
+
+fun facing() -> Direction {
+    return .up;
+}

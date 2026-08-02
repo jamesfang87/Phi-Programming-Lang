@@ -972,7 +972,11 @@ mod tests {
         DiagCtx::clear();
         let src = "let x = \"never closed\nlet y = '';\nlet z = @;\n";
         let chars: Vec<char> = src.chars().collect();
-        let offset = crate::driver::src_map::SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = crate::driver::src_map::SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
 
         Lexer::new(&chars, offset).tokenize();
         DiagCtx::report();

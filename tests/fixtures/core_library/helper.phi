@@ -1,0 +1,6 @@
+module app::helper;
+
+public enum Direction {
+    up,
+    down,
+}

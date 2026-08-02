@@ -4,14 +4,14 @@
 //! parsing, and error recovery. [`Parser::parse`] parses one file and reports errors through
 //! [`DiagCtx`].
 
+use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
 use chumsky::extra;
 use chumsky::prelude::*;
-use chumsky::Parser as ChumskyParser;
 
 use crate::ast::interner::Interner;
 use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Item, ItemKind, ParsedSrcFile, Path};
-use crate::diag::DiagCtx;
+use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::src_map::SrcMap;
 use crate::lexer::src_span::SrcSpan;
 use crate::lexer::token::{Token, TokenKind};
@@ -53,12 +53,62 @@ impl Parser {
             self.report_error(err);
         }
 
-        output.unwrap_or_else(|| ParsedSrcFile {
-            module: None,
-            imports: Vec::new(),
-            items: Vec::new(),
-            span: SrcSpan::new(0, 0),
-        })
+        match output {
+            Some(items) => self.assemble_file(items),
+            None => ParsedSrcFile {
+                module: None,
+                imports: Vec::new(),
+                items: Vec::new(),
+                span: SrcSpan::new(0, 0),
+            },
+        }
+    }
+
+    /// Splits a file's parsed items into the three parts a [`ParsedSrcFile`] keeps separate: its
+    /// `module` header, its imports, and the definitions themselves.
+    ///
+    /// The grammar parses all three as ordinary items, since they're interleaved in the token
+    /// stream and each is recovered from the same way. They're pulled apart here instead because
+    /// lowering treats them differently: a file's items go into whichever module its header
+    /// names, so that header has to be known before any of them is lowered.
+    fn assemble_file(&self, items: Vec<Item>) -> ParsedSrcFile {
+        let span = match (items.first(), items.last()) {
+            (Some(first), Some(last)) => first.span.merge(last.span),
+            _ => SrcSpan::new(self.file_offset, self.file_offset),
+        };
+
+        let mut module = None;
+        let mut imports = Vec::new();
+        let mut definitions = Vec::new();
+
+        for item in items {
+            match item.kind {
+                // Only the first `module` header counts. A file belongs to exactly one module,
+                // so a second one isn't a second home for the items below it -- it's a mistake,
+                // and taking the first keeps the rest of the file lowering somewhere sensible.
+                ItemKind::Module(decl) => match module {
+                    None => module = Some(decl),
+                    Some(_) => Self::report_duplicate_module(item.span),
+                },
+                ItemKind::Import(import) => imports.push(import),
+                _ => definitions.push(item),
+            }
+        }
+
+        ParsedSrcFile {
+            module,
+            imports,
+            items: definitions,
+            span,
+        }
+    }
+
+    fn report_duplicate_module(span: SrcSpan) {
+        DiagCtx::emit(
+            Diagnostic::error("a file can only declare one module", span)
+                .with_label("second `module` declaration")
+                .with_help("every item in a file belongs to the module its first header names"),
+        );
     }
 
     fn report_error(&self, err: &Rich<Token>) {
@@ -130,9 +180,10 @@ impl Parser {
     }
 
     /// Builds the whole grammar for a single file: a sequence of items followed by end-of-input.
-    fn grammar<'a>(
-        &'a self,
-    ) -> impl ChumskyParser<'a, &'a [Token], ParsedSrcFile, Extra<'a>> + Clone {
+    ///
+    /// The result is a flat list of items, including the file's `module` header and its imports.
+    /// [`Self::assemble_file`] sorts those into the parts of a [`ParsedSrcFile`] afterwards.
+    fn grammar<'a>(&'a self) -> impl ChumskyParser<'a, &'a [Token], Vec<Item>, Extra<'a>> + Clone {
         let item_start = choice((
             self.kind(TokenKind::PublicKw).ignored(),
             self.kind(TokenKind::FunKw).ignored(),
@@ -154,21 +205,7 @@ impl Parser {
                 },
             )));
 
-        item.repeated()
-            .collect::<Vec<_>>()
-            .then(end())
-            .map(|(items, _)| {
-                let span = match (items.first(), items.last()) {
-                    (Some(first), Some(last)) => first.span.merge(last.span),
-                    _ => SrcSpan::new(self.file_offset, self.file_offset),
-                };
-                ParsedSrcFile {
-                    module: None,
-                    imports: Vec::new(),
-                    items,
-                    span,
-                }
-            })
+        item.repeated().collect::<Vec<_>>().then_ignore(end())
     }
 }
 
@@ -196,7 +233,11 @@ mod tests {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let unit = Parser::new(tokens, offset).parse();
         let diagnostics = DiagCtx::diagnostics();
@@ -213,7 +254,11 @@ mod tests {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let _ = Parser::new(tokens, offset).parse();
         DiagCtx::diagnostics().len()
@@ -225,7 +270,11 @@ mod tests {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let unit = Parser::new(tokens, offset).parse();
         (unit, DiagCtx::diagnostics().len())
@@ -241,6 +290,45 @@ mod tests {
             ItemKind::Function(f) => f,
             other => panic!("expected a single function item, got {other:?}"),
         }
+    }
+
+    /// A file's `module` header and its imports are parsed as ordinary items but don't stay in
+    /// `items`: lowering reads them from their own fields, and needs the header in particular
+    /// before it can place any of the items below it.
+    #[test]
+    fn module_header_and_imports_are_split_out_of_items() {
+        let unit = parse_ok(
+            "module math::vector;\nimport core::ops::Add;\nimport math::*;\nfun main() {}",
+        );
+
+        let module = unit.module.as_ref().expect("the header should be recorded");
+        let segments: Vec<String> = module.path.segments.iter().map(|s| text(*s)).collect();
+        assert_eq!(segments, ["math", "vector"]);
+
+        assert_eq!(unit.imports.len(), 2);
+        assert!(unit.imports[1].glob);
+
+        // Only the function is left behind.
+        assert_eq!(text(only_function(&unit).name), "main");
+    }
+
+    #[test]
+    fn a_file_without_a_module_header_records_none() {
+        let unit = parse_ok("fun main() {}");
+        assert!(unit.module.is_none());
+    }
+
+    #[test]
+    fn a_second_module_header_is_an_error() {
+        let (unit, errors) = parse_with_errors("module a;\nmodule b;\nfun main() {}");
+        assert_eq!(errors, 1);
+
+        // The first header still wins, so the rest of the file lowers somewhere sensible.
+        let module = unit
+            .module
+            .as_ref()
+            .expect("the first header should be kept");
+        assert_eq!(text(module.path.segments[0]), "a");
     }
 
     #[test]

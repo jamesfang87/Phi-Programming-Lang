@@ -9,13 +9,14 @@ mod ast;
 mod diag;
 mod driver;
 mod hir;
+mod langitems;
 mod lexer;
 mod nameres;
 mod parser;
 mod typeck;
 
-use crate::driver::compiler::Compiler;
 use crate::driver::Driver;
+use crate::driver::compiler::Compiler;
 use std::env;
 use std::path::Path;
 

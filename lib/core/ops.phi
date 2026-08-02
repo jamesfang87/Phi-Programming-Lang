@@ -1,0 +1,49 @@
+module core::ops;
+
+public trait Add {
+    fun add(&self, other: &Self) -> Self;
+}
+
+public trait Sub {
+    fun sub(&self, other: &Self) -> Self;
+}
+
+public trait Mul {
+    fun mul(&self, other: &Self) -> Self;
+}
+
+public trait Div {
+    fun div(&self, other: &Self) -> Self;
+}
+
+public trait Rem {
+    fun rem(&self, other: &Self) -> Self;
+}
+
+public trait Neg {
+    fun neg(&self) -> Self;
+}
+
+public trait Not {
+    fun not(&self) -> Self;
+}
+
+public trait Eq {
+    fun eq(&self, other: &Self) -> bool;
+}
+
+public trait Comparable {
+    fun less_than(&self, other: &Self) -> bool;
+}
+
+public trait Index<K, V> {
+    fun index(&self, key: K) -> &V;
+}
+
+public trait IndexSet<K, V> {
+    fun index_set(&mut self, key: K, value: V);
+}
+
+public trait Drop {
+    fun drop(self);
+}
