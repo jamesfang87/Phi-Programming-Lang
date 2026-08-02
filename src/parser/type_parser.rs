@@ -9,8 +9,8 @@
 //! own, since `expr_parser` needs a type parser back for closures, and the two would otherwise
 //! have no way to be built together.
 
-use chumsky::prelude::*;
 use chumsky::Parser as ChumskyParser;
+use chumsky::prelude::*;
 
 use crate::ast::Mutability;
 use crate::ast::{Expr, Path, Ty, TyKind};
@@ -52,14 +52,37 @@ impl Parser {
                 .map(|t: Token| Ty::primitive(t))
                 .boxed();
 
+                // A named type, with an optional generic argument list: `String`, `Option<T>`,
+                // `Result<T, E>`.
+                //
+                // Unlike an expression, a type has no other meaning for `<`, so the argument
+                // list is taken greedily wherever one follows a path. Nesting needs no special
+                // handling either: the lexer only ever produces `>` as a single `CloseCaret`,
+                // never a shift token, so `Array<Option<T>>` closes as two ordinary tokens.
                 let path_ty = self
                     .path_parser()
-                    .map(|p: Path| Ty {
-                        span: p.span,
-                        kind: TyKind::Base {
-                            base: p,
-                            args: Vec::new(),
-                        },
+                    .then(
+                        self.kind(TokenKind::OpenCaret)
+                            .ignore_then(
+                                ty.clone()
+                                    .separated_by(self.kind(TokenKind::Comma))
+                                    .allow_trailing()
+                                    .at_least(1)
+                                    .collect::<Vec<_>>(),
+                            )
+                            .then(self.kind(TokenKind::CloseCaret))
+                            .or_not(),
+                    )
+                    .map(|(p, args): (Path, Option<(Vec<Ty>, Token)>)| {
+                        let (args, span) = match args {
+                            Some((args, close_tok)) => (args, p.span.merge(close_tok.span)),
+                            None => (Vec::new(), p.span),
+                        };
+
+                        Ty {
+                            span,
+                            kind: TyKind::Base { base: p, args },
+                        }
                     })
                     .boxed();
 
@@ -213,7 +236,11 @@ mod tests {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let parser = Parser::new(tokens.clone(), offset);
         let (output, errors) = parser.type_parser().parse(&tokens[..]).into_output_errors();
@@ -228,7 +255,11 @@ mod tests {
     /// they're empty, unlike [`parse_ty`]).
     fn diagnostic_count(src: &str) -> usize {
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let parser = Parser::new(tokens.clone(), offset);
         let (_, errors) = parser
@@ -263,6 +294,41 @@ mod tests {
                 assert_eq!(Interner::resolve(base.segments[0].text), "math");
                 assert_eq!(Interner::resolve(base.segments[1].text), "Vector2D");
                 assert!(args.is_empty());
+            }
+            other => panic!("expected a base type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_generic_args_on_a_named_type() {
+        let ty = parse_ty("Result<T, E>");
+        match &ty.kind {
+            TyKind::Base { base, args } => {
+                assert_eq!(Interner::resolve(base.segments[0].text), "Result");
+                assert_eq!(args.len(), 2);
+                assert_eq!(base_name(&args[0]), "T");
+                assert_eq!(base_name(&args[1]), "E");
+            }
+            other => panic!("expected a base type, got {other:?}"),
+        }
+    }
+
+    /// `>>` is two `CloseCaret` tokens rather than a shift, so a nested argument list needs no
+    /// special handling to close.
+    #[test]
+    fn parses_nested_generic_args() {
+        let ty = parse_ty("Array<Option<i32>>");
+        match &ty.kind {
+            TyKind::Base { base, args } => {
+                assert_eq!(Interner::resolve(base.segments[0].text), "Array");
+                assert_eq!(args.len(), 1);
+                match &args[0].kind {
+                    TyKind::Base { base, args } => {
+                        assert_eq!(Interner::resolve(base.segments[0].text), "Option");
+                        assert_eq!(args.len(), 1);
+                    }
+                    other => panic!("expected a nested base type, got {other:?}"),
+                }
             }
             other => panic!("expected a base type, got {other:?}"),
         }

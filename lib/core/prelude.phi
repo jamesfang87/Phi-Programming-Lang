@@ -1,0 +1,17 @@
+module core::prelude;
+
+import core::option::Option;
+import core::result::Result;
+import core::iter::Iterator;
+import core::ops::Add;
+import core::ops::Sub;
+import core::ops::Mul;
+import core::ops::Div;
+import core::ops::Rem;
+import core::ops::Neg;
+import core::ops::Not;
+import core::ops::Eq;
+import core::ops::Comparable;
+import core::ops::Index;
+import core::ops::IndexSet;
+import core::ops::Drop;

@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use crate::ast::interner::Interner;
 use crate::ast::Ident;
+use crate::ast::interner::Interner;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::hir::{DefId, HirId, LocalId, Node, OwnerNode, TyKind, VariantPayload};
 use crate::lexer::src_span::SrcSpan;
-use crate::nameres::resolve_results::Res;
 use crate::nameres::NameResolver;
+use crate::nameres::resolve_results::Res;
 
 /// Where an owner's own generic type parameter comes from.
 ///
@@ -59,7 +59,7 @@ impl<'hir> NameResolver<'hir> {
                 OwnerNode::Enum(_) => self.resolve_enums(item),
                 OwnerNode::Trait(_) => self.resolve_trait(item),
                 OwnerNode::Extend(_) => self.resolve_extend(item),
-                OwnerNode::Closure(_) => {
+                _ => {
                     unreachable!(
                         "A module should not contain fields, variants, type params, and closures in the top level"
                     )

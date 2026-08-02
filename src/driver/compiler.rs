@@ -9,11 +9,13 @@ use std::path::Path;
 
 use crate::ast::ParsedSrcFile;
 use crate::diag::DiagCtx;
+use crate::driver::core_lib::CoreLib;
 use crate::driver::file_collector::FileCollector;
+use crate::driver::src_file::FileOrigin;
 use crate::driver::src_map::SrcMap;
 use crate::hir::lower::lower_unit;
-use crate::lexer::token::Token;
 use crate::lexer::Lexer;
+use crate::lexer::token::Token;
 use crate::nameres::resolve;
 use crate::parser::Parser;
 
@@ -24,9 +26,16 @@ impl Compiler {
         Compiler {}
     }
 
-    /// Collects every `.phi` file under `root` into the source map.
+    /// Collects every `.phi` file under `root`, and the core library, into the source map.
+    ///
+    /// The user's files are registered first so that they occupy the lowest global offsets. The
+    /// core library is part of every build but changes on a completely different schedule to the
+    /// program being compiled, and registering it last keeps a change to it -- adding a trait,
+    /// say -- from shifting the span of every user file behind it.
     pub fn collect_sources(&mut self, root: &Path) -> io::Result<()> {
-        FileCollector::collect(root)
+        FileCollector::collect(root)?;
+        CoreLib::register();
+        Ok(())
     }
 
     /// Lexes every collected file, in `SrcMap` order.
@@ -68,8 +77,14 @@ impl Compiler {
         let token_streams = self.lex();
         let asts = self.parse(token_streams);
 
+        // The core library is part of every unit, but it isn't part of the program the user
+        // asked to see, so it's left out of the dump.
         if print_ast {
-            for (file, ast) in SrcMap::files().iter().zip(asts.iter()) {
+            for (file, ast) in SrcMap::files()
+                .iter()
+                .zip(asts.iter())
+                .filter(|(file, _)| file.origin == FileOrigin::User)
+            {
                 println!("// {}", file.name);
                 println!("{ast:#?}");
             }

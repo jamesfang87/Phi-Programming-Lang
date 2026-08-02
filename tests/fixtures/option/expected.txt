@@ -3,40 +3,33 @@
 === stdout ===
 // ./main.phi
 ParsedSrcFile {
-    module: None,
-    imports: [],
-    items: [
-        Item {
-            kind: Module(
-                ModuleDecl {
-                    path: Path {
-                        segments: [
-                            Ident {
-                                text: Symbol(
-                                    0,
-                                ),
-                                span: SrcSpan {
-                                    begin: 7,
-                                    end: 13,
-                                },
-                            },
-                        ],
+    module: Some(
+        ModuleDecl {
+            path: Path {
+                segments: [
+                    Ident {
+                        text: Symbol(
+                            0,
+                        ),
                         span: SrcSpan {
                             begin: 7,
                             end: 13,
                         },
                     },
-                    span: SrcSpan {
-                        begin: 0,
-                        end: 14,
-                    },
+                ],
+                span: SrcSpan {
+                    begin: 7,
+                    end: 13,
                 },
-            ),
+            },
             span: SrcSpan {
                 begin: 0,
                 end: 14,
             },
         },
+    ),
+    imports: [],
+    items: [
         Item {
             kind: Enum(
                 Enum {
