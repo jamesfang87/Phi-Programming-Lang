@@ -22,6 +22,7 @@ pub mod symbol_table;
 
 use crate::ast::Symbol;
 use crate::hir::{DefId, Hir};
+use crate::langitems;
 use crate::nameres::resolve_results::{NameResolverResults, Res};
 use crate::nameres::symbol_table::SymbolTable;
 
@@ -37,10 +38,17 @@ struct NameResolver<'hir> {
 }
 
 pub fn resolve(hir: &Hir) -> NameResolverResults {
+    let symbol_tab = SymbolTable::new(hir);
+
+    // Resolved up front, against the finished namespaces, so that the lang items are available
+    // to every later pass without any of them having to reach back into the symbol table --
+    // which doesn't outlive this function.
+    let lang_items = langitems::collect(&symbol_tab, hir.root_id());
+
     let mut resolver = NameResolver {
         hir,
-        results: NameResolverResults::new(),
-        symbol_tab: SymbolTable::new(hir),
+        results: NameResolverResults::new(lang_items),
+        symbol_tab,
     };
     resolver.resolve_module(hir.root_id());
     resolver.results

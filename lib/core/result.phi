@@ -1,0 +1,6 @@
+module core::result;
+
+public enum Result<T, E> {
+    ok: T,
+    err: E,
+}

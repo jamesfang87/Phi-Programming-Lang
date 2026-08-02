@@ -1,0 +1,12 @@
+module app::map;
+
+public struct Map<K, V> {
+    key: K,
+    value: V,
+}
+
+extend<K, V> Map<K, V> with Index<K, V> {
+    fun index(&self, key: K) -> &V {
+        return &self.value;
+    }
+}

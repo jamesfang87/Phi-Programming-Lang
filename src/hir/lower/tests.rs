@@ -22,7 +22,11 @@ fn lower_src(src: &str) -> Hir {
     DiagCtx::clear();
     Interner::clear();
     let chars: Vec<char> = src.chars().collect();
-    let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+    let offset = SrcMap::add_file(
+        "<test>".to_string(),
+        chars.clone(),
+        crate::driver::src_file::FileOrigin::User,
+    );
     let tokens = Lexer::new(&chars, offset).tokenize();
     let unit = Parser::new(tokens, offset).parse();
     let diagnostics = DiagCtx::diagnostics();
@@ -356,7 +360,11 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
         Interner::clear();
         let src = "fun helper() {}";
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         Parser::new(tokens, offset).parse()
     };

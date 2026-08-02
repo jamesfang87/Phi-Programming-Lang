@@ -1,0 +1,6 @@
+module core::option;
+
+public enum Option<T> {
+    some: T,
+    none,
+}

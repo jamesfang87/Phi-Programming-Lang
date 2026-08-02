@@ -4,7 +4,7 @@
 //! increasing char-offset space. This lets a `SrcSpan` be resolved back to its owning file
 //! and text without threading a source reference through every stage of the pipeline.
 
-use crate::driver::src_file::SrcFile;
+use crate::driver::src_file::{FileOrigin, SrcFile};
 use crate::lexer::src_span::SrcSpan;
 use std::sync::{Mutex, OnceLock};
 
@@ -73,11 +73,12 @@ impl SrcMap {
     }
 
     /// Registers a new source file, returning the global offset its content starts at.
-    pub fn add_file(name: String, content: Vec<char>) -> usize {
+    pub fn add_file(name: String, content: Vec<char>, origin: FileOrigin) -> usize {
         let mut st = state().lock().unwrap();
         let offset = st.cur_offset;
         let len = content.len();
-        let file: &'static SrcFile = Box::leak(Box::new(SrcFile::new(name, content, offset)));
+        let file: &'static SrcFile =
+            Box::leak(Box::new(SrcFile::new(name, content, origin, offset)));
         st.files.push(file);
         st.cur_offset += len;
         offset
@@ -95,8 +96,8 @@ impl SrcMapBuilder {
         SrcMapBuilder
     }
 
-    pub fn add_file(self, name: String, content: Vec<char>) -> Self {
-        SrcMap::add_file(name, content);
+    pub fn add_file(self, name: String, content: Vec<char>, origin: FileOrigin) -> Self {
+        SrcMap::add_file(name, content, origin);
         self
     }
 

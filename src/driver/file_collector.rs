@@ -3,6 +3,7 @@
 //! It walks the directory tree under a given root and registers every `.phi` file it finds
 //! in the global `SrcMap`, in a reproducible order.
 
+use crate::driver::src_file::FileOrigin;
 use crate::driver::src_map::SrcMapBuilder;
 use std::fs;
 use std::io;
@@ -36,7 +37,7 @@ impl FileCollector {
             } else if path.extension().and_then(|s| s.to_str()) == Some("phi") {
                 let name = path.to_string_lossy().into_owned();
                 let content = fs::read_to_string(&path)?.chars().collect::<Vec<char>>();
-                SrcMapBuilder::new().add_file(name, content);
+                SrcMapBuilder::new().add_file(name, content, FileOrigin::User);
             }
         }
         Ok(())

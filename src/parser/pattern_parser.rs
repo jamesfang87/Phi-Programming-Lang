@@ -8,8 +8,8 @@
 //! expression literal parsers so `match x { 1 => ... }` accepts the same literal forms as an
 //! expression would.
 
-use chumsky::prelude::*;
 use chumsky::Parser as ChumskyParser;
+use chumsky::prelude::*;
 
 use crate::ast::{Expr, ExprKind, Ident, Literal, Pat, PatKind, Payload, PayloadField};
 
@@ -175,7 +175,11 @@ mod tests {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let parser = Parser::new(tokens.clone(), offset);
         let (output, errors) = parser

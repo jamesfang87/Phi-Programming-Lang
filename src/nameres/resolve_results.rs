@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use crate::ast::Symbol;
 use crate::hir::{DefId, HirId};
+use crate::langitems::LangItems;
 
 /// A primitive, built-in type such as `i32` or `bool` -- these never get a `DefId` of their own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PrimTy {
     I8,
     I16,
@@ -58,6 +59,12 @@ pub enum Res {
 pub struct NameResolverResults {
     res: HashMap<HirId, Res>,
 
+    /// The core library definitions the compiler knows by name. These aren't reached through a
+    /// path the user wrote, but they are resolved the same way and against the same namespaces,
+    /// so they're part of the same answer to "what does this name mean" that the rest of this
+    /// struct records.
+    lang_items: LangItems,
+
     /// What `Self` stands for inside each definition that introduces it: a struct, an enum, a
     /// trait, or an `extend` block. Definitions that don't introduce a `Self` of their own (a
     /// function, a closure, a module) are absent -- a reference inside one of those looks the
@@ -76,12 +83,18 @@ pub struct NameResolverResults {
 }
 
 impl NameResolverResults {
-    pub fn new() -> Self {
+    pub fn new(lang_items: LangItems) -> Self {
         Self {
             res: HashMap::new(),
+            lang_items,
             self_tys: HashMap::new(),
             generics: HashMap::new(),
         }
+    }
+
+    /// The core library definitions the compiler knows by name.
+    pub fn lang_items(&self) -> &LangItems {
+        &self.lang_items
     }
 
     pub fn add(&mut self, reference: HirId, res: Res) {
@@ -118,6 +131,6 @@ impl NameResolverResults {
 
 impl Default for NameResolverResults {
     fn default() -> Self {
-        Self::new()
+        Self::new(LangItems::default())
     }
 }

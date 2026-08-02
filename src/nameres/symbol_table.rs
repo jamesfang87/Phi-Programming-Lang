@@ -59,9 +59,19 @@ impl ModuleNamespace {
     }
 }
 
+/// The module unqualified lookups fall back to once the enclosing module chain is exhausted.
+/// It re-exports the core library's most-used items, so a program can name `Option` or `Add`
+/// without importing anything.
+const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
+
 pub struct SymbolTable<'hir> {
     scopes: Vec<Scope>,
     modules: HashMap<DefId, ModuleNamespace>,
+    /// The prelude module, once [`Self::new`] has found it. `None` if the core library isn't
+    /// part of this unit -- which shouldn't happen in a real build, since the compiler embeds
+    /// it, but leaves the resolver working (minus the prelude) rather than panicking if it is
+    /// ever driven without one.
+    prelude: Option<DefId>,
     hir: &'hir Hir,
 }
 
@@ -72,10 +82,23 @@ impl<'hir> SymbolTable<'hir> {
         let mut table = Self {
             scopes: Vec::new(),
             modules,
+            prelude: None,
             hir,
         };
         table.resolve_imports(hir.root_id());
+        // The prelude's own namespace is filled in by the imports it declares, so it isn't
+        // usable as a fallback until those have been resolved.
+        table.prelude = table.find_prelude();
         table
+    }
+
+    /// Walks [`PRELUDE_PATH`] down from the root to find the prelude module.
+    fn find_prelude(&self) -> Option<DefId> {
+        let mut current = self.hir.root_id();
+        for segment in PRELUDE_PATH {
+            current = self.lookup_mod(current, Interner::intern(segment))?;
+        }
+        Some(current)
     }
 
     fn collect_module(
@@ -345,9 +368,18 @@ impl<'hir> SymbolTable<'hir> {
         chain
     }
 
-    /// Runs `lookup` against each module in `from`'s chain in turn, yielding the first hit.
+    /// Runs `lookup` against each module in `from`'s chain in turn, yielding the first hit, and
+    /// falls back to the prelude if none of them has one.
+    ///
+    /// The prelude comes last, after the root, so it can only ever supply a name nothing else
+    /// in scope already does. An item the user declares themselves shadows the core library's
+    /// of the same name, rather than colliding with it -- unlike a glob import, whose names go
+    /// into a module's own namespace and do collide (see [`Self::import_glob`]).
     fn in_module_chain<T>(&self, from: DefId, lookup: impl Fn(DefId) -> Option<T>) -> Option<T> {
-        self.module_chain(from).into_iter().find_map(lookup)
+        self.module_chain(from)
+            .into_iter()
+            .chain(self.prelude)
+            .find_map(lookup)
     }
 
     /// Steps through each of `segments` as a submodule name, starting from `base`.

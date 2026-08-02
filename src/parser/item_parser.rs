@@ -1,8 +1,8 @@
 //! Parses top-level items: functions, structs, enums, traits, `extend` blocks, modules, and
 //! imports.
 
-use chumsky::prelude::*;
 use chumsky::Parser as ChumskyParser;
+use chumsky::prelude::*;
 
 use crate::ast::Ident;
 use crate::ast::Import;
@@ -388,31 +388,33 @@ impl Parser {
         // `extend Adt<T> { methods }` to add inherent methods without implementing a trait.
         // Each of the three angle-bracket groups (the `extend` block's own generics, the
         // ADT's, and the trait's) is independent and optional.
+        // All three of an `extend` block's angle-bracket groups -- its own generics, the ADT's,
+        // and the trait's -- are written the same way, as a comma-separated `<T, U>`. Each is
+        // optional, and each is parsed against this one grammar.
+        let generic_args = self
+            .kind(TokenKind::OpenCaret)
+            .ignore_then(
+                type_p
+                    .clone()
+                    .separated_by(self.kind(TokenKind::Comma))
+                    .allow_trailing()
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then_ignore(self.kind(TokenKind::CloseCaret))
+            .or_not()
+            .boxed();
+
         let extend = self
             .kind(TokenKind::ExtendKw)
-            .then(
-                self.kind(TokenKind::OpenCaret)
-                    .ignore_then(self.type_parser().repeated().at_least(1).collect())
-                    .then_ignore(self.kind(TokenKind::CloseCaret))
-                    .or_not(),
-            )
+            .then(generic_args.clone())
             .then(self.path_parser())
-            .then(
-                self.kind(TokenKind::OpenCaret)
-                    .ignore_then(self.type_parser().repeated().at_least(1).collect())
-                    .then_ignore(self.kind(TokenKind::CloseCaret))
-                    .or_not(),
-            )
+            .then(generic_args.clone())
             .then(
                 self.kind(TokenKind::WithKw)
                     .ignore_then(self.path_parser())
                     .or_not()
-                    .then(
-                        self.kind(TokenKind::OpenCaret)
-                            .ignore_then(self.type_parser().repeated().at_least(1).collect())
-                            .then_ignore(self.kind(TokenKind::CloseCaret))
-                            .or_not(),
-                    ),
+                    .then(generic_args.clone()),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
             .then(function_decl.clone()(false).repeated().collect())
@@ -527,8 +529,8 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::interner::Interner;
     use crate::ast::SelfMode;
+    use crate::ast::interner::Interner;
     use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;
@@ -537,7 +539,11 @@ mod tests {
         DiagCtx::clear();
         Interner::clear();
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone());
+        let offset = SrcMap::add_file(
+            "<test>".to_string(),
+            chars.clone(),
+            crate::driver::src_file::FileOrigin::User,
+        );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let parser = Parser::new(tokens.clone(), offset);
         let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
@@ -707,6 +713,26 @@ mod tests {
                 assert!(e.trait_generics.is_some());
                 assert_eq!(e.methods.len(), 1);
                 assert!(e.methods[0].body.is_some());
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    /// Each of the three angle-bracket groups takes more than one argument, comma-separated,
+    /// which is what implementing a trait like `Index<K, V>` needs.
+    #[test]
+    fn parses_extend_with_multiple_generic_args() {
+        let item = parse_item(
+            "extend<K, V> Map<K, V> with Index<K, V> { fun index(&self, key: K) -> &V {} }",
+        );
+        match &item.kind {
+            ItemKind::Extend(e) => {
+                assert_eq!(e.extend_generics.as_deref().map(<[_]>::len), Some(2));
+                assert_eq!(e.adt_generics.as_deref().map(<[_]>::len), Some(2));
+                assert_eq!(e.trait_generics.as_deref().map(<[_]>::len), Some(2));
+
+                let trait_path = e.trait_path.as_ref().expect("expected a trait path");
+                assert_eq!(text(trait_path.segments[0]), "Index");
             }
             other => panic!("expected an extend item, got {other:?}"),
         }
