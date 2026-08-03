@@ -104,6 +104,17 @@ impl Hir {
         self.parents[def_id.index()]
     }
 
+    /// Iterates every `DefId` that owns an arena, in the order they were allocated. Used by the
+    /// `--debug` dump to walk the whole program without needing its own traversal; see
+    /// [`crate::driver::emit_debug`].
+    pub fn def_ids(&self) -> impl Iterator<Item = DefId> + '_ {
+        self.arenas
+            .iter()
+            .enumerate()
+            .filter(|(_, arena)| arena.is_some())
+            .map(|(index, _)| DefId::from_usize(index))
+    }
+
     /// Walks up from `def_id` until it reaches a module, and returns that module. The result is
     /// either the module `def_id` is declared in, or `def_id` itself if it already names a
     /// module.

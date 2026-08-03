@@ -15,8 +15,8 @@ mod nameres;
 mod parser;
 mod typeck;
 
-use crate::driver::Driver;
 use crate::driver::compiler::Compiler;
+use crate::driver::Driver;
 use std::env;
 use std::path::Path;
 
@@ -65,15 +65,24 @@ fn main() {
             let extra = &args[2..];
             let print_ast = extra.iter().any(|a| a == "--ast");
             let print_hir = extra.iter().any(|a| a == "--hir");
-            if extra.iter().any(|a| a != "--ast" && a != "--hir") {
+            let debug = extra.iter().any(|a| a == "--debug");
+            let exclude_core = extra.iter().any(|a| a == "--no-core");
+            let known = ["--ast", "--hir", "--debug", "--no-core"];
+            if extra.iter().any(|a| !known.contains(&a.as_str())) {
                 eprintln!(
-                    "error: unknown argument after 'build' (only '--ast' and '--hir' are accepted)"
+                    "error: unknown argument after 'build' (only '--ast', '--hir', '--debug', and '--no-core' are accepted)"
                 );
                 std::process::exit(1);
             }
 
             let mut compiler = Compiler::new();
-            match compiler.build(Path::new("."), print_ast, print_hir) {
+            match compiler.build(
+                Path::new("."),
+                print_ast,
+                print_hir,
+                debug,
+                exclude_core,
+            ) {
                 Ok(true) => {}
                 Ok(false) => std::process::exit(1),
                 Err(e) => {
