@@ -10,14 +10,15 @@ use std::path::Path;
 use crate::ast::ParsedSrcFile;
 use crate::diag::DiagCtx;
 use crate::driver::core_lib::CoreLib;
+use crate::driver::emit_debug;
 use crate::driver::file_collector::FileCollector;
-use crate::driver::src_file::FileOrigin;
 use crate::driver::src_map::SrcMap;
 use crate::hir::lower::lower_unit;
-use crate::lexer::Lexer;
 use crate::lexer::token::Token;
+use crate::lexer::Lexer;
 use crate::nameres::resolve;
 use crate::parser::Parser;
+use crate::typeck;
 
 pub struct Compiler;
 
@@ -72,37 +73,56 @@ impl Compiler {
     ///
     /// If `print_hir` is set, the lowered HIR for the whole unit is pretty-printed to stdout
     /// once lowering finishes. This is the hook `phi build --hir` uses.
-    pub fn build(&mut self, root: &Path, print_ast: bool, print_hir: bool) -> io::Result<bool> {
+    ///
+    /// If `debug` is set, every stage's results are dumped: the AST, the HIR, name resolution,
+    /// and type checking (the latter two aren't otherwise wired into the pipeline yet, and are
+    /// run here just to produce something to print). Unlike `--ast` and `--hir`, every `DefId`
+    /// and `Symbol` in that dump is resolved to a name instead of being left as a bare integer.
+    /// This is the hook `phi build --debug` uses -- see [`crate::driver::emit_debug`].
+    ///
+    /// `exclude_core` drops the core library -- which is linked into every build -- out of the
+    /// `--hir` and `--debug` dumps. It has no effect otherwise; `--ast` always excludes the core
+    /// library already.
+    pub fn build(
+        &mut self,
+        root: &Path,
+        print_ast: bool,
+        print_hir: bool,
+        debug: bool,
+        exclude_core: bool,
+    ) -> io::Result<bool> {
         self.collect_sources(root)?;
         let token_streams = self.lex();
         let asts = self.parse(token_streams);
 
-        // The core library is part of every unit, but it isn't part of the program the user
-        // asked to see, so it's left out of the dump.
-        if print_ast {
-            for (file, ast) in SrcMap::files()
-                .iter()
-                .zip(asts.iter())
-                .filter(|(file, _)| file.origin == FileOrigin::User)
-            {
-                println!("// {}", file.name);
-                println!("{ast:#?}");
-            }
+        if print_ast || debug {
+            emit_debug::print_ast(&asts);
         }
 
         // Desugars every file's AST into one HIR.
         let hir = lower_unit(&asts);
 
-        if print_hir {
-            println!("{hir:#?}");
+        if print_hir || debug {
+            emit_debug::print_hir(&hir, exclude_core);
         }
 
         // Resolves names within the HIR. The result isn't consumed yet.
         //
         // Type checking will need it once it's wired up.
-        let _name_res = resolve(&hir);
+        let name_res = resolve(&hir);
 
-        // TODO: typecheck `hir` using `_name_res`, and continue the pipeline.
+        if debug {
+            emit_debug::print_nameres(&hir, &name_res, exclude_core);
+        }
+
+        // TODO: typecheck `hir` using `name_res`, and continue the pipeline.
+        //
+        // `collect` is only run here, gated behind `--debug`, since nothing downstream consumes
+        // its results yet.
+        if debug {
+            let (tcx, typeck_results) = typeck::collect(&hir, &name_res);
+            emit_debug::print_typeck(&hir, &tcx, &typeck_results, exclude_core);
+        }
 
         DiagCtx::report();
         Ok(!DiagCtx::has_errors())
