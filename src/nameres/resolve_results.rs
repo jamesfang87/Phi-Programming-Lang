@@ -98,11 +98,27 @@ impl NameResolverResults {
     }
 
     pub fn add(&mut self, reference: HirId, res: Res) {
-        self.res.insert(reference, res);
+        match res {
+            Res::Local(hir_id)
+            | Res::SelfVal(hir_id)
+            | Res::Variant(hir_id)
+            | Res::TyParam(hir_id)
+                if hir_id == reference => {}
+            _ => {
+                self.res.insert(reference, res);
+            }
+        }
     }
 
     pub fn get(&self, reference: HirId) -> Option<Res> {
         self.res.get(&reference).copied()
+    }
+
+    /// Iterates every name- or path-carrying [`HirId`] recorded so far, alongside what it
+    /// resolved to. Used by the `--nameres` debug dump; see
+    /// [`crate::driver::emit_debug::print_nameres`].
+    pub fn iter(&self) -> impl Iterator<Item = (HirId, Res)> + '_ {
+        self.res.iter().map(|(&id, &res)| (id, res))
     }
 
     /// Records what `Self` means inside `def_id`'s own body.
@@ -126,6 +142,18 @@ impl NameResolverResults {
     /// [`NameResolver::generic_ty`]: crate::nameres::NameResolver::generic_ty
     pub fn generic(&self, def_id: DefId, name: Symbol) -> Option<Res> {
         self.generics.get(&def_id)?.get(&name).copied()
+    }
+
+    /// Iterates every definition that introduces a `Self`, alongside what `Self` means inside
+    /// its own body. Used by the `--nameres` debug dump.
+    pub fn self_tys_iter(&self) -> impl Iterator<Item = (DefId, Res)> + '_ {
+        self.self_tys.iter().map(|(&id, &res)| (id, res))
+    }
+
+    /// Iterates every definition that declares generics of its own, alongside the name -> [`Res`]
+    /// map for those generics. Used by the `--nameres` debug dump.
+    pub fn generics_iter(&self) -> impl Iterator<Item = (DefId, &HashMap<Symbol, Res>)> + '_ {
+        self.generics.iter().map(|(&id, params)| (id, params))
     }
 }
 

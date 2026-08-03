@@ -7,6 +7,7 @@
 
 pub mod compiler;
 pub mod core_lib;
+pub mod emit_debug;
 pub mod file_collector;
 pub mod src_file;
 pub mod src_map;
