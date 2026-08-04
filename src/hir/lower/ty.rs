@@ -1,20 +1,19 @@
 //! Lowers AST types.
 
 use crate::ast;
-use crate::hir::ids::LocalId;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::TyKind;
+use crate::hir::{HirId, TyKind};
 use crate::lexer::src_span::SrcSpan;
 
 impl OwnerLowerer<'_> {
-    pub(super) fn lower_ty(&mut self, ty: &ast::Ty) -> LocalId {
+    pub(super) fn lower_ty(&mut self, ty: &ast::Ty) -> HirId {
         self.lower_ty_kind(&ty.kind, ty.span)
     }
 
-    pub(super) fn lower_ty_kind(&mut self, kind: &ast::TyKind, span: SrcSpan) -> LocalId {
+    pub(super) fn lower_ty_kind(&mut self, kind: &ast::TyKind, span: SrcSpan) -> HirId {
         self.synth_ty(span, |low, _id| match kind {
-            ast::TyKind::Base { base, args } => TyKind::Base {
-                path: base.clone(),
+            ast::TyKind::Path { path, args } => TyKind::Path {
+                path: path.clone(),
                 args: args.iter().map(|a| low.lower_ty(a)).collect(),
             },
             ast::TyKind::Ref { base, mutability } => TyKind::Ref {

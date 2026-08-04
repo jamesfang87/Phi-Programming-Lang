@@ -12,10 +12,11 @@ use crate::diag::DiagCtx;
 use crate::driver::core_lib::CoreLib;
 use crate::driver::emit_debug;
 use crate::driver::file_collector::FileCollector;
+use crate::driver::options::BuildOptions;
 use crate::driver::src_map::SrcMap;
 use crate::hir::lower::lower_unit;
-use crate::lexer::token::Token;
 use crate::lexer::Lexer;
+use crate::lexer::token::Token;
 use crate::nameres::resolve;
 use crate::parser::Parser;
 use crate::typeck;
@@ -40,7 +41,7 @@ impl Compiler {
     }
 
     /// Lexes every collected file, in `SrcMap` order.
-    pub fn lex(&mut self) -> Vec<Vec<Token>> {
+    pub fn lex() -> Vec<Vec<Token>> {
         let mut token_streams = Vec::with_capacity(SrcMap::files().len());
         for file in SrcMap::files() {
             let mut lexer = Lexer::new(&file.content, file.global_offset);
@@ -50,7 +51,7 @@ impl Compiler {
     }
 
     /// Parses every collected file's token stream into an AST.
-    pub fn parse(&mut self, token_streams: Vec<Vec<Token>>) -> Vec<ParsedSrcFile> {
+    pub fn parse(token_streams: Vec<Vec<Token>>) -> Vec<ParsedSrcFile> {
         token_streams
             .into_iter()
             .zip(SrcMap::files().iter())
@@ -66,62 +67,41 @@ impl Compiler {
     ///
     /// Prints any diagnostics collected and reports whether compilation succeeded.
     ///
-    /// If `print_ast` is set, the parsed AST for every file is pretty-printed to stdout before
-    /// diagnostics are reported, in `SrcMap` order, which `FileCollector` sorts to be
-    /// reproducible. This is the hook `phi build --ast` uses, and what the golden tests under
-    /// `tests/` snapshot.
-    ///
-    /// If `print_hir` is set, the lowered HIR for the whole unit is pretty-printed to stdout
-    /// once lowering finishes. This is the hook `phi build --hir` uses.
-    ///
-    /// If `debug` is set, every stage's results are dumped: the AST, the HIR, name resolution,
-    /// and type checking (the latter two aren't otherwise wired into the pipeline yet, and are
-    /// run here just to produce something to print). Unlike `--ast` and `--hir`, every `DefId`
-    /// and `Symbol` in that dump is resolved to a name instead of being left as a bare integer.
-    /// This is the hook `phi build --debug` uses -- see [`crate::driver::emit_debug`].
-    ///
-    /// `exclude_core` drops the core library -- which is linked into every build -- out of the
-    /// `--hir` and `--debug` dumps. It has no effect otherwise; `--ast` always excludes the core
-    /// library already.
-    pub fn build(
-        &mut self,
-        root: &Path,
-        print_ast: bool,
-        print_hir: bool,
-        debug: bool,
-        exclude_core: bool,
-    ) -> io::Result<bool> {
+    /// Each stage's result is dumped to stdout if [`options.dumps`](BuildOptions::dumps) asks
+    /// for it, in `SrcMap` order, which `FileCollector` sorts to be reproducible. The AST dump
+    /// is what `phi build --ast` prints and what the golden tests under `tests/` snapshot; the
+    /// rest are the hooks behind `--hir` and `--debug`. Unlike `--ast` and `--hir`, the `--debug`
+    /// dumps resolve every `DefId` and `Symbol` to a name instead of leaving it a bare integer
+    /// -- see [`crate::driver::emit_debug`].
+    pub fn build(&mut self, root: &Path, options: &BuildOptions) -> io::Result<bool> {
         self.collect_sources(root)?;
-        let token_streams = self.lex();
-        let asts = self.parse(token_streams);
+        let asts = Self::parse(Self::lex());
 
-        if print_ast || debug {
+        if options.dumps.ast {
             emit_debug::print_ast(&asts);
         }
 
         // Desugars every file's AST into one HIR.
         let hir = lower_unit(&asts);
 
-        if print_hir || debug {
-            emit_debug::print_hir(&hir, exclude_core);
+        if options.dumps.hir {
+            emit_debug::print_hir(&hir, options.exclude_core);
         }
 
         // Resolves names within the HIR. The result isn't consumed yet.
         //
         // Type checking will need it once it's wired up.
-        let name_res = resolve(&hir);
+        let nameres = resolve(&hir);
 
-        if debug {
-            emit_debug::print_nameres(&hir, &name_res, exclude_core);
+        if options.dumps.nameres {
+            emit_debug::print_nameres(&hir, &nameres, options.exclude_core);
         }
 
-        // TODO: typecheck `hir` using `name_res`, and continue the pipeline.
-        //
-        // `collect` is only run here, gated behind `--debug`, since nothing downstream consumes
-        // its results yet.
-        if debug {
-            let (tcx, typeck_results) = typeck::collect(&hir, &name_res);
-            emit_debug::print_typeck(&hir, &tcx, &typeck_results, exclude_core);
+        // TODO: consume type checking's results and continue the pipeline. Until something
+        // downstream needs them, the pass runs only to produce something to dump.
+        if options.dumps.typeck {
+            let checked = typeck::check(&hir, &nameres);
+            emit_debug::print_typeck(&hir, &checked.tcx, &checked.types, options.exclude_core);
         }
 
         DiagCtx::report();

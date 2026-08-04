@@ -2,7 +2,7 @@
 //! to: a local binding, a top-level item, an enum variant, `Self`, or a primitive type.
 //!
 //! Each `resolve_*` method visits one kind of HIR node and, whenever it finds a name or path,
-//! looks it up through [`SymbolTable`] and records the answer in [`NameResolverResults`] under
+//! looks it up through [`SymbolTable`] and records the answer in [`NameResolutions`] under
 //! that node's [`HirId`](crate::hir::HirId). Typeck consumes those results afterward instead of
 //! doing its own lookups, which keeps "what does this name mean" a single, self-contained pass
 //! over the tree.
@@ -10,20 +10,20 @@
 //! The submodules split the walk by node kind: [`resolve_block`] and [`resolve_item`] drive the
 //! traversal into [`resolve_expr`], [`resolve_pat`], and [`resolve_ty`] as each kind of node
 //! turns up. [`symbol_table`] holds the scopes and per-module namespaces the lookups run
-//! against, and [`resolve_results`] defines the output type and what a name can resolve to.
+//! against, and [`results`] defines the output type and what a name can resolve to.
 
 pub mod resolve_block;
 pub mod resolve_expr;
 pub mod resolve_item;
 pub mod resolve_pat;
-pub mod resolve_results;
 pub mod resolve_ty;
+pub mod results;
 pub mod symbol_table;
 
 use crate::ast::Symbol;
 use crate::hir::{DefId, Hir};
 use crate::langitems;
-use crate::nameres::resolve_results::{NameResolverResults, Res};
+use crate::nameres::results::{NameResolutions, Res};
 use crate::nameres::symbol_table::SymbolTable;
 
 /// Note that the resolver carries no "where am I?" state of its own. Every `resolve_*` method
@@ -34,10 +34,10 @@ use crate::nameres::symbol_table::SymbolTable;
 struct NameResolver<'hir> {
     hir: &'hir Hir,
     symbol_tab: SymbolTable<'hir>,
-    results: NameResolverResults,
+    results: NameResolutions,
 }
 
-pub fn resolve(hir: &Hir) -> NameResolverResults {
+pub fn resolve(hir: &Hir) -> NameResolutions {
     let symbol_tab = SymbolTable::new(hir);
 
     // Resolved up front, against the finished namespaces, so that the lang items are available
@@ -47,7 +47,7 @@ pub fn resolve(hir: &Hir) -> NameResolverResults {
 
     let mut resolver = NameResolver {
         hir,
-        results: NameResolverResults::new(lang_items),
+        results: NameResolutions::new(),
         symbol_tab,
     };
     resolver.resolve_module(hir.root_id());

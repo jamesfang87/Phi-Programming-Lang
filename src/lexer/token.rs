@@ -1,15 +1,11 @@
-//! Defines the token types the lexer produces and the [`Token`] that pairs a [`TokenKind`]
-//! with its [`SrcSpan`].
-//!
-//! The parser matches on `TokenKind` directly. Keywords, operators, and delimiters each get
-//! their own variant rather than a generic "punctuation" or "keyword" variant with a string
-//! payload, so the parser gets exhaustiveness checking from the compiler instead of relying on
-//! string comparisons.
+//! [`Token`] represents a single lexical token in the Phi Programming Language;
+//! it consists of two part:, a [`TokenKind`] that records what type of token
+//! it is and a [`SrcSpan`].
 
 use crate::lexer::src_span::SrcSpan;
 
-/// The kind of a single token. See [`TokenKind::to_string`] for the exact source text each
-/// variant corresponds to.
+/// [`TokenKind`] is the kind of a single token. See [`TokenKind::to_string`]
+/// for the exact source text each variant corresponds to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
     Eof,
@@ -78,8 +74,8 @@ pub enum TokenKind {
     CloseBrace,
     OpenBracket,
     CloseBracket,
-    Arrow,     // `->`, function return type
-    FatArrow,  // `=>`, match arms
+    Arrow,    // `->`, function return type
+    FatArrow, // `=>`, match arms
     Comma,
     Semicolon,
 
@@ -248,42 +244,6 @@ impl TokenKind {
             TokenKind::Identifier => "identifier",
         }
     }
-
-    /// Returns `true` if the token is an arithmetic operator (`+`, `-`, `*`, `/`, `%`).
-    pub fn is_arithmetic(self) -> bool {
-        matches!(
-            self,
-            TokenKind::Plus
-                | TokenKind::Minus
-                | TokenKind::Star
-                | TokenKind::Slash
-                | TokenKind::Percent
-        )
-    }
-
-    /// Returns `true` if the token is a logical operator (`!`, `&&`, `||`).
-    pub fn is_logical(self) -> bool {
-        matches!(
-            self,
-            TokenKind::Bang | TokenKind::DoubleAmp | TokenKind::DoublePipe
-        )
-    }
-
-    /// Returns `true` if the token is a comparison operator (`<`, `<=`, `>`, `>=`).
-    pub fn is_comparison(self) -> bool {
-        matches!(
-            self,
-            TokenKind::OpenCaret
-                | TokenKind::LessEqual
-                | TokenKind::CloseCaret
-                | TokenKind::GreaterEqual
-        )
-    }
-
-    /// Returns `true` if the token is an equality operator (`==`, `!=`).
-    pub fn is_equality(self) -> bool {
-        matches!(self, TokenKind::DoubleEquals | TokenKind::BangEquals)
-    }
 }
 
 impl std::fmt::Display for TokenKind {
@@ -296,7 +256,8 @@ impl std::fmt::Display for TokenKind {
     }
 }
 
-/// Token represents a single, lexed token. It includes the type of token and its source span.
+/// [`Token`] represents a single lexical token. It includes the type of token
+/// and its source span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,

@@ -151,10 +151,8 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::lex_src;
     use crate::ast::interner::Interner;
-    use crate::diag::DiagCtx;
-    use crate::driver::src_map::SrcMap;
-    use crate::lexer::Lexer;
 
     /// The single pattern a `Payload::Single` holds, or a panic.
     fn single(payload: &Payload<Pat>) -> &Pat {
@@ -172,15 +170,7 @@ mod tests {
     }
 
     fn parse_pattern(src: &str) -> Pat {
-        DiagCtx::clear();
-        Interner::clear();
-        let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file(
-            "<test>".to_string(),
-            chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
-        );
-        let tokens = Lexer::new(&chars, offset).tokenize();
+        let (tokens, offset) = lex_src(src);
         let parser = Parser::new(tokens.clone(), offset);
         let (output, errors) = parser
             .pattern_parser()

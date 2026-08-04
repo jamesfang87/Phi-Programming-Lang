@@ -5,7 +5,7 @@
 
 use crate::ast::{Ident, Literal};
 use crate::hir::expr::Payload;
-use crate::hir::ids::{HirId, LocalId};
+use crate::hir::ids::HirId;
 use crate::lexer::src_span::SrcSpan;
 
 #[derive(Debug)]
@@ -34,7 +34,7 @@ pub enum PatKind {
         payload: Payload, // -> Node::Pat
     },
     /// `(a, b, ..)`. Destructures a tuple.
-    Tuple(Vec<LocalId>), // -> Node::Pat
+    Tuple(Vec<HirId>), // -> Node::Pat
     /// A pattern that failed to parse. Lowering carries it through rather than aborting.
     Error,
 }
@@ -55,7 +55,7 @@ pub enum BindingMode {
 #[derive(Debug)]
 pub struct Arm {
     pub hir_id: HirId,
-    pub pat: LocalId,  // -> Node::Pat
-    pub body: LocalId, // -> Node::Expr
+    pub pat: HirId,   // -> Node::Pat
+    pub block: HirId, // -> Node::Block
     pub span: SrcSpan,
 }

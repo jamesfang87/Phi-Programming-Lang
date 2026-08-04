@@ -1,14 +1,14 @@
 //! Lowers expressions, including promoting closures to their own owner.
 
 use crate::ast;
-use crate::ast::{Ident, Path};
-use crate::hir::ids::{DefId, LocalId};
+use crate::ast::Path;
+use crate::hir::ids::DefId;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{AccessArgs, Closure, ExprKind, OwnerNode, Payload};
+use crate::hir::{AccessArgs, Closure, ExprKind, HirId, OwnerNode, Payload, PayloadField};
 use crate::lexer::src_span::SrcSpan;
 
 impl OwnerLowerer<'_> {
-    pub(super) fn lower_expr(&mut self, e: &ast::Expr) -> LocalId {
+    pub(super) fn lower_expr(&mut self, e: &ast::Expr) -> HirId {
         let span = e.span;
         self.synth_expr(span, |low, _id| low.lower_expr_kind(&e.kind, span))
     }
@@ -16,7 +16,7 @@ impl OwnerLowerer<'_> {
     fn lower_expr_kind(&mut self, kind: &ast::ExprKind, span: SrcSpan) -> ExprKind {
         match kind {
             ast::ExprKind::Literal(lit) => ExprKind::Literal(*lit),
-            ast::ExprKind::DeclRef(path) => ExprKind::Path(path.clone()),
+            ast::ExprKind::Path(path) => ExprKind::Path(path.clone()),
             ast::ExprKind::Unary { op, operand } => ExprKind::Unary {
                 op: *op,
                 operand: self.lower_expr(operand),
@@ -42,7 +42,7 @@ impl OwnerLowerer<'_> {
                 mutability: *mutability,
                 operand: self.lower_expr(operand),
             },
-            ast::ExprKind::FunCall { callee, args } => ExprKind::Call {
+            ast::ExprKind::Call { callee, args } => ExprKind::Call {
                 callee: self.lower_expr(callee),
                 args: args.iter().map(|a| self.lower_expr(a)).collect(),
             },
@@ -65,10 +65,7 @@ impl OwnerLowerer<'_> {
             },
             ast::ExprKind::Ctor { path, payload } => ExprKind::Ctor {
                 path: path.clone(),
-                payload: payload
-                    .iter()
-                    .map(|p| (p.name, self.lower_expr(&p.expr)))
-                    .collect(),
+                payload: self.lower_record_fields(payload),
             },
             ast::ExprKind::Variant { variant, payload } => ExprKind::Variant {
                 variant: *variant,
@@ -85,19 +82,19 @@ impl OwnerLowerer<'_> {
             ast::ExprKind::Try(inner) => ExprKind::Try(self.lower_expr(inner)),
             ast::ExprKind::If {
                 cond,
-                then_branch,
-                else_branch,
+                then_block,
+                else_expr,
             } => ExprKind::If {
                 cond: self.lower_expr(cond),
-                then_branch: self.lower_block(then_branch),
-                else_branch: else_branch.as_ref().map(|e| self.lower_expr(e)),
+                then_block: self.lower_block(then_block),
+                else_block: else_expr.as_ref().map(|e| self.lower_expr_as_block(e)),
             },
             ast::ExprKind::IfLet {
                 pat,
                 scrutinee,
-                then_branch,
-                else_branch,
-            } => self.lower_if_let(pat, scrutinee, then_branch, else_branch),
+                then_block,
+                else_expr,
+            } => self.lower_if_let(pat, scrutinee, then_block, else_expr),
             ast::ExprKind::Match { scrutinee, arms } => ExprKind::Match {
                 scrutinee: self.lower_expr(scrutinee),
                 arms: arms.iter().map(|a| self.lower_arm(a)).collect(),
@@ -125,7 +122,7 @@ impl OwnerLowerer<'_> {
     fn lower_record_fields(
         &mut self,
         fields: &[ast::PayloadField<ast::Expr>],
-    ) -> Vec<(Ident, LocalId)> {
+    ) -> Vec<PayloadField> {
         fields
             .iter()
             .map(|f| {
@@ -141,7 +138,10 @@ impl OwnerLowerer<'_> {
                         })
                     }
                 };
-                (f.name, value)
+                PayloadField {
+                    name: f.name,
+                    value,
+                }
             })
             .collect()
     }
@@ -161,26 +161,25 @@ impl OwnerLowerer<'_> {
         let root = ow.reserve_root();
         let params = params.iter().map(|p| ow.lower_closure_param(p)).collect();
         let ret = ret.as_ref().map(|t| ow.lower_ty(t));
-        let body = ow.lower_expr(body);
-        let hir_id = ow.hir_id(root);
+        let block = ow.lower_expr_as_block(body);
         ow.fill(
             root,
             OwnerNode::Closure(Closure {
-                hir_id,
+                hir_id: root,
                 params,
                 ret,
-                body,
+                block,
                 span,
             }),
         );
         ow.finish()
     }
 
-    pub(super) fn lower_arm(&mut self, a: &ast::Arm) -> LocalId {
+    pub(super) fn lower_arm(&mut self, a: &ast::Arm) -> HirId {
         self.synth_arm(a.span, |low, _id| {
             let pat = low.lower_pat(&a.pat);
-            let body = low.lower_expr(&a.body);
-            (pat, body)
+            let block = low.lower_expr_as_block(&a.body);
+            (pat, block)
         })
     }
 }
