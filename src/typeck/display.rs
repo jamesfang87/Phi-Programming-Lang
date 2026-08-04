@@ -160,6 +160,12 @@ impl Pretty for UnifyError {
                 "mismatched types: expected a float type, found `{}`",
                 cx.show(found)
             ),
+            UnifyError::Infinite { var, ty } => write!(
+                f,
+                "cyclic type of infinite size: `{}` would have to contain itself, as `{}`",
+                cx.show(var),
+                cx.show(ty)
+            ),
         }
     }
 }
