@@ -388,9 +388,20 @@ impl Parser {
         // `extend Adt<T> { methods }` to add inherent methods without implementing a trait.
         // Each of the three angle-bracket groups (the `extend` block's own generics, the
         // ADT's, and the trait's) is independent and optional.
-        // All three of an `extend` block's angle-bracket groups -- its own generics, the ADT's,
-        // and the trait's -- are written the same way, as a comma-separated `<T, U>`. Each is
-        // optional, and each is parsed against this one grammar.
+        // An `extend` block's first angle-bracket group *declares* type parameters, exactly as
+        // `struct Foo<T>` does, so it is parsed with the same grammar and yields the same
+        // `Generic`s. Its position is what says so -- only the group directly after `extend` can
+        // be a declaration -- and reading it as a declaration here is what keeps every later pass
+        // from having to recover that fact from a type that happens to be a bare name.
+        let generic_params = self
+            .kind(TokenKind::OpenCaret)
+            .ignore_then(generics.clone())
+            .then_ignore(self.kind(TokenKind::CloseCaret))
+            .or_not()
+            .boxed();
+
+        // The other two groups -- the ADT's and the trait's -- *apply* arguments, so they are
+        // type lists: `extend Map<i32, bool> with Index<i32, bool>` is as valid as `Map<K, V>`.
         let generic_args = self
             .kind(TokenKind::OpenCaret)
             .ignore_then(
@@ -407,7 +418,7 @@ impl Parser {
 
         let extend = self
             .kind(TokenKind::ExtendKw)
-            .then(generic_args.clone())
+            .then(generic_params)
             .then(self.path_parser())
             .then(generic_args.clone())
             .then(
