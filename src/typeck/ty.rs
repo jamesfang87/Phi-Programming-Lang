@@ -78,7 +78,8 @@ pub enum TyKind {
     /// It is addressed by the [`HirId`] of the node that declares it -- a
     /// [`Node::Generic`](crate::hir::Node::Generic), or, for an `extend` block's own `<T>` list,
     /// the [`Node::Ty`](crate::hir::Node::Ty) standing in for one (see
-    /// [`GenericDecl`](crate::nameres::resolve_item)). That is exactly what name resolution
+    /// [`resolve_extend_generics`](crate::nameres::NameResolver)). That is exactly what name
+    /// resolution
     /// hands back in [`TypeRes::Generic`](crate::nameres::results::TypeRes::Generic), so no
     /// separate numbering has to be built or kept in sync to name a parameter here.
     Generic(HirId),
