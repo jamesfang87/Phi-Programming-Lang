@@ -1,7 +1,7 @@
 use super::*;
 use crate::testing::{lower_src, parse_src};
 use crate::ast::interner::Interner;
-use crate::ast::{BinaryOp, Ident, Mutability, Path, UnaryOp, Visibility};
+use crate::ast::{Ast, BinaryOp, Ident, ModuleDecl, Mutability, Path, UnaryOp, Visibility};
 use crate::hir::ids::{DefId, HirId};
 use crate::hir::{
     AccessArgs, Arm, Block, Closure, Enum, Expr, ExprKind, Extend, Field, Function, LoopSource,
@@ -329,11 +329,11 @@ fn import_glob_and_alias_are_lowered_into_the_module() {
 
 #[test]
 fn nested_module_declaration_synthesizes_ancestor_modules() {
-    // The parser doesn't currently wire a file's `module` header into `SrcUnit::module`, so
-    // this exercises `LoweringCtx::module_for_path` directly by attaching the decl by hand.
+    // The parser doesn't currently wire a file's `module` header into `ParsedSrcFile::module`,
+    // so this attaches the decl by hand to reach the module tree `Ast::new` builds from it.
     let mut unit = parse_src("fun helper() {}");
     let path_span = unit.span;
-    unit.module = Some(ast::ModuleDecl {
+    unit.module = Some(ModuleDecl {
         path: Path {
             segments: vec![
                 Ident {
@@ -350,7 +350,7 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
         span: path_span,
     });
 
-    let hir = lower_unit(&[unit]);
+    let hir = lower_unit(&Ast::new(vec![unit]));
     let root = hir.root();
     // The root's only item is the synthesized `math`, which in turn holds `math::vector`.
     assert_eq!(root.items.len(), 1);

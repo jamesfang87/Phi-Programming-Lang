@@ -11,10 +11,11 @@
 //! the core library that's linked into every build.
 
 use crate::ast::interner::Interner;
-use crate::ast::{ParsedSrcFile, Symbol};
+use crate::ast::{Ast, AstModule, Symbol};
 use crate::driver::src_file::FileOrigin;
 use crate::driver::src_map::SrcMap;
 use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
+use crate::lexer::src_span::SrcSpan;
 use crate::nameres::results::{NameResolutions, SelfTyRes, TypeRes, ValueRes};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
@@ -23,11 +24,7 @@ use crate::typeck::tyctx::TyCtx;
 /// Whether `def_id` was declared in a file the user wrote, as opposed to the core library that's
 /// linked into every build.
 fn is_user_def(hir: &Hir, def_id: DefId) -> bool {
-    let span = hir.def(def_id).span();
-    matches!(
-        SrcMap::file_containing(span.get_begin()).map(|file| file.origin),
-        Some(FileOrigin::User)
-    )
+    is_user_span(hir.def(def_id).span())
 }
 
 fn fmt_symbol(sym: Symbol) -> String {
@@ -258,18 +255,61 @@ fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
     }
 }
 
-/// Pretty-prints the parsed AST of every file the user wrote. The core library is always left
-/// out, since it isn't part of the program the user asked to see. This is the hook
-/// `phi build --ast` (and `--debug`) uses, and what the golden tests under `tests/` snapshot.
-pub fn print_ast(asts: &[ParsedSrcFile]) {
-    for (file, ast) in SrcMap::files()
-        .iter()
-        .zip(asts.iter())
-        .filter(|(file, _)| file.origin == FileOrigin::User)
-    {
-        println!("// {}", file.name);
-        println!("{ast:#?}");
+/// Whether `span` sits in a file the user wrote, as opposed to the core library that's linked
+/// into every build.
+fn is_user_span(span: SrcSpan) -> bool {
+    matches!(
+        SrcMap::file_containing(span.get_begin()).map(|file| file.origin),
+        Some(FileOrigin::User)
+    )
+}
+
+/// Pretty-prints the parsed AST, module by module. The core library is always left out, since it
+/// isn't part of the program the user asked to see. This is the hook `phi build --ast` (and
+/// `--debug`) uses, and what the golden tests under `tests/` snapshot.
+///
+/// Modules, not files, are the unit here: the parser hands back an [`Ast`], which has already
+/// merged every file declaring into the same module. A module the user contributed nothing to is
+/// skipped entirely, so a build's own modules aren't buried under the core library's.
+pub fn print_ast(ast: &Ast) {
+    for mod_id in ast.mod_ids() {
+        let module = ast.module(mod_id);
+        let imports: Vec<_> = module
+            .imports
+            .iter()
+            .filter(|import| is_user_span(import.span))
+            .collect();
+        let items: Vec<_> = module
+            .items
+            .iter()
+            .filter(|item| is_user_span(item.span))
+            .collect();
+        if imports.is_empty() && items.is_empty() {
+            continue;
+        }
+
+        println!("// module {}", fmt_mod_path(module));
+        for import in imports {
+            println!("{import:#?}");
+        }
+        for item in items {
+            println!("{item:#?}");
+        }
     }
+}
+
+/// A module's dotted path, or `<root>` for the root module, which has none.
+fn fmt_mod_path(module: &AstModule) -> String {
+    if module.path.segments.is_empty() {
+        return "<root>".to_string();
+    }
+    module
+        .path
+        .segments
+        .iter()
+        .map(|seg| Interner::resolve(seg.text))
+        .collect::<Vec<_>>()
+        .join("::")
 }
 
 /// Pretty-prints the lowered HIR for the whole unit. This is the hook `phi build --hir` uses.

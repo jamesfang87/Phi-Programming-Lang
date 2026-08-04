@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::ast::{Ident, Symbol};
 use crate::ast::interner::Interner;
-use crate::hir::{DefId, Hir, HirId, OwnerNode, VariantPayload};
+use crate::ast::{Ident, Symbol};
 use crate::hir::visit::Visitor;
+use crate::hir::{DefId, Hir, HirId, OwnerNode, VariantPayload};
 use crate::nameres::NameResolver;
 use crate::nameres::results::{SelfTyRes, TypeRes, ValueRes};
 
@@ -191,10 +191,9 @@ impl<'hir> NameResolver<'hir> {
             unreachable!("root of an Extend owner is always OwnerNode::Extend");
         };
 
-        // Only this first bracket group -- the block's own `<T>` -- declares fresh type
+        // Only this first bracket group declares fresh type
         // parameters; `Foo<T>` and `Bar<T>` below apply existing types (possibly these ones)
-        // and are resolved as ordinary types. The parser already draws that line, so these are
-        // ordinary `Generic`s and bind exactly like a `struct`'s or a `fun`'s.
+        // and are resolved as ordinary types.
         self.resolve_generics(extend_id, &extend.extend_generics);
 
         let adt_res = self.resolve_ty_path(extend_id, &extend.adt_path);

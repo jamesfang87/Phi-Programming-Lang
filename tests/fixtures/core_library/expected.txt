@@ -1,334 +1,196 @@
 === status ===
 0
 === stdout ===
-// ./helper.phi
-ParsedSrcFile {
-    module: Some(
-        ModuleDecl {
-            path: Path {
-                segments: [
-                    Ident {
-                        text: Symbol(
-                            0,
-                        ),
-                        span: SrcSpan {
-                            begin: 7,
-                            end: 10,
-                        },
-                    },
-                    Ident {
-                        text: Symbol(
-                            1,
-                        ),
-                        span: SrcSpan {
-                            begin: 12,
-                            end: 18,
-                        },
-                    },
-                ],
-                span: SrcSpan {
-                    begin: 7,
-                    end: 18,
-                },
-            },
-            span: SrcSpan {
-                begin: 0,
-                end: 19,
-            },
-        },
-    ),
-    imports: [],
-    items: [
-        Item {
-            kind: Enum(
-                Enum {
-                    visibility: Public,
-                    name: Ident {
-                        text: Symbol(
-                            2,
-                        ),
-                        span: SrcSpan {
-                            begin: 33,
-                            end: 42,
-                        },
-                    },
-                    generics: None,
-                    variants: [
-                        Variant {
-                            name: Ident {
-                                text: Symbol(
-                                    3,
-                                ),
-                                span: SrcSpan {
-                                    begin: 49,
-                                    end: 51,
-                                },
-                            },
-                            payload: Unit,
-                            span: SrcSpan {
-                                begin: 49,
-                                end: 51,
-                            },
-                        },
-                        Variant {
-                            name: Ident {
-                                text: Symbol(
-                                    4,
-                                ),
-                                span: SrcSpan {
-                                    begin: 57,
-                                    end: 61,
-                                },
-                            },
-                            payload: Unit,
-                            span: SrcSpan {
-                                begin: 57,
-                                end: 61,
-                            },
-                        },
-                    ],
-                    span: SrcSpan {
-                        begin: 28,
-                        end: 61,
-                    },
-                },
-            ),
-            span: SrcSpan {
-                begin: 28,
-                end: 61,
-            },
-        },
-    ],
-    span: SrcSpan {
-        begin: 0,
-        end: 61,
-    },
-}
-// ./main.phi
-ParsedSrcFile {
-    module: Some(
-        ModuleDecl {
-            path: Path {
-                segments: [
-                    Ident {
-                        text: Symbol(
-                            0,
-                        ),
-                        span: SrcSpan {
-                            begin: 72,
-                            end: 75,
-                        },
-                    },
-                ],
-                span: SrcSpan {
-                    begin: 72,
-                    end: 75,
-                },
-            },
-            span: SrcSpan {
-                begin: 65,
-                end: 76,
-            },
-        },
-    ),
-    imports: [
-        Import {
-            path: Path {
-                segments: [
-                    Ident {
-                        text: Symbol(
-                            0,
-                        ),
-                        span: SrcSpan {
-                            begin: 85,
-                            end: 88,
-                        },
-                    },
-                    Ident {
-                        text: Symbol(
-                            1,
-                        ),
-                        span: SrcSpan {
-                            begin: 90,
-                            end: 96,
-                        },
-                    },
-                    Ident {
-                        text: Symbol(
-                            2,
-                        ),
-                        span: SrcSpan {
-                            begin: 98,
-                            end: 107,
-                        },
-                    },
-                ],
+// module app
+Import {
+    path: Path {
+        segments: [
+            Ident {
+                text: Symbol(
+                    0,
+                ),
                 span: SrcSpan {
                     begin: 85,
+                    end: 88,
+                },
+            },
+            Ident {
+                text: Symbol(
+                    1,
+                ),
+                span: SrcSpan {
+                    begin: 90,
+                    end: 96,
+                },
+            },
+            Ident {
+                text: Symbol(
+                    2,
+                ),
+                span: SrcSpan {
+                    begin: 98,
                     end: 107,
                 },
             },
-            glob: false,
-            alias: None,
-            span: SrcSpan {
-                begin: 78,
-                end: 108,
-            },
+        ],
+        span: SrcSpan {
+            begin: 85,
+            end: 107,
         },
-        Import {
-            path: Path {
-                segments: [
-                    Ident {
-                        text: Symbol(
-                            5,
-                        ),
-                        span: SrcSpan {
-                            begin: 116,
-                            end: 120,
-                        },
-                    },
-                    Ident {
-                        text: Symbol(
-                            6,
-                        ),
-                        span: SrcSpan {
-                            begin: 122,
-                            end: 125,
-                        },
-                    },
-                    Ident {
-                        text: Symbol(
-                            7,
-                        ),
-                        span: SrcSpan {
-                            begin: 127,
-                            end: 137,
-                        },
-                    },
-                ],
+    },
+    glob: false,
+    alias: None,
+    span: SrcSpan {
+        begin: 78,
+        end: 108,
+    },
+}
+Import {
+    path: Path {
+        segments: [
+            Ident {
+                text: Symbol(
+                    5,
+                ),
                 span: SrcSpan {
                     begin: 116,
+                    end: 120,
+                },
+            },
+            Ident {
+                text: Symbol(
+                    6,
+                ),
+                span: SrcSpan {
+                    begin: 122,
+                    end: 125,
+                },
+            },
+            Ident {
+                text: Symbol(
+                    7,
+                ),
+                span: SrcSpan {
+                    begin: 127,
                     end: 137,
                 },
             },
-            glob: false,
-            alias: None,
-            span: SrcSpan {
-                begin: 109,
-                end: 138,
-            },
+        ],
+        span: SrcSpan {
+            begin: 116,
+            end: 137,
         },
-    ],
-    items: [
-        Item {
-            kind: Function(
-                Function {
-                    visibility: Private,
-                    name: Ident {
-                        text: Symbol(
-                            8,
-                        ),
-                        span: SrcSpan {
-                            begin: 144,
-                            end: 151,
-                        },
-                    },
-                    generics: [],
-                    self_param: None,
-                    params: [],
-                    ret: Some(
-                        Ty {
-                            kind: Path {
-                                path: Path {
-                                    segments: [
-                                        Ident {
-                                            text: Symbol(
-                                                9,
-                                            ),
-                                            span: SrcSpan {
-                                                begin: 157,
-                                                end: 163,
-                                            },
-                                        },
-                                    ],
+    },
+    glob: false,
+    alias: None,
+    span: SrcSpan {
+        begin: 109,
+        end: 138,
+    },
+}
+Item {
+    kind: Function(
+        Function {
+            visibility: Private,
+            name: Ident {
+                text: Symbol(
+                    8,
+                ),
+                span: SrcSpan {
+                    begin: 144,
+                    end: 151,
+                },
+            },
+            generics: [],
+            self_param: None,
+            params: [],
+            ret: Some(
+                Ty {
+                    kind: Path {
+                        path: Path {
+                            segments: [
+                                Ident {
+                                    text: Symbol(
+                                        9,
+                                    ),
                                     span: SrcSpan {
                                         begin: 157,
                                         end: 163,
                                     },
                                 },
-                                args: [
-                                    Ty {
-                                        kind: Path {
-                                            path: Path {
-                                                segments: [
-                                                    Ident {
-                                                        text: Symbol(
-                                                            10,
-                                                        ),
-                                                        span: SrcSpan {
-                                                            begin: 164,
-                                                            end: 167,
-                                                        },
-                                                    },
-                                                ],
+                            ],
+                            span: SrcSpan {
+                                begin: 157,
+                                end: 163,
+                            },
+                        },
+                        args: [
+                            Ty {
+                                kind: Path {
+                                    path: Path {
+                                        segments: [
+                                            Ident {
+                                                text: Symbol(
+                                                    10,
+                                                ),
                                                 span: SrcSpan {
                                                     begin: 164,
                                                     end: 167,
                                                 },
                                             },
-                                            args: [],
-                                        },
+                                        ],
                                         span: SrcSpan {
                                             begin: 164,
                                             end: 167,
                                         },
                                     },
-                                ],
+                                    args: [],
+                                },
+                                span: SrcSpan {
+                                    begin: 164,
+                                    end: 167,
+                                },
                             },
-                            span: SrcSpan {
-                                begin: 157,
-                                end: 168,
-                            },
-                        },
-                    ),
-                    block: Some(
-                        Block {
-                            stmts: [
-                                Stmt {
-                                    kind: Return(
-                                        Expr {
-                                            kind: Variant {
-                                                variant: Ident {
-                                                    text: Symbol(
-                                                        11,
-                                                    ),
-                                                    span: SrcSpan {
-                                                        begin: 183,
-                                                        end: 187,
-                                                    },
-                                                },
-                                                payload: None,
-                                            },
+                        ],
+                    },
+                    span: SrcSpan {
+                        begin: 157,
+                        end: 168,
+                    },
+                },
+            ),
+            block: Some(
+                Block {
+                    stmts: [
+                        Stmt {
+                            kind: Return(
+                                Expr {
+                                    kind: Variant {
+                                        variant: Ident {
+                                            text: Symbol(
+                                                11,
+                                            ),
                                             span: SrcSpan {
-                                                begin: 182,
+                                                begin: 183,
                                                 end: 187,
                                             },
                                         },
-                                    ),
+                                        payload: None,
+                                    },
                                     span: SrcSpan {
-                                        begin: 175,
-                                        end: 188,
+                                        begin: 182,
+                                        end: 187,
                                     },
                                 },
-                            ],
+                            ),
                             span: SrcSpan {
-                                begin: 169,
-                                end: 190,
+                                begin: 175,
+                                end: 188,
                             },
                         },
-                    ),
+                    ],
                     span: SrcSpan {
-                        begin: 140,
+                        begin: 169,
                         end: 190,
                     },
                 },
@@ -338,187 +200,187 @@ ParsedSrcFile {
                 end: 190,
             },
         },
-        Item {
-            kind: Function(
-                Function {
-                    visibility: Private,
-                    name: Ident {
-                        text: Symbol(
-                            12,
-                        ),
-                        span: SrcSpan {
-                            begin: 196,
-                            end: 202,
-                        },
-                    },
-                    generics: [],
-                    self_param: None,
-                    params: [],
-                    ret: Some(
-                        Ty {
-                            kind: Path {
-                                path: Path {
-                                    segments: [
-                                        Ident {
-                                            text: Symbol(
-                                                13,
-                                            ),
-                                            span: SrcSpan {
-                                                begin: 208,
-                                                end: 214,
-                                            },
-                                        },
-                                    ],
+    ),
+    span: SrcSpan {
+        begin: 140,
+        end: 190,
+    },
+}
+Item {
+    kind: Function(
+        Function {
+            visibility: Private,
+            name: Ident {
+                text: Symbol(
+                    12,
+                ),
+                span: SrcSpan {
+                    begin: 196,
+                    end: 202,
+                },
+            },
+            generics: [],
+            self_param: None,
+            params: [],
+            ret: Some(
+                Ty {
+                    kind: Path {
+                        path: Path {
+                            segments: [
+                                Ident {
+                                    text: Symbol(
+                                        13,
+                                    ),
                                     span: SrcSpan {
                                         begin: 208,
                                         end: 214,
                                     },
                                 },
-                                args: [
-                                    Ty {
-                                        kind: Path {
-                                            path: Path {
-                                                segments: [
-                                                    Ident {
-                                                        text: Symbol(
-                                                            9,
-                                                        ),
-                                                        span: SrcSpan {
-                                                            begin: 215,
-                                                            end: 221,
-                                                        },
-                                                    },
-                                                ],
+                            ],
+                            span: SrcSpan {
+                                begin: 208,
+                                end: 214,
+                            },
+                        },
+                        args: [
+                            Ty {
+                                kind: Path {
+                                    path: Path {
+                                        segments: [
+                                            Ident {
+                                                text: Symbol(
+                                                    9,
+                                                ),
                                                 span: SrcSpan {
                                                     begin: 215,
                                                     end: 221,
                                                 },
                                             },
-                                            args: [
-                                                Ty {
-                                                    kind: Path {
-                                                        path: Path {
-                                                            segments: [
-                                                                Ident {
-                                                                    text: Symbol(
-                                                                        10,
-                                                                    ),
-                                                                    span: SrcSpan {
-                                                                        begin: 222,
-                                                                        end: 225,
-                                                                    },
-                                                                },
-                                                            ],
+                                        ],
+                                        span: SrcSpan {
+                                            begin: 215,
+                                            end: 221,
+                                        },
+                                    },
+                                    args: [
+                                        Ty {
+                                            kind: Path {
+                                                path: Path {
+                                                    segments: [
+                                                        Ident {
+                                                            text: Symbol(
+                                                                10,
+                                                            ),
                                                             span: SrcSpan {
                                                                 begin: 222,
                                                                 end: 225,
                                                             },
                                                         },
-                                                        args: [],
-                                                    },
+                                                    ],
                                                     span: SrcSpan {
                                                         begin: 222,
                                                         end: 225,
                                                     },
                                                 },
-                                            ],
+                                                args: [],
+                                            },
+                                            span: SrcSpan {
+                                                begin: 222,
+                                                end: 225,
+                                            },
                                         },
-                                        span: SrcSpan {
-                                            begin: 215,
-                                            end: 226,
-                                        },
-                                    },
-                                    Ty {
-                                        kind: Path {
-                                            path: Path {
-                                                segments: [
-                                                    Ident {
-                                                        text: Symbol(
-                                                            14,
-                                                        ),
-                                                        span: SrcSpan {
-                                                            begin: 228,
-                                                            end: 232,
-                                                        },
-                                                    },
-                                                ],
+                                    ],
+                                },
+                                span: SrcSpan {
+                                    begin: 215,
+                                    end: 226,
+                                },
+                            },
+                            Ty {
+                                kind: Path {
+                                    path: Path {
+                                        segments: [
+                                            Ident {
+                                                text: Symbol(
+                                                    14,
+                                                ),
                                                 span: SrcSpan {
                                                     begin: 228,
                                                     end: 232,
                                                 },
                                             },
-                                            args: [],
-                                        },
+                                        ],
                                         span: SrcSpan {
                                             begin: 228,
                                             end: 232,
                                         },
                                     },
-                                ],
+                                    args: [],
+                                },
+                                span: SrcSpan {
+                                    begin: 228,
+                                    end: 232,
+                                },
                             },
-                            span: SrcSpan {
-                                begin: 208,
-                                end: 233,
-                            },
-                        },
-                    ),
-                    block: Some(
-                        Block {
-                            stmts: [
-                                Stmt {
-                                    kind: Return(
-                                        Expr {
-                                            kind: Variant {
-                                                variant: Ident {
-                                                    text: Symbol(
-                                                        15,
-                                                    ),
-                                                    span: SrcSpan {
-                                                        begin: 248,
-                                                        end: 250,
-                                                    },
-                                                },
-                                                payload: Single(
-                                                    Expr {
-                                                        kind: Variant {
-                                                            variant: Ident {
-                                                                text: Symbol(
-                                                                    11,
-                                                                ),
-                                                                span: SrcSpan {
-                                                                    begin: 252,
-                                                                    end: 256,
-                                                                },
-                                                            },
-                                                            payload: None,
-                                                        },
+                        ],
+                    },
+                    span: SrcSpan {
+                        begin: 208,
+                        end: 233,
+                    },
+                },
+            ),
+            block: Some(
+                Block {
+                    stmts: [
+                        Stmt {
+                            kind: Return(
+                                Expr {
+                                    kind: Variant {
+                                        variant: Ident {
+                                            text: Symbol(
+                                                15,
+                                            ),
+                                            span: SrcSpan {
+                                                begin: 248,
+                                                end: 250,
+                                            },
+                                        },
+                                        payload: Single(
+                                            Expr {
+                                                kind: Variant {
+                                                    variant: Ident {
+                                                        text: Symbol(
+                                                            11,
+                                                        ),
                                                         span: SrcSpan {
-                                                            begin: 251,
+                                                            begin: 252,
                                                             end: 256,
                                                         },
                                                     },
-                                                ),
+                                                    payload: None,
+                                                },
+                                                span: SrcSpan {
+                                                    begin: 251,
+                                                    end: 256,
+                                                },
                                             },
-                                            span: SrcSpan {
-                                                begin: 247,
-                                                end: 257,
-                                            },
-                                        },
-                                    ),
+                                        ),
+                                    },
                                     span: SrcSpan {
-                                        begin: 240,
-                                        end: 258,
+                                        begin: 247,
+                                        end: 257,
                                     },
                                 },
-                            ],
+                            ),
                             span: SrcSpan {
-                                begin: 234,
-                                end: 260,
+                                begin: 240,
+                                end: 258,
                             },
                         },
-                    ),
+                    ],
                     span: SrcSpan {
-                        begin: 192,
+                        begin: 234,
                         end: 260,
                     },
                 },
@@ -528,88 +390,88 @@ ParsedSrcFile {
                 end: 260,
             },
         },
-        Item {
-            kind: Function(
-                Function {
-                    visibility: Private,
-                    name: Ident {
-                        text: Symbol(
-                            16,
-                        ),
-                        span: SrcSpan {
-                            begin: 266,
-                            end: 272,
-                        },
-                    },
-                    generics: [],
-                    self_param: None,
-                    params: [],
-                    ret: Some(
-                        Ty {
-                            kind: Path {
-                                path: Path {
-                                    segments: [
-                                        Ident {
-                                            text: Symbol(
-                                                2,
-                                            ),
-                                            span: SrcSpan {
-                                                begin: 278,
-                                                end: 287,
-                                            },
-                                        },
-                                    ],
+    ),
+    span: SrcSpan {
+        begin: 192,
+        end: 260,
+    },
+}
+Item {
+    kind: Function(
+        Function {
+            visibility: Private,
+            name: Ident {
+                text: Symbol(
+                    16,
+                ),
+                span: SrcSpan {
+                    begin: 266,
+                    end: 272,
+                },
+            },
+            generics: [],
+            self_param: None,
+            params: [],
+            ret: Some(
+                Ty {
+                    kind: Path {
+                        path: Path {
+                            segments: [
+                                Ident {
+                                    text: Symbol(
+                                        2,
+                                    ),
                                     span: SrcSpan {
                                         begin: 278,
                                         end: 287,
                                     },
                                 },
-                                args: [],
-                            },
+                            ],
                             span: SrcSpan {
                                 begin: 278,
                                 end: 287,
                             },
                         },
-                    ),
-                    block: Some(
-                        Block {
-                            stmts: [
-                                Stmt {
-                                    kind: Return(
-                                        Expr {
-                                            kind: Variant {
-                                                variant: Ident {
-                                                    text: Symbol(
-                                                        3,
-                                                    ),
-                                                    span: SrcSpan {
-                                                        begin: 302,
-                                                        end: 304,
-                                                    },
-                                                },
-                                                payload: None,
-                                            },
+                        args: [],
+                    },
+                    span: SrcSpan {
+                        begin: 278,
+                        end: 287,
+                    },
+                },
+            ),
+            block: Some(
+                Block {
+                    stmts: [
+                        Stmt {
+                            kind: Return(
+                                Expr {
+                                    kind: Variant {
+                                        variant: Ident {
+                                            text: Symbol(
+                                                3,
+                                            ),
                                             span: SrcSpan {
-                                                begin: 301,
+                                                begin: 302,
                                                 end: 304,
                                             },
                                         },
-                                    ),
+                                        payload: None,
+                                    },
                                     span: SrcSpan {
-                                        begin: 294,
-                                        end: 305,
+                                        begin: 301,
+                                        end: 304,
                                     },
                                 },
-                            ],
+                            ),
                             span: SrcSpan {
-                                begin: 288,
-                                end: 307,
+                                begin: 294,
+                                end: 305,
                             },
                         },
-                    ),
+                    ],
                     span: SrcSpan {
-                        begin: 262,
+                        begin: 288,
                         end: 307,
                     },
                 },
@@ -619,151 +481,437 @@ ParsedSrcFile {
                 end: 307,
             },
         },
-    ],
+    ),
     span: SrcSpan {
-        begin: 65,
+        begin: 262,
         end: 307,
     },
 }
-// ./map.phi
-ParsedSrcFile {
-    module: Some(
-        ModuleDecl {
-            path: Path {
-                segments: [
-                    Ident {
-                        text: Symbol(
-                            0,
-                        ),
-                        span: SrcSpan {
-                            begin: 315,
-                            end: 318,
-                        },
-                    },
-                    Ident {
-                        text: Symbol(
-                            17,
-                        ),
-                        span: SrcSpan {
-                            begin: 320,
-                            end: 323,
-                        },
-                    },
-                ],
+// module app::helper
+Item {
+    kind: Enum(
+        Enum {
+            visibility: Public,
+            name: Ident {
+                text: Symbol(
+                    2,
+                ),
                 span: SrcSpan {
-                    begin: 315,
-                    end: 323,
+                    begin: 33,
+                    end: 42,
                 },
             },
+            generics: None,
+            variants: [
+                Variant {
+                    name: Ident {
+                        text: Symbol(
+                            3,
+                        ),
+                        span: SrcSpan {
+                            begin: 49,
+                            end: 51,
+                        },
+                    },
+                    payload: Unit,
+                    span: SrcSpan {
+                        begin: 49,
+                        end: 51,
+                    },
+                },
+                Variant {
+                    name: Ident {
+                        text: Symbol(
+                            4,
+                        ),
+                        span: SrcSpan {
+                            begin: 57,
+                            end: 61,
+                        },
+                    },
+                    payload: Unit,
+                    span: SrcSpan {
+                        begin: 57,
+                        end: 61,
+                    },
+                },
+            ],
             span: SrcSpan {
-                begin: 308,
-                end: 324,
+                begin: 28,
+                end: 61,
             },
         },
     ),
-    imports: [],
-    items: [
-        Item {
-            kind: Struct(
-                Struct {
-                    visibility: Public,
-                    name: Ident {
-                        text: Symbol(
-                            18,
-                        ),
+    span: SrcSpan {
+        begin: 28,
+        end: 61,
+    },
+}
+// module app::map
+Item {
+    kind: Struct(
+        Struct {
+            visibility: Public,
+            name: Ident {
+                text: Symbol(
+                    18,
+                ),
+                span: SrcSpan {
+                    begin: 340,
+                    end: 343,
+                },
+            },
+            generics: Some(
+                [
+                    Generic {
+                        name: Ident {
+                            text: Symbol(
+                                19,
+                            ),
+                            span: SrcSpan {
+                                begin: 344,
+                                end: 345,
+                            },
+                        },
+                        bounds: None,
                         span: SrcSpan {
-                            begin: 340,
-                            end: 343,
+                            begin: 344,
+                            end: 345,
                         },
                     },
-                    generics: Some(
-                        [
-                            Generic {
-                                name: Ident {
-                                    text: Symbol(
-                                        19,
-                                    ),
-                                    span: SrcSpan {
-                                        begin: 344,
-                                        end: 345,
-                                    },
-                                },
-                                bounds: None,
-                                span: SrcSpan {
-                                    begin: 344,
-                                    end: 345,
-                                },
+                    Generic {
+                        name: Ident {
+                            text: Symbol(
+                                20,
+                            ),
+                            span: SrcSpan {
+                                begin: 347,
+                                end: 348,
                             },
-                            Generic {
-                                name: Ident {
-                                    text: Symbol(
-                                        20,
-                                    ),
-                                    span: SrcSpan {
-                                        begin: 347,
-                                        end: 348,
-                                    },
-                                },
-                                bounds: None,
-                                span: SrcSpan {
-                                    begin: 347,
-                                    end: 348,
-                                },
-                            },
-                        ],
-                    ),
-                    fields: [
-                        Field {
-                            visibility: Private,
-                            name: Ident {
-                                text: Symbol(
-                                    21,
-                                ),
-                                span: SrcSpan {
-                                    begin: 356,
-                                    end: 359,
-                                },
-                            },
-                            ty: Ty {
-                                kind: Path {
-                                    path: Path {
-                                        segments: [
-                                            Ident {
-                                                text: Symbol(
-                                                    19,
-                                                ),
-                                                span: SrcSpan {
-                                                    begin: 361,
-                                                    end: 362,
-                                                },
-                                            },
-                                        ],
+                        },
+                        bounds: None,
+                        span: SrcSpan {
+                            begin: 347,
+                            end: 348,
+                        },
+                    },
+                ],
+            ),
+            fields: [
+                Field {
+                    visibility: Private,
+                    name: Ident {
+                        text: Symbol(
+                            21,
+                        ),
+                        span: SrcSpan {
+                            begin: 356,
+                            end: 359,
+                        },
+                    },
+                    ty: Ty {
+                        kind: Path {
+                            path: Path {
+                                segments: [
+                                    Ident {
+                                        text: Symbol(
+                                            19,
+                                        ),
                                         span: SrcSpan {
                                             begin: 361,
                                             end: 362,
                                         },
                                     },
-                                    args: [],
-                                },
+                                ],
                                 span: SrcSpan {
                                     begin: 361,
                                     end: 362,
                                 },
                             },
+                            args: [],
+                        },
+                        span: SrcSpan {
+                            begin: 361,
+                            end: 362,
+                        },
+                    },
+                    span: SrcSpan {
+                        begin: 356,
+                        end: 362,
+                    },
+                },
+                Field {
+                    visibility: Private,
+                    name: Ident {
+                        text: Symbol(
+                            22,
+                        ),
+                        span: SrcSpan {
+                            begin: 368,
+                            end: 373,
+                        },
+                    },
+                    ty: Ty {
+                        kind: Path {
+                            path: Path {
+                                segments: [
+                                    Ident {
+                                        text: Symbol(
+                                            20,
+                                        ),
+                                        span: SrcSpan {
+                                            begin: 375,
+                                            end: 376,
+                                        },
+                                    },
+                                ],
+                                span: SrcSpan {
+                                    begin: 375,
+                                    end: 376,
+                                },
+                            },
+                            args: [],
+                        },
+                        span: SrcSpan {
+                            begin: 375,
+                            end: 376,
+                        },
+                    },
+                    span: SrcSpan {
+                        begin: 368,
+                        end: 376,
+                    },
+                },
+            ],
+            span: SrcSpan {
+                begin: 333,
+                end: 376,
+            },
+        },
+    ),
+    span: SrcSpan {
+        begin: 333,
+        end: 376,
+    },
+}
+Item {
+    kind: Extend(
+        Extend {
+            extend_generics: Some(
+                [
+                    Generic {
+                        name: Ident {
+                            text: Symbol(
+                                19,
+                            ),
                             span: SrcSpan {
-                                begin: 356,
-                                end: 362,
+                                begin: 388,
+                                end: 389,
                             },
                         },
-                        Field {
-                            visibility: Private,
+                        bounds: None,
+                        span: SrcSpan {
+                            begin: 388,
+                            end: 389,
+                        },
+                    },
+                    Generic {
+                        name: Ident {
+                            text: Symbol(
+                                20,
+                            ),
+                            span: SrcSpan {
+                                begin: 391,
+                                end: 392,
+                            },
+                        },
+                        bounds: None,
+                        span: SrcSpan {
+                            begin: 391,
+                            end: 392,
+                        },
+                    },
+                ],
+            ),
+            adt_generics: Some(
+                [
+                    Ty {
+                        kind: Path {
+                            path: Path {
+                                segments: [
+                                    Ident {
+                                        text: Symbol(
+                                            19,
+                                        ),
+                                        span: SrcSpan {
+                                            begin: 398,
+                                            end: 399,
+                                        },
+                                    },
+                                ],
+                                span: SrcSpan {
+                                    begin: 398,
+                                    end: 399,
+                                },
+                            },
+                            args: [],
+                        },
+                        span: SrcSpan {
+                            begin: 398,
+                            end: 399,
+                        },
+                    },
+                    Ty {
+                        kind: Path {
+                            path: Path {
+                                segments: [
+                                    Ident {
+                                        text: Symbol(
+                                            20,
+                                        ),
+                                        span: SrcSpan {
+                                            begin: 401,
+                                            end: 402,
+                                        },
+                                    },
+                                ],
+                                span: SrcSpan {
+                                    begin: 401,
+                                    end: 402,
+                                },
+                            },
+                            args: [],
+                        },
+                        span: SrcSpan {
+                            begin: 401,
+                            end: 402,
+                        },
+                    },
+                ],
+            ),
+            trait_generics: Some(
+                [
+                    Ty {
+                        kind: Path {
+                            path: Path {
+                                segments: [
+                                    Ident {
+                                        text: Symbol(
+                                            19,
+                                        ),
+                                        span: SrcSpan {
+                                            begin: 415,
+                                            end: 416,
+                                        },
+                                    },
+                                ],
+                                span: SrcSpan {
+                                    begin: 415,
+                                    end: 416,
+                                },
+                            },
+                            args: [],
+                        },
+                        span: SrcSpan {
+                            begin: 415,
+                            end: 416,
+                        },
+                    },
+                    Ty {
+                        kind: Path {
+                            path: Path {
+                                segments: [
+                                    Ident {
+                                        text: Symbol(
+                                            20,
+                                        ),
+                                        span: SrcSpan {
+                                            begin: 418,
+                                            end: 419,
+                                        },
+                                    },
+                                ],
+                                span: SrcSpan {
+                                    begin: 418,
+                                    end: 419,
+                                },
+                            },
+                            args: [],
+                        },
+                        span: SrcSpan {
+                            begin: 418,
+                            end: 419,
+                        },
+                    },
+                ],
+            ),
+            adt_path: Path {
+                segments: [
+                    Ident {
+                        text: Symbol(
+                            18,
+                        ),
+                        span: SrcSpan {
+                            begin: 394,
+                            end: 397,
+                        },
+                    },
+                ],
+                span: SrcSpan {
+                    begin: 394,
+                    end: 397,
+                },
+            },
+            trait_path: Some(
+                Path {
+                    segments: [
+                        Ident {
+                            text: Symbol(
+                                23,
+                            ),
+                            span: SrcSpan {
+                                begin: 409,
+                                end: 414,
+                            },
+                        },
+                    ],
+                    span: SrcSpan {
+                        begin: 409,
+                        end: 414,
+                    },
+                },
+            ),
+            methods: [
+                Function {
+                    visibility: Private,
+                    name: Ident {
+                        text: Symbol(
+                            24,
+                        ),
+                        span: SrcSpan {
+                            begin: 431,
+                            end: 436,
+                        },
+                    },
+                    generics: [],
+                    self_param: Some(
+                        SelfParam {
+                            mode: Immutable,
+                            span: SrcSpan {
+                                begin: 437,
+                                end: 442,
+                            },
+                        },
+                    ),
+                    params: [
+                        Param {
                             name: Ident {
                                 text: Symbol(
-                                    22,
+                                    21,
                                 ),
                                 span: SrcSpan {
-                                    begin: 368,
-                                    end: 373,
+                                    begin: 444,
+                                    end: 447,
                                 },
                             },
                             ty: Ty {
@@ -772,422 +920,153 @@ ParsedSrcFile {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
-                                                    20,
-                                                ),
-                                                span: SrcSpan {
-                                                    begin: 375,
-                                                    end: 376,
-                                                },
-                                            },
-                                        ],
-                                        span: SrcSpan {
-                                            begin: 375,
-                                            end: 376,
-                                        },
-                                    },
-                                    args: [],
-                                },
-                                span: SrcSpan {
-                                    begin: 375,
-                                    end: 376,
-                                },
-                            },
-                            span: SrcSpan {
-                                begin: 368,
-                                end: 376,
-                            },
-                        },
-                    ],
-                    span: SrcSpan {
-                        begin: 333,
-                        end: 376,
-                    },
-                },
-            ),
-            span: SrcSpan {
-                begin: 333,
-                end: 376,
-            },
-        },
-        Item {
-            kind: Extend(
-                Extend {
-                    extend_generics: Some(
-                        [
-                            Generic {
-                                name: Ident {
-                                    text: Symbol(
-                                        19,
-                                    ),
-                                    span: SrcSpan {
-                                        begin: 388,
-                                        end: 389,
-                                    },
-                                },
-                                bounds: None,
-                                span: SrcSpan {
-                                    begin: 388,
-                                    end: 389,
-                                },
-                            },
-                            Generic {
-                                name: Ident {
-                                    text: Symbol(
-                                        20,
-                                    ),
-                                    span: SrcSpan {
-                                        begin: 391,
-                                        end: 392,
-                                    },
-                                },
-                                bounds: None,
-                                span: SrcSpan {
-                                    begin: 391,
-                                    end: 392,
-                                },
-                            },
-                        ],
-                    ),
-                    adt_generics: Some(
-                        [
-                            Ty {
-                                kind: Path {
-                                    path: Path {
-                                        segments: [
-                                            Ident {
-                                                text: Symbol(
                                                     19,
                                                 ),
-                                                span: SrcSpan {
-                                                    begin: 398,
-                                                    end: 399,
-                                                },
-                                            },
-                                        ],
-                                        span: SrcSpan {
-                                            begin: 398,
-                                            end: 399,
-                                        },
-                                    },
-                                    args: [],
-                                },
-                                span: SrcSpan {
-                                    begin: 398,
-                                    end: 399,
-                                },
-                            },
-                            Ty {
-                                kind: Path {
-                                    path: Path {
-                                        segments: [
-                                            Ident {
-                                                text: Symbol(
-                                                    20,
-                                                ),
-                                                span: SrcSpan {
-                                                    begin: 401,
-                                                    end: 402,
-                                                },
-                                            },
-                                        ],
-                                        span: SrcSpan {
-                                            begin: 401,
-                                            end: 402,
-                                        },
-                                    },
-                                    args: [],
-                                },
-                                span: SrcSpan {
-                                    begin: 401,
-                                    end: 402,
-                                },
-                            },
-                        ],
-                    ),
-                    trait_generics: Some(
-                        [
-                            Ty {
-                                kind: Path {
-                                    path: Path {
-                                        segments: [
-                                            Ident {
-                                                text: Symbol(
-                                                    19,
-                                                ),
-                                                span: SrcSpan {
-                                                    begin: 415,
-                                                    end: 416,
-                                                },
-                                            },
-                                        ],
-                                        span: SrcSpan {
-                                            begin: 415,
-                                            end: 416,
-                                        },
-                                    },
-                                    args: [],
-                                },
-                                span: SrcSpan {
-                                    begin: 415,
-                                    end: 416,
-                                },
-                            },
-                            Ty {
-                                kind: Path {
-                                    path: Path {
-                                        segments: [
-                                            Ident {
-                                                text: Symbol(
-                                                    20,
-                                                ),
-                                                span: SrcSpan {
-                                                    begin: 418,
-                                                    end: 419,
-                                                },
-                                            },
-                                        ],
-                                        span: SrcSpan {
-                                            begin: 418,
-                                            end: 419,
-                                        },
-                                    },
-                                    args: [],
-                                },
-                                span: SrcSpan {
-                                    begin: 418,
-                                    end: 419,
-                                },
-                            },
-                        ],
-                    ),
-                    adt_path: Path {
-                        segments: [
-                            Ident {
-                                text: Symbol(
-                                    18,
-                                ),
-                                span: SrcSpan {
-                                    begin: 394,
-                                    end: 397,
-                                },
-                            },
-                        ],
-                        span: SrcSpan {
-                            begin: 394,
-                            end: 397,
-                        },
-                    },
-                    trait_path: Some(
-                        Path {
-                            segments: [
-                                Ident {
-                                    text: Symbol(
-                                        23,
-                                    ),
-                                    span: SrcSpan {
-                                        begin: 409,
-                                        end: 414,
-                                    },
-                                },
-                            ],
-                            span: SrcSpan {
-                                begin: 409,
-                                end: 414,
-                            },
-                        },
-                    ),
-                    methods: [
-                        Function {
-                            visibility: Private,
-                            name: Ident {
-                                text: Symbol(
-                                    24,
-                                ),
-                                span: SrcSpan {
-                                    begin: 431,
-                                    end: 436,
-                                },
-                            },
-                            generics: [],
-                            self_param: Some(
-                                SelfParam {
-                                    mode: Immutable,
-                                    span: SrcSpan {
-                                        begin: 437,
-                                        end: 442,
-                                    },
-                                },
-                            ),
-                            params: [
-                                Param {
-                                    name: Ident {
-                                        text: Symbol(
-                                            21,
-                                        ),
-                                        span: SrcSpan {
-                                            begin: 444,
-                                            end: 447,
-                                        },
-                                    },
-                                    ty: Ty {
-                                        kind: Path {
-                                            path: Path {
-                                                segments: [
-                                                    Ident {
-                                                        text: Symbol(
-                                                            19,
-                                                        ),
-                                                        span: SrcSpan {
-                                                            begin: 449,
-                                                            end: 450,
-                                                        },
-                                                    },
-                                                ],
                                                 span: SrcSpan {
                                                     begin: 449,
                                                     end: 450,
                                                 },
                                             },
-                                            args: [],
-                                        },
+                                        ],
                                         span: SrcSpan {
                                             begin: 449,
                                             end: 450,
                                         },
                                     },
-                                    span: SrcSpan {
-                                        begin: 444,
-                                        end: 450,
-                                    },
+                                    args: [],
                                 },
-                            ],
-                            ret: Some(
-                                Ty {
-                                    kind: Ref {
-                                        base: Ty {
-                                            kind: Path {
-                                                path: Path {
-                                                    segments: [
-                                                        Ident {
-                                                            text: Symbol(
-                                                                20,
-                                                            ),
-                                                            span: SrcSpan {
-                                                                begin: 456,
-                                                                end: 457,
-                                                            },
-                                                        },
-                                                    ],
+                                span: SrcSpan {
+                                    begin: 449,
+                                    end: 450,
+                                },
+                            },
+                            span: SrcSpan {
+                                begin: 444,
+                                end: 450,
+                            },
+                        },
+                    ],
+                    ret: Some(
+                        Ty {
+                            kind: Ref {
+                                base: Ty {
+                                    kind: Path {
+                                        path: Path {
+                                            segments: [
+                                                Ident {
+                                                    text: Symbol(
+                                                        20,
+                                                    ),
                                                     span: SrcSpan {
                                                         begin: 456,
                                                         end: 457,
                                                     },
                                                 },
-                                                args: [],
-                                            },
+                                            ],
                                             span: SrcSpan {
                                                 begin: 456,
                                                 end: 457,
                                             },
                                         },
-                                        mutability: Immutable,
+                                        args: [],
                                     },
                                     span: SrcSpan {
-                                        begin: 455,
+                                        begin: 456,
                                         end: 457,
                                     },
                                 },
-                            ),
-                            block: Some(
-                                Block {
-                                    stmts: [
-                                        Stmt {
-                                            kind: Return(
-                                                Expr {
-                                                    kind: Borrow {
-                                                        mutability: Immutable,
-                                                        operand: Expr {
-                                                            kind: Access {
-                                                                base: Expr {
-                                                                    kind: Path(
-                                                                        Path {
-                                                                            segments: [
-                                                                                Ident {
-                                                                                    text: Symbol(
-                                                                                        25,
-                                                                                    ),
-                                                                                    span: SrcSpan {
-                                                                                        begin: 476,
-                                                                                        end: 480,
-                                                                                    },
-                                                                                },
-                                                                            ],
+                                mutability: Immutable,
+                            },
+                            span: SrcSpan {
+                                begin: 455,
+                                end: 457,
+                            },
+                        },
+                    ),
+                    block: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: Return(
+                                        Expr {
+                                            kind: Borrow {
+                                                mutability: Immutable,
+                                                operand: Expr {
+                                                    kind: Access {
+                                                        base: Expr {
+                                                            kind: Path(
+                                                                Path {
+                                                                    segments: [
+                                                                        Ident {
+                                                                            text: Symbol(
+                                                                                25,
+                                                                            ),
                                                                             span: SrcSpan {
                                                                                 begin: 476,
                                                                                 end: 480,
                                                                             },
                                                                         },
-                                                                    ),
+                                                                    ],
                                                                     span: SrcSpan {
                                                                         begin: 476,
                                                                         end: 480,
                                                                     },
                                                                 },
-                                                                member: Ident {
-                                                                    text: Symbol(
-                                                                        22,
-                                                                    ),
-                                                                    span: SrcSpan {
-                                                                        begin: 481,
-                                                                        end: 486,
-                                                                    },
-                                                                },
-                                                                args: None,
-                                                            },
+                                                            ),
                                                             span: SrcSpan {
                                                                 begin: 476,
+                                                                end: 480,
+                                                            },
+                                                        },
+                                                        member: Ident {
+                                                            text: Symbol(
+                                                                22,
+                                                            ),
+                                                            span: SrcSpan {
+                                                                begin: 481,
                                                                 end: 486,
                                                             },
                                                         },
+                                                        args: None,
                                                     },
                                                     span: SrcSpan {
-                                                        begin: 475,
+                                                        begin: 476,
                                                         end: 486,
                                                     },
                                                 },
-                                            ),
+                                            },
                                             span: SrcSpan {
-                                                begin: 468,
-                                                end: 487,
+                                                begin: 475,
+                                                end: 486,
                                             },
                                         },
-                                    ],
+                                    ),
                                     span: SrcSpan {
-                                        begin: 458,
-                                        end: 493,
+                                        begin: 468,
+                                        end: 487,
                                     },
                                 },
-                            ),
+                            ],
                             span: SrcSpan {
-                                begin: 427,
+                                begin: 458,
                                 end: 493,
                             },
                         },
-                    ],
+                    ),
                     span: SrcSpan {
-                        begin: 381,
-                        end: 495,
+                        begin: 427,
+                        end: 493,
                     },
                 },
-            ),
+            ],
             span: SrcSpan {
                 begin: 381,
                 end: 495,
             },
         },
-    ],
+    ),
     span: SrcSpan {
-        begin: 308,
+        begin: 381,
         end: 495,
     },
 }
