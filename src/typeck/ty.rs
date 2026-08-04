@@ -13,7 +13,7 @@
 
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
-use crate::nameres::resolve_results::PrimTy;
+use crate::nameres::results::PrimTy;
 
 /// A handle to a type interned in a [`TyCtx`](crate::typeck::tyctx::TyCtx).
 ///
@@ -68,7 +68,7 @@ pub enum TyKind {
     Var(TyVar),
     /// A built-in type such as `i32` or `bool`.
     Primitive(PrimTy),
-    /// A user-declared `struct` or `enum`, applied to its generic arguments. `args` always has
+    /// A user-declared `struct` / `enum`/ trait, applied to its generic arguments. `args` always has
     /// exactly as many entries as `def` declares type parameters -- a mismatch is reported and
     /// becomes [`TyKind::Error`] instead, so later passes can substitute positionally without
     /// re-checking.
@@ -79,7 +79,7 @@ pub enum TyKind {
     /// [`Node::Generic`](crate::hir::Node::Generic), or, for an `extend` block's own `<T>` list,
     /// the [`Node::Ty`](crate::hir::Node::Ty) standing in for one (see
     /// [`GenericDecl`](crate::nameres::resolve_item)). That is exactly what name resolution
-    /// hands back in [`Res::TyParam`](crate::nameres::resolve_results::Res::TyParam), so no
+    /// hands back in [`Res::Generic`](crate::nameres::results::Res::Generic), so no
     /// separate numbering has to be built or kept in sync to name a parameter here.
     Generic(HirId),
     /// The implicit `Self` parameter a trait declares, naming the trait it belongs to.
@@ -88,11 +88,16 @@ pub enum TyKind {
     /// eventually implements the trait and so has no structure to speak of. Inside an `extend`
     /// block `Self` is concrete, so it lowers to the extended [`TyKind::Adt`] directly and never
     /// reaches this variant.
-    SelfParam(DefId),
+    SelfTy(DefId),
     /// `&T` or `&mut T`.
     Ref { base: Ty, mutability: Mutability },
     /// `any T`.
     Any(Ty),
+    /// `()`, the type of an expression evaluated only for its side effects, such as a function
+    /// with no declared return type or a block with no trailing expression. Distinct from
+    /// [`TyKind::Tuple`] with no elements even though both are written `()`, so that "this
+    /// produces nothing" is one type instead of an incidental zero-length tuple.
+    Unit,
     /// `(T, U, ..)`.
     Tuple(Vec<Ty>),
     /// A fixed-size array, `[T; N]`.

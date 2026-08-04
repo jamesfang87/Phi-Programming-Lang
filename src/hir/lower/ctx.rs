@@ -175,19 +175,18 @@ impl LoweringCtx {
         let self_param = f.self_param.as_ref().map(|sp| ow.lower_self_param(sp));
         let params = f.params.iter().map(|p| ow.lower_param(p)).collect();
         let ret = f.ret.as_ref().map(|t| ow.lower_ty(t));
-        let body = f.body.as_ref().map(|b| ow.lower_block(b));
-        let hir_id = ow.hir_id(root);
+        let block = f.block.as_ref().map(|b| ow.lower_block(b));
         ow.fill(
             root,
             OwnerNode::Function(Function {
-                hir_id,
+                hir_id: root,
                 visibility: f.visibility,
                 name: f.name,
                 generics,
                 self_param,
                 params,
                 ret,
-                body,
+                block,
                 span: f.span,
             }),
         );
@@ -200,11 +199,10 @@ impl LoweringCtx {
         let root = ow.reserve_root();
         let generics = ow.lower_generics(s.generics.as_deref().unwrap_or(&[]));
         let fields = s.fields.iter().map(|f| ow.lower_field(f)).collect();
-        let hir_id = ow.hir_id(root);
         ow.fill(
             root,
             OwnerNode::Struct(Struct {
-                hir_id,
+                hir_id: root,
                 visibility: s.visibility,
                 name: s.name,
                 generics,
@@ -221,11 +219,10 @@ impl LoweringCtx {
         let root = ow.reserve_root();
         let generics = ow.lower_generics(e.generics.as_deref().unwrap_or(&[]));
         let variants = e.variants.iter().map(|v| ow.lower_variant(v)).collect();
-        let hir_id = ow.hir_id(root);
         ow.fill(
             root,
             OwnerNode::Enum(Enum {
-                hir_id,
+                hir_id: root,
                 visibility: e.visibility,
                 name: e.name,
                 generics,
@@ -248,11 +245,10 @@ impl LoweringCtx {
         let mut ow = OwnerLowerer::new(self, item_id);
         let root = ow.reserve_root();
         let generics = ow.lower_generics(t.generics.as_deref().unwrap_or(&[]));
-        let hir_id = ow.hir_id(root);
         ow.fill(
             root,
             OwnerNode::Trait(Trait {
-                hir_id,
+                hir_id: root,
                 visibility: t.visibility,
                 name: t.name,
                 generics,
@@ -293,11 +289,10 @@ impl LoweringCtx {
             .iter()
             .map(|t| ow.lower_ty(t))
             .collect();
-        let hir_id = ow.hir_id(root);
         ow.fill(
             root,
             OwnerNode::Extend(Extend {
-                hir_id,
+                hir_id: root,
                 extend_generics,
                 adt_generics,
                 trait_generics,
@@ -324,11 +319,10 @@ impl LoweringCtx {
                 .iter()
                 .map(|imp| ow.lower_import(imp))
                 .collect();
-            let hir_id = ow.hir_id(root);
             ow.fill(
                 root,
                 OwnerNode::Module(Module {
-                    hir_id,
+                    hir_id: root,
                     path: scratch.path,
                     items: scratch.items,
                     imports,

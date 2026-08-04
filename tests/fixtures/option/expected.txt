@@ -76,8 +76,8 @@ ParsedSrcFile {
                             },
                             payload: Type(
                                 Ty {
-                                    kind: Base {
-                                        base: Path {
+                                    kind: Path {
+                                        path: Path {
                                             segments: [
                                                 Ident {
                                                     text: Symbol(

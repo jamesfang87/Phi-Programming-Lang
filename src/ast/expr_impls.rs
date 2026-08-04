@@ -1,7 +1,4 @@
 //! Constructors that build [`Expr`] literal and binary nodes directly from lexer tokens.
-//!
-//! The parser calls these instead of matching on `Token` fields itself, so the lexer's escape
-//! handling and the interner stay in one place.
 
 use super::*;
 use crate::ast::interner::Interner;
@@ -78,7 +75,8 @@ impl Expr {
         }
     }
 
-    pub fn binary(op: BinaryOp, lhs: Expr, rhs: Expr, span: SrcSpan) -> Self {
+    pub fn binary(lhs: Expr, ((op, _op_span), rhs): ((BinaryOp, SrcSpan), Expr)) -> Self {
+        let span = lhs.span.merge(rhs.span);
         Expr::new(
             ExprKind::Binary {
                 op,

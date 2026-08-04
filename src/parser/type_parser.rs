@@ -81,7 +81,7 @@ impl Parser {
 
                         Ty {
                             span,
-                            kind: TyKind::Base { base: p, args },
+                            kind: TyKind::Path { path: p, args },
                         }
                     })
                     .boxed();
@@ -226,22 +226,14 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::lex_src;
     use crate::ast::interner::Interner;
     use crate::ast::{ExprKind, Literal};
-    use crate::diag::DiagCtx;
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;
 
     fn parse_ty(src: &str) -> Ty {
-        DiagCtx::clear();
-        Interner::clear();
-        let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file(
-            "<test>".to_string(),
-            chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
-        );
-        let tokens = Lexer::new(&chars, offset).tokenize();
+        let (tokens, offset) = lex_src(src);
         let parser = Parser::new(tokens.clone(), offset);
         let (output, errors) = parser.type_parser().parse(&tokens[..]).into_output_errors();
         assert!(
@@ -272,7 +264,7 @@ mod tests {
 
     fn base_name(ty: &Ty) -> String {
         match &ty.kind {
-            TyKind::Base { base, .. } => Interner::resolve(base.segments[0].text),
+            TyKind::Path { path, .. } => Interner::resolve(path.segments[0].text),
             other => panic!("expected a base type, got {other:?}"),
         }
     }
@@ -289,10 +281,10 @@ mod tests {
     fn parses_qualified_path_type() {
         let ty = parse_ty("math::Vector2D");
         match &ty.kind {
-            TyKind::Base { base, args } => {
-                assert_eq!(base.segments.len(), 2);
-                assert_eq!(Interner::resolve(base.segments[0].text), "math");
-                assert_eq!(Interner::resolve(base.segments[1].text), "Vector2D");
+            TyKind::Path { path, args } => {
+                assert_eq!(path.segments.len(), 2);
+                assert_eq!(Interner::resolve(path.segments[0].text), "math");
+                assert_eq!(Interner::resolve(path.segments[1].text), "Vector2D");
                 assert!(args.is_empty());
             }
             other => panic!("expected a base type, got {other:?}"),
@@ -303,8 +295,8 @@ mod tests {
     fn parses_generic_args_on_a_named_type() {
         let ty = parse_ty("Result<T, E>");
         match &ty.kind {
-            TyKind::Base { base, args } => {
-                assert_eq!(Interner::resolve(base.segments[0].text), "Result");
+            TyKind::Path { path, args } => {
+                assert_eq!(Interner::resolve(path.segments[0].text), "Result");
                 assert_eq!(args.len(), 2);
                 assert_eq!(base_name(&args[0]), "T");
                 assert_eq!(base_name(&args[1]), "E");
@@ -319,12 +311,12 @@ mod tests {
     fn parses_nested_generic_args() {
         let ty = parse_ty("Array<Option<i32>>");
         match &ty.kind {
-            TyKind::Base { base, args } => {
-                assert_eq!(Interner::resolve(base.segments[0].text), "Array");
+            TyKind::Path { path, args } => {
+                assert_eq!(Interner::resolve(path.segments[0].text), "Array");
                 assert_eq!(args.len(), 1);
                 match &args[0].kind {
-                    TyKind::Base { base, args } => {
-                        assert_eq!(Interner::resolve(base.segments[0].text), "Option");
+                    TyKind::Path { path, args } => {
+                        assert_eq!(Interner::resolve(path.segments[0].text), "Option");
                         assert_eq!(args.len(), 1);
                     }
                     other => panic!("expected a nested base type, got {other:?}"),
@@ -349,7 +341,7 @@ mod tests {
         match &ty.kind {
             TyKind::Ref { mutability, base } => {
                 assert!(matches!(mutability, Mutability::Mutable));
-                assert!(matches!(base.kind, TyKind::Base { .. }));
+                assert!(matches!(base.kind, TyKind::Path { .. }));
             }
             other => panic!("expected a ref type, got {other:?}"),
         }
@@ -359,7 +351,7 @@ mod tests {
     fn parses_any_type() {
         let ty = parse_ty("any i32");
         match &ty.kind {
-            TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::Base { .. })),
+            TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::Path { .. })),
             other => panic!("expected an any type, got {other:?}"),
         }
     }
@@ -385,8 +377,8 @@ mod tests {
         match &ty.kind {
             TyKind::Tuple(types) => {
                 assert_eq!(types.len(), 2);
-                assert!(matches!(types[0].kind, TyKind::Base { .. }));
-                assert!(matches!(types[1].kind, TyKind::Base { .. }));
+                assert!(matches!(types[0].kind, TyKind::Path { .. }));
+                assert!(matches!(types[1].kind, TyKind::Path { .. }));
             }
             other => panic!("expected a tuple type, got {other:?}"),
         }
@@ -397,7 +389,7 @@ mod tests {
         let ty = parse_ty("[i32]");
         match &ty.kind {
             TyKind::Array { elem, len } => {
-                assert!(matches!(elem.kind, TyKind::Base { .. }));
+                assert!(matches!(elem.kind, TyKind::Path { .. }));
                 assert!(len.is_none());
             }
             other => panic!("expected an array type, got {other:?}"),
@@ -409,7 +401,7 @@ mod tests {
         let ty = parse_ty("[i32; 5]");
         match &ty.kind {
             TyKind::Array { elem, len } => {
-                assert!(matches!(elem.kind, TyKind::Base { .. }));
+                assert!(matches!(elem.kind, TyKind::Path { .. }));
                 let len = len.as_ref().expect("expected an array length");
                 assert!(matches!(len.kind, ExprKind::Literal(Literal::Int { .. })));
             }
@@ -428,7 +420,7 @@ mod tests {
                 match &base.kind {
                     TyKind::Ref { mutability, base } => {
                         assert!(matches!(mutability, Mutability::Immutable));
-                        assert!(matches!(base.kind, TyKind::Base { .. }));
+                        assert!(matches!(base.kind, TyKind::Path { .. }));
                     }
                     other => panic!("expected a nested ref type, got {other:?}"),
                 }
@@ -455,12 +447,12 @@ mod tests {
         match &ty.kind {
             TyKind::Tuple(types) => {
                 assert_eq!(types.len(), 2);
-                assert!(matches!(types[0].kind, TyKind::Base { .. }));
+                assert!(matches!(types[0].kind, TyKind::Path { .. }));
                 match &types[1].kind {
                     TyKind::Tuple(inner) => {
                         assert_eq!(inner.len(), 2);
-                        assert!(matches!(inner[0].kind, TyKind::Base { .. }));
-                        assert!(matches!(inner[1].kind, TyKind::Base { .. }));
+                        assert!(matches!(inner[0].kind, TyKind::Path { .. }));
+                        assert!(matches!(inner[1].kind, TyKind::Path { .. }));
                     }
                     other => panic!("expected a nested tuple type, got {other:?}"),
                 }
@@ -491,7 +483,7 @@ mod tests {
                     TyKind::Tuple(types) => {
                         assert_eq!(types.len(), 2);
                         assert!(matches!(types[0].kind, TyKind::Ref { .. }));
-                        assert!(matches!(types[1].kind, TyKind::Base { .. }));
+                        assert!(matches!(types[1].kind, TyKind::Path { .. }));
                     }
                     other => panic!("expected a tuple element type, got {other:?}"),
                 }
@@ -550,9 +542,9 @@ mod tests {
         match &ty.kind {
             TyKind::Function { params, ret } => {
                 assert_eq!(params.len(), 2);
-                assert!(matches!(params[0].kind, TyKind::Base { .. }));
+                assert!(matches!(params[0].kind, TyKind::Path { .. }));
                 assert!(ret.is_some());
-                assert!(matches!(ret.clone().unwrap().kind, TyKind::Base { .. }));
+                assert!(matches!(ret.clone().unwrap().kind, TyKind::Path { .. }));
             }
             other => panic!("expected a fn type, got {other:?}"),
         }

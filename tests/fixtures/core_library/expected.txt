@@ -238,8 +238,8 @@ ParsedSrcFile {
                     params: [],
                     ret: Some(
                         Ty {
-                            kind: Base {
-                                base: Path {
+                            kind: Path {
+                                path: Path {
                                     segments: [
                                         Ident {
                                             text: Symbol(
@@ -258,8 +258,8 @@ ParsedSrcFile {
                                 },
                                 args: [
                                     Ty {
-                                        kind: Base {
-                                            base: Path {
+                                        kind: Path {
+                                            path: Path {
                                                 segments: [
                                                     Ident {
                                                         text: Symbol(
@@ -291,12 +291,12 @@ ParsedSrcFile {
                             },
                         },
                     ),
-                    body: Some(
+                    block: Some(
                         Block {
                             stmts: [
                                 Stmt {
-                                    kind: Return {
-                                        ret: Expr {
+                                    kind: Return(
+                                        Expr {
                                             kind: Variant {
                                                 variant: Ident {
                                                     text: Symbol(
@@ -314,7 +314,7 @@ ParsedSrcFile {
                                                 end: 187,
                                             },
                                         },
-                                    },
+                                    ),
                                     span: SrcSpan {
                                         begin: 175,
                                         end: 188,
@@ -356,8 +356,8 @@ ParsedSrcFile {
                     params: [],
                     ret: Some(
                         Ty {
-                            kind: Base {
-                                base: Path {
+                            kind: Path {
+                                path: Path {
                                     segments: [
                                         Ident {
                                             text: Symbol(
@@ -376,8 +376,8 @@ ParsedSrcFile {
                                 },
                                 args: [
                                     Ty {
-                                        kind: Base {
-                                            base: Path {
+                                        kind: Path {
+                                            path: Path {
                                                 segments: [
                                                     Ident {
                                                         text: Symbol(
@@ -396,8 +396,8 @@ ParsedSrcFile {
                                             },
                                             args: [
                                                 Ty {
-                                                    kind: Base {
-                                                        base: Path {
+                                                    kind: Path {
+                                                        path: Path {
                                                             segments: [
                                                                 Ident {
                                                                     text: Symbol(
@@ -429,8 +429,8 @@ ParsedSrcFile {
                                         },
                                     },
                                     Ty {
-                                        kind: Base {
-                                            base: Path {
+                                        kind: Path {
+                                            path: Path {
                                                 segments: [
                                                     Ident {
                                                         text: Symbol(
@@ -462,12 +462,12 @@ ParsedSrcFile {
                             },
                         },
                     ),
-                    body: Some(
+                    block: Some(
                         Block {
                             stmts: [
                                 Stmt {
-                                    kind: Return {
-                                        ret: Expr {
+                                    kind: Return(
+                                        Expr {
                                             kind: Variant {
                                                 variant: Ident {
                                                     text: Symbol(
@@ -504,7 +504,7 @@ ParsedSrcFile {
                                                 end: 257,
                                             },
                                         },
-                                    },
+                                    ),
                                     span: SrcSpan {
                                         begin: 240,
                                         end: 258,
@@ -546,8 +546,8 @@ ParsedSrcFile {
                     params: [],
                     ret: Some(
                         Ty {
-                            kind: Base {
-                                base: Path {
+                            kind: Path {
+                                path: Path {
                                     segments: [
                                         Ident {
                                             text: Symbol(
@@ -572,12 +572,12 @@ ParsedSrcFile {
                             },
                         },
                     ),
-                    body: Some(
+                    block: Some(
                         Block {
                             stmts: [
                                 Stmt {
-                                    kind: Return {
-                                        ret: Expr {
+                                    kind: Return(
+                                        Expr {
                                             kind: Variant {
                                                 variant: Ident {
                                                     text: Symbol(
@@ -595,7 +595,7 @@ ParsedSrcFile {
                                                 end: 304,
                                             },
                                         },
-                                    },
+                                    ),
                                     span: SrcSpan {
                                         begin: 294,
                                         end: 305,
@@ -725,8 +725,8 @@ ParsedSrcFile {
                                 },
                             },
                             ty: Ty {
-                                kind: Base {
-                                    base: Path {
+                                kind: Path {
+                                    path: Path {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
@@ -767,8 +767,8 @@ ParsedSrcFile {
                                 },
                             },
                             ty: Ty {
-                                kind: Base {
-                                    base: Path {
+                                kind: Path {
+                                    path: Path {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
@@ -815,8 +815,8 @@ ParsedSrcFile {
                     extend_generics: Some(
                         [
                             Ty {
-                                kind: Base {
-                                    base: Path {
+                                kind: Path {
+                                    path: Path {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
@@ -841,8 +841,8 @@ ParsedSrcFile {
                                 },
                             },
                             Ty {
-                                kind: Base {
-                                    base: Path {
+                                kind: Path {
+                                    path: Path {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
@@ -871,8 +871,8 @@ ParsedSrcFile {
                     adt_generics: Some(
                         [
                             Ty {
-                                kind: Base {
-                                    base: Path {
+                                kind: Path {
+                                    path: Path {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
@@ -897,8 +897,8 @@ ParsedSrcFile {
                                 },
                             },
                             Ty {
-                                kind: Base {
-                                    base: Path {
+                                kind: Path {
+                                    path: Path {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
@@ -927,8 +927,8 @@ ParsedSrcFile {
                     trait_generics: Some(
                         [
                             Ty {
-                                kind: Base {
-                                    base: Path {
+                                kind: Path {
+                                    path: Path {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
@@ -953,8 +953,8 @@ ParsedSrcFile {
                                 },
                             },
                             Ty {
-                                kind: Base {
-                                    base: Path {
+                                kind: Path {
+                                    path: Path {
                                         segments: [
                                             Ident {
                                                 text: Symbol(
@@ -1050,8 +1050,8 @@ ParsedSrcFile {
                                         },
                                     },
                                     ty: Ty {
-                                        kind: Base {
-                                            base: Path {
+                                        kind: Path {
+                                            path: Path {
                                                 segments: [
                                                     Ident {
                                                         text: Symbol(
@@ -1085,8 +1085,8 @@ ParsedSrcFile {
                                 Ty {
                                     kind: Ref {
                                         base: Ty {
-                                            kind: Base {
-                                                base: Path {
+                                            kind: Path {
+                                                path: Path {
                                                     segments: [
                                                         Ident {
                                                             text: Symbol(
@@ -1118,18 +1118,18 @@ ParsedSrcFile {
                                     },
                                 },
                             ),
-                            body: Some(
+                            block: Some(
                                 Block {
                                     stmts: [
                                         Stmt {
-                                            kind: Return {
-                                                ret: Expr {
+                                            kind: Return(
+                                                Expr {
                                                     kind: Borrow {
                                                         mutability: Immutable,
                                                         operand: Expr {
                                                             kind: Access {
                                                                 base: Expr {
-                                                                    kind: DeclRef(
+                                                                    kind: Path(
                                                                         Path {
                                                                             segments: [
                                                                                 Ident {
@@ -1175,7 +1175,7 @@ ParsedSrcFile {
                                                         end: 486,
                                                     },
                                                 },
-                                            },
+                                            ),
                                             span: SrcSpan {
                                                 begin: 468,
                                                 end: 487,

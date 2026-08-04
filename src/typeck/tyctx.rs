@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
-use crate::nameres::resolve_results::PrimTy;
+use crate::nameres::results::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 
 pub struct TyCtx {
@@ -39,6 +39,11 @@ pub struct TyCtx {
 
     /// [`TyKind::Never`], interned up front for the same reason as [`TyCtx::error`].
     never: Ty,
+
+    /// [`TyKind::Unit`], interned up front for the same reason as [`TyCtx::error`]. A function
+    /// with no declared return type reaches for this on every `collect_function` call, which is
+    /// often enough to be worth not re-interning.
+    unit: Ty,
 }
 
 impl TyCtx {
@@ -48,12 +53,14 @@ impl TyCtx {
             interned: HashMap::new(),
             next_var: 0,
             // Placeholders: `intern` needs the context to exist before it can be called, so the
-            // two cached handles are filled in immediately below.
+            // cached handles are filled in immediately below.
             error: Ty::from_usize(0),
             never: Ty::from_usize(0),
+            unit: Ty::from_usize(0),
         };
         tcx.error = tcx.intern(TyKind::Error);
         tcx.never = tcx.intern(TyKind::Never);
+        tcx.unit = tcx.intern(TyKind::Unit);
         tcx
     }
 
@@ -79,21 +86,16 @@ impl TyCtx {
             .expect("a Ty handle from another TyCtx (or one built by hand)")
     }
 
-    /// The number of distinct types interned so far.
-    pub fn len(&self) -> usize {
-        self.kinds.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.kinds.is_empty()
-    }
-
     pub fn error(&self) -> Ty {
         self.error
     }
 
     pub fn never(&self) -> Ty {
         self.never
+    }
+
+    pub fn unit(&self) -> Ty {
+        self.unit
     }
 
     pub fn mk_prim(&mut self, prim: PrimTy) -> Ty {
@@ -109,7 +111,7 @@ impl TyCtx {
     }
 
     pub fn mk_self_param(&mut self, trait_: DefId) -> Ty {
-        self.intern(TyKind::SelfParam(trait_))
+        self.intern(TyKind::SelfTy(trait_))
     }
 
     pub fn mk_ref(&mut self, base: Ty, mutability: Mutability) -> Ty {

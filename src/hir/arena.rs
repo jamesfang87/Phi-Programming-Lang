@@ -5,9 +5,9 @@
 //! Every owning definition gets its own [`Arena`]. Lowering places each of that definition's
 //! child nodes into the arena and addresses it by [`LocalId`].
 
+use crate::hir::HirId;
 use crate::hir::block::{Block, Stmt};
 use crate::hir::expr::Expr;
-use crate::hir::ids::LocalId;
 use crate::hir::items::{
     Closure, ClosureParam, Enum, Extend, Field, Function, Generic, Import, Module, Param,
     SelfParam, Struct, Trait, Variant,
@@ -48,6 +48,47 @@ pub enum OwnerNode {
     Closure(Closure),
 }
 
+impl Node {
+    /// The [`HirId`] this node stores for itself.
+    ///
+    /// Every node knows its own address, which is what lets [`Hir::node`](crate::hir::Hir::node)
+    /// check that an id addresses the node it names without a per-node-kind walk.
+    pub fn hir_id(&self) -> HirId {
+        match self {
+            Node::Owner(owner) => owner.hir_id(),
+            Node::Import(n) => n.hir_id,
+            Node::Param(n) => n.hir_id,
+            Node::ClosureParam(n) => n.hir_id,
+            Node::SelfParam(n) => n.hir_id,
+            Node::Field(n) => n.hir_id,
+            Node::Variant(n) => n.hir_id,
+            Node::Generic(n) => n.hir_id,
+            Node::Arm(n) => n.hir_id,
+            Node::Block(n) => n.hir_id,
+            Node::Stmt(n) => n.hir_id,
+            Node::Expr(n) => n.hir_id,
+            Node::Pat(n) => n.hir_id,
+            Node::Ty(n) => n.hir_id,
+        }
+    }
+}
+
+impl OwnerNode {
+    /// The [`HirId`] this owner stores for itself, which always addresses slot zero of its own
+    /// arena.
+    pub fn hir_id(&self) -> HirId {
+        match self {
+            OwnerNode::Module(n) => n.hir_id,
+            OwnerNode::Function(n) => n.hir_id,
+            OwnerNode::Struct(n) => n.hir_id,
+            OwnerNode::Enum(n) => n.hir_id,
+            OwnerNode::Trait(n) => n.hir_id,
+            OwnerNode::Extend(n) => n.hir_id,
+            OwnerNode::Closure(n) => n.hir_id,
+        }
+    }
+}
+
 impl From<OwnerNode> for Node {
     fn from(owner: OwnerNode) -> Self {
         Node::Owner(owner)
@@ -65,14 +106,8 @@ pub struct Arena {
 
 impl Arena {
     /// Returns the node stored at `local_id`.
-    pub fn get(&self, local_id: LocalId) -> &Node {
-        &self.nodes[local_id.index()]
-    }
-
-    /// Returns the owner node at slot zero, still wrapped as a [`Node`]. Use [`Arena::owner`]
-    /// instead if the unwrapped [`OwnerNode`] is what's needed.
-    pub fn get_owner(&self) -> &Node {
-        &self.nodes[0]
+    pub fn get(&self, id: HirId) -> &Node {
+        &self.nodes[id.local_id.index()]
     }
 
     /// Returns the [`OwnerNode`] every arena's slot zero holds.

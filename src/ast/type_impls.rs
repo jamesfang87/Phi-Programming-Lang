@@ -15,8 +15,8 @@ impl Ty {
             span: tok.span,
         };
         Ty {
-            kind: TyKind::Base {
-                base: Path {
+            kind: TyKind::Path {
+                path: Path {
                     segments: vec![ident],
                     span: tok.span,
                 },

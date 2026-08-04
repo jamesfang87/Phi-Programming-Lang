@@ -2,7 +2,7 @@
 //!
 //! These three grammars recurse into each other (an expression can hold a block, a block holds
 //! statements, and a statement can hold an expression), so `chumsky` builds them together as one
-//! set of mutually recursive parsers. [`Parser::expr_and_block_parsers`] returns both halves.
+//! set of mutually recursive parsers.
 //!
 //! Expression precedence goes from tightest to loosest as the file reads top to bottom: postfix
 //! operators, then prefix operators, then the binary operators in the usual arithmetic order,
@@ -17,15 +17,14 @@ use chumsky::prelude::*;
 use chumsky::recursive::Indirect;
 
 use crate::ast::{
-    AccessArgs, Arm, BinaryOp, Block, ClosureParam, CtorPayload, DeclStmt, Expr, ExprKind, Ident,
-    Literal, Mutability, Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp, WithStmtLend,
+    AccessArgs, Arm, BinaryOp, Block, ClosureParam, Expr, ExprKind, Ident,
+    Literal, Mutability, Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp, WithLend,
 };
 
 use crate::ast::interner::Interner;
 use crate::driver::src_map::SrcMap;
 use crate::lexer::src_span::SrcSpan;
 use crate::lexer::token::{Token, TokenKind};
-use crate::parser::combine_binary;
 
 use super::{BoxedP, Extra, Parser};
 
@@ -65,7 +64,7 @@ impl Parser {
 
         // The else branch is used for both statements (let-else) and exprs
         // (if expr)
-        let else_branch = self
+        let else_expr = self
             .kind(TokenKind::ElseKw)
             .ignore_then(choice((
                 block.clone().map(|b: Block| {
@@ -115,7 +114,7 @@ impl Parser {
                         span: t.span,
                     };
                     Expr {
-                        kind: ExprKind::DeclRef(Path {
+                        kind: ExprKind::Path(Path {
                             segments: vec![name],
                             span: t.span,
                         }),
@@ -138,9 +137,9 @@ impl Parser {
                     let callee_span = callee_path.span;
                     let span = callee_span.merge(close_tok.span);
                     Expr {
-                        kind: ExprKind::FunCall {
+                        kind: ExprKind::Call {
                             callee: Box::new(Expr {
-                                kind: ExprKind::DeclRef(callee_path),
+                                kind: ExprKind::Path(callee_path),
                                 span: callee_span,
                             }),
                             args,
@@ -157,9 +156,9 @@ impl Parser {
                 .then(expr.clone())
                 .map(|(name, value)| {
                     let span = name.span.merge(value.span);
-                    CtorPayload {
+                    PayloadField {
                         name,
-                        expr: Box::new(value),
+                        value: Some(value),
                         span,
                     }
                 })
@@ -273,7 +272,7 @@ impl Parser {
             let decl_ref = path.clone().map(|p: Path| {
                 let span = p.span;
                 Expr {
-                    kind: ExprKind::DeclRef(p),
+                    kind: ExprKind::Path(p),
                     span,
                 }
             });
@@ -321,18 +320,18 @@ impl Parser {
                 .then_ignore(self.kind(TokenKind::Equals))
                 .then(expr_ns.clone())
                 .then(block.clone())
-                .then(else_branch.clone())
-                .map(|((((if_tok, pat), scrutinee), then_branch), else_branch)| {
-                    let span = match &else_branch {
+                .then(else_expr.clone())
+                .map(|((((if_tok, pat), scrutinee), then_block), else_expr)| {
+                    let span = match &else_expr {
                         Some(e) => if_tok.span.merge(e.span),
-                        None => if_tok.span.merge(then_branch.span),
+                        None => if_tok.span.merge(then_block.span),
                     };
                     Expr {
                         kind: ExprKind::IfLet {
                             pat,
                             scrutinee: Box::new(scrutinee),
-                            then_branch,
-                            else_branch: else_branch.map(Box::new),
+                            then_block,
+                            else_expr: else_expr.map(Box::new),
                         },
                         span,
                     }
@@ -343,17 +342,17 @@ impl Parser {
                 .kind(TokenKind::IfKw)
                 .then(expr_ns.clone())
                 .then(block.clone())
-                .then(else_branch.clone())
-                .map(|(((if_tok, cond), then_branch), else_branch)| {
-                    let span = match &else_branch {
+                .then(else_expr.clone())
+                .map(|(((if_tok, cond), then_block), else_expr)| {
+                    let span = match &else_expr {
                         Some(e) => if_tok.span.merge(e.span),
-                        None => if_tok.span.merge(then_branch.span),
+                        None => if_tok.span.merge(then_block.span),
                     };
                     Expr {
                         kind: ExprKind::If {
                             cond: Box::new(cond),
-                            then_branch,
-                            else_branch: else_branch.map(Box::new),
+                            then_block,
+                            else_expr: else_expr.map(Box::new),
                         },
                         span,
                     }
@@ -631,9 +630,10 @@ impl Parser {
                 bin_op(TokenKind::Slash, BinaryOp::Div),
                 bin_op(TokenKind::Percent, BinaryOp::Rem),
             ));
+
             let product = unary
                 .clone()
-                .foldl(mul_op.then(unary.clone()).repeated(), combine_binary)
+                .foldl(mul_op.then(unary.clone()).repeated(), Expr::binary)
                 .boxed();
 
             let add_op = choice((
@@ -642,7 +642,7 @@ impl Parser {
             ));
             let sum = product
                 .clone()
-                .foldl(add_op.then(product.clone()).repeated(), combine_binary)
+                .foldl(add_op.then(product.clone()).repeated(), Expr::binary)
                 .boxed();
 
             let cmp_op = choice((
@@ -655,19 +655,19 @@ impl Parser {
             ));
             let comparison = sum
                 .clone()
-                .foldl(cmp_op.then(sum.clone()).repeated(), combine_binary)
+                .foldl(cmp_op.then(sum.clone()).repeated(), Expr::binary)
                 .boxed();
 
             let and_op = bin_op(TokenKind::DoubleAmp, BinaryOp::And);
             let logical_and = comparison
                 .clone()
-                .foldl(and_op.then(comparison.clone()).repeated(), combine_binary)
+                .foldl(and_op.then(comparison.clone()).repeated(), Expr::binary)
                 .boxed();
 
             let or_op = bin_op(TokenKind::DoublePipe, BinaryOp::Or);
             let logical_or = logical_and
                 .clone()
-                .foldl(or_op.then(logical_and.clone()).repeated(), combine_binary)
+                .foldl(or_op.then(logical_and.clone()).repeated(), Expr::binary)
                 .boxed();
 
             // A range can look like `a..b`, `a..=b`, `a..`, `..b`, `..=b`, or `..`; either bound
@@ -778,13 +778,13 @@ impl Parser {
                 .then_ignore(self.kind(TokenKind::Equals))
                 .then(expr_ns.clone())
                 .then(block.clone())
-                .map(|(((while_tok, pat), scrutinee), body)| {
-                    let span = while_tok.span.merge(body.span);
+                .map(|(((while_tok, pat), scrutinee), block)| {
+                    let span = while_tok.span.merge(block.span);
                     Stmt {
                         kind: StmtKind::WhileLet {
                             pat,
                             scrutinee,
-                            body,
+                            block,
                         },
                         span,
                     }
@@ -795,10 +795,10 @@ impl Parser {
                 .kind(TokenKind::WhileKw)
                 .then(expr_ns.clone())
                 .then(block.clone())
-                .map(|((while_tok, cond), body)| {
-                    let span = while_tok.span.merge(body.span);
+                .map(|((while_tok, cond), block)| {
+                    let span = while_tok.span.merge(block.span);
                     Stmt {
-                        kind: StmtKind::While { cond, body },
+                        kind: StmtKind::While { cond, block },
                         span,
                     }
                 })
@@ -810,10 +810,10 @@ impl Parser {
                 .then_ignore(self.kind(TokenKind::InKw))
                 .then(expr_ns.clone())
                 .then(block.clone())
-                .map(|(((for_tok, name), iter), body)| {
-                    let span = for_tok.span.merge(body.span);
+                .map(|(((for_tok, pat), iter), block)| {
+                    let span = for_tok.span.merge(block.span);
                     Stmt {
-                        kind: StmtKind::For { name, iter, body },
+                        kind: StmtKind::For { pat, iter, block },
                         span,
                     }
                 })
@@ -848,7 +848,7 @@ impl Parser {
                 .map(|((ret_tok, value), semi_tok)| {
                     let span = ret_tok.span.merge(semi_tok.span);
                     Stmt {
-                        kind: StmtKind::Return { ret: value },
+                        kind: StmtKind::Return(value),
                         span,
                     }
                 })
@@ -861,7 +861,7 @@ impl Parser {
                 .map(|((ret_tok, value), semi_tok)| {
                     let span = ret_tok.span.merge(semi_tok.span);
                     Stmt {
-                        kind: StmtKind::Defer { defer: value },
+                        kind: StmtKind::Defer(value),
                         span,
                     }
                 })
@@ -892,16 +892,14 @@ impl Parser {
                             Mutability::Immutable
                         };
                         let span = let_tok.span.merge(semi_tok.span);
-                        let decl = DeclStmt {
-                            mutability,
-                            name,
-                            ty,
-                            expr: value,
-                            span,
-                            else_branch: else_block,
-                        };
                         Stmt {
-                            kind: StmtKind::Let(decl),
+                            kind: StmtKind::Let {
+                                mutability,
+                                pat: name,
+                                ty,
+                                init: value,
+                                else_block,
+                            },
                             span,
                         }
                     },
@@ -917,12 +915,12 @@ impl Parser {
                 )
                 .then_ignore(self.kind(TokenKind::Equals))
                 .then(expr.clone())
-                .map(|((name, ty), value)| {
-                    let span = name.span.merge(value.span);
-                    WithStmtLend {
-                        name,
+                .map(|((pat, ty), value)| {
+                    let span = pat.span.merge(value.span);
+                    WithLend {
+                        pat,
                         ty,
-                        expr: value,
+                        init: value,
                         span,
                     }
                 })
@@ -937,10 +935,10 @@ impl Parser {
                         .collect::<Vec<_>>(),
                 )
                 .then(block.clone())
-                .map(|((with_tok, lends), body)| {
-                    let span = with_tok.span.merge(body.span);
+                .map(|((with_tok, lends), block)| {
+                    let span = with_tok.span.merge(block.span);
                     Stmt {
-                        kind: StmtKind::With { lends, body },
+                        kind: StmtKind::With { lends, block },
                         span,
                     }
                 })
@@ -1049,22 +1047,12 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::lex_src;
     use crate::ast::PatKind;
     use crate::ast::interner::Interner;
-    use crate::diag::DiagCtx;
-    use crate::driver::src_map::SrcMap;
-    use crate::lexer::Lexer;
 
     fn parse_expr(src: &str) -> Expr {
-        DiagCtx::clear();
-        Interner::clear();
-        let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file(
-            "<test>".to_string(),
-            chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
-        );
-        let tokens = Lexer::new(&chars, offset).tokenize();
+        let (tokens, offset) = lex_src(src);
         let parser = Parser::new(tokens.clone(), offset);
         let (output, errors) = parser.expr_parser().parse(&tokens[..]).into_output_errors();
         assert!(
@@ -1083,7 +1071,7 @@ mod tests {
                 operand,
             } => {
                 assert!(matches!(mutability, Mutability::Immutable));
-                assert!(matches!(operand.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(operand.kind, ExprKind::Path(_)));
             }
             other => panic!("expected a borrow expr, got {other:?}"),
         }
@@ -1122,7 +1110,7 @@ mod tests {
     fn parses_self_expr() {
         let expr = parse_expr("self");
         match &expr.kind {
-            ExprKind::DeclRef(path) => {
+            ExprKind::Path(path) => {
                 assert_eq!(Interner::resolve(path.segments[0].text), "self")
             }
             other => panic!("expected a decl-ref expr, got {other:?}"),
@@ -1134,7 +1122,7 @@ mod tests {
         let expr = parse_expr("self.x");
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
-                assert!(matches!(base.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(base.kind, ExprKind::Path(_)));
                 assert_eq!(Interner::resolve(member.text), "x");
                 assert!(matches!(args, AccessArgs::None));
             }
@@ -1147,7 +1135,7 @@ mod tests {
         let expr = parse_expr("self.dot(other)");
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
-                assert!(matches!(base.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(base.kind, ExprKind::Path(_)));
                 assert_eq!(Interner::resolve(member.text), "dot");
                 assert!(matches!(args, AccessArgs::Call(args) if args.len() == 1));
             }
@@ -1183,7 +1171,7 @@ mod tests {
         let expr = parse_expr("Expr.int { value: 3 }");
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
-                assert!(matches!(base.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(base.kind, ExprKind::Path(_)));
                 assert_eq!(Interner::resolve(member.text), "int");
                 match args {
                     AccessArgs::Record(fields) => {
@@ -1207,7 +1195,7 @@ mod tests {
         let expr = parse_expr("if a.b { x } else { 0 }");
         match &expr.kind {
             ExprKind::If {
-                cond, else_branch, ..
+                cond, else_expr, ..
             } => {
                 assert!(matches!(
                     cond.kind,
@@ -1216,7 +1204,7 @@ mod tests {
                         ..
                     }
                 ));
-                assert!(else_branch.is_some());
+                assert!(else_expr.is_some());
             }
             other => panic!("expected an if expr, got {other:?}"),
         }
@@ -1230,12 +1218,12 @@ mod tests {
         match &expr.kind {
             ExprKind::If {
                 cond,
-                then_branch,
-                else_branch,
+                then_block,
+                else_expr,
             } => {
-                assert!(matches!(cond.kind, ExprKind::DeclRef(_)));
-                assert_eq!(then_branch.stmts.len(), 1);
-                assert!(else_branch.is_some());
+                assert!(matches!(cond.kind, ExprKind::Path(_)));
+                assert_eq!(then_block.stmts.len(), 1);
+                assert!(else_expr.is_some());
             }
             other => panic!("expected an if expr, got {other:?}"),
         }
@@ -1246,7 +1234,7 @@ mod tests {
         let expr = parse_expr("match Foo { x => 1, _ => 0 }");
         match &expr.kind {
             ExprKind::Match { scrutinee, arms } => {
-                assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(scrutinee.kind, ExprKind::Path(_)));
                 assert_eq!(arms.len(), 2);
             }
             other => panic!("expected a match expr, got {other:?}"),
@@ -1272,7 +1260,7 @@ mod tests {
         let expr = parse_expr("if f(Foo { a: 1 }) { x } else { 0 }");
         match &expr.kind {
             ExprKind::If { cond, .. } => match &cond.kind {
-                ExprKind::FunCall { args, .. } => {
+                ExprKind::Call { args, .. } => {
                     assert!(matches!(args[0].kind, ExprKind::Ctor { .. }));
                 }
                 other => panic!("expected a call expr, got {other:?}"),
@@ -1312,7 +1300,7 @@ mod tests {
         let expr = parse_expr("a[0]");
         match &expr.kind {
             ExprKind::Index { base, index } => {
-                assert!(matches!(base.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(base.kind, ExprKind::Path(_)));
                 assert!(matches!(index.kind, ExprKind::Literal(Literal::Int { .. })));
             }
             other => panic!("expected an index expr, got {other:?}"),
@@ -1323,7 +1311,7 @@ mod tests {
     fn parses_try_expr() {
         let expr = parse_expr("read_config()?");
         match &expr.kind {
-            ExprKind::Try(inner) => assert!(matches!(inner.kind, ExprKind::FunCall { .. })),
+            ExprKind::Try(inner) => assert!(matches!(inner.kind, ExprKind::Call { .. })),
             other => panic!("expected a try expr, got {other:?}"),
         }
     }
@@ -1365,7 +1353,7 @@ mod tests {
         match &expr.kind {
             ExprKind::Ctor { payload, .. } => {
                 assert_eq!(payload.len(), 1);
-                assert!(matches!(payload[0].expr.kind, ExprKind::Ctor { .. }));
+                assert!(matches!(payload[0].value.as_ref().unwrap().kind, ExprKind::Ctor { .. }));
             }
             other => panic!("expected a ctor expr, got {other:?}"),
         }
@@ -1381,7 +1369,7 @@ mod tests {
     fn parses_grouping_not_tuple_for_single_element() {
         // `(x)` is a grouped expr, not a 1-tuple.
         let expr = parse_expr("(x)");
-        assert!(matches!(expr.kind, ExprKind::DeclRef(_)));
+        assert!(matches!(expr.kind, ExprKind::Path(_)));
     }
 
     #[test]
@@ -1494,8 +1482,8 @@ mod tests {
         match &expr.kind {
             ExprKind::If {
                 cond,
-                then_branch,
-                else_branch,
+                then_block,
+                else_expr,
             } => {
                 assert!(matches!(
                     cond.kind,
@@ -1504,8 +1492,8 @@ mod tests {
                         ..
                     }
                 ));
-                assert_eq!(then_branch.stmts.len(), 1);
-                assert!(else_branch.is_none());
+                assert_eq!(then_block.stmts.len(), 1);
+                assert!(else_expr.is_none());
             }
             other => panic!("expected an if expr, got {other:?}"),
         }
@@ -1515,9 +1503,9 @@ mod tests {
     fn parses_if_else_expr() {
         let expr = parse_expr(r#"if x < 5 { "small" } else { "large" }"#);
         match &expr.kind {
-            ExprKind::If { else_branch, .. } => {
-                let else_branch = else_branch.as_ref().expect("expected an else branch");
-                assert!(matches!(else_branch.kind, ExprKind::Block(_)));
+            ExprKind::If { else_expr, .. } => {
+                let else_expr = else_expr.as_ref().expect("expected an else branch");
+                assert!(matches!(else_expr.kind, ExprKind::Block(_)));
             }
             other => panic!("expected an if expr, got {other:?}"),
         }
@@ -1527,9 +1515,9 @@ mod tests {
     fn parses_else_if_chain() {
         let expr = parse_expr("if a { 1 } else if b { 2 } else { 3 }");
         match &expr.kind {
-            ExprKind::If { else_branch, .. } => {
-                let else_branch = else_branch.as_ref().expect("expected an else branch");
-                assert!(matches!(else_branch.kind, ExprKind::If { .. }));
+            ExprKind::If { else_expr, .. } => {
+                let else_expr = else_expr.as_ref().expect("expected an else branch");
+                assert!(matches!(else_expr.kind, ExprKind::If { .. }));
             }
             other => panic!("expected an if expr, got {other:?}"),
         }
@@ -1542,12 +1530,12 @@ mod tests {
             ExprKind::IfLet {
                 pat,
                 scrutinee,
-                else_branch,
+                else_expr,
                 ..
             } => {
                 assert!(matches!(pat.kind, PatKind::Variant { .. }));
-                assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
-                assert!(else_branch.is_some());
+                assert!(matches!(scrutinee.kind, ExprKind::Path(_)));
+                assert!(else_expr.is_some());
             }
             other => panic!("expected an if-let expr, got {other:?}"),
         }
@@ -1557,7 +1545,7 @@ mod tests {
     fn parses_if_let_without_else() {
         let expr = parse_expr("if let .some(x) = o { x }");
         match &expr.kind {
-            ExprKind::IfLet { else_branch, .. } => assert!(else_branch.is_none()),
+            ExprKind::IfLet { else_expr, .. } => assert!(else_expr.is_none()),
             other => panic!("expected an if-let expr, got {other:?}"),
         }
     }
@@ -1567,9 +1555,9 @@ mod tests {
     fn parses_else_if_let_chain() {
         let expr = parse_expr("if let .some(a) = o { a } else if let .none = o { 1 } else { 2 }");
         match &expr.kind {
-            ExprKind::IfLet { else_branch, .. } => {
-                let else_branch = else_branch.as_ref().expect("expected an else branch");
-                assert!(matches!(else_branch.kind, ExprKind::IfLet { .. }));
+            ExprKind::IfLet { else_expr, .. } => {
+                let else_expr = else_expr.as_ref().expect("expected an else branch");
+                assert!(matches!(else_expr.kind, ExprKind::IfLet { .. }));
             }
             other => panic!("expected an if-let expr, got {other:?}"),
         }
@@ -1582,11 +1570,11 @@ mod tests {
         match &expr.kind {
             ExprKind::IfLet {
                 scrutinee,
-                then_branch,
+                then_block,
                 ..
             } => {
-                assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
-                assert_eq!(then_branch.stmts.len(), 1);
+                assert!(matches!(scrutinee.kind, ExprKind::Path(_)));
+                assert_eq!(then_block.stmts.len(), 1);
             }
             other => panic!("expected an if-let expr, got {other:?}"),
         }
@@ -1597,7 +1585,7 @@ mod tests {
         let expr = parse_expr("match shape { .circle(r) => 1, .rectangle((w, h)) => 2, _ => 0 }");
         match &expr.kind {
             ExprKind::Match { scrutinee, arms } => {
-                assert!(matches!(scrutinee.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(scrutinee.kind, ExprKind::Path(_)));
                 assert_eq!(arms.len(), 3);
                 assert!(matches!(arms[0].pat.kind, PatKind::Variant { .. }));
                 assert!(matches!(arms[2].pat.kind, PatKind::Wildcard));
@@ -1639,12 +1627,12 @@ mod tests {
         // method call on an indexed, borrowed receiver.
         let expr = parse_expr("render(Frame { pixels: (&buf)[0].to_owned() })");
         match &expr.kind {
-            ExprKind::FunCall { args, .. } => {
+            ExprKind::Call { args, .. } => {
                 assert_eq!(args.len(), 1);
                 match &args[0].kind {
                     ExprKind::Ctor { payload, .. } => {
                         assert_eq!(payload.len(), 1);
-                        assert!(matches!(payload[0].expr.kind, ExprKind::Access { .. }));
+                        assert!(matches!(payload[0].value.as_ref().unwrap().kind, ExprKind::Access { .. }));
                     }
                     other => panic!("expected a ctor expr, got {other:?}"),
                 }
@@ -1710,7 +1698,7 @@ mod tests {
         // Exercises a closure nested inside a call, matching how it's actually used in practice.
         let expr = parse_expr("map(xs, |x| x * 2)");
         match &expr.kind {
-            ExprKind::FunCall { args, .. } => {
+            ExprKind::Call { args, .. } => {
                 assert_eq!(args.len(), 2);
                 assert!(matches!(args[1].kind, ExprKind::Closure { .. }));
             }
@@ -1723,7 +1711,7 @@ mod tests {
         let expr = parse_expr("i = i + 1");
         match &expr.kind {
             ExprKind::Assign { lhs, rhs } => {
-                assert!(matches!(lhs.kind, ExprKind::DeclRef(_)));
+                assert!(matches!(lhs.kind, ExprKind::Path(_)));
                 assert!(matches!(
                     rhs.kind,
                     ExprKind::Binary {
@@ -1749,7 +1737,7 @@ mod tests {
             match &expr.kind {
                 ExprKind::AssignOp { op: got, lhs, .. } => {
                     assert_eq!(*got, op, "wrong op for {src:?}");
-                    assert!(matches!(lhs.kind, ExprKind::DeclRef(_)));
+                    assert!(matches!(lhs.kind, ExprKind::Path(_)));
                 }
                 other => panic!("expected an assign-op expr for {src:?}, got {other:?}"),
             }

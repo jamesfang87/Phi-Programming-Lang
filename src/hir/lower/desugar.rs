@@ -1,13 +1,12 @@
 //! Desugars `while`/`for` loops into [`ExprKind::Loop`], and the `let` forms of `if`/`while`
 //! into [`ExprKind::Match`].
 
+use crate::ast;
 use crate::ast::interner::Interner;
-use crate::ast::{self, TyKind};
 use crate::ast::{Ident, Mutability, Path};
-use crate::hir::ids::LocalId;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{
-    AccessArgs, BindingMode, ExprKind, LetStmt, LoopSource, PatKind, Payload, StmtKind,
+    AccessArgs, BindingMode, ExprKind, HirId, LoopSource, PatKind, Payload, StmtKind,
 };
 
 impl OwnerLowerer<'_> {
@@ -17,31 +16,25 @@ impl OwnerLowerer<'_> {
         &mut self,
         pat: &ast::Pat,
         scrutinee: &ast::Expr,
-        then_branch: &ast::Block,
-        else_branch: &Option<Box<ast::Expr>>,
+        then_block: &ast::Block,
+        else_expr: &Option<Box<ast::Expr>>,
     ) -> ExprKind {
         let span = scrutinee.span;
         let scrutinee = self.lower_expr(scrutinee);
 
-        let match_arm = self.synth_arm(then_branch.span, |low, _arm_id| {
+        let match_arm = self.synth_arm(then_block.span, |low, _arm_id| {
             let pat = low.lower_pat(pat);
-            let body = low.synth_expr(then_branch.span, |low, _expr_id| {
-                let block = low.lower_block(then_branch);
-                ExprKind::Block(block)
-            });
-            (pat, body)
+            let block = low.lower_block(then_block);
+            (pat, block)
         });
 
         let else_arm = self.synth_arm(span, |low, _arm_id| {
             let pat = low.synth_pat(span, |_, _| PatKind::Wildcard);
-            let body = match else_branch {
-                Some(else_branch) => low.lower_expr(else_branch),
-                None => low.synth_expr(span, |low, _expr_id| {
-                    let empty = low.synth_block(span, |_, _| (Vec::new(), None));
-                    ExprKind::Block(empty)
-                }),
+            let block = match else_expr {
+                Some(else_expr) => low.lower_expr_as_block(else_expr),
+                None => low.synth_block(span, |_, _| (Vec::new(), None)),
             };
-            (pat, body)
+            (pat, block)
         });
 
         ExprKind::Match {
@@ -60,7 +53,7 @@ impl OwnerLowerer<'_> {
         pat: &ast::Pat,
         scrutinee: &ast::Expr,
         body: &ast::Block,
-    ) -> LocalId {
+    ) -> HirId {
         let span = scrutinee.span;
         self.synth_expr(span, |low, _loop_id| {
             let loop_body = low.synth_block(body.span, |low, _block_id| {
@@ -69,23 +62,17 @@ impl OwnerLowerer<'_> {
 
                     let match_arm = low.synth_arm(body.span, |low, _arm_id| {
                         let pat = low.lower_pat(pat);
-                        let arm_body = low.synth_expr(body.span, |low, _expr_id| {
-                            let block = low.lower_block(body);
-                            ExprKind::Block(block)
-                        });
-                        (pat, arm_body)
+                        let block = low.lower_block(body);
+                        (pat, block)
                     });
 
                     let break_arm = low.synth_arm(span, |low, _arm_id| {
                         let pat = low.synth_pat(span, |_, _| PatKind::Wildcard);
-                        let arm_body = low.synth_expr(span, |low, _expr_id| {
-                            let brk_block = low.synth_block(span, |low, _bb_id| {
-                                let brk = low.synth_stmt(span, |_, _| StmtKind::Break);
-                                (vec![brk], None)
-                            });
-                            ExprKind::Block(brk_block)
+                        let block = low.synth_block(span, |low, _bb_id| {
+                            let brk = low.synth_stmt(span, |_, _| StmtKind::Break);
+                            (vec![brk], None)
                         });
-                        (pat, arm_body)
+                        (pat, block)
                     });
 
                     ExprKind::Match {
@@ -98,7 +85,7 @@ impl OwnerLowerer<'_> {
             });
             ExprKind::Loop {
                 source: LoopSource::While,
-                body: loop_body,
+                block: loop_body,
             }
         })
     }
@@ -107,7 +94,7 @@ impl OwnerLowerer<'_> {
     ///
     /// Unlike [`Self::lower_while_let`], the body always runs when the loop doesn't break, so it
     /// gets spliced directly into the loop rather than nested inside a match arm.
-    pub(super) fn lower_while(&mut self, cond: &ast::Expr, body: &ast::Block) -> LocalId {
+    pub(super) fn lower_while(&mut self, cond: &ast::Expr, body: &ast::Block) -> HirId {
         let span = cond.span;
         self.synth_expr(span, |low, _loop_id| {
             let loop_body = low.synth_block(body.span, |low, _block_id| {
@@ -122,8 +109,8 @@ impl OwnerLowerer<'_> {
                     });
                     ExprKind::If {
                         cond: not_cond,
-                        then_branch: break_block,
-                        else_branch: None,
+                        then_block: break_block,
+                        else_block: None,
                     }
                 });
                 let guard_stmt = low.synth_stmt(span, move |_, _| StmtKind::Expr(guard_if));
@@ -139,7 +126,7 @@ impl OwnerLowerer<'_> {
             });
             ExprKind::Loop {
                 source: LoopSource::While,
-                body: loop_body,
+                block: loop_body,
             }
         })
     }
@@ -152,7 +139,7 @@ impl OwnerLowerer<'_> {
         pat: &ast::Pat,
         iter: &ast::Expr,
         body: &ast::Block,
-    ) -> LocalId {
+    ) -> HirId {
         let span = iter.span;
         self.synth_expr(span, |low, _outer_id| {
             let inner_block = low.synth_block(span, |low, _block_id| {
@@ -166,14 +153,12 @@ impl OwnerLowerer<'_> {
                     name: iter_ident,
                     mode: BindingMode::Inferred,
                 });
-                let let_stmt = low.synth_stmt(span, move |_, _| {
-                    StmtKind::Let(LetStmt {
-                        mutability: Mutability::Mutable,
-                        pat: iter_pat,
-                        ty: None,
-                        init: iter_init,
-                        else_branch: None,
-                    })
+                let let_stmt = low.synth_stmt(span, move |_, _| StmtKind::Let {
+                    mutability: Mutability::Mutable,
+                    pat: iter_pat,
+                    ty: None,
+                    init: iter_init,
+                    else_block: None,
                 });
 
                 let loop_expr = low.synth_expr(span, |low, _loop_id| {
@@ -207,11 +192,8 @@ impl OwnerLowerer<'_> {
                                         payload: Payload::Single(user_pat),
                                     }
                                 });
-                                let some_body = low.synth_expr(body.span, |low, _expr_id| {
-                                    let block = low.lower_block(body);
-                                    ExprKind::Block(block)
-                                });
-                                (some_pat, some_body)
+                                let some_block = low.lower_block(body);
+                                (some_pat, some_block)
                             });
 
                             let none_arm = low.synth_arm(span, |low, _arm_id| {
@@ -222,14 +204,11 @@ impl OwnerLowerer<'_> {
                                     },
                                     payload: Payload::None,
                                 });
-                                let none_body = low.synth_expr(span, |low, _expr_id| {
-                                    let brk_block = low.synth_block(span, |low, _bb_id| {
-                                        let brk = low.synth_stmt(span, |_, _| StmtKind::Break);
-                                        (vec![brk], None)
-                                    });
-                                    ExprKind::Block(brk_block)
+                                let none_block = low.synth_block(span, |low, _bb_id| {
+                                    let brk = low.synth_stmt(span, |_, _| StmtKind::Break);
+                                    (vec![brk], None)
                                 });
-                                (none_pat, none_body)
+                                (none_pat, none_block)
                             });
 
                             ExprKind::Match {
@@ -243,7 +222,7 @@ impl OwnerLowerer<'_> {
                     });
                     ExprKind::Loop {
                         source: LoopSource::For,
-                        body: loop_body,
+                        block: loop_body,
                     }
                 });
                 let loop_stmt = low.synth_stmt(span, move |_, _| StmtKind::Expr(loop_expr));

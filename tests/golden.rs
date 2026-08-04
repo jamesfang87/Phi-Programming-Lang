@@ -33,7 +33,10 @@ fn run_fixture(fixture_dir: &Path) -> String {
 
     format!(
         "=== status ===\n{}\n=== stdout ===\n{}=== stderr ===\n{}",
-        output.status.code().map_or("<none>".to_string(), |c| c.to_string()),
+        output
+            .status
+            .code()
+            .map_or("<none>".to_string(), |c| c.to_string()),
         stdout,
         stderr,
     )
@@ -52,7 +55,10 @@ fn golden_fixtures() {
         })
         .collect();
     fixtures.sort();
-    assert!(!fixtures.is_empty(), "no fixtures found under tests/fixtures");
+    assert!(
+        !fixtures.is_empty(),
+        "no fixtures found under tests/fixtures"
+    );
 
     for fixture_dir in fixtures {
         let name = fixture_dir
@@ -64,9 +70,8 @@ fn golden_fixtures() {
         let actual = run_fixture(&fixture_dir);
 
         if bless {
-            fs::write(&expected_path, &actual).unwrap_or_else(|e| {
-                panic!("failed to write {}: {e}", expected_path.display())
-            });
+            fs::write(&expected_path, &actual)
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", expected_path.display()));
             println!("blessed {name}");
             continue;
         }

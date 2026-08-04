@@ -4,118 +4,101 @@
 //! The conversion is mostly mechanical, because name resolution has already done the hard part:
 //! every path in a `hir::Ty` was resolved to a [`Res`] and recorded under that node's
 //! [`HirId`], so this pass reads the answer instead of doing its own lookups. What is left is to
-//! replace each nested `LocalId` with the `Ty` it lowers to, and to check the things that only
+//! replace each nested `HirId` with the `Ty` it lowers to, and to check the things that only
 //! become checkable once a path has a definition behind it: that a type is applied to as many
 //! generic arguments as it declares parameters, and that what a path names can be used as a type
 //! at all.
 //!
-//! Every annotation lowered here is recorded in [`TypeckResults`](crate::typeck::tyres::TypeckResults)
+//! Every annotation lowered here is recorded in [`TypeResolutions`](crate::typeck::results::TypeResolutions)
 //! under its own `HirId`, so later passes can ask what a written type meant without repeating
 //! the walk.
 
 use crate::diag::{DiagCtx, Diagnostic};
-use crate::hir::{DefId, HirId, LocalId, Node, OwnerNode, TyKind as HirTyKind};
+use crate::hir::{DefId, HirId, Node, OwnerNode, TyKind as HirTyKind};
 use crate::lexer::src_span::SrcSpan;
-use crate::nameres::resolve_results::Res;
+use crate::nameres::results::Res;
 use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
 
 impl<'hir> Typeck<'hir> {
-    /// Lowers the annotation `ty_id` names inside `owner_id`'s arena, recording the result under
-    /// that node's [`HirId`] before returning it.
-    pub fn lower_ty(&mut self, owner_id: DefId, ty_id: LocalId) -> Ty {
-        let hir_id = HirId {
-            owner: owner_id,
-            local_id: ty_id,
-        };
-        let Node::Ty(ty) = self.hir.node(hir_id) else {
-            unreachable!("Expected a ty's local id to name a ty");
+    /// Lowers the annotation `id` names, recording the result under that same [`HirId`] before
+    /// returning it.
+    pub fn lower_ty(&mut self, id: HirId) -> Ty {
+        let Node::Ty(ty) = self.hir.node(id) else {
+            unreachable!("expected a ty id to name a ty");
         };
         let span = ty.span;
 
         let lowered = match &ty.kind {
-            HirTyKind::Base { args, .. } => {
+            HirTyKind::Path { args, .. } => {
                 // Collected first so the `&self` borrow of the node ends before lowering the
                 // arguments, which needs `&mut self`.
-                let args: Vec<LocalId> = args.clone();
-                self.lower_base(owner_id, hir_id, &args, span)
+                let args: Vec<HirId> = args.clone();
+                self.lower_base(id, &args, span)
             }
             HirTyKind::Ref { base, mutability } => {
                 let (base, mutability) = (*base, *mutability);
-                let base = self.lower_ty(owner_id, base);
+                let base = self.lower_ty(base);
                 self.tcx.mk_ref(base, mutability)
             }
             HirTyKind::Any(base) => {
-                let base = self.lower_ty(owner_id, *base);
+                let base = self.lower_ty(*base);
                 self.tcx.mk_any(base)
             }
             HirTyKind::Tuple(elems) => {
                 let elems = elems.clone();
-                let elems = self.lower_tys(owner_id, &elems);
+                let elems = self.lower_tys(&elems);
                 self.tcx.mk_tuple(elems)
             }
             HirTyKind::Array { elem, len } => {
                 let (elem, len) = (*elem, *len);
-                let elem = self.lower_ty(owner_id, elem);
+                let elem = self.lower_ty(elem);
                 // The length expression is addressed, not evaluated -- see `TyKind::Array`.
-                let len = len.map(|local_id| HirId {
-                    owner: owner_id,
-                    local_id,
-                });
                 self.tcx.mk_array(elem, len)
             }
             HirTyKind::Function { params, ret } => {
                 let (params, ret) = (params.clone(), *ret);
-                let params = self.lower_tys(owner_id, &params);
-                let ret = ret.map(|ret| self.lower_ty(owner_id, ret));
+                let params = self.lower_tys(&params);
+                let ret = ret.map(|ret| self.lower_ty(ret));
                 self.tcx.mk_fun(params, ret)
             }
-            HirTyKind::SelfType => self.self_ty(owner_id, span),
-            HirTyKind::Dyn(_) => self.lower_dyn(hir_id, span),
+            HirTyKind::SelfType => self.self_ty(id.owner, span),
+            HirTyKind::Dyn(_) => self.lower_dyn(id, span),
             HirTyKind::Error => self.tcx.error(),
         };
 
-        self.results.add(hir_id, lowered);
+        self.types.record(id, lowered);
         lowered
     }
 
     /// Lowers a list of annotations sitting in the same arena, such as a tuple's elements or a
     /// type's generic arguments.
-    pub fn lower_tys(&mut self, owner_id: DefId, ty_ids: &[LocalId]) -> Vec<Ty> {
-        ty_ids
-            .iter()
-            .map(|&ty_id| self.lower_ty(owner_id, ty_id))
-            .collect()
+    pub fn lower_tys(&mut self, ids: &[HirId]) -> Vec<Ty> {
+        ids.iter().map(|&id| self.lower_ty(id)).collect()
     }
 
-    /// Lowers a named type: `i32`, `T`, `Map<K, V>`, and so on. `hir_id` addresses the annotation
+    /// Lowers a named type: `i32`, `T`, `Map<K, V>`, and so on. `id` addresses the annotation
     /// itself, which is the key name resolution recorded its answer under.
-    fn lower_base(
-        &mut self,
-        owner_id: DefId,
-        hir_id: HirId,
-        arg_ids: &[LocalId],
-        span: SrcSpan,
-    ) -> Ty {
+    fn lower_base(&mut self, id: HirId, args: &[HirId], span: SrcSpan) -> Ty {
         // A missing entry means name resolution gave up on this annotation before recording an
         // answer -- an `extend` block's own `<...>` list holding something that isn't a bare
         // parameter name is the one way that happens. It has already been reported, so this
         // stays quiet.
-        let Some(res) = self.nameres.get(hir_id) else {
+        let Some(res) = self.nameres.res(id) else {
             return self.tcx.error();
         };
 
         match res {
             Res::PrimTy(prim) => {
-                Self::expect_no_args(arg_ids, span, "a primitive type");
+                Self::expect_no_args(args, span, "a primitive type");
                 self.tcx.mk_prim(prim)
             }
-            Res::TyParam(param) => {
-                Self::expect_no_args(arg_ids, span, "a generic type parameter");
+            Res::Generic(param) => {
+                Self::expect_no_args(args, span, "a generic type parameter");
                 self.tcx.mk_generic(param)
             }
             Res::Def(def_id) => {
-                let declared = match self.hir.owner(def_id) {
+                let declared = match self.hir.def(def_id) {
                     OwnerNode::Struct(struct_) => struct_.generics.len(),
                     OwnerNode::Enum(enum_) => enum_.generics.len(),
                     // A trait names a set of types rather than one type, so it can only be used
@@ -132,12 +115,12 @@ impl<'hir> Typeck<'hir> {
                     }
                 };
 
-                if arg_ids.len() != declared {
-                    Self::report_arg_count(span, declared, arg_ids.len());
+                if args.len() != declared {
+                    Self::report_arg_count(span, declared, args.len());
                     return self.tcx.error();
                 }
 
-                let args = self.lower_tys(owner_id, arg_ids);
+                let args = self.lower_tys(args);
                 self.tcx.mk_adt(def_id, args)
             }
             // Already reported by name resolution; staying quiet here keeps one mistake from
@@ -152,13 +135,13 @@ impl<'hir> Typeck<'hir> {
     /// Lowers `dyn Trait`. The HIR carries no generic arguments for the trait yet, so an
     /// implemented-with-arguments trait such as `dyn Index<K, V>` cannot be written; the
     /// argument list here is always empty.
-    fn lower_dyn(&mut self, hir_id: HirId, span: SrcSpan) -> Ty {
-        let Some(res) = self.nameres.get(hir_id) else {
+    fn lower_dyn(&mut self, id: HirId, span: SrcSpan) -> Ty {
+        let Some(res) = self.nameres.res(id) else {
             return self.tcx.error();
         };
 
         match res {
-            Res::Def(def_id) if matches!(self.hir.owner(def_id), OwnerNode::Trait(_)) => {
+            Res::Def(def_id) if matches!(self.hir.def(def_id), OwnerNode::Trait(_)) => {
                 self.tcx.mk_dyn(def_id, Vec::new())
             }
             Res::Err => self.tcx.error(),
@@ -181,7 +164,7 @@ impl<'hir> Typeck<'hir> {
     ///   `extend<K, V> Map<K, V>` is again `Map<K, V>` -- but by way of the block's arguments,
     ///   which need not be bare parameters (`extend Map<i32, bool>` gives `Map<i32, bool>`);
     /// - inside a trait, there is no concrete type yet, so it stays the trait's own
-    ///   [`SelfParam`](crate::typeck::ty::TyKind::SelfParam) until an `extend` substitutes it.
+    ///   [`SelfTy`](crate::typeck::ty::TyKind::SelfTy) until an `extend` substitutes it.
     ///
     /// Results are cached per definition, since `Self` is typically written many times in one
     /// body and the `extend` case has to lower a list of arguments each time it is computed.
@@ -219,7 +202,7 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         };
 
-        let self_ty = match self.hir.owner(introducer) {
+        let self_ty = match self.hir.def(introducer) {
             OwnerNode::Struct(struct_) => {
                 let params = struct_.generics.clone();
                 self.adt_of_own_params(introducer, &params)
@@ -231,7 +214,7 @@ impl<'hir> Typeck<'hir> {
             OwnerNode::Trait(_) => self.tcx.mk_self_param(adt),
             OwnerNode::Extend(extend) => {
                 let args = extend.adt_generics.clone();
-                let args = self.lower_tys(introducer, &args);
+                let args = self.lower_tys(&args);
                 self.tcx.mk_adt(adt, args)
             }
             _ => unreachable!("only a struct, enum, trait, or extend block introduces a `Self`"),
@@ -244,24 +227,16 @@ impl<'hir> Typeck<'hir> {
 
     /// Builds `def_id` applied to the type parameters it declares itself, which is what `Self`
     /// means inside a `struct` or `enum` body.
-    fn adt_of_own_params(&mut self, def_id: DefId, params: &[LocalId]) -> Ty {
-        let args = params
-            .iter()
-            .map(|&local_id| {
-                self.tcx.mk_generic(HirId {
-                    owner: def_id,
-                    local_id,
-                })
-            })
-            .collect();
+    fn adt_of_own_params(&mut self, def_id: DefId, params: &[HirId]) -> Ty {
+        let args = params.iter().map(|&id| self.tcx.mk_generic(id)).collect();
         self.tcx.mk_adt(def_id, args)
     }
 
     /// Reports generic arguments applied to something that declares none, such as `i32<bool>`.
-    fn expect_no_args(arg_ids: &[LocalId], span: SrcSpan, what: &str) {
-        if !arg_ids.is_empty() {
+    fn expect_no_args(args: &[HirId], span: SrcSpan, kind: &str) {
+        if !args.is_empty() {
             DiagCtx::emit(
-                Diagnostic::error(format!("{what} takes no generic arguments"), span)
+                Diagnostic::error(format!("{kind} takes no generic arguments"), span)
                     .with_label("unexpected generic arguments"),
             );
         }
@@ -336,26 +311,20 @@ mod tests {
     use crate::ast::Mutability;
     use crate::ast::interner::Interner;
     use crate::diag::DiagCtx;
-    use crate::driver::src_file::FileOrigin;
-    use crate::driver::src_map::SrcMap;
-    use crate::hir::lower::lower_unit;
-    use crate::hir::{DefId, Hir, HirId, LocalId, NameResolverResults, OwnerNode};
-    use crate::lexer::Lexer;
-    use crate::nameres;
-    use crate::nameres::resolve_results::PrimTy;
-    use crate::parser::Parser;
-    use crate::typeck::collect;
+    use crate::hir::{DefId, Hir, HirId, OwnerNode};
+    use crate::nameres::results::PrimTy;
+    use crate::testing::resolve_src;
+    use crate::typeck::results::TypeResolutions;
     use crate::typeck::ty::{Ty, TyKind};
     use crate::typeck::tyctx::TyCtx;
-    use crate::typeck::tyres::TypeckResults;
 
     /// Everything a lowered program's types are looked up through. The four travel together
-    /// because a `Ty` is an index into `tcx`, and a `TypeckResults` entry is keyed by a `HirId`
+    /// because a `Ty` is an index into `tcx`, and a `TypeResolutions` entry is keyed by a `HirId`
     /// that only means something against `hir`.
     struct Checked {
         hir: Hir,
         tcx: TyCtx,
-        results: TypeckResults,
+        types: TypeResolutions,
     }
 
     /// Runs `src` through the whole pipeline up to and including `collect`.
@@ -365,25 +334,15 @@ mod tests {
     /// missing here: the core library is not registered for these tests, since compiling it
     /// alongside a two-line fixture would swamp what each test is actually about.
     fn check(src: &str) -> Checked {
-        DiagCtx::clear();
-        Interner::clear();
-
-        let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
-        let tokens = Lexer::new(&chars, offset).tokenize();
-        let unit = Parser::new(tokens, offset).parse();
-        let diagnostics = DiagCtx::diagnostics();
-        assert!(
-            diagnostics.is_empty(),
-            "unexpected parse diagnostics for {src:?}: {diagnostics:?}"
-        );
-
-        let hir = lower_unit(&[unit]);
-        let nameres: NameResolverResults = nameres::resolve(&hir);
+        let (hir, nameres) = resolve_src(src);
         DiagCtx::clear();
 
-        let (tcx, results) = collect(&hir, &nameres);
-        Checked { hir, tcx, results }
+        let checked = crate::typeck::check(&hir, &nameres);
+        Checked {
+            hir,
+            tcx: checked.tcx,
+            types: checked.types,
+        }
     }
 
     /// The messages `collect` reported, in order.
@@ -402,7 +361,7 @@ mod tests {
                 .iter()
                 .copied()
                 .find(|&id| {
-                    let named = match self.hir.owner(id) {
+                    let named = match self.hir.def(id) {
                         OwnerNode::Function(f) => f.name,
                         OwnerNode::Struct(s) => s.name,
                         OwnerNode::Enum(e) => e.name,
@@ -420,21 +379,20 @@ mod tests {
             root.items
                 .iter()
                 .copied()
-                .find(|&id| matches!(self.hir.owner(id), OwnerNode::Extend(_)))
+                .find(|&id| matches!(self.hir.def(id), OwnerNode::Extend(_)))
                 .expect("no extend block")
         }
 
         /// The type recorded for a definition as a whole.
-        fn def_ty(&self, def_id: DefId) -> Ty {
-            self.ty(HirId {
-                owner: def_id,
-                local_id: LocalId::OWNER,
-            })
+        fn def_ty(&self, def: DefId) -> Ty {
+            self.types
+                .ty_of_def(def)
+                .expect("this definition's own type was never recorded")
         }
 
         fn ty(&self, hir_id: HirId) -> Ty {
-            self.results
-                .get(hir_id)
+            self.types
+                .ty(hir_id)
                 .unwrap_or_else(|| panic!("no type recorded for {hir_id:?}"))
         }
 
@@ -452,7 +410,7 @@ mod tests {
 
         /// The `Ty` of the `i`th generic parameter `def_id` declares.
         fn generic(&self, def_id: DefId, i: usize) -> Ty {
-            let generics = match self.hir.owner(def_id) {
+            let generics = match self.hir.def(def_id) {
                 OwnerNode::Struct(s) => &s.generics,
                 OwnerNode::Enum(e) => &e.generics,
                 OwnerNode::Trait(t) => &t.generics,
@@ -460,10 +418,7 @@ mod tests {
                 OwnerNode::Extend(e) => &e.extend_generics,
                 _ => panic!("this definition declares no generics"),
             };
-            self.ty(HirId {
-                owner: def_id,
-                local_id: generics[i],
-            })
+            self.ty(generics[i])
         }
     }
 
@@ -521,13 +476,10 @@ mod tests {
     fn a_field_annotation_naming_a_parameter_lowers_to_that_parameter() {
         let checked = check("struct Wrap<T> { inner: T }");
         let wrap = checked.def("Wrap");
-        let OwnerNode::Struct(struct_) = checked.hir.owner(wrap) else {
+        let OwnerNode::Struct(struct_) = checked.hir.def(wrap) else {
             unreachable!();
         };
-        let field = checked.ty(HirId {
-            owner: wrap,
-            local_id: struct_.fields[0],
-        });
+        let field = checked.ty(struct_.fields[0]);
 
         assert_eq!(field, checked.generic(wrap, 0));
     }
@@ -667,13 +619,10 @@ mod tests {
     fn self_inside_a_struct_is_the_struct_applied_to_its_parameters() {
         let checked = check("struct Wrap<T> { inner: Self }");
         let wrap = checked.def("Wrap");
-        let OwnerNode::Struct(struct_) = checked.hir.owner(wrap) else {
+        let OwnerNode::Struct(struct_) = checked.hir.def(wrap) else {
             unreachable!();
         };
-        let field = checked.ty(HirId {
-            owner: wrap,
-            local_id: struct_.fields[0],
-        });
+        let field = checked.ty(struct_.fields[0]);
 
         assert_eq!(field, checked.def_ty(wrap));
         assert_eq!(
@@ -690,7 +639,7 @@ mod tests {
         let checked = check("trait Show { fun clone(&self) -> Self; }");
         let show = checked.def("Show");
 
-        assert_eq!(checked.kind(checked.def_ty(show)), &TyKind::SelfParam(show));
+        assert_eq!(checked.kind(checked.def_ty(show)), &TyKind::SelfTy(show));
     }
 
     #[test]
@@ -730,7 +679,7 @@ mod tests {
              extend<T> Wrap<T> { fun get(&self, other: i32) -> Self {} }",
         );
         let extend = checked.extend();
-        let OwnerNode::Extend(block) = checked.hir.owner(extend) else {
+        let OwnerNode::Extend(block) = checked.hir.def(extend) else {
             unreachable!();
         };
         let (params, ret) = checked.sig(block.methods[0]);

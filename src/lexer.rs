@@ -1,8 +1,17 @@
-//! Turns source text into a flat stream of [`Token`]s for the parser to consume.
+//! The [`Lexer`] converts UTF-8 source text into a stream of [`Token`]s for the
+//! parser to consume.
 //!
-//! The lexer does not stop on bad input. If it finds an unexpected character or an unterminated
-//! literal, it records a diagnostic through [`DiagCtx`]. Then it keeps scanning. This way the
-//! parser still gets a full token stream to work with.
+//! The Lexer takes into consideration the global offsets and the tokens it
+//! produces already have global offsets.
+//!
+//! Source Text: The Lexer works on UTF-8 source text, which is decoded into
+//! chars. This allows us to support the use of various languages for writing
+//! source code.
+//!
+//! Error Handling: The Lexer does not stop on bad input. If it finds an
+//! unexpected character or an unterminated literal, it records a diagnostic
+//! through [`DiagCtx`]. After so, it keeps scanning. This way the parser still
+//! gets a full token stream to work with.
 
 use crate::diag::DiagCtx;
 use crate::lexer::{
@@ -13,14 +22,21 @@ use crate::lexer::{
 pub mod src_span;
 pub mod token;
 
-/// Scans UTF-8 source text (already decoded to `char`s) into tokens.
-///
-/// `file_offset` gives the position of `src` in the compiler's global source map. Spans
-/// produced by this lexer are absolute offsets across the whole compilation, not just this file.
 pub struct Lexer<'a> {
+    /// [`Lexer::src`] is a &Vec<char> represent the raw source code.
     src: &'a Vec<char>,
+
+    /// [`Lexer::file_offset`] allows the [`Lexer`] to produce global
+    /// [`SrcSpan`]s for the [`Token`] stream it outputs.
     file_offset: usize,
+
+    /// [`Lexer::cursor`] is the current position in [`Lexer::src`].
     cursor: usize,
+
+    /// [`Lexer::lexeme_pos`] is position that the current lexeme (lexical unit)
+    /// starts at in [`Lexer::src`].
+    /// This is required for generating spans for multi-character tokens as
+    /// [`Lexer::cursor`] is not the start of the token anymore.
     lexeme_pos: usize,
 }
 

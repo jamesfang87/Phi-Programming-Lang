@@ -3,7 +3,7 @@
 //! with internally.
 
 use crate::ast::{Mutability, Path};
-use crate::hir::ids::{HirId, LocalId};
+use crate::hir::ids::HirId;
 use crate::lexer::src_span::SrcSpan;
 
 #[derive(Debug)]
@@ -16,28 +16,28 @@ pub struct Ty {
 #[derive(Debug)]
 pub enum TyKind {
     /// A named type, optionally with generic arguments, such as `i32`, `String`, or `Array<T>`.
-    Base {
+    Path {
         path: Path,
-        args: Vec<LocalId>, // -> Node::Ty
+        args: Vec<HirId>, // -> Node::Ty
     },
     /// Represents `&T` or `&mut T`.
     Ref {
-        base: LocalId, // -> Node::Ty
+        base: HirId, // -> Node::Ty
         mutability: Mutability,
     },
     /// Represents `any T`.
-    Any(LocalId), // -> Node::Ty
+    Any(HirId), // -> Node::Ty
     /// Represents `(T, U, ..)`.
-    Tuple(Vec<LocalId>), // -> Node::Ty
+    Tuple(Vec<HirId>), // -> Node::Ty
     /// A fixed-size array, written `[T; N]`.
     Array {
-        elem: LocalId,        // -> Node::Ty
-        len: Option<LocalId>, // -> Node::Expr, the constant expression `N`
+        elem: HirId,        // -> Node::Ty
+        len: Option<HirId>, // -> Node::Expr, the constant expression `N`
     },
     /// A function type, such as `fun(i32, i32) -> i32` or `fun(&str)`.
     Function {
-        params: Vec<LocalId>, // -> Node::Ty
-        ret: Option<LocalId>, // -> Node::Ty
+        params: Vec<HirId>, // -> Node::Ty
+        ret: Option<HirId>, // -> Node::Ty
     },
     /// Represents `Self`, which refers back to the type being defined or extended, used inside
     /// that type's own `struct`, `trait`, or `extend` body.
