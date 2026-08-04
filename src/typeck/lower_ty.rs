@@ -121,6 +121,11 @@ impl<'hir> Typeck<'hir> {
                 }
 
                 let args = self.lower_tys(args);
+                // Writing the type is what instantiates it, so this is where its declared bounds
+                // become something to prove. Deferred rather than proved: the arguments may still
+                // be inference variables, and the index may not exist yet. See
+                // [`bounds`](crate::typeck::traits::bounds).
+                self.register_bound_obligations(def_id, &args, span, id.owner);
                 self.tcx.mk_adt(def_id, args)
             }
             // Already reported by name resolution; staying quiet here keeps one mistake from
@@ -132,6 +137,11 @@ impl<'hir> Typeck<'hir> {
     /// Lowers `dyn Trait`. The HIR carries no generic arguments for the trait yet, so an
     /// implemented-with-arguments trait such as `dyn Index<K, V>` cannot be written; the
     /// argument list here is always empty.
+    ///
+    /// Which makes `dyn` applied to a trait that *does* declare parameters an error with no
+    /// spelling that would fix it. It is still an error rather than something to wave through: a
+    /// half-applied trait is not a type, and letting one reach the solver would mean matching a
+    /// goal against an argument list nobody wrote.
     fn lower_dyn(&mut self, id: HirId, span: SrcSpan) -> Ty {
         let Some(res) = self.nameres.ty(id) else {
             return self.tcx.error();
@@ -139,6 +149,13 @@ impl<'hir> Typeck<'hir> {
 
         match res {
             TypeRes::Def(def_id) if matches!(self.hir.def(def_id), OwnerNode::Trait(_)) => {
+                if !self.check_arg_count(def_id, 0, span) {
+                    return self.tcx.error();
+                }
+                // A `dyn Trait` is an instantiation of the trait's parameters like any other, so
+                // whatever they are bounded by has to hold of the arguments -- of which there are
+                // none today, which is why this can only ever be the empty case.
+                self.register_bound_obligations(def_id, &[], span, id.owner);
                 self.tcx.mk_dyn(def_id, Vec::new())
             }
             TypeRes::Err => self.tcx.error(),

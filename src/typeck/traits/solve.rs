@@ -1,0 +1,1183 @@
+//! The query: does `self_ty` implement `trait_ref`, given what the surrounding definition lets
+//! us assume?
+//!
+//! [`Typeck::implements`] answers it, in this order, and the order is the design:
+//!
+//! 1. **Resolve** the goal through the inference unifier. A goal containing
+//!    [`TyKind::Error`] answers [`Solution::Error`] -- a diagnostic for it already exists, and a
+//!    second one would be noise. A goal whose self type is still an inference variable answers
+//!    [`Solution::Ambiguous`]: not "no", but "ask again once inference has settled".
+//! 2. **The environment first.** A bound written on a parameter beats any impl that happens to
+//!    match, because inside `fun f<T: Show>(x: T)` the only thing known about `T` is what was
+//!    declared. This step is the whole reason a generic function can use its own bounds.
+//! 3. **`dyn`.** `dyn Show` satisfies `Show` and nothing else. There is no impl behind it --
+//!    impls are nominal -- so it is a rule here rather than an entry in the index.
+//! 4. **Otherwise require an ADT.** References, tuples, arrays and `any` implement nothing.
+//!    `x.show()` where `x: &Foo` is the job of receiver adjustment in method resolution, not of
+//!    making references implement things.
+//! 5. **Match candidates**, one-way (see [`match_ty`]), and
+//! 6. **recurse** into the selected impl's own obligations.
+//!
+//! ## Matching, not unification
+//!
+//! [`match_ty`] is one-way on purpose: it never touches the global
+//! [`Unifier`](crate::typeck::unify::Unifier), so selecting a candidate can never constrain the
+//! goal's inference variables. Two things fall out of that. Step 1 can honestly report
+//! `Ambiguous` instead of guessing an impl and poisoning inference with the guess; and no
+//! snapshot/rollback machinery has to be added to `Unifier`, which has none.
+//!
+//! ## Termination
+//!
+//! Two cutoffs, both of which report and answer [`Solution::Error`] rather than succeeding
+//! quietly. A goal already in progress is a cyclic bound -- there is no coinduction here, because
+//! phi has no auto traits for which "assume it holds" would be the right answer. And a hard depth
+//! cap catches the growing-goal case, `T` -> `Box<T>` -> `Box<Box<T>>`, which no cycle check can
+//! see because no goal ever repeats.
+
+use std::collections::HashMap;
+
+use crate::ast::interner::Interner;
+use crate::diag::{DiagCtx, Diagnostic};
+use crate::hir::{DefId, HirId, OwnerNode};
+use crate::lexer::src_span::SrcSpan;
+use crate::nameres::results::TypeRes;
+use crate::typeck::Typeck;
+use crate::typeck::traits::TraitRef;
+use crate::typeck::traits::index::ImplId;
+use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::tyctx::TyCtx;
+
+/// How deep the solver will chase an impl's obligations before giving up.
+///
+/// This is not the cycle check, which catches a goal that *repeats*. It catches a goal that grows
+/// without ever repeating, where every step is a new question and the recursion is nonetheless
+/// infinite.
+pub const RECURSION_LIMIT: usize = 128;
+
+/// One thing that must be proved: that `self_ty` implements `trait_ref`.
+///
+/// `cause` is where to point when it fails, and is deliberately *not* part of what makes two
+/// obligations the same question -- see [`Obligation::same_goal`].
+#[derive(Clone, Debug)]
+pub struct Obligation {
+    pub self_ty: Ty,
+    pub trait_ref: TraitRef,
+    pub cause: SrcSpan,
+}
+
+impl Obligation {
+    pub fn new(self_ty: Ty, trait_ref: TraitRef, cause: SrcSpan) -> Self {
+        Obligation {
+            self_ty,
+            trait_ref,
+            cause,
+        }
+    }
+
+    /// Whether two obligations ask the same question, ignoring where each was raised.
+    ///
+    /// Cycle detection and the environment lookup both want this rather than `==`: the same goal
+    /// reached from two places is still the same goal, and a bound in a `ParamEnv` carries the
+    /// span of its own declaration, not of the call site asking about it.
+    pub fn same_goal(&self, other: &Obligation) -> bool {
+        self.self_ty == other.self_ty && self.trait_ref == other.trait_ref
+    }
+}
+
+/// What may be *assumed* while checking one definition: every bound on every type parameter in
+/// scope, plus a trait's implicit `Self: ThatTrait`.
+///
+/// Built once per definition and cached, since every goal raised inside a body is asked against
+/// the same one.
+///
+/// The same set plays two roles depending on which side of the impl you stand on. Checking an
+/// `extend<T: Show> Box<T>` block's own method bodies, `T: Show` is an assumption. Selecting that
+/// impl from outside, the very same `T: Show` is an *obligation* the caller has to discharge.
+/// That is why phi needs no `where` clause syntax and this design stores an impl's obligations
+/// nowhere: they are already here.
+#[derive(Clone, Debug, Default)]
+pub struct ParamEnv {
+    pub bounds: Vec<Obligation>,
+}
+
+impl ParamEnv {
+    /// The environment that assumes nothing, for a goal raised where no parameters are in scope.
+    pub fn empty() -> Self {
+        ParamEnv::default()
+    }
+}
+
+/// The answer to a query.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Solution {
+    Holds(ImplSource),
+    DoesNotHold,
+    /// The goal still contains inference variables, so it can be neither proved nor disproved
+    /// yet. Ask again once more of the body has been checked.
+    Ambiguous,
+    /// The goal contained [`TyKind::Error`], or a cutoff fired. Either way a diagnostic already
+    /// exists, and this exists so that one earlier mistake does not cascade into a second --
+    /// exactly the role `TyKind::Error` plays in unification.
+    Error,
+}
+
+/// *Why* a goal holds. Carried back rather than discarded because method resolution has to
+/// instantiate the method it found, which takes the substitution that made the impl match.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ImplSource {
+    /// An `extend` block matched, under `subst`: what each of the block's own parameters had to
+    /// be for its header to become the goal.
+    FromImpl {
+        impl_id: ImplId,
+        subst: HashMap<HirId, Ty>,
+    },
+    /// A bound declared on a type parameter in scope.
+    FromEnv { param: HirId },
+    /// The implicit `Self` of a trait, which implements that trait by definition.
+    FromSelf,
+    /// A `dyn Trait` value, which implements exactly the trait it names. Not in the original
+    /// design's three variants, which had nowhere to put the built-in `dyn` rule they also
+    /// specified; folding it into [`ImplSource::FromSelf`] would have told method resolution
+    /// something untrue about where the methods live.
+    FromDyn,
+}
+
+/// Matches the open type `impl_ty` against the closed type `goal_ty`, recording in `subst` what
+/// each of the impl's own parameters had to be.
+///
+/// One-way. Where `impl_ty` is a [`TyKind::Generic`] belonging to `generics`, it binds -- or
+/// checks against an existing binding, so a parameter written twice has to take one value in both
+/// places. A `TyKind::Generic` that is *not* one of this impl's parameters is an ordinary rigid
+/// constant, matching only itself. Everywhere else this requires structural equality, recursing
+/// into components.
+///
+/// Nothing in `goal_ty` is ever bound, which is what keeps candidate selection from constraining
+/// the caller's inference variables; see the [module docs](self).
+pub fn match_ty(
+    tcx: &TyCtx,
+    generics: &[HirId],
+    impl_ty: Ty,
+    goal_ty: Ty,
+    subst: &mut HashMap<HirId, Ty>,
+) -> bool {
+    if let TyKind::Generic(param) = *tcx.kind(impl_ty)
+        && generics.contains(&param)
+    {
+        return match subst.get(&param) {
+            // Interning makes this the whole of the consistency check: two structurally equal
+            // ground types are the same handle.
+            Some(&bound) => bound == goal_ty,
+            None => {
+                subst.insert(param, goal_ty);
+                true
+            }
+        };
+    }
+
+    // Identical handles are identical types, so the common case costs one comparison. This also
+    // short-circuits the pairs below that carry no components at all.
+    if impl_ty == goal_ty {
+        return true;
+    }
+
+    match (tcx.kind(impl_ty), tcx.kind(goal_ty)) {
+        // An impl header that failed to lower matches nothing. A goal containing an error never
+        // reaches here -- `implements` answers `Solution::Error` before selecting candidates.
+        (TyKind::Error, _) | (_, TyKind::Error) => false,
+
+        (TyKind::Adt { def: d, args: x }, TyKind::Adt { def: e, args: y })
+        | (TyKind::Dyn { trait_: d, args: x }, TyKind::Dyn { trait_: e, args: y }) => {
+            d == e && match_all(tcx, generics, x, y, subst)
+        }
+
+        (
+            TyKind::Ref {
+                base: x,
+                mutability: m,
+            },
+            TyKind::Ref {
+                base: y,
+                mutability: n,
+            },
+        ) => m == n && match_ty(tcx, generics, *x, *y, subst),
+
+        (TyKind::Any(x), TyKind::Any(y)) => match_ty(tcx, generics, *x, *y, subst),
+
+        (TyKind::Tuple(x), TyKind::Tuple(y)) => match_all(tcx, generics, x, y, subst),
+
+        (TyKind::Array { elem: x, len: m }, TyKind::Array { elem: y, len: n }) => {
+            m == n && match_ty(tcx, generics, *x, *y, subst)
+        }
+
+        (
+            TyKind::Fun {
+                params: x,
+                ret: r_x,
+            },
+            TyKind::Fun {
+                params: y,
+                ret: r_y,
+            },
+        ) => match (r_x, r_y) {
+            _ if !match_all(tcx, generics, x, y, subst) => false,
+            (Some(r_x), Some(r_y)) => match_ty(tcx, generics, *r_x, *r_y, subst),
+            (None, None) => true,
+            (Some(_), None) | (None, Some(_)) => false,
+        },
+
+        // Everything with no components was already decided by the handle comparison above: two
+        // primitives, two rigid parameters, two `SelfTy`s, `Unit`, `Never`, and an inference
+        // variable in the goal that the impl does not have a parameter to absorb.
+        _ => false,
+    }
+}
+
+fn match_all(
+    tcx: &TyCtx,
+    generics: &[HirId],
+    impl_tys: &[Ty],
+    goal_tys: &[Ty],
+    subst: &mut HashMap<HirId, Ty>,
+) -> bool {
+    impl_tys.len() == goal_tys.len()
+        && impl_tys
+            .iter()
+            .zip(goal_tys.iter())
+            .all(|(&a, &b)| match_ty(tcx, generics, a, b, subst))
+}
+
+impl<'hir> Typeck<'hir> {
+    /// Answers whether `goal` holds, assuming `env`. See the [module docs](self) for the order
+    /// the steps run in and why.
+    pub fn implements(&mut self, goal: &Obligation, env: &ParamEnv) -> Solution {
+        // Step 1. Everything below compares interned handles, which only means "same type" once
+        // every inference variable that has been resolved is replaced by what it resolved to.
+        let goal = Obligation {
+            self_ty: self.resolve_deep(goal.self_ty),
+            trait_ref: TraitRef {
+                def: goal.trait_ref.def,
+                args: goal
+                    .trait_ref
+                    .args
+                    .iter()
+                    .map(|&arg| self.resolve_deep(arg))
+                    .collect(),
+            },
+            cause: goal.cause,
+        };
+
+        if self.goal_mentions_error(&goal) {
+            return Solution::Error;
+        }
+        if matches!(self.tcx.kind(goal.self_ty), TyKind::Var(_)) {
+            return Solution::Ambiguous;
+        }
+
+        if self.goal_stack.iter().any(|open| open.same_goal(&goal)) {
+            self.report_cyclic_bound(&goal);
+            return Solution::Error;
+        }
+        if self.goal_stack.len() >= RECURSION_LIMIT {
+            self.report_recursion_limit(&goal);
+            return Solution::Error;
+        }
+
+        self.goal_stack.push(goal.clone());
+        let solution = self.solve(&goal, env);
+        self.goal_stack.pop();
+        solution
+    }
+
+    /// Steps 2 through 6, with the goal already resolved and on the in-progress stack.
+    fn solve(&mut self, goal: &Obligation, env: &ParamEnv) -> Solution {
+        // Step 2. Bounds are ground in their parameter's own terms -- `TyKind::Generic` or
+        // `TyKind::SelfTy` -- so this is equality, not matching.
+        if let Some(bound) = env.bounds.iter().find(|bound| bound.same_goal(goal)) {
+            return Solution::Holds(match *self.tcx.kind(bound.self_ty) {
+                TyKind::Generic(param) => ImplSource::FromEnv { param },
+                TyKind::SelfTy(_) => ImplSource::FromSelf,
+                ref other => unreachable!(
+                    "a ParamEnv bound is always about a type parameter or `Self`, but one is \
+                     about {other:?}"
+                ),
+            });
+        }
+
+        // Step 3.
+        if let TyKind::Dyn { trait_, args } = self.tcx.kind(goal.self_ty) {
+            let holds = *trait_ == goal.trait_ref.def && *args == goal.trait_ref.args;
+            return if holds {
+                Solution::Holds(ImplSource::FromDyn)
+            } else {
+                Solution::DoesNotHold
+            };
+        }
+
+        // Step 4.
+        let TyKind::Adt { def, .. } = *self.tcx.kind(goal.self_ty) else {
+            return Solution::DoesNotHold;
+        };
+
+        // Step 5.
+        let Some((impl_id, subst)) = self.select(def, goal) else {
+            return Solution::DoesNotHold;
+        };
+
+        // Step 6. The impl's own obligations are the bounds on its `extend<T: ..>` generics --
+        // see `ParamEnv` -- substituted through what made it match. They are proved in the
+        // *caller's* environment, since that is who has to discharge them.
+        let obligations = self.param_env(self.impls.header(impl_id).def).bounds;
+        for obligation in obligations {
+            let sub_goal = Obligation {
+                self_ty: self.subst_ty(obligation.self_ty, &subst),
+                trait_ref: TraitRef {
+                    def: obligation.trait_ref.def,
+                    args: obligation
+                        .trait_ref
+                        .args
+                        .iter()
+                        .map(|&arg| self.subst_ty(arg, &subst))
+                        .collect(),
+                },
+                // The failure is about the goal that dragged this in, not about where the bound
+                // was declared.
+                cause: goal.cause,
+            };
+
+            match self.implements(&sub_goal, env) {
+                Solution::Holds(_) => {}
+                Solution::DoesNotHold => return Solution::DoesNotHold,
+                Solution::Ambiguous => return Solution::Ambiguous,
+                Solution::Error => return Solution::Error,
+            }
+        }
+
+        Solution::Holds(ImplSource::FromImpl { impl_id, subst })
+    }
+
+    /// The one impl of `goal`'s trait whose header matches `goal`, if there is one.
+    ///
+    /// Coherence guarantees at most one, which is what makes the query a function. A second match
+    /// is a bug in coherence rather than a program error, so it trips an assertion in debug and
+    /// is reported rather than silently resolved by arbitrary choice in release.
+    fn select(&mut self, head: DefId, goal: &Obligation) -> Option<(ImplId, HashMap<HirId, Ty>)> {
+        let mut matches: Vec<(ImplId, HashMap<HirId, Ty>)> = Vec::new();
+
+        for &impl_id in self.impls.for_self(head) {
+            let header = self.impls.header(impl_id);
+            let Some(trait_ref) = &header.trait_ref else {
+                // An inherent block implements no trait, so it is never a candidate here. Its
+                // methods are found by method resolution, not by this query.
+                continue;
+            };
+            if trait_ref.def != goal.trait_ref.def {
+                continue;
+            }
+
+            let mut subst = HashMap::new();
+            let matched = match_ty(
+                &self.tcx,
+                &header.generics,
+                header.self_ty,
+                goal.self_ty,
+                &mut subst,
+            ) && match_all(
+                &self.tcx,
+                &header.generics,
+                &trait_ref.args,
+                &goal.trait_ref.args,
+                &mut subst,
+            );
+
+            if matched {
+                matches.push((impl_id, subst));
+            }
+        }
+
+        debug_assert!(
+            matches.len() <= 1,
+            "two impls matched one goal, which coherence is supposed to have made impossible"
+        );
+        if matches.len() > 1 {
+            self.report_ambiguous_impls(goal);
+            return None;
+        }
+        matches.pop()
+    }
+
+    /// Everything `def` may assume: the bounds on its own generics, on those of every definition
+    /// enclosing it, and -- inside a trait -- that `Self` implements that trait.
+    ///
+    /// Walking up the parent chain is what gives a method the `extend` block's parameters. The
+    /// three bracket groups of an `extend` block are not equal here: only the first *declares*
+    /// parameters, so only it can carry bounds.
+    ///
+    /// No elaboration step exists, because phi has no supertraits. If they are added, closing the
+    /// bound set under the supertrait relation goes here and nothing else in this design changes.
+    pub fn param_env(&mut self, def: DefId) -> ParamEnv {
+        if let Some(env) = self.param_envs.get(&def) {
+            return env.clone();
+        }
+
+        let mut bounds = Vec::new();
+        let mut current = Some(def);
+        while let Some(owner) = current {
+            let (generics, self_bound) = match self.hir.def(owner) {
+                OwnerNode::Function(f) => (f.generics.clone(), None),
+                OwnerNode::Struct(s) => (s.generics.clone(), None),
+                OwnerNode::Enum(e) => (e.generics.clone(), None),
+                // Inside a trait, the implicit `Self` implements that trait by definition, which
+                // is what lets one default method call another.
+                OwnerNode::Trait(t) => {
+                    (t.generics.clone(), Some((owner, t.generics.clone(), t.span)))
+                }
+                OwnerNode::Extend(e) => (e.extend_generics.clone(), None),
+                // A module or a closure declares no generics of its own. Walking through rather
+                // than stopping is what lets a closure body see its enclosing function's bounds.
+                OwnerNode::Module(_) | OwnerNode::Closure(_) => (Vec::new(), None),
+            };
+
+            for generic in generics {
+                self.collect_bounds(generic, &mut bounds);
+            }
+            if let Some((trait_def, trait_generics, span)) = self_bound {
+                let self_ty = self.tcx.mk_self_param(trait_def);
+                let args = trait_generics
+                    .iter()
+                    .map(|&id| self.tcx.mk_generic(id))
+                    .collect();
+                bounds.push(Obligation::new(
+                    self_ty,
+                    TraitRef {
+                        def: trait_def,
+                        args,
+                    },
+                    span,
+                ));
+            }
+
+            current = self.hir.parent(owner);
+        }
+
+        let env = ParamEnv { bounds };
+        self.param_envs.insert(def, env.clone());
+        env
+    }
+
+    /// Turns the bounds written on one type parameter into obligations about it.
+    ///
+    /// A bound that did not resolve to a trait is skipped rather than reported. Name resolution
+    /// already reported the unresolvable ones, and a bound naming a struct is a mistake that
+    /// belongs to bound *checking* rather than to building the set of things that may be assumed:
+    /// [`check_declared_bounds`](Typeck::check_declared_bounds) is what reports it, once per
+    /// declaration rather than once per environment the parameter appears in. Skipping it here
+    /// means it can never be assumed, which is the safe answer.
+    pub(crate) fn collect_bounds(&mut self, generic: HirId, bounds: &mut Vec<Obligation>) {
+        let span = self.hir.generic(generic).span;
+        let resolutions: Vec<TypeRes> = self.nameres.bounds(generic).to_vec();
+
+        for res in resolutions {
+            let TypeRes::Def(def) = res else {
+                continue;
+            };
+            if !matches!(self.hir.def(def), OwnerNode::Trait(_)) {
+                continue;
+            }
+
+            let self_ty = self.tcx.mk_generic(generic);
+            // A bound is a bare path with no argument list, so a trait's own parameters can never
+            // be applied in one. When that syntax arrives, its arguments are lowered here.
+            bounds.push(Obligation::new(
+                self_ty,
+                TraitRef {
+                    def,
+                    args: Vec::new(),
+                },
+                span,
+            ));
+        }
+    }
+
+    /// Rebuilds `ty` with every parameter in `subst` replaced by what it is bound to.
+    ///
+    /// Only the parameters in `subst` are touched; anything else -- including a parameter of some
+    /// enclosing definition -- is left exactly as it was.
+    pub fn subst_ty(&mut self, ty: Ty, subst: &HashMap<HirId, Ty>) -> Ty {
+        match self.tcx.kind(ty).clone() {
+            TyKind::Generic(param) => subst.get(&param).copied().unwrap_or(ty),
+            TyKind::Adt { def, args } => {
+                let args = self.subst_tys(&args, subst);
+                self.tcx.mk_adt(def, args)
+            }
+            TyKind::Dyn { trait_, args } => {
+                let args = self.subst_tys(&args, subst);
+                self.tcx.mk_dyn(trait_, args)
+            }
+            TyKind::Tuple(elems) => {
+                let elems = self.subst_tys(&elems, subst);
+                self.tcx.mk_tuple(elems)
+            }
+            TyKind::Ref { base, mutability } => {
+                let base = self.subst_ty(base, subst);
+                self.tcx.mk_ref(base, mutability)
+            }
+            TyKind::Any(base) => {
+                let base = self.subst_ty(base, subst);
+                self.tcx.mk_any(base)
+            }
+            TyKind::Array { elem, len } => {
+                let elem = self.subst_ty(elem, subst);
+                self.tcx.mk_array(elem, len)
+            }
+            TyKind::Fun { params, ret } => {
+                let params = self.subst_tys(&params, subst);
+                let ret = ret.map(|ret| self.subst_ty(ret, subst));
+                self.tcx.mk_fun(params, ret)
+            }
+            // Nothing to substitute into. `SelfTy` in particular is not a parameter this
+            // substitution knows about: an impl's `Self` was already replaced by its self type
+            // when the header was lowered.
+            TyKind::Var(_)
+            | TyKind::Primitive(_)
+            | TyKind::SelfTy(_)
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error => ty,
+        }
+    }
+
+    fn subst_tys(&mut self, tys: &[Ty], subst: &HashMap<HirId, Ty>) -> Vec<Ty> {
+        tys.iter().map(|&ty| self.subst_ty(ty, subst)).collect()
+    }
+
+    /// Whether any part of the goal is [`TyKind::Error`], which means something about it was
+    /// already reported.
+    fn goal_mentions_error(&self, goal: &Obligation) -> bool {
+        self.mentions_error(goal.self_ty)
+            || goal
+                .trait_ref
+                .args
+                .iter()
+                .any(|&arg| self.mentions_error(arg))
+    }
+
+    fn mentions_error(&self, ty: Ty) -> bool {
+        match self.tcx.kind(ty) {
+            TyKind::Error => true,
+            TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } | TyKind::Tuple(args) => {
+                args.iter().any(|&arg| self.mentions_error(arg))
+            }
+            TyKind::Ref { base, .. } | TyKind::Any(base) => self.mentions_error(*base),
+            TyKind::Array { elem, .. } => self.mentions_error(*elem),
+            TyKind::Fun { params, ret } => {
+                params.iter().any(|&param| self.mentions_error(param))
+                    || ret.is_some_and(|ret| self.mentions_error(ret))
+            }
+            TyKind::Var(_)
+            | TyKind::Primitive(_)
+            | TyKind::Generic(_)
+            | TyKind::SelfTy(_)
+            | TyKind::Unit
+            | TyKind::Never => false,
+        }
+    }
+
+    /// How a goal reads in a diagnostic: `` `Foo<i32>: Show` ``.
+    pub(crate) fn show_goal(&self, goal: &Obligation) -> String {
+        format!(
+            "`{}: {}`",
+            self.cx().show(goal.self_ty),
+            trait_name(self.hir, goal.trait_ref.def)
+        )
+    }
+
+    fn report_cyclic_bound(&self, goal: &Obligation) {
+        DiagCtx::emit(
+            Diagnostic::error(
+                format!(
+                    "cyclic trait bound: proving {} requires proving it again",
+                    self.show_goal(goal)
+                ),
+                goal.cause,
+            )
+            .with_label("this bound cannot be proved")
+            .with_help(
+                "one of the bounds involved has to be discharged by something other than \
+                 itself, or the chain has no base case",
+            ),
+        );
+    }
+
+    fn report_recursion_limit(&self, goal: &Obligation) {
+        DiagCtx::emit(
+            Diagnostic::error(
+                format!(
+                    "recursion limit reached while proving {}",
+                    self.show_goal(goal)
+                ),
+                goal.cause,
+            )
+            .with_label("this bound needed too many steps to prove")
+            .with_help(format!(
+                "each step of the proof produced a larger type than the last, and the solver \
+                 gave up after {RECURSION_LIMIT}"
+            )),
+        );
+    }
+
+    /// The release-mode half of the duplicate-match assertion in [`Typeck::select`]: reported
+    /// rather than resolved by arbitrary choice, so that a coherence bug surfaces as a
+    /// diagnostic instead of as an answer that depends on collection order.
+    fn report_ambiguous_impls(&self, goal: &Obligation) {
+        DiagCtx::emit(
+            Diagnostic::error(
+                format!("more than one implementation applies to {}", self.show_goal(goal)),
+                goal.cause,
+            )
+            .with_label("cannot tell which implementation to use")
+            .with_help("this is a compiler bug: overlapping implementations should have been reported at their declarations"),
+        );
+    }
+}
+
+/// The name a trait was declared with.
+fn trait_name(hir: &crate::hir::Hir, def: DefId) -> &'static str {
+    let OwnerNode::Trait(trait_) = hir.def(def) else {
+        unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
+    };
+    Interner::resolve(trait_.name.text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::{Hir, NameResolutions};
+    use crate::nameres::results::PrimTy;
+    use crate::testing::resolve_src;
+
+    // -----------------------------------------------------------------
+    // match_ty
+    // -----------------------------------------------------------------
+
+    fn param(n: usize) -> HirId {
+        DefId::from_usize(n).owner_id()
+    }
+
+    fn def(n: usize) -> DefId {
+        DefId::from_usize(n)
+    }
+
+    const FOO: usize = 1;
+    const BAR: usize = 2;
+
+    #[test]
+    fn a_parameter_binds_to_whatever_the_goal_has_there() {
+        let mut tcx = TyCtx::new();
+        let t = tcx.mk_generic(param(10));
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let impl_ty = tcx.mk_adt(def(FOO), vec![t]);
+        let goal_ty = tcx.mk_adt(def(FOO), vec![i32_ty]);
+
+        let mut subst = HashMap::new();
+        assert!(match_ty(&tcx, &[param(10)], impl_ty, goal_ty, &mut subst));
+        assert_eq!(subst, HashMap::from([(param(10), i32_ty)]));
+    }
+
+    #[test]
+    fn a_parameter_used_twice_must_bind_to_the_same_type() {
+        let mut tcx = TyCtx::new();
+        let t = tcx.mk_generic(param(10));
+        let (i32_ty, bool_ty) = (tcx.mk_prim(PrimTy::I32), tcx.mk_prim(PrimTy::Bool));
+        let impl_ty = tcx.mk_adt(def(FOO), vec![t, t]);
+        let consistent = tcx.mk_adt(def(FOO), vec![i32_ty, i32_ty]);
+        let inconsistent = tcx.mk_adt(def(FOO), vec![i32_ty, bool_ty]);
+
+        assert!(match_ty(
+            &tcx,
+            &[param(10)],
+            impl_ty,
+            consistent,
+            &mut HashMap::new()
+        ));
+        assert!(!match_ty(
+            &tcx,
+            &[param(10)],
+            impl_ty,
+            inconsistent,
+            &mut HashMap::new()
+        ));
+    }
+
+    /// The asymmetry that makes this matching rather than unification: a parameter on the *goal*
+    /// side is a rigid constant, not something to bind.
+    #[test]
+    fn matching_is_one_way() {
+        let mut tcx = TyCtx::new();
+        let t = tcx.mk_generic(param(10));
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let open = tcx.mk_adt(def(FOO), vec![t]);
+        let closed = tcx.mk_adt(def(FOO), vec![i32_ty]);
+
+        assert!(match_ty(&tcx, &[param(10)], open, closed, &mut HashMap::new()));
+        assert!(
+            !match_ty(&tcx, &[param(10)], closed, open, &mut HashMap::new()),
+            "`i32` does not match `T`; only the impl side may bind"
+        );
+    }
+
+    #[test]
+    fn a_generic_that_is_not_the_impls_own_parameter_is_rigid() {
+        let mut tcx = TyCtx::new();
+        let outer = tcx.mk_generic(param(20));
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let impl_ty = tcx.mk_adt(def(FOO), vec![outer]);
+        let concrete = tcx.mk_adt(def(FOO), vec![i32_ty]);
+        let same = tcx.mk_adt(def(FOO), vec![outer]);
+
+        // The impl declares `param(10)`, not `param(20)`, so `outer` may not be bound.
+        assert!(!match_ty(
+            &tcx,
+            &[param(10)],
+            impl_ty,
+            concrete,
+            &mut HashMap::new()
+        ));
+        assert!(match_ty(
+            &tcx,
+            &[param(10)],
+            impl_ty,
+            same,
+            &mut HashMap::new()
+        ));
+    }
+
+    #[test]
+    fn a_structural_mismatch_does_not_match() {
+        let mut tcx = TyCtx::new();
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let foo = tcx.mk_adt(def(FOO), vec![i32_ty]);
+        let bar = tcx.mk_adt(def(BAR), vec![i32_ty]);
+        let arity = tcx.mk_adt(def(FOO), vec![i32_ty, i32_ty]);
+
+        assert!(!match_ty(&tcx, &[], foo, bar, &mut HashMap::new()));
+        assert!(!match_ty(&tcx, &[], foo, arity, &mut HashMap::new()));
+    }
+
+    #[test]
+    fn matching_recurses_into_nested_arguments() {
+        let mut tcx = TyCtx::new();
+        let t = tcx.mk_generic(param(10));
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let bar_t = tcx.mk_adt(def(BAR), vec![t]);
+        let bar_i32 = tcx.mk_adt(def(BAR), vec![i32_ty]);
+        let impl_ty = tcx.mk_adt(def(FOO), vec![bar_t]);
+        let goal_ty = tcx.mk_adt(def(FOO), vec![bar_i32]);
+
+        let mut subst = HashMap::new();
+        assert!(match_ty(&tcx, &[param(10)], impl_ty, goal_ty, &mut subst));
+        assert_eq!(subst[&param(10)], i32_ty);
+    }
+
+    /// A parameter binds to whatever is there, including a whole composite.
+    #[test]
+    fn a_parameter_binds_to_a_composite() {
+        let mut tcx = TyCtx::new();
+        let t = tcx.mk_generic(param(10));
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let bar_i32 = tcx.mk_adt(def(BAR), vec![i32_ty]);
+        let impl_ty = tcx.mk_adt(def(FOO), vec![t]);
+        let goal_ty = tcx.mk_adt(def(FOO), vec![bar_i32]);
+
+        let mut subst = HashMap::new();
+        assert!(match_ty(&tcx, &[param(10)], impl_ty, goal_ty, &mut subst));
+        assert_eq!(subst[&param(10)], bar_i32);
+    }
+
+    #[test]
+    fn an_error_type_matches_nothing() {
+        let mut tcx = TyCtx::new();
+        let error = tcx.error();
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+
+        assert!(!match_ty(&tcx, &[], error, i32_ty, &mut HashMap::new()));
+        assert!(!match_ty(&tcx, &[], i32_ty, error, &mut HashMap::new()));
+    }
+
+    // -----------------------------------------------------------------
+    // implements
+    // -----------------------------------------------------------------
+
+    /// Collects `src` and builds the impl index, which is everything the query reads.
+    fn solver<'hir>(hir: &'hir Hir, nameres: &'hir NameResolutions) -> Typeck<'hir> {
+        let mut checker = Typeck::new(hir, nameres);
+        checker.collect_module(hir.root_id());
+        checker.build_impl_index();
+        DiagCtx::clear();
+        checker
+    }
+
+    fn messages() -> Vec<String> {
+        DiagCtx::diagnostics()
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect()
+    }
+
+    /// The `DefId` of the top-level definition named `name`.
+    fn named(checker: &Typeck<'_>, name: &str) -> DefId {
+        checker
+            .hir
+            .root()
+            .items
+            .iter()
+            .copied()
+            .find(|&id| {
+                let text = match checker.hir.def(id) {
+                    OwnerNode::Struct(s) => s.name.text,
+                    OwnerNode::Enum(e) => e.name.text,
+                    OwnerNode::Trait(t) => t.name.text,
+                    OwnerNode::Function(f) => f.name.text,
+                    _ => return false,
+                };
+                Interner::resolve(text) == name
+            })
+            .unwrap_or_else(|| panic!("no definition named {name:?}"))
+    }
+
+    fn goal(checker: &mut Typeck<'_>, self_ty: Ty, trait_def: DefId) -> Obligation {
+        Obligation::new(
+            self_ty,
+            TraitRef {
+                def: trait_def,
+                args: Vec::new(),
+            },
+            SrcSpan::new(0, 0),
+        )
+    }
+
+    const SRC: &str = "trait Show { fun show(&self); }
+                       struct Foo {}
+                       struct Bare {}
+                       extend Foo with Show { fun show(&self) {} }";
+
+    #[test]
+    fn a_matching_impl_proves_the_goal() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        let goal = goal(&mut checker, foo_ty, show);
+        assert!(matches!(
+            checker.implements(&goal, &ParamEnv::empty()),
+            Solution::Holds(ImplSource::FromImpl { .. })
+        ));
+    }
+
+    #[test]
+    fn a_type_with_no_impl_does_not_implement() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let (bare, show) = (named(&checker, "Bare"), named(&checker, "Show"));
+        let bare_ty = checker.tcx.mk_adt(bare, vec![]);
+
+        let goal = goal(&mut checker, bare_ty, show);
+        assert_eq!(
+            checker.implements(&goal, &ParamEnv::empty()),
+            Solution::DoesNotHold
+        );
+    }
+
+    /// A goal whose self type is still an inference variable is not "no" -- it is "not yet".
+    #[test]
+    fn an_unresolved_self_type_is_ambiguous() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let show = named(&checker, "Show");
+        let var = checker.tcx.next_ty_var();
+
+        let goal = goal(&mut checker, var, show);
+        assert_eq!(
+            checker.implements(&goal, &ParamEnv::empty()),
+            Solution::Ambiguous
+        );
+        assert!(messages().is_empty(), "an ambiguity is not a diagnostic");
+    }
+
+    #[test]
+    fn a_goal_containing_an_error_answers_error_without_reporting() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let show = named(&checker, "Show");
+        let error = checker.tcx.error();
+
+        let goal = goal(&mut checker, error, show);
+        assert_eq!(checker.implements(&goal, &ParamEnv::empty()), Solution::Error);
+        assert!(
+            messages().is_empty(),
+            "a diagnostic for the error type already exists"
+        );
+    }
+
+    /// Nothing but a struct, an enum, or a `dyn` can implement anything -- a reference to a type
+    /// that implements `Show` does not itself implement it.
+    #[test]
+    fn a_reference_implements_nothing() {
+        use crate::ast::Mutability;
+
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+        let ref_ty = checker.tcx.mk_ref(foo_ty, Mutability::Immutable);
+
+        let goal = goal(&mut checker, ref_ty, show);
+        assert_eq!(
+            checker.implements(&goal, &ParamEnv::empty()),
+            Solution::DoesNotHold
+        );
+    }
+
+    #[test]
+    fn dyn_implements_exactly_the_trait_it_names() {
+        let (hir, nameres) = resolve_src(
+            "trait Show { fun show(&self); }
+             trait Other { fun other(&self); }",
+        );
+        let mut checker = solver(&hir, &nameres);
+        let (show, other) = (named(&checker, "Show"), named(&checker, "Other"));
+        let dyn_show = checker.tcx.mk_dyn(show, vec![]);
+
+        let its_own = goal(&mut checker, dyn_show, show);
+        assert_eq!(
+            checker.implements(&its_own, &ParamEnv::empty()),
+            Solution::Holds(ImplSource::FromDyn)
+        );
+
+        let another = goal(&mut checker, dyn_show, other);
+        assert_eq!(
+            checker.implements(&another, &ParamEnv::empty()),
+            Solution::DoesNotHold
+        );
+    }
+
+    /// The environment is consulted before the index, and it is the only thing that can answer a
+    /// goal about a bare type parameter.
+    #[test]
+    fn a_bound_in_the_environment_proves_a_goal_about_a_parameter() {
+        let (hir, nameres) = resolve_src(
+            "trait Show { fun show(&self); }
+             fun f<T: Show>(x: T) {}",
+        );
+        let mut checker = solver(&hir, &nameres);
+        let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
+        let OwnerNode::Function(function) = hir.def(f) else {
+            unreachable!("`f` is a function");
+        };
+        let param = function.generics[0];
+        let t = checker.tcx.mk_generic(param);
+
+        let env = checker.param_env(f);
+        assert_eq!(env.bounds.len(), 1, "`T: Show` is the only bound in scope");
+
+        let goal = goal(&mut checker, t, show);
+        assert_eq!(
+            checker.implements(&goal, &env),
+            Solution::Holds(ImplSource::FromEnv { param })
+        );
+    }
+
+    #[test]
+    fn a_parameter_with_no_bound_implements_nothing() {
+        let (hir, nameres) = resolve_src(
+            "trait Show { fun show(&self); }
+             fun f<T>(x: T) {}",
+        );
+        let mut checker = solver(&hir, &nameres);
+        let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
+        let OwnerNode::Function(function) = hir.def(f) else {
+            unreachable!("`f` is a function");
+        };
+        let t = checker.tcx.mk_generic(function.generics[0]);
+
+        let env = checker.param_env(f);
+        let goal = goal(&mut checker, t, show);
+        assert_eq!(checker.implements(&goal, &env), Solution::DoesNotHold);
+    }
+
+    /// Inside a trait, `Self` implements that trait by definition.
+    #[test]
+    fn a_traits_own_self_implements_it() {
+        let (hir, nameres) = resolve_src("trait Show { fun show(&self); }");
+        let mut checker = solver(&hir, &nameres);
+        let show = named(&checker, "Show");
+        let self_ty = checker.tcx.mk_self_param(show);
+
+        let env = checker.param_env(show);
+        let goal = goal(&mut checker, self_ty, show);
+        assert_eq!(
+            checker.implements(&goal, &env),
+            Solution::Holds(ImplSource::FromSelf)
+        );
+    }
+
+    /// A method sees the bounds of the `extend` block it is declared in, not just its own.
+    #[test]
+    fn a_method_inherits_its_extend_blocks_bounds() {
+        let (hir, nameres) = resolve_src(
+            "trait Show { fun show(&self); }
+             struct Wrap<T> { inner: T }
+             extend<T: Show> Wrap<T> { fun get(&self) {} }",
+        );
+        let mut checker = solver(&hir, &nameres);
+        let extend = hir
+            .def_ids()
+            .find(|&id| matches!(hir.def(id), OwnerNode::Extend(_)))
+            .expect("the fixture declares an extend block");
+        let OwnerNode::Extend(block) = hir.def(extend) else {
+            unreachable!("filtered to extend blocks above");
+        };
+
+        let env = checker.param_env(block.methods[0]);
+        assert_eq!(
+            env.bounds.len(),
+            1,
+            "the method itself declares nothing, so its only bound comes from the block"
+        );
+    }
+
+    /// A conditional impl is honored: `Wrap<T>: Show` holds exactly when `T: Show` does.
+    #[test]
+    fn a_conditional_impls_own_bounds_are_proved_recursively() {
+        let (hir, nameres) = resolve_src(
+            "trait Show { fun show(&self); }
+             struct Wrap<T> { inner: T }
+             struct Foo {}
+             struct Bare {}
+             extend Foo with Show { fun show(&self) {} }
+             extend<T: Show> Wrap<T> with Show { fun show(&self) {} }",
+        );
+        let mut checker = solver(&hir, &nameres);
+        let (show, wrap) = (named(&checker, "Show"), named(&checker, "Wrap"));
+        let (foo, bare) = (named(&checker, "Foo"), named(&checker, "Bare"));
+
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+        let bare_ty = checker.tcx.mk_adt(bare, vec![]);
+        let wrap_foo = checker.tcx.mk_adt(wrap, vec![foo_ty]);
+        let wrap_bare = checker.tcx.mk_adt(wrap, vec![bare_ty]);
+
+        let holds = goal(&mut checker, wrap_foo, show);
+        assert!(matches!(
+            checker.implements(&holds, &ParamEnv::empty()),
+            Solution::Holds(ImplSource::FromImpl { .. })
+        ));
+
+        // `Bare: Show` fails, so `Wrap<Bare>: Show` fails with it.
+        let fails = goal(&mut checker, wrap_bare, show);
+        assert_eq!(
+            checker.implements(&fails, &ParamEnv::empty()),
+            Solution::DoesNotHold
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Termination
+    //
+    // Neither cutoff is reachable from source today: a bound may only be written on the impl's
+    // own parameters, and matching binds those to strict subterms of the goal, so every sub-goal
+    // is smaller than its parent. Both are exercised directly against the in-progress stack, so
+    // that they still work the day a language feature makes them reachable.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_goal_already_in_progress_is_reported_as_a_cycle() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+        let goal = goal(&mut checker, foo_ty, show);
+
+        checker.goal_stack.push(goal.clone());
+        assert_eq!(checker.implements(&goal, &ParamEnv::empty()), Solution::Error);
+        assert_eq!(
+            messages(),
+            ["cyclic trait bound: proving `Foo: Show` requires proving it again"]
+        );
+    }
+
+    /// The same goal reached from a different place is still the same goal: the cause span is not
+    /// part of what the cycle check compares.
+    #[test]
+    fn the_cycle_check_ignores_where_the_goal_was_raised() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        let mut open = goal(&mut checker, foo_ty, show);
+        open.cause = SrcSpan::new(100, 110);
+        checker.goal_stack.push(open);
+
+        let asked = goal(&mut checker, foo_ty, show);
+        assert_eq!(checker.implements(&asked, &ParamEnv::empty()), Solution::Error);
+    }
+
+    #[test]
+    fn a_goal_deeper_than_the_recursion_limit_is_reported() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        // Distinct goals, so the cycle check cannot fire first: each is about a fresh inference
+        // variable, which nothing else in the program is ever about.
+        for _ in 0..RECURSION_LIMIT {
+            let var = checker.tcx.next_ty_var();
+            let filler = goal(&mut checker, var, show);
+            checker.goal_stack.push(filler);
+        }
+
+        let goal = goal(&mut checker, foo_ty, show);
+        assert_eq!(checker.implements(&goal, &ParamEnv::empty()), Solution::Error);
+        assert_eq!(
+            messages(),
+            ["recursion limit reached while proving `Foo: Show`"]
+        );
+    }
+
+    /// One below the limit still answers the question rather than giving up.
+    #[test]
+    fn a_goal_just_inside_the_recursion_limit_is_answered() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        for _ in 0..RECURSION_LIMIT - 1 {
+            let var = checker.tcx.next_ty_var();
+            let filler = goal(&mut checker, var, show);
+            checker.goal_stack.push(filler);
+        }
+
+        let goal = goal(&mut checker, foo_ty, show);
+        assert!(matches!(
+            checker.implements(&goal, &ParamEnv::empty()),
+            Solution::Holds(_)
+        ));
+        assert!(messages().is_empty(), "{:?}", messages());
+    }
+
+    /// The stack is unwound as the recursion returns, so one query does not make the next one
+    /// look deeper than it is.
+    #[test]
+    fn the_in_progress_stack_is_empty_once_a_query_returns() {
+        let (hir, nameres) = resolve_src(SRC);
+        let mut checker = solver(&hir, &nameres);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        let goal = goal(&mut checker, foo_ty, show);
+        checker.implements(&goal, &ParamEnv::empty());
+        assert!(checker.goal_stack.is_empty());
+    }
+}

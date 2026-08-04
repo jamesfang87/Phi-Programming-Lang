@@ -1,17 +1,9 @@
 #![allow(dead_code)]
 
-//! The abstract syntax tree the parser builds from a token stream.
-//!
-//! Every node carries a [`SrcSpan`] so diagnostics and later passes can point back at the
-//! source text that produced it. This tree is purely syntactic: paths aren't resolved, types
-//! aren't checked, and `Error` variants stand in for anything the parser recovered from. Name
-//! resolution and typechecking happen on the HIR the tree gets lowered to, in [`crate::hir`].
-
 mod expr_impls;
+pub mod interner;
 mod tree;
 mod type_impls;
-
-pub mod interner;
 
 pub use tree::{Ast, AstModule, ModId};
 
