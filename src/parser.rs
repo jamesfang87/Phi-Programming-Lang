@@ -252,7 +252,7 @@ mod tests {
         (unit, DiagCtx::diagnostics().len())
     }
 
-    fn text(ident: Ident) -> String {
+    fn text(ident: Ident) -> &'static str {
         Interner::resolve(ident.text)
     }
 
@@ -274,7 +274,7 @@ mod tests {
         );
 
         let module = unit.module.as_ref().expect("the header should be recorded");
-        let segments: Vec<String> = module.path.segments.iter().map(|s| text(*s)).collect();
+        let segments: Vec<&str> = module.path.segments.iter().map(|s| text(*s)).collect();
         assert_eq!(segments, ["math", "vector"]);
 
         assert_eq!(unit.imports.len(), 2);
@@ -610,7 +610,7 @@ mod tests {
         let (unit, error_count) = parse_with_errors("fun a() {} ???; fun b() {} !!!; fun c() {}");
         assert_eq!(error_count, 2);
         assert_eq!(unit.items.len(), 5);
-        let function_names: Vec<String> = unit
+        let function_names: Vec<&str> = unit
             .items
             .iter()
             .filter_map(|item| match &item.kind {

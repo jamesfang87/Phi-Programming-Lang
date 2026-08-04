@@ -36,20 +36,20 @@ fn fmt_symbol(sym: Symbol) -> String {
 
 /// The name a `DefId` was declared with. `Extend` and `Closure` never have one, so they get a
 /// placeholder instead.
-fn def_name(hir: &Hir, def_id: DefId) -> String {
+fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
     match hir.def(def_id) {
         OwnerNode::Module(m) => m
             .path
             .segments
             .last()
             .map(|seg| Interner::resolve(seg.text))
-            .unwrap_or_else(|| "<root>".to_string()),
+            .unwrap_or("<root>"),
         OwnerNode::Function(f) => Interner::resolve(f.name.text),
         OwnerNode::Struct(s) => Interner::resolve(s.name.text),
         OwnerNode::Enum(e) => Interner::resolve(e.name.text),
         OwnerNode::Trait(t) => Interner::resolve(t.name.text),
-        OwnerNode::Extend(_) => "<extend>".to_string(),
-        OwnerNode::Closure(_) => "<closure>".to_string(),
+        OwnerNode::Extend(_) => "<extend>",
+        OwnerNode::Closure(_) => "<closure>",
     }
 }
 

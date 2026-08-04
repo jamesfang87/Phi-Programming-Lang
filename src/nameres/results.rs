@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::Symbol;
 use crate::hir::{DefId, HirId};
+use crate::langitems::LangItems;
 
 /// A primitive, built-in type such as `i32` or `bool`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -114,6 +115,15 @@ pub struct NameResolutions {
     ///
     /// [`NameResolver::generic_ty`]: crate::nameres::NameResolver::generic_ty
     generics: HashMap<DefId, HashMap<Symbol, TypeRes>>,
+
+    /// The core-library definitions the compiler itself knows by name -- the enums `?` and `for`
+    /// desugar through, and the traits the operators dispatch to.
+    ///
+    /// They live here because resolving them is name resolution's job and can only be done while
+    /// the symbol table exists, but every consumer of them is a later pass. Carrying them out
+    /// with the rest of this pass's output is what makes them reachable at all; see
+    /// [`crate::langitems`].
+    lang_items: LangItems,
 }
 
 impl NameResolutions {
@@ -123,7 +133,18 @@ impl NameResolutions {
             types: HashMap::new(),
             self_tys: HashMap::new(),
             generics: HashMap::new(),
+            lang_items: LangItems::default(),
         }
+    }
+
+    /// Records the lang items resolved against the finished module namespaces.
+    pub fn record_lang_items(&mut self, lang_items: LangItems) {
+        self.lang_items = lang_items;
+    }
+
+    /// The core-library definitions the compiler knows by name.
+    pub fn lang_items(&self) -> &LangItems {
+        &self.lang_items
     }
 
     /// Records what the name or path at `id` named in value position.
