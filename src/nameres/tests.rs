@@ -11,7 +11,7 @@
 use crate::ast::interner::Interner;
 use crate::hir::{DefId, ExprKind, Hir, HirId, Node, OwnerNode};
 use crate::nameres::results::{NameResolutions, ValueRes};
-use crate::testing::resolve_src;
+use crate::testing::{first_function, resolve_src};
 
 /// Every expression in `def`'s arena that is a bare, single-segment path naming `name`.
 ///
@@ -139,5 +139,70 @@ fn if_let_binding_is_visible_in_the_matched_branch() {
     assert!(
         matches!(nameres.value(refs[0]), Some(ValueRes::Local(_))),
         "`x` did not resolve to the binding its pattern introduces"
+    );
+}
+
+// -----------------------------------------------------------------
+// Subtrees the hand-written walk used to skip
+// -----------------------------------------------------------------
+
+/// Every `Node::Ty` in `def`'s arena that is a single-segment path naming `name`.
+fn ty_paths_to(hir: &Hir, def: DefId, name: &str) -> Vec<HirId> {
+    let symbol = Interner::intern(name);
+    hir.arena(def)
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Ty(ty) => match &ty.kind {
+                crate::hir::TyKind::Path { path, .. } => match path.segments.as_slice() {
+                    [segment] if segment.text == symbol => Some(ty.hir_id),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// A `let`'s type annotation is a subtree of the statement, not of its initializer, and the
+/// hand-written walk destructured `StmtKind::Let` with a `..` that swallowed it -- so the
+/// annotation got no resolution at all and type lowering silently produced `TyKind::Error`.
+#[test]
+fn a_let_annotation_is_resolved() {
+    let (hir, nameres) = resolve_src("struct S {} fun f() { let x: S = g(); }");
+    let def = first_function(&hir);
+    let annotations = ty_paths_to(&hir, def, "S");
+    assert_eq!(annotations.len(), 1, "fixture writes `S` once, in the let");
+    assert!(
+        nameres.ty(annotations[0]).is_some(),
+        "the let's type annotation was never resolved"
+    );
+}
+
+/// The `else` block of a `let ... else` is executable code, and was never walked, so every name
+/// inside one went unresolved.
+#[test]
+fn a_let_else_block_is_resolved() {
+    let (hir, nameres) = resolve_src("fun f(x: i32) { let y = g() else { h(x); }; }");
+    let def = first_function(&hir);
+    let refs = refs_to(&hir, def, "x");
+    assert_eq!(refs.len(), 1, "fixture names `x` once, inside the else block");
+    assert!(
+        matches!(nameres.value(refs[0]), Some(ValueRes::Local(_))),
+        "`x` inside the let-else block was never resolved"
+    );
+}
+
+/// A `with` binding's annotation was skipped for the same reason a `let`'s was.
+#[test]
+fn a_with_lend_annotation_is_resolved() {
+    let (hir, nameres) = resolve_src("struct S {} fun f() { with a: S = g() { h(); } }");
+    let def = first_function(&hir);
+    let annotations = ty_paths_to(&hir, def, "S");
+    assert_eq!(annotations.len(), 1, "fixture writes `S` once, in the lend");
+    assert!(
+        nameres.ty(annotations[0]).is_some(),
+        "the with binding's type annotation was never resolved"
     );
 }
