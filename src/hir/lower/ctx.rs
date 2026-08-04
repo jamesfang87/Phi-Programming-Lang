@@ -332,18 +332,30 @@ impl LoweringCtx {
             ow.finish();
         }
 
-        let n = self.items.len();
-        let mut owners: Vec<Option<Arena>> = (0..n).map(|_| None).collect();
-        for (item_id, arena) in self.owners {
-            owners[item_id.index()] = Some(arena);
-        }
+        // Every allocated `DefId` owns exactly one arena, so the finished table is dense and
+        // needs no placeholder to scatter into: ordering the collected arenas by id is enough
+        // to index them by `DefId`. The assertion is what keeps `Hir::arenas` safe to be a
+        // plain `Vec<Arena>` -- a def that never registered an arena would otherwise shift
+        // every later id silently.
+        let allocated = self.items.len();
+        let mut owners: Vec<(DefId, Arena)> = self.owners.into_iter().collect();
+        owners.sort_by_key(|(item_id, _)| item_id.index());
+        debug_assert!(
+            owners.len() == allocated
+                && owners
+                    .iter()
+                    .enumerate()
+                    .all(|(index, (item_id, _))| item_id.index() == index),
+            "every allocated DefId owns exactly one arena"
+        );
+        let arenas: Vec<Arena> = owners.into_iter().map(|(_, arena)| arena).collect();
         let parents = self.items.finish();
 
         // `Hir`'s fields are private to `crate::hir`, but `crate::hir::lower` and its
         // submodules are descendants of it, so the struct literal is accessible here even
         // though it isn't public.
         Hir {
-            arenas: owners,
+            arenas,
             parents,
             root_module: self.root_module,
         }

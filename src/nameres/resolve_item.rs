@@ -107,6 +107,13 @@ impl<'hir> NameResolver<'hir> {
 
             let res = Res::Generic(id);
             params.insert(name.text, res);
+            // Also record the declaration against the node it is written on, not just in the
+            // by-name table. A [`GenericDecl::BareTy`] entry is a real `Node::Ty` that type
+            // lowering will visit like any other annotation, and it looks its answer up here by
+            // id; without this it finds nothing and lowers an `extend` block's own `<T>` to
+            // `TyKind::Error`. The resolution points at the node itself, which is exactly the
+            // identity mapping [`NameResolutions::record`] has to keep rather than discard.
+            self.results.record(id, res);
         }
         self.results.record_generic(owner_id, params);
     }

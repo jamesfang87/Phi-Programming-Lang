@@ -44,20 +44,24 @@ pub struct Hir {
     ///
     /// Every slot is filled once lowering has finished: a field, a variant, or a generic type
     /// parameter is addressed by a [`HirId`] within its owner's arena and never gets a `DefId`
-    /// at all (see [`DefId`]), so it never claims a slot here to leave empty. The `Option` is
-    /// scaffolding from construction only -- `LoweringCtx::finish` collects the arenas out of a
-    /// `HashMap` into this dense `Vec`, and needs a placeholder to scatter them into.
+    /// at all (see [`DefId`]), so it never claims a slot here to leave empty. That density is
+    /// what lets this be a plain `Vec<Arena>` rather than a `Vec<Option<Arena>>` -- lookups
+    /// need no unwrap, and there is no unreachable "missing arena" case to explain.
     ///
-    /// It should therefore be a plain `Vec<Arena>`. Making it one means changing how
-    /// `LoweringCtx::finish` builds it, in `crate::hir::lower::ctx`.
-    arenas: Vec<Option<Arena>>,
+    /// `LoweringCtx::finish` is what upholds it, ordering the arenas it collected by `DefId`
+    /// rather than scattering them into placeholders.
+    arenas: Vec<Arena>,
 
     /// Maps each definition, indexed by its (global) [`DefId`], to the definition it is
     /// lexically declared inside. That enclosing definition is an item's module, a method's
     /// `extend` block or trait, or a closure's enclosing owner.
     ///
-    /// Only the root module has no parent, so `parents[root_module]` is the sole `None`.
-    parents: Vec<Option<DefId>>,
+    /// The root module is its own parent. That keeps this dense -- a `Vec<DefId>` rather than a
+    /// `Vec<Option<DefId>>` -- while leaving "has no parent" representable, since the root is
+    /// the only definition that can be its own. [`Hir::parent`] is what turns that back into an
+    /// `Option`, so a caller walking up the chain still gets a `None` to stop at rather than
+    /// looping on the root forever.
+    parents: Vec<DefId>,
 
     /// The root module, which transitively contains every other definition in the program.
     root_module: DefId,
@@ -69,9 +73,7 @@ impl Hir {
     /// Panics if `def_id` has no arena, i.e. it does not name an owner or lowering has not
     /// finished yet.
     pub fn arena(&self, def_id: DefId) -> &Arena {
-        self.arenas[def_id.index()]
-            .as_ref()
-            .expect("def has no owner arena (not an owner DefKind, or not yet lowered)")
+        &self.arenas[def_id.index()]
     }
 
     /// Looks up the [`Node`] a [`HirId`] addresses.
@@ -120,7 +122,10 @@ impl Hir {
     /// Together with [`Hir::module_of`], this lets a pass recover its surrounding context from
     /// an id alone, instead of threading that context through its own traversal.
     pub fn parent(&self, def_id: DefId) -> Option<DefId> {
-        self.parents[def_id.index()]
+        let parent = self.parents[def_id.index()];
+        // The root is stored as its own parent, which is how the table stays dense. Reporting
+        // that as `None` is what gives a caller walking upwards a termination condition.
+        (parent != def_id).then_some(parent)
     }
 
     /// Iterates every `DefId` that owns an arena, in the order they were allocated. Used by the
@@ -130,7 +135,6 @@ impl Hir {
         self.arenas
             .iter()
             .enumerate()
-            .filter(|(_, arena)| arena.is_some())
             .map(|(index, _)| DefId::from_usize(index))
     }
 

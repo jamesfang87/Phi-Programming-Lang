@@ -157,11 +157,8 @@ impl<'hir> Typeck<'hir> {
         let OwnerNode::Struct(struct_node) = hir.def(r#struct) else {
             unreachable!("root of a Struct owner is always OwnerNode::Struct");
         };
-        let (generics, fields, span) = (
-            &struct_node.generics,
-            &struct_node.fields,
-            struct_node.span,
-        );
+        let (generics, fields, span) =
+            (&struct_node.generics, &struct_node.fields, struct_node.span);
 
         // The generics have to be recorded first: the struct's own type is itself applied to
         // them.
@@ -177,11 +174,7 @@ impl<'hir> Typeck<'hir> {
         let OwnerNode::Enum(enum_node) = hir.def(r#enum) else {
             unreachable!("root of an Enum owner is always OwnerNode::Enum");
         };
-        let (generics, variants, span) = (
-            &enum_node.generics,
-            &enum_node.variants,
-            enum_node.span,
-        );
+        let (generics, variants, span) = (&enum_node.generics, &enum_node.variants, enum_node.span);
 
         self.collect_generics(generics);
         let self_ty = self.self_ty(r#enum, span);
@@ -208,11 +201,8 @@ impl<'hir> Typeck<'hir> {
         let OwnerNode::Trait(trait_node) = hir.def(r#trait) else {
             unreachable!("root of a Trait owner is always OwnerNode::Trait");
         };
-        let (generics, functions, span) = (
-            &trait_node.generics,
-            &trait_node.functions,
-            trait_node.span,
-        );
+        let (generics, functions, span) =
+            (&trait_node.generics, &trait_node.functions, trait_node.span);
 
         self.collect_generics(generics);
         // A trait names no type of its own, so what it gets recorded as is the `Self` it stands
@@ -611,10 +601,12 @@ impl<'hir> Typeck<'hir> {
     /// Reports why a `return`'s expression didn't unify with the enclosing function's return
     /// type, at the `return` statement's span.
     fn report_return_mismatch(&self, err: UnifyError, span: SrcSpan) {
-        DiagCtx::emit(Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
-            "returned value does not match this \
+        DiagCtx::emit(
+            Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
+                "returned value does not match this \
                 function's return type",
-        ));
+            ),
+        );
     }
 
     pub fn check_block(&mut self, id: HirId) {
@@ -698,12 +690,11 @@ pub fn check(hir: &Hir, nameres: &NameResolutions) -> TypeckOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diag::Severity;
+    use crate::nameres::results::PrimTy;
     use crate::testing::{
         find_return, first_extend_method, first_function, first_struct, first_trait, resolve_src,
     };
-    use crate::diag::Severity;
-    use crate::nameres::results::PrimTy;
-
 
     /// Builds a `Typeck` with every signature collected, ready for `check_stmt` to be called
     /// directly on one of `def_id`'s statements.
@@ -920,7 +911,6 @@ mod tests {
     // check_expr: Path
     // -----------------------------------------------------------------
 
-
     #[test]
     fn path_to_a_parameter_checks_to_the_parameters_type() {
         let (hir, nameres) = resolve_src("fun f(x: i32) -> i32 { return x; }");
@@ -980,7 +970,6 @@ mod tests {
     // -----------------------------------------------------------------
     // Diagnostic rendering
     // -----------------------------------------------------------------
-
 
     #[test]
     fn primitive_displays_as_its_keyword() {
@@ -1204,7 +1193,8 @@ mod tests {
         let cx = DisplayCx::new(&hir, &tcx);
 
         assert_eq!(
-            cx.show(UnifyError::Mismatch { expected, found }).to_string(),
+            cx.show(UnifyError::Mismatch { expected, found })
+                .to_string(),
             "mismatched types: expected `i32`, found `bool`"
         );
     }
