@@ -1,11 +1,6 @@
 # The Phi Programming Language
 
-Phi is a modern programming language guaranteeing memory safety and data-race freedom written in Rust. To do so, Phi uses *mutable value semantics (MVS)*.
-
-For trivially copyable types such as integers, floating-point numbers, and booleans, copies happen implicitly. For other types, move is the default.
-
-References are treated as **second-class objects** and cannot be stored. Phi has a variety of constructs — projections, functions that return them, and the `any` keyword — that make programming with this restriction ergonomic.
-
+Phi is a modern programming language guaranteeing memory safety and data-race freedom through *mutable value semantics (MVS)*. In MVS, references are treated as **second-class objects** and cannot be stored. While this may sounds overly-restrictive, this restriction allows us to completely elide lifetime annotations while preserving non-lexical lifetimes. In addition, it promotes the use of Data-Oriented Design, which greatly improves cache-locality and performance. Furthermore, Phi as a variety of modern language ergonomics, such as projections and the `any` keyword, wrapped in familiar syntax which makes programming in Phi incredibly similar to programming in C++, Rust, or any other languages.
 
 ---
 
@@ -23,13 +18,24 @@ fun main() {
 
 ### Running a program
 
-A single file is compiled and run with:
+You can run and compile a single Phi file as so:
 
 ```
 phi run hello.phi
 ```
 
-A multi-file project is organized around a `phi.toml` manifest at its root, with source files nested beneath a `src/` directory. `phi build` produces a binary; `phi run` builds and executes it in one step.
+A multi-file project is organized around a `Phi.toml` manifest at the project root root, with source files inside a `src/` directory. To create a new project, you can use the following two commands:
+
+```
+phi new [project_name] // creates a new project with the given name under the current directory
+phi init               // creates a new project in the current directory with its name
+```
+
+To compile and run the project, Phi provides three commands:
+```
+phi run   // compiles and runs the executable
+phi build // compiles and generates an executable w/o running
+phi check // just checks source code w/o generating an executable
 
 ---
 
@@ -61,9 +67,8 @@ Identifiers begin with a letter or underscore and continue with letters, digits,
 1_000_000   // underscores may separate digits for readability
 true, false // bool
 'a'         // char
-"hello"     // String
+"hello"     // &String
 ```
-
 ---
 
 ## 3. Variables and Bindings
@@ -72,15 +77,13 @@ Variables are declared immutable by default with `let`. To declare a mutable var
 
 ```phi
 fun main() {
-    let foo = 0;              // immutable integer
+    let foo = 0;               // immutable integer
     let mut bar = 1;           // mutable integer
     let mut phi: f64 = 1.618;  // mutable, with an explicit type annotation
 }
 ```
 
-Phi uses **type inference**: the compiler determines the type of `foo` and `bar` from their initial values and later uses. A type annotation, as seen with `phi`, is optional but may be supplied for clarity.
-
-Rebinding a `let` variable, or reading a variable after it has moved or been dropped, is a compile error.
+Notice how there are no type annotations provided for the variables `foo` and `bar`. Phi uses **type inference**: the compiler determines the type of `foo` and `bar` from their initial values and later uses. A type annotation, as seen with `phi`, is optional but may be supplied for clarity.
 
 ---
 
@@ -93,23 +96,14 @@ Rebinding a `let` variable, or reading a variable after it has moved or been dro
 | Floating point | `f32`, `f64` |
 | Boolean | `bool` |
 | Character | `char` (a single Unicode scalar value) |
-| Text | `String` (owned, growable), `&str` (a projected view of text) |
+| Text | `String` (owned, growable), `&String` (a projected view of text) |
 | Grouping | tuples `(T, U, ...)`, arrays `Array<T>`, fixed-size arrays `[T; N]` |
-
-Integers, floats, `bool`, and `char` are trivially copyable. `String` and `Array<T>` are not — they own a heap allocation and move by default.
-
-Tuples are constructed and destructured positionally:
-
-```phi
-let point: (f64, f64) = (1.0, 2.0);
-let (x, y) = point;
-```
 
 ---
 
 ## 5. Copies, Moves, and Drops
 
-Trivially copyable types are implicitly copied. Every other type moves by default. A moved-from variable cannot be used again, and a value is destroyed at the end of its lifetime — the last time it is used, not necessarily the end of its enclosing scope.
+In Phi, trivially copyable types (such as integers, floats, bools, chars, etc.) are implicitly copied. Every other type moves by default. A moved-from variable cannot be used again, and a value is destroyed at the end of its lifetime. Note that the end of a value's lifetime is the last time it is used, not necessarily the end of its enclosing scope.
 
 ```phi
 let a = String::from("hi");
@@ -118,7 +112,7 @@ let b = a;      // moves; `a` is no longer usable
 println(b);     // fine
 ```
 
-A type that owns a resource — a file handle, a socket, a heap buffer — implements the `Drop` trait to define what happens when its last use has passed:
+A type that owns a resource, such as memory or a file handle, implements the `Drop` trait to define what happens when its last use has passed:
 
 ```phi
 extend TempFile with Drop {
@@ -148,8 +142,7 @@ fun add(x: i32, y: i32) -> i32 {
 }
 ```
 
-Parameter types and return types must always be annotated; only local variable types are inferred. For trivially copyable types, parameters are passed by value. Returns are not guaranteed to copy or move in any particular observable way, since return value optimization (RVO) may construct the result directly in the caller's storage.
-
+Parameter types and return types must always be annotated; only local variable types are inferred. For trivially copyable types, parameters are passed by value. 
 For non-trivially-copyable types, a parameter can be passed in one of three ways:
 
 **1. Immutable borrow** — the callee may read but not mutate or move the argument:
@@ -169,11 +162,13 @@ fun append_bang(x: &mut String) {
 }
 ```
 
-**3. Ownership transfer** — the callee receives the value outright and may move it, mutate it, return it, or let it drop:
+**3. Ownership transfer** — the callee receives the value and now owns it. it may further move it, mutate it, return it, or let it drop:
 
 ```phi
 fun framed(base: String) -> String {
-    return base + "!";                 // base may escape into the result — it's ours
+    base + "!"                 // base may escape into the result — it's ours
+                               // note that we do not have to use return,
+                               // we can just write the return value without a semicolon on the last line
 }
 
 let title = framed(greeting);  // greeting is gone now (String isn't trivial)
@@ -181,15 +176,13 @@ let title = framed(greeting);  // greeting is gone now (String isn't trivial)
 
 ### Closures
 
-Closures are written the same way as in Rust — parameters between `|...|`, followed by the body:
+Closures are written the same way as in Rust:
 
 ```phi
 let add = |x: i32, y: i32| -> i32 { x + y };
 let double = |x| x * 2;      // parameter and return types are inferred when omitted
 let answer = || 42;          // no parameters
 ```
-
-The body is any expression: a `{ ... }` block whose final, semicolon-less expression is the result (exactly like a function body without `return`), or a single bare expression for short closures. Parameter types and the return type are optional and inferred from context; annotate them the same way a function's parameters and return type are annotated when inference isn't enough or clarity is wanted.
 
 Closures are ordinary values and are most often passed directly to a function that takes one:
 
@@ -215,16 +208,15 @@ A function type with no `->` — `fun(String)` — describes a function that doe
 
 ## 7. Projections
 
-References cannot be returned from ordinary functions or stored into variables — a function must own any value it returns, and a variable must own any value it holds. **Projections**, like the ones in the Hylo programming language, are the construct that makes it possible to still borrow, and to return borrowed data, without lifting that restriction.
+To make programming with MVS ergonomic, Phi has **Projections**, like the ones in the Hylo Programming Language. Projections make it possible to still create and use references without lifting MVS restrictions.
 
 ### Projections
 
-A projection borrows a value, or part of a value, in place. While a projection lives:
+Like in Hylo, a projection is essentially a reference to a value, or part of a value. While a projection lives:
+- If it is **mutable**, the source cannot be read, mutated, moved, or destroyed through any other name.
+- If it is **immutable**, the source cannot be mutated, moved or destroyed, but it, and other immutable projections of it, may still be read.
 
-- If it is **mutable**, the source cannot be read, mutated, or destroyed through any other name.
-- If it is **immutable**, the source cannot be mutated or destroyed, but it — or other immutable projections of it — may still be read.
-
-A value has either many readers or one writer, never both at once. Projections of *disjoint* parts of a value — two different fields of the same struct, for instance — may coexist independently. By default, a projection's lifetime ends at its last use, exactly like an ordinary variable's:
+A general rule for allowed actions after a value has been projected is that a value has either *many readers* or *one writer* (but never both at once). However, note that projections of *disjoint* parts of a value, such as two different fields of the same struct, may coexist independently. By default, a projection's lifetime ends at its last use, exactly like an ordinary variable's:
 
 ```phi
 fun main() {
@@ -249,11 +241,11 @@ with px = &mut point.x, py = &mut point.y {
 // px and py go out of scope here, unconditionally
 ```
 
-Every binding in a `with` block ends at the closing brace, regardless of where its own last use happened to fall inside the block. This differs from inferred last-use in a way that matters as code changes over time: with last-use, a binding's lock on its source is computed from wherever its final mention is, which means adding a later use during maintenance silently extends how long the source stays locked. A `with` block's boundary can't drift like that — `px` and `py` simply don't exist past the brace, so a later access to `point.x` requires a fresh binding rather than an accidental extension of the old one.
+As every binding in a `with` block ends at the closing brace, regardless of where its own last use happened to fall inside the block, `with` blocks help reduce bugs which may occur when further changes to the code extend or shorten how long a source stays locked due to a projection. They also document exactly how long a projection should live.
 
 ### Functions that return a projection
 
-A function's return type can be `&T`, `&mut T`, or `any T`, exactly as a parameter's can — in which case the function hands back a projection into one of its own parameters, chosen by ordinary control flow, rather than an owned value. There is no separate declaration form for this: it's the same `fun`, `->`, and `return` as any other function, and the return type alone determines the behavior.
+Unlike Hylo, which requires ordinary functions to own the values they return, ordinary functions in Phi *can* return projections. To reduce code duplication, Phi has the `any` keyword which works like methond bundles in Hylo. `any` lets the function's result mode vary based on how the function is used at each call site.
 
 ```phi
 // `any` lets the function's result mode — &T, &mut T, or a move —
@@ -267,8 +259,9 @@ fun min(x: &mut i32, y: &mut i32) -> &mut i32 {
     return if x < y { &mut x } else { &mut y };
 }
 ```
+The use of any does not have any impact on the performance of the program. The compiler generates a separate function underneath the hood for each mode.
 
-As long as the returned value lives — which may be a single line, if it is used inline at the call site — the source parameters are subject to the same aliasing rules as any local projection. The function itself ends at `return`, exactly like any other function; any cleanup tied to the projection's source is expressed the ordinary way, through `Drop` on whatever guard or handle is being returned.
+As long as the returned projection lives — which may be a single line if it is used inline at the call site — the source parameters are subject to the same aliasing rules as any local projection. For example, if a function returns a mutable projection which is stored into a variable, the source parameters cannot be read, mutated, moved, or destroyed while the returned projection lives.
 
 ### Rules
 
@@ -299,7 +292,7 @@ for i in 0..5 {
 }
 ```
 
-Looping over a data structure goes through projections, and the loop's binding mode is written explicitly at the `in`:
+Looping over a data structure uses projections, and the loop's binding mode is written explicitly after the `in`:
 
 ```phi
 for x in &a {
@@ -331,7 +324,7 @@ let label = if x < 5 { "small" } else { "large" };
 
 `if`, `match`,`spawn`, and `concurrent` are the only constructs usable as expressions. `while` and `for` are always statements and never produce a value.
 
-### `if let` and `while let`
+### Pattern matching with statements
 
 `if let` runs its branch only when a value matches a pattern, binding whatever the pattern names:
 
@@ -342,8 +335,7 @@ if let .some(n) = lookup(key) {
     println("missing");
 }
 ```
-
-It chains with `else if let`, and — like `if` — is usable as an expression when every branch produces a value.
+It chains with `else if let`, and like `if`, is usable as an expression when every branch produces a value.
 
 `while let` loops for as long as the value keeps matching, which is the usual way to drain something that reports its own end:
 
@@ -353,34 +345,28 @@ while let .some(line) = reader.next_line() {
 }
 ```
 
-Both are shorthands for a `match`: `if let` for a two-arm match whose second arm is `_`, and `while let` for a `loop` around one whose second arm breaks.
-
-A `{` directly after the condition of an `if`/`while`, the value of an `if let`/`while let`, or the subject of a `match` always opens the body. A struct literal or a record payload there has to be parenthesized:
-
+`let else` declarations also allow you to destructure some pattern:
 ```phi
-if (Config { verbose: true }).verbose { ... }
+let .some(n) = lookup(key) else {
+    // handle the error case
+}
+foo(n) // we have extracted n and can use it after
 ```
 
 ---
 
 ## 9. Structs and Methods
 
-Phi supports user-defined types with `struct`. Fields, and any methods that belong inherently to the type, are declared together in the struct body:
+Phi supports user-defined types with `struct`.
 
 ```phi
 struct Vector2D {
     public x: f64,
     public y: f64,
-
-    public fun dot(&self, other: &Vector2D) -> f64 {
-        return self.x * other.x + self.y * other.y;
-    }
 }
 ```
 
-For non-static methods, the first parameter is always `self`, which may be an immutable borrow (`&self`), a mutable borrow (`&mut self`), or an owned value (`self`). Static methods omit `self` entirely. As with any function, a method's return type can be `&T`, `&mut T`, or `any T`, in which case it hands back a projection following the same rules described in section 7.
-
-Construct a struct with field initializers:
+You can construct a struct with a struct literal. However, this cannot be done if a struct has at least 1 private field. In that case, you must write a function inside an `extend` block (see the next section) which returns an instance of that struct.
 
 ```phi
 let force = Vector2D { x: 1.0, y: 1.0 };
@@ -393,14 +379,18 @@ force.x;                   // field access
 force.dot(other_force);    // method call
 ```
 
-### `extend`: adding methods after the fact
+### `extend`: adding methods
 
-A struct's methods cannot live in its body. The `extend` construct reopens a type to add more methods:
-
-**Splitting inherent methods across a file or module**, with no trait involved:
+Unlike in C++ or Java, a struct's methods cannot live in its body. The `extend` construct extends structs with methods. For non-static methods, the first parameter is always `self`, which may be an immutable borrow (`&self`), a mutable borrow (`&mut self`), or an owned value (`self`). Static methods omit `self` entirely.
 
 ```phi
 extend Vector2D {
+    public fun new(x: f64, y: f64) -> Vector2D {
+        // Vector2D::new(x, y) must be used instead of a struct literal to initialize
+        // a Vector2D outside of the struct if either x or y were private.
+        return Vector2D { x: x, y: y };
+    }
+
     public fun normalized(&self) -> Vector2D {
         let m = self.length();
         return Vector2D { x: self.x / m, y: self.y / m };
@@ -418,7 +408,7 @@ extend Vector2D with Comparable {
 }
 ```
 
-A given type may have as many plain `extend Type { }` blocks as convenient. For `extend Type with Trait { }`, there may be exactly one such block for a given `(Type, Trait)` pair anywhere in a program.
+A given type may have as many plain `extend Type { }` blocks as convenient. For `extend Type with Trait { }`, there may be as many as long as they don't conflict. For example, `extend<T> Foo<T> with Bar` conflicts with `extend<i32> Foo<i32> with Bar` but `extend<String> Foo<String> with Bar` does not.
 
 ### Methods that return a projection
 
@@ -441,7 +431,7 @@ extend Pair {
 
 ## 10. Enums and Pattern Matching
 
-Phi is not an object-oriented language — there is no inheritance. Polymorphism is achieved through sum types: enums, combined with exhaustive pattern matching.
+Phi is not an object-oriented language — there is no inheritance. Polymorphism is achieved through sum types called enums.
 
 ```phi
 struct Rectangle {
@@ -484,7 +474,7 @@ fun main() {
 }
 ```
 
-An enum is a struct that can only have one field set at a time, and it's declared like one: a variant is written `name: Type` — a name and the single type of its payload. That type may be an existing one (`rectangle: Rectangle`), an anonymous struct declared inline (`square: { l: f64 }`), or a tuple (`parallelogram: (f64, f64)`). A variant with no payload at all is written bare (`nothing,`).
+An enum works like a struct that can only have one field set at a time. Variants of an enum can have no type (where only the name of the variant is give), a single type (as seen with `.circle`) or an anonymous struct declared inline (such as `.square`).
 
 ### Building a variant
 
@@ -498,19 +488,18 @@ A variant is built by naming it after a `.`, and the payload is written the way 
 | `square: { l: f64 }` | `.square { l: 4.0 }` |
 | `nothing,` | `.nothing` |
 
-Parentheses hold exactly one value, whatever its type — a tuple payload is a single tuple, not several arguments. Braces are only for a payload declared inline as an anonymous struct, because only then do the field names belong to the variant's own declaration. `.square { l }` is shorthand for `.square { l: l }`.
+Parentheses hold exactly one value, whatever its type. Braces are only for a payload declared inline as an anonymous struct, because only then do the field names belong to the variant's own declaration. `.square { l }` is shorthand for `.square { l: l }`.
 
-The leading `.` means the enum is taken from context — the expected type of a parameter, a `let` with an annotation, or the value being returned. Name it explicitly when there's no such context, or when you want to be explicit:
+The leading `.` allows you to elide the enum type and have the compiler infer it from the context of the program. You may also name it explicitly when it is ambiguous what enum you are referring to or when it is clearer to be explicit.
 
 ```phi
 let s = Shape.circle(1.24);
 let s = math::Shape.circle(1.24);   // `::` walks modules, `.` reaches a member
 ```
 
-`.circle(1.24)` is exactly that with the type deleted. The same `.` marks an elided struct literal, `.{ l: 4.0, w: 6.0 }`, which is why a named payload is built with one inside the parentheses.
+Note that `.` can also allow you to elide in struct's name in a struct literal (`.{ l: 4.0, w: 6.0 }`) when it is clear in the context what struct you are referring to.
 
-Enums with no payloads anywhere are written and used the same way, which covers the C-style case:
-
+Enums with no payloads anywhere are written and used the same way, which allows you to use enums as C-style enums.
 ```phi
 enum Color { red, green, blue }
 
@@ -529,9 +518,7 @@ A pattern mirrors construction exactly, with bindings in place of values:
 .nothing                   // no payload
 ```
 
-The leading `.` is also what separates a variant from a binding: a bare name in a pattern always binds, so a variant and a local may share a name without ambiguity.
-
-How you match a variant determines what its arms receive, mirroring the by-value / by-`&` / by-`&mut` distinction used for function parameters: matching `shape: &Shape` against `.rectangle(rect)` gives `rect: &Rectangle`, while matching an owned `Shape` would give an owned `Rectangle`.
+How you match a variant determines what its arms receive, mirroring the by-value / by-`&` / by-`&mut` distinction used for function parameters. For example, matching `shape: &Shape` against `.rectangle(rect)` gives `rect: &Rectangle`, while matching an owned `Shape` would give an owned `Rectangle`.
 
 Matches must be **exhaustive** — every variant must be handled, either explicitly or through the wildcard pattern `_`.
 
@@ -573,11 +560,11 @@ Multiple bounds on the same type parameter are joined with `+` inside the same a
 fun describe<T: Comparable + Display>(value: T) { ... }
 ```
 
-Generics are checked at their definition site and monomorphized by default: `largest<Vector2D>` and `largest<i32>` are compiled as if they were two separate, ordinary functions.
+The use of generics also does not effect program performance as the compiler monomorphizes them by default. For example, `largest<Vector2D>` and `largest<i32>` would be generated into and compiled as if they were two separate, ordinary functions.
 
 ### Dynamic dispatch with `dyn`
 
-`dyn Trait` is a type that erases the concrete type behind a trait's interface, allowing a single collection to hold several different concrete types at once, resolved at runtime:
+`dyn Trait` is a type that erases the concrete type behind a trait's interface, allowing a single collection to hold several different concrete types at once, which are resolved at runtime:
 
 ```phi
 fun render_all(shapes: &Array<dyn Shape>) {
@@ -591,7 +578,7 @@ fun render_all(shapes: &Array<dyn Shape>) {
 
 ## 12. Operator Overloading
 
-Operators are overloaded by implementing specific, recognized traits — there is no separate marker on the method itself:
+Operators are overloaded by implementing specific traits:
 
 ```phi
 trait Add {
@@ -621,7 +608,7 @@ trait IndexSet<K, V> {
 
 ## 13. Error Handling
 
-Phi has no exceptions. Failure is represented as an ordinary value, using two standard-library enums:
+Phi has no exceptions. Errors are instead represented as values, using two standard-library enums:
 
 ```phi
 enum Option<T> {
@@ -706,7 +693,7 @@ Nested modules are expressed with `::` in the module path, both at the declarati
 module math::vector;
 ```
 
-By default, every item — a struct, function, trait, or enum — is private to the module it's declared in. The `public` keyword exports an item so that other modules may import it:
+By default, every item — a struct, function, trait, or enum — is private to the module it's declared in. The `public` keyword exports an item so that other modules may import it. For fields, it allows the field to be accessed outside of the struct.
 
 ```phi
 module math;
@@ -716,8 +703,6 @@ public struct Vector2D {
     public y: f64,
 }
 ```
-
-Visibility is tracked per-field as well as per-item: a `struct` may be `public` while only some of its fields are, restricting outside modules to whichever fields and methods are explicitly marked `public`.
 
 ### Importing
 
@@ -732,21 +717,3 @@ fun main() {
 ```
 
 ---
-
-## 16. Standard Library Basics
-
-A few types are available without an explicit `import`:
-
-| Type | Purpose |
-|---|---|
-| `Array<T>` | A growable, owned sequence of `T`. Indexing (`a[i]`), slicing (`a[..n]`, `a[n..]`), and iteration all go through the projection rules from section 7. |
-| `String` | An owned, growable, UTF-8 text buffer. `+` concatenates; `&str` is the borrowed view used for parameters that only read text. |
-| `Option<T>` | Introduced in section 13: presence (`.some(value)`) or absence (`.none`). |
-| `Result<T, E>` | Introduced in section 13: success (`.ok(value)`) or failure (`.err(err)`). |
-| `HashMap<K, V>` | A hash-based associative map. Reads use `Index`; writes to a possibly-absent key use `IndexSet` (section 12). |
-
-Common trait conformances are provided for these types out of the box — `Array<T>` and `String` both conform to `Drop`, and any `T: Comparable` type can be sorted or compared without additional code.
-
----
-
-test line
