@@ -52,20 +52,40 @@ impl Unifier {
         }
     }
 
+    /// The representative of `ty`'s equivalence class, registering `ty` as its own class if this
+    /// is the first time it has been seen.
+    ///
+    /// Written iteratively rather than recursively. Union by size already bounds a class's
+    /// height to `O(log n)`, so this is not guarding against a stack overflow -- it is that this
+    /// runs on every read of every type ([`Typeck::ty_of`](crate::typeck::Typeck) goes through
+    /// it), and the loop form leaves nothing on the read path whose depth depends on the program
+    /// being compiled. The two passes below are the standard path-compression split: walk to the
+    /// root, then point every link on the way at it, so the next lookup on any of them is a
+    /// single step.
     pub fn root(&mut self, ty: Ty) -> Ty {
-        if let None = self.parents.get(&ty) {
+        if !self.parents.contains_key(&ty) {
             self.parents.insert(ty, ty);
             self.sizes.insert(ty, 1);
+            return ty;
         }
 
-        let parent = self.parents.get(&ty).unwrap();
-        return if parent == &ty {
-            ty
-        } else {
-            let ret = self.root(*parent);
-            self.parents.insert(ty, ret);
-            ret
-        };
+        let mut current = ty;
+        while let Some(&parent) = self.parents.get(&current) {
+            if parent == current {
+                break;
+            }
+            current = parent;
+        }
+        let root = current;
+
+        let mut current = ty;
+        while current != root {
+            let parent = self.parents[&current];
+            self.parents.insert(current, root);
+            current = parent;
+        }
+
+        root
     }
 
     /// Attempts to unify `expected` and `found`, binding inference variables so that the two
@@ -1089,6 +1109,30 @@ mod tests {
         assert_eq!(u.unify(&tcx, a, b), Ok(()));
         assert_eq!(u.unify(&tcx, b, c), Ok(()));
         assert_eq!(u.root(a), u.root(c));
+    }
+
+    /// Union by size keeps a class shallow, so a large class still resolves through the loop in
+    /// `root` without the chain ever getting deep. This is a correctness check on that loop over
+    /// a class far larger than the handful the other tests build, not a stack-depth guard --
+    /// there is no construction here that makes the tree tall.
+    #[test]
+    fn every_member_of_a_large_class_resolves_to_one_representative() {
+        const MEMBERS: usize = 50_000;
+
+        let mut tcx = TyCtx::new();
+        let vars: Vec<Ty> = (0..MEMBERS).map(|_| tcx.next_ty_var()).collect();
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let mut u = Unifier::new();
+
+        for pair in vars.windows(2) {
+            assert_eq!(u.unify(&tcx, pair[0], pair[1]), Ok(()));
+        }
+        assert_eq!(u.unify(&tcx, vars[0], i32_ty), Ok(()));
+
+        // The concrete type outranks every variable however large their class grew.
+        for &var in &vars {
+            assert_eq!(u.root(var), i32_ty);
+        }
     }
 
     // -----------------------------------------------------------------

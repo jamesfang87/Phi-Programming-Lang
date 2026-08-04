@@ -81,17 +81,15 @@ impl NameResolutions {
         }
     }
 
+    /// Records what the name or path at `id` resolved to.
+    ///
+    /// A resolution that points at `id` itself -- a binding that is its own declaration, or an
+    /// `extend` block's own `<T>` entry, which name resolution binds to the very node it is
+    /// written on -- is stored like any other. Dropping those as redundant would make absence
+    /// mean two different things, "resolved to itself" and "never resolved", leaving every
+    /// consumer to tell them apart from context it does not have.
     pub fn record(&mut self, id: HirId, res: Res) {
-        match res {
-            Res::Local(hir_id)
-            | Res::SelfVal(hir_id)
-            | Res::Variant(hir_id)
-            | Res::Generic(hir_id)
-                if hir_id == id => {}
-            _ => {
-                self.res.insert(id, res);
-            }
-        }
+        self.res.insert(id, res);
     }
 
     /// Records what `Self` means inside `def_id`'s own body.

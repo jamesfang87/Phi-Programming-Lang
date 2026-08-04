@@ -21,9 +21,10 @@ use crate::hir::ids::{DefId, HirId, LocalId};
 /// [`Hir::parent`]: crate::hir::Hir::parent
 /// [`Hir::module_of`]: crate::hir::Hir::module_of
 pub struct DefIdAllocator {
-    /// `parents[i]` is the definition lexically enclosing `DefId(i)`. Only the root module has
-    /// no parent, so only `parents[root]` is `None`.
-    parents: Vec<Option<DefId>>,
+    /// `parents[i]` is the definition lexically enclosing `DefId(i)`. The root module has no
+    /// enclosing definition and is recorded as its own parent, which keeps this dense; see
+    /// [`Hir::parent`], which turns that back into a `None`.
+    parents: Vec<DefId>,
 }
 
 impl DefIdAllocator {
@@ -34,10 +35,11 @@ impl DefIdAllocator {
     }
 
     /// Allocates the next, previously-unused `DefId`, recording `parent` as the definition it is
-    /// declared inside. `parent` is `None` only for the root module.
+    /// declared inside. `parent` is `None` only for the root module, which is stored as its own
+    /// parent so the table stays dense.
     pub fn alloc(&mut self, parent: Option<DefId>) -> DefId {
         let id = DefId::from_usize(self.parents.len());
-        self.parents.push(parent);
+        self.parents.push(parent.unwrap_or(id));
         id
     }
 
@@ -48,7 +50,7 @@ impl DefIdAllocator {
 
     /// Consumes the allocator, yielding the parent of every `DefId` it handed out, indexed by
     /// [`DefId::index`].
-    pub fn finish(self) -> Vec<Option<DefId>> {
+    pub fn finish(self) -> Vec<DefId> {
         self.parents
     }
 }
