@@ -2,7 +2,7 @@
 //! into a [`Ty`], which is what the checker reasons about.
 //!
 //! The conversion is mostly mechanical, because name resolution has already done the hard part:
-//! every path in a `hir::Ty` was resolved to a [`Res`] and recorded under that node's
+//! every path in a `hir::Ty` was resolved to a [`TypeRes`] and recorded under that node's
 //! [`HirId`], so this pass reads the answer instead of doing its own lookups. What is left is to
 //! replace each nested `HirId` with the `Ty` it lowers to, and to check the things that only
 //! become checkable once a path has a definition behind it: that a type is applied to as many
@@ -16,7 +16,7 @@
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::hir::{DefId, HirId, Node, OwnerNode, TyKind as HirTyKind};
 use crate::lexer::src_span::SrcSpan;
-use crate::nameres::results::Res;
+use crate::nameres::results::{SelfTyRes, TypeRes};
 use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
 
@@ -84,20 +84,20 @@ impl<'hir> Typeck<'hir> {
         // answer -- an `extend` block's own `<...>` list holding something that isn't a bare
         // parameter name is the one way that happens. It has already been reported, so this
         // stays quiet.
-        let Some(res) = self.nameres.res(id) else {
+        let Some(res) = self.nameres.ty(id) else {
             return self.tcx.error();
         };
 
         match res {
-            Res::PrimTy(prim) => {
+            TypeRes::PrimTy(prim) => {
                 Self::expect_no_args(args, span, "a primitive type");
                 self.tcx.mk_prim(prim)
             }
-            Res::Generic(param) => {
+            TypeRes::Generic(param) => {
                 Self::expect_no_args(args, span, "a generic type parameter");
                 self.tcx.mk_generic(param)
             }
-            Res::Def(def_id) => {
+            TypeRes::Def(def_id) => {
                 let declared = match self.hir.def(def_id) {
                     OwnerNode::Struct(struct_) => struct_.generics.len(),
                     OwnerNode::Enum(enum_) => enum_.generics.len(),
@@ -125,10 +125,7 @@ impl<'hir> Typeck<'hir> {
             }
             // Already reported by name resolution; staying quiet here keeps one mistake from
             // producing a second diagnostic.
-            Res::Err => self.tcx.error(),
-            Res::Local(_) | Res::SelfVal(_) | Res::Variant(_) | Res::SelfTy { .. } => {
-                unreachable!("a named type resolves in the type namespace");
-            }
+            TypeRes::Err => self.tcx.error(),
         }
     }
 
@@ -136,15 +133,15 @@ impl<'hir> Typeck<'hir> {
     /// implemented-with-arguments trait such as `dyn Index<K, V>` cannot be written; the
     /// argument list here is always empty.
     fn lower_dyn(&mut self, id: HirId, span: SrcSpan) -> Ty {
-        let Some(res) = self.nameres.res(id) else {
+        let Some(res) = self.nameres.ty(id) else {
             return self.tcx.error();
         };
 
         match res {
-            Res::Def(def_id) if matches!(self.hir.def(def_id), OwnerNode::Trait(_)) => {
+            TypeRes::Def(def_id) if matches!(self.hir.def(def_id), OwnerNode::Trait(_)) => {
                 self.tcx.mk_dyn(def_id, Vec::new())
             }
-            Res::Err => self.tcx.error(),
+            TypeRes::Err => self.tcx.error(),
             _ => {
                 Self::report_dyn_not_a_trait(span);
                 self.tcx.error()
@@ -196,8 +193,8 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         }
 
-        let Res::SelfTy { adt, .. } = res else {
-            // `resolve_extend` records `Res::Err` when the extended path did not resolve.
+        let SelfTyRes::Ty { adt, .. } = res else {
+            // `resolve_extend` records `SelfTyRes::Err` when the extended path did not resolve.
             self.computing_self_tys.remove(&introducer);
             return self.tcx.error();
         };

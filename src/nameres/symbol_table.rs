@@ -4,11 +4,11 @@ use crate::ast::interner::Interner;
 use crate::ast::{Ident, Path, Symbol};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::hir::{DefId, Hir, Import, OwnerNode};
-use crate::nameres::results::Res;
+use crate::nameres::results::ValueRes;
 use std::collections::hash_map::Entry;
 
 struct Scope {
-    scope: HashMap<Symbol, Res>,
+    scope: HashMap<Symbol, ValueRes>,
 }
 
 impl Scope {
@@ -293,7 +293,7 @@ impl<'hir> SymbolTable<'hir> {
 
     /// Binds `name` to `res` in the innermost scope, opening one first if none is open yet (e.g.
     /// for module-level bindings like imports, resolved before any block scope exists).
-    pub fn bind(&mut self, name: Ident, res: Res) {
+    pub fn bind(&mut self, name: Ident, res: ValueRes) {
         if self.scopes.is_empty() {
             self.push_scope();
         }
@@ -301,7 +301,7 @@ impl<'hir> SymbolTable<'hir> {
     }
 
     /// Looks `name` up in every open scope, innermost first.
-    pub fn lookup(&self, name: Symbol) -> Option<Res> {
+    pub fn lookup(&self, name: Symbol) -> Option<ValueRes> {
         self.scopes
             .iter()
             .rev()
@@ -408,14 +408,14 @@ impl<'hir> SymbolTable<'hir> {
     /// it knows it. Scanning every enum in scope for a matching variant name -- which is what
     /// bare, undotted variant names would require -- is exactly the ambiguity the leading `.`
     /// exists to avoid.
-    pub fn lookup_variant(&self, enum_def: DefId, name: Symbol) -> Option<Res> {
+    pub fn lookup_variant(&self, enum_def: DefId, name: Symbol) -> Option<ValueRes> {
         let OwnerNode::Enum(enum_) = self.hir.def(enum_def) else {
             return None;
         };
 
         for &variant_id in &enum_.variants {
             if self.hir.variant(variant_id).name.text == name {
-                return Some(Res::Variant(variant_id));
+                return Some(ValueRes::Variant(variant_id));
             }
         }
         None

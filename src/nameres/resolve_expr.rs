@@ -1,7 +1,7 @@
 use crate::ast::{Ident, Path};
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Payload};
 use crate::nameres::NameResolver;
-use crate::nameres::results::Res;
+use crate::nameres::results::{TypeRes, ValueRes};
 use crate::nameres::symbol_table::SymbolTable;
 
 impl<'hir> NameResolver<'hir> {
@@ -11,7 +11,7 @@ impl<'hir> NameResolver<'hir> {
         match &expr.kind {
             ExprKind::Path(path) => {
                 let res = self.resolve_value_path(expr_id.owner, path);
-                self.results.record(expr_id, res);
+                self.results.record_value(expr_id, res);
             }
             ExprKind::Unary { operand, .. }
             | ExprKind::Borrow { operand, .. }
@@ -51,7 +51,7 @@ impl<'hir> NameResolver<'hir> {
             ExprKind::Ctor { path, payload } => {
                 if let Some(path) = path {
                     let res = self.resolve_struct_path(expr_id.owner, path);
-                    self.results.record(expr_id, res);
+                    self.results.record_value(expr_id, res);
                 }
 
                 for field in payload {
@@ -107,7 +107,7 @@ impl<'hir> NameResolver<'hir> {
         }
     }
 
-    pub fn resolve_value_path(&mut self, owner_id: DefId, path: &Path) -> Res {
+    pub fn resolve_value_path(&mut self, owner_id: DefId, path: &Path) -> ValueRes {
         if let [name] = path.segments.as_slice() {
             if let Some(res) = self.symbol_tab.lookup(name.text) {
                 return res;
@@ -115,7 +115,7 @@ impl<'hir> NameResolver<'hir> {
         }
 
         if let Some(def_id) = self.symbol_tab.lookup_value_path(owner_id, path) {
-            return Res::Def(def_id);
+            return ValueRes::Def(def_id);
         }
 
         let name = *path
@@ -123,7 +123,7 @@ impl<'hir> NameResolver<'hir> {
             .last()
             .expect("a path always has at least one segment");
         SymbolTable::report_not_found(name);
-        Res::Err
+        ValueRes::Err
     }
 
     fn resolve_access(&mut self, hir_id: HirId, base: HirId, member: Ident, args: &AccessArgs) {
@@ -150,9 +150,9 @@ impl<'hir> NameResolver<'hir> {
                     .lookup_variant(enum_def, member.text)
                     .unwrap_or_else(|| {
                         SymbolTable::report_not_found(member);
-                        Res::Err
+                        ValueRes::Err
                     });
-                self.results.record(hir_id, res);
+                self.results.record_value(hir_id, res);
             }
             // A value, so the member is a field or a method: deferred to typeck.
             None => self.resolve_expr(base),
@@ -174,9 +174,9 @@ impl<'hir> NameResolver<'hir> {
     }
 
     /// Resolves the path of a struct literal (`Vector2D { .. }`) against the type namespace.
-    fn resolve_struct_path(&mut self, owner_id: DefId, path: &Path) -> Res {
+    fn resolve_struct_path(&mut self, owner_id: DefId, path: &Path) -> ValueRes {
         if let Some(def_id) = self.symbol_tab.lookup_type_path(owner_id, path) {
-            return Res::Def(def_id);
+            return ValueRes::Def(def_id);
         }
 
         let name = *path
@@ -184,6 +184,6 @@ impl<'hir> NameResolver<'hir> {
             .last()
             .expect("a path always has at least one segment");
         SymbolTable::report_not_found(name);
-        Res::Err
+        ValueRes::Err
     }
 }

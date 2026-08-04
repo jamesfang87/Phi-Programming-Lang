@@ -79,7 +79,7 @@ pub enum TyKind {
     /// [`Node::Generic`](crate::hir::Node::Generic), or, for an `extend` block's own `<T>` list,
     /// the [`Node::Ty`](crate::hir::Node::Ty) standing in for one (see
     /// [`GenericDecl`](crate::nameres::resolve_item)). That is exactly what name resolution
-    /// hands back in [`Res::Generic`](crate::nameres::results::Res::Generic), so no
+    /// hands back in [`TypeRes::Generic`](crate::nameres::results::TypeRes::Generic), so no
     /// separate numbering has to be built or kept in sync to name a parameter here.
     Generic(HirId),
     /// The implicit `Self` parameter a trait declares, naming the trait it belongs to.

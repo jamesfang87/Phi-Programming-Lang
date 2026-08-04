@@ -25,7 +25,7 @@ mod tests;
 use crate::ast::Symbol;
 use crate::hir::{DefId, Hir};
 use crate::langitems;
-use crate::nameres::results::{NameResolutions, Res};
+use crate::nameres::results::{NameResolutions, SelfTyRes, TypeRes};
 use crate::nameres::symbol_table::SymbolTable;
 
 /// Note that the resolver carries no "where am I?" state of its own. Every `resolve_*` method
@@ -65,7 +65,7 @@ impl<'hir> NameResolver<'hir> {
     /// This reads the table [`resolve_module`](Self::resolve_module)'s traversal fills in.
     /// That is safe because a definition's `Self` is recorded before its body is walked, and
     /// `Self` can only be *named* from within that body.
-    fn self_ty(&self, owner_id: DefId) -> Option<Res> {
+    fn self_ty(&self, owner_id: DefId) -> Option<SelfTyRes> {
         let mut current = owner_id;
         loop {
             if let Some(res) = self.results.self_ty(current) {
@@ -84,7 +84,7 @@ impl<'hir> NameResolver<'hir> {
     /// This reads the table [`resolve_generics`](Self::resolve_generics) fills in, which is
     /// safe for the same reason [`Self::self_ty`] is: a definition's generics are recorded
     /// before its body is walked, and its body is the only place they can be named from.
-    fn generic_ty(&self, owner_id: DefId, name: Symbol) -> Option<Res> {
+    fn generic_ty(&self, owner_id: DefId, name: Symbol) -> Option<TypeRes> {
         let mut current = owner_id;
         loop {
             if let Some(res) = self.results.generic(current, name) {

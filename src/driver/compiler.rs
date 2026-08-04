@@ -52,14 +52,12 @@ impl Compiler {
 
     /// Parses every collected file's token stream into an AST.
     pub fn parse(token_streams: Vec<Vec<Token>>) -> Vec<ParsedSrcFile> {
-        token_streams
+        let streams: Vec<(Vec<Token>, usize)> = token_streams
             .into_iter()
             .zip(SrcMap::files().iter())
-            .map(|(stream, file)| {
-                let parser = Parser::new(stream, file.global_offset);
-                parser.parse()
-            })
-            .collect()
+            .map(|(stream, file)| (stream, file.global_offset))
+            .collect();
+        Parser::new().parse_all(&streams)
     }
 
     /// Runs the full pipeline over every `.phi` file under `root`: collects sources, lexes,

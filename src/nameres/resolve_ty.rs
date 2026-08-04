@@ -2,7 +2,7 @@ use crate::ast::interner::Interner;
 use crate::ast::{Path, Symbol};
 use crate::hir::{DefId, HirId, TyKind};
 use crate::nameres::NameResolver;
-use crate::nameres::results::{PrimTy, Res};
+use crate::nameres::results::{PrimTy, TypeRes};
 use crate::nameres::symbol_table::SymbolTable;
 
 impl<'hir> NameResolver<'hir> {
@@ -12,7 +12,7 @@ impl<'hir> NameResolver<'hir> {
         match &ty.kind {
             TyKind::Path { path, args } => {
                 let res = self.resolve_ty_path(ty_id.owner, path);
-                self.results.record(ty_id, res);
+                self.results.record_type(ty_id, res);
                 for &arg in args {
                     self.resolve_ty(arg);
                 }
@@ -39,13 +39,15 @@ impl<'hir> NameResolver<'hir> {
                     self.resolve_ty(*ret);
                 }
             }
-            TyKind::SelfType => {
-                let res = self.self_ty(ty_id.owner).unwrap_or(Res::Err);
-                self.results.record(ty_id, res);
-            }
+            // `Self` resolves no path, so there is nothing to record against this node. What it
+            // stands for is a property of the enclosing definition rather than of the annotation,
+            // and is recorded once per definition by `resolve_struct`, `resolve_enums`,
+            // `resolve_trait`, and `resolve_extend`. Type lowering reads it back the same way
+            // this resolver would, by walking up from the owner -- see `Typeck::self_ty`.
+            TyKind::SelfType => {}
             TyKind::Dyn(path) => {
                 let res = self.resolve_ty_path(ty_id.owner, path);
-                self.results.record(ty_id, res);
+                self.results.record_type(ty_id, res);
             }
             TyKind::Error => {}
         }
@@ -54,10 +56,10 @@ impl<'hir> NameResolver<'hir> {
     /// Resolves a path used as a type: a single-segment path can name a primitive (`i32`,
     /// `bool`, ...), which never gets a `DefId`, so those are checked before falling back to the
     /// type namespace (structs/enums/traits), searched relative to the module `owner_id` sits in.
-    pub fn resolve_ty_path(&mut self, owner_id: DefId, path: &Path) -> Res {
+    pub fn resolve_ty_path(&mut self, owner_id: DefId, path: &Path) -> TypeRes {
         if let [name] = path.segments.as_slice() {
             if let Some(prim) = Self::prim_ty(name.text) {
-                return Res::PrimTy(prim);
+                return TypeRes::PrimTy(prim);
             }
             if let Some(res) = self.generic_ty(owner_id, name.text) {
                 return res;
@@ -65,7 +67,7 @@ impl<'hir> NameResolver<'hir> {
         }
 
         if let Some(def_id) = self.symbol_tab.lookup_type_path(owner_id, path) {
-            return Res::Def(def_id);
+            return TypeRes::Def(def_id);
         }
 
         let name = *path
@@ -73,7 +75,7 @@ impl<'hir> NameResolver<'hir> {
             .last()
             .expect("a path always has at least one segment");
         SymbolTable::report_not_found(name);
-        Res::Err
+        TypeRes::Err
     }
 
     fn prim_ty(symbol: Symbol) -> Option<PrimTy> {

@@ -6,7 +6,7 @@ use crate::diag::{DiagCtx, Diagnostic};
 use crate::hir::{DefId, HirId, OwnerNode, TyKind, VariantPayload};
 use crate::lexer::src_span::SrcSpan;
 use crate::nameres::NameResolver;
-use crate::nameres::results::Res;
+use crate::nameres::results::{SelfTyRes, TypeRes, ValueRes};
 
 /// Where an owner's own generic type parameter comes from.
 ///
@@ -105,15 +105,15 @@ impl<'hir> NameResolver<'hir> {
                 }
             };
 
-            let res = Res::Generic(id);
+            let res = TypeRes::Generic(id);
             params.insert(name.text, res);
             // Also record the declaration against the node it is written on, not just in the
             // by-name table. A [`GenericDecl::BareTy`] entry is a real `Node::Ty` that type
             // lowering will visit like any other annotation, and it looks its answer up here by
             // id; without this it finds nothing and lowers an `extend` block's own `<T>` to
             // `TyKind::Error`. The resolution points at the node itself, which is exactly the
-            // identity mapping [`NameResolutions::record`] has to keep rather than discard.
-            self.results.record(id, res);
+            // identity mapping [`NameResolutions::record_type`] has to keep rather than discard.
+            self.results.record_type(id, res);
         }
         self.results.record_generic(owner_id, params);
     }
@@ -147,19 +147,19 @@ impl<'hir> NameResolver<'hir> {
 
             // `self` is bound like a parameter -- it just doesn't carry a name of its own in the
             // HIR, so the keyword is interned here to bind it under. It resolves to
-            // `Res::SelfVal` rather than `Res::Local`: its type isn't declared anywhere, it's
+            // `ValueRes::SelfVal` rather than `ValueRes::Local`: its type isn't declared anywhere, it's
             // the enclosing item's `Self`, recovered from `fun_id` the same way
             // [`NameResolver::self_ty`] does.
             let name = Ident {
                 text: Interner::intern("self"),
                 span: self_param.span,
             };
-            self.results.record(id, Res::SelfVal(id));
-            self.symbol_tab.bind(name, Res::SelfVal(id));
+            self.results.record_value(id, ValueRes::SelfVal(id));
+            self.symbol_tab.bind(name, ValueRes::SelfVal(id));
         }
         for &param_id in &function.params {
             let param = hir.param(param_id);
-            self.symbol_tab.bind(param.name, Res::Local(param_id));
+            self.symbol_tab.bind(param.name, ValueRes::Local(param_id));
             self.resolve_ty(param.ty);
         }
         if let Some(ret) = function.ret {
@@ -186,7 +186,7 @@ impl<'hir> NameResolver<'hir> {
         self.symbol_tab.push_scope();
         for &param_id in &closure.params {
             let param = hir.closure_param(param_id);
-            self.symbol_tab.bind(param.name, Res::Local(param_id));
+            self.symbol_tab.bind(param.name, ValueRes::Local(param_id));
             if let Some(ty) = param.ty {
                 self.resolve_ty(ty);
             }
@@ -209,7 +209,7 @@ impl<'hir> NameResolver<'hir> {
 
         self.results.record_self_ty(
             struct_id,
-            Res::SelfTy {
+            SelfTyRes::Ty {
                 adt: struct_id,
                 trait_: None,
             },
@@ -230,7 +230,7 @@ impl<'hir> NameResolver<'hir> {
 
         self.results.record_self_ty(
             enum_id,
-            Res::SelfTy {
+            SelfTyRes::Ty {
                 adt: enum_id,
                 trait_: None,
             },
@@ -258,10 +258,10 @@ impl<'hir> NameResolver<'hir> {
 
         // Inside a trait's own default methods, `Self` stands for whatever type eventually
         // implements it -- there's no concrete adt yet, so the trait's own id stands in for both
-        // halves of `Res::SelfTy`.
+        // halves of `SelfTyRes::Ty`.
         self.results.record_self_ty(
             trait_id,
-            Res::SelfTy {
+            SelfTyRes::Ty {
                 adt: trait_id,
                 trait_: Some(trait_id),
             },
@@ -297,17 +297,17 @@ impl<'hir> NameResolver<'hir> {
         }
 
         // Unlike a struct/enum/trait, an `extend` block's `Self` isn't structural: it's whatever
-        // its `adt_path` resolved to just above. Recording `Res::Err` when that failed keeps a
+        // its `adt_path` resolved to just above. Recording `SelfTyRes::Err` when that failed keeps a
         // `Self` inside the block from being reported a second time.
         let self_ty = match adt_res {
-            Res::Def(adt) => Res::SelfTy {
+            TypeRes::Def(adt) => SelfTyRes::Ty {
                 adt,
                 trait_: trait_res.and_then(|res| match res {
-                    Res::Def(trait_id) => Some(trait_id),
+                    TypeRes::Def(trait_id) => Some(trait_id),
                     _ => None,
                 }),
             },
-            _ => Res::Err,
+            _ => SelfTyRes::Err,
         };
         self.results.record_self_ty(extend_id, self_ty);
 

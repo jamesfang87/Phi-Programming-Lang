@@ -10,7 +10,7 @@
 
 use crate::ast::interner::Interner;
 use crate::hir::{DefId, ExprKind, Hir, HirId, Node, OwnerNode};
-use crate::nameres::results::{NameResolutions, Res};
+use crate::nameres::results::{NameResolutions, ValueRes};
 use crate::testing::resolve_src;
 
 /// Every expression in `def`'s arena that is a bare, single-segment path naming `name`.
@@ -60,9 +60,9 @@ fn assert_names_param(hir: &Hir, nameres: &NameResolutions, def: DefId, name: &s
     assert_eq!(refs.len(), 1, "expected exactly one reference to `{name}`");
     let param = param_named(hir, def, name);
 
-    match nameres.res(refs[0]) {
-        Some(Res::Local(id)) if id == param => {}
-        other => panic!("`{name}` resolved to {other:?}, expected Res::Local({param:?})"),
+    match nameres.value(refs[0]) {
+        Some(ValueRes::Local(id)) if id == param => {}
+        other => panic!("`{name}` resolved to {other:?}, expected ValueRes::Local({param:?})"),
     }
 }
 
@@ -137,7 +137,7 @@ fn if_let_binding_is_visible_in_the_matched_branch() {
     let refs = refs_to(&hir, def, "x");
     assert_eq!(refs.len(), 1, "expected exactly one reference to `x`");
     assert!(
-        matches!(nameres.res(refs[0]), Some(Res::Local(_))),
+        matches!(nameres.value(refs[0]), Some(ValueRes::Local(_))),
         "`x` did not resolve to the binding its pattern introduces"
     );
 }

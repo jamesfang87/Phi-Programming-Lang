@@ -1052,8 +1052,8 @@ mod tests {
     use crate::ast::interner::Interner;
 
     fn parse_expr(src: &str) -> Expr {
-        let (tokens, offset) = lex_src(src);
-        let parser = Parser::new(tokens.clone(), offset);
+        let (tokens, _) = lex_src(src);
+        let parser = Parser::new();
         let (output, errors) = parser.expr_parser().parse(&tokens[..]).into_output_errors();
         assert!(
             errors.is_empty(),

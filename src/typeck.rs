@@ -18,7 +18,7 @@ use crate::hir::{
     DefId, ExprKind, Hir, HirId, NameResolutions, Node, OwnerNode, StmtKind, VariantPayload,
 };
 use crate::lexer::src_span::SrcSpan;
-use crate::nameres::results::{PrimTy, Res};
+use crate::nameres::results::{PrimTy, ValueRes};
 use crate::typeck::display::DisplayCx;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
@@ -424,7 +424,7 @@ impl<'hir> Typeck<'hir> {
                 self.tcx.mk_tuple(tys)
             }
             ExprKind::Path(_) => {
-                let Some(res) = self.nameres.res(id) else {
+                let Some(res) = self.nameres.value(id) else {
                     unreachable!(
                         "every Path expr is resolved by name resolution before typeck runs"
                     );
@@ -442,27 +442,26 @@ impl<'hir> Typeck<'hir> {
                     // unifying one use constrains the rest. Nothing ever *binds* that variable,
                     // so the local's type stays unknown -- this stands in for the missing
                     // inference rather than doing any of it.
-                    Res::Local(local) => self.recorded_ty(local).unwrap_or_else(|| {
+                    ValueRes::Local(local) => self.recorded_ty(local).unwrap_or_else(|| {
                         let ty = self.tcx.next_ty_var();
                         self.types.record(local, ty);
                         ty
                     }),
-                    Res::SelfVal(self_param) => self
+                    ValueRes::SelfVal(self_param) => self
                         .recorded_ty(self_param)
                         .expect("collect_self_param always records the self parameter's type"),
-                    Res::Def(def) => self
+                    ValueRes::Def(def) => self
                         .recorded_ty_of_def(def)
                         .expect("collect_function always records a function's own signature"),
                     // Already reported by name resolution; staying quiet here keeps one mistake
                     // from producing a second diagnostic.
-                    Res::Err => self.tcx.error(),
+                    ValueRes::Err => self.tcx.error(),
 
-                    // `resolve_value_path` -- the only thing that resolves an `ExprKind::Path`
-                    // -- looks a name up in the value namespace (locals, `self`, and functions)
-                    // or fails outright. The other four `Res` variants belong to the type
-                    // namespace or to `.variant` accesses, and a value path can't reach them.
-                    Res::Variant(_) | Res::PrimTy(_) | Res::SelfTy { .. } | Res::Generic(_) => {
-                        unreachable!("a value path never resolves to {res:?}")
+                    // A variant is reached through `.v`, which lowers to `ExprKind::Access`, not
+                    // through a path. Everything the type namespace can answer with is not in
+                    // `ValueRes` at all, so there is nothing further to rule out here.
+                    ValueRes::Variant(_) => {
+                        unreachable!("a variant is named through an Access, not a Path")
                     }
                 }
             }
