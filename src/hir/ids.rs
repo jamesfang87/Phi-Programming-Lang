@@ -20,6 +20,17 @@ impl DefId {
     pub fn index(self) -> usize {
         self.0 as usize
     }
+
+    /// The [`HirId`] of this definition's own declaration node, which every arena stores at
+    /// [`LocalId::OWNER`].
+    ///
+    /// This is the bridge between the two ways the compiler addresses a definition: by `DefId`
+    /// when naming the definition itself, and by `HirId` when it is one node among the rest --
+    /// which is how [`TypeResolutions`](crate::typeck::results::TypeResolutions) manages to key
+    /// a definition's own type in the same table as every other node's.
+    pub fn owner_id(self) -> HirId {
+        HirId::new(self, LocalId::OWNER)
+    }
 }
 
 /// A [`LocalId`] identifies one node inside a single owner's arena. `LocalId`s start at zero
@@ -57,4 +68,10 @@ impl LocalId {
 pub struct HirId {
     pub owner: DefId,
     pub local_id: LocalId,
+}
+
+impl HirId {
+    pub fn new(owner: DefId, local_id: LocalId) -> Self {
+        HirId { owner, local_id }
+    }
 }

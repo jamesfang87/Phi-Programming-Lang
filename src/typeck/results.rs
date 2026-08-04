@@ -1,20 +1,19 @@
 use std::collections::HashMap;
 
-use crate::hir::{DefId, HirId, LocalId};
+use crate::hir::{DefId, HirId};
 use crate::typeck::ty::Ty;
 
 /// The output of type checking: every node whose type the checker worked out, mapped to that
 /// type.
 ///
 /// A definition's own type -- the type a `struct` names, the signature of a `fun` -- is in here
-/// too, stored under its owner node, which is the node at [`LocalId::OWNER`] of its own arena.
+/// too, stored under its owner node -- see [`DefId::owner_id`](crate::hir::DefId::owner_id).
 /// Nothing else can be stored under that id, so definitions need no table of their own.
 ///
 /// The [`Ty`] handles stored here are only meaningful paired with the
 /// [`TyCtx`](crate::typeck::tyctx::TyCtx) that interned them, which is why
 /// [`check`](crate::typeck::check) hands both back together.
 ///
-/// [`LocalId::OWNER`]: crate::hir::LocalId::OWNER
 #[derive(Default)]
 pub struct TypeResolutions {
     ty: HashMap<HirId, Ty>,
@@ -32,13 +31,7 @@ impl TypeResolutions {
     /// Records the type a definition itself has: what a `struct` names, what a `fun`'s signature
     /// is.
     pub fn record_def(&mut self, def: DefId, ty: Ty) {
-        self.record(
-            HirId {
-                owner: def,
-                local_id: LocalId::OWNER,
-            },
-            ty,
-        );
+        self.record(def.owner_id(), ty);
     }
 
     /// The type of `id`, or `None` if this pass never assigned one.
@@ -49,10 +42,7 @@ impl TypeResolutions {
     /// The type of the definition `def` itself, the counterpart to
     /// [`record_def`](TypeResolutions::record_def).
     pub fn ty_of_def(&self, def: DefId) -> Option<Ty> {
-        self.ty(HirId {
-            owner: def,
-            local_id: LocalId::OWNER,
-        })
+        self.ty(def.owner_id())
     }
 
     /// Iterates every node recorded so far, alongside the type assigned to it. Used by the

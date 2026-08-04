@@ -96,10 +96,7 @@ impl ArenaBuilder {
     pub fn reserve(&mut self) -> HirId {
         let local_id = LocalId::from_usize(self.slots.len());
         self.slots.push(None);
-        HirId {
-            owner: self.def_id,
-            local_id,
-        }
+        HirId::new(self.def_id, local_id)
     }
 
     /// Writes the real content for a [`LocalId`] previously returned by
@@ -153,10 +150,7 @@ mod tests {
         let mut builder = ArenaBuilder::new(DefId::from_usize(0));
         let id = builder.reserve();
 
-        let foreign = HirId {
-            owner: DefId::from_usize(1),
-            local_id: id.local_id,
-        };
+        let foreign = HirId::new(DefId::from_usize(1), id.local_id);
         builder.fill(foreign, block(foreign));
     }
 
