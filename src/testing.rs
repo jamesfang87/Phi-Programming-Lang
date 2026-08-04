@@ -41,7 +41,7 @@ pub fn lex_src(src: &str) -> (Vec<Token>, usize) {
 /// Lexes and parses `src`, asserting no diagnostics were raised along the way.
 pub fn parse_src(src: &str) -> ParsedSrcFile {
     let (tokens, offset) = lex_src(src);
-    let unit = Parser::new(tokens, offset).parse();
+    let unit = Parser::new().parse(&tokens, offset);
     assert_clean(src);
     unit
 }

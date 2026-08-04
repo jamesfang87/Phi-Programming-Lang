@@ -170,8 +170,8 @@ mod tests {
     }
 
     fn parse_pattern(src: &str) -> Pat {
-        let (tokens, offset) = lex_src(src);
-        let parser = Parser::new(tokens.clone(), offset);
+        let (tokens, _) = lex_src(src);
+        let parser = Parser::new();
         let (output, errors) = parser
             .pattern_parser()
             .parse(&tokens[..])

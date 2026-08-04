@@ -3,7 +3,7 @@
 //! `--debug`, which runs the whole pipeline (through type checking) and prints all of it.
 //!
 //! A raw [`Symbol`] or [`DefId`] is just an integer, which makes the derived `Debug` output of
-//! [`Res`] and [`TyKind`] tedious to read by hand. The HIR, name resolution, and type checking
+//! [`ValueRes`] and [`TyKind`] tedious to read by hand. The HIR, name resolution, and type checking
 //! dumps here resolve a `Symbol` back to its interned string and a `DefId` back to the name and
 //! [`HirId`] of the definition it addresses, instead of leaving either as a bare number.
 //!
@@ -16,7 +16,7 @@ use crate::driver::src_file::FileOrigin;
 use crate::driver::src_map::SrcMap;
 use crate::hir::{DefId, Hir, HirId, LocalId, Node, OwnerNode};
 use crate::lexer::src_span::SrcSpan;
-use crate::nameres::results::{NameResolutions, Res};
+use crate::nameres::results::{NameResolutions, SelfTyRes, TypeRes, ValueRes};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
@@ -192,14 +192,28 @@ fn block(open: &str, close: &str, items: &[String], indent: usize) -> String {
     format!("{open}\n{body}{}{close}", pad(indent))
 }
 
-fn fmt_res(hir: &Hir, res: Res, indent: usize) -> String {
+fn fmt_value_res(hir: &Hir, res: ValueRes) -> String {
     match res {
-        Res::Def(id) => format!("Def({})", fmt_def(hir, id)),
-        Res::Local(id) => format!("Local({id:?})"),
-        Res::SelfVal(id) => format!("SelfVal({id:?})"),
-        Res::Variant(id) => format!("Variant({id:?})"),
-        Res::PrimTy(prim) => format!("PrimTy({prim:?})"),
-        Res::SelfTy { adt, trait_ } => {
+        ValueRes::Local(id) => format!("Local({id:?})"),
+        ValueRes::SelfVal(id) => format!("SelfVal({id:?})"),
+        ValueRes::Variant(id) => format!("Variant({id:?})"),
+        ValueRes::Def(id) => format!("Def({})", fmt_def(hir, id)),
+        ValueRes::Err => "Err".to_string(),
+    }
+}
+
+fn fmt_type_res(hir: &Hir, res: TypeRes) -> String {
+    match res {
+        TypeRes::PrimTy(prim) => format!("PrimTy({prim:?})"),
+        TypeRes::Generic(id) => format!("Generic({id:?})"),
+        TypeRes::Def(id) => format!("Def({})", fmt_def(hir, id)),
+        TypeRes::Err => "Err".to_string(),
+    }
+}
+
+fn fmt_self_ty_res(hir: &Hir, res: SelfTyRes, indent: usize) -> String {
+    match res {
+        SelfTyRes::Ty { adt, trait_ } => {
             let trait_ = match trait_ {
                 Some(t) => fmt_def(hir, t),
                 None => "None".to_string(),
@@ -212,8 +226,7 @@ fn fmt_res(hir: &Hir, res: Res, indent: usize) -> String {
                 pad(indent)
             )
         }
-        Res::Generic(id) => format!("Generic({id:?})"),
-        Res::Err => "Err".to_string(),
+        SelfTyRes::Err => "Err".to_string(),
     }
 }
 
@@ -327,13 +340,23 @@ pub fn print_hir(hir: &Hir, exclude_core: bool) {
 pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core: bool) {
     let keep = |def_id: DefId| !exclude_core || is_user_def(hir, def_id);
 
-    println!("=== NameResolution results ===");
-    for (hir_id, res) in results.iter().filter(|(id, _)| keep(id.owner)) {
+    println!("=== NameResolution results: values ===");
+    for (hir_id, res) in results.iter_values().filter(|(id, _)| keep(id.owner)) {
         println!(
             "{hir_id:?} :: {} ->\n{}{}",
             fmt_node_summary(hir, hir_id),
             pad(1),
-            fmt_res(hir, res, 1)
+            fmt_value_res(hir, res)
+        );
+    }
+
+    println!("=== NameResolution results: types ===");
+    for (hir_id, res) in results.iter_types().filter(|(id, _)| keep(id.owner)) {
+        println!(
+            "{hir_id:?} :: {} ->\n{}{}",
+            fmt_node_summary(hir, hir_id),
+            pad(1),
+            fmt_type_res(hir, res)
         );
     }
 
@@ -348,7 +371,7 @@ pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core: bool) {
             fmt_def(hir, def_id),
             fmt_node_summary(hir, hir_id),
             pad(1),
-            fmt_res(hir, res, 1)
+            fmt_self_ty_res(hir, res, 1)
         );
     }
 
@@ -365,7 +388,7 @@ pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core: bool) {
                 fmt_symbol(name),
                 fmt_node_summary(hir, hir_id),
                 pad(1),
-                fmt_res(hir, res, 1)
+                fmt_type_res(hir, res)
             );
         }
     }

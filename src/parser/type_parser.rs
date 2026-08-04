@@ -233,8 +233,8 @@ mod tests {
     use crate::lexer::Lexer;
 
     fn parse_ty(src: &str) -> Ty {
-        let (tokens, offset) = lex_src(src);
-        let parser = Parser::new(tokens.clone(), offset);
+        let (tokens, _) = lex_src(src);
+        let parser = Parser::new();
         let (output, errors) = parser.type_parser().parse(&tokens[..]).into_output_errors();
         assert!(
             errors.is_empty(),
@@ -253,7 +253,7 @@ mod tests {
             crate::driver::src_file::FileOrigin::User,
         );
         let tokens = Lexer::new(&chars, offset).tokenize();
-        let parser = Parser::new(tokens.clone(), offset);
+        let parser = Parser::new();
         let (_, errors) = parser
             .type_parser()
             .then(end())

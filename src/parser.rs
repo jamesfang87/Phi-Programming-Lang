@@ -29,50 +29,74 @@ mod item_parser;
 mod pattern_parser;
 mod type_parser;
 
-pub struct Parser {
-    tokens: Vec<Token>,
-    file_offset: usize,
-}
+/// The grammar, and the entry points that run it over a file's tokens.
+///
+/// Deliberately holds no per-file state. Nothing the grammar is built from reads a token stream
+/// or a file offset -- [`Parser::kind`] filters on a token's kind, and the leaf parsers reach
+/// the source text through the global [`SrcMap`] -- so one built grammar parses every file in a
+/// build. That is what [`Parser::parse_all`] exploits; see its docs for why it matters.
+pub struct Parser;
 
 impl Parser {
-    /// Builds a parser over `tokens`. `file_offset` is the token stream's start position in the
-    /// global [`SrcMap`]. It becomes the span of the fallback empty file if parsing fails.
-    pub fn new(tokens: Vec<Token>, file_offset: usize) -> Self {
-        Parser {
-            tokens,
-            file_offset,
-        }
+    pub fn new() -> Self {
+        Parser
     }
 
-    /// The entry point for parsing a file.
+    /// Parses one file's token stream into a [`ParsedSrcFile`], reporting errors through
+    /// [`DiagCtx`]. `file_offset` is the stream's start position in the global [`SrcMap`], and
+    /// becomes the span of the fallback empty file if parsing fails.
     ///
-    /// Parses the token stream into a [`ParsedSrcFile`] and reports errors through [`DiagCtx`].
+    /// This builds a grammar for the one call. Use [`Parser::parse_all`] to parse a whole build.
+    pub fn parse(&self, tokens: &[Token], file_offset: usize) -> ParsedSrcFile {
+        let grammar = self.grammar();
+        Self::run(&grammar, tokens, file_offset)
+    }
+
+    /// Parses every file's token stream, building the grammar **once** for all of them.
     ///
-    /// If the grammar fails completely, this returns an empty file.
-    pub fn parse(&self) -> ParsedSrcFile {
-        let (output, errors) = self.grammar().parse(&self.tokens[..]).into_output_errors();
+    /// Constructing the grammar is not free: it allocates the whole boxed combinator tree, and
+    /// does so more than once per build of it, since `item_parser` reaches for both
+    /// `type_parser` and `block_parser` and each of those builds its own expression grammar.
+    /// Paying that per file made it a fixed cost that scaled with file count rather than with
+    /// how much source there was -- roughly a third of the wall time on a 400-file build.
+    /// Hoisting it here is sound precisely because the grammar carries no per-file state.
+    pub fn parse_all(&self, streams: &[(Vec<Token>, usize)]) -> Vec<ParsedSrcFile> {
+        let grammar = self.grammar();
+        streams
+            .iter()
+            .map(|(tokens, file_offset)| Self::run(&grammar, tokens, *file_offset))
+            .collect()
+    }
+
+    /// Runs an already-built `grammar` over one file's tokens.
+    fn run<'a>(
+        grammar: &impl ChumskyParser<'a, &'a [Token], Vec<Item>, Extra<'a>>,
+        tokens: &'a [Token],
+        file_offset: usize,
+    ) -> ParsedSrcFile {
+        let (output, errors) = grammar.parse(tokens).into_output_errors();
 
         for err in &errors {
-            self.report_error(err);
+            Self::report_error(err);
         }
 
         match output {
-            Some(items) => self.assemble_file(items),
+            Some(items) => Self::assemble_file(items, file_offset),
             None => ParsedSrcFile {
                 module: None,
                 imports: Vec::new(),
                 items: Vec::new(),
-                span: SrcSpan::new(0, 0),
+                span: SrcSpan::new(file_offset, file_offset),
             },
         }
     }
 
     /// Splits a file's parsed items into its module header, imports, and definitions
     /// as required by [`ParsedSrcFile`]
-    fn assemble_file(&self, items: Vec<Item>) -> ParsedSrcFile {
+    fn assemble_file(items: Vec<Item>, file_offset: usize) -> ParsedSrcFile {
         let span = match (items.first(), items.last()) {
             (Some(first), Some(last)) => first.span.merge(last.span),
-            _ => SrcSpan::new(self.file_offset, self.file_offset),
+            _ => SrcSpan::new(file_offset, file_offset),
         };
 
         let mut module = None;
@@ -107,7 +131,7 @@ impl Parser {
         );
     }
 
-    fn report_error(&self, err: &Rich<Token>) {
+    fn report_error(err: &Rich<Token>) {
         let span = err
             .found()
             .map(|t| t.span)
@@ -216,7 +240,7 @@ mod tests {
     /// [`parse_src`], this asserts nothing, so it can exercise the error paths.
     fn diagnostic_count(src: &str) -> usize {
         let (tokens, offset) = lex_src(src);
-        let _ = Parser::new(tokens, offset).parse();
+        let _ = Parser::new().parse(&tokens, offset);
         DiagCtx::diagnostics().len()
     }
 
@@ -224,7 +248,7 @@ mod tests {
     /// parsed unit, for exercising recovery.
     fn parse_with_errors(src: &str) -> (ParsedSrcFile, usize) {
         let (tokens, offset) = lex_src(src);
-        let unit = Parser::new(tokens, offset).parse();
+        let unit = Parser::new().parse(&tokens, offset);
         (unit, DiagCtx::diagnostics().len())
     }
 

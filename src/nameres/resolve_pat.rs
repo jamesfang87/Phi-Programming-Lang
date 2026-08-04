@@ -1,6 +1,6 @@
 use crate::hir::{HirId, PatKind, Payload};
 use crate::nameres::NameResolver;
-use crate::nameres::results::Res;
+use crate::nameres::results::{TypeRes, ValueRes};
 
 impl<'hir> NameResolver<'hir> {
     pub fn bind_pat(&mut self, pat_id: HirId) {
@@ -8,7 +8,7 @@ impl<'hir> NameResolver<'hir> {
 
         match &pat.kind {
             PatKind::Binding { name, .. } => {
-                self.symbol_tab.bind(*name, Res::Local(pat_id));
+                self.symbol_tab.bind(*name, ValueRes::Local(pat_id));
             }
             // Which enum a `.variant` pattern names comes from the scrutinee's type, so the
             // variant itself is left for typeck; only its payload's bindings are introduced

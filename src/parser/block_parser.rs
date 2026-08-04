@@ -27,8 +27,8 @@ mod tests {
     };
 
     fn parse_block(src: &str) -> Block {
-        let (tokens, offset) = lex_src(src);
-        let parser = Parser::new(tokens.clone(), offset);
+        let (tokens, _) = lex_src(src);
+        let parser = Parser::new();
         let (output, errors) = parser
             .block_parser()
             .parse(&tokens[..])
@@ -42,8 +42,8 @@ mod tests {
 
     /// Like [`parse_block`], but doesn't assert the parse was clean, for exercising recovery.
     fn parse_block_with_errors(src: &str) -> (Block, usize) {
-        let (tokens, offset) = lex_src(src);
-        let parser = Parser::new(tokens.clone(), offset);
+        let (tokens, _) = lex_src(src);
+        let parser = Parser::new();
         let (output, errors) = parser
             .block_parser()
             .parse(&tokens[..])
