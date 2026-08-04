@@ -108,6 +108,20 @@ pub struct NameResolutions {
     /// [`NameResolver::self_ty`]: crate::nameres::NameResolver::self_ty
     self_tys: HashMap<DefId, SelfTyRes>,
 
+    /// What each trait bound written on a generic type parameter named, keyed by the
+    /// [`Node::Generic`](crate::hir::Node::Generic) that carries them and ordered as they were
+    /// written.
+    ///
+    /// A bound is a bare [`Path`](crate::ast::Path) hanging off the parameter, not a node of its
+    /// own, so there is no [`HirId`] to key it under in [`NameResolutions::types`] the way every
+    /// other type-position path is. Resolving one and dropping the answer -- which is what this
+    /// pass used to do -- means `fun f<T: Show>(..)` promises nothing to anybody downstream: the
+    /// trait solver's `ParamEnv` is built out of exactly this table.
+    ///
+    /// A parameter with no bounds is absent rather than present-and-empty; see
+    /// [`NameResolutions::bounds`].
+    bounds: HashMap<HirId, Vec<TypeRes>>,
+
     /// The generic type parameters each definition declares for itself, keyed by name. A
     /// definition that declares no generics of its own is absent -- a reference inside one of
     /// those (or inside a definition nested in it, such as a method's body) looks the answer up
@@ -132,6 +146,7 @@ impl NameResolutions {
             values: HashMap::new(),
             types: HashMap::new(),
             self_tys: HashMap::new(),
+            bounds: HashMap::new(),
             generics: HashMap::new(),
             lang_items: LangItems::default(),
         }
@@ -169,6 +184,14 @@ impl NameResolutions {
         self.self_tys.insert(def_id, res);
     }
 
+    /// Records what each trait bound written on the generic parameter `id` named, in the order
+    /// they were written. Called once per parameter, even when it carries no bounds at all, so
+    /// that a parameter whose bounds were resolved is distinguishable from one that was never
+    /// reached.
+    pub fn record_bounds(&mut self, id: HirId, bounds: Vec<TypeRes>) {
+        self.bounds.insert(id, bounds);
+    }
+
     /// Records the generic type parameters `def_id` declares for itself, keyed by name.
     pub fn record_generic(&mut self, def_id: DefId, params: HashMap<Symbol, TypeRes>) {
         self.generics.insert(def_id, params);
@@ -187,6 +210,15 @@ impl NameResolutions {
     /// What `Self` means inside `def_id`'s own body, if `def_id` introduces one at all.
     pub fn self_ty(&self, def_id: DefId) -> Option<SelfTyRes> {
         self.self_tys.get(&def_id).copied()
+    }
+
+    /// What the trait bounds written on the generic parameter `id` named, in source order.
+    ///
+    /// An unbounded parameter answers with an empty slice rather than `None`: "declares no
+    /// bounds" and "was never resolved" are the same thing to every consumer, since both mean
+    /// there is nothing to assume about the parameter.
+    pub fn bounds(&self, id: HirId) -> &[TypeRes] {
+        self.bounds.get(&id).map_or(&[], Vec::as_slice)
     }
 
     /// Looks `name` up among the generic type parameters `def_id` declares for itself -- not

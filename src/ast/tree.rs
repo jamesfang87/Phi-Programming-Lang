@@ -6,11 +6,6 @@
 //! that declares into the same module and synthesizing any module -- `math`, when only
 //! `math::vector` is ever declared -- that no file names on its own.
 //!
-//! That grouping is pure surface-syntax bookkeeping: it needs no `DefId`s, no arenas, and nothing
-//! else HIR-specific. It used to live in `LoweringCtx` all the same, which left lowering
-//! interleaving module assembly with node lowering. Here, lowering receives a module tree that is
-//! already built and only has to walk it.
-//!
 //! [`Ast`] is to the AST what [`Hir`](crate::hir::Hir) is to the HIR: the root that owns every
 //! node, records each module's parent, and names the root module. The nodes below a module are
 //! unchanged -- still the parser's `Box`-linked [`Item`]s, addressed by following the tree rather
