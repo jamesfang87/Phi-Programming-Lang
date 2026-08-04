@@ -1,6 +1,6 @@
 use crate::ast::interner::Interner;
 use crate::ast::{Path, Symbol};
-use crate::hir::{DefId, HirId, TyKind};
+use crate::hir::DefId;
 use crate::nameres::NameResolver;
 use crate::nameres::results::{PrimTy, TypeRes};
 use crate::nameres::symbol_table::report_not_found;
