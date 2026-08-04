@@ -33,14 +33,10 @@ const CORE_FILES: &[(&str, &str)] = &[
     ("core/result.phi", include_str!("../../lib/core/result.phi")),
 ];
 
-pub struct CoreLib;
-
-impl CoreLib {
-    /// Registers every core library file with the `SrcMap`, in the order [`CORE_FILES`] lists
-    /// them.
-    pub fn register() {
-        for &(name, source) in CORE_FILES {
-            SrcMap::add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
-        }
+/// Registers every core library file with the `SrcMap`, in the order [`CORE_FILES`] lists
+/// them.
+pub fn register() {
+    for &(name, source) in CORE_FILES {
+        SrcMap::add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
     }
 }

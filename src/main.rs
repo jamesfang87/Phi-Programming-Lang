@@ -17,8 +17,7 @@ mod parser;
 mod testing;
 mod typeck;
 
-use crate::driver::Driver;
-use crate::driver::compiler::Compiler;
+use crate::driver::compiler;
 use crate::driver::options::BuildOptions;
 use std::env;
 use std::path::Path;
@@ -27,7 +26,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        Driver::print_usage();
+        driver::print_usage();
         std::process::exit(1);
     }
 
@@ -40,7 +39,7 @@ fn main() {
             }
 
             let name = &args[2];
-            if let Err(e) = Driver::new_project(name) {
+            if let Err(e) = driver::new_project(name) {
                 eprintln!("error: {}", e);
                 std::process::exit(1);
             }
@@ -58,7 +57,7 @@ fn main() {
                 std::process::exit(1);
             };
 
-            if let Err(e) = Driver::init_project(path) {
+            if let Err(e) = driver::init_project(path) {
                 eprintln!("error: {}", e);
                 std::process::exit(1);
             }
@@ -73,8 +72,7 @@ fn main() {
                 }
             };
 
-            let mut compiler = Compiler::new();
-            match compiler.build(Path::new("."), &options) {
+            match compiler::build(Path::new("."), &options) {
                 Ok(true) => {}
                 Ok(false) => std::process::exit(1),
                 Err(e) => {
@@ -85,12 +83,12 @@ fn main() {
         }
 
         "help" | "--help" | "-h" => {
-            Driver::print_usage();
+            driver::print_usage();
         }
 
         _ => {
             eprintln!("error: unknown command '{}'", command);
-            Driver::print_usage();
+            driver::print_usage();
             std::process::exit(1);
         }
     }
