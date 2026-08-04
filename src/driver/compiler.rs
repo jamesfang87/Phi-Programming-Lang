@@ -7,7 +7,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::ast::ParsedSrcFile;
+use crate::ast::Ast;
 use crate::diag::DiagCtx;
 use crate::driver::core_lib;
 use crate::driver::emit_debug;
@@ -43,8 +43,8 @@ pub fn lex() -> Vec<Vec<Token>> {
     token_streams
 }
 
-/// Parses every collected file's token stream into an AST.
-pub fn parse(token_streams: Vec<Vec<Token>>) -> Vec<ParsedSrcFile> {
+/// Parses every collected file's token stream into the build's [`Ast`].
+pub fn parse(token_streams: Vec<Vec<Token>>) -> Ast {
     let streams: Vec<(Vec<Token>, usize)> = token_streams
         .into_iter()
         .zip(SrcMap::files().iter())
@@ -66,14 +66,14 @@ pub fn parse(token_streams: Vec<Vec<Token>>) -> Vec<ParsedSrcFile> {
 /// -- see [`crate::driver::emit_debug`].
 pub fn build(root: &Path, options: &BuildOptions) -> io::Result<bool> {
     collect_sources(root)?;
-    let asts = parse(lex());
+    let ast = parse(lex());
 
     if options.dumps.ast {
-        emit_debug::print_ast(&asts);
+        emit_debug::print_ast(&ast);
     }
 
-    // Desugars every file's AST into one HIR.
-    let hir = lower_unit(&asts);
+    // Desugars the whole program's AST into one HIR.
+    let hir = lower_unit(&ast);
 
     if options.dumps.hir {
         emit_debug::print_hir(&hir, options.exclude_core);

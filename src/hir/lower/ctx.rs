@@ -1,168 +1,92 @@
-//! Drives the whole lowering pass: allocates `DefId`s, accumulates each module's contents as
-//! files are lowered into it, and assembles the final `Hir` once every item has been lowered.
+//! Drives the whole lowering pass: allocates `DefId`s, lowers each module's items into their own
+//! owners, and assembles the final `Hir` once every item has been lowered.
 
 use std::collections::HashMap;
 
-use crate::ast::{self, Ident, Path, Symbol};
+use crate::ast;
 use crate::hir::builder::DefIdAllocator;
 use crate::hir::ids::DefId;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{Arena, Enum, Extend, Function, Hir, Module, OwnerNode, Struct, Trait};
-use crate::lexer::src_span::SrcSpan;
-
-/// A module's contents, accumulated across every file that declares into it, before its `Module`
-/// node is built in [`LoweringCtx::finish`].
-pub(super) struct ModuleScratch {
-    path: Path,
-    items: Vec<DefId>,
-    imports: Vec<ast::Import>,
-}
 
 /// `LoweringCtx` tracks the state threaded through the whole lowering pass. It holds:
 ///
 /// - The `DefId` allocator, which assigns every definition its global id.
 /// - Each owner's finished arena, once that owner has been lowered.
-/// - The modules being assembled, since a module accumulates contributions from every file
-///   that declares into it before it becomes a real `Module` owner.
+///
+/// The module tree itself is not state here: [`ast::Ast`] has already grouped every file's
+/// contents into modules, so [`lower_unit`](super::lower_unit) walks a finished tree and this
+/// only has to give each module a `DefId` and lower what is in it.
 ///
 /// [`LoweringCtx::finish`] consumes this state after every item has been lowered and packs it
 /// into the final `Hir`.
 pub(super) struct LoweringCtx {
     pub(super) items: DefIdAllocator,
     pub(super) owners: HashMap<DefId, Arena>,
-    /// Module path (dotted segments) -> its `DefId`, populated as modules are discovered --
-    /// either from an explicit `module a::b;` declaration or synthesized as an ancestor of one.
-    modules_by_path: HashMap<Vec<Symbol>, DefId>,
-    module_scratch: HashMap<DefId, ModuleScratch>,
-    root_module: DefId,
 }
 
 impl LoweringCtx {
     pub(super) fn new() -> Self {
-        let mut items = DefIdAllocator::new();
-        let root = items.alloc(None);
-
-        let mut modules_by_path = HashMap::new();
-        modules_by_path.insert(Vec::new(), root);
-
-        let mut module_scratch = HashMap::new();
-        module_scratch.insert(
-            root,
-            ModuleScratch {
-                path: Path {
-                    segments: Vec::new(),
-                    span: SrcSpan::new(0, 0),
-                },
-                items: Vec::new(),
-                imports: Vec::new(),
-            },
-        );
-
         LoweringCtx {
-            items,
+            items: DefIdAllocator::new(),
             owners: HashMap::new(),
-            modules_by_path,
-            module_scratch,
-            root_module: root,
         }
     }
 
-    pub(super) fn root_module(&self) -> DefId {
-        self.root_module
-    }
-
-    /// Finds or creates the `DefId` for the module named by `segments`, synthesizing any
-    /// ancestor module a file never declares on its own.
-    pub(super) fn module_for_path(&mut self, segments: &[Ident]) -> DefId {
-        let mut current = self.root_module;
-        let mut prefix: Vec<Symbol> = Vec::new();
-        for (i, seg) in segments.iter().enumerate() {
-            prefix.push(seg.text);
-            if let Some(&existing) = self.modules_by_path.get(&prefix) {
-                current = existing;
-                continue;
+    /// Lowers one module: every item declared in it becomes an owner of its own, and the module
+    /// itself becomes a `Module` owner listing them.
+    ///
+    /// `def_id` is the module's own id, allocated by the caller, and `child_modules` holds the
+    /// ids of the modules nested inside it. A submodule is one of its parent's items, like any
+    /// other definition -- that's what keeps the module tree walkable downwards from the root,
+    /// for passes that traverse it (name resolution) rather than address a def by id.
+    pub(super) fn lower_module(
+        &mut self,
+        def_id: DefId,
+        module: &ast::AstModule,
+        child_modules: Vec<DefId>,
+    ) {
+        let mut items = child_modules;
+        for item in &module.items {
+            if let Some(item_id) = self.lower_item(def_id, item) {
+                items.push(item_id);
             }
-            // `current` is still the module one level up: the parent of the one being created.
-            let item_id = self.items.alloc(Some(current));
-            let path_segments = segments[..=i].to_vec();
-            let span = path_segments[0]
-                .span
-                .merge(path_segments[path_segments.len() - 1].span);
-            self.module_scratch.insert(
-                item_id,
-                ModuleScratch {
-                    path: Path {
-                        segments: path_segments,
-                        span,
-                    },
-                    items: Vec::new(),
-                    imports: Vec::new(),
-                },
-            );
-            self.modules_by_path.insert(prefix.clone(), item_id);
-            // A submodule is one of its parent's items, like any other definition -- that's what
-            // keeps the module tree walkable downwards from the root, for passes that traverse
-            // it (name resolution) rather than address a def by id.
-            self.declare(current, item_id);
-            current = item_id;
         }
-        current
+
+        let mut ow = OwnerLowerer::new(self, def_id);
+        let root = ow.reserve_root();
+        let imports = module
+            .imports
+            .iter()
+            .map(|imp| ow.lower_import(imp))
+            .collect();
+        ow.fill(
+            root,
+            OwnerNode::Module(Module {
+                hir_id: root,
+                items,
+                imports,
+                span: module.path.span,
+                path: module.path.clone(),
+            }),
+        );
+        ow.finish();
     }
 
-    pub(super) fn lower_file(&mut self, module: DefId, unit: &ast::ParsedSrcFile) {
-        for import in &unit.imports {
-            self.module_scratch
-                .get_mut(&module)
-                .unwrap()
-                .imports
-                .push(import.clone());
-        }
-        for item in &unit.items {
-            self.lower_item(module, item);
-        }
-    }
-
-    fn lower_item(&mut self, module: DefId, item: &ast::Item) {
+    /// Lowers one item into its own owner, returning the `DefId` its module should list it
+    /// under, or `None` for an item that declares nothing.
+    fn lower_item(&mut self, module: DefId, item: &ast::Item) -> Option<DefId> {
         match &item.kind {
-            ast::ItemKind::Function(f) => {
-                let item_id = self.lower_function(module, f);
-                self.declare(module, item_id);
-            }
-            ast::ItemKind::Struct(s) => {
-                let item_id = self.lower_struct(module, s);
-                self.declare(module, item_id);
-            }
-            ast::ItemKind::Enum(e) => {
-                let item_id = self.lower_enum(module, e);
-                self.declare(module, item_id);
-            }
-            ast::ItemKind::Trait(t) => {
-                let item_id = self.lower_trait(module, t);
-                self.declare(module, item_id);
-            }
-            ast::ItemKind::Extend(e) => {
-                let item_id = self.lower_extend(module, e);
-                self.declare(module, item_id);
-            }
-            ast::ItemKind::Import(import) => {
-                self.module_scratch
-                    .get_mut(&module)
-                    .unwrap()
-                    .imports
-                    .push(import.clone());
-            }
-            // A file's own `module` header is handled by `lower_unit` (top-level) before any
-            // item is visited; a bare `module` item mid-file has nothing further to do here.
-            ast::ItemKind::Module(_) | ast::ItemKind::Error => {}
+            ast::ItemKind::Function(f) => Some(self.lower_function(module, f)),
+            ast::ItemKind::Struct(s) => Some(self.lower_struct(module, s)),
+            ast::ItemKind::Enum(e) => Some(self.lower_enum(module, e)),
+            ast::ItemKind::Trait(t) => Some(self.lower_trait(module, t)),
+            ast::ItemKind::Extend(e) => Some(self.lower_extend(module, e)),
+            // `Parser::assemble_file` sorts a file's `module` header and its imports out of its
+            // items before [`ast::Ast`] groups them into modules, so neither reaches lowering.
+            // `Error` stands in for an item the parser recovered from and declares nothing.
+            ast::ItemKind::Module(_) | ast::ItemKind::Import(_) | ast::ItemKind::Error => None,
         }
-    }
-
-    fn declare(&mut self, module: DefId, item_id: DefId) {
-        self.module_scratch
-            .get_mut(&module)
-            .unwrap()
-            .items
-            .push(item_id);
     }
 
     /// Lowers a function into its own owner. `parent` is whatever declares it: a module for a
@@ -299,33 +223,9 @@ impl LoweringCtx {
         ow.finish()
     }
 
-    /// Turns every accumulated `ModuleScratch` into a real `Module` owner, then packs the whole
-    /// pass's bookkeeping into a dense `Hir`.
-    pub(super) fn finish(mut self) -> Hir {
-        let module_defs: Vec<DefId> = self.module_scratch.keys().copied().collect();
-        for item_id in module_defs {
-            let scratch = self.module_scratch.remove(&item_id).unwrap();
-            let span = scratch.path.span;
-            let mut ow = OwnerLowerer::new(&mut self, item_id);
-            let root = ow.reserve_root();
-            let imports = scratch
-                .imports
-                .iter()
-                .map(|imp| ow.lower_import(imp))
-                .collect();
-            ow.fill(
-                root,
-                OwnerNode::Module(Module {
-                    hir_id: root,
-                    path: scratch.path,
-                    items: scratch.items,
-                    imports,
-                    span,
-                }),
-            );
-            ow.finish();
-        }
-
+    /// Packs the whole pass's bookkeeping into a dense `Hir`, once every module and item has been
+    /// lowered. `root_module` is the `DefId` given to [`ast::Ast`]'s root.
+    pub(super) fn finish(self, root_module: DefId) -> Hir {
         // Every allocated `DefId` owns exactly one arena, so the finished table is dense and
         // needs no placeholder to scatter into: ordering the collected arenas by id is enough
         // to index them by `DefId`. The assertion is what keeps `Hir::arenas` safe to be a
@@ -351,7 +251,7 @@ impl LoweringCtx {
         Hir {
             arenas,
             parents,
-            root_module: self.root_module,
+            root_module,
         }
     }
 }

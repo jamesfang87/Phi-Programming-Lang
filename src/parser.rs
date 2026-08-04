@@ -14,7 +14,7 @@ use chumsky::extra;
 use chumsky::prelude::*;
 
 use crate::ast::interner::Interner;
-use crate::ast::{Ident, Item, ItemKind, ParsedSrcFile, Path};
+use crate::ast::{Ast, Ident, Item, ItemKind, ParsedSrcFile, Path};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::src_map::SrcMap;
 use crate::lexer::src_span::SrcSpan;
@@ -52,7 +52,8 @@ impl Parser {
         Self::run(&grammar, tokens, file_offset)
     }
 
-    /// Parses every file's token stream, building the grammar **once** for all of them.
+    /// Parses every file's token stream into the build's [`Ast`], building the grammar **once**
+    /// for all of them.
     ///
     /// Constructing the grammar is not free: it allocates the whole boxed combinator tree, and
     /// does so more than once per build of it, since `item_parser` reaches for both
@@ -60,12 +61,17 @@ impl Parser {
     /// Paying that per file made it a fixed cost that scaled with file count rather than with
     /// how much source there was -- roughly a third of the wall time on a 400-file build.
     /// Hoisting it here is sound precisely because the grammar carries no per-file state.
-    pub fn parse_all(&self, streams: &[(Vec<Token>, usize)]) -> Vec<ParsedSrcFile> {
+    ///
+    /// Files are parsed one at a time -- a [`ParsedSrcFile`] holds nothing but what one file
+    /// wrote, which is what keeps the grammar free of any notion of the build around it -- and
+    /// [`Ast::new`] groups them into modules once the last one is parsed.
+    pub fn parse_all(&self, streams: &[(Vec<Token>, usize)]) -> Ast {
         let grammar = self.grammar();
-        streams
+        let files = streams
             .iter()
             .map(|(tokens, file_offset)| Self::run(&grammar, tokens, *file_offset))
-            .collect()
+            .collect();
+        Ast::new(files)
     }
 
     /// Runs an already-built `grammar` over one file's tokens.

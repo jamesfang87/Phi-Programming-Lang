@@ -9,7 +9,7 @@
 //! drives the rest itself. [`parse_src`] and [`lower_src`] assert that no diagnostics were
 //! raised; [`resolve_src`] is the exception, for the reason given on it.
 
-use crate::ast::ParsedSrcFile;
+use crate::ast::{Ast, ParsedSrcFile};
 use crate::ast::interner::Interner;
 use crate::diag::DiagCtx;
 use crate::driver::src_file::FileOrigin;
@@ -48,7 +48,7 @@ pub fn parse_src(src: &str) -> ParsedSrcFile {
 
 /// Lexes, parses, and lowers `src`, asserting no diagnostics were raised along the way.
 pub fn lower_src(src: &str) -> Hir {
-    lower_unit(&[parse_src(src)])
+    lower_unit(&Ast::new(vec![parse_src(src)]))
 }
 
 /// Lexes, parses, lowers, and name-resolves `src`, asserting no diagnostics were raised up to
