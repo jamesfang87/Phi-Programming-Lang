@@ -14,7 +14,7 @@ use std::fmt;
 
 use crate::ast::Mutability;
 use crate::ast::interner::Interner;
-use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
+use crate::hir::{DefId, Hir, HirId, OwnerNode};
 use crate::nameres::results::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
@@ -213,22 +213,7 @@ fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
     }
 }
 
-/// The name a generic parameter was declared with. A `TyKind::Generic`'s `HirId` addresses
-/// either a real [`Node::Generic`], or, for an `extend` block's own `<T>` list, the bare
-/// [`Node::Ty`] standing in for one -- see the type's own docs for why.
+/// The name a generic parameter was declared with.
 fn generic_name(hir: &Hir, hir_id: HirId) -> &'static str {
-    match hir.node(hir_id) {
-        Node::Generic(generic) => Interner::resolve(generic.name.text),
-        Node::Ty(ty) => {
-            let crate::hir::TyKind::Path { path, .. } = &ty.kind else {
-                unreachable!("an extend block's own <T> stand-in always lowers to TyKind::Path");
-            };
-            let name = path
-                .segments
-                .last()
-                .expect("a path always has at least one segment");
-            Interner::resolve(name.text)
-        }
-        _ => unreachable!("a Generic Ty's HirId always addresses a Node::Generic or Node::Ty"),
-    }
+    Interner::resolve(hir.generic(hir_id).name.text)
 }

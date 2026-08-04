@@ -75,11 +75,9 @@ pub enum TyKind {
     Adt { def: DefId, args: Vec<Ty> },
     /// A generic type parameter, such as `T` inside `fun identity<T>(x: T) -> T`.
     ///
-    /// It is addressed by the [`HirId`] of the node that declares it -- a
-    /// [`Node::Generic`](crate::hir::Node::Generic), or, for an `extend` block's own `<T>` list,
-    /// the [`Node::Ty`](crate::hir::Node::Ty) standing in for one (see
-    /// [`resolve_extend_generics`](crate::nameres::NameResolver)). That is exactly what name
-    /// resolution
+    /// It is addressed by the [`HirId`] of the [`Node::Generic`](crate::hir::Node::Generic) that
+    /// declares it -- including an `extend` block's own `<T>` list, which the parser reads as
+    /// declarations like any other. That is exactly what name resolution
     /// hands back in [`TypeRes::Generic`](crate::nameres::results::TypeRes::Generic), so no
     /// separate numbering has to be built or kept in sync to name a parameter here.
     Generic(HirId),

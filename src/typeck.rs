@@ -235,7 +235,9 @@ impl<'hir> Typeck<'hir> {
             extend_node.span,
         );
 
-        self.lower_tys(extend_generics);
+        // The first group declares parameters, the other two apply arguments -- so the first is
+        // collected like any other generics list and the others are lowered as types.
+        self.collect_generics(extend_generics);
         self.lower_tys(adt_generics);
         self.lower_tys(trait_generics);
 
