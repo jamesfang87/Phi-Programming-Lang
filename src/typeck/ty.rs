@@ -1,6 +1,6 @@
 //! The types the type checker reasons about, as opposed to [`hir::Ty`](crate::hir::Ty), which is
 //! the type *annotation* the user wrote. The two differ in what they address: a `hir::Ty` holds
-//! unresolved paths and points at sibling nodes by [`LocalId`](crate::hir::LocalId), while a
+//! unresolved paths and points at sibling nodes by [`HirId`](crate::hir::HirId), while a
 //! [`Ty`] here has every path already resolved to the definition it names, and every nested type
 //! replaced by another [`Ty`].
 //!

@@ -408,13 +408,10 @@ fn is_float(prim: PrimTy) -> bool {
 mod tests {
     use super::*;
     use crate::ast::Mutability;
-    use crate::hir::{DefId, HirId, LocalId};
+    use crate::hir::{DefId, HirId};
 
     fn hir_id(n: u32) -> HirId {
-        HirId {
-            owner: DefId::from_usize(n as usize),
-            local_id: LocalId::from_usize(n as usize),
-        }
+        DefId::from_usize(n as usize).owner_id()
     }
 
     /// Runs `decompose` the way `unify` does: after driving both types to their union-find

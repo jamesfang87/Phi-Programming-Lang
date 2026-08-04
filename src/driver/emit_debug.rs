@@ -14,8 +14,7 @@ use crate::ast::interner::Interner;
 use crate::ast::{ParsedSrcFile, Symbol};
 use crate::driver::src_file::FileOrigin;
 use crate::driver::src_map::SrcMap;
-use crate::hir::{DefId, Hir, HirId, LocalId, Node, OwnerNode};
-use crate::lexer::src_span::SrcSpan;
+use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
 use crate::nameres::results::{NameResolutions, SelfTyRes, TypeRes, ValueRes};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
@@ -24,23 +23,11 @@ use crate::typeck::tyctx::TyCtx;
 /// Whether `def_id` was declared in a file the user wrote, as opposed to the core library that's
 /// linked into every build.
 fn is_user_def(hir: &Hir, def_id: DefId) -> bool {
-    let span = owner_span(hir.def(def_id));
+    let span = hir.def(def_id).span();
     matches!(
         SrcMap::file_containing(span.get_begin()).map(|file| file.origin),
         Some(FileOrigin::User)
     )
-}
-
-fn owner_span(owner: &OwnerNode) -> SrcSpan {
-    match owner {
-        OwnerNode::Module(m) => m.span,
-        OwnerNode::Function(f) => f.span,
-        OwnerNode::Struct(s) => s.span,
-        OwnerNode::Enum(e) => e.span,
-        OwnerNode::Trait(t) => t.span,
-        OwnerNode::Extend(e) => e.span,
-        OwnerNode::Closure(c) => c.span,
-    }
 }
 
 fn fmt_symbol(sym: Symbol) -> String {
@@ -67,16 +54,16 @@ fn def_name(hir: &Hir, def_id: DefId) -> String {
 }
 
 fn fmt_def(hir: &Hir, def_id: DefId) -> String {
-    let hir_id = HirId {
-        owner: def_id,
-        local_id: LocalId::OWNER,
-    };
+    let hir_id = def_id.owner_id();
     format!("{} ({hir_id:?})", def_name(hir, def_id))
 }
 
-/// The kind of HIR node, as `Category::Variant` (e.g. `Expr::Call`, `Pat::Binding`). Read off
-/// the derived `Debug` of the node's own `*Kind` enum rather than matched by hand, so this stays
-/// in sync automatically as variants are added or renamed.
+/// The kind of HIR node, as `Category::Variant` (e.g. `Expr::Call`, `Pat::Binding`).
+///
+/// The category comes from [`Node::kind_name`], so a new node kind needs no edit here. Only the
+/// five kinds that carry an inner `*Kind` enum worth naming are listed, and their inner variant
+/// is read off the derived `Debug` rather than matched by hand, so those stay in sync
+/// automatically as variants are added or renamed.
 fn node_kind(node: &Node) -> String {
     fn variant_name<T: std::fmt::Debug>(value: &T) -> String {
         // A derived `Debug` on an enum always starts with the bare variant name, whether it's a
@@ -91,38 +78,11 @@ fn node_kind(node: &Node) -> String {
 
     match node {
         Node::Owner(owner) => format!("Owner::{}", variant_name(owner)),
-        Node::Import(_) => "Import".to_string(),
-        Node::Param(_) => "Param".to_string(),
-        Node::ClosureParam(_) => "ClosureParam".to_string(),
-        Node::SelfParam(_) => "SelfParam".to_string(),
-        Node::Field(_) => "Field".to_string(),
-        Node::Variant(_) => "Variant".to_string(),
-        Node::Generic(_) => "Generic".to_string(),
-        Node::Arm(_) => "Arm".to_string(),
-        Node::Block(_) => "Block".to_string(),
         Node::Stmt(stmt) => format!("Stmt::{}", variant_name(&stmt.kind)),
         Node::Expr(expr) => format!("Expr::{}", variant_name(&expr.kind)),
         Node::Pat(pat) => format!("Pat::{}", variant_name(&pat.kind)),
         Node::Ty(ty) => format!("Ty::{}", variant_name(&ty.kind)),
-    }
-}
-
-fn node_span(node: &Node) -> SrcSpan {
-    match node {
-        Node::Owner(owner) => owner_span(owner),
-        Node::Import(i) => i.span,
-        Node::Param(p) => p.span,
-        Node::ClosureParam(p) => p.span,
-        Node::SelfParam(p) => p.span,
-        Node::Field(f) => f.span,
-        Node::Variant(v) => v.span,
-        Node::Generic(g) => g.span,
-        Node::Arm(a) => a.span,
-        Node::Block(b) => b.span,
-        Node::Stmt(s) => s.span,
-        Node::Expr(e) => e.span,
-        Node::Pat(p) => p.span,
-        Node::Ty(t) => t.span,
+        other => other.kind_name().to_string(),
     }
 }
 
@@ -152,7 +112,7 @@ fn snippet(text: &str) -> String {
 fn fmt_node_summary(hir: &Hir, hir_id: HirId) -> String {
     let node = hir.node(hir_id);
     let kind = node_kind(node);
-    let span = node_span(node);
+    let span = node.span();
 
     let Some(file) = SrcMap::file_containing(span.get_begin()) else {
         return kind;
@@ -362,10 +322,7 @@ pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core: bool) {
 
     println!("--- Self types ---");
     for (def_id, res) in results.iter_self_tys().filter(|(id, _)| keep(*id)) {
-        let hir_id = HirId {
-            owner: def_id,
-            local_id: LocalId::OWNER,
-        };
+        let hir_id = def_id.owner_id();
         println!(
             "{} :: {} ->\n{}{}",
             fmt_def(hir, def_id),
@@ -377,10 +334,7 @@ pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core: bool) {
 
     println!("--- Generics ---");
     for (def_id, params) in results.iter_generics().filter(|(id, _)| keep(*id)) {
-        let hir_id = HirId {
-            owner: def_id,
-            local_id: LocalId::OWNER,
-        };
+        let hir_id = def_id.owner_id();
         for (&name, &res) in params {
             println!(
                 "{} :: {} :: {} ->\n{}{}",
