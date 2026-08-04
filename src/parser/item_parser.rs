@@ -166,7 +166,7 @@ impl Parser {
                             self_param,
                             params,
                             ret,
-                            body,
+                            block: body,
                             span,
                         }
                     },
@@ -529,22 +529,12 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::lex_src;
     use crate::ast::SelfMode;
     use crate::ast::interner::Interner;
-    use crate::diag::DiagCtx;
-    use crate::driver::src_map::SrcMap;
-    use crate::lexer::Lexer;
 
     fn parse_item(src: &str) -> Item {
-        DiagCtx::clear();
-        Interner::clear();
-        let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file(
-            "<test>".to_string(),
-            chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
-        );
-        let tokens = Lexer::new(&chars, offset).tokenize();
+        let (tokens, offset) = lex_src(src);
         let parser = Parser::new(tokens.clone(), offset);
         let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
         assert!(
@@ -693,8 +683,8 @@ mod tests {
             ItemKind::Trait(t) => {
                 assert_eq!(text(t.name), "Greet");
                 assert_eq!(t.functions.len(), 2);
-                assert!(t.functions[0].body.is_none());
-                assert!(t.functions[1].body.is_some());
+                assert!(t.functions[0].block.is_none());
+                assert!(t.functions[1].block.is_some());
             }
             other => panic!("expected a trait item, got {other:?}"),
         }
@@ -712,7 +702,7 @@ mod tests {
                 assert_eq!(text(trait_path.segments[0]), "Container");
                 assert!(e.trait_generics.is_some());
                 assert_eq!(e.methods.len(), 1);
-                assert!(e.methods[0].body.is_some());
+                assert!(e.methods[0].block.is_some());
             }
             other => panic!("expected an extend item, got {other:?}"),
         }

@@ -1,8 +1,8 @@
 # The Phi Programming Language
 
-Phi is a modern programming language written in C++23. To guarantee memory safety and data-race freedom, Phi uses *mutable value semantics (MVS)*.
+Phi is a modern programming language guaranteeing memory safety and data-race freedom written in Rust. To do so, Phi uses *mutable value semantics (MVS)*.
 
-For trivially copyable types such as integers, floating-point numbers, booleans, and structs containing only these types, copies happen implicitly. For other types, move is the default.
+For trivially copyable types such as integers, floating-point numbers, and booleans, copies happen implicitly. For other types, move is the default.
 
 References are treated as **second-class objects** and cannot be stored. Phi has a variety of constructs — projections, functions that return them, and the `any` keyword — that make programming with this restriction ergonomic.
 

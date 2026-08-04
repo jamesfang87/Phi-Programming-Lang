@@ -2,12 +2,11 @@
 //! `{ l: l }` binding pattern.
 
 use crate::ast;
-use crate::hir::ids::LocalId;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{BindingMode, PatKind, Payload};
+use crate::hir::{BindingMode, HirId, PatKind, Payload, PayloadField};
 
 impl OwnerLowerer<'_> {
-    pub(super) fn lower_pat(&mut self, p: &ast::Pat) -> LocalId {
+    pub(super) fn lower_pat(&mut self, p: &ast::Pat) -> HirId {
         self.synth_pat(p.span, |low, _id| low.lower_pat_kind(&p.kind))
     }
 
@@ -51,7 +50,10 @@ impl OwnerLowerer<'_> {
                                 })
                             }
                         };
-                        (f.name, value)
+                        PayloadField {
+                            name: f.name,
+                            value,
+                        }
                     })
                     .collect(),
             ),

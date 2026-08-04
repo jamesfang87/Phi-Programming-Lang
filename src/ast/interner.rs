@@ -1,11 +1,8 @@
-//! A trivial string interner backing [`crate::ast::Symbol`].
+//! A trivial string interner for [`crate::ast::Symbol`].
 //!
-//! The interner is thread-local, mirroring [`crate::diag::DiagCtx`].
-//!
-//! Pipeline stages call its associated functions directly, rather than threading an interner
+//! The interner is thread-local, mirroring [`crate::diag::DiagCtx`]. Pipeline
+//! stages call its associated functions directly, rather than threading an interner
 //! instance through every parser and lexer constructor.
-//!
-//! Tests get isolation for free via [`Interner::clear`].
 
 use std::cell::RefCell;
 use std::collections::HashMap;

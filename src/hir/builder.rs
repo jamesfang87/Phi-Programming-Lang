@@ -91,29 +91,28 @@ impl ArenaBuilder {
     ///
     /// Call this before lowering a node's children, so the id being reserved is available to
     /// build the node's own [`HirId`] once its children are done.
-    pub fn reserve(&mut self) -> LocalId {
+    pub fn reserve(&mut self) -> HirId {
         let local_id = LocalId::from_usize(self.slots.len());
         self.slots.push(None);
-        local_id
+        HirId {
+            owner: self.def_id,
+            local_id,
+        }
     }
 
     /// Writes the real content for a [`LocalId`] previously returned by
     /// [`ArenaBuilder::reserve()`]. Call this exactly once for every reserved id. Lowering must
     /// have already lowered that node's children, if it has any, before you call `fill`.
-    pub fn fill(&mut self, id: LocalId, node: impl Into<Node>) {
+    pub fn fill(&mut self, id: HirId, node: impl Into<Node>) {
+        debug_assert_eq!(
+            id.owner, self.def_id,
+            "node filled into another owner's arena"
+        );
         debug_assert!(
-            self.slots[id.index()].is_none(),
+            self.slots[id.local_id.index()].is_none(),
             "ArenaBuilder::fill called twice for the same LocalId"
         );
-        self.slots[id.index()] = Some(node.into());
-    }
-
-    /// Returns the full [`HirId`] for a [`LocalId`] in this arena.
-    pub fn hir_id(&self, local_id: LocalId) -> HirId {
-        HirId {
-            owner: self.def_id,
-            local_id,
-        }
+        self.slots[id.local_id.index()] = Some(node.into());
     }
 
     /// Consumes the builder once every reserved id has been filled in, producing the finished
@@ -125,5 +124,49 @@ impl ArenaBuilder {
             .map(|node| node.expect("ArenaBuilder::finish: a reserved LocalId was never filled"))
             .collect();
         Arena { nodes }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::block::Block;
+    use crate::lexer::src_span::SrcSpan;
+
+    fn block(id: HirId) -> Node {
+        Node::Block(Block {
+            hir_id: id,
+            stmts: Vec::new(),
+            expr: None,
+            span: SrcSpan::new(0, 0),
+        })
+    }
+
+    /// Nodes reference their children by `HirId`, so the type system no longer keeps a child in
+    /// its parent's arena. This is where that is caught: a builder refuses an id belonging to
+    /// any owner but its own.
+    #[test]
+    #[should_panic(expected = "node filled into another owner's arena")]
+    fn filling_a_node_under_a_foreign_id_is_caught() {
+        let mut builder = ArenaBuilder::new(DefId::from_usize(0));
+        let id = builder.reserve();
+
+        let foreign = HirId {
+            owner: DefId::from_usize(1),
+            local_id: id.local_id,
+        };
+        builder.fill(foreign, block(foreign));
+    }
+
+    /// A node's own id is what it gets stored under, which is what lets `Hir::node` check an
+    /// arena against itself.
+    #[test]
+    fn a_filled_node_is_stored_under_its_own_id() {
+        let mut builder = ArenaBuilder::new(DefId::from_usize(0));
+        let id = builder.reserve();
+        builder.fill(id, block(id));
+
+        let arena = builder.finish();
+        assert_eq!(arena.get(id).hir_id(), id);
     }
 }

@@ -2,24 +2,22 @@
 //! fields, variants, and imports.
 
 use crate::ast;
-use crate::hir::ids::LocalId;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{
-    ClosureParam, Field, Generic, Import, Node, Param, SelfParam, Variant as HirVariant,
+    ClosureParam, Field, Generic, HirId, Import, Node, Param, SelfParam, Variant as HirVariant,
     VariantPayload,
 };
 
 impl OwnerLowerer<'_> {
-    pub(super) fn lower_generics(&mut self, generics: &[ast::Generic]) -> Vec<LocalId> {
+    pub(super) fn lower_generics(&mut self, generics: &[ast::Generic]) -> Vec<HirId> {
         generics.iter().map(|g| self.lower_generic(g)).collect()
     }
 
-    fn lower_generic(&mut self, g: &ast::Generic) -> LocalId {
-        let id = self.reserve();
+    fn lower_generic(&mut self, g: &ast::Generic) -> HirId {
+        let hir_id = self.reserve();
         let bounds = g.bounds.clone().unwrap_or_default();
-        let hir_id = self.hir_id(id);
         self.fill(
-            id,
+            hir_id,
             Node::Generic(Generic {
                 hir_id,
                 name: g.name,
@@ -27,29 +25,27 @@ impl OwnerLowerer<'_> {
                 span: g.span,
             }),
         );
-        id
+        hir_id
     }
 
-    pub(super) fn lower_self_param(&mut self, sp: &ast::SelfParam) -> LocalId {
-        let id = self.reserve();
-        let hir_id = self.hir_id(id);
+    pub(super) fn lower_self_param(&mut self, sp: &ast::SelfParam) -> HirId {
+        let hir_id = self.reserve();
         self.fill(
-            id,
+            hir_id,
             Node::SelfParam(SelfParam {
                 hir_id,
                 mode: sp.mode,
                 span: sp.span,
             }),
         );
-        id
+        hir_id
     }
 
-    pub(super) fn lower_param(&mut self, p: &ast::Param) -> LocalId {
-        let id = self.reserve();
+    pub(super) fn lower_param(&mut self, p: &ast::Param) -> HirId {
+        let hir_id = self.reserve();
         let ty = self.lower_ty(&p.ty);
-        let hir_id = self.hir_id(id);
         self.fill(
-            id,
+            hir_id,
             Node::Param(Param {
                 hir_id,
                 name: p.name,
@@ -57,15 +53,14 @@ impl OwnerLowerer<'_> {
                 span: p.span,
             }),
         );
-        id
+        hir_id
     }
 
-    pub(super) fn lower_closure_param(&mut self, p: &ast::ClosureParam) -> LocalId {
-        let id = self.reserve();
+    pub(super) fn lower_closure_param(&mut self, p: &ast::ClosureParam) -> HirId {
+        let hir_id = self.reserve();
         let ty = p.ty.as_ref().map(|t| self.lower_ty(t));
-        let hir_id = self.hir_id(id);
         self.fill(
-            id,
+            hir_id,
             Node::ClosureParam(ClosureParam {
                 hir_id,
                 name: p.name,
@@ -73,15 +68,14 @@ impl OwnerLowerer<'_> {
                 span: p.span,
             }),
         );
-        id
+        hir_id
     }
 
-    pub(super) fn lower_field(&mut self, f: &ast::Field) -> LocalId {
-        let id = self.reserve();
+    pub(super) fn lower_field(&mut self, f: &ast::Field) -> HirId {
+        let hir_id = self.reserve();
         let ty = self.lower_ty(&f.ty);
-        let hir_id = self.hir_id(id);
         self.fill(
-            id,
+            hir_id,
             Node::Field(Field {
                 hir_id,
                 name: f.name,
@@ -90,11 +84,11 @@ impl OwnerLowerer<'_> {
                 span: f.span,
             }),
         );
-        id
+        hir_id
     }
 
-    pub(super) fn lower_variant(&mut self, v: &ast::Variant) -> LocalId {
-        let id = self.reserve();
+    pub(super) fn lower_variant(&mut self, v: &ast::Variant) -> HirId {
+        let hir_id = self.reserve();
         let payload = match &v.payload {
             ast::VariantPayload::Unit => VariantPayload::Unit,
             ast::VariantPayload::Type(ty) => VariantPayload::Type(self.lower_ty(ty)),
@@ -102,9 +96,8 @@ impl OwnerLowerer<'_> {
                 VariantPayload::Record(fields.iter().map(|f| self.lower_field(f)).collect())
             }
         };
-        let hir_id = self.hir_id(id);
         self.fill(
-            id,
+            hir_id,
             Node::Variant(HirVariant {
                 hir_id,
                 name: v.name,
@@ -112,14 +105,13 @@ impl OwnerLowerer<'_> {
                 span: v.span,
             }),
         );
-        id
+        hir_id
     }
 
-    pub(super) fn lower_import(&mut self, imp: &ast::Import) -> LocalId {
-        let id = self.reserve();
-        let hir_id = self.hir_id(id);
+    pub(super) fn lower_import(&mut self, imp: &ast::Import) -> HirId {
+        let hir_id = self.reserve();
         self.fill(
-            id,
+            hir_id,
             Node::Import(Import {
                 hir_id,
                 path: imp.path.clone(),
@@ -128,6 +120,6 @@ impl OwnerLowerer<'_> {
                 span: imp.span,
             }),
         );
-        id
+        hir_id
     }
 }

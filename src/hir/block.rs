@@ -6,7 +6,7 @@
 //! see the module-level docs in `src/hir.rs`.
 
 use crate::ast::Mutability;
-use crate::hir::ids::{HirId, LocalId};
+use crate::hir::ids::HirId;
 use crate::lexer::src_span::SrcSpan;
 
 /// A `{ ... }` block. It holds a sequence of statements, optionally followed by a trailing,
@@ -14,8 +14,8 @@ use crate::lexer::src_span::SrcSpan;
 #[derive(Debug)]
 pub struct Block {
     pub hir_id: HirId,
-    pub stmts: Vec<LocalId>,   // -> Node::Stmt
-    pub expr: Option<LocalId>, // -> Node::Expr
+    pub stmts: Vec<HirId>,   // -> Node::Stmt
+    pub expr: Option<HirId>, // -> Node::Expr
     pub span: SrcSpan,
 }
 
@@ -28,40 +28,37 @@ pub struct Stmt {
 
 #[derive(Debug)]
 pub enum StmtKind {
-    Let(LetStmt),
+    /// A `let` binding, of the form `let [mut] pat[: ty] = init;`.
+    Let {
+        mutability: Mutability,
+        pat: HirId,                // -> Node::Pat
+        ty: Option<HirId>,         // -> Node::Ty
+        init: HirId,               // -> Node::Expr
+        else_block: Option<HirId>, // -> Node::Block
+    },
     /// `with a = lend x, b = lend y { ... }`. Each [`WithLend`] borrows a value for the
-    /// duration of `body` and releases it once `body` finishes.
+    /// duration of `block` and releases it once `block` finishes.
     With {
         lends: Vec<WithLend>,
-        body: LocalId, // -> Node::Block
+        block: HirId, // -> Node::Block
     },
     Break,
     Continue,
-    Return(Option<LocalId>), // -> Node::Expr
+    Return(Option<HirId>), // -> Node::Expr
     /// `defer expr;`. Schedules `expr` to run when the enclosing scope exits, no matter how it
     /// exits.
-    Defer(LocalId), // -> Node::Expr
-    Expr(LocalId),           // -> Node::Expr
+    Defer(HirId), // -> Node::Expr
+    Expr(HirId),           // -> Node::Expr
     /// A statement that failed to parse. Lowering carries it through rather than aborting.
     Error,
-}
-
-/// A `let` binding, of the form `let [mut] pat[: ty] = init;`.
-#[derive(Debug)]
-pub struct LetStmt {
-    pub mutability: Mutability,
-    pub pat: LocalId,                 // -> Node::Pat
-    pub ty: Option<LocalId>,          // -> Node::Ty
-    pub init: LocalId,                // -> Node::Expr
-    pub else_branch: Option<LocalId>, // -> Node::Block
 }
 
 /// One binding inside a `with` statement's lend list, such as `a = lend x` in
 /// `with a = lend x { ... }`.
 #[derive(Debug)]
 pub struct WithLend {
-    pub pat: LocalId,        // -> Node::Pat
-    pub ty: Option<LocalId>, // -> Node::Ty
-    pub init: LocalId,       // -> Node::Expr
+    pub pat: HirId,        // -> Node::Pat
+    pub ty: Option<HirId>, // -> Node::Ty
+    pub init: HirId,       // -> Node::Expr
     pub span: SrcSpan,
 }

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, Path, Symbol};
 use crate::diag::{DiagCtx, Diagnostic};
-use crate::hir::{DefId, Hir, HirId, Import, Node, OwnerNode};
-use crate::nameres::resolve_results::Res;
+use crate::hir::{DefId, Hir, Import, Node, OwnerNode};
+use crate::nameres::results::Res;
 use std::collections::hash_map::Entry;
 
 struct Scope {
@@ -106,7 +106,7 @@ impl<'hir> SymbolTable<'hir> {
         module_id: DefId,
         modules: &mut HashMap<DefId, ModuleNamespace>,
     ) {
-        let OwnerNode::Module(module) = hir.owner(module_id) else {
+        let OwnerNode::Module(module) = hir.def(module_id) else {
             unreachable!("{module_id:?} does not name a module");
         };
 
@@ -116,7 +116,7 @@ impl<'hir> SymbolTable<'hir> {
             mods: HashMap::new(),
         };
         for &item in &module.items {
-            match hir.owner(item) {
+            match hir.def(item) {
                 OwnerNode::Function(f) => {
                     namespace.insert_value(f.name, item);
                 }
@@ -169,7 +169,7 @@ impl<'hir> SymbolTable<'hir> {
         }
 
         for &item in &module.items {
-            if let OwnerNode::Module(_) = self.hir.owner(item) {
+            if let OwnerNode::Module(_) = self.hir.def(item) {
                 self.resolve_imports(item);
             }
         }
@@ -395,7 +395,7 @@ impl<'hir> SymbolTable<'hir> {
     /// name one.
     fn step_into_module(&self, module: DefId, name: Symbol) -> Option<DefId> {
         let next = self.lookup_mod(module, name)?;
-        debug_assert!(matches!(self.hir.owner(next), OwnerNode::Module(_)));
+        debug_assert!(matches!(self.hir.def(next), OwnerNode::Module(_)));
         Some(next)
     }
 
@@ -412,20 +412,16 @@ impl<'hir> SymbolTable<'hir> {
     /// bare, undotted variant names would require -- is exactly the ambiguity the leading `.`
     /// exists to avoid.
     pub fn lookup_variant(&self, enum_def: DefId, name: Symbol) -> Option<Res> {
-        let OwnerNode::Enum(enum_) = self.hir.owner(enum_def) else {
+        let OwnerNode::Enum(enum_) = self.hir.def(enum_def) else {
             return None;
         };
 
         for &variant_id in &enum_.variants {
-            let hir_id = HirId {
-                owner: enum_def,
-                local_id: variant_id,
-            };
-            let Node::Variant(variant) = self.hir.node(hir_id) else {
+            let Node::Variant(variant) = self.hir.node(variant_id) else {
                 unreachable!("an enum's variant list only names variant nodes");
             };
             if variant.name.text == name {
-                return Some(Res::Variant(hir_id));
+                return Some(Res::Variant(variant_id));
             }
         }
         None

@@ -1,11 +1,13 @@
-//! Defines [`SrcSpan`], a half-open range of character offsets into the compiler's source map.
+//! [`SrcSpan`] is a half-open range of character (not byte) offsets into the
+//! compiler's source map.
 //!
-//! Every compiler stage that points at source code (the lexer, the parser, diagnostics) uses
-//! this type instead of file-local positions. The offsets are global, so a span survives being
-//! passed between stages without carrying a file ID alongside it.
+//! Offsets stored in [`SrcSpan`] are global. Thus, the offsets of a span not
+//! only record information about a position in a file, but also which file.
+//! This removes the requirement to carry a separate file id, reducing the
+//! memory footprint of the compiler.
 
-/// [`crate::driver::src_map::SrcMap`] assigns each file a slice of the offset space, so a span
-/// always resolves back to one file and one position within it.
+#![allow(dead_code)]
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SrcSpan {
     begin: usize,

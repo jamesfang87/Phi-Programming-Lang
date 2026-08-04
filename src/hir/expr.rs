@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use crate::ast::{BinaryOp, Ident, Literal, Mutability, Path, UnaryOp};
-use crate::hir::ids::{DefId, HirId, LocalId};
+use crate::hir::ids::{DefId, HirId};
 use crate::lexer::src_span::SrcSpan;
 
 #[derive(Debug)]
@@ -25,31 +25,31 @@ pub enum ExprKind {
     Path(Path),
     Unary {
         op: UnaryOp,
-        operand: LocalId, // -> Node::Expr
+        operand: HirId, // -> Node::Expr
     },
     Binary {
         op: BinaryOp,
-        lhs: LocalId, // -> Node::Expr
-        rhs: LocalId, // -> Node::Expr
+        lhs: HirId, // -> Node::Expr
+        rhs: HirId, // -> Node::Expr
     },
     Assign {
-        lhs: LocalId, // -> Node::Expr
-        rhs: LocalId, // -> Node::Expr
+        lhs: HirId, // -> Node::Expr
+        rhs: HirId, // -> Node::Expr
     },
     /// `lhs += rhs`, `lhs -= rhs`, and so on. `op` is the underlying binary operator (`+`, `-`,
     /// ...).
     AssignOp {
         op: BinaryOp,
-        lhs: LocalId, // -> Node::Expr
-        rhs: LocalId, // -> Node::Expr
+        lhs: HirId, // -> Node::Expr
+        rhs: HirId, // -> Node::Expr
     },
     Borrow {
         mutability: Mutability,
-        operand: LocalId, // -> Node::Expr
+        operand: HirId, // -> Node::Expr
     },
     Call {
-        callee: LocalId,    // -> Node::Expr
-        args: Vec<LocalId>, // -> Node::Expr
+        callee: HirId,    // -> Node::Expr
+        args: Vec<HirId>, // -> Node::Expr
     },
     /// The `.` operator reaches a field, a method call, or an enum variant named through its
     /// type. See [`ast::ExprKind::Access`](crate::ast::ExprKind::Access). The three can't be
@@ -57,19 +57,19 @@ pub enum ExprKind {
     /// it is. [`AccessArgs::Record`] is the exception. Name resolution settles that case on its
     /// own.
     Access {
-        base: LocalId, // -> Node::Expr
+        base: HirId, // -> Node::Expr
         member: Ident,
         args: AccessArgs,
     },
     Index {
-        base: LocalId,  // -> Node::Expr
-        index: LocalId, // -> Node::Expr
+        base: HirId,  // -> Node::Expr
+        index: HirId, // -> Node::Expr
     },
     /// A struct literal. `path` is `None` for the elided `.{ ... }` form, whose type is
     /// recovered from the expected type during typeck.
     Ctor {
         path: Option<Path>,
-        payload: Vec<(Ident, LocalId)>, // -> Node::Expr
+        payload: Vec<PayloadField>,
     },
     /// An enum variant being built, such as `.circle(1.24)`, `.square { l: 4.0 }`, or `.none`.
     /// Typeck recovers which enum the variant belongs to from the expected type, so this node
@@ -78,35 +78,37 @@ pub enum ExprKind {
         variant: Ident,
         payload: Payload, // -> Node::Expr
     },
-    Tuple(Vec<LocalId>), // -> Node::Expr
+    Tuple(Vec<HirId>), // -> Node::Expr
     Range {
-        lo: Option<LocalId>, // -> Node::Expr
-        hi: Option<LocalId>, // -> Node::Expr
+        lo: Option<HirId>, // -> Node::Expr
+        hi: Option<HirId>, // -> Node::Expr
         inclusive: bool,
     },
     /// `expr?`. Propagates an error result out of the enclosing function.
-    Try(LocalId), // -> Node::Expr
+    Try(HirId), // -> Node::Expr
+    /// Both branches are blocks. An `else if` chain lowers to `else { if .. }`, so a chain of
+    /// any length is uniform rather than alternating between an `If` and a `Block`.
     If {
-        cond: LocalId,                // -> Node::Expr
-        then_branch: LocalId,         // -> Node::Block
-        else_branch: Option<LocalId>, // -> Node::Expr
+        cond: HirId,               // -> Node::Expr
+        then_block: HirId,         // -> Node::Block
+        else_block: Option<HirId>, // -> Node::Block
     },
     Match {
-        scrutinee: LocalId, // -> Node::Expr
-        arms: Vec<LocalId>, // -> Node::Arm
+        scrutinee: HirId, // -> Node::Expr
+        arms: Vec<HirId>, // -> Node::Arm
     },
     /// A loop. `source` records whether it came from `while`, `for`, or a bare `loop`, since all
     /// three converge to this one node during lowering.
     Loop {
         source: LoopSource,
-        body: LocalId, // -> Node::Block
+        block: HirId, // -> Node::Block
     },
-    /// `spawn { ... }`. Runs `body` as a new concurrent task.
-    Spawn(LocalId), // -> Node::Block
-    /// `concurrent { ... }`. Runs the statements in `body` concurrently with each other.
-    Concurrent(LocalId), // -> Node::Block
-    Block(LocalId), // -> Node::Block
-    /// A closure literal. `DefId` names the closure's own owner, which holds its params, body,
+    /// `spawn { ... }`. Runs the block as a new concurrent task.
+    Spawn(HirId), // -> Node::Block
+    /// `concurrent { ... }`. Runs the statements in the block concurrently with each other.
+    Concurrent(HirId), // -> Node::Block
+    Block(HirId), // -> Node::Block
+    /// A closure literal. `DefId` names the closure's own owner, which holds its params, block,
     /// and return type; see [`crate::hir::Closure`].
     Closure(DefId),
     Error,
@@ -124,8 +126,8 @@ pub enum ExprKind {
 #[derive(Debug)]
 pub enum Payload {
     None,
-    Single(LocalId),
-    Record(Vec<(Ident, LocalId)>),
+    Single(HirId),
+    Record(Vec<PayloadField>),
 }
 
 /// What follows the member name in an [`ExprKind::Access`]. See
@@ -133,8 +135,24 @@ pub enum Payload {
 #[derive(Debug)]
 pub enum AccessArgs {
     None,
-    Call(Vec<LocalId>),            // -> Node::Expr
-    Record(Vec<(Ident, LocalId)>), // -> Node::Expr
+    Call(Vec<HirId>), // -> Node::Expr
+    Record(Vec<PayloadField>),
+}
+
+/// One named field and the node bound to it: a field initializer in an [`ExprKind::Ctor`]
+/// struct literal, or one field of a record payload in [`Payload::Record`] or
+/// [`AccessArgs::Record`].
+///
+/// Like [`Payload`] itself, this is shared between building and matching, so `value` names a
+/// `Node::Expr` in an expression and a `Node::Pat` in a pattern.
+///
+/// Lowering desugars the `{ l }` field shorthand into `{ l: l }`, so `value` is always a real
+/// node here -- unlike the AST's [`ast::PayloadField`](crate::ast::PayloadField), whose value is
+/// optional.
+#[derive(Debug)]
+pub struct PayloadField {
+    pub name: Ident,
+    pub value: HirId,
 }
 
 #[derive(Debug)]

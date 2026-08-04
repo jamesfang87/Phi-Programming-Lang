@@ -25,11 +25,10 @@ pub mod lower;
 mod pat;
 mod types;
 
-pub use crate::nameres::resolve_results::NameResolverResults;
+pub use crate::nameres::results::NameResolutions;
 pub use arena::{Arena, Node, OwnerNode};
-pub use block::{Block, LetStmt, Stmt, StmtKind, WithLend};
-pub use builder::{ArenaBuilder, DefIdAllocator};
-pub use expr::{AccessArgs, Expr, ExprKind, LoopSource, Payload};
+pub use block::{Block, Stmt, StmtKind, WithLend};
+pub use expr::{AccessArgs, Expr, ExprKind, LoopSource, Payload, PayloadField};
 pub use ids::{DefId, HirId, LocalId};
 pub use items::{
     Closure, ClosureParam, Enum, Extend, Field, Function, Generic, Import, Module, Param,
@@ -71,19 +70,34 @@ impl Hir {
     }
 
     /// Looks up the [`Node`] a [`HirId`] addresses.
+    ///
+    /// The assertion checks that an arena agrees with itself: the node stored at a slot is the
+    /// one whose own [`HirId`] names that slot. It catches a node filled in under an id other
+    /// than the one it was built with.
+    ///
+    /// It does *not* catch a child reference into a foreign arena. Following such an id lands
+    /// on a real node in that other arena, which stores exactly the id that was followed, so
+    /// nothing here disagrees. That invariant is enforced where a child id is stored instead,
+    /// by `ArenaBuilder::fill`.
     pub fn node(&self, id: HirId) -> &Node {
-        self.arena(id.owner).get(id.local_id)
+        let node = self.arena(id.owner).get(id);
+        debug_assert_eq!(
+            node.hir_id(),
+            id,
+            "HirId does not address the node it names"
+        );
+        node
     }
 
     /// Returns the [`OwnerNode`] a [`DefId`] names. Every `DefId` names an owner, so this never
     /// fails.
-    pub fn owner(&self, id: DefId) -> &OwnerNode {
+    pub fn def(&self, id: DefId) -> &OwnerNode {
         self.arena(id).owner()
     }
 
     /// Returns the root module of the program.
     pub fn root(&self) -> &Module {
-        let OwnerNode::Module(module) = self.owner(self.root_module) else {
+        let OwnerNode::Module(module) = self.def(self.root_module) else {
             unreachable!("root of a Module owner is always OwnerNode::Module");
         };
 
@@ -121,7 +135,7 @@ impl Hir {
     pub fn module_of(&self, def_id: DefId) -> DefId {
         let mut current = def_id;
         loop {
-            if matches!(self.owner(current), OwnerNode::Module(_)) {
+            if matches!(self.def(current), OwnerNode::Module(_)) {
                 return current;
             }
             current = self

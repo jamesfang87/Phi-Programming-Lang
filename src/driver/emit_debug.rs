@@ -16,15 +16,15 @@ use crate::driver::src_file::FileOrigin;
 use crate::driver::src_map::SrcMap;
 use crate::hir::{DefId, Hir, HirId, LocalId, Node, OwnerNode};
 use crate::lexer::src_span::SrcSpan;
-use crate::nameres::resolve_results::{NameResolverResults, Res};
+use crate::nameres::results::{NameResolutions, Res};
+use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::tyres::TypeckResults;
 
 /// Whether `def_id` was declared in a file the user wrote, as opposed to the core library that's
 /// linked into every build.
 fn is_user_def(hir: &Hir, def_id: DefId) -> bool {
-    let span = owner_span(hir.owner(def_id));
+    let span = owner_span(hir.def(def_id));
     matches!(
         SrcMap::file_containing(span.get_begin()).map(|file| file.origin),
         Some(FileOrigin::User)
@@ -50,7 +50,7 @@ fn fmt_symbol(sym: Symbol) -> String {
 /// The name a `DefId` was declared with. `Extend` and `Closure` never have one, so they get a
 /// placeholder instead.
 fn def_name(hir: &Hir, def_id: DefId) -> String {
-    match hir.owner(def_id) {
+    match hir.def(def_id) {
         OwnerNode::Module(m) => m
             .path
             .segments
@@ -136,7 +136,10 @@ const MAX_SNIPPET_LEN: usize = 60;
 fn snippet(text: &str) -> String {
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if one_line.chars().count() > MAX_SNIPPET_LEN {
-        format!("{}...", one_line.chars().take(MAX_SNIPPET_LEN).collect::<String>())
+        format!(
+            "{}...",
+            one_line.chars().take(MAX_SNIPPET_LEN).collect::<String>()
+        )
     } else {
         one_line
     }
@@ -209,7 +212,7 @@ fn fmt_res(hir: &Hir, res: Res, indent: usize) -> String {
                 pad(indent)
             )
         }
-        Res::TyParam(id) => format!("TyParam({id:?})"),
+        Res::Generic(id) => format!("Generic({id:?})"),
         Res::Err => "Err".to_string(),
     }
 }
@@ -223,11 +226,14 @@ fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
             if args.is_empty() {
                 return name;
             }
-            let args: Vec<_> = args.iter().map(|a| fmt_ty(hir, tcx, *a, indent + 1)).collect();
+            let args: Vec<_> = args
+                .iter()
+                .map(|a| fmt_ty(hir, tcx, *a, indent + 1))
+                .collect();
             format!("{name}{}", block("<", ">", &args, indent))
         }
         TyKind::Generic(id) => format!("Generic({id:?})"),
-        TyKind::SelfParam(def) => format!("SelfParam({})", fmt_def(hir, *def)),
+        TyKind::SelfTy(def) => format!("SelfTy({})", fmt_def(hir, *def)),
         TyKind::Ref { base, mutability } => {
             let inner = pad(indent + 1);
             format!(
@@ -267,10 +273,14 @@ fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
             if args.is_empty() {
                 return name;
             }
-            let args: Vec<_> = args.iter().map(|a| fmt_ty(hir, tcx, *a, indent + 1)).collect();
+            let args: Vec<_> = args
+                .iter()
+                .map(|a| fmt_ty(hir, tcx, *a, indent + 1))
+                .collect();
             format!("{name}{}", block("<", ">", &args, indent))
         }
         TyKind::Never => "Never".to_string(),
+        TyKind::Unit => "Unit".to_string(),
         TyKind::Error => "Error".to_string(),
     }
 }
@@ -314,7 +324,7 @@ pub fn print_hir(hir: &Hir, exclude_core: bool) {
 /// [`DefId`] to its name and [`HirId`]. This is part of the `phi build --debug` dump.
 ///
 /// With `exclude_core` set, entries belonging to the core library are left out.
-pub fn print_nameres(hir: &Hir, results: &NameResolverResults, exclude_core: bool) {
+pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core: bool) {
     let keep = |def_id: DefId| !exclude_core || is_user_def(hir, def_id);
 
     println!("=== NameResolution results ===");
@@ -328,7 +338,7 @@ pub fn print_nameres(hir: &Hir, results: &NameResolverResults, exclude_core: boo
     }
 
     println!("--- Self types ---");
-    for (def_id, res) in results.self_tys_iter().filter(|(id, _)| keep(*id)) {
+    for (def_id, res) in results.iter_self_tys().filter(|(id, _)| keep(*id)) {
         let hir_id = HirId {
             owner: def_id,
             local_id: LocalId::OWNER,
@@ -343,7 +353,7 @@ pub fn print_nameres(hir: &Hir, results: &NameResolverResults, exclude_core: boo
     }
 
     println!("--- Generics ---");
-    for (def_id, params) in results.generics_iter().filter(|(id, _)| keep(*id)) {
+    for (def_id, params) in results.iter_generics().filter(|(id, _)| keep(*id)) {
         let hir_id = HirId {
             owner: def_id,
             local_id: LocalId::OWNER,
@@ -365,7 +375,7 @@ pub fn print_nameres(hir: &Hir, results: &NameResolverResults, exclude_core: boo
 /// [`DefId`] inside it to its name and [`HirId`]. This is part of the `phi build --debug` dump.
 ///
 /// With `exclude_core` set, entries belonging to the core library are left out.
-pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeckResults, exclude_core: bool) {
+pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_core: bool) {
     let keep = |def_id: DefId| !exclude_core || is_user_def(hir, def_id);
 
     println!("=== TypeCk results ===");

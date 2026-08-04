@@ -1,15 +1,14 @@
 //! Lowers blocks and statements.
 
 use crate::ast;
-use crate::hir::ids::LocalId;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{LetStmt, StmtKind, WithLend};
+use crate::hir::{HirId, StmtKind, WithLend};
 
 impl OwnerLowerer<'_> {
     /// Lowers a block. If the last statement is a bare expression without a trailing semicolon,
     /// it becomes the block's tail value instead of an ordinary statement; every other statement
     /// lowers as-is.
-    pub(super) fn lower_block(&mut self, b: &ast::Block) -> LocalId {
+    pub(super) fn lower_block(&mut self, b: &ast::Block) -> HirId {
         self.synth_block(b.span, |low, _id| {
             let mut stmts = Vec::new();
             let mut tail = None;
@@ -26,61 +25,72 @@ impl OwnerLowerer<'_> {
         })
     }
 
-    pub(super) fn lower_stmt(&mut self, s: &ast::Stmt) -> LocalId {
+    /// Lowers `e` into a block whose tail value is `e`.
+    ///
+    /// Every HIR construct that owns executable code owns a `Block`, so the surface forms that
+    /// take a bare expression -- a match arm, a closure body, an `else if` -- are wrapped here.
+    /// An expression already written as a block lowers to that block directly rather than
+    /// picking up a second, redundant one.
+    pub(super) fn lower_expr_as_block(&mut self, e: &ast::Expr) -> HirId {
+        if let ast::ExprKind::Block(b) = &e.kind {
+            return self.lower_block(b);
+        }
+
+        self.synth_block(e.span, |low, _id| {
+            let tail = low.lower_expr(e);
+            (Vec::new(), Some(tail))
+        })
+    }
+
+    pub(super) fn lower_stmt(&mut self, s: &ast::Stmt) -> HirId {
         self.synth_stmt(s.span, |low, _id| match &s.kind {
-            ast::StmtKind::While { cond, body } => {
-                let loop_expr = low.lower_while(cond, body);
+            ast::StmtKind::While { cond, block } => {
+                let loop_expr = low.lower_while(cond, block);
                 StmtKind::Expr(loop_expr)
             }
             ast::StmtKind::WhileLet {
                 pat,
                 scrutinee,
-                body,
+                block,
             } => {
-                let loop_expr = low.lower_while_let(pat, scrutinee, body);
+                let loop_expr = low.lower_while_let(pat, scrutinee, block);
                 StmtKind::Expr(loop_expr)
             }
-            ast::StmtKind::For { name, iter, body } => {
-                let loop_expr = low.lower_for(name, iter, body);
+            ast::StmtKind::For { pat, iter, block } => {
+                let loop_expr = low.lower_for(pat, iter, block);
                 StmtKind::Expr(loop_expr)
             }
             ast::StmtKind::Break => StmtKind::Break,
             ast::StmtKind::Continue => StmtKind::Continue,
-            ast::StmtKind::Return { ret } => StmtKind::Return(Some(low.lower_expr(ret))),
-            ast::StmtKind::Defer { defer } => StmtKind::Defer(low.lower_expr(defer)),
-            ast::StmtKind::Let(decl) => StmtKind::Let(low.lower_decl(decl)),
-            ast::StmtKind::With { lends, body } => {
+            ast::StmtKind::Return(ret) => StmtKind::Return(Some(low.lower_expr(ret))),
+            ast::StmtKind::Defer(defer) => StmtKind::Defer(low.lower_expr(defer)),
+            ast::StmtKind::Let {
+                mutability,
+                pat,
+                ty,
+                init,
+                else_block,
+            } => StmtKind::Let {
+                mutability: *mutability,
+                pat: low.lower_pat(pat),
+                ty: ty.as_ref().map(|t| low.lower_ty(t)),
+                init: low.lower_expr(init),
+                else_block: else_block.as_ref().map(|b| low.lower_block(b)),
+            },
+            ast::StmtKind::With { lends, block } => {
                 let lends = lends.iter().map(|l| low.lower_with_lend(l)).collect();
-                let body = low.lower_block(body);
-                StmtKind::With { lends, body }
+                let block = low.lower_block(block);
+                StmtKind::With { lends, block }
             }
             ast::StmtKind::Expr { expr, .. } => StmtKind::Expr(low.lower_expr(expr)),
             ast::StmtKind::Error => StmtKind::Error,
         })
     }
 
-    pub(super) fn lower_decl(&mut self, d: &ast::DeclStmt) -> LetStmt {
-        let pat = self.lower_pat(&d.name);
-        let ty = d.ty.as_ref().map(|t| self.lower_ty(t));
-        let init = self.lower_expr(&d.expr);
-        let else_branch = d
-            .else_branch
-            .clone()
-            .map(|branch| self.lower_block(&branch));
-
-        LetStmt {
-            mutability: d.mutability,
-            pat,
-            ty,
-            init,
-            else_branch,
-        }
-    }
-
-    pub(super) fn lower_with_lend(&mut self, l: &ast::WithStmtLend) -> WithLend {
-        let pat = self.lower_pat(&l.name);
+    pub(super) fn lower_with_lend(&mut self, l: &ast::WithLend) -> WithLend {
+        let pat = self.lower_pat(&l.pat);
         let ty = l.ty.as_ref().map(|t| self.lower_ty(t));
-        let init = self.lower_expr(&l.expr);
+        let init = self.lower_expr(&l.init);
         WithLend {
             pat,
             ty,

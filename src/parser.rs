@@ -1,8 +1,12 @@
-//! Parses the lexer's token stream into an AST, using the `chumsky` parser-combinator library.
+//! [`Parser`] is an implementation of a parser using the `chumsky`
+//! parser-combinator library. [`Parser`] takes the token stream produced
+//! by the Lexer to output an Abstract Syntax Tree (AST)^1.
 //!
-//! This module holds the helpers the other parser submodules share: token matching, path
-//! parsing, and error recovery. [`Parser::parse`] parses one file and reports errors through
-//! [`DiagCtx`].
+//! 1. One should note that the AST outputted by the [`Parser`] is per-file,
+//! not per module. What this means is that the [`Parser`] does not immediately
+//! combine files implementing the same module, but instead keeps them separated
+//! to keep the beginnings of name resolution outside of the parser. Immediately
+//! after, however, this is done.
 
 use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
@@ -10,7 +14,7 @@ use chumsky::extra;
 use chumsky::prelude::*;
 
 use crate::ast::interner::Interner;
-use crate::ast::{BinaryOp, Expr, ExprKind, Ident, Item, ItemKind, ParsedSrcFile, Path};
+use crate::ast::{Ident, Item, ItemKind, ParsedSrcFile, Path};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::src_map::SrcMap;
 use crate::lexer::src_span::SrcSpan;
@@ -25,7 +29,6 @@ mod item_parser;
 mod pattern_parser;
 mod type_parser;
 
-/// Parses one source file's worth of tokens into an AST.
 pub struct Parser {
     tokens: Vec<Token>,
     file_offset: usize,
@@ -45,7 +48,7 @@ impl Parser {
     ///
     /// Parses the token stream into a [`ParsedSrcFile`] and reports errors through [`DiagCtx`].
     ///
-    /// If the grammar fails completely, this returns an empty file instead of panicking.
+    /// If the grammar fails completely, this returns an empty file.
     pub fn parse(&self) -> ParsedSrcFile {
         let (output, errors) = self.grammar().parse(&self.tokens[..]).into_output_errors();
 
@@ -64,13 +67,8 @@ impl Parser {
         }
     }
 
-    /// Splits a file's parsed items into the three parts a [`ParsedSrcFile`] keeps separate: its
-    /// `module` header, its imports, and the definitions themselves.
-    ///
-    /// The grammar parses all three as ordinary items, since they're interleaved in the token
-    /// stream and each is recovered from the same way. They're pulled apart here instead because
-    /// lowering treats them differently: a file's items go into whichever module its header
-    /// names, so that header has to be known before any of them is lowered.
+    /// Splits a file's parsed items into its module header, imports, and definitions
+    /// as required by [`ParsedSrcFile`]
     fn assemble_file(&self, items: Vec<Item>) -> ParsedSrcFile {
         let span = match (items.first(), items.last()) {
             (Some(first), Some(last)) => first.span.merge(last.span),
@@ -83,9 +81,7 @@ impl Parser {
 
         for item in items {
             match item.kind {
-                // Only the first `module` header counts. A file belongs to exactly one module,
-                // so a second one isn't a second home for the items below it -- it's a mistake,
-                // and taking the first keeps the rest of the file lowering somewhere sensible.
+                // Only the first `module` header counts. A file belongs to exactly one module.
                 ItemKind::Module(decl) => match module {
                     None => module = Some(decl),
                     Some(_) => Self::report_duplicate_module(item.span),
@@ -209,57 +205,17 @@ impl Parser {
     }
 }
 
-fn combine_binary(lhs: Expr, ((op, _op_span), rhs): ((BinaryOp, SrcSpan), Expr)) -> Expr {
-    let span = lhs.span.merge(rhs.span);
-    Expr {
-        kind: ExprKind::Binary {
-            op,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-        },
-        span,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{lex_src, parse_src};
     use crate::ast::*;
     use crate::diag::DiagCtx;
-    use crate::lexer::Lexer;
 
-    /// Lexes and parses `src`, asserting there were no diagnostics along the way.
-    fn parse_ok(src: &str) -> ParsedSrcFile {
-        DiagCtx::clear();
-        Interner::clear();
-        let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file(
-            "<test>".to_string(),
-            chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
-        );
-        let tokens = Lexer::new(&chars, offset).tokenize();
-        let unit = Parser::new(tokens, offset).parse();
-        let diagnostics = DiagCtx::diagnostics();
-        assert!(
-            diagnostics.is_empty(),
-            "unexpected diagnostics for {src:?}: {diagnostics:?}"
-        );
-        unit
-    }
-
-    /// Lexes and parses `src`, returning how many diagnostics were raised (without asserting
-    /// they're empty, unlike [`parse_ok`]).
+    /// Lexes and parses `src`, returning how many diagnostics were raised. Unlike
+    /// [`parse_src`], this asserts nothing, so it can exercise the error paths.
     fn diagnostic_count(src: &str) -> usize {
-        DiagCtx::clear();
-        Interner::clear();
-        let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file(
-            "<test>".to_string(),
-            chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
-        );
-        let tokens = Lexer::new(&chars, offset).tokenize();
+        let (tokens, offset) = lex_src(src);
         let _ = Parser::new(tokens, offset).parse();
         DiagCtx::diagnostics().len()
     }
@@ -267,15 +223,7 @@ mod tests {
     /// Like [`diagnostic_count`], but also returns the (best-effort, possibly error-containing)
     /// parsed unit, for exercising recovery.
     fn parse_with_errors(src: &str) -> (ParsedSrcFile, usize) {
-        DiagCtx::clear();
-        Interner::clear();
-        let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file(
-            "<test>".to_string(),
-            chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
-        );
-        let tokens = Lexer::new(&chars, offset).tokenize();
+        let (tokens, offset) = lex_src(src);
         let unit = Parser::new(tokens, offset).parse();
         (unit, DiagCtx::diagnostics().len())
     }
@@ -297,7 +245,7 @@ mod tests {
     /// before it can place any of the items below it.
     #[test]
     fn module_header_and_imports_are_split_out_of_items() {
-        let unit = parse_ok(
+        let unit = parse_src(
             "module math::vector;\nimport core::ops::Add;\nimport math::*;\nfun main() {}",
         );
 
@@ -314,7 +262,7 @@ mod tests {
 
     #[test]
     fn a_file_without_a_module_header_records_none() {
-        let unit = parse_ok("fun main() {}");
+        let unit = parse_src("fun main() {}");
         assert!(unit.module.is_none());
     }
 
@@ -333,18 +281,18 @@ mod tests {
 
     #[test]
     fn parses_empty_function() {
-        let unit = parse_ok("fun main() {}");
+        let unit = parse_src("fun main() {}");
         let f = only_function(&unit);
         assert_eq!(text(f.name), "main");
         assert!(matches!(f.visibility, Visibility::Private));
         assert!(f.params.is_empty());
         assert!(f.ret.is_none());
-        assert_eq!(f.body.as_ref().unwrap().stmts.len(), 0);
+        assert_eq!(f.block.as_ref().unwrap().stmts.len(), 0);
     }
 
     #[test]
     fn parses_public_function_with_params_and_return_type() {
-        let unit = parse_ok("public fun add(x: i32, y: i32) -> i32 { return x + y; }");
+        let unit = parse_src("public fun add(x: i32, y: i32) -> i32 { return x + y; }");
         let f = only_function(&unit);
         assert!(matches!(f.visibility, Visibility::Public));
         assert_eq!(f.params.len(), 2);
@@ -352,26 +300,26 @@ mod tests {
         assert_eq!(text(f.params[1].name), "y");
         for param in &f.params {
             match &param.ty.kind {
-                TyKind::Base { base, args } => {
-                    assert_eq!(text(base.segments[0]), "i32");
+                TyKind::Path { path, args } => {
+                    assert_eq!(text(path.segments[0]), "i32");
                     assert!(args.is_empty());
                 }
                 other => panic!("expected a base type, got {other:?}"),
             }
         }
         match &f.ret.as_ref().unwrap().kind {
-            TyKind::Base { base, .. } => assert_eq!(text(base.segments[0]), "i32"),
+            TyKind::Path { path, .. } => assert_eq!(text(path.segments[0]), "i32"),
             other => panic!("expected a base type, got {other:?}"),
         }
 
-        let body = f.body.as_ref().unwrap();
+        let body = f.block.as_ref().unwrap();
         assert_eq!(body.stmts.len(), 1);
         match &body.stmts[0].kind {
-            StmtKind::Return { ret: expr } => match &expr.kind {
+            StmtKind::Return(expr) => match &expr.kind {
                 ExprKind::Binary { op, lhs, rhs } => {
                     assert_eq!(*op, BinaryOp::Add);
-                    assert!(matches!(lhs.kind, ExprKind::DeclRef(_)));
-                    assert!(matches!(rhs.kind, ExprKind::DeclRef(_)));
+                    assert!(matches!(lhs.kind, ExprKind::Path(_)));
+                    assert!(matches!(rhs.kind, ExprKind::Path(_)));
                 }
                 other => panic!("expected a binary expr, got {other:?}"),
             },
@@ -381,15 +329,15 @@ mod tests {
 
     #[test]
     fn parses_call_with_string_literal_argument() {
-        let unit = parse_ok(r#"fun main() { println("Hello, world!"); }"#);
+        let unit = parse_src(r#"fun main() { println("Hello, world!"); }"#);
         let f = only_function(&unit);
-        let body = f.body.as_ref().unwrap();
+        let body = f.block.as_ref().unwrap();
         assert_eq!(body.stmts.len(), 1);
         match &body.stmts[0].kind {
             StmtKind::Expr { expr, .. } => match &expr.kind {
-                ExprKind::FunCall { callee, args } => {
+                ExprKind::Call { callee, args } => {
                     match &callee.kind {
-                        ExprKind::DeclRef(path) => assert_eq!(text(path.segments[0]), "println"),
+                        ExprKind::Path(path) => assert_eq!(text(path.segments[0]), "println"),
                         other => panic!("expected a decl-ref callee, got {other:?}"),
                     }
                     assert_eq!(args.len(), 1);
@@ -408,27 +356,27 @@ mod tests {
 
     #[test]
     fn parses_let_with_mut_and_type_annotation() {
-        let unit = parse_ok("fun main() { let mut phi: f64 = 1.618; }");
+        let unit = parse_src("fun main() { let mut phi: f64 = 1.618; }");
         let f = only_function(&unit);
-        let body = f.body.as_ref().unwrap();
+        let body = f.block.as_ref().unwrap();
         match &body.stmts[0].kind {
-            StmtKind::Let(DeclStmt {
+            StmtKind::Let {
                 mutability,
-                name,
+                pat,
                 ty,
-                expr,
+                init,
                 ..
-            }) => {
+            } => {
                 assert!(matches!(mutability, Mutability::Mutable));
-                match &name.kind {
+                match &pat.kind {
                     PatKind::Binding(name) => assert_eq!(text(*name), "phi"),
                     other => panic!("expected a binding pattern, got {other:?}"),
                 }
                 match &ty.as_ref().unwrap().kind {
-                    TyKind::Base { base, .. } => assert_eq!(text(base.segments[0]), "f64"),
+                    TyKind::Path { path, .. } => assert_eq!(text(path.segments[0]), "f64"),
                     other => panic!("expected a base type, got {other:?}"),
                 }
-                match &expr.kind {
+                match &init.kind {
                     ExprKind::Literal(Literal::Float { value, .. }) => {
                         assert_eq!(Interner::resolve(*value), "1.618")
                     }
@@ -441,10 +389,10 @@ mod tests {
 
     #[test]
     fn parses_immutable_let_without_type_annotation() {
-        let unit = parse_ok("fun main() { let foo = 0; }");
+        let unit = parse_src("fun main() { let foo = 0; }");
         let f = only_function(&unit);
-        match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Let(DeclStmt { mutability, ty, .. }) => {
+        match &f.block.as_ref().unwrap().stmts[0].kind {
+            StmtKind::Let { mutability, ty, .. } => {
                 assert!(matches!(mutability, Mutability::Immutable));
                 assert!(ty.is_none());
             }
@@ -454,10 +402,10 @@ mod tests {
 
     #[test]
     fn parses_while_loop() {
-        let unit = parse_ok("fun main() { while i < 5 { foo(); } }");
+        let unit = parse_src("fun main() { while i < 5 { foo(); } }");
         let f = only_function(&unit);
-        match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::While { cond, body } => {
+        match &f.block.as_ref().unwrap().stmts[0].kind {
+            StmtKind::While { cond, block } => {
                 assert!(matches!(
                     cond.kind,
                     ExprKind::Binary {
@@ -465,7 +413,7 @@ mod tests {
                         ..
                     }
                 ));
-                assert_eq!(body.stmts.len(), 1);
+                assert_eq!(block.stmts.len(), 1);
             }
             other => panic!("expected a while statement, got {other:?}"),
         }
@@ -474,10 +422,10 @@ mod tests {
     #[test]
     fn respects_arithmetic_precedence() {
         // 1 + 2 * 3 should parse as 1 + (2 * 3), not (1 + 2) * 3.
-        let unit = parse_ok("fun main() { return 1 + 2 * 3; }");
+        let unit = parse_src("fun main() { return 1 + 2 * 3; }");
         let f = only_function(&unit);
-        match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return { ret: expr } => match &expr.kind {
+        match &f.block.as_ref().unwrap().stmts[0].kind {
+            StmtKind::Return(expr) => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Add,
                     rhs,
@@ -500,10 +448,10 @@ mod tests {
     #[test]
     fn parens_override_precedence() {
         // (1 + 2) * 3 should parse with `*` at the top.
-        let unit = parse_ok("fun main() { return (1 + 2) * 3; }");
+        let unit = parse_src("fun main() { return (1 + 2) * 3; }");
         let f = only_function(&unit);
-        match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return { ret: expr } => match &expr.kind {
+        match &f.block.as_ref().unwrap().stmts[0].kind {
+            StmtKind::Return(expr) => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Mul,
                     lhs,
@@ -525,10 +473,10 @@ mod tests {
 
     #[test]
     fn unary_minus_binds_tighter_than_binary_operators() {
-        let unit = parse_ok("fun main() { return -1 + 2; }");
+        let unit = parse_src("fun main() { return -1 + 2; }");
         let f = only_function(&unit);
-        match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return { ret: expr } => match &expr.kind {
+        match &f.block.as_ref().unwrap().stmts[0].kind {
+            StmtKind::Return(expr) => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Add,
                     lhs,
@@ -550,10 +498,10 @@ mod tests {
 
     #[test]
     fn logical_operators_parse_with_and_binding_tighter_than_or() {
-        let unit = parse_ok("fun main() { return true || false && true; }");
+        let unit = parse_src("fun main() { return true || false && true; }");
         let f = only_function(&unit);
-        match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return { ret: expr } => match &expr.kind {
+        match &f.block.as_ref().unwrap().stmts[0].kind {
+            StmtKind::Return(expr) => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Or,
                     rhs,
@@ -575,7 +523,7 @@ mod tests {
 
     #[test]
     fn parses_multiple_functions() {
-        let unit = parse_ok("fun a() {} fun b() {}");
+        let unit = parse_src("fun a() {} fun b() {}");
         assert_eq!(unit.items.len(), 2);
         for item in &unit.items {
             assert!(matches!(item.kind, ItemKind::Function(_)));
@@ -584,10 +532,10 @@ mod tests {
 
     #[test]
     fn parses_char_and_bool_literals() {
-        let unit = parse_ok("fun main() { return 'a'; }");
+        let unit = parse_src("fun main() { return 'a'; }");
         let f = only_function(&unit);
-        match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return { ret: expr } => {
+        match &f.block.as_ref().unwrap().stmts[0].kind {
+            StmtKind::Return(expr) => {
                 assert!(matches!(expr.kind, ExprKind::Literal(Literal::Char('a'))));
             }
             other => panic!("expected a return statement, got {other:?}"),
@@ -596,10 +544,10 @@ mod tests {
 
     #[test]
     fn escape_sequences_are_unescaped_in_string_literals() {
-        let unit = parse_ok(r#"fun main() { return "a\nb"; }"#);
+        let unit = parse_src(r#"fun main() { return "a\nb"; }"#);
         let f = only_function(&unit);
-        match &f.body.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return { ret: expr } => match &expr.kind {
+        match &f.block.as_ref().unwrap().stmts[0].kind {
+            StmtKind::Return(expr) => match &expr.kind {
                 ExprKind::Literal(Literal::Str(sym)) => {
                     assert_eq!(Interner::resolve(*sym), "a\nb")
                 }

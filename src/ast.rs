@@ -120,7 +120,7 @@ pub struct Function {
     pub self_param: Option<SelfParam>,
     pub params: Vec<Param>,
     pub ret: Option<Ty>,
-    pub body: Option<Block>,
+    pub block: Option<Block>,
     pub span: SrcSpan,
 }
 
@@ -247,8 +247,8 @@ pub struct Ty {
 
 #[derive(Clone, Debug)]
 pub enum TyKind {
-    Base {
-        base: Path,
+    Path {
+        path: Path,
         args: Vec<Ty>,
     },
     Ref {
@@ -303,36 +303,38 @@ pub struct Stmt {
 pub enum StmtKind {
     While {
         cond: Expr,
-        body: Block,
+        block: Block,
     },
     WhileLet {
         pat: Pat,
         scrutinee: Expr,
-        body: Block,
+        block: Block,
     },
     For {
-        name: Pat,
+        pat: Pat,
         iter: Expr,
-        body: Block,
+        block: Block,
     },
     Break,
     Continue,
-    Return {
-        ret: Expr,
+    Return(Expr),
+    /// `defer expr;`. The expression runs just before the enclosing scope exits.
+    Defer(Expr),
+    /// A `let` binding, of the form `let [mut] pat[: ty] = init;`.
+    Let {
+        mutability: Mutability,
+        pat: Pat,
+        ty: Option<Ty>,
+        init: Expr,
+        else_block: Option<Block>,
     },
-    /// `defer expr;`. `expr` runs just before the enclosing scope exits.
-    Defer {
-        defer: Expr,
-    },
-    /// A `let` binding.
-    Let(DeclStmt),
     /// A `with` block, such as `with px = &mut point.x, py = &mut point.y { ... }`.
     ///
-    /// Each binding in `lends` is scoped to `body` and stops projecting its source at the
+    /// Each binding in `lends` is scoped to `block` and stops projecting its source at the
     /// closing brace, regardless of where its last use inside the block falls.
     With {
-        lends: Vec<WithStmtLend>,
-        body: Block,
+        lends: Vec<WithLend>,
+        block: Block,
     },
     Expr {
         expr: Expr,
@@ -341,22 +343,12 @@ pub enum StmtKind {
     Error,
 }
 
-#[derive(Clone, Debug)]
-pub struct DeclStmt {
-    pub mutability: Mutability,
-    pub name: Pat,
-    pub ty: Option<Ty>,
-    pub expr: Expr,
-    pub span: SrcSpan,
-    pub else_branch: Option<Block>,
-}
-
 /// One binding in a `with` block, such as `px = &mut point.x`.
 #[derive(Clone, Debug)]
-pub struct WithStmtLend {
-    pub name: Pat,
+pub struct WithLend {
+    pub pat: Pat,
     pub ty: Option<Ty>,
-    pub expr: Expr,
+    pub init: Expr,
     pub span: SrcSpan,
 }
 
@@ -373,7 +365,7 @@ pub struct Expr {
 #[derive(Clone, Debug)]
 pub enum ExprKind {
     Literal(Literal),
-    DeclRef(Path),
+    Path(Path),
     Unary {
         op: UnaryOp,
         operand: Box<Expr>,
@@ -400,7 +392,7 @@ pub enum ExprKind {
         mutability: Mutability,
         operand: Box<Expr>,
     },
-    FunCall {
+    Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
     },
@@ -421,7 +413,7 @@ pub enum ExprKind {
     /// `path` is `None` for the elided form, `.{ a: 1 }`, which takes its type from context.
     Ctor {
         path: Option<Path>,
-        payload: Vec<CtorPayload>,
+        payload: Vec<PayloadField<Expr>>,
     },
     /// An enum variant construction, such as `.circle(1.24)` or `Shape.circle(1.24)`.
     Variant {
@@ -439,14 +431,14 @@ pub enum ExprKind {
     Try(Box<Expr>),
     If {
         cond: Box<Expr>,
-        then_branch: Block,
-        else_branch: Option<Box<Expr>>,
+        then_block: Block,
+        else_expr: Option<Box<Expr>>,
     },
     IfLet {
         pat: Pat,
         scrutinee: Box<Expr>,
-        then_branch: Block,
-        else_branch: Option<Box<Expr>>,
+        then_block: Block,
+        else_expr: Option<Box<Expr>>,
     },
     Match {
         scrutinee: Box<Expr>,
@@ -519,14 +511,6 @@ impl ExprKind {
     }
 }
 
-/// One `name: expr` field initializer inside a [`ExprKind::Ctor`] struct literal.
-#[derive(Clone, Debug)]
-pub struct CtorPayload {
-    pub name: Ident,
-    pub expr: Box<Expr>,
-    pub span: SrcSpan,
-}
-
 /// The payload an enum variant carries, shared between constructing a variant
 /// ([`ExprKind::Variant`]) and matching one ([`PatternKind::Variant`]).
 #[derive(Clone, Debug)]
@@ -558,6 +542,9 @@ pub enum AccessArgs {
     Record(Vec<PayloadField<Expr>>),
 }
 
+/// One named field and the value bound to it: a field initializer in a struct literal
+/// ([`ExprKind::Ctor`]), or one field of a variant's record payload, whether the payload is
+/// being built or matched.
 #[derive(Clone, Debug)]
 pub struct PayloadField<T> {
     pub name: Ident,
