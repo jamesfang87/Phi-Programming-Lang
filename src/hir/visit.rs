@@ -216,7 +216,7 @@ pub fn walk_extend<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
     );
 
     // All three bracket groups are `Node::Ty`, even the first, which declares parameters rather
-    // than applying them -- see `GenericDecl` in name resolution for why.
+    // than applying them -- see `NameResolver::resolve_extend_generics` for why.
     for &id in extend_generics.iter().chain(adt_generics).chain(trait_generics) {
         v.visit_ty(id);
     }
