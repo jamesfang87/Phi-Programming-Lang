@@ -88,17 +88,31 @@ impl Compiler {
             emit_debug::print_hir(&hir, options.exclude_core);
         }
 
-        // Resolves names within the HIR. The result isn't consumed yet.
-        //
-        // Type checking will need it once it's wired up.
+        // Resolves names within the HIR, which is what lets type checking below know which
+        // definition each identifier refers to.
         let nameres = resolve(&hir);
 
         if options.dumps.nameres {
             emit_debug::print_nameres(&hir, &nameres, options.exclude_core);
         }
 
-        // TODO: consume type checking's results and continue the pipeline. Until something
-        // downstream needs them, the pass runs only to produce something to dump.
+        // Type checks the HIR, but only when the dump asks for it.
+        //
+        // This gating is a known problem and is meant to go away. A pass that runs only in
+        // order to be printed has no forcing function: nothing fails when it regresses, so
+        // bugs accumulate in it unnoticed and every build silently accepts programs it should
+        // have rejected. `typeck::check` belongs on the unconditional path, with only
+        // `print_typeck` below staying behind the flag.
+        //
+        // What blocks that today is that `check_expr` is still `todo!()` for most of
+        // `ExprKind` -- `Binary`, `Call`, `If`, `Match`, `Variant`, and a dozen more. Running
+        // it on every build doesn't turn latent type errors into reported ones; it turns every
+        // build of any non-trivial program into a panic. `fun add(a: i32, b: i32) -> i32 {
+        // return a + b; }` is enough to hit `todo!("check_expr: Binary")`, and the
+        // `core_library` fixture under `tests/` dies on `todo!("check_expr: Variant")`.
+        //
+        // So the flag stays until `check_expr` handles every `ExprKind` it can be reached
+        // with. Removing it is then a matter of hoisting the call out of this `if`.
         if options.dumps.typeck {
             let checked = typeck::check(&hir, &nameres);
             emit_debug::print_typeck(&hir, &checked.tcx, &checked.types, options.exclude_core);
