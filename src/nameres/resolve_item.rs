@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ast::Ident;
 use crate::ast::interner::Interner;
 use crate::diag::{DiagCtx, Diagnostic};
-use crate::hir::{DefId, HirId, Node, OwnerNode, TyKind, VariantPayload};
+use crate::hir::{DefId, HirId, OwnerNode, TyKind, VariantPayload};
 use crate::lexer::src_span::SrcSpan;
 use crate::nameres::NameResolver;
 use crate::nameres::results::Res;
@@ -77,7 +77,6 @@ impl<'hir> NameResolver<'hir> {
     /// parameter list, return type, field, or variant payload may name one of these parameters.
     /// [`NameResolver::generic_ty`] is what later lookups read this table through.
     fn resolve_generics(&mut self, owner_id: DefId, decls: &[GenericDecl]) {
-        let arena = self.hir.arena(owner_id);
         let mut params = HashMap::new();
         for &decl in decls {
             let id = match decl {
@@ -86,18 +85,14 @@ impl<'hir> NameResolver<'hir> {
 
             let name = match decl {
                 GenericDecl::Generic(id) => {
-                    let Node::Generic(generic) = arena.get(id) else {
-                        unreachable!("Node that is not a generic found in a generics list");
-                    };
+                    let generic = self.hir.generic(id);
                     for bound in &generic.bounds {
                         self.resolve_ty_path(owner_id, bound);
                     }
                     generic.name
                 }
                 GenericDecl::BareTy(id) => {
-                    let Node::Ty(ty) = arena.get(id) else {
-                        unreachable!("Node that is not a ty found in a bare generics list");
-                    };
+                    let ty = self.hir.ty(id);
                     let TyKind::Path { path, args } = &ty.kind else {
                         Self::report_expected_generic_param(ty.span);
                         continue;
@@ -141,9 +136,7 @@ impl<'hir> NameResolver<'hir> {
 
         self.symbol_tab.push_scope();
         if let Some(id) = function.self_param {
-            let Node::SelfParam(self_param) = arena.get(id) else {
-                unreachable!("Node that is not a self param found in a function's self param slot");
-            };
+            let self_param = hir.self_param(id);
 
             // `self` is bound like a parameter -- it just doesn't carry a name of its own in the
             // HIR, so the keyword is interned here to bind it under. It resolves to
@@ -158,12 +151,9 @@ impl<'hir> NameResolver<'hir> {
             self.symbol_tab.bind(name, Res::SelfVal(id));
         }
         for &param_id in &function.params {
-            if let Node::Param(param_node) = arena.get(param_id) {
-                self.symbol_tab.bind(param_node.name, Res::Local(param_id));
-                self.resolve_ty(param_node.ty);
-            } else {
-                unreachable!("Node that is not a parameter found in a function's parameter list");
-            }
+            let param = hir.param(param_id);
+            self.symbol_tab.bind(param.name, Res::Local(param_id));
+            self.resolve_ty(param.ty);
         }
         if let Some(ret) = function.ret {
             self.resolve_ty(ret);
@@ -188,10 +178,7 @@ impl<'hir> NameResolver<'hir> {
 
         self.symbol_tab.push_scope();
         for &param_id in &closure.params {
-            let Node::ClosureParam(param) = arena.get(param_id) else {
-                unreachable!("Node that is not a closure param found in a closure's param list");
-            };
-
+            let param = hir.closure_param(param_id);
             self.symbol_tab.bind(param.name, Res::Local(param_id));
             if let Some(ty) = param.ty {
                 self.resolve_ty(ty);
@@ -221,10 +208,7 @@ impl<'hir> NameResolver<'hir> {
             },
         );
         for &field_id in &struct_.fields {
-            let Node::Field(field) = arena.get(field_id) else {
-                unreachable!("Node that is not a field found in a struct's field list");
-            };
-            self.resolve_ty(field.ty);
+            self.resolve_ty(hir.field(field_id).ty);
         }
     }
 
@@ -245,21 +229,12 @@ impl<'hir> NameResolver<'hir> {
             },
         );
         for &variant_id in &enum_.variants {
-            let Node::Variant(variant) = arena.get(variant_id) else {
-                unreachable!("Node that is not a variant found in an enum's variant list");
-            };
-
-            match &variant.payload {
+            match &hir.variant(variant_id).payload {
                 VariantPayload::Unit => {}
                 VariantPayload::Type(ty_id) => self.resolve_ty(*ty_id),
                 VariantPayload::Record(fields) => {
                     for &field_id in fields {
-                        let Node::Field(field) = arena.get(field_id) else {
-                            unreachable!(
-                                "Node that is not a field found in a variant's field list"
-                            );
-                        };
-                        self.resolve_ty(field.ty);
+                        self.resolve_ty(hir.field(field_id).ty);
                     }
                 }
             }

@@ -1,17 +1,13 @@
 use crate::ast::interner::Interner;
 use crate::ast::{Path, Symbol};
-use crate::hir::{DefId, HirId, Node, TyKind};
+use crate::hir::{DefId, HirId, TyKind};
 use crate::nameres::NameResolver;
 use crate::nameres::results::{PrimTy, Res};
 use crate::nameres::symbol_table::SymbolTable;
 
 impl<'hir> NameResolver<'hir> {
     pub fn resolve_ty(&mut self, ty_id: HirId) {
-        let hir = self.hir;
-
-        let Node::Ty(ty) = hir.node(ty_id) else {
-            unreachable!("Expected a ty's local id to name a ty");
-        };
+        let ty = self.hir.ty(ty_id);
 
         match &ty.kind {
             TyKind::Path { path, args } => {

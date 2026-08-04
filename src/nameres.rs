@@ -19,6 +19,8 @@ pub mod resolve_pat;
 pub mod resolve_ty;
 pub mod results;
 pub mod symbol_table;
+#[cfg(test)]
+mod tests;
 
 use crate::ast::Symbol;
 use crate::hir::{DefId, Hir};
