@@ -1,117 +1,21 @@
-use crate::ast::{Ident, Path};
-use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Payload};
+//! The lookups an expression needs. The traversal itself is [`crate::hir::visit`]'s; see the
+//! [`Visitor`](crate::hir::visit::Visitor) implementation in [`crate::nameres`].
+
+use crate::ast::Path;
+use crate::hir::visit::Visitor;
+use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode};
 use crate::nameres::NameResolver;
-use crate::nameres::results::ValueRes;
+use crate::nameres::results::{TypeRes, ValueRes};
 use crate::nameres::symbol_table::report_not_found;
 
 impl<'hir> NameResolver<'hir> {
-    pub fn resolve_expr(&mut self, expr_id: HirId) {
-        let expr = self.hir.expr(expr_id);
-
-        match &expr.kind {
-            ExprKind::Path(path) => {
-                let res = self.resolve_value_path(expr_id.owner, path);
-                self.results.record_value(expr_id, res);
-            }
-            ExprKind::Unary { operand, .. }
-            | ExprKind::Borrow { operand, .. }
-            | ExprKind::Try(operand) => {
-                self.resolve_expr(*operand);
-            }
-            ExprKind::Binary { lhs, rhs, .. }
-            | ExprKind::Assign { lhs, rhs }
-            | ExprKind::AssignOp { lhs, rhs, .. } => {
-                self.resolve_expr(*lhs);
-                self.resolve_expr(*rhs);
-            }
-            ExprKind::Call { callee, args } => {
-                self.resolve_expr(*callee);
-                for &arg in args {
-                    self.resolve_expr(arg);
-                }
-            }
-            ExprKind::If {
-                cond,
-                then_block,
-                else_block,
-            } => {
-                self.resolve_expr(*cond);
-                self.resolve_block(*then_block);
-                // Both branches are blocks, even when the source wrote `else if ...` or a bare
-                // `else <expr>`: lowering wraps whatever followed `else` in a block of its own.
-                if let Some(else_block) = else_block {
-                    self.resolve_block(*else_block);
-                }
-            }
-            ExprKind::Block(block_id) => self.resolve_block(*block_id),
-            ExprKind::Index { base, index } => {
-                self.resolve_expr(*base);
-                self.resolve_expr(*index);
-            }
-            ExprKind::Ctor { path, payload } => {
-                if let Some(path) = path {
-                    let res = self.resolve_struct_path(expr_id.owner, path);
-                    self.results.record_value(expr_id, res);
-                }
-
-                for field in payload {
-                    self.resolve_expr(field.value);
-                }
-            }
-            ExprKind::Variant { payload, .. } => match payload {
-                Payload::None => {}
-                Payload::Single(value) => self.resolve_expr(*value),
-                Payload::Record(fields) => {
-                    for field in fields {
-                        self.resolve_expr(field.value);
-                    }
-                }
-            },
-            ExprKind::Access { base, member, args } => {
-                self.resolve_access(expr_id, *base, *member, args)
-            }
-            ExprKind::Tuple(elems) => {
-                for &elem in elems {
-                    self.resolve_expr(elem);
-                }
-            }
-            ExprKind::Range { lo, hi, .. } => {
-                if let Some(lo) = lo {
-                    self.resolve_expr(*lo);
-                }
-                if let Some(hi) = hi {
-                    self.resolve_expr(*hi);
-                }
-            }
-            ExprKind::Match { scrutinee, arms } => {
-                self.resolve_expr(*scrutinee);
-
-                for &arm_id in arms {
-                    let arm = self.hir.arm(arm_id);
-
-                    self.symbol_tab.push_scope();
-                    self.bind_pat(arm.pat);
-                    self.resolve_block(arm.block);
-                    self.symbol_tab.pop_scope();
-                }
-            }
-            ExprKind::Loop { block, .. } => self.resolve_block(*block),
-            ExprKind::Spawn(block_id) | ExprKind::Concurrent(block_id) => {
-                self.resolve_block(*block_id);
-            }
-            ExprKind::Closure(closure_id) => self.resolve_closure(*closure_id),
-
-            // Do nothing
-            ExprKind::Literal(_) => {}
-            ExprKind::Error => {}
-        }
-    }
-
+    /// Resolves a path used as a value: a local or `self` first, since an inner binding shadows
+    /// any item of the same name, then the value namespace of the module the path sits in.
     pub fn resolve_value_path(&mut self, owner_id: DefId, path: &Path) -> ValueRes {
-        if let [name] = path.segments.as_slice() {
-            if let Some(res) = self.symbol_tab.lookup(name.text) {
-                return res;
-            }
+        if let [name] = path.segments.as_slice()
+            && let Some(res) = self.symbol_tab.lookup(name.text)
+        {
+            return res;
         }
 
         if let Some(def_id) = self.symbol_tab.lookup_value_path(owner_id, path) {
@@ -126,21 +30,42 @@ impl<'hir> NameResolver<'hir> {
         ValueRes::Err
     }
 
-    fn resolve_access(&mut self, hir_id: HirId, base: HirId, member: Ident, args: &AccessArgs) {
+    /// Resolves the path of a struct literal (`Vector2D { .. }`) against the type namespace.
+    pub fn resolve_struct_path(&mut self, owner_id: DefId, path: &Path) -> TypeRes {
+        if let Some(def_id) = self.symbol_tab.lookup_type_path(owner_id, path) {
+            return TypeRes::Def(def_id);
+        }
+
+        let name = *path
+            .segments
+            .last()
+            .expect("a path always has at least one segment");
+        report_not_found(name);
+        TypeRes::Err
+    }
+
+    /// Resolves a `base.member` access, including its own children.
+    ///
+    /// This does the whole node rather than letting the shared walk reach the children, because
+    /// the two readings of `base` are not the same traversal. When `base` names an enum the
+    /// access is a variant -- `Shape.circle` -- and `base` is a type path that must *not* be
+    /// resolved as a value; otherwise `base` is an ordinary value expression whose member is a
+    /// field or a method, which only typeck can tell apart.
+    pub fn resolve_access(&mut self, id: HirId) {
+        let ExprKind::Access { base, member, args } = &self.hir.expr(id).kind else {
+            unreachable!("resolve_access called on an expression that is not an access");
+        };
+        let (base, member) = (*base, *member);
         // The payload or argument list is resolved the same way regardless of what the access
         // turns out to be.
-        match args {
-            AccessArgs::None => {}
-            AccessArgs::Call(args) => {
-                for &arg in args {
-                    self.resolve_expr(arg);
-                }
-            }
-            AccessArgs::Record(fields) => {
-                for field in fields {
-                    self.resolve_expr(field.value);
-                }
-            }
+        let args: Vec<HirId> = match args {
+            AccessArgs::None => Vec::new(),
+            AccessArgs::Call(args) => args.clone(),
+            AccessArgs::Record(fields) => fields.iter().map(|field| field.value).collect(),
+        };
+
+        for arg in args {
+            self.visit_expr(arg);
         }
 
         match self.enum_named_by(base) {
@@ -152,13 +77,17 @@ impl<'hir> NameResolver<'hir> {
                         report_not_found(member);
                         ValueRes::Err
                     });
-                self.results.record_value(hir_id, res);
+                self.results.record_value(id, res);
             }
             // A value, so the member is a field or a method: deferred to typeck.
-            None => self.resolve_expr(base),
+            None => self.visit_expr(base),
         }
     }
 
+    /// The enum `base` names, if it names one at all rather than being a value.
+    ///
+    /// A single-segment path that a local shadows is a value, whatever else is in scope, which is
+    /// what lets a variable and an enum share a name.
     fn enum_named_by(&self, base: HirId) -> Option<DefId> {
         let base = self.hir.expr(base);
         let ExprKind::Path(path) = &base.kind else {
@@ -171,19 +100,5 @@ impl<'hir> NameResolver<'hir> {
         }
         let def_id = self.symbol_tab.lookup_type_path(base.hir_id.owner, path)?;
         matches!(self.hir.def(def_id), OwnerNode::Enum(_)).then_some(def_id)
-    }
-
-    /// Resolves the path of a struct literal (`Vector2D { .. }`) against the type namespace.
-    fn resolve_struct_path(&mut self, owner_id: DefId, path: &Path) -> ValueRes {
-        if let Some(def_id) = self.symbol_tab.lookup_type_path(owner_id, path) {
-            return ValueRes::Def(def_id);
-        }
-
-        let name = *path
-            .segments
-            .last()
-            .expect("a path always has at least one segment");
-        report_not_found(name);
-        ValueRes::Err
     }
 }

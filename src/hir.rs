@@ -24,6 +24,7 @@ mod items;
 pub mod lower;
 mod pat;
 mod types;
+pub mod visit;
 
 pub use crate::nameres::results::NameResolutions;
 pub use arena::{Arena, Node, OwnerNode};

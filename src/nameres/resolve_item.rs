@@ -5,6 +5,7 @@ use crate::ast::interner::Interner;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::hir::{DefId, HirId, OwnerNode, TyKind, VariantPayload};
 use crate::lexer::src_span::SrcSpan;
+use crate::hir::visit::Visitor;
 use crate::nameres::NameResolver;
 use crate::nameres::results::{SelfTyRes, TypeRes, ValueRes};
 
@@ -160,15 +161,15 @@ impl<'hir> NameResolver<'hir> {
         for &param_id in &function.params {
             let param = hir.param(param_id);
             self.symbol_tab.bind(param.name, ValueRes::Local(param_id));
-            self.resolve_ty(param.ty);
+            self.visit_ty(param.ty);
         }
         if let Some(ret) = function.ret {
-            self.resolve_ty(ret);
+            self.visit_ty(ret);
         }
 
         let body = function.block;
         if let Some(body_id) = body {
-            self.resolve_block(body_id);
+            self.visit_block(body_id);
         }
         self.symbol_tab.pop_scope();
     }
@@ -188,13 +189,13 @@ impl<'hir> NameResolver<'hir> {
             let param = hir.closure_param(param_id);
             self.symbol_tab.bind(param.name, ValueRes::Local(param_id));
             if let Some(ty) = param.ty {
-                self.resolve_ty(ty);
+                self.visit_ty(ty);
             }
         }
         if let Some(ret) = closure.ret {
-            self.resolve_ty(ret);
+            self.visit_ty(ret);
         }
-        self.resolve_block(closure.block);
+        self.visit_block(closure.block);
         self.symbol_tab.pop_scope();
     }
 
@@ -215,7 +216,7 @@ impl<'hir> NameResolver<'hir> {
             },
         );
         for &field_id in &struct_.fields {
-            self.resolve_ty(hir.field(field_id).ty);
+            self.visit_ty(hir.field(field_id).ty);
         }
     }
 
@@ -238,10 +239,10 @@ impl<'hir> NameResolver<'hir> {
         for &variant_id in &enum_.variants {
             match &hir.variant(variant_id).payload {
                 VariantPayload::Unit => {}
-                VariantPayload::Type(ty_id) => self.resolve_ty(*ty_id),
+                VariantPayload::Type(ty_id) => self.visit_ty(*ty_id),
                 VariantPayload::Record(fields) => {
                     for &field_id in fields {
-                        self.resolve_ty(hir.field(field_id).ty);
+                        self.visit_ty(hir.field(field_id).ty);
                     }
                 }
             }
@@ -267,7 +268,7 @@ impl<'hir> NameResolver<'hir> {
             },
         );
         for &function_id in &trait_.functions {
-            self.resolve_function(function_id);
+            self.visit_function(function_id);
         }
     }
 
@@ -290,10 +291,10 @@ impl<'hir> NameResolver<'hir> {
             .map(|path| self.resolve_ty_path(extend_id, path));
 
         for &ty_id in &extend.adt_generics {
-            self.resolve_ty(ty_id);
+            self.visit_ty(ty_id);
         }
         for &ty_id in &extend.trait_generics {
-            self.resolve_ty(ty_id);
+            self.visit_ty(ty_id);
         }
 
         // Unlike a struct/enum/trait, an `extend` block's `Self` isn't structural: it's whatever
@@ -312,7 +313,7 @@ impl<'hir> NameResolver<'hir> {
         self.results.record_self_ty(extend_id, self_ty);
 
         for &method_id in &extend.methods {
-            self.resolve_function(method_id);
+            self.visit_function(method_id);
         }
     }
 }
