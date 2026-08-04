@@ -814,53 +814,33 @@ ParsedSrcFile {
                 Extend {
                     extend_generics: Some(
                         [
-                            Ty {
-                                kind: Path {
-                                    path: Path {
-                                        segments: [
-                                            Ident {
-                                                text: Symbol(
-                                                    19,
-                                                ),
-                                                span: SrcSpan {
-                                                    begin: 388,
-                                                    end: 389,
-                                                },
-                                            },
-                                        ],
-                                        span: SrcSpan {
-                                            begin: 388,
-                                            end: 389,
-                                        },
+                            Generic {
+                                name: Ident {
+                                    text: Symbol(
+                                        19,
+                                    ),
+                                    span: SrcSpan {
+                                        begin: 388,
+                                        end: 389,
                                     },
-                                    args: [],
                                 },
+                                bounds: None,
                                 span: SrcSpan {
                                     begin: 388,
                                     end: 389,
                                 },
                             },
-                            Ty {
-                                kind: Path {
-                                    path: Path {
-                                        segments: [
-                                            Ident {
-                                                text: Symbol(
-                                                    20,
-                                                ),
-                                                span: SrcSpan {
-                                                    begin: 391,
-                                                    end: 392,
-                                                },
-                                            },
-                                        ],
-                                        span: SrcSpan {
-                                            begin: 391,
-                                            end: 392,
-                                        },
+                            Generic {
+                                name: Ident {
+                                    text: Symbol(
+                                        20,
+                                    ),
+                                    span: SrcSpan {
+                                        begin: 391,
+                                        end: 392,
                                     },
-                                    args: [],
                                 },
+                                bounds: None,
                                 span: SrcSpan {
                                     begin: 391,
                                     end: 392,

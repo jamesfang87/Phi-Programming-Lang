@@ -154,8 +154,11 @@ pub struct Trait {
 /// An `extend` block, such as `extend<T> Foo<T> with Bar<T> { ... }`.
 #[derive(Clone, Debug)]
 pub struct Extend {
-    /// The generics the `extend` block itself introduces, from `extend<T>`.
-    pub extend_generics: Option<Vec<Ty>>,
+    /// The type parameters the `extend` block itself introduces, from `extend<T>`.
+    ///
+    /// These are declarations, like a `struct`'s or a `fun`'s, and are parsed as such. The two
+    /// groups below are argument lists that apply types -- possibly these ones.
+    pub extend_generics: Option<Vec<Generic>>,
     /// The extended type's own generic arguments, from `Foo<T>`.
     pub adt_generics: Option<Vec<Ty>>,
     /// The optional `with`-clause trait's generic arguments, from `with Bar<T>`.

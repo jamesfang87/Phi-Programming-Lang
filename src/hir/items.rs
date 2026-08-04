@@ -112,14 +112,15 @@ pub struct Trait {
 /// An `extend` block, either an inherent `extend Foo { ... }` or a trait implementation
 /// `extend Foo: Bar { ... }` (`trait_path` is `None` for the inherent form).
 ///
-/// The three generic-argument lists are kept separate because they scope differently.
-/// `extend_generics` are the type parameters the block itself introduces. `adt_generics` are the
-/// arguments applied to the type being extended. `trait_generics` are the arguments applied to
-/// the trait being implemented.
+/// The three angle-bracket groups are kept separate because they mean different things.
+/// `extend_generics` *declares* the type parameters the block introduces, so it holds
+/// `Node::Generic`s exactly as a `struct` or `fun` does. `adt_generics` and `trait_generics`
+/// *apply* arguments -- to the type being extended and to the trait being implemented -- so they
+/// hold types, which may be those parameters or anything else.
 #[derive(Debug)]
 pub struct Extend {
     pub hir_id: HirId,
-    pub extend_generics: Vec<HirId>, // -> Node::Ty
+    pub extend_generics: Vec<HirId>, // -> Node::Generic
     pub adt_generics: Vec<HirId>,    // -> Node::Ty
     pub trait_generics: Vec<HirId>,  // -> Node::Ty
     pub adt_path: Path,

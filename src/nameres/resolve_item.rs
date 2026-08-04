@@ -2,9 +2,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Ident, Symbol};
 use crate::ast::interner::Interner;
-use crate::diag::{DiagCtx, Diagnostic};
-use crate::hir::{DefId, Hir, HirId, OwnerNode, TyKind, VariantPayload};
-use crate::lexer::src_span::SrcSpan;
+use crate::hir::{DefId, Hir, HirId, OwnerNode, VariantPayload};
 use crate::hir::visit::Visitor;
 use crate::nameres::NameResolver;
 use crate::nameres::results::{SelfTyRes, TypeRes, ValueRes};
@@ -32,34 +30,6 @@ impl<'hir> NameResolver<'hir> {
         self.results.record_generic(owner_id, params);
     }
 
-    /// The same, for an `extend` block's own `<T>` list, which is written as types.
-    ///
-    /// `extend<T> Foo<T> with Bar<T>` parses all three bracket groups as plain type lists,
-    /// because a type is exactly what the ADT's and trait's groups hold and the grammar cannot
-    /// tell the block's own group apart without looking at where it sits. Only this first group
-    /// declares anything. Its entries carry no bounds and must each be a single bare name, so
-    /// unlike [`NameResolver::resolve_generics`] this has to check that shape before it can bind
-    /// one -- which is the whole of the difference between the two.
-    fn resolve_extend_generics(&mut self, owner_id: DefId, ids: &[HirId]) {
-        let hir: &'hir Hir = self.hir;
-        let mut params = HashMap::new();
-
-        for &id in ids {
-            let ty = hir.ty(id);
-            let TyKind::Path { path, args } = &ty.kind else {
-                Self::report_expected_generic_param(ty.span);
-                continue;
-            };
-            let ([name], true) = (path.segments.as_slice(), args.is_empty()) else {
-                Self::report_expected_generic_param(ty.span);
-                continue;
-            };
-            self.declare_generic(&mut params, *name, id);
-        }
-
-        self.results.record_generic(owner_id, params);
-    }
-
     /// Records one type parameter: under its name for lookups from inside the body, and against
     /// the node that declares it.
     ///
@@ -74,21 +44,6 @@ impl<'hir> NameResolver<'hir> {
         let res = TypeRes::Generic(id);
         params.insert(name.text, res);
         self.results.record_type(id, res);
-    }
-
-    /// Reports an `extend` block's own `<...>` list containing something other than a bare type
-    /// parameter name, such as `extend<i32> Foo<i32>` -- that group declares fresh parameters,
-    /// unlike `Foo<T>`'s and `Bar<T>`'s, which apply existing types (see
-    /// [`NameResolver::resolve_extend_generics`]).
-    fn report_expected_generic_param(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("expected a generic type parameter name here", span)
-                .with_label("not a valid parameter name")
-                .with_help(
-                    "an `extend` block's own `<...>` list declares fresh type parameters, so \
-                     each entry must be a single bare name, such as `T`",
-                ),
-        );
     }
 
     pub fn resolve_function(&mut self, fun_id: DefId) {
@@ -238,8 +193,9 @@ impl<'hir> NameResolver<'hir> {
 
         // Only this first bracket group -- the block's own `<T>` -- declares fresh type
         // parameters; `Foo<T>` and `Bar<T>` below apply existing types (possibly these ones)
-        // and are resolved as ordinary types, not declarations. See `resolve_extend_generics`.
-        self.resolve_extend_generics(extend_id, &extend.extend_generics);
+        // and are resolved as ordinary types. The parser already draws that line, so these are
+        // ordinary `Generic`s and bind exactly like a `struct`'s or a `fun`'s.
+        self.resolve_generics(extend_id, &extend.extend_generics);
 
         let adt_res = self.resolve_ty_path(extend_id, &extend.adt_path);
 

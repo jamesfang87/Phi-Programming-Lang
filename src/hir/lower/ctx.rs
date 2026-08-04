@@ -268,13 +268,7 @@ impl LoweringCtx {
             .collect();
         let mut ow = OwnerLowerer::new(self, item_id);
         let root = ow.reserve_root();
-        let extend_generics = e
-            .extend_generics
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .map(|t| ow.lower_ty(t))
-            .collect();
+        let extend_generics = ow.lower_generics(e.extend_generics.as_deref().unwrap_or(&[]));
         let adt_generics = e
             .adt_generics
             .as_deref()
