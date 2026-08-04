@@ -78,7 +78,7 @@ impl Driver {
         eprintln!("Usage:");
         eprintln!("  {} new <project_name>", prog);
         eprintln!("  {} init [path]", prog);
-        eprintln!("  {} build [--ast]", prog);
+        eprintln!("  {} build [--ast] [--hir] [--debug]", prog);
         eprintln!("  {} help", prog);
     }
 }
