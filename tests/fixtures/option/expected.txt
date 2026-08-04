@@ -1,143 +1,109 @@
 === status ===
 0
 === stdout ===
-// ./main.phi
-ParsedSrcFile {
-    module: Some(
-        ModuleDecl {
-            path: Path {
-                segments: [
-                    Ident {
-                        text: Symbol(
-                            0,
-                        ),
+// module option
+Item {
+    kind: Enum(
+        Enum {
+            visibility: Public,
+            name: Ident {
+                text: Symbol(
+                    1,
+                ),
+                span: SrcSpan {
+                    begin: 28,
+                    end: 34,
+                },
+            },
+            generics: Some(
+                [
+                    Generic {
+                        name: Ident {
+                            text: Symbol(
+                                2,
+                            ),
+                            span: SrcSpan {
+                                begin: 35,
+                                end: 36,
+                            },
+                        },
+                        bounds: None,
                         span: SrcSpan {
-                            begin: 7,
-                            end: 13,
+                            begin: 35,
+                            end: 36,
                         },
                     },
                 ],
-                span: SrcSpan {
-                    begin: 7,
-                    end: 13,
-                },
-            },
-            span: SrcSpan {
-                begin: 0,
-                end: 14,
-            },
-        },
-    ),
-    imports: [],
-    items: [
-        Item {
-            kind: Enum(
-                Enum {
-                    visibility: Public,
+            ),
+            variants: [
+                Variant {
                     name: Ident {
                         text: Symbol(
-                            1,
+                            3,
                         ),
                         span: SrcSpan {
-                            begin: 28,
-                            end: 34,
+                            begin: 44,
+                            end: 48,
                         },
                     },
-                    generics: Some(
-                        [
-                            Generic {
-                                name: Ident {
-                                    text: Symbol(
-                                        2,
-                                    ),
-                                    span: SrcSpan {
-                                        begin: 35,
-                                        end: 36,
-                                    },
-                                },
-                                bounds: None,
-                                span: SrcSpan {
-                                    begin: 35,
-                                    end: 36,
-                                },
-                            },
-                        ],
-                    ),
-                    variants: [
-                        Variant {
-                            name: Ident {
-                                text: Symbol(
-                                    3,
-                                ),
-                                span: SrcSpan {
-                                    begin: 44,
-                                    end: 48,
-                                },
-                            },
-                            payload: Type(
-                                Ty {
-                                    kind: Path {
-                                        path: Path {
-                                            segments: [
-                                                Ident {
-                                                    text: Symbol(
-                                                        2,
-                                                    ),
-                                                    span: SrcSpan {
-                                                        begin: 50,
-                                                        end: 51,
-                                                    },
-                                                },
-                                            ],
+                    payload: Type(
+                        Ty {
+                            kind: Path {
+                                path: Path {
+                                    segments: [
+                                        Ident {
+                                            text: Symbol(
+                                                2,
+                                            ),
                                             span: SrcSpan {
                                                 begin: 50,
                                                 end: 51,
                                             },
                                         },
-                                        args: [],
-                                    },
+                                    ],
                                     span: SrcSpan {
                                         begin: 50,
                                         end: 51,
                                     },
                                 },
-                            ),
+                                args: [],
+                            },
                             span: SrcSpan {
-                                begin: 44,
+                                begin: 50,
                                 end: 51,
                             },
                         },
-                        Variant {
-                            name: Ident {
-                                text: Symbol(
-                                    4,
-                                ),
-                                span: SrcSpan {
-                                    begin: 57,
-                                    end: 61,
-                                },
-                            },
-                            payload: Unit,
-                            span: SrcSpan {
-                                begin: 57,
-                                end: 61,
-                            },
-                        },
-                    ],
+                    ),
                     span: SrcSpan {
-                        begin: 23,
+                        begin: 44,
+                        end: 51,
+                    },
+                },
+                Variant {
+                    name: Ident {
+                        text: Symbol(
+                            4,
+                        ),
+                        span: SrcSpan {
+                            begin: 57,
+                            end: 61,
+                        },
+                    },
+                    payload: Unit,
+                    span: SrcSpan {
+                        begin: 57,
                         end: 61,
                     },
                 },
-            ),
+            ],
             span: SrcSpan {
                 begin: 23,
                 end: 61,
             },
         },
-    ],
+    ),
     span: SrcSpan {
-        begin: 0,
+        begin: 23,
         end: 61,
     },
 }

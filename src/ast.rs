@@ -8,9 +8,12 @@
 //! resolution and typechecking happen on the HIR the tree gets lowered to, in [`crate::hir`].
 
 mod expr_impls;
+mod tree;
 mod type_impls;
 
 pub mod interner;
+
+pub use tree::{Ast, AstModule, ModId};
 
 use crate::lexer::src_span::SrcSpan;
 
