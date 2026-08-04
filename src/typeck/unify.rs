@@ -22,6 +22,14 @@ pub enum UnifyError {
     /// A float-only inference variable (from an unsuffixed literal such as `1.0`) met a
     /// non-float type.
     ExpectedFloat { var: Ty, found: Ty },
+    /// Binding `var` to `ty` would make the type contain itself, as in `?0 = (?0, i32)`.
+    ///
+    /// The union-find would take this happily -- `?0` simply points at the tuple, and nothing
+    /// about that is a cycle. The cycle is *structural*: resolving the tuple resolves `?0`, which
+    /// resolves to the tuple again. Anything that walks a type's structure, such as
+    /// [`Typeck::resolve_deep`](crate::typeck::Typeck), would then never terminate, so the bind
+    /// is refused here instead.
+    Infinite { var: Ty, ty: Ty },
 }
 
 /// Tracks which [`Ty`] handles the checker has decided must denote the same type.
@@ -148,7 +156,7 @@ impl Unifier {
             })?;
         }
 
-        self.merge(tcx, t, u);
+        self.merge(tcx, t, u)?;
         Ok(())
     }
 
@@ -160,7 +168,7 @@ impl Unifier {
     /// unrelated class.
     ///
     /// `t` and `u` must both be roots.
-    fn merge(&mut self, tcx: &TyCtx, t: Ty, u: Ty) {
+    fn merge(&mut self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<(), UnifyError> {
         let t_is_var = matches!(tcx.kind(t), TyKind::Var(_));
         let u_is_var = matches!(tcx.kind(u), TyKind::Var(_));
 
@@ -179,8 +187,18 @@ impl Unifier {
                 }
             }
             // Two concrete types, already proven equal componentwise. Nothing to merge.
-            (false, false) => return,
+            (false, false) => return Ok(()),
         };
+
+        // The occurs check. Binding a variable to a type it appears inside would make the type
+        // contain itself; see `UnifyError::Infinite`. This is the only place a variable is ever
+        // bound, so it is the only place the check has to happen.
+        if self.occurs(tcx, child, root) {
+            return Err(UnifyError::Infinite {
+                var: child,
+                ty: root,
+            });
+        }
 
         debug_assert!(
             matches!(tcx.kind(child), TyKind::Var(_)),
@@ -195,6 +213,42 @@ impl Unifier {
 
         self.sizes.insert(root, self.sizes[&root] + self.sizes[&child]);
         self.parents.insert(child, root);
+        Ok(())
+    }
+
+    /// Whether the inference variable `var` appears anywhere inside `ty`.
+    ///
+    /// Resolves as it descends, so a variable already bound to a composite is followed into that
+    /// composite rather than treated as opaque -- which is what catches the indirect case, where
+    /// `?0` and `?1` are each other's containers.
+    ///
+    /// Terminates because it only ever runs *before* a bind that would introduce a cycle, so the
+    /// structure it walks is still acyclic.
+    fn occurs(&mut self, tcx: &TyCtx, var: Ty, ty: Ty) -> bool {
+        let ty = self.root(ty);
+        if ty == var {
+            return true;
+        }
+
+        match tcx.kind(ty).clone() {
+            TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } | TyKind::Tuple(args) => {
+                args.iter().any(|&arg| self.occurs(tcx, var, arg))
+            }
+            TyKind::Ref { base, .. } | TyKind::Any(base) => self.occurs(tcx, var, base),
+            TyKind::Array { elem, .. } => self.occurs(tcx, var, elem),
+            TyKind::Fun { params, ret } => {
+                params.iter().any(|&param| self.occurs(tcx, var, param))
+                    || ret.is_some_and(|ret| self.occurs(tcx, var, ret))
+            }
+            // Nothing nested to look inside. A `Var` that is not `var` itself cannot contain it.
+            TyKind::Var(_)
+            | TyKind::Primitive(_)
+            | TyKind::Generic(_)
+            | TyKind::SelfTy(_)
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error => false,
+        }
     }
 
     /// Checks that `t` and `u` have the same immediate shape, and returns the component pairs
@@ -1211,6 +1265,79 @@ mod tests {
         let b_repr = u.root(b);
         assert_eq!(u.unify(&tcx, b, c), Ok(()));
         assert_eq!(u.root(c), b_repr);
+    }
+
+    // -----------------------------------------------------------------
+    // unify: the occurs check
+    // -----------------------------------------------------------------
+
+    /// Without this the bind succeeds and the *structure* becomes cyclic: resolving the tuple
+    /// resolves `?0`, which resolves back to the tuple. Anything walking a type's structure then
+    /// runs forever, so the test would hang rather than fail.
+    #[test]
+    fn a_variable_cannot_be_bound_to_a_type_containing_it() {
+        let mut tcx = TyCtx::new();
+        let var = tcx.next_ty_var();
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let tuple = tcx.mk_tuple(vec![var, i32_ty]);
+        let mut u = Unifier::new();
+
+        assert_eq!(
+            u.unify(&tcx, var, tuple),
+            Err(UnifyError::Infinite {
+                var,
+                ty: tuple
+            })
+        );
+        // The refused bind leaves the variable free.
+        assert_eq!(u.root(var), var);
+    }
+
+    #[test]
+    fn the_occurs_check_is_symmetric() {
+        let mut tcx = TyCtx::new();
+        let var = tcx.next_ty_var();
+        let tuple = tcx.mk_tuple(vec![var]);
+        let mut u = Unifier::new();
+
+        assert!(matches!(
+            u.unify(&tcx, tuple, var),
+            Err(UnifyError::Infinite { .. })
+        ));
+    }
+
+    /// The indirect case: neither bind contains its own variable syntactically, but the second
+    /// closes a loop through the first. `occurs` resolves as it descends, which is what sees it.
+    #[test]
+    fn a_cycle_closed_through_another_variable_is_caught() {
+        let mut tcx = TyCtx::new();
+        let a = tcx.next_ty_var();
+        let b = tcx.next_ty_var();
+        let tuple_b = tcx.mk_tuple(vec![b]);
+        let tuple_a = tcx.mk_tuple(vec![a]);
+        let mut u = Unifier::new();
+
+        // `a = (b,)` is fine on its own.
+        assert_eq!(u.unify(&tcx, a, tuple_b), Ok(()));
+        // `b = (a,)` would make both infinite.
+        assert!(matches!(
+            u.unify(&tcx, b, tuple_a),
+            Err(UnifyError::Infinite { .. })
+        ));
+    }
+
+    /// The check must not reject an ordinary nested bind involving a *different* variable.
+    #[test]
+    fn a_variable_may_be_bound_to_a_type_containing_another_variable() {
+        let mut tcx = TyCtx::new();
+        let a = tcx.next_ty_var();
+        let b = tcx.next_ty_var();
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let tuple = tcx.mk_tuple(vec![b, i32_ty]);
+        let mut u = Unifier::new();
+
+        assert_eq!(u.unify(&tcx, a, tuple), Ok(()));
+        assert_eq!(u.root(a), tuple);
     }
 
     #[test]
