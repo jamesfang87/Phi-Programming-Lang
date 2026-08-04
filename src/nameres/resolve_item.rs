@@ -41,34 +41,6 @@ impl GenericDecl {
 }
 
 impl<'hir> NameResolver<'hir> {
-    /// A module's imports are resolved earlier, while [`SymbolTable`](crate::name_res::symbol_table::SymbolTable)
-    /// is being built -- see [`SymbolTable::resolve_imports`](crate::name_res::symbol_table::SymbolTable::resolve_imports).
-    /// By the time this walk runs, an imported name is already sitting in the importing module's
-    /// own namespace, indistinguishable from a name the module declared itself, so this walk
-    /// never has to look at `module.imports` at all.
-    pub fn resolve_module(&mut self, module_id: DefId) {
-        let arena = self.hir.arena(module_id);
-        let OwnerNode::Module(module) = arena.owner() else {
-            unreachable!("root of a Module owner is always OwnerNode::Module");
-        };
-
-        for &item in &module.items {
-            match self.hir.def(item) {
-                OwnerNode::Module(_) => self.resolve_module(item),
-                OwnerNode::Function(_) => self.resolve_function(item),
-                OwnerNode::Struct(_) => self.resolve_struct(item),
-                OwnerNode::Enum(_) => self.resolve_enums(item),
-                OwnerNode::Trait(_) => self.resolve_trait(item),
-                OwnerNode::Extend(_) => self.resolve_extend(item),
-                _ => {
-                    unreachable!(
-                        "A module should not contain fields, variants, type params, and closures in the top level"
-                    )
-                }
-            }
-        }
-    }
-
     /// Binds each generic type parameter `owner_id` declares for itself -- `function.generics`,
     /// `struct_.generics`, an `extend` block's own `<T>` list, and so on -- into the type
     /// namespace visible inside its own body, and resolves each parameter's trait bounds (if it

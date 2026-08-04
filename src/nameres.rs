@@ -25,7 +25,7 @@ use crate::ast::Symbol;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{DefId, ExprKind, Hir, HirId, PatKind, TyKind};
 use crate::langitems;
-use crate::nameres::results::{NameResolutions, SelfTyRes, TypeRes, ValueRes};
+use crate::nameres::results::{NameResolutions, TypeRes, ValueRes};
 use crate::nameres::symbol_table::SymbolTable;
 
 /// Note that the resolver carries no "where am I?" state of its own. Every `resolve_*` method
@@ -58,24 +58,6 @@ pub fn resolve(hir: &Hir) -> NameResolutions {
 }
 
 impl<'hir> NameResolver<'hir> {
-    /// What `Self` resolves to inside `owner_id`: the nearest enclosing definition that
-    /// introduces a `Self` -- a struct, enum, trait, or `extend` block -- found by walking up
-    /// the parent chain, so that a method (or a closure nested inside one) picks up the `Self`
-    /// of the item it is declared in. `None` when there is no such enclosing definition.
-    ///
-    /// This reads the table [`resolve_module`](Self::resolve_module)'s traversal fills in.
-    /// That is safe because a definition's `Self` is recorded before its body is walked, and
-    /// `Self` can only be *named* from within that body.
-    fn self_ty(&self, owner_id: DefId) -> Option<SelfTyRes> {
-        let mut current = owner_id;
-        loop {
-            if let Some(res) = self.results.self_ty(current) {
-                return Some(res);
-            }
-            current = self.hir.parent(current)?;
-        }
-    }
-
     /// What `name` resolves to as a generic type parameter visible inside `owner_id`: `name`
     /// itself if `owner_id` declares a generic by that name, otherwise the same lookup against
     /// each enclosing definition in turn, so a method (or a closure nested inside one) can name
