@@ -84,22 +84,3 @@ impl SrcMap {
         offset
     }
 }
-
-/// A builder for assembling files into the global `SrcMap`.
-///
-/// Each `add_file` call registers the file immediately, so `finish` is a no-op kept only for
-/// call-site readability.
-pub struct SrcMapBuilder;
-
-impl SrcMapBuilder {
-    pub fn new() -> Self {
-        SrcMapBuilder
-    }
-
-    pub fn add_file(self, name: String, content: Vec<char>, origin: FileOrigin) -> Self {
-        SrcMap::add_file(name, content, origin);
-        self
-    }
-
-    pub fn finish(self) {}
-}

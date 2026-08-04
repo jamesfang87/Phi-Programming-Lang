@@ -2,7 +2,7 @@ use crate::ast::{Ident, Path};
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Payload};
 use crate::nameres::NameResolver;
 use crate::nameres::results::ValueRes;
-use crate::nameres::symbol_table::SymbolTable;
+use crate::nameres::symbol_table::report_not_found;
 
 impl<'hir> NameResolver<'hir> {
     pub fn resolve_expr(&mut self, expr_id: HirId) {
@@ -122,7 +122,7 @@ impl<'hir> NameResolver<'hir> {
             .segments
             .last()
             .expect("a path always has at least one segment");
-        SymbolTable::report_not_found(name);
+        report_not_found(name);
         ValueRes::Err
     }
 
@@ -149,7 +149,7 @@ impl<'hir> NameResolver<'hir> {
                     .symbol_tab
                     .lookup_variant(enum_def, member.text)
                     .unwrap_or_else(|| {
-                        SymbolTable::report_not_found(member);
+                        report_not_found(member);
                         ValueRes::Err
                     });
                 self.results.record_value(hir_id, res);
@@ -183,7 +183,7 @@ impl<'hir> NameResolver<'hir> {
             .segments
             .last()
             .expect("a path always has at least one segment");
-        SymbolTable::report_not_found(name);
+        report_not_found(name);
         ValueRes::Err
     }
 }

@@ -3,7 +3,7 @@ use crate::ast::{Path, Symbol};
 use crate::hir::{DefId, HirId, TyKind};
 use crate::nameres::NameResolver;
 use crate::nameres::results::{PrimTy, TypeRes};
-use crate::nameres::symbol_table::SymbolTable;
+use crate::nameres::symbol_table::report_not_found;
 
 impl<'hir> NameResolver<'hir> {
     pub fn resolve_ty(&mut self, ty_id: HirId) {
@@ -74,7 +74,7 @@ impl<'hir> NameResolver<'hir> {
             .segments
             .last()
             .expect("a path always has at least one segment");
-        SymbolTable::report_not_found(name);
+        report_not_found(name);
         TypeRes::Err
     }
 

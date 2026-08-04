@@ -32,7 +32,7 @@ impl ModuleNamespace {
     /// binding) if `name` is already declared there.
     fn insert_value(&mut self, name: Ident, def_id: DefId) {
         match self.values.entry(name.text) {
-            Entry::Occupied(_) => SymbolTable::report_conflict(name),
+            Entry::Occupied(_) => report_conflict(name),
             Entry::Vacant(e) => {
                 e.insert(def_id);
             }
@@ -42,7 +42,7 @@ impl ModuleNamespace {
     /// Same as [`Self::insert_value`], but for the type namespace.
     fn insert_type(&mut self, name: Ident, def_id: DefId) {
         match self.types.entry(name.text) {
-            Entry::Occupied(_) => SymbolTable::report_conflict(name),
+            Entry::Occupied(_) => report_conflict(name),
             Entry::Vacant(e) => {
                 e.insert(def_id);
             }
@@ -51,7 +51,7 @@ impl ModuleNamespace {
 
     fn insert_mod(&mut self, name: Ident, def_id: DefId) {
         match self.mods.entry(name.text) {
-            Entry::Occupied(_) => SymbolTable::report_conflict(name),
+            Entry::Occupied(_) => report_conflict(name),
             Entry::Vacant(e) => {
                 e.insert(def_id);
             }
@@ -182,7 +182,7 @@ impl<'hir> SymbolTable<'hir> {
 
         if import.glob {
             let Some(source) = self.lookup_mod_path(root, &import.path) else {
-                Self::report_not_found(
+                report_not_found(
                     *import
                         .path
                         .segments
@@ -223,8 +223,8 @@ impl<'hir> SymbolTable<'hir> {
                 .get_mut(&importing_module)
                 .unwrap()
                 .insert_mod(name, def_id),
-            (None, None, None) => Self::report_not_found(name),
-            _ => Self::report_ambiguous_import(name),
+            (None, None, None) => report_not_found(name),
+            _ => report_ambiguous_import(name),
         }
     }
 
@@ -420,50 +420,50 @@ impl<'hir> SymbolTable<'hir> {
         }
         None
     }
+}
 
-    pub fn report_not_found(name: Ident) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "cannot find `{}` in this scope",
-                    Interner::resolve(name.text)
-                ),
-                name.span,
-            )
-            .with_label("not found in this scope"),
-        );
-    }
-
-    pub fn report_conflict(name: Ident) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "the name `{}` is defined multiple times",
-                    Interner::resolve(name.text)
-                ),
-                name.span,
-            )
-            .with_label("redefined here")
-            .with_help("a name with the same spelling is already in scope"),
-        );
-    }
-
-    /// Reports an import whose path matches more than one namespace at once -- e.g. a value and
-    /// a type both named the same thing -- so there's no single answer for what the imported
-    /// name should mean.
-    pub fn report_ambiguous_import(name: Ident) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "ambiguous import: `{}` refers to more than one item",
-                    Interner::resolve(name.text)
-                ),
-                name.span,
-            )
-            .with_label("ambiguous import")
-            .with_help(
-                "this path matches more than one declaration; use a more specific path to disambiguate",
+pub fn report_not_found(name: Ident) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "cannot find `{}` in this scope",
+                Interner::resolve(name.text)
             ),
-        );
-    }
+            name.span,
+        )
+        .with_label("not found in this scope"),
+    );
+}
+
+pub fn report_conflict(name: Ident) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "the name `{}` is defined multiple times",
+                Interner::resolve(name.text)
+            ),
+            name.span,
+        )
+        .with_label("redefined here")
+        .with_help("a name with the same spelling is already in scope"),
+    );
+}
+
+/// Reports an import whose path matches more than one namespace at once -- e.g. a value and
+/// a type both named the same thing -- so there's no single answer for what the imported
+/// name should mean.
+pub fn report_ambiguous_import(name: Ident) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "ambiguous import: `{}` refers to more than one item",
+                Interner::resolve(name.text)
+            ),
+            name.span,
+        )
+        .with_label("ambiguous import")
+        .with_help(
+            "this path matches more than one declaration; use a more specific path to disambiguate",
+        ),
+    );
 }
