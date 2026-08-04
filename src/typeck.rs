@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinaryOp, Literal, Mutability, SelfMode};
+use crate::ast::{Literal, Mutability, SelfMode};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::hir::{
     DefId, ExprKind, Hir, HirId, NameResolutions, Node, OwnerNode, StmtKind, VariantPayload,
@@ -92,17 +92,22 @@ impl<'hir> Typeck<'hir> {
     /// The body is deliberately skipped. Checking it needs every other signature in the program
     /// to be collected first, which is exactly what this pass is producing.
     pub fn collect_function(&mut self, function: DefId) {
-        let OwnerNode::Function(function_node) = self.hir.def(function) else {
+        // Read the HIR at its own lifetime rather than through `self`. `&'hir Hir` is `Copy` and
+        // outlives the borrow of `self`, so the nodes below stay readable across the `&mut self`
+        // calls that follow -- which is what the signature is being copied out of, and why none
+        // of it has to be cloned first.
+        let hir: &'hir Hir = self.hir;
+        let OwnerNode::Function(function_node) = hir.def(function) else {
             unreachable!("root of a Function owner is always OwnerNode::Function");
         };
         let (generics, self_param, params, ret) = (
-            function_node.generics.clone(),
+            &function_node.generics,
             function_node.self_param,
-            function_node.params.clone(),
+            &function_node.params,
             function_node.ret,
         );
 
-        self.collect_generics(&generics);
+        self.collect_generics(generics);
 
         // A method's `self` counts as its first parameter, so that a signature says everything
         // a call has to be checked against without the caller having to look the receiver up
@@ -111,8 +116,8 @@ impl<'hir> Typeck<'hir> {
         if let Some(id) = self_param {
             param_tys.push(self.collect_self_param(id));
         }
-        for id in params {
-            let Node::Param(param) = self.hir.node(id) else {
+        for &id in params {
+            let Node::Param(param) = hir.node(id) else {
                 unreachable!("Node that is not a parameter found in a function's parameter list");
             };
 
@@ -148,40 +153,42 @@ impl<'hir> Typeck<'hir> {
     }
 
     pub fn collect_struct(&mut self, r#struct: DefId) {
-        let OwnerNode::Struct(struct_node) = self.hir.def(r#struct) else {
+        let hir: &'hir Hir = self.hir;
+        let OwnerNode::Struct(struct_node) = hir.def(r#struct) else {
             unreachable!("root of a Struct owner is always OwnerNode::Struct");
         };
         let (generics, fields, span) = (
-            struct_node.generics.clone(),
-            struct_node.fields.clone(),
+            &struct_node.generics,
+            &struct_node.fields,
             struct_node.span,
         );
 
         // The generics have to be recorded first: the struct's own type is itself applied to
         // them.
-        self.collect_generics(&generics);
+        self.collect_generics(generics);
         let self_ty = self.self_ty(r#struct, span);
         self.types.record_def(r#struct, self_ty);
 
-        self.collect_fields(&fields);
+        self.collect_fields(fields);
     }
 
     pub fn collect_enum(&mut self, r#enum: DefId) {
-        let OwnerNode::Enum(enum_node) = self.hir.def(r#enum) else {
+        let hir: &'hir Hir = self.hir;
+        let OwnerNode::Enum(enum_node) = hir.def(r#enum) else {
             unreachable!("root of an Enum owner is always OwnerNode::Enum");
         };
         let (generics, variants, span) = (
-            enum_node.generics.clone(),
-            enum_node.variants.clone(),
+            &enum_node.generics,
+            &enum_node.variants,
             enum_node.span,
         );
 
-        self.collect_generics(&generics);
+        self.collect_generics(generics);
         let self_ty = self.self_ty(r#enum, span);
         self.types.record_def(r#enum, self_ty);
 
-        for id in variants {
-            let Node::Variant(variant) = self.hir.node(id) else {
+        for &id in variants {
+            let Node::Variant(variant) = hir.node(id) else {
                 unreachable!("Node that is not a variant found in an enum's variant list");
             };
 
@@ -191,31 +198,29 @@ impl<'hir> Typeck<'hir> {
                     let ty = self.lower_ty(*ty_id);
                     self.types.record(id, ty);
                 }
-                VariantPayload::Record(fields) => {
-                    let fields = fields.clone();
-                    self.collect_fields(&fields);
-                }
+                VariantPayload::Record(fields) => self.collect_fields(fields),
             }
         }
     }
 
     pub fn collect_trait(&mut self, r#trait: DefId) {
-        let OwnerNode::Trait(trait_node) = self.hir.def(r#trait) else {
+        let hir: &'hir Hir = self.hir;
+        let OwnerNode::Trait(trait_node) = hir.def(r#trait) else {
             unreachable!("root of a Trait owner is always OwnerNode::Trait");
         };
         let (generics, functions, span) = (
-            trait_node.generics.clone(),
-            trait_node.functions.clone(),
+            &trait_node.generics,
+            &trait_node.functions,
             trait_node.span,
         );
 
-        self.collect_generics(&generics);
+        self.collect_generics(generics);
         // A trait names no type of its own, so what it gets recorded as is the `Self` it stands
         // for: the placeholder every implementing type substitutes.
         let self_ty = self.self_ty(r#trait, span);
         self.types.record_def(r#trait, self_ty);
 
-        for function in functions {
+        for &function in functions {
             self.collect_function(function);
         }
     }
@@ -228,27 +233,28 @@ impl<'hir> Typeck<'hir> {
     /// declares parameters, and name resolution has already bound each entry to itself, so
     /// lowering one yields the [`Generic`](crate::typeck::ty::TyKind::Generic) it declares.
     pub fn collect_extend(&mut self, extend: DefId) {
-        let OwnerNode::Extend(extend_node) = self.hir.def(extend) else {
+        let hir: &'hir Hir = self.hir;
+        let OwnerNode::Extend(extend_node) = hir.def(extend) else {
             unreachable!("root of an Extend owner is always OwnerNode::Extend");
         };
         let (extend_generics, adt_generics, trait_generics, methods, span) = (
-            extend_node.extend_generics.clone(),
-            extend_node.adt_generics.clone(),
-            extend_node.trait_generics.clone(),
-            extend_node.methods.clone(),
+            &extend_node.extend_generics,
+            &extend_node.adt_generics,
+            &extend_node.trait_generics,
+            &extend_node.methods,
             extend_node.span,
         );
 
-        self.lower_tys(&extend_generics);
-        self.lower_tys(&adt_generics);
-        self.lower_tys(&trait_generics);
+        self.lower_tys(extend_generics);
+        self.lower_tys(adt_generics);
+        self.lower_tys(trait_generics);
 
         // Which is the extended type applied to `adt_generics`, so this is also what `Self`
         // means inside each method below.
         let self_ty = self.self_ty(extend, span);
         self.types.record_def(extend, self_ty);
 
-        for method in methods {
+        for &method in methods {
             self.collect_function(method);
         }
     }
@@ -436,11 +442,21 @@ impl<'hir> Typeck<'hir> {
 
                 match res {
                     // A local's type was already recorded if it names a parameter
-                    // (`collect_function`); a `let`/`with` binding's isn't checked yet, so falls
-                    // back to a fresh variable for now.
-                    Res::Local(local) => self
-                        .recorded_ty(local)
-                        .unwrap_or_else(|| self.tcx.next_ty_var()),
+                    // (`collect_function`).
+                    //
+                    // A `let`/`with` binding's is not: inferring one from the initializer and
+                    // the annotation is still unwritten (see `check_stmt`'s `StmtKind::Let`
+                    // arm, which checks nothing but the `else` block). Until it is, the binding
+                    // gets one inference variable recorded against the pattern that introduced
+                    // it, so at least every use of the same local agrees with every other and
+                    // unifying one use constrains the rest. Nothing ever *binds* that variable,
+                    // so the local's type stays unknown -- this stands in for the missing
+                    // inference rather than doing any of it.
+                    Res::Local(local) => self.recorded_ty(local).unwrap_or_else(|| {
+                        let ty = self.tcx.next_ty_var();
+                        self.types.record(local, ty);
+                        ty
+                    }),
                     Res::SelfVal(self_param) => self
                         .recorded_ty(self_param)
                         .expect("collect_self_param always records the self parameter's type"),
@@ -461,37 +477,22 @@ impl<'hir> Typeck<'hir> {
                 }
             }
             ExprKind::Unary { .. } => todo!("check_expr: Unary"),
-            ExprKind::Binary { op, lhs, rhs } => {
+            ExprKind::Binary { lhs, rhs, .. } => {
                 let (lhs, rhs) = (self.ty_of(*lhs), self.ty_of(*rhs));
                 if let Err(error) = self.unifier.unify(&self.tcx, lhs, rhs) {
-                    DiagCtx::emit(Diagnostic {
-                        severity: crate::diag::Severity::Error,
-                        message: self.cx().show(error).to_string(),
-                        span: expr.span,
-                        label: format!(
-                            "cannot use incompatible types {} and {} in binary operation",
-                            self.cx().show(lhs),
-                            self.cx().show(rhs)
-                        )
-                        .into(),
-                        help: None,
-                    });
+                    DiagCtx::emit(
+                        Diagnostic::error(self.cx().show(error).to_string(), expr.span).with_label(
+                            format!(
+                                "cannot use incompatible types {} and {} in binary operation",
+                                self.cx().show(lhs),
+                                self.cx().show(rhs)
+                            ),
+                        ),
+                    );
                 }
-                match op {
-                    BinaryOp::Add => {}
-                    BinaryOp::Sub => {}
-                    BinaryOp::Mul => {}
-                    BinaryOp::Div => {}
-                    BinaryOp::Rem => {}
-                    BinaryOp::Eq => {}
-                    BinaryOp::Ne => {}
-                    BinaryOp::Lt => {}
-                    BinaryOp::Le => {}
-                    BinaryOp::Gt => {}
-                    BinaryOp::Ge => {}
-                    BinaryOp::And => {}
-                    BinaryOp::Or => {}
-                }
+                // What the operator itself demands of its operands -- that `+` takes numbers,
+                // that `&&` takes bools -- and what it produces is still unwritten; all that
+                // happens above is that the two sides are required to agree with each other.
                 todo!("check_expr: Binary")
             }
             ExprKind::Assign { .. } => todo!("check_expr: Assign"),
@@ -580,12 +581,17 @@ impl<'hir> Typeck<'hir> {
                 let TyKind::Fun { ret, .. } = self.tcx.kind(sig) else {
                     unreachable!("a function's own signature always lowers to TyKind::Fun");
                 };
-                // A function with no declared return type expects nothing back, so `Never`
-                // stands in for it: like `Never` itself, it unifies with whatever the `return`
-                // expression turns out to be.
-                let ret = ret.unwrap_or_else(|| self.tcx.never());
+                // A function with no declared return type produces nothing, which is exactly
+                // what `Unit` means. `Never` would be wrong here: it unifies with everything,
+                // so `return <anything>` from a function that returns nothing would be accepted
+                // silently.
+                let ret = ret.unwrap_or_else(|| self.tcx.unit());
 
-                if let Err(err) = self.unifier.unify(&self.tcx, expr_ty, ret) {
+                // The declared return type is what the context demands, so it goes in `expected`
+                // and the returned expression in `found` -- otherwise the diagnostic reads
+                // backwards ("expected `bool`, found `()`" for a `bool` returned from a function
+                // declared to return nothing).
+                if let Err(err) = self.unifier.unify(&self.tcx, ret, expr_ty) {
                     self.report_return_mismatch(err, stmt.span);
                 }
             }
@@ -615,9 +621,16 @@ impl<'hir> Typeck<'hir> {
         let Node::Block(block) = self.hir.node(id) else {
             unreachable!("Node which is not a block passed to check_block");
         };
+        let tail = block.expr;
 
         for &stmt in &block.stmts {
             self.check_stmt(stmt);
+        }
+
+        // A block's trailing expression is not a statement, so the loop above never reaches it.
+        // Checking it here is what types a function body written as a bare expression.
+        if let Some(tail) = tail {
+            self.ty_of(tail);
         }
     }
 
@@ -648,7 +661,7 @@ impl<'hir> Typeck<'hir> {
         };
 
         for &method in &extend.methods {
-            self.collect_function(method);
+            self.check_function(method);
         }
     }
 }
@@ -742,9 +755,10 @@ mod tests {
     }
 
     #[test]
-    fn return_stmt_in_a_function_with_no_declared_return_type_accepts_any_value() {
-        // No `-> T` means `Never` stands in for the return type, which -- like the real
-        // `TyKind::Never` -- unifies with anything, so nothing here should be flagged.
+    fn return_stmt_in_a_function_with_no_declared_return_type_rejects_a_value() {
+        // No `-> T` means the function returns `Unit`, so returning a `bool` from it is an
+        // error. This used to lower to `Never` instead, which unifies with everything and so
+        // accepted any returned value at all.
         let (hir, nameres) = resolve_src("fun f() { return true; }");
         let def_id = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def_id);
@@ -753,6 +767,24 @@ mod tests {
 
         DiagCtx::clear();
         checker.check_stmt(stmt_id);
+        let diagnostics = DiagCtx::diagnostics();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].severity, Severity::Error);
+    }
+
+    /// Defect 2's end-to-end shape: `Never`/`Error`/`Unit` are interned once per pass, so a
+    /// merge involving one used to leak across every function checked afterwards. Both of these
+    /// functions are individually valid, and checking them together must stay that way.
+    #[test]
+    fn two_functions_with_no_return_type_do_not_interfere() {
+        let (hir, nameres) = resolve_src(
+            "fun f() -> bool { return true; }
+             fun g() -> i32 { return 1; }",
+        );
+        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+
+        DiagCtx::clear();
+        checker.check_module(hir.root_id());
         let diagnostics = DiagCtx::diagnostics();
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
