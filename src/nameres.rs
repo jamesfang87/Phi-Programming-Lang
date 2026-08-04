@@ -1,18 +1,3 @@
-//! Name resolution walks the HIR and resolves every name and path to the declaration it refers
-//! to: a local binding, a top-level item, an enum variant, `Self`, or a primitive type.
-//!
-//! Each `resolve_*` method visits one kind of HIR node and, whenever it finds a name or path,
-//! looks it up through [`SymbolTable`] and records the answer in [`NameResolutions`] under
-//! that node's [`HirId`](crate::hir::HirId). Typeck consumes those results afterward instead of
-//! doing its own lookups, which keeps "what does this name mean" a single, self-contained pass
-//! over the tree.
-//!
-//! The traversal itself is [`crate::hir::visit`]'s, shared with every other pass; the `Visitor`
-//! implementation below overrides only the nodes that need something around or instead of the
-//! default walk. [`resolve_item`] holds the per-definition setup, [`resolve_expr`] and
-//! [`resolve_ty`] the lookups each kind of path needs, [`symbol_table`] the scopes and per-module
-//! namespaces those run against, and [`results`] the output type and what a name can resolve to.
-
 pub mod resolve_expr;
 pub mod resolve_item;
 pub mod resolve_ty;
@@ -28,11 +13,6 @@ use crate::langitems;
 use crate::nameres::results::{NameResolutions, TypeRes, ValueRes};
 use crate::nameres::symbol_table::SymbolTable;
 
-/// Note that the resolver carries no "where am I?" state of its own. Every `resolve_*` method
-/// already takes the [`DefId`] of the owner it is walking, and the HIR records each owner's
-/// parent, so both kinds of surrounding context -- the enclosing module and the meaning of
-/// `Self` -- are derived from that id on demand ([`Hir::module_of`], [`Self::self_ty`]) rather
-/// than tracked in a field that has to be saved and restored at every nesting boundary.
 struct NameResolver<'hir> {
     hir: &'hir Hir,
     symbol_tab: SymbolTable<'hir>,
@@ -41,10 +21,6 @@ struct NameResolver<'hir> {
 
 pub fn resolve(hir: &Hir) -> NameResolutions {
     let symbol_tab = SymbolTable::new(hir);
-
-    // Resolved up front, against the finished namespaces, because the symbol table they are
-    // looked up through does not outlive this function. They are carried out in the results so
-    // that a later pass can reach them without one.
     let lang_items = langitems::collect(&symbol_tab, hir.root_id());
 
     let mut resolver = NameResolver {
@@ -141,7 +117,9 @@ impl<'hir> Visitor<'hir> for NameResolver<'hir> {
                 let res = self.resolve_value_path(id.owner, &path);
                 self.results.record_value(id, res);
             }
-            ExprKind::Ctor { path: Some(path), .. } => {
+            ExprKind::Ctor {
+                path: Some(path), ..
+            } => {
                 // A struct literal names its type, so this one path in an expression is resolved
                 // against the type namespace.
                 let path = path.clone();

@@ -21,9 +21,17 @@ impl<'hir> NameResolver<'hir> {
 
         for &id in ids {
             let generic = hir.generic(id);
-            for bound in &generic.bounds {
-                self.resolve_ty_path(owner_id, bound);
-            }
+            // A bound is a bare `Path` on the parameter rather than a node of its own, so unlike
+            // every other type-position path there is no `HirId` to record the answer under.
+            // Keeping the answers in a list beside the parameter is what lets the trait solver
+            // build a `ParamEnv` without re-running name lookup; see
+            // [`NameResolutions::bounds`].
+            let bounds = generic
+                .bounds
+                .iter()
+                .map(|bound| self.resolve_ty_path(owner_id, bound))
+                .collect();
+            self.results.record_bounds(id, bounds);
             self.declare_generic(&mut params, generic.name, id);
         }
 
@@ -197,6 +205,15 @@ impl<'hir> NameResolver<'hir> {
         self.resolve_generics(extend_id, &extend.extend_generics);
 
         let adt_res = self.resolve_ty_path(extend_id, &extend.adt_path);
+
+        // Recorded under the block's own node, which is the one `HirId` an `extend` has that
+        // nothing else claims a type-position answer for. `SelfTyRes` below keeps only the
+        // *successful* half of this -- a `DefId` -- and collapses everything else to
+        // `SelfTyRes::Err`, which is enough to lower `Self` but not to say why an `extend` was
+        // rejected. Coherence has to tell `extend i32` from `extend Show` from `extend Missing`
+        // to word its diagnostic, and staying quiet for the last of the three, so it reads the
+        // undiscarded answer from here.
+        self.results.record_type(extend.hir_id, adt_res);
 
         let trait_res = extend
             .trait_path

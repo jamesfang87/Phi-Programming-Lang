@@ -9,6 +9,16 @@
 //! a function body. The second is [`Typeck::check_module`], which checks those bodies against
 //! the signatures the first stage collected. Every `collect_*` therefore runs before any
 //! `check_*`.
+//!
+//! A third stage sits between them: [`Typeck::build_impl_index`], [`Typeck::check_coherence`],
+//! [`Typeck::check_trait_members`], [`Typeck::check_declared_bounds`],
+//! [`Typeck::check_impl_headers`] and [`Typeck::select_program_obligations`], which collect every
+//! `extend` block in the program into an index the trait solver can look up in, check that no two
+//! of them can both apply to one type, check each of them against the trait it implements, and
+//! then prove the bounds collection raised while that index did not yet exist. Its position is
+//! exact. Coherence needs every `extend` header lowered to a [`Ty`], so it cannot run before
+//! collection; bodies ask the solver questions, so they cannot be checked before coherence has
+//! made the answer to those questions unique. See [`traits`].
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,6 +31,9 @@ use crate::lexer::src_span::SrcSpan;
 use crate::nameres::results::{PrimTy, ValueRes};
 use crate::typeck::display::DisplayCx;
 use crate::typeck::results::TypeResolutions;
+use crate::typeck::traits::bounds::ObligationCx;
+use crate::typeck::traits::index::ImplIndex;
+use crate::typeck::traits::solve::{Obligation, ParamEnv};
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::{Unifier, UnifyError};
@@ -28,6 +41,7 @@ use crate::typeck::unify::{Unifier, UnifyError};
 pub mod display;
 pub mod lower_ty;
 pub mod results;
+pub mod traits;
 pub mod ty;
 pub mod tyctx;
 pub mod unify;
@@ -53,6 +67,33 @@ pub struct Typeck<'hir> {
     /// established while checking one expression are still known while checking the next.
     unifier: Unifier,
 
+    /// Every `extend` block in the program, keyed for lookup. Empty until
+    /// [`Typeck::build_impl_index`] runs, which is why nothing may ask the solver a question
+    /// before then.
+    impls: ImplIndex,
+
+    /// What each definition may assume about its own type parameters, worked out on first use.
+    /// See [`ParamEnv`].
+    param_envs: HashMap<DefId, ParamEnv>,
+
+    /// The trait goals currently being proved, outermost first. A goal that turns up while it is
+    /// already on here is a cyclic bound, and the depth of the stack is what the solver's
+    /// recursion limit counts; see [`traits::solve`].
+    goal_stack: Vec<Obligation>,
+
+    /// Bounds raised while collecting signatures, before the impl index existed to prove them
+    /// against. Drained once, immediately after coherence; see [`traits::bounds`].
+    program_obligations: ObligationCx,
+
+    /// Bounds raised while checking one function body, drained at the end of it -- the first
+    /// moment that body's inference has settled.
+    body_obligations: ObligationCx,
+
+    /// Which of the two contexts a registration goes to. A registration site cannot tell them
+    /// apart on its own: lowering an annotation is the same act during collection and inside a
+    /// body, and only the surrounding phase differs.
+    in_body: bool,
+
     /// What `Self` lowers to inside each definition that introduces one, cached because `Self` is
     /// typically written many times in one body. Filled in on demand by
     /// [`Typeck::self_ty`](crate::typeck::Typeck).
@@ -64,6 +105,27 @@ pub struct Typeck<'hir> {
 }
 
 impl<'hir> Typeck<'hir> {
+    /// A checker that has looked at nothing yet. Every stage below is driven from
+    /// [`check`], which is what puts them in the right order; this exists so that a test can
+    /// stop after any one of them.
+    pub fn new(hir: &'hir Hir, nameres: &'hir NameResolutions) -> Self {
+        Typeck {
+            hir,
+            nameres,
+            tcx: TyCtx::new(),
+            types: TypeResolutions::new(),
+            unifier: Unifier::new(),
+            impls: ImplIndex::new(),
+            param_envs: HashMap::new(),
+            goal_stack: Vec::new(),
+            program_obligations: ObligationCx::new(),
+            body_obligations: ObligationCx::new(),
+            in_body: false,
+            self_tys: HashMap::new(),
+            computing_self_tys: HashSet::new(),
+        }
+    }
+
     pub fn collect_module(&mut self, module_id: DefId) {
         let OwnerNode::Module(module) = self.hir.def(module_id) else {
             unreachable!("root of a Module owner is always OwnerNode::Module");
@@ -489,8 +551,10 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Assign { .. } => todo!("check_expr: Assign"),
             ExprKind::AssignOp { .. } => todo!("check_expr: AssignOp"),
             ExprKind::Borrow { .. } => todo!("check_expr: Borrow"),
-            ExprKind::Call { .. } => todo!("check_expr: Call"),
-            ExprKind::Access { .. } => todo!("check_expr: Access"),
+            ExprKind::Call { callee, args } => self.check_call(*callee, args, expr.span),
+            ExprKind::Access { base, member, args } => {
+                self.check_access(id, *base, *member, args, expr.span)
+            }
             ExprKind::Index { .. } => todo!("check_expr: Index"),
             ExprKind::Ctor { .. } => todo!("check_expr: Ctor"),
             ExprKind::Variant { .. } => todo!("check_expr: Variant"),
@@ -633,7 +697,14 @@ impl<'hir> Typeck<'hir> {
         };
 
         if let Some(block) = function.block {
+            // Bounds raised while checking the body are proved at the end of it and not before:
+            // an argument written as `_` early on is only known once the rest of the body has
+            // pinned it down, and asking sooner would answer "ambiguous" to a question that has a
+            // perfectly good answer a few statements later.
+            self.in_body = true;
             self.check_block(block);
+            self.select_body_obligations();
+            self.in_body = false;
         }
         self.writeback(def_id);
     }
@@ -671,16 +742,14 @@ pub struct TypeckOutput {
 
 /// Checks the whole program, as described in the [module docs](self).
 pub fn check(hir: &Hir, nameres: &NameResolutions) -> TypeckOutput {
-    let mut checker = Typeck {
-        hir,
-        nameres,
-        tcx: TyCtx::new(),
-        types: TypeResolutions::new(),
-        unifier: Unifier::new(),
-        self_tys: HashMap::new(),
-        computing_self_tys: HashSet::new(),
-    };
+    let mut checker = Typeck::new(hir, nameres);
     checker.collect_module(hir.root_id());
+    checker.build_impl_index();
+    checker.check_coherence();
+    checker.check_trait_members();
+    checker.check_declared_bounds();
+    checker.check_impl_headers();
+    checker.select_program_obligations();
     checker.check_module(hir.root_id());
     TypeckOutput {
         tcx: checker.tcx,
@@ -703,15 +772,7 @@ mod tests {
         hir: &'hir Hir,
         nameres: &'hir NameResolutions,
     ) -> Typeck<'hir> {
-        let mut checker = Typeck {
-            hir,
-            nameres,
-            tcx: TyCtx::new(),
-            types: TypeResolutions::new(),
-            unifier: Unifier::new(),
-            self_tys: HashMap::new(),
-            computing_self_tys: HashSet::new(),
-        };
+        let mut checker = Typeck::new(hir, nameres);
         checker.collect_module(hir.root_id());
         checker
     }
