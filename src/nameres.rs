@@ -42,9 +42,9 @@ struct NameResolver<'hir> {
 pub fn resolve(hir: &Hir) -> NameResolutions {
     let symbol_tab = SymbolTable::new(hir);
 
-    // Resolved up front, against the finished namespaces, so that the lang items are available
-    // to every later pass without any of them having to reach back into the symbol table --
-    // which doesn't outlive this function.
+    // Resolved up front, against the finished namespaces, because the symbol table they are
+    // looked up through does not outlive this function. They are carried out in the results so
+    // that a later pass can reach them without one.
     let lang_items = langitems::collect(&symbol_tab, hir.root_id());
 
     let mut resolver = NameResolver {
@@ -53,6 +53,7 @@ pub fn resolve(hir: &Hir) -> NameResolutions {
         symbol_tab,
     };
     resolver.resolve_module(hir.root_id());
+    resolver.results.record_lang_items(lang_items);
     resolver.results
 }
 

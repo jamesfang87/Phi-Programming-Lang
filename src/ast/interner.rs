@@ -9,9 +9,17 @@ use std::collections::HashMap;
 
 use crate::ast::Symbol;
 
+/// Interned text is leaked to `'static` rather than owned by this table, so that
+/// [`Interner::resolve`] can hand back a borrow instead of a clone.
+///
+/// Leaking is what makes that sound in the presence of [`Interner::clear`]: resetting the table
+/// drops the *index*, not the strings, so a `&'static str` handed out earlier stays valid even
+/// though the `Symbol` that produced it no longer resolves to it. The cost is that cleared text
+/// is never reclaimed, which is bounded by the total distinct text a process interns -- a
+/// compiler run interns every identifier once and then exits, and the tests that clear are short.
 struct InternerData {
-    strings: Vec<String>,
-    lookup: HashMap<String, Symbol>,
+    strings: Vec<&'static str>,
+    lookup: HashMap<&'static str, Symbol>,
 }
 
 impl InternerData {
@@ -37,16 +45,21 @@ impl Interner {
             if let Some(&sym) = interner.lookup.get(text) {
                 return sym;
             }
+            let text: &'static str = Box::leak(text.to_string().into_boxed_str());
             let sym = Symbol::from_id(interner.strings.len() as u32);
-            interner.strings.push(text.to_string());
-            interner.lookup.insert(text.to_string(), sym);
+            interner.strings.push(text);
+            interner.lookup.insert(text, sym);
             sym
         })
     }
 
     /// Resolves a `Symbol` back to the text it was interned from.
-    pub fn resolve(sym: Symbol) -> String {
-        INTERNER.with(|interner| interner.borrow().strings[sym.id() as usize].clone())
+    ///
+    /// Borrowed rather than cloned: this is called wherever a name is compared or printed --
+    /// every primitive-type check, every diagnostic, every debug dump -- and an owned `String`
+    /// per call made each of those allocate to read a name the interner already held.
+    pub fn resolve(sym: Symbol) -> &'static str {
+        INTERNER.with(|interner| interner.borrow().strings[sym.id() as usize])
     }
 
     /// Discards every interned string on this thread.

@@ -544,7 +544,7 @@ mod tests {
         output.expect("expected a successfully parsed item")
     }
 
-    fn text(ident: Ident) -> String {
+    fn text(ident: Ident) -> &'static str {
         Interner::resolve(ident.text)
     }
 

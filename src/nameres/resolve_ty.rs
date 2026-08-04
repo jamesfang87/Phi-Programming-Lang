@@ -79,7 +79,7 @@ impl<'hir> NameResolver<'hir> {
     }
 
     fn prim_ty(symbol: Symbol) -> Option<PrimTy> {
-        match Interner::resolve(symbol).as_str() {
+        match Interner::resolve(symbol) {
             "i8" => Some(PrimTy::I8),
             "i16" => Some(PrimTy::I16),
             "i32" => Some(PrimTy::I32),
