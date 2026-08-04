@@ -1,14 +1,12 @@
 //! Resolves blocks and statements, threading the scope each `let`/`with` binding introduces
 //! through to the statements and expressions that follow it.
 
-use crate::hir::{HirId, Node, StmtKind};
+use crate::hir::{HirId, StmtKind};
 use crate::nameres::NameResolver;
 
 impl<'hir> NameResolver<'hir> {
     pub fn resolve_block(&mut self, id: HirId) {
-        let Node::Block(block) = self.hir.node(id) else {
-            unreachable!("Expected a block's local id to name a block");
-        };
+        let block = self.hir.block(id);
 
         self.symbol_tab.push_scope(); // enter a new scope for the block
         for &stmt_id in &block.stmts {
@@ -21,11 +19,7 @@ impl<'hir> NameResolver<'hir> {
     }
 
     pub fn resolve_stmt(&mut self, id: HirId) {
-        let hir = self.hir;
-
-        let Node::Stmt(stmt) = hir.node(id) else {
-            unreachable!("Expected a stmt's local id to name a stmt");
-        };
+        let stmt = self.hir.stmt(id);
 
         match &stmt.kind {
             StmtKind::Let { pat, init, .. } => {
