@@ -198,7 +198,7 @@ fn prim_name(prim: PrimTy) -> &'static str {
 
 /// The name a `struct`, `enum`, or `trait` was declared with -- the only three `OwnerNode`s a
 /// `TyKind::Adt` or `TyKind::Dyn` can point at.
-fn def_name(hir: &Hir, def_id: DefId) -> String {
+fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
     match hir.def(def_id) {
         OwnerNode::Struct(s) => Interner::resolve(s.name.text),
         OwnerNode::Enum(e) => Interner::resolve(e.name.text),
@@ -210,7 +210,7 @@ fn def_name(hir: &Hir, def_id: DefId) -> String {
 /// The name a generic parameter was declared with. A `TyKind::Generic`'s `HirId` addresses
 /// either a real [`Node::Generic`], or, for an `extend` block's own `<T>` list, the bare
 /// [`Node::Ty`] standing in for one -- see the type's own docs for why.
-fn generic_name(hir: &Hir, hir_id: HirId) -> String {
+fn generic_name(hir: &Hir, hir_id: HirId) -> &'static str {
     match hir.node(hir_id) {
         Node::Generic(generic) => Interner::resolve(generic.name.text),
         Node::Ty(ty) => {

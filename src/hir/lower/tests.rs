@@ -13,7 +13,7 @@ use crate::hir::{
 // Driving the pipeline
 // -----------------------------------------------------------------
 
-fn text(ident: Ident) -> String {
+fn text(ident: Ident) -> &'static str {
     Interner::resolve(ident.text)
 }
 

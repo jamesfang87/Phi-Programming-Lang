@@ -262,7 +262,7 @@ mod tests {
         errors.len()
     }
 
-    fn base_name(ty: &Ty) -> String {
+    fn base_name(ty: &Ty) -> &'static str {
         match &ty.kind {
             TyKind::Path { path, .. } => Interner::resolve(path.segments[0].text),
             other => panic!("expected a base type, got {other:?}"),
