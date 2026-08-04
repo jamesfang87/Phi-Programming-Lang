@@ -1,14 +1,12 @@
 use crate::ast::{Ident, Path};
-use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Node, OwnerNode, Payload};
+use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Payload};
 use crate::nameres::NameResolver;
 use crate::nameres::results::Res;
 use crate::nameres::symbol_table::SymbolTable;
 
 impl<'hir> NameResolver<'hir> {
     pub fn resolve_expr(&mut self, expr_id: HirId) {
-        let Node::Expr(expr) = self.hir.node(expr_id) else {
-            unreachable!("Expected a expr's local id to name an expr");
-        };
+        let expr = self.hir.expr(expr_id);
 
         match &expr.kind {
             ExprKind::Path(path) => {
@@ -39,8 +37,10 @@ impl<'hir> NameResolver<'hir> {
             } => {
                 self.resolve_expr(*cond);
                 self.resolve_block(*then_block);
+                // Both branches are blocks, even when the source wrote `else if ...` or a bare
+                // `else <expr>`: lowering wraps whatever followed `else` in a block of its own.
                 if let Some(else_block) = else_block {
-                    self.resolve_expr(*else_block);
+                    self.resolve_block(*else_block);
                 }
             }
             ExprKind::Block(block_id) => self.resolve_block(*block_id),
@@ -87,9 +87,7 @@ impl<'hir> NameResolver<'hir> {
                 self.resolve_expr(*scrutinee);
 
                 for &arm_id in arms {
-                    let Node::Arm(arm) = self.hir.node(arm_id) else {
-                        unreachable!("expected arms of match statement to be arm")
-                    };
+                    let arm = self.hir.arm(arm_id);
 
                     self.symbol_tab.push_scope();
                     self.bind_pat(arm.pat);
@@ -162,9 +160,7 @@ impl<'hir> NameResolver<'hir> {
     }
 
     fn enum_named_by(&self, base: HirId) -> Option<DefId> {
-        let Node::Expr(base) = self.hir.node(base) else {
-            unreachable!("Expected an access base's local id to name an expr");
-        };
+        let base = self.hir.expr(base);
         let ExprKind::Path(path) = &base.kind else {
             return None;
         };

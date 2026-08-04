@@ -42,9 +42,14 @@ pub struct Hir {
     /// Maps each definition, indexed by its (global) [`DefId`], to the [`Arena`] holding its
     /// nodes.
     ///
-    /// Some `DefId`s never get an arena. Fields, variants, and generic type parameters are
-    /// addressed by a [`LocalId`] within their owner's arena and never become owners
-    /// themselves, so their slot here stays `None`.
+    /// Every slot is filled once lowering has finished: a field, a variant, or a generic type
+    /// parameter is addressed by a [`HirId`] within its owner's arena and never gets a `DefId`
+    /// at all (see [`DefId`]), so it never claims a slot here to leave empty. The `Option` is
+    /// scaffolding from construction only -- `LoweringCtx::finish` collects the arenas out of a
+    /// `HashMap` into this dense `Vec`, and needs a placeholder to scatter them into.
+    ///
+    /// It should therefore be a plain `Vec<Arena>`. Making it one means changing how
+    /// `LoweringCtx::finish` builds it, in `crate::hir::lower::ctx`.
     arenas: Vec<Option<Arena>>,
 
     /// Maps each definition, indexed by its (global) [`DefId`], to the definition it is
@@ -143,4 +148,62 @@ impl Hir {
                 .expect("every def is nested in the root module, which is a module");
         }
     }
+}
+
+/// Generates the typed node accessors on [`Hir`], one per child-bearing [`Node`] variant.
+///
+/// Every child reference in the HIR is a bare [`HirId`], so nothing in the type system says which
+/// [`Node`] variant one addresses -- only the `// -> Node::Block` comment beside the field does.
+/// A pass that follows such an id therefore has to unwrap the variant itself, and the natural way
+/// to write that is a `let ... else { unreachable!(..) }` naming the kind the author *believed*
+/// was there. Written out by hand at every child reference, that is both noise and a place to be
+/// wrong: passing a block id to a function expecting an expression is a one-word mistake that
+/// compiles cleanly and panics at run time (it did, for `if`/`else`'s `else_block`).
+///
+/// Routing every such unwrap through one generated accessor per kind makes the mistake obvious at
+/// the call site -- `hir.block(id)` versus `hir.expr(id)` reads as a claim about the id -- and
+/// gives every failure the same message, naming both the kind expected and the kind found. The
+/// bodies are identical apart from two names, so they are generated rather than repeated
+/// fourteen times over.
+///
+/// [`Hir::node`] stays the untyped escape hatch for code that genuinely has to dispatch on the
+/// variant, such as the `--debug` dump.
+macro_rules! node_accessors {
+    ($($method:ident => $variant:ident -> $node_ty:ty),* $(,)?) => {
+        impl Hir {
+            $(
+                #[doc = concat!(
+                    "Looks up the [`", stringify!($node_ty), "`] that `id` addresses.\n\n",
+                    "Panics if `id` addresses any node other than a `Node::",
+                    stringify!($variant), "`, naming what it found instead."
+                )]
+                pub fn $method(&self, id: HirId) -> &$node_ty {
+                    match self.node(id) {
+                        Node::$variant(node) => node,
+                        other => panic!(
+                            "expected {id:?} to name a Node::{}, found a Node::{}",
+                            stringify!($variant),
+                            other.kind_name(),
+                        ),
+                    }
+                }
+            )*
+        }
+    };
+}
+
+node_accessors! {
+    import => Import -> Import,
+    param => Param -> Param,
+    closure_param => ClosureParam -> ClosureParam,
+    self_param => SelfParam -> SelfParam,
+    field => Field -> Field,
+    variant => Variant -> Variant,
+    generic => Generic -> Generic,
+    arm => Arm -> Arm,
+    block => Block -> Block,
+    stmt => Stmt -> Stmt,
+    expr => Expr -> Expr,
+    pat => Pat -> Pat,
+    ty => Ty -> Ty,
 }

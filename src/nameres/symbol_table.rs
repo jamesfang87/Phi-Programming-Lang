@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, Path, Symbol};
 use crate::diag::{DiagCtx, Diagnostic};
-use crate::hir::{DefId, Hir, Import, Node, OwnerNode};
+use crate::hir::{DefId, Hir, Import, OwnerNode};
 use crate::nameres::results::Res;
 use std::collections::hash_map::Entry;
 
@@ -162,10 +162,7 @@ impl<'hir> SymbolTable<'hir> {
         };
 
         for &import_id in &module.imports {
-            let Node::Import(import) = arena.get(import_id) else {
-                unreachable!("Node that is not an import found in a module's import list");
-            };
-            self.resolve_import(module_id, import);
+            self.resolve_import(module_id, self.hir.import(import_id));
         }
 
         for &item in &module.items {
@@ -417,10 +414,7 @@ impl<'hir> SymbolTable<'hir> {
         };
 
         for &variant_id in &enum_.variants {
-            let Node::Variant(variant) = self.hir.node(variant_id) else {
-                unreachable!("an enum's variant list only names variant nodes");
-            };
-            if variant.name.text == name {
+            if self.hir.variant(variant_id).name.text == name {
                 return Some(Res::Variant(variant_id));
             }
         }

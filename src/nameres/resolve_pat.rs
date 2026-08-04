@@ -1,14 +1,10 @@
-use crate::hir::{HirId, Node, PatKind, Payload};
+use crate::hir::{HirId, PatKind, Payload};
 use crate::nameres::NameResolver;
 use crate::nameres::results::Res;
 
 impl<'hir> NameResolver<'hir> {
     pub fn bind_pat(&mut self, pat_id: HirId) {
-        let hir = self.hir;
-
-        let Node::Pat(pat) = hir.node(pat_id) else {
-            unreachable!("Expected a pat's local id to name a pat");
-        };
+        let pat = self.hir.pat(pat_id);
 
         match &pat.kind {
             PatKind::Binding { name, .. } => {

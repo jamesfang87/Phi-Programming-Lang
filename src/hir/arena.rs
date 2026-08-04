@@ -49,6 +49,32 @@ pub enum OwnerNode {
 }
 
 impl Node {
+    /// The name of this node's [`Node`] variant, such as `"Block"` or `"Expr"`.
+    ///
+    /// This exists for the panic messages of the typed accessors on
+    /// [`Hir`](crate::hir::Hir), which report what they actually found when a child id turns out
+    /// to address the wrong kind of node. A `Debug` of the node would say the same thing, but it
+    /// would also print the node's entire subtree -- for a function body, the whole function --
+    /// which buries the one word that makes the mismatch diagnosable.
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Node::Owner(_) => "Owner",
+            Node::Import(_) => "Import",
+            Node::Param(_) => "Param",
+            Node::ClosureParam(_) => "ClosureParam",
+            Node::SelfParam(_) => "SelfParam",
+            Node::Field(_) => "Field",
+            Node::Variant(_) => "Variant",
+            Node::Generic(_) => "Generic",
+            Node::Arm(_) => "Arm",
+            Node::Block(_) => "Block",
+            Node::Stmt(_) => "Stmt",
+            Node::Expr(_) => "Expr",
+            Node::Pat(_) => "Pat",
+            Node::Ty(_) => "Ty",
+        }
+    }
+
     /// The [`HirId`] this node stores for itself.
     ///
     /// Every node knows its own address, which is what lets [`Hir::node`](crate::hir::Hir::node)
