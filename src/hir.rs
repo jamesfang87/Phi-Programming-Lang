@@ -29,7 +29,7 @@ pub use crate::nameres::results::NameResolutions;
 pub use arena::{Arena, Node, OwnerNode};
 pub use block::{Block, Stmt, StmtKind, WithLend};
 pub use expr::{AccessArgs, Expr, ExprKind, LoopSource, Payload, PayloadField};
-pub use ids::{DefId, HirId, LocalId};
+pub use ids::{DefId, HirId};
 pub use items::{
     Closure, ClosureParam, Enum, Extend, Field, Function, Generic, Import, Module, Param,
     SelfParam, Struct, Trait, Variant, VariantPayload,

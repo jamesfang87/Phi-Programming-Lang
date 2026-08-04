@@ -1,6 +1,6 @@
 use crate::hir::{HirId, PatKind, Payload};
 use crate::nameres::NameResolver;
-use crate::nameres::results::{TypeRes, ValueRes};
+use crate::nameres::results::ValueRes;
 
 impl<'hir> NameResolver<'hir> {
     pub fn bind_pat(&mut self, pat_id: HirId) {

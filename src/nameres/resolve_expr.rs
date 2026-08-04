@@ -1,7 +1,7 @@
 use crate::ast::{Ident, Path};
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Payload};
 use crate::nameres::NameResolver;
-use crate::nameres::results::{TypeRes, ValueRes};
+use crate::nameres::results::ValueRes;
 use crate::nameres::symbol_table::SymbolTable;
 
 impl<'hir> NameResolver<'hir> {

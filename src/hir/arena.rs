@@ -6,6 +6,7 @@
 //! child nodes into the arena and addresses it by [`LocalId`].
 
 use crate::hir::HirId;
+use crate::lexer::src_span::SrcSpan;
 use crate::hir::block::{Block, Stmt};
 use crate::hir::expr::Expr;
 use crate::hir::items::{
@@ -48,72 +49,88 @@ pub enum OwnerNode {
     Closure(Closure),
 }
 
-impl Node {
-    /// The name of this node's [`Node`] variant, such as `"Block"` or `"Expr"`.
-    ///
-    /// This exists for the panic messages of the typed accessors on
-    /// [`Hir`](crate::hir::Hir), which report what they actually found when a child id turns out
-    /// to address the wrong kind of node. A `Debug` of the node would say the same thing, but it
-    /// would also print the node's entire subtree -- for a function body, the whole function --
-    /// which buries the one word that makes the mismatch diagnosable.
-    pub fn kind_name(&self) -> &'static str {
-        match self {
-            Node::Owner(_) => "Owner",
-            Node::Import(_) => "Import",
-            Node::Param(_) => "Param",
-            Node::ClosureParam(_) => "ClosureParam",
-            Node::SelfParam(_) => "SelfParam",
-            Node::Field(_) => "Field",
-            Node::Variant(_) => "Variant",
-            Node::Generic(_) => "Generic",
-            Node::Arm(_) => "Arm",
-            Node::Block(_) => "Block",
-            Node::Stmt(_) => "Stmt",
-            Node::Expr(_) => "Expr",
-            Node::Pat(_) => "Pat",
-            Node::Ty(_) => "Ty",
+/// Generates the accessors every node kind supports, from one list of variants.
+///
+/// Each of `kind_name`, `hir_id`, and `span` is otherwise a match arm per variant, and there
+/// were four such matches spread over this file and the debug dump -- so adding a node kind
+/// meant four edits, three of which the compiler could not remind you about until the fourth was
+/// wrong. Listing the variants once here is what collapses that.
+///
+/// Variants come in two groups because [`Node::Owner`] wraps another enum rather than a node
+/// struct: a `delegate` variant forwards to the same accessor on its payload, while a `field`
+/// variant reads the `hir_id` and `span` that every node struct carries directly.
+macro_rules! node_accessors {
+    (
+        $Enum:ident {
+            $( delegate $Delegating:ident, )*
+            $( field $Direct:ident, )*
         }
-    }
+    ) => {
+        impl $Enum {
+            /// The name of this node's variant, such as `"Block"` or `"Expr"`.
+            ///
+            /// This exists for the panic messages of the typed accessors on
+            /// [`Hir`](crate::hir::Hir), which report what they actually found when a child id
+            /// turns out to address the wrong kind of node. A `Debug` of the node would say the
+            /// same thing, but it would also print the node's entire subtree -- for a function
+            /// body, the whole function -- which buries the one word that makes the mismatch
+            /// diagnosable.
+            pub fn kind_name(&self) -> &'static str {
+                match self {
+                    $( $Enum::$Delegating(n) => n.kind_name(), )*
+                    $( $Enum::$Direct(_) => stringify!($Direct), )*
+                }
+            }
 
-    /// The [`HirId`] this node stores for itself.
-    ///
-    /// Every node knows its own address, which is what lets [`Hir::node`](crate::hir::Hir::node)
-    /// check that an id addresses the node it names without a per-node-kind walk.
-    pub fn hir_id(&self) -> HirId {
-        match self {
-            Node::Owner(owner) => owner.hir_id(),
-            Node::Import(n) => n.hir_id,
-            Node::Param(n) => n.hir_id,
-            Node::ClosureParam(n) => n.hir_id,
-            Node::SelfParam(n) => n.hir_id,
-            Node::Field(n) => n.hir_id,
-            Node::Variant(n) => n.hir_id,
-            Node::Generic(n) => n.hir_id,
-            Node::Arm(n) => n.hir_id,
-            Node::Block(n) => n.hir_id,
-            Node::Stmt(n) => n.hir_id,
-            Node::Expr(n) => n.hir_id,
-            Node::Pat(n) => n.hir_id,
-            Node::Ty(n) => n.hir_id,
+            /// The [`HirId`] this node stores for itself.
+            ///
+            /// Every node knows its own address, which is what lets
+            /// [`Hir::node`](crate::hir::Hir::node) check that an id addresses the node it names
+            /// without a per-node-kind walk.
+            pub fn hir_id(&self) -> HirId {
+                match self {
+                    $( $Enum::$Delegating(n) => n.hir_id(), )*
+                    $( $Enum::$Direct(n) => n.hir_id, )*
+                }
+            }
+
+            /// The source text this node was built from.
+            pub fn span(&self) -> SrcSpan {
+                match self {
+                    $( $Enum::$Delegating(n) => n.span(), )*
+                    $( $Enum::$Direct(n) => n.span, )*
+                }
+            }
         }
-    }
+    };
 }
 
-impl OwnerNode {
-    /// The [`HirId`] this owner stores for itself, which always addresses slot zero of its own
-    /// arena.
-    pub fn hir_id(&self) -> HirId {
-        match self {
-            OwnerNode::Module(n) => n.hir_id,
-            OwnerNode::Function(n) => n.hir_id,
-            OwnerNode::Struct(n) => n.hir_id,
-            OwnerNode::Enum(n) => n.hir_id,
-            OwnerNode::Trait(n) => n.hir_id,
-            OwnerNode::Extend(n) => n.hir_id,
-            OwnerNode::Closure(n) => n.hir_id,
-        }
-    }
-}
+node_accessors!(Node {
+    delegate Owner,
+    field Import,
+    field Param,
+    field ClosureParam,
+    field SelfParam,
+    field Field,
+    field Variant,
+    field Generic,
+    field Arm,
+    field Block,
+    field Stmt,
+    field Expr,
+    field Pat,
+    field Ty,
+});
+
+node_accessors!(OwnerNode {
+    field Module,
+    field Function,
+    field Struct,
+    field Enum,
+    field Trait,
+    field Extend,
+    field Closure,
+});
 
 impl From<OwnerNode> for Node {
     fn from(owner: OwnerNode) -> Self {
