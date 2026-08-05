@@ -46,23 +46,41 @@ phi init
 phi --help
 ```
 
+Every project is described by a `Phi.toml` manifest at its root, with sources collected only
+from that project's `src/` directory. The manifest has a required `[project]` table with
+`name`, `version`, and `edition`, and an optional `[profile]` table with `mode = "debug" |
+"release"`, defaulting to `debug` when the table (or the key) is absent.
+
+```toml
+[project]
+name = "example"
+version = "0.1.0"
+edition = "2026"
+
+[profile]
+mode = "debug"
+```
+
 The overall driver architecture is the following:
 ```
 driver/
-├── cli.rs                 # Handles CLI parsing (clap/structopt)
-├── source.rs              # FileMap, Span, reading source files
-├── project.rs             # Handles "new projection creation" (like phi new)
-└── pipeline.rs            # The actual compiler stages (lexer -> parser -> ...)
+├── cli.rs                 # CLI and Phi.toml parsing, and dispatch
+├── source.rs              # SrcSpan, SrcFile, SrcMap, SrcCollector
+├── project.rs             # Project creation: `phi new` and `phi init`
+├── pipeline.rs            # The compiler stages (lexer -> parser -> ...)
+└── emit_debug.rs          # Human-readable dumps of each stage's output
 ```
 
-The CLI and Phi.toml parsing are implemented by the `driver::cli` module. The code inside `driver::cli` collects the args given into the two constructs:
-1. `CliArgs`, an enum which contains the all possible commands and tracks what options were given for the current command.
-2. `Config`, a struct which is the config given in the Phi.toml and includes things like project name/version and compilation mode (release/debug).
-Based on what args are given, `driver::cli` either dispatches to the `driver::project` module, which handles project creation, or to then `driver::pipeline` module, which handles the actual compilation.
+The CLI and Phi.toml parsing are implemented by the `driver::cli` module. The code inside `driver::cli` collects the args given into two constructs:
+1. `CliArgs`, an enum which contains all possible commands and tracks what options were given for the current command.
+2. `Config`, a struct read from the project's `Phi.toml`, holding project name/version/edition, the compilation mode (release/debug), and the project's root and `src/` directories.
+Based on what args are given, `driver::cli` either dispatches to the `driver::project` module, which handles project creation, or to the `driver::pipeline` module, which handles the actual compilation.
 
-The public API in `driver::project` and `driver::pipeline` mirror the CLI. In `project.rs`, there is `pub fn init()` and `pub fn new(project_name: &str)` which mirror the two commands in the CLI with the same name. In `pipeline.rs`, there is `pub fn check(config: Config, build_options: BuildOptions)`, `pub fn build(config: Config, build_options: BuildOptions)`, and `pub fn run(config: Config, build_options: BuildOptions)`.
+The public API in `driver::project` and `driver::pipeline` mirrors the CLI. In `project.rs`, there is `pub fn init()` and `pub fn new(project_name: &str)`, which mirror the two commands in the CLI with the same name. In `pipeline.rs`, there is `pub fn check(config: &Config, options: &BuildOptions)`, `pub fn build(config: &Config, options: &BuildOptions)`, and `pub fn run(config: &Config)`. `Config` and `BuildOptions` are kept as separate arguments rather than merged into one struct: `Config` carries the manifest -- what project this is -- while `BuildOptions` carries the flags given to the specific `build` or `check` invocation, and those two things vary independently.
 
-The remaining module contains `SrcSpan`, `SrcFile`, `SrcMap`, and `SrcCollector`, which are used to track source files and source file contents. 
+`build` and `check` accept the same flags and differ only in that `build` additionally prints a note that code generation is not implemented yet and that `build` currently only checks; `run` builds first, then reports that there is no backend to run and exits with status 1. `--mir` and `--llvm` are both accepted by `build` and `check`, but since neither stage exists yet, passing either just prints a note that the stage is not implemented and has no other effect. `--emit-debug` dumps every stage that is actually implemented, which includes the `NameResolutions` and `TypeResolutions` dumps even though those have no flag of their own to request them individually; `--no-emit-core` never affects compilation itself, only whether the core library's definitions show up in those dumps.
+
+The remaining module, `driver::source`, contains `SrcSpan`, `SrcFile`, `SrcMap`, and `SrcCollector`, which are used to track source files and source file contents, and to collect them from the project's `src/` directory.
 
 `SrcSpan` represents a half-open span of character offsets in the source code. It is a pure data class and does essentially nothing else but hold these two indices. These offsets are global across all source files which removes the requirement to store a pointer/reference to the file inside `SrcSpan`. Meanwhile, `SrcFile` tracks the contents of a single file and some metadata about it. This is essentially the structure of `SrcFile`.
 
