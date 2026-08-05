@@ -151,8 +151,8 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::lex_src;
     use crate::ast::interner::Interner;
+    use crate::testing::lex_src;
 
     /// The single pattern a `Payload::Single` holds, or a panic.
     fn single(payload: &Payload<Pat>) -> &Pat {

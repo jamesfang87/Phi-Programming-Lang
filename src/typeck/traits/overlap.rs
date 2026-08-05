@@ -581,8 +581,7 @@ mod tests {
 
         let a = header(vec![param(10)], tcx.mk_adt(def(FOO), vec![ref_t, tuple_t]));
         let b = header(vec![], tcx.mk_adt(def(FOO), vec![ref_i32, tuple_i32]));
-        let wrong_mutability =
-            header(vec![], tcx.mk_adt(def(FOO), vec![mut_ref_i32, tuple_i32]));
+        let wrong_mutability = header(vec![], tcx.mk_adt(def(FOO), vec![mut_ref_i32, tuple_i32]));
 
         assert!(overlaps(&tcx, &a, &b));
         assert!(!overlaps(&tcx, &a, &wrong_mutability));

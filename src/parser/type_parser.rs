@@ -250,11 +250,11 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::lex_src;
     use crate::ast::interner::Interner;
     use crate::ast::{ExprKind, Literal};
     use crate::driver::src_map::SrcMap;
     use crate::lexer::Lexer;
+    use crate::testing::lex_src;
 
     fn parse_ty(src: &str) -> Ty {
         let (tokens, _) = lex_src(src);

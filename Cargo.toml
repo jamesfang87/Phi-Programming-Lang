@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 ariadne = "0.6"
 chumsky = "0.13.0"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
