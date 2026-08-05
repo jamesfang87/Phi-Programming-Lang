@@ -1,5 +1,5 @@
 # Compiler Architecture
-Broadly, the compiler's architecture can be described as such: 
+Broadly, the compiler's architecture can be described as such, which is similar to `rustc`: 
 
 ```mermaid
 flowchart LR
@@ -100,7 +100,7 @@ pub struct SrcFile {
 Meanwhile, `SrcMap` keeps track of all `SrcFile`s in the project and allows us to query some information about the contents of each file. See the code implementation for what queries we can make. Files are added into `SrcMap` through the `SrcCollector` class which walks through the current repository searching for `.phi` files. 
 
 ## Lexer
-The first stage in the pipeline is lexing, which converts the raw text of a `SrcFile` into `Token`s. The structure of the `lexer` module is the following:
+The first stage in the pipeline is lexing, which converts the raw text of a `SrcFile` into `Token`s. The `Lexer` works on UTF-8 source code, which is decoded into chars. The structure of the `lexer` module is the following:
 ```
 src/
 ├── lexer.rs                 # Handles CLI parsing (clap/structopt)
@@ -141,3 +141,129 @@ pub struct Lexer<'a> {
 pub fn new(src_text: &'a Vec<char>, file_offset: usize) -> Lexer<'a>;
 pub fn tokenize(&mut self) -> Vec<Token>;
 ```
+
+## Parser
+The Phi parser is implemented with the `chumsky` parser combinator library. `Parser` is a lightweight struct. It stores nothing about the file which is being parsed. To parse a file, `Parser` exposes the following method:
+
+```rust
+pub fn parse(&self, tokens: &[Token], file_offset: usize) -> ParsedSrcFile;
+```
+
+Since Phi's semantics allow a module to be implemented across several files, we cannot return an AST from just one file. Instead, the `parse` functions returns a `ParsedSrcFile`, which must be combined based on what module each implements to create the Abstract Syntax Tree (AST). The `Parser` has just the function for this, which parses all token streams into the AST:
+```rust
+pub fn parse_all(&self, streams: &[(Vec<Token>, usize)]) -> Ast {
+```
+
+The structure of the parser module and its submodules is as follows:
+```src/
+└── parser.rs
+    ├── block_parser.rs
+    ├── expr_parser.rs
+    ├── item_parser.rs
+    ├── pattern_parser.rs
+    └── type_parser.rs
+```
+Each submodule produces a specific sub-grammar for group of language features. There is a sub-grammar for blocks/statements, for expressions, for patterns, etc. which can be used. However, this is slightly misleading as to what goes on under the hood. Since sub-grammars recurse into each other, the `chumsky` library requires that we define "monolithic" grammars which is responsible for parsing all recursing sub-grammars. For example, types and expressions recurse into each other, requiring a single grammar for all expressions and types. We thus separate these grammars for a cleaner public-facing interface.
+
+## Abstract Syntax Tree (AST)
+The Abstract Syntax Tree is a tree representing the written program. The goal of the AST is convert the user's exact syntax into a tree form for semantic analysis. Nodes in the AST are heap-allocated, unlike the HIR later on. 
+
+### Items
+An `Item` represents any top-level declaration or statement. The following describes exactly what an `Item` can be.
+```rust
+#[derive(Clone, Debug)]
+pub struct Item {
+    pub kind: ItemKind,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub enum ItemKind {
+    ModuleDecl(ModuleDecl),
+    Import(Import),
+    Function(Function),
+    Struct(Struct),
+    Enum(Enum),
+    Trait(Trait),
+    Extend(Extend),
+    Error,
+}
+```
+An important thing to note is that `ModuleDecl` only represents the module declaration at the top of a file, such as `module math::vector`. That is, it just stores information not what module this file is implementing, **not** the contents of that module. This is due to Phi semantics allowing modules to implement any separate module. When the AST is created, code is organized into `Module`s, which actually hold information about the `Items` and imports in a module. Each module is assigned an `ModId` (which is just a unique integer) to help with this process.
+
+### Types
+To separate related work into distinct stages of the pipeline when possible, `ast::Ty` deliberately does not distinguish between primitives and nominal types to prevent name resolution from being done during parsing. Thus, there is one representation with `TyKind::Path`.
+
+```rust
+#[derive(Clone, Debug)]
+pub struct Ty {
+    pub kind: TyKind,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub enum TyKind {
+    Path {
+        path: Path,
+        args: Vec<Ty>,
+    },
+    Ref {
+        base: Box<Ty>,
+        mutability: Mutability,
+    },
+    /// `any T`, which can only be used as a parameter or return type.
+    Any(Box<Ty>),
+    Tuple(Vec<Ty>),
+    Array {
+        elem: Box<Ty>,
+        len: Option<Box<Expr>>,
+    },
+    Function {
+        params: Vec<Ty>,
+        ret: Option<Box<Ty>>,
+    },
+    SelfType,
+    Dyn {
+        path: Path,
+        args: Vec<Ty>,
+    },
+    Error,
+}
+```
+
+## Name Resolution
+Name Resolution operates on the AST to produce a side table mapping `Path`s in the AST to references to Nodes in the AST. 
+
+## High Intermediate Representation (HIR)
+The High Intermediate Representation (HIR) is an Intermediate Representation used for type inference. It is built using the AST from the `Parser` and results from `NameResolution`. The HIR has a few differences from the AST:
+1. Unlike the AST, where nodes are individually heap-allocated, nodes in the HIR are arena-allocated
+2. Nodes in the HIR are organized with a two-level ID system, like that of the Rust compiler
+3. Instead of being split between statements, expressions, and items, the HIR is more broadly split between `definitions` and `locals`. Below, we go into more detail about arena-allocation, the two-level ID system, and `definitions` and `locals`.
+
+`definitions` are any node which can "own" some other value. For example, a function is a `definition` because it can "own" parameters and the statements in its body. Phi defines the following language constructs as `definitions`: Functions, Structs, Enums, Traits, Extend Blocks, Modules, and Closures. All other constructs, such as struct fields, statements, expressions, patterns, etc. are considered `locals`. Being a `definition` enables the node to own an arena, which holds all the `locals` the `definition` owns. Arenas are formatted in the following manner: the first slot holds the owner of the arena (the `definition`) while all slots after hold `locals` the definition owns. For example, a function's arena holds itself in the first slot with its parameters and any statements in its body after. Each `definition` is also assigned an unique `DefId`, which can be used to access its arena. It should be noted that `definitions` are **not** stored into arenas. For example, a module holds `definitions` but these are not stored in the module's arenas, but inside their own arenas. They are stored at the same level as their parent module in the HIR:
+
+```rust
+pub struct Hir {
+    /// Maps each definition, indexed by its [`DefId`], to the [`Arena`] holding its
+    /// nodes.
+    arenas: Vec<Arena>,
+    ... the rest of the code is hidden
+}
+```
+
+To fully identify `locals` and allow for incremental compilation, nodes in the HIR are tracked with a two-level ID called `HirId`. A `HirId` holds both a `DefId` (to keep track of the arena where the node is located) and a `LocalId` (to keep track of the exact slot in the arena). 
+
+```rust
+pub struct HirId {
+    pub owner: DefId,
+    pub local_id: LocalId,
+}
+```
+
+To have more uniform call sites and avoid multiple functions accepting either `DefId` or `HirId`, `definitions` are also assigned a `HirId` where `local_id` is 0 (remember that definitions are stored at the first slot: slot 0).
+
+## Type Inference
+
+### Trait Solving
+
+## Borrow Checking
