@@ -1,6 +1,6 @@
 # The Phi Programming Language
 
-Phi is a modern programming language guaranteeing memory safety and data-race freedom through *mutable value semantics (MVS)*. In MVS, references are treated as **second-class objects** and cannot be stored. While this may sound overly-restrictive, this restriction allows us to completely elide lifetime annotations while preserving non-lexical lifetimes. In addition, it promotes the use of Data-Oriented Design, which greatly improves cache-locality and performance. Furthermore, Phi as a variety of modern language ergonomics, such as projections and the `any` keyword, wrapped in familiar syntax which makes programming in Phi incredibly similar to programming in C++, Rust, or any other languages.
+Phi is a modern programming language inspired by Hylo and Rust guaranteeing memory safety and data-race freedom through *mutable value semantics (MVS)*. In MVS, references are treated as **second-class objects** and cannot be stored. While this may sound overly-restrictive, this restriction allows us to completely elide lifetime annotations while preserving non-lexical lifetimes. In addition, it promotes the use of Data-Oriented Design, which greatly improves cache-locality and performance. Furthermore, Phi as a variety of modern language ergonomics, such as projections and the `any` keyword, wrapped in familiar syntax which makes programming in Phi incredibly similar to programming in C++, Rust, or any other languages.
 
 ---
 

@@ -77,13 +77,13 @@ pub fn build(root: &Path, options: &BuildOptions) -> io::Result<bool> {
     // Resolves names within the HIR, which is what lets type checking below know which
     // definition each identifier refers to.
     let nameres = resolve(&hir);
+    let checked = typeck::check(&hir, &nameres);
 
     if options.dumps.nameres {
         emit_debug::print_nameres(&hir, &nameres, options.exclude_core);
     }
 
     if options.dumps.typeck {
-        let checked = typeck::check(&hir, &nameres);
         emit_debug::print_typeck(&hir, &checked.tcx, &checked.types, options.exclude_core);
     }
 
