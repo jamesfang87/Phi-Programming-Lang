@@ -31,7 +31,10 @@ impl OwnerLowerer<'_> {
                 ret: ret.as_ref().map(|r| low.lower_ty(r)),
             },
             ast::TyKind::SelfType => TyKind::SelfType,
-            ast::TyKind::Dyn(path) => TyKind::Dyn(path.clone()),
+            ast::TyKind::Dyn { path, args } => TyKind::Dyn {
+                path: path.clone(),
+                args: args.iter().map(|a| low.lower_ty(a)).collect(),
+            },
             ast::TyKind::Error => TyKind::Error,
         })
     }

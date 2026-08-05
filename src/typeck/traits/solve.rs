@@ -58,11 +58,17 @@ pub const RECURSION_LIMIT: usize = 128;
 ///
 /// `cause` is where to point when it fails, and is deliberately *not* part of what makes two
 /// obligations the same question -- see [`Obligation::same_goal`].
+///
+/// `declared_at` is the other half of that story. A goal raised because a declaration writes
+/// `<T: Show>` is about two places at once: the instantiation that failed to meet the bound, and
+/// the bound itself. `cause` is the first, `declared_at` the second. It is `None` for a goal
+/// nobody declared -- one the solver raised for itself while chasing an impl's own obligations.
 #[derive(Clone, Debug)]
 pub struct Obligation {
     pub self_ty: Ty,
     pub trait_ref: TraitRef,
     pub cause: SrcSpan,
+    pub declared_at: Option<SrcSpan>,
 }
 
 impl Obligation {
@@ -71,7 +77,14 @@ impl Obligation {
             self_ty,
             trait_ref,
             cause,
+            declared_at: None,
         }
+    }
+
+    /// Records where the bound this goal came from was written. See [`Obligation::declared_at`].
+    pub fn with_declared_at(mut self, span: SrcSpan) -> Self {
+        self.declared_at = Some(span);
+        self
     }
 
     /// Whether two obligations ask the same question, ignoring where each was raised.
@@ -264,6 +277,7 @@ impl<'hir> Typeck<'hir> {
                     .collect(),
             },
             cause: goal.cause,
+            declared_at: goal.declared_at,
         };
 
         if self.goal_mentions_error(&goal) {
@@ -339,9 +353,11 @@ impl<'hir> Typeck<'hir> {
                         .map(|&arg| self.subst_ty(arg, &subst))
                         .collect(),
                 },
-                // The failure is about the goal that dragged this in, not about where the bound
-                // was declared.
+                // The failure is about the goal that dragged this in, so that is what the error
+                // points at. Where the bound was declared is not lost, though -- it rides along
+                // as the secondary location, which is the one thing it is good for.
                 cause: goal.cause,
+                declared_at: obligation.declared_at,
             };
 
             match self.implements(&sub_goal, env) {
@@ -487,14 +503,22 @@ impl<'hir> Typeck<'hir> {
             let self_ty = self.tcx.mk_generic(generic);
             // A bound is a bare path with no argument list, so a trait's own parameters can never
             // be applied in one. When that syntax arrives, its arguments are lowered here.
-            bounds.push(Obligation::new(
-                self_ty,
-                TraitRef {
-                    def,
-                    args: Vec::new(),
-                },
-                span,
-            ));
+            //
+            // `span` serves as both cause and declaration site here, because a bound read straight
+            // out of a declaration *is* its own declaration. It stops being both once
+            // `register_bound_obligations` re-raises this against an instantiation, which is where
+            // the two come apart.
+            bounds.push(
+                Obligation::new(
+                    self_ty,
+                    TraitRef {
+                        def,
+                        args: Vec::new(),
+                    },
+                    span,
+                )
+                .with_declared_at(span),
+            );
         }
     }
 
@@ -592,20 +616,24 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn report_cyclic_bound(&self, goal: &Obligation) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "cyclic trait bound: proving {} requires proving it again",
-                    self.show_goal(goal)
-                ),
-                goal.cause,
-            )
-            .with_label("this bound cannot be proved")
-            .with_help(
-                "one of the bounds involved has to be discharged by something other than \
-                 itself, or the chain has no base case",
+        let mut diag = Diagnostic::error(
+            format!(
+                "cyclic trait bound: proving {} requires proving it again",
+                self.show_goal(goal)
             ),
+            goal.cause,
+        )
+        .with_label("this bound cannot be proved")
+        .with_help(
+            "one of the bounds involved has to be discharged by something other than \
+             itself, or the chain has no base case",
         );
+
+        if let Some(declared_at) = goal.declared_at {
+            diag = diag.with_secondary(declared_at, "the bound the cycle starts from is here");
+        }
+
+        DiagCtx::emit(diag);
     }
 
     fn report_recursion_limit(&self, goal: &Obligation) {

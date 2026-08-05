@@ -263,7 +263,10 @@ impl<'hir> Typeck<'hir> {
                 .iter()
                 .map(|&arg| self.subst_ty(arg, &subst))
                 .collect();
-            let goal = Obligation::new(
+            // The goal is raised at the instantiation, but it exists because of the bound the
+            // declaration writes, and that is a second place worth pointing at. `collect_bounds`
+            // left it in the bound's own `cause`, which is about to be replaced by this one.
+            let mut goal = Obligation::new(
                 self_ty,
                 TraitRef {
                     def: bound.trait_ref.def,
@@ -271,6 +274,9 @@ impl<'hir> Typeck<'hir> {
                 },
                 cause,
             );
+            if let Some(declared_at) = bound.declared_at {
+                goal = goal.with_declared_at(declared_at);
+            }
             self.register_obligation(goal, owner);
         }
     }
@@ -449,41 +455,62 @@ impl<'hir> Typeck<'hir> {
         Interner::resolve(name)
     }
 
+    /// Where a definition's name was written, for a diagnostic pointing back at what it declares.
+    fn def_span(&self, def: DefId) -> SrcSpan {
+        match self.hir.def(def) {
+            OwnerNode::Function(f) => f.name.span,
+            OwnerNode::Struct(s) => s.name.span,
+            OwnerNode::Enum(e) => e.name.span,
+            OwnerNode::Trait(t) => t.name.span,
+            OwnerNode::Extend(_) | OwnerNode::Module(_) | OwnerNode::Closure(_) => {
+                unreachable!("only a named definition is ever applied to generic arguments")
+            }
+        }
+    }
+
     // -----------------------------------------------------------------
     // Diagnostics
     // -----------------------------------------------------------------
 
     fn report_unsatisfied_bound(&self, goal: &Obligation) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!("the trait bound {} is not satisfied", self.show_goal(goal)),
-                goal.cause,
-            )
-            .with_label("this instantiation does not meet the bound its declaration writes")
-            .with_help(
-                "either write an `extend .. with` block implementing the trait for this type, or \
-                 pass a type that already has one",
-            ),
+        let mut diag = Diagnostic::error(
+            format!("the trait bound {} is not satisfied", self.show_goal(goal)),
+            goal.cause,
+        )
+        .with_label("this instantiation does not meet the bound its declaration writes")
+        .with_help(
+            "either write an `extend .. with` block implementing the trait for this type, or \
+             pass a type that already has one",
         );
+
+        if let Some(declared_at) = goal.declared_at {
+            diag = diag.with_secondary(declared_at, "required by this bound");
+        }
+
+        DiagCtx::emit(diag);
     }
 
     /// A goal that no further pass could decide. Not a failed bound -- it is a bound nobody ever
     /// finished asking about, because the type it is about never became known.
     fn report_annotations_needed(&self, goal: &Obligation) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "type annotations needed: cannot tell whether {} holds",
-                    self.show_goal(goal)
-                ),
-                goal.cause,
-            )
-            .with_label("the type here is still unknown")
-            .with_help(
-                "nothing in this body pins the type down, so whether it satisfies the bound \
-                 cannot be decided; write the type out",
+        let mut diag = Diagnostic::error(
+            format!(
+                "type annotations needed: cannot tell whether {} holds",
+                self.show_goal(goal)
             ),
+            goal.cause,
+        )
+        .with_label("the type here is still unknown")
+        .with_help(
+            "nothing in this body pins the type down, so whether it satisfies the bound \
+             cannot be decided; write the type out",
         );
+
+        if let Some(declared_at) = goal.declared_at {
+            diag = diag.with_secondary(declared_at, "the bound that has to be decided is here");
+        }
+
+        DiagCtx::emit(diag);
     }
 
     fn report_bound_is_not_a_trait(path: &Path) {
@@ -515,6 +542,13 @@ impl<'hir> Typeck<'hir> {
                 span,
             )
             .with_label(format!("expected {declared} argument{plural}"))
+            .with_secondary(
+                self.def_span(def),
+                format!(
+                    "`{}` declares {declared} type parameter{plural} here",
+                    self.def_name(def)
+                ),
+            )
             .with_help(
                 "every parameter has to be given an argument, since the declaration is written in \
                  terms of all of them",
@@ -739,6 +773,38 @@ mod tests {
         );
     }
 
+    /// The failure is at the instantiation, but it is only a failure because of the bound the
+    /// declaration writes -- so the diagnostic points at both, and the bound's own span survives
+    /// being re-raised against the instantiation to get there.
+    #[test]
+    fn an_unmet_bound_points_at_the_declaration_that_requires_it() {
+        let (hir, nameres) = resolve_src(
+            "trait Show { fun show(&self); }
+             struct Sorted<T: Show> { inner: T }
+             struct Bare {}
+             fun f(x: Sorted<Bare>) {}",
+        );
+
+        DiagCtx::clear();
+        let mut checker = Typeck::new(&hir, &nameres);
+        checker.collect_module(hir.root_id());
+        checker.build_impl_index();
+        checker.select_program_obligations();
+
+        let diagnostics = DiagCtx::diagnostics();
+        let [unmet] = diagnostics.as_slice() else {
+            panic!("expected exactly one diagnostic, got {diagnostics:?}");
+        };
+        let [bound] = unmet.secondary.as_slice() else {
+            panic!("expected exactly one secondary label");
+        };
+        assert_eq!(bound.message, "required by this bound");
+
+        // The bound is written on `Sorted`'s declaration, above the use in `f` that failed it.
+        let primary = unmet.span.expect("an unmet bound names a place");
+        assert!(bound.span.get_begin() < primary.get_begin());
+    }
+
     #[test]
     fn a_bound_met_by_an_impl_is_accepted() {
         let (hir, nameres) = resolve_src(
@@ -939,8 +1005,9 @@ mod tests {
         );
     }
 
-    /// `dyn` carries no argument list in the surface syntax, so a trait that declares parameters
-    /// cannot be written as one at all.
+    /// A `dyn` is an application of the trait's parameters like any other, so leaving them off a
+    /// trait that declares some is the same mistake as leaving them off a struct -- and, since
+    /// `dyn` carries its own argument list, one with a spelling that fixes it.
     #[test]
     fn a_dyn_naming_a_trait_with_parameters_is_reported() {
         let (hir, nameres) = resolve_src(

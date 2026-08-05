@@ -468,7 +468,7 @@ pub fn walk_pat<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
 
 pub fn walk_ty<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     match &v.hir().ty(id).kind {
-        TyKind::Path { args, .. } => {
+        TyKind::Path { args, .. } | TyKind::Dyn { args, .. } => {
             for arg in args.clone() {
                 v.visit_ty(arg);
             }
@@ -499,7 +499,7 @@ pub fn walk_ty<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
                 v.visit_ty(ret);
             }
         }
-        TyKind::SelfType | TyKind::Dyn(_) | TyKind::Error => {}
+        TyKind::SelfType | TyKind::Error => {}
     }
 }
 

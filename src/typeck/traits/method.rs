@@ -295,8 +295,8 @@ impl<'hir> Typeck<'hir> {
             self.instantiate_method(chosen.method, &chosen.subst, chosen.self_ty);
 
         match mode {
-            Some(mode) => self.check_receiver(mode, receiver, layers, member),
-            None => self.report_no_receiver(member),
+            Some(mode) => self.check_receiver(mode, receiver, layers, member, chosen.method),
+            None => self.report_no_receiver(member, chosen.method),
         }
 
         // A method's `self` counts as its first parameter -- see
@@ -601,6 +601,27 @@ impl<'hir> Typeck<'hir> {
         Some(self_param.mode)
     }
 
+    /// Where a function's name is written, for a diagnostic pointing at the declaration it found.
+    fn function_name_span(&self, method: DefId) -> SrcSpan {
+        let OwnerNode::Function(function) = self.hir.def(method) else {
+            unreachable!("a candidate's method is always a function");
+        };
+        function.name.span
+    }
+
+    /// Where a method's receiver is written, so a diagnostic about a receiver can point at what
+    /// it was checked against. Falls back to the method's name for one that declares none.
+    fn method_receiver_span(&self, method: DefId) -> SrcSpan {
+        let OwnerNode::Function(function) = self.hir.def(method) else {
+            unreachable!("a candidate's method is always a function");
+        };
+        match function.self_param.map(|id| self.hir.node(id)) {
+            Some(Node::SelfParam(self_param)) => self_param.span,
+            Some(_) => unreachable!("a function's self param slot always holds a Node::SelfParam"),
+            None => function.name.span,
+        }
+    }
+
     // -----------------------------------------------------------------
     // Receivers
     // -----------------------------------------------------------------
@@ -635,7 +656,14 @@ impl<'hir> Typeck<'hir> {
     /// what the peeled layers already describe. Taking a reference -- autoref -- is only possible
     /// where there is something to take a reference *to*, which is why a place expression is
     /// required: `make_foo().show()` would have to borrow a temporary that outlives nothing.
-    fn check_receiver(&mut self, mode: SelfMode, receiver: HirId, layers: &[Layer], member: Ident) {
+    fn check_receiver(
+        &mut self,
+        mode: SelfMode,
+        receiver: HirId,
+        layers: &[Layer],
+        member: Ident,
+        method: DefId,
+    ) {
         let span = self.hir.expr(receiver).span;
         match mode {
             // `any self` is exactly the mode that accepts every form of receiver, which is what
@@ -647,7 +675,7 @@ impl<'hir> Typeck<'hir> {
             // all.
             SelfMode::Move => {
                 if !layers.is_empty() {
-                    self.report_receiver_mode(member, mode, span);
+                    self.report_receiver_mode(member, mode, span, method);
                 }
             }
 
@@ -656,7 +684,7 @@ impl<'hir> Typeck<'hir> {
             // place to borrow.
             SelfMode::Immutable => {
                 if layers.is_empty() && !self.is_place_expr(receiver) {
-                    self.report_receiver_not_a_place(member, mode, span);
+                    self.report_receiver_not_a_place(member, mode, span, method);
                 }
             }
 
@@ -665,11 +693,11 @@ impl<'hir> Typeck<'hir> {
             SelfMode::Mutable => match layers.first() {
                 None => {
                     if !self.is_place_expr(receiver) {
-                        self.report_receiver_not_a_place(member, mode, span);
+                        self.report_receiver_not_a_place(member, mode, span, method);
                     }
                 }
                 Some(Layer::Ref(Mutability::Immutable)) => {
-                    self.report_receiver_mode(member, mode, span);
+                    self.report_receiver_mode(member, mode, span, method);
                 }
                 Some(Layer::Ref(Mutability::Mutable) | Layer::Any) => {}
             },
@@ -860,24 +888,36 @@ impl<'hir> Typeck<'hir> {
             })
             .collect();
 
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "ambiguous method call: `{}` is declared by more than one trait in scope: {}",
-                    Interner::resolve(member.text),
-                    traits.join(", ")
-                ),
-                member.span,
-            )
-            .with_label("cannot tell which one is meant")
-            .with_help(
-                "each of these traits declares a method of this name and the receiver reaches \
-                 all of them, so nothing here says which was meant",
+        let mut diag = Diagnostic::error(
+            format!(
+                "ambiguous method call: `{}` is declared by more than one trait in scope: {}",
+                Interner::resolve(member.text),
+                traits.join(", ")
             ),
+            member.span,
+        )
+        .with_label("cannot tell which one is meant")
+        .with_help(
+            "each of these traits declares a method of this name and the receiver reaches \
+             all of them, so nothing here says which was meant",
         );
+
+        // Every candidate gets underlined, not just the first two. Which ones collided is the
+        // whole question here, and the answer is the set.
+        for candidate in candidates {
+            let CandidateSource::Trait(def) = candidate.source else {
+                unreachable!("an inherent candidate wins outright, so it is never ambiguous");
+            };
+            diag = diag.with_secondary(
+                self.function_name_span(candidate.method),
+                format!("`{}` declares it here", self.candidate_trait_name(def)),
+            );
+        }
+
+        DiagCtx::emit(diag);
     }
 
-    fn report_no_receiver(&self, member: Ident) {
+    fn report_no_receiver(&self, member: Ident, method: DefId) {
         DiagCtx::emit(
             Diagnostic::error(
                 format!(
@@ -887,6 +927,10 @@ impl<'hir> Typeck<'hir> {
                 member.span,
             )
             .with_label("declared without a `self` parameter")
+            .with_secondary(
+                self.function_name_span(method),
+                "declared here, taking no receiver",
+            )
             .with_help(
                 "a function declared in an `extend` block without a `self` parameter belongs to \
                  the type rather than to a value of it",
@@ -894,7 +938,7 @@ impl<'hir> Typeck<'hir> {
         );
     }
 
-    fn report_receiver_mode(&self, member: Ident, mode: SelfMode, span: SrcSpan) {
+    fn report_receiver_mode(&self, member: Ident, mode: SelfMode, span: SrcSpan, method: DefId) {
         DiagCtx::emit(
             Diagnostic::error(
                 format!(
@@ -905,6 +949,10 @@ impl<'hir> Typeck<'hir> {
                 span,
             )
             .with_label(format!("expected {}", show_self_mode(mode)))
+            .with_secondary(
+                self.method_receiver_span(method),
+                format!("declared taking {} here", show_self_mode(mode)),
+            )
             .with_help(match mode {
                 SelfMode::Move => {
                     "this method takes its receiver by value, and the value here is behind a \
@@ -915,7 +963,13 @@ impl<'hir> Typeck<'hir> {
         );
     }
 
-    fn report_receiver_not_a_place(&self, member: Ident, mode: SelfMode, span: SrcSpan) {
+    fn report_receiver_not_a_place(
+        &self,
+        member: Ident,
+        mode: SelfMode,
+        span: SrcSpan,
+        method: DefId,
+    ) {
         DiagCtx::emit(
             Diagnostic::error(
                 format!(
@@ -926,6 +980,10 @@ impl<'hir> Typeck<'hir> {
                 span,
             )
             .with_label("nowhere to take a reference to")
+            .with_secondary(
+                self.method_receiver_span(method),
+                format!("declared taking {} here", show_self_mode(mode)),
+            )
             .with_help(
                 "the reference the call would take is to a value that exists only for the \
                  length of this expression; bind it to a name first",
@@ -1254,6 +1312,37 @@ mod tests {
     // Picking
     // -----------------------------------------------------------------
 
+    /// The function named `name` that `owner` -- a trait or an `extend` block -- declares.
+    ///
+    /// A [`Candidate`]'s `method` is always a real function, and the diagnostics read it to point
+    /// at where that function was declared, so a fixture that hands over the trait's own `DefId`
+    /// instead is not a shortcut but a fake that the reporting path sees through.
+    fn method_of(checker: &Typeck<'_>, owner: DefId, name: &str) -> DefId {
+        checker
+            .hir
+            .def_ids()
+            .find(|&id| {
+                checker.hir.parent(id) == Some(owner)
+                    && matches!(
+                        checker.hir.def(id),
+                        OwnerNode::Function(f) if Interner::resolve(f.name.text) == name
+                    )
+            })
+            .unwrap_or_else(|| panic!("no method named {name:?}"))
+    }
+
+    /// The function named `name` declared by the fixture's one `extend` block. An `extend` block
+    /// has no name of its own to look it up by, and a fixture that needs this only ever writes
+    /// one.
+    fn extend_method(checker: &Typeck<'_>, name: &str) -> DefId {
+        let block = checker
+            .hir
+            .def_ids()
+            .find(|&id| matches!(checker.hir.def(id), OwnerNode::Extend(_)))
+            .expect("the fixture writes an extend block");
+        method_of(checker, block, name)
+    }
+
     fn candidate(source: CandidateSource, method: DefId, self_ty: Ty) -> Candidate {
         Candidate {
             method,
@@ -1267,10 +1356,12 @@ mod tests {
     fn an_inherent_candidate_wins_over_a_trait_one() {
         let (hir, nameres) = resolve_src(
             "trait Show { fun show(&self); }
-             struct Foo {}",
+             struct Foo {}
+             extend Foo { fun show(&self) {} }",
         );
         let mut checker = collected(&hir, &nameres);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let inherent = extend_method(&checker, "show");
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
         let member = Ident {
             text: Interner::intern("show"),
@@ -1279,8 +1370,12 @@ mod tests {
 
         // Trait first, so that "the inherent one" is not merely "the first one".
         let candidates = [
-            candidate(CandidateSource::Trait(show), show, foo_ty),
-            candidate(CandidateSource::Inherent, foo, foo_ty),
+            candidate(
+                CandidateSource::Trait(show),
+                method_of(&checker, show, "show"),
+                foo_ty,
+            ),
+            candidate(CandidateSource::Inherent, inherent, foo_ty),
         ];
         let picked = checker
             .pick(&candidates, member)
@@ -1303,7 +1398,11 @@ mod tests {
             span: SrcSpan::new(0, 0),
         };
 
-        let candidates = [candidate(CandidateSource::Trait(show), show, foo_ty)];
+        let candidates = [candidate(
+            CandidateSource::Trait(show),
+            method_of(&checker, show, "show"),
+            foo_ty,
+        )];
         assert!(checker.pick(&candidates, member).is_some());
         assert!(DiagCtx::diagnostics().is_empty());
     }
@@ -1328,8 +1427,8 @@ mod tests {
         };
 
         let candidates = [
-            candidate(CandidateSource::Trait(a), a, foo_ty),
-            candidate(CandidateSource::Trait(b), b, foo_ty),
+            candidate(CandidateSource::Trait(a), method_of(&checker, a, "size"), foo_ty),
+            candidate(CandidateSource::Trait(b), method_of(&checker, b, "size"), foo_ty),
         ];
         assert!(checker.pick(&candidates, member).is_none());
         assert_eq!(

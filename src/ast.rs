@@ -273,7 +273,13 @@ pub enum TyKind {
         ret: Option<Box<Ty>>,
     },
     SelfType,
-    Dyn(Path),
+    /// `dyn Trait`, or `dyn Trait<K, V>` for a trait that declares parameters. `args` carries the
+    /// same thing it does in [`TyKind::Path`]: what the trait's own parameters were applied to,
+    /// empty when no `<..>` was written.
+    Dyn {
+        path: Path,
+        args: Vec<Ty>,
+    },
     Error,
 }
 
