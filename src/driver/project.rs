@@ -1,16 +1,7 @@
-//! The project-scaffolding commands: `new` and `init`.
-//!
-//! These create a Phi project's skeleton -- a `src/main.phi` entry point and a `Phi.toml`
-//! manifest -- and run before any project exists, which is why they are the two commands that
-//! need no [`Config`](crate::driver::cli::Config).
-
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Creates a new Phi project directory named `project_name` and populates it.
-///
-/// Fails if `project_name` already exists.
 pub fn new(project_name: &str) -> io::Result<PathBuf> {
     let path = Path::new(project_name);
     if path.exists() {
@@ -24,18 +15,10 @@ pub fn new(project_name: &str) -> io::Result<PathBuf> {
     Ok(path.to_path_buf())
 }
 
-/// Initializes the current directory as a Phi project.
 pub fn init() -> io::Result<()> {
     init_at(Path::new("."))
 }
 
-/// Writes a project skeleton into `path`: a `src/main.phi` stub and a `Phi.toml` manifest.
-///
-/// [`new`] and [`init`] differ only in which directory they target, so the work lives here
-/// rather than in either of them -- and taking the directory as an argument means `new` need
-/// not change the process's working directory to reuse it.
-///
-/// Fails if `path` is not a directory.
 fn init_at(path: &Path) -> io::Result<()> {
     if !path.is_dir() {
         return Err(io::Error::new(
