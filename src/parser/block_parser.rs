@@ -20,11 +20,9 @@ mod tests {
     use chumsky::Parser as ChumskyParser;
 
     use super::*;
-    use crate::testing::lex_src;
     use crate::ast::interner::Interner;
-    use crate::ast::{
-        BinaryOp, Expr, ExprKind, Literal, Mutability, PatKind, Stmt, StmtKind,
-    };
+    use crate::ast::{BinaryOp, Expr, ExprKind, Literal, Mutability, PatKind, Stmt, StmtKind};
+    use crate::testing::lex_src;
 
     fn parse_block(src: &str) -> Block {
         let (tokens, _) = lex_src(src);

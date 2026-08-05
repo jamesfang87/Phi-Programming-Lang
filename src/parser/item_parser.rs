@@ -540,9 +540,9 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::lex_src;
     use crate::ast::SelfMode;
     use crate::ast::interner::Interner;
+    use crate::testing::lex_src;
 
     fn parse_item(src: &str) -> Item {
         let (tokens, _) = lex_src(src);

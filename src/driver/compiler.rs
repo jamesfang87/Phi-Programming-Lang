@@ -9,10 +9,10 @@ use std::path::Path;
 
 use crate::ast::Ast;
 use crate::diag::DiagCtx;
+use crate::driver::cli::BuildOptions;
 use crate::driver::core_lib;
 use crate::driver::emit_debug;
 use crate::driver::file_collector;
-use crate::driver::options::BuildOptions;
 use crate::driver::src_map::SrcMap;
 use crate::hir::lower::lower_unit;
 use crate::lexer::Lexer;
@@ -71,7 +71,7 @@ pub fn build(root: &Path, options: &BuildOptions) -> io::Result<bool> {
     let hir = lower_unit(&ast);
 
     if options.dumps.hir {
-        emit_debug::print_hir(&hir, options.exclude_core);
+        emit_debug::print_hir(&hir, options.exclude_core_in_emit);
     }
 
     // Resolves names within the HIR, which is what lets type checking below know which
@@ -80,11 +80,16 @@ pub fn build(root: &Path, options: &BuildOptions) -> io::Result<bool> {
     let checked = typeck::check(&hir, &nameres);
 
     if options.dumps.nameres {
-        emit_debug::print_nameres(&hir, &nameres, options.exclude_core);
+        emit_debug::print_nameres(&hir, &nameres, options.exclude_core_in_emit);
     }
 
     if options.dumps.typeck {
-        emit_debug::print_typeck(&hir, &checked.tcx, &checked.types, options.exclude_core);
+        emit_debug::print_typeck(
+            &hir,
+            &checked.tcx,
+            &checked.types,
+            options.exclude_core_in_emit,
+        );
     }
 
     DiagCtx::report();

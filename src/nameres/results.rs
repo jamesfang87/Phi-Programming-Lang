@@ -77,10 +77,7 @@ pub enum SelfTyRes {
     /// `adt` is the concrete type `Self` stands for -- the struct or enum itself, or the type an
     /// `extend` targets. `trait_` is set when the enclosing trait is known too: inside a trait's
     /// own body, or an `extend ... with Trait`.
-    Ty {
-        adt: DefId,
-        trait_: Option<DefId>,
-    },
+    Ty { adt: DefId, trait_: Option<DefId> },
     /// The definition introduces a `Self`, but what it stands for could not be worked out -- an
     /// `extend` whose target path did not resolve. Recorded rather than left absent so that a
     /// `Self` written inside the block is not reported a second time.

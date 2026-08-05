@@ -444,9 +444,10 @@ impl<'hir> Typeck<'hir> {
                 OwnerNode::Enum(e) => (e.generics.clone(), None),
                 // Inside a trait, the implicit `Self` implements that trait by definition, which
                 // is what lets one default method call another.
-                OwnerNode::Trait(t) => {
-                    (t.generics.clone(), Some((owner, t.generics.clone(), t.span)))
-                }
+                OwnerNode::Trait(t) => (
+                    t.generics.clone(),
+                    Some((owner, t.generics.clone(), t.span)),
+                ),
                 OwnerNode::Extend(e) => (e.extend_generics.clone(), None),
                 // A module or a closure declares no generics of its own. Walking through rather
                 // than stopping is what lets a closure body see its enclosing function's bounds.
@@ -746,7 +747,13 @@ mod tests {
         let open = tcx.mk_adt(def(FOO), vec![t]);
         let closed = tcx.mk_adt(def(FOO), vec![i32_ty]);
 
-        assert!(match_ty(&tcx, &[param(10)], open, closed, &mut HashMap::new()));
+        assert!(match_ty(
+            &tcx,
+            &[param(10)],
+            open,
+            closed,
+            &mut HashMap::new()
+        ));
         assert!(
             !match_ty(&tcx, &[param(10)], closed, open, &mut HashMap::new()),
             "`i32` does not match `T`; only the impl side may bind"
@@ -940,7 +947,10 @@ mod tests {
         let error = checker.tcx.error();
 
         let goal = goal(&mut checker, error, show);
-        assert_eq!(checker.implements(&goal, &ParamEnv::empty()), Solution::Error);
+        assert_eq!(
+            checker.implements(&goal, &ParamEnv::empty()),
+            Solution::Error
+        );
         assert!(
             messages().is_empty(),
             "a diagnostic for the error type already exists"
@@ -1126,7 +1136,10 @@ mod tests {
         let goal = goal(&mut checker, foo_ty, show);
 
         checker.goal_stack.push(goal.clone());
-        assert_eq!(checker.implements(&goal, &ParamEnv::empty()), Solution::Error);
+        assert_eq!(
+            checker.implements(&goal, &ParamEnv::empty()),
+            Solution::Error
+        );
         assert_eq!(
             messages(),
             ["cyclic trait bound: proving `Foo: Show` requires proving it again"]
@@ -1147,7 +1160,10 @@ mod tests {
         checker.goal_stack.push(open);
 
         let asked = goal(&mut checker, foo_ty, show);
-        assert_eq!(checker.implements(&asked, &ParamEnv::empty()), Solution::Error);
+        assert_eq!(
+            checker.implements(&asked, &ParamEnv::empty()),
+            Solution::Error
+        );
     }
 
     #[test]
@@ -1166,7 +1182,10 @@ mod tests {
         }
 
         let goal = goal(&mut checker, foo_ty, show);
-        assert_eq!(checker.implements(&goal, &ParamEnv::empty()), Solution::Error);
+        assert_eq!(
+            checker.implements(&goal, &ParamEnv::empty()),
+            Solution::Error
+        );
         assert_eq!(
             messages(),
             ["recursion limit reached while proving `Foo: Show`"]

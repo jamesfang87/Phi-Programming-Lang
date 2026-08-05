@@ -648,7 +648,9 @@ mod tests {
         };
         assert_eq!(*trait_, index);
         assert_eq!(
-            args.iter().map(|&arg| checked.kind(arg)).collect::<Vec<_>>(),
+            args.iter()
+                .map(|&arg| checked.kind(arg))
+                .collect::<Vec<_>>(),
             [
                 &TyKind::Primitive(PrimTy::I32),
                 &TyKind::Primitive(PrimTy::Bool)

@@ -464,13 +464,16 @@ mod tests {
         let use_: Vec<char> = "extend Foo with Show {}\n".chars().collect();
         let use_at = SrcMap::add_file("<use>".to_string(), use_.clone(), FileOrigin::User);
 
-        Diagnostic::error("missing method `show`", SrcSpan::new(use_at, use_at + use_.len() - 1))
-            .with_label("`show` not implemented")
-            .with_secondary(
-                SrcSpan::new(decl_at + 13, decl_at + 28),
-                "declared here, with no default body",
-            )
-            .eprint();
+        Diagnostic::error(
+            "missing method `show`",
+            SrcSpan::new(use_at, use_at + use_.len() - 1),
+        )
+        .with_label("`show` not implemented")
+        .with_secondary(
+            SrcSpan::new(decl_at + 13, decl_at + 28),
+            "declared here, with no default body",
+        )
+        .eprint();
     }
 
     /// A secondary label that resolves to no file is dropped, not escalated: the error it

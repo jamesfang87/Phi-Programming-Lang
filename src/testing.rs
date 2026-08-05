@@ -9,8 +9,8 @@
 //! drives the rest itself. [`parse_src`] and [`lower_src`] assert that no diagnostics were
 //! raised; [`resolve_src`] is the exception, for the reason given on it.
 
-use crate::ast::{Ast, ParsedSrcFile};
 use crate::ast::interner::Interner;
+use crate::ast::{Ast, ParsedSrcFile};
 use crate::diag::DiagCtx;
 use crate::driver::src_file::FileOrigin;
 use crate::driver::src_map::SrcMap;
@@ -91,9 +91,7 @@ fn first_item(hir: &Hir, what: &str, pred: impl Fn(&OwnerNode) -> bool) -> DefId
 
 /// The `DefId` of the first top-level `fun` declared in `hir`.
 pub fn first_function(hir: &Hir) -> DefId {
-    first_item(hir, "function", |def| {
-        matches!(def, OwnerNode::Function(_))
-    })
+    first_item(hir, "function", |def| matches!(def, OwnerNode::Function(_)))
 }
 
 /// The `DefId` of the first top-level `struct` declared in `hir`.

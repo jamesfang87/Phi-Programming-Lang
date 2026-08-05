@@ -378,8 +378,13 @@ mod tests {
         let checker = indexed(&hir, &nameres);
 
         assert_eq!(checker.impls.len(), 1);
-        let header = checker.impls.header(checker.impls.for_self(foo(&checker))[0]);
-        assert!(header.trait_ref.is_none(), "an inherent extend has no trait");
+        let header = checker
+            .impls
+            .header(checker.impls.for_self(foo(&checker))[0]);
+        assert!(
+            header.trait_ref.is_none(),
+            "an inherent extend has no trait"
+        );
         assert_eq!(header.methods.len(), 1);
         assert!(messages().is_empty(), "{:?}", messages());
     }
@@ -393,7 +398,9 @@ mod tests {
         );
         let checker = indexed(&hir, &nameres);
 
-        let header = checker.impls.header(checker.impls.for_self(foo(&checker))[0]);
+        let header = checker
+            .impls
+            .header(checker.impls.for_self(foo(&checker))[0]);
         let trait_ref = header
             .trait_ref
             .as_ref()
@@ -411,7 +418,9 @@ mod tests {
              extend<T> Wrap<T> { fun get(&self) {} }",
         );
         let checker = indexed(&hir, &nameres);
-        let header = checker.impls.header(checker.impls.for_self(wrap(&checker))[0]);
+        let header = checker
+            .impls
+            .header(checker.impls.for_self(wrap(&checker))[0]);
 
         assert_eq!(header.generics.len(), 1);
         assert_eq!(header.generics[0].owner, header.def);
