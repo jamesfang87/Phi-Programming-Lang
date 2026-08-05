@@ -26,7 +26,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
-        driver::print_usage();
+        driver::cli::print_usage();
         std::process::exit(1);
     }
 
@@ -39,25 +39,19 @@ fn main() {
             }
 
             let name = &args[2];
-            if let Err(e) = driver::new_project(name) {
+            if let Err(e) = driver::project::new(name) {
                 eprintln!("error: {}", e);
                 std::process::exit(1);
             }
         }
 
         "init" => {
-            // With no extra argument, initialize the current directory rather than requiring
-            // `phi init .`.
-            let path = if args.len() == 2 {
-                Path::new(".")
-            } else if args.len() == 3 {
-                Path::new(&args[2])
-            } else {
-                eprintln!("error: 'init' accepts zero or one argument (the target directory)");
+            if args.len() != 2 {
+                eprintln!("error: 'init' accepts no arguments");
                 std::process::exit(1);
-            };
+            }
 
-            if let Err(e) = driver::init_project(path) {
+            if let Err(e) = driver::project::init() {
                 eprintln!("error: {}", e);
                 std::process::exit(1);
             }
@@ -83,12 +77,12 @@ fn main() {
         }
 
         "help" | "--help" | "-h" => {
-            driver::print_usage();
+            driver::cli::print_usage();
         }
 
         _ => {
             eprintln!("error: unknown command '{}'", command);
-            driver::print_usage();
+            driver::cli::print_usage();
             std::process::exit(1);
         }
     }
