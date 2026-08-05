@@ -2,7 +2,7 @@
 //! name: the enums `?` and `for` desugar through, and the traits the operators dispatch to.
 //!
 //! Phi identifies them by path rather than by an attribute on the declaration. There is exactly
-//! one core library, it is embedded in the compiler binary (see [`crate::driver::core_lib`]),
+//! one core library, it is embedded in the compiler binary (see [`crate::driver::source::SrcCollector`]),
 //! and nothing outside it may declare a lang item -- so the path a lang item lives at is already
 //! a fact both sides agree on, and spelling it out here costs no syntax. [`LangItem::path`] is
 //! the whole of that agreement: moving `Add` from `core::ops` to somewhere else means changing
@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, Path};
 use crate::diag::{DiagCtx, Diagnostic};
+use crate::driver::source::SrcSpan;
 use crate::hir::DefId;
-use crate::lexer::src_span::SrcSpan;
 use crate::nameres::symbol_table::SymbolTable;
 
 /// One definition in the core library that the compiler knows by name.

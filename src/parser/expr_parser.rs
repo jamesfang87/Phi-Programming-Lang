@@ -22,8 +22,7 @@ use crate::ast::{
 };
 
 use crate::ast::interner::Interner;
-use crate::driver::src_map::SrcMap;
-use crate::lexer::src_span::SrcSpan;
+use crate::driver::source::{SrcMap, SrcSpan};
 use crate::lexer::token::{Token, TokenKind};
 
 use super::{BoxedP, Extra, Parser};

@@ -10,10 +10,8 @@ use std::path::Path;
 use crate::ast::Ast;
 use crate::diag::DiagCtx;
 use crate::driver::cli::BuildOptions;
-use crate::driver::core_lib;
 use crate::driver::emit_debug;
-use crate::driver::file_collector;
-use crate::driver::src_map::SrcMap;
+use crate::driver::source::{SrcCollector, SrcMap};
 use crate::hir::lower::lower_unit;
 use crate::lexer::Lexer;
 use crate::lexer::token::Token;
@@ -23,8 +21,8 @@ use crate::typeck;
 
 /// Collects every `.phi` file under `root`, and the core library, into the source map.
 fn collect_sources(root: &Path) -> io::Result<()> {
-    file_collector::collect(root)?;
-    core_lib::register();
+    SrcCollector::collect(root)?;
+    SrcCollector::collect_core();
     Ok(())
 }
 
@@ -54,7 +52,7 @@ pub fn parse(token_streams: Vec<Vec<Token>>) -> Ast {
 /// Prints any diagnostics collected and reports whether compilation succeeded.
 ///
 /// Each stage's result is dumped to stdout if [`options.dumps`](BuildOptions::dumps) asks
-/// for it, in `SrcMap` order, which `file_collector` sorts to be reproducible. The AST dump
+/// for it, in `SrcMap` order, which `SrcCollector` sorts to be reproducible. The AST dump
 /// is what `phi build --ast` prints and what the golden tests under `tests/` snapshot; the
 /// rest are the hooks behind `--hir` and `--debug`. Unlike `--ast` and `--hir`, the `--debug`
 /// dumps resolve every `DefId` and `Symbol` to a name instead of leaving it a bare integer

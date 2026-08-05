@@ -14,12 +14,9 @@
 //! gets a full token stream to work with.
 
 use crate::diag::DiagCtx;
-use crate::lexer::{
-    src_span::SrcSpan,
-    token::{Token, TokenKind},
-};
+use crate::driver::source::SrcSpan;
+use crate::lexer::token::{Token, TokenKind};
 
-pub mod src_span;
 pub mod token;
 
 pub struct Lexer<'a> {
@@ -988,10 +985,10 @@ mod tests {
         DiagCtx::clear();
         let src = "let x = \"never closed\nlet y = '';\nlet z = @;\n";
         let chars: Vec<char> = src.chars().collect();
-        let offset = crate::driver::src_map::SrcMap::add_file(
+        let offset = crate::driver::source::SrcMap::add_file(
             "<test>".to_string(),
             chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
+            crate::driver::source::FileOrigin::User,
         );
 
         Lexer::new(&chars, offset).tokenize();

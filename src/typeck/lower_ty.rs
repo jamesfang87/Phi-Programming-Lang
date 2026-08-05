@@ -14,8 +14,8 @@
 //! the walk.
 
 use crate::diag::{DiagCtx, Diagnostic};
+use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, Node, OwnerNode, TyKind as HirTyKind};
-use crate::lexer::src_span::SrcSpan;
 use crate::nameres::results::{SelfTyRes, TypeRes};
 use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;

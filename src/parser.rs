@@ -16,8 +16,7 @@ use chumsky::prelude::*;
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, Ident, Item, ItemKind, ParsedSrcFile, Path};
 use crate::diag::{DiagCtx, Diagnostic};
-use crate::driver::src_map::SrcMap;
-use crate::lexer::src_span::SrcSpan;
+use crate::driver::source::{SrcMap, SrcSpan};
 use crate::lexer::token::{Token, TokenKind};
 
 type Extra<'a> = extra::Err<Rich<'a, Token>>;

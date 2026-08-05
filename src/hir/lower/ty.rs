@@ -1,9 +1,9 @@
 //! Lowers AST types.
 
 use crate::ast;
+use crate::driver::source::SrcSpan;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{HirId, TyKind};
-use crate::lexer::src_span::SrcSpan;
 
 impl OwnerLowerer<'_> {
     pub(super) fn lower_ty(&mut self, ty: &ast::Ty) -> HirId {

@@ -12,10 +12,8 @@
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, AstModule, Symbol};
-use crate::driver::src_file::FileOrigin;
-use crate::driver::src_map::SrcMap;
+use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
 use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
-use crate::lexer::src_span::SrcSpan;
 use crate::nameres::results::{NameResolutions, SelfTyRes, TypeRes, ValueRes};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
