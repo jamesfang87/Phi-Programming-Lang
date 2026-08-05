@@ -108,3 +108,4 @@ Item {
     },
 }
 === stderr ===
+note: code generation is not implemented yet; 'build' currently only checks
