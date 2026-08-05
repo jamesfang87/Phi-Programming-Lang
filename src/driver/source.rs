@@ -1,11 +1,3 @@
-//! Everything the compiler needs to read source text and address positions within it.
-//!
-//! A [`SrcSpan`] is a half-open range of *character* offsets into one global address space
-//! shared by every file the compiler has read. That is what lets a pipeline stage raise a
-//! diagnostic without knowing, or carrying, which file it came from. [`SrcMap`] owns that
-//! address space; [`SrcCollector`] fills it, first from the user's project and then from the
-//! embedded core library.
-
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -55,20 +47,14 @@ impl SrcSpan {
 }
 
 /// Where a source file came from.
-///
-/// The core library is compiled into every unit alongside the user's own files, so the two are
-/// otherwise indistinguishable by the time they reach the `SrcMap`. Stages that report on "the
-/// program" -- `--ast` dumping it, for one -- use this to tell them apart.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FileOrigin {
-    /// A file the user wrote, found under the project root by the `FileCollector`.
+    /// A file the user wrote, found under the project root by the `SrcCollector`.
     User,
     /// A file of the core library, embedded in the compiler binary itself.
     Core,
 }
 
-/// A single source file the compiler has read, addressed within the shared `SrcMap` offset
-/// space rather than at file-local offsets.
 pub struct SrcFile {
     pub name: String,
     pub content: Vec<char>,
@@ -80,10 +66,6 @@ pub struct SrcFile {
 }
 
 impl SrcFile {
-    /// Creates a new `SrcFile` and precomputes its line-start offsets.
-    ///
-    /// Precomputing lets [`SrcFile::line_col`] locate a position with a binary search instead
-    /// of rescanning the file on every call.
     pub fn new(name: String, content: Vec<char>, origin: FileOrigin, global_offset: usize) -> Self {
         // Line 1 starts at the file's own global offset.
         let mut line_starts = vec![global_offset];
@@ -105,7 +87,7 @@ impl SrcFile {
         }
     }
 
-    /// Converts a *global* offset that falls within this file into a 1-based (line, column).
+    /// Converts a global offset that falls within this file into a 1-based (line, column).
     pub fn line_col(&self, pos: usize) -> (usize, usize) {
         // Binary search for the line this position falls on: the largest line start that is
         // less than or equal to `pos`.
@@ -200,11 +182,7 @@ impl SrcMap {
     }
 }
 
-/// Every file of the core library, as `(name, source)`.
-///
-/// The names are what diagnostics pointing into `core` are rendered against, so they're written
-/// as paths relative to the compiler's own `lib/` directory rather than the absolute paths the
-/// files had when the binary was built.
+/// Every file of the core library as `(name, source)`.
 const CORE_FILES: &[(&str, &str)] = &[
     ("core/iter.phi", include_str!("../../lib/core/iter.phi")),
     ("core/ops.phi", include_str!("../../lib/core/ops.phi")),
@@ -234,7 +212,7 @@ impl SrcCollector {
     /// tree exactly as it does the user's -- nothing downstream needs to know `core` is
     /// special.
     ///
-    /// The one thing that is special is *when* they're registered: this runs after
+    /// The one thing that is special is when they're registered: this runs after
     /// [`SrcCollector::collect`] has walked the project, so `core` sits at the end of the
     /// offset space and editing it doesn't shift the span of every user file in the build.
     ///

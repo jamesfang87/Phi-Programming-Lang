@@ -1,14 +1,3 @@
-//! The compilation commands: `check`, `build`, and `run`.
-//!
-//! Each collects the project's source files, then drives them through the lexer, parser,
-//! lowering, name resolution, and type checking. Diagnostics raised along the way go straight
-//! to the `DiagCtx` singleton rather than being threaded through this pipeline, and are
-//! reported once at the end -- stages are deliberately not gated on whether an earlier one
-//! raised an error, because the error variants in the AST and HIR let later stages skip
-//! malformed input and keep reporting on the parts of the program that are well-formed.
-//!
-//! `build` and `run` are `check` plus stages that do not exist yet. They say so and stop.
-
 use std::io;
 use std::path::Path;
 
@@ -39,10 +28,6 @@ fn collect_sources(src_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Says so, once, for each requested dump whose stage does not exist yet.
-///
-/// These are notes rather than diagnostics: they are about the compiler's own maturity, not
-/// about the user's program, so they neither go through `DiagCtx` nor affect the exit code.
 fn note_unimplemented_dumps(options: &BuildOptions) {
     if options.dumps.mir {
         eprintln!("note: MIR lowering is not implemented yet; --mir has no effect");
@@ -72,17 +57,6 @@ pub fn parse(token_streams: Vec<Vec<Token>>) -> Ast {
     Parser::new().parse_all(&streams)
 }
 
-/// Compiles the project without producing an artifact: collects sources, lexes, parses,
-/// lowers, resolves names, and type checks.
-///
-/// Prints any diagnostics collected and returns whether compilation succeeded.
-///
-/// Each stage's result is dumped to stdout if [`options.dumps`](BuildOptions::dumps) asks for
-/// it, in `SrcMap` order, which [`SrcCollector`] sorts to be reproducible. The AST dump is
-/// what `phi build --ast` prints and what the golden tests under `tests/` snapshot; the rest
-/// are the hooks behind `--hir` and `--emit-debug`. Unlike `--ast` and `--hir`, the
-/// `--emit-debug` dumps resolve every `DefId` and `Symbol` to a name instead of leaving it a
-/// bare integer -- see [`crate::driver::emit_debug`].
 pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
     note_unimplemented_dumps(options);
     collect_sources(&config.src_dir)?;
@@ -121,9 +95,6 @@ pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
     Ok(!DiagCtx::has_errors())
 }
 
-/// Compiles the project and produces an artifact.
-///
-/// Identical to [`check`] until there is a code generation backend to be different from it.
 pub fn build(config: &Config, options: &BuildOptions) -> io::Result<bool> {
     if !check(config, options)? {
         return Ok(false);
@@ -132,9 +103,6 @@ pub fn build(config: &Config, options: &BuildOptions) -> io::Result<bool> {
     Ok(true)
 }
 
-/// Builds the project and runs the resulting artifact.
-///
-/// There is no artifact yet, so this reports that and fails.
 pub fn run(config: &Config) -> io::Result<bool> {
     if !build(config, &BuildOptions::default())? {
         return Ok(false);

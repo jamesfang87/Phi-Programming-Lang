@@ -1,10 +1,3 @@
-//! The command line: what `phi` was asked to do, and the project it was asked to do it in.
-//!
-//! Arguments collect into two constructs. [`CliArgs`] is the command that was named plus
-//! whatever options it was given. [`Config`] is the project's own settings, read from its
-//! `Phi.toml` manifest. Commands that compile something need both; `new` and `init` need
-//! neither, since they run before a project exists.
-
 use std::env;
 use std::fs;
 use std::io;
@@ -14,10 +7,6 @@ use serde::Deserialize;
 
 use crate::driver::{pipeline, project};
 
-/// Which of the pipeline's intermediate results to print.
-///
-/// `--emit-debug` sets every one of these that has a stage behind it, so each stage asks a
-/// single flag rather than re-deriving `print_ast || debug` for itself.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Dumps {
     pub ast: bool,
@@ -28,14 +17,9 @@ pub struct Dumps {
     pub typeck: bool,
 }
 
-/// Everything `phi build` or `phi check` was asked to do, beyond compiling.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BuildOptions {
     pub dumps: Dumps,
-
-    /// Drops the core library -- which is linked into every build -- out of the `--hir`,
-    /// nameres, and typeck *dumps*. It has no effect on compilation itself, which is what
-    /// the name is meant to make plain.
     pub exclude_core_in_emit: bool,
 }
 
@@ -50,11 +34,6 @@ impl BuildOptions {
         "--no-emit-core",
     ];
 
-    /// Parses the arguments following `build` or `check`, or explains what was wrong with
-    /// them.
-    ///
-    /// The unknown-argument check lives here rather than at the call site so that the list of
-    /// flags and the message naming them cannot drift apart.
     pub fn from_args(args: &[String]) -> Result<Self, String> {
         if let Some(unknown) = args.iter().find(|a| !Self::KNOWN.contains(&a.as_str())) {
             let known = Self::KNOWN.join("', '");
@@ -64,9 +43,6 @@ impl BuildOptions {
         }
 
         let has = |flag: &str| args.iter().any(|a| a == flag);
-        // `--emit-debug` dumps every stage that exists, including the name resolution and
-        // type checking results, which have no flag of their own. It deliberately leaves
-        // `mir` and `llvm` alone, so it never trips the not-implemented notes.
         let debug = has("--emit-debug");
 
         Ok(BuildOptions {
@@ -83,7 +59,6 @@ impl BuildOptions {
     }
 }
 
-/// Whether the project is built for debugging or for release.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     #[default]
@@ -91,7 +66,6 @@ pub enum Mode {
     Release,
 }
 
-/// A project's settings, as read from its `Phi.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub name: String,
@@ -104,8 +78,6 @@ pub struct Config {
     pub src_dir: PathBuf,
 }
 
-/// The on-disk shape of `Phi.toml`, kept separate from [`Config`] so the manifest's schema
-/// can differ from what the rest of the compiler wants to be handed.
 #[derive(Deserialize)]
 struct Manifest {
     project: ManifestProject,
@@ -129,8 +101,6 @@ impl Config {
     pub const MANIFEST: &'static str = "Phi.toml";
 
     /// Reads and parses `cwd/Phi.toml`.
-    ///
-    /// The error is a message ready to print, since every caller does exactly that.
     pub fn load(cwd: &Path) -> Result<Config, String> {
         let path = cwd.join(Self::MANIFEST);
         let text = fs::read_to_string(&path)
@@ -138,8 +108,6 @@ impl Config {
         Self::from_str(&text, cwd).map_err(|e| format!("in `{}`: {e}", path.display()))
     }
 
-    /// Parses manifest text for a project rooted at `root`. Split out from [`Config::load`]
-    /// so it can be tested without touching the filesystem.
     fn from_str(text: &str, root: &Path) -> Result<Config, String> {
         let manifest: Manifest = toml::from_str(text).map_err(|e| e.to_string())?;
 
@@ -164,7 +132,7 @@ impl Config {
     }
 }
 
-/// Every command `phi` accepts, carrying whatever options that command was given.
+/// Every command `phi` accepts
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliArgs {
     Build(BuildOptions),
@@ -217,9 +185,6 @@ pub fn print_usage() {
     eprintln!("  {prog} help");
 }
 
-/// Parses `args`, dispatches, and returns the process exit code.
-///
-/// `args` is everything after the program name.
 pub fn main(args: &[String]) -> i32 {
     let parsed = match CliArgs::from_args(args) {
         Ok(parsed) => parsed,
@@ -256,9 +221,6 @@ fn exit_code(result: io::Result<bool>) -> i32 {
 }
 
 /// Loads the current directory's manifest and hands it to `command`.
-///
-/// The three compilation commands all need a [`Config`] and none of the scaffolding commands
-/// do, so the loading lives here rather than in `main`'s match arms.
 fn with_config(command: impl FnOnce(&Config) -> io::Result<bool>) -> i32 {
     let config = match Config::load(Path::new(".")) {
         Ok(config) => config,
