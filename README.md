@@ -18,12 +18,6 @@ fun main() {
 
 ### Running a program
 
-You can run and compile a single Phi file as so:
-
-```
-phi run hello.phi
-```
-
 A multi-file project is organized around a `Phi.toml` manifest at the project root root, with source files inside a `src/` directory. To create a new project, you can use the following two commands:
 
 ```
