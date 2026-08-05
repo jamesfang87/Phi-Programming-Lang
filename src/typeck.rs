@@ -22,7 +22,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Literal, Mutability, SelfMode};
+use crate::ast::{Literal, Mutability, SelfMode, UnaryOp};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{
@@ -529,7 +529,14 @@ impl<'hir> Typeck<'hir> {
                     }
                 }
             }
-            ExprKind::Unary { .. } => todo!("check_expr: Unary"),
+            ExprKind::Unary { op, operand } => {
+                match op {
+                    UnaryOp::Neg => {}
+                    UnaryOp::Not => {}
+                }
+
+                todo!("check_expr: Unary")
+            }
             ExprKind::Binary { lhs, rhs, .. } => {
                 let (lhs, rhs) = (self.ty_of(*lhs), self.ty_of(*rhs));
                 if let Err(error) = self.unifier.unify(&self.tcx, lhs, rhs) {
