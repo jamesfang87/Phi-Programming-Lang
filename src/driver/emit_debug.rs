@@ -7,8 +7,6 @@ use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
-/// Whether `def_id` was declared in a file the user wrote, as opposed to the core library that's
-/// linked into every build.
 fn is_user_def(hir: &Hir, def_id: DefId) -> bool {
     is_user_span(hir.def(def_id).span())
 }
@@ -17,8 +15,6 @@ fn fmt_symbol(sym: Symbol) -> String {
     format!("{} (symbol: {})", Interner::resolve(sym), sym.id())
 }
 
-/// The name a `DefId` was declared with. `Extend` and `Closure` never have one, so they get a
-/// placeholder instead.
 fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
     match hir.def(def_id) {
         OwnerNode::Module(m) => m
@@ -41,7 +37,6 @@ fn fmt_def(hir: &Hir, def_id: DefId) -> String {
     format!("{} ({hir_id:?})", def_name(hir, def_id))
 }
 
-/// The kind of HIR node, as `Category::Variant` (e.g. `Expr::Call`, `Pat::Binding`).
 fn node_kind(node: &Node) -> String {
     fn variant_name<T: std::fmt::Debug>(value: &T) -> String {
         let debug = format!("{value:?}");
@@ -80,10 +75,6 @@ fn snippet(text: &str) -> String {
     }
 }
 
-/// A one-line "what is this" summary for a [`HirId`]: its node kind, the source text its span
-/// covers, and where that span is. Falls back to just the kind if the span doesn't land inside
-/// any file the compiler has read, which shouldn't happen for a real HIR node but isn't worth a
-/// panic in a debug dump.
 fn fmt_node_summary(hir: &Hir, hir_id: HirId) -> String {
     let node = hir.node(hir_id);
     let kind = node_kind(node);
@@ -101,10 +92,7 @@ fn fmt_node_summary(hir: &Hir, hir_id: HirId) -> String {
     }
 }
 
-/// One indent level, in spaces. Everything below builds its own multi-line output by hand
-/// rather than going through `{:#?}`, since the whole point is substituting a resolved name in
-/// where a derived `Debug` would print a bare `Symbol` or `DefId` -- so nesting depth has to be
-/// tracked manually too.
+/// One indent level, in spaces.
 const INDENT: &str = "    ";
 
 fn pad(indent: usize) -> String {
@@ -233,8 +221,6 @@ fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
     }
 }
 
-/// Whether `span` sits in a file the user wrote, as opposed to the core library that's linked
-/// into every build.
 fn is_user_span(span: SrcSpan) -> bool {
     matches!(
         SrcMap::file_containing(span.get_begin()).map(|file| file.origin),
@@ -242,13 +228,6 @@ fn is_user_span(span: SrcSpan) -> bool {
     )
 }
 
-/// Pretty-prints the parsed AST, module by module. The core library is always left out, since it
-/// isn't part of the program the user asked to see. This is the hook `phi build --ast` (and
-/// `--debug`) uses, and what the golden tests under `tests/` snapshot.
-///
-/// Modules, not files, are the unit here: the parser hands back an [`Ast`], which has already
-/// merged every file declaring into the same module. A module the user contributed nothing to is
-/// skipped entirely, so a build's own modules aren't buried under the core library's.
 pub fn print_ast(ast: &Ast) {
     for mod_id in ast.mod_ids() {
         let module = ast.module(mod_id);
@@ -290,12 +269,6 @@ fn fmt_mod_path(module: &AstModule) -> String {
         .join("::")
 }
 
-/// Pretty-prints the lowered HIR for the whole unit. This is the hook `phi build --hir` uses.
-///
-/// With `exclude_core_in_emit` unset, this is a single `{hir:#?}` dump of everything, core library
-/// included. With it set, the core library is left out by walking every definition
-/// individually and skipping the ones it owns, since [`Hir`]'s derived `Debug` has no way to
-/// filter partway through.
 pub fn print_hir(hir: &Hir, exclude_core_in_emit: bool) {
     if !exclude_core_in_emit {
         println!("{hir:#?}");
@@ -311,10 +284,6 @@ pub fn print_hir(hir: &Hir, exclude_core_in_emit: bool) {
     }
 }
 
-/// Prints every entry of `results`, resolving each [`Symbol`] to its interned string and each
-/// [`DefId`] to its name and [`HirId`]. This is part of the `phi build --debug` dump.
-///
-/// With `exclude_core_in_emit` set, entries belonging to the core library are left out.
 pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core_in_emit: bool) {
     let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(hir, def_id);
 
@@ -366,10 +335,6 @@ pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core_in_emit:
     }
 }
 
-/// Prints every entry of `results`, resolving each [`Ty`] handle to its structure and each
-/// [`DefId`] inside it to its name and [`HirId`]. This is part of the `phi build --debug` dump.
-///
-/// With `exclude_core_in_emit` set, entries belonging to the core library are left out.
 pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_core_in_emit: bool) {
     let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(hir, def_id);
 

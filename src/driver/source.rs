@@ -106,10 +106,6 @@ impl SrcFile {
 }
 
 /// Mutable state for the global source map.
-///
-/// Tracks every file added so far, plus the running offset at which the next file gets
-/// appended. Files are never removed, and each `SrcFile` is leaked to `'static` when added,
-/// so handing out `&'static SrcFile` references stays sound even as this list grows.
 struct SrcMapState {
     files: Vec<&'static SrcFile>,
     cur_offset: usize,
@@ -127,10 +123,6 @@ fn state() -> &'static Mutex<SrcMapState> {
 }
 
 /// Namespace for the process-wide source map.
-///
-/// Every source file the compiler has read is indexed here by a shared global char-offset
-/// space, so spans can be resolved back to text without threading a source reference through
-/// every stage of the pipeline.
 pub struct SrcMap;
 
 impl SrcMap {
