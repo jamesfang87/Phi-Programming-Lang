@@ -348,7 +348,12 @@ impl<'hir> Typeck<'hir> {
     ) {
         let names: Vec<String> = missing
             .iter()
-            .map(|&declaration| format!("`{}`", Interner::resolve(self.function(declaration).name.text)))
+            .map(|&declaration| {
+                format!(
+                    "`{}`",
+                    Interner::resolve(self.function(declaration).name.text)
+                )
+            })
             .collect();
         let (plural, these) = if missing.len() == 1 {
             ("", "this")

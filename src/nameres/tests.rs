@@ -187,7 +187,11 @@ fn a_let_else_block_is_resolved() {
     let (hir, nameres) = resolve_src("fun f(x: i32) { let y = g() else { h(x); }; }");
     let def = first_function(&hir);
     let refs = refs_to(&hir, def, "x");
-    assert_eq!(refs.len(), 1, "fixture names `x` once, inside the else block");
+    assert_eq!(
+        refs.len(),
+        1,
+        "fixture names `x` once, inside the else block"
+    );
     assert!(
         matches!(nameres.value(refs[0]), Some(ValueRes::Local(_))),
         "`x` inside the let-else block was never resolved"

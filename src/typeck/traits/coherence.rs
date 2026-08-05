@@ -179,7 +179,10 @@ impl<'hir> Typeck<'hir> {
                 ),
                 second.span,
             )
-            .with_label(format!("duplicate definition of `{}`", Interner::resolve(name)))
+            .with_label(format!(
+                "duplicate definition of `{}`",
+                Interner::resolve(name)
+            ))
             .with_secondary(
                 first.span,
                 format!(

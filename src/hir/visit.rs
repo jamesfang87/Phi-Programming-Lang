@@ -22,7 +22,7 @@
 //! program before it checks any body -- so the choice belongs to the pass rather than the walk.
 
 use crate::hir::{
-    AccessArgs, DefId, ExprKind, Hir, HirId, OwnerNode, Payload, PatKind, StmtKind, TyKind,
+    AccessArgs, DefId, ExprKind, Hir, HirId, OwnerNode, PatKind, Payload, StmtKind, TyKind,
     VariantPayload,
 };
 

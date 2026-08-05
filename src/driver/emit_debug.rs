@@ -314,12 +314,12 @@ fn fmt_mod_path(module: &AstModule) -> String {
 
 /// Pretty-prints the lowered HIR for the whole unit. This is the hook `phi build --hir` uses.
 ///
-/// With `exclude_core` unset, this is a single `{hir:#?}` dump of everything, core library
+/// With `exclude_core_in_emit` unset, this is a single `{hir:#?}` dump of everything, core library
 /// included. With it set, the core library is left out by walking every definition
 /// individually and skipping the ones it owns, since [`Hir`]'s derived `Debug` has no way to
 /// filter partway through.
-pub fn print_hir(hir: &Hir, exclude_core: bool) {
-    if !exclude_core {
+pub fn print_hir(hir: &Hir, exclude_core_in_emit: bool) {
+    if !exclude_core_in_emit {
         println!("{hir:#?}");
         return;
     }
@@ -336,9 +336,9 @@ pub fn print_hir(hir: &Hir, exclude_core: bool) {
 /// Prints every entry of `results`, resolving each [`Symbol`] to its interned string and each
 /// [`DefId`] to its name and [`HirId`]. This is part of the `phi build --debug` dump.
 ///
-/// With `exclude_core` set, entries belonging to the core library are left out.
-pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core: bool) {
-    let keep = |def_id: DefId| !exclude_core || is_user_def(hir, def_id);
+/// With `exclude_core_in_emit` set, entries belonging to the core library are left out.
+pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core_in_emit: bool) {
+    let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(hir, def_id);
 
     println!("=== NameResolution results: values ===");
     for (hir_id, res) in results.iter_values().filter(|(id, _)| keep(id.owner)) {
@@ -391,9 +391,9 @@ pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core: bool) {
 /// Prints every entry of `results`, resolving each [`Ty`] handle to its structure and each
 /// [`DefId`] inside it to its name and [`HirId`]. This is part of the `phi build --debug` dump.
 ///
-/// With `exclude_core` set, entries belonging to the core library are left out.
-pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_core: bool) {
-    let keep = |def_id: DefId| !exclude_core || is_user_def(hir, def_id);
+/// With `exclude_core_in_emit` set, entries belonging to the core library are left out.
+pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_core_in_emit: bool) {
+    let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(hir, def_id);
 
     println!("=== TypeCk results ===");
     for (hir_id, ty) in results.iter().filter(|(id, _)| keep(id.owner)) {

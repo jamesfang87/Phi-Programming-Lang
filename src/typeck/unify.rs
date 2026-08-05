@@ -211,7 +211,8 @@ impl Unifier {
             tcx.kind(root),
         );
 
-        self.sizes.insert(root, self.sizes[&root] + self.sizes[&child]);
+        self.sizes
+            .insert(root, self.sizes[&root] + self.sizes[&child]);
         self.parents.insert(child, root);
         Ok(())
     }
@@ -1284,10 +1285,7 @@ mod tests {
 
         assert_eq!(
             u.unify(&tcx, var, tuple),
-            Err(UnifyError::Infinite {
-                var,
-                ty: tuple
-            })
+            Err(UnifyError::Infinite { var, ty: tuple })
         );
         // The refused bind leaves the variable free.
         assert_eq!(u.root(var), var);

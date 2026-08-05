@@ -238,9 +238,9 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{lex_src, parse_src};
     use crate::ast::*;
     use crate::diag::DiagCtx;
+    use crate::testing::{lex_src, parse_src};
 
     /// Lexes and parses `src`, returning how many diagnostics were raised. Unlike
     /// [`parse_src`], this asserts nothing, so it can exercise the error paths.

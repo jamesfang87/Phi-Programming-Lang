@@ -6,7 +6,6 @@
 //! child nodes into the arena and addresses it by [`LocalId`].
 
 use crate::hir::HirId;
-use crate::lexer::src_span::SrcSpan;
 use crate::hir::block::{Block, Stmt};
 use crate::hir::expr::Expr;
 use crate::hir::items::{
@@ -15,6 +14,7 @@ use crate::hir::items::{
 };
 use crate::hir::pat::{Arm, Pat};
 use crate::hir::types::Ty;
+use crate::lexer::src_span::SrcSpan;
 
 /// One node of the HIR.
 #[derive(Debug)]

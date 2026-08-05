@@ -1427,8 +1427,16 @@ mod tests {
         };
 
         let candidates = [
-            candidate(CandidateSource::Trait(a), method_of(&checker, a, "size"), foo_ty),
-            candidate(CandidateSource::Trait(b), method_of(&checker, b, "size"), foo_ty),
+            candidate(
+                CandidateSource::Trait(a),
+                method_of(&checker, a, "size"),
+                foo_ty,
+            ),
+            candidate(
+                CandidateSource::Trait(b),
+                method_of(&checker, b, "size"),
+                foo_ty,
+            ),
         ];
         assert!(checker.pick(&candidates, member).is_none());
         assert_eq!(

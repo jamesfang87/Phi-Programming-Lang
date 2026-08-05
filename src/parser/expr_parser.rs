@@ -17,8 +17,8 @@ use chumsky::prelude::*;
 use chumsky::recursive::Indirect;
 
 use crate::ast::{
-    AccessArgs, Arm, BinaryOp, Block, ClosureParam, Expr, ExprKind, Ident,
-    Literal, Mutability, Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp, WithLend,
+    AccessArgs, Arm, BinaryOp, Block, ClosureParam, Expr, ExprKind, Ident, Literal, Mutability,
+    Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp, WithLend,
 };
 
 use crate::ast::interner::Interner;
@@ -1047,9 +1047,9 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::lex_src;
     use crate::ast::PatKind;
     use crate::ast::interner::Interner;
+    use crate::testing::lex_src;
 
     fn parse_expr(src: &str) -> Expr {
         let (tokens, _) = lex_src(src);
@@ -1353,7 +1353,10 @@ mod tests {
         match &expr.kind {
             ExprKind::Ctor { payload, .. } => {
                 assert_eq!(payload.len(), 1);
-                assert!(matches!(payload[0].value.as_ref().unwrap().kind, ExprKind::Ctor { .. }));
+                assert!(matches!(
+                    payload[0].value.as_ref().unwrap().kind,
+                    ExprKind::Ctor { .. }
+                ));
             }
             other => panic!("expected a ctor expr, got {other:?}"),
         }
@@ -1632,7 +1635,10 @@ mod tests {
                 match &args[0].kind {
                     ExprKind::Ctor { payload, .. } => {
                         assert_eq!(payload.len(), 1);
-                        assert!(matches!(payload[0].value.as_ref().unwrap().kind, ExprKind::Access { .. }));
+                        assert!(matches!(
+                            payload[0].value.as_ref().unwrap().kind,
+                            ExprKind::Access { .. }
+                        ));
                     }
                     other => panic!("expected a ctor expr, got {other:?}"),
                 }

@@ -1,5 +1,4 @@
 use super::*;
-use crate::testing::{lower_src, parse_src};
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, BinaryOp, Ident, ModuleDecl, Mutability, Path, UnaryOp, Visibility};
 use crate::hir::ids::{DefId, HirId};
@@ -8,6 +7,7 @@ use crate::hir::{
     Module, Node, OwnerNode, Param, Pat, PatKind, Payload, Stmt, StmtKind, Struct, Trait, Ty,
     TyKind, VariantPayload,
 };
+use crate::testing::{lower_src, parse_src};
 
 // -----------------------------------------------------------------
 // Driving the pipeline
@@ -600,10 +600,7 @@ fn lowers_if_and_match_exprs() {
                     let Payload::Single(inner) = payload else {
                         panic!("expected a single payload, got {payload:?}")
                     };
-                    assert!(matches!(
-                        pat(&hir, *inner).kind,
-                        PatKind::Binding { .. }
-                    ));
+                    assert!(matches!(pat(&hir, *inner).kind, PatKind::Binding { .. }));
                 }
                 other => panic!("expected a variant pattern, got {other:?}"),
             }
@@ -834,10 +831,7 @@ fn lowers_break_continue_return_defer_stmts() {
         stmt(&hir, body.stmts[1]).kind,
         StmtKind::Return(Some(_))
     ));
-    assert!(matches!(
-        stmt(&hir, body.stmts[2]).kind,
-        StmtKind::Defer(_)
-    ));
+    assert!(matches!(stmt(&hir, body.stmts[2]).kind, StmtKind::Defer(_)));
 }
 
 #[test]
@@ -938,10 +932,7 @@ fn if_let_desugars_to_a_match() {
         ExprKind::Match { arms, .. } => {
             assert_eq!(arms.len(), 2);
             let first = arm(&hir, arms[0]);
-            assert!(matches!(
-                pat(&hir, first.pat).kind,
-                PatKind::Variant { .. }
-            ));
+            assert!(matches!(pat(&hir, first.pat).kind, PatKind::Variant { .. }));
             let second = arm(&hir, arms[1]);
             assert!(matches!(pat(&hir, second.pat).kind, PatKind::Wildcard));
         }
@@ -968,9 +959,7 @@ fn an_expression_bodied_arm_is_wrapped_in_a_block() {
         "a wrapped expression body has no statements"
     );
     assert!(matches!(
-        expr(&hir, arm_block.expr.expect("the expression is the tail")
-        )
-        .kind,
+        expr(&hir, arm_block.expr.expect("the expression is the tail")).kind,
         ExprKind::Literal(_)
     ));
 }
@@ -992,7 +981,9 @@ fn an_expression_bodied_closure_is_wrapped_in_a_block() {
     let closure_block = block(&hir, c.block);
     assert!(closure_block.stmts.is_empty());
     assert!(matches!(
-        expr(&hir, closure_block.expr.expect("the expression is the tail")
+        expr(
+            &hir,
+            closure_block.expr.expect("the expression is the tail")
         )
         .kind,
         ExprKind::Path(_)
@@ -1014,9 +1005,8 @@ fn else_if_lowers_to_a_block_holding_the_nested_if() {
 
     // The `else if` is the wrapping block's tail value, not a statement.
     assert!(outer_else.stmts.is_empty());
-    let ExprKind::If { else_block, .. } = &expr(&hir, outer_else.expr.expect("the nested if is the tail"),
-    )
-    .kind
+    let ExprKind::If { else_block, .. } =
+        &expr(&hir, outer_else.expr.expect("the nested if is the tail")).kind
     else {
         panic!("expected the else to hold a nested if expr")
     };
@@ -1077,10 +1067,7 @@ fn while_let_desugars_to_a_loop_around_a_match() {
                 PatKind::Variant { .. }
             ));
             let break_arm = arm(&hir, arms[1]);
-            assert!(matches!(
-                pat(&hir, break_arm.pat).kind,
-                PatKind::Wildcard
-            ));
+            assert!(matches!(pat(&hir, break_arm.pat).kind, PatKind::Wildcard));
             let b = block(&hir, break_arm.block);
             assert!(matches!(stmt(&hir, b.stmts[0]).kind, StmtKind::Break));
         }

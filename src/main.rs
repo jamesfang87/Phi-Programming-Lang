@@ -17,8 +17,8 @@ mod parser;
 mod testing;
 mod typeck;
 
+use crate::driver::cli::BuildOptions;
 use crate::driver::compiler;
-use crate::driver::options::BuildOptions;
 use std::env;
 use std::path::Path;
 
