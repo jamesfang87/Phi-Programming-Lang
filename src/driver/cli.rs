@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-// `use crate::driver::{pipeline, project};` belongs here, but neither module exists yet.
-// Task 3 adds `project` and Task 4 adds `pipeline`, each alongside the code that uses it.
+use crate::driver::project;
+// `use crate::driver::pipeline;` belongs here too, but `pipeline` doesn't exist yet.
+// Task 4 adds it alongside the dispatch code that uses it.
 
 /// Which of the pipeline's intermediate results to print.
 ///
