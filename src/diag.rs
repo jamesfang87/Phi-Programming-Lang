@@ -11,8 +11,7 @@ use std::ops::Range;
 
 use ariadne::{Color, Config, Fmt, Label, Report, ReportKind, sources};
 
-use crate::driver::src_map::SrcMap;
-use crate::lexer::src_span::SrcSpan;
+use crate::driver::source::{SrcMap, SrcSpan};
 
 /// How serious a diagnostic is.
 ///
@@ -408,7 +407,7 @@ impl DiagCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::src_file::FileOrigin;
+    use crate::driver::source::FileOrigin;
 
     fn messages(diagnostics: Vec<Diagnostic>) -> Vec<String> {
         diagnostics.into_iter().map(|d| d.message).collect()

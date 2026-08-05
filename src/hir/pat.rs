@@ -4,9 +4,9 @@
 #![allow(dead_code)]
 
 use crate::ast::{Ident, Literal};
+use crate::driver::source::SrcSpan;
 use crate::hir::expr::Payload;
 use crate::hir::ids::HirId;
-use crate::lexer::src_span::SrcSpan;
 
 #[derive(Debug)]
 pub struct Pat {

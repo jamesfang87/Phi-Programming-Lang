@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{Ident, Import, Item, ParsedSrcFile, Path, Symbol};
-use crate::lexer::src_span::SrcSpan;
+use crate::driver::source::SrcSpan;
 
 /// Identifies one module in an [`Ast`]. Modules are numbered densely from the root, and a
 /// module's ancestors are always numbered before it.

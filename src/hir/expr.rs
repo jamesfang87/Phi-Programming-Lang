@@ -9,8 +9,8 @@
 #![allow(dead_code)]
 
 use crate::ast::{BinaryOp, Ident, Literal, Mutability, Path, UnaryOp};
+use crate::driver::source::SrcSpan;
 use crate::hir::ids::{DefId, HirId};
-use crate::lexer::src_span::SrcSpan;
 
 #[derive(Debug)]
 pub struct Expr {

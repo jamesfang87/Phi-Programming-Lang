@@ -252,7 +252,7 @@ mod tests {
     use super::*;
     use crate::ast::interner::Interner;
     use crate::ast::{ExprKind, Literal};
-    use crate::driver::src_map::SrcMap;
+    use crate::driver::source::SrcMap;
     use crate::lexer::Lexer;
     use crate::testing::lex_src;
 
@@ -274,7 +274,7 @@ mod tests {
         let offset = SrcMap::add_file(
             "<test>".to_string(),
             chars.clone(),
-            crate::driver::src_file::FileOrigin::User,
+            crate::driver::source::FileOrigin::User,
         );
         let tokens = Lexer::new(&chars, offset).tokenize();
         let parser = Parser::new();

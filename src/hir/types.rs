@@ -3,8 +3,8 @@
 //! with internally.
 
 use crate::ast::{Mutability, Path};
+use crate::driver::source::SrcSpan;
 use crate::hir::ids::HirId;
-use crate::lexer::src_span::SrcSpan;
 
 #[derive(Debug)]
 pub struct Ty {

@@ -20,8 +20,8 @@ use std::collections::HashMap;
 
 use crate::ast::Symbol;
 use crate::diag::{DiagCtx, Diagnostic};
+use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode};
-use crate::lexer::src_span::SrcSpan;
 use crate::nameres::results::{SelfTyRes, TypeRes};
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;

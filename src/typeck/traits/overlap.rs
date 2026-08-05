@@ -315,8 +315,8 @@ fn zip(a: &[Ty], b: &[Ty]) -> Vec<(Ty, Ty)> {
 mod tests {
     use super::*;
     use crate::ast::Mutability;
+    use crate::driver::source::SrcSpan;
     use crate::hir::DefId;
-    use crate::lexer::src_span::SrcSpan;
     use crate::nameres::results::PrimTy;
     use crate::typeck::traits::TraitRef;
 

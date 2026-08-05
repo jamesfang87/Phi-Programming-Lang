@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::ast::interner::Interner;
-use crate::driver::src_map::SrcMap;
-use crate::lexer::{src_span::SrcSpan, token::Token, unescape};
+use crate::driver::source::{SrcMap, SrcSpan};
+use crate::lexer::{token::Token, unescape};
 
 impl Expr {
     pub fn new(kind: ExprKind, span: SrcSpan) -> Self {

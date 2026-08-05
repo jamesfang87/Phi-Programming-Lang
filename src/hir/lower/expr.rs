@@ -2,10 +2,10 @@
 
 use crate::ast;
 use crate::ast::Path;
+use crate::driver::source::SrcSpan;
 use crate::hir::ids::DefId;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{AccessArgs, Closure, ExprKind, HirId, OwnerNode, Payload, PayloadField};
-use crate::lexer::src_span::SrcSpan;
 
 impl OwnerLowerer<'_> {
     pub(super) fn lower_expr(&mut self, e: &ast::Expr) -> HirId {
