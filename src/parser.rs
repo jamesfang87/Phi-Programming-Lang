@@ -34,11 +34,11 @@ mod type_parser;
 /// or a file offset -- [`Parser::kind`] filters on a token's kind, and the leaf parsers reach
 /// the source text through the global [`SrcMap`] -- so one built grammar parses every file in a
 /// build. That is what [`Parser::parse_all`] exploits; see its docs for why it matters.
-pub struct Parser;
+pub struct Parser {}
 
 impl Parser {
     pub fn new() -> Self {
-        Parser
+        Parser {}
     }
 
     /// Parses one file's token stream into a [`ParsedSrcFile`], reporting errors through

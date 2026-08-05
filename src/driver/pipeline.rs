@@ -37,8 +37,8 @@ fn note_unimplemented_dumps(options: &BuildOptions) {
     }
 }
 
-/// Lexes every collected file, in `SrcMap` order.
 pub fn lex() -> Vec<Vec<Token>> {
+    // TODO: write this with .into_iter() and maps
     let mut token_streams = Vec::with_capacity(SrcMap::files().len());
     for file in SrcMap::files() {
         let mut lexer = Lexer::new(&file.content, file.global_offset);
@@ -47,7 +47,6 @@ pub fn lex() -> Vec<Vec<Token>> {
     token_streams
 }
 
-/// Parses every collected file's token stream into the build's [`Ast`].
 pub fn parse(token_streams: Vec<Vec<Token>>) -> Ast {
     let streams: Vec<(Vec<Token>, usize)> = token_streams
         .into_iter()
