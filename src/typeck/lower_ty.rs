@@ -63,7 +63,10 @@ impl<'hir> Typeck<'hir> {
                 self.tcx.mk_fun(params, ret)
             }
             HirTyKind::SelfType => self.self_ty(id.owner, span),
-            HirTyKind::Dyn(_) => self.lower_dyn(id, span),
+            HirTyKind::Dyn { args, .. } => {
+                let args: Vec<HirId> = args.clone();
+                self.lower_dyn(id, &args, span)
+            }
             HirTyKind::Error => self.tcx.error(),
         };
 
@@ -134,29 +137,26 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Lowers `dyn Trait`. The HIR carries no generic arguments for the trait yet, so an
-    /// implemented-with-arguments trait such as `dyn Index<K, V>` cannot be written; the
-    /// argument list here is always empty.
+    /// Lowers `dyn Trait`, or `dyn Trait<K, V>` for a trait that declares parameters.
     ///
-    /// Which makes `dyn` applied to a trait that *does* declare parameters an error with no
-    /// spelling that would fix it. It is still an error rather than something to wave through: a
-    /// half-applied trait is not a type, and letting one reach the solver would mean matching a
-    /// goal against an argument list nobody wrote.
-    fn lower_dyn(&mut self, id: HirId, span: SrcSpan) -> Ty {
+    /// A trait applied to the wrong number of arguments is an error for the same reason a struct
+    /// is: a half-applied trait is not a type, and letting one reach the solver would mean
+    /// matching a goal against an argument list nobody wrote.
+    fn lower_dyn(&mut self, id: HirId, args: &[HirId], span: SrcSpan) -> Ty {
         let Some(res) = self.nameres.ty(id) else {
             return self.tcx.error();
         };
 
         match res {
             TypeRes::Def(def_id) if matches!(self.hir.def(def_id), OwnerNode::Trait(_)) => {
-                if !self.check_arg_count(def_id, 0, span) {
+                if !self.check_arg_count(def_id, args.len(), span) {
                     return self.tcx.error();
                 }
-                // A `dyn Trait` is an instantiation of the trait's parameters like any other, so
-                // whatever they are bounded by has to hold of the arguments -- of which there are
-                // none today, which is why this can only ever be the empty case.
-                self.register_bound_obligations(def_id, &[], span, id.owner);
-                self.tcx.mk_dyn(def_id, Vec::new())
+                let args = self.lower_tys(args);
+                // A `dyn Trait` instantiates the trait's parameters like any other application of
+                // it, so whatever they are bounded by has to hold of these arguments.
+                self.register_bound_obligations(def_id, &args, span, id.owner);
+                self.tcx.mk_dyn(def_id, args)
             }
             TypeRes::Err => self.tcx.error(),
             _ => {
@@ -626,6 +626,56 @@ mod tests {
                 trait_: show,
                 args: Vec::new(),
             }
+        );
+    }
+
+    /// The case `dyn` could not express until it carried an argument list of its own: a trait
+    /// that declares parameters, applied to them.
+    #[test]
+    fn dyn_carries_the_traits_generic_arguments() {
+        let checked = check(
+            "trait Index<K, V> { fun index(&self, key: K) -> &V; }
+             fun f(x: &dyn Index<i32, bool>) {}",
+        );
+        let index = checked.def("Index");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Ref { base, .. } = checked.kind(params[0]) else {
+            panic!("&dyn Index<i32, bool> lowers to a Ref");
+        };
+        let TyKind::Dyn { trait_, args } = checked.kind(*base) else {
+            panic!("dyn Index<i32, bool> lowers to a Dyn");
+        };
+        assert_eq!(*trait_, index);
+        assert_eq!(
+            args.iter().map(|&arg| checked.kind(arg)).collect::<Vec<_>>(),
+            [
+                &TyKind::Primitive(PrimTy::I32),
+                &TyKind::Primitive(PrimTy::Bool)
+            ]
+        );
+    }
+
+    /// A `dyn` applied to the wrong number of arguments is an error for the same reason a struct
+    /// is -- and, unlike before, one the user can now fix by writing the arguments.
+    #[test]
+    fn dyn_checks_the_traits_argument_count() {
+        let checked = check(
+            "trait Index<K, V> { fun index(&self, key: K) -> &V; }
+             fun f(x: &dyn Index<i32>) {}",
+        );
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Ref { base, .. } = checked.kind(params[0]) else {
+            panic!("&dyn Index<i32> lowers to a Ref");
+        };
+        assert_eq!(checked.kind(*base), &TyKind::Error);
+        assert_eq!(
+            DiagCtx::diagnostics()
+                .into_iter()
+                .map(|diagnostic| diagnostic.message)
+                .collect::<Vec<_>>(),
+            ["`Index` takes 2 generic arguments but 1 was supplied"]
         );
     }
 

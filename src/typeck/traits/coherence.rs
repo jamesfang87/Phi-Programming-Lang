@@ -132,14 +132,12 @@ impl<'hir> Typeck<'hir> {
             .collect()
     }
 
-    /// Reports a conflict at the *second* of the two blocks.
+    /// Reports a conflict, pointing at the *second* of the two blocks and underlining the first
+    /// beneath it.
     ///
-    /// The design called for reporting at both spans at once. A [`Diagnostic`] carries one span
-    /// and there is no note severity to attach a second location with, so this points at the
-    /// later block -- the one that introduced the conflict -- and names the type and trait, which
-    /// is enough to find the other. Widening `Diagnostic` to carry secondary labels would fix it
-    /// for every pass at once and is a change worth making on its own, not as a side effect of
-    /// this one.
+    /// Which one is "the error" is a real choice, not an arbitrary one: neither block is wrong
+    /// on its own, and either could be the one to delete. The later block gets the primary span
+    /// because it is the one that introduced the conflict into a program that did not have it.
     fn report_conflicting_impls(&self, first: &ImplHeader, second: &ImplHeader) {
         let trait_ref = second
             .trait_ref
@@ -156,12 +154,18 @@ impl<'hir> Typeck<'hir> {
                 second.span,
             )
             .with_label("conflicting implementation")
-            .with_help(format!(
-                "`{}` is already implemented by another `extend` block, and two implementations \
-                 may not both apply to one type; note that bounds on an implementation's own \
-                 generics are not considered when deciding whether two of them overlap",
-                self.cx().show(first.self_ty)
-            )),
+            .with_secondary(
+                first.span,
+                format!(
+                    "`{}` is already implemented here",
+                    self.cx().show(first.self_ty)
+                ),
+            )
+            .with_help(
+                "two implementations may not both apply to one type; note that bounds on an \
+                 implementation's own generics are not considered when deciding whether two of \
+                 them overlap",
+            ),
         );
     }
 
@@ -176,12 +180,18 @@ impl<'hir> Typeck<'hir> {
                 second.span,
             )
             .with_label(format!("duplicate definition of `{}`", Interner::resolve(name)))
-            .with_help(format!(
-                "`{}` already gets a method named `{}` from another `extend` block, so a call to \
-                 it would have no single meaning",
-                self.cx().show(first.self_ty),
-                Interner::resolve(name)
-            )),
+            .with_secondary(
+                first.span,
+                format!(
+                    "`{}` already gets a method named `{}` here",
+                    self.cx().show(first.self_ty),
+                    Interner::resolve(name)
+                ),
+            )
+            .with_help(
+                "a call to it would have no single meaning, so one of the two has to be renamed \
+                 or removed",
+            ),
         );
     }
 
@@ -239,6 +249,38 @@ mod tests {
                 "the method `show` is defined more than once for type `Foo`",
             ]
         );
+    }
+
+    /// The conflict is about two blocks, so the diagnostic names two places: the later block,
+    /// which is what has to change, and the earlier one it collides with.
+    #[test]
+    fn a_conflict_points_at_both_blocks() {
+        let (hir, nameres) = resolve_src(
+            "trait Marker {}
+             struct Foo {}
+             extend Foo with Marker {}
+             extend Foo with Marker {}",
+        );
+
+        let mut checker = Typeck::new(&hir, &nameres);
+        checker.collect_module(hir.root_id());
+        checker.build_impl_index();
+        DiagCtx::clear();
+        checker.check_coherence();
+
+        let diagnostics = DiagCtx::diagnostics();
+        let [conflict] = diagnostics.as_slice() else {
+            panic!("expected exactly one diagnostic, got {diagnostics:?}");
+        };
+        let [first] = conflict.secondary.as_slice() else {
+            panic!("expected exactly one secondary label");
+        };
+        assert_eq!(first.message, "`Foo` is already implemented here");
+
+        // The secondary points at the earlier block and the primary at the later one, which is
+        // the whole distinction the two labels are drawing.
+        let primary = conflict.span.expect("a conflict names a place");
+        assert!(first.span.get_begin() < primary.get_begin());
     }
 
     /// A marker trait with no methods is exactly the case check 2 cannot see, which is why the

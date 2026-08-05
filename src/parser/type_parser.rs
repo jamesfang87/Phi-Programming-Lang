@@ -168,13 +168,37 @@ impl Parser {
                     })
                     .boxed();
 
+                // `dyn Trait`, with the same optional argument list a named type takes: a trait
+                // that declares parameters has to be applied to them before it names a type, so
+                // `dyn Index<K, V>` is as ordinary as `Map<K, V>`.
                 let dyn_ty = self
                     .kind(TokenKind::DynKw)
                     .then(self.path_parser())
-                    .map(|(dyn_tok, path)| Ty {
-                        span: dyn_tok.span.merge(path.span),
-                        kind: TyKind::Dyn(path),
-                    })
+                    .then(
+                        self.kind(TokenKind::OpenCaret)
+                            .ignore_then(
+                                ty.clone()
+                                    .separated_by(self.kind(TokenKind::Comma))
+                                    .allow_trailing()
+                                    .at_least(1)
+                                    .collect::<Vec<_>>(),
+                            )
+                            .then(self.kind(TokenKind::CloseCaret))
+                            .or_not(),
+                    )
+                    .map(
+                        |((dyn_tok, path), args): ((Token, Path), Option<(Vec<Ty>, Token)>)| {
+                            let (args, end) = match args {
+                                Some((args, close_tok)) => (args, close_tok.span),
+                                None => (Vec::new(), path.span),
+                            };
+
+                            Ty {
+                                span: dyn_tok.span.merge(end),
+                                kind: TyKind::Dyn { path, args },
+                            }
+                        },
+                    )
                     .boxed();
 
                 // A function type looks like `fun(i32, i32) -> i32` or `fun(&str)`. Omitting
@@ -360,8 +384,38 @@ mod tests {
     fn parses_dyn_type() {
         let ty = parse_ty("dyn Shape");
         match &ty.kind {
-            TyKind::Dyn(path) => assert_eq!(Interner::resolve(path.segments[0].text), "Shape"),
+            TyKind::Dyn { path, args } => {
+                assert_eq!(Interner::resolve(path.segments[0].text), "Shape");
+                assert!(args.is_empty());
+            }
             other => panic!("expected a dyn type, got {other:?}"),
+        }
+    }
+
+    /// A trait that declares parameters has to be applied to them before `dyn` names a type.
+    #[test]
+    fn parses_dyn_type_with_generic_arguments() {
+        let ty = parse_ty("dyn Index<K, V>");
+        match &ty.kind {
+            TyKind::Dyn { path, args } => {
+                assert_eq!(Interner::resolve(path.segments[0].text), "Index");
+                assert_eq!(args.len(), 2);
+            }
+            other => panic!("expected a dyn type, got {other:?}"),
+        }
+    }
+
+    /// The argument list binds to the `dyn`, not to something after it: a `dyn` inside a
+    /// reference still ends where its own `>` does.
+    #[test]
+    fn parses_a_reference_to_a_generic_dyn() {
+        let ty = parse_ty("&dyn Index<K, V>");
+        match &ty.kind {
+            TyKind::Ref { base, .. } => match &base.kind {
+                TyKind::Dyn { args, .. } => assert_eq!(args.len(), 2),
+                other => panic!("expected a dyn type, got {other:?}"),
+            },
+            other => panic!("expected a ref type, got {other:?}"),
         }
     }
 
