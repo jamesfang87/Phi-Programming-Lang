@@ -468,7 +468,7 @@ impl Parser {
                 let module = ModuleDecl { path, span };
 
                 Item {
-                    kind: ItemKind::Module(module),
+                    kind: ItemKind::ModuleDecl(module),
                     span,
                 }
             })
@@ -757,7 +757,7 @@ mod tests {
     fn parses_module_decl() {
         let item = parse_item("module math::vector;");
         match &item.kind {
-            ItemKind::Module(m) => {
+            ItemKind::ModuleDecl(m) => {
                 assert_eq!(m.path.segments.len(), 2);
                 assert_eq!(text(m.path.segments[0]), "math");
                 assert_eq!(text(m.path.segments[1]), "vector");
