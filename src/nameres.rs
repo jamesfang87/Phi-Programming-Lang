@@ -150,7 +150,7 @@ impl<'hir> Visitor<'hir> for NameResolver<'hir> {
 
     fn visit_ty(&mut self, id: HirId) {
         match &self.hir.ty(id).kind {
-            TyKind::Path { path, .. } | TyKind::Dyn(path) => {
+            TyKind::Path { path, .. } | TyKind::Dyn { path, .. } => {
                 let path = path.clone();
                 let res = self.resolve_ty_path(id.owner, &path);
                 self.results.record_type(id, res);

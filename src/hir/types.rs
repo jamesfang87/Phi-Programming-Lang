@@ -42,7 +42,11 @@ pub enum TyKind {
     /// Represents `Self`, which refers back to the type being defined or extended, used inside
     /// that type's own `struct`, `trait`, or `extend` body.
     SelfType,
-    /// Represents `dyn Trait`, a type implementing `Trait` that is resolved dynamically.
-    Dyn(Path),
+    /// Represents `dyn Trait`, a type implementing `Trait` that is resolved dynamically,
+    /// applied to the trait's own generic arguments if it declares any.
+    Dyn {
+        path: Path,
+        args: Vec<HirId>, // -> Node::Ty
+    },
     Error,
 }

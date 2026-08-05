@@ -7,8 +7,9 @@
 
 use std::cell::RefCell;
 use std::io::IsTerminal;
+use std::ops::Range;
 
-use ariadne::{Color, Config, Fmt, Label, Report, ReportKind, Source};
+use ariadne::{Color, Config, Fmt, Label, Report, ReportKind, sources};
 
 use crate::driver::src_map::SrcMap;
 use crate::lexer::src_span::SrcSpan;
@@ -38,6 +39,23 @@ impl Severity {
     }
 }
 
+/// A second place a diagnostic points at, besides the one its `span` names.
+///
+/// Plenty of errors are about a *relationship* between two pieces of source rather than about
+/// one piece on its own: an implementation that doesn't match the declaration it implements, an
+/// `extend` block that conflicts with an earlier one, a call whose argument disagrees with the
+/// parameter it was passed to. Describing the second place in prose -- "`Show` is already
+/// implemented elsewhere" -- leaves the reader to go find it. A secondary label puts the
+/// compiler's finger on it instead.
+///
+/// The span may lie in a different file from the primary one; see [`Diagnostic::eprint`] for
+/// how that is rendered.
+#[derive(Debug, Clone)]
+pub struct SecondaryLabel {
+    pub span: SrcSpan,
+    pub message: String,
+}
+
 /// A single diagnostic produced by any pipeline stage, such as the lexer or parser, ready to
 /// be rendered with `ariadne`.
 ///
@@ -48,6 +66,12 @@ impl Severity {
 /// [`Diagnostic::error_global`]. That is a genuinely different thing from a zero-length span
 /// at offset 0, which points at the first character of whichever file happens to have been
 /// registered first.
+///
+/// `span` is where the mistake *is* -- the place whose text has to change to fix it.
+/// [`secondary`](SecondaryLabel) labels are the places that explain why it's a mistake, and a
+/// diagnostic should stay comprehensible with all of them stripped off: they run in a fixed
+/// order after the primary, but a reader skimming only the first underline should still get the
+/// point.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -55,26 +79,26 @@ pub struct Diagnostic {
     pub span: Option<SrcSpan>,
     pub label: Option<String>,
     pub help: Option<String>,
+    pub secondary: Vec<SecondaryLabel>,
 }
 
 impl Diagnostic {
     pub fn error(message: impl Into<String>, span: SrcSpan) -> Self {
-        Diagnostic {
-            severity: Severity::Error,
-            message: message.into(),
-            span: Some(span),
-            label: None,
-            help: None,
-        }
+        Self::new(Severity::Error, message, Some(span))
     }
 
     pub fn warning(message: impl Into<String>, span: SrcSpan) -> Self {
+        Self::new(Severity::Warning, message, Some(span))
+    }
+
+    fn new(severity: Severity, message: impl Into<String>, span: Option<SrcSpan>) -> Self {
         Diagnostic {
-            severity: Severity::Warning,
+            severity,
             message: message.into(),
-            span: Some(span),
+            span,
             label: None,
             help: None,
+            secondary: Vec::new(),
         }
     }
 
@@ -90,13 +114,7 @@ impl Diagnostic {
     ///
     /// A diagnostic built this way renders as a plain message with no source snippet.
     pub fn error_global(message: impl Into<String>) -> Self {
-        Diagnostic {
-            severity: Severity::Error,
-            message: message.into(),
-            span: None,
-            label: None,
-            help: None,
-        }
+        Self::new(Severity::Error, message, None)
     }
 
     /// Sets the text shown right under the highlighted span, so it doesn't just repeat the
@@ -112,6 +130,21 @@ impl Diagnostic {
         self
     }
 
+    /// Adds a second place the diagnostic points at, underlined and labelled beneath the primary
+    /// one. See [`SecondaryLabel`] for what belongs in one.
+    ///
+    /// Can be called more than once; the labels are shown in the order they were added, within
+    /// each file. A label whose span belongs to no registered file is dropped when the
+    /// diagnostic is rendered rather than reported as a second failure -- see
+    /// [`Diagnostic::eprint`].
+    pub fn with_secondary(mut self, span: SrcSpan, message: impl Into<String>) -> Self {
+        self.secondary.push(SecondaryLabel {
+            span,
+            message: message.into(),
+        });
+        self
+    }
+
     /// Renders this diagnostic to stderr.
     ///
     /// A diagnostic with a span is rendered by `ariadne` against the source it points at; one
@@ -122,49 +155,59 @@ impl Diagnostic {
     /// span a stage actually built out of source text, but a diagnostic that cannot find its
     /// file is still a diagnostic worth showing, and losing it -- along with every diagnostic
     /// queued behind it -- to a panic is strictly worse than showing it without its snippet.
+    /// A secondary label that can't be located is dropped on the same reasoning taken one step
+    /// further: it is the elaboration, so showing the error without it beats showing neither.
+    ///
+    /// Secondary labels may point into other files -- a conflicting `extend` block or a trait
+    /// declaration is routinely a file away from the code that violates it -- so every file any
+    /// label lands in is handed to `ariadne` together, and it quotes each one in its own
+    /// snippet.
     fn eprint(&self) {
         let Some(span) = self.span else {
             return self.eprint_bare();
         };
-        let Some(file) = SrcMap::file_containing(span.get_begin()) else {
+        let Some(primary) = Located::of(span) else {
             return self.eprint_bare();
         };
 
-        let (text, byte_offsets) = byte_source(&file.content);
-        // A span is half-open and `byte_offsets` has one entry per char plus a final one for
-        // the end, so both ends are in range for any span that lies within this file. Clamp
-        // anyway: a span running past the file's end is a bug in whichever stage built it, and
-        // it should surface as a slightly wide underline rather than an index-out-of-bounds
-        // panic that takes the whole diagnostic report down with it.
-        let last = byte_offsets.len() - 1;
-        let local_begin = (span.get_begin() - file.global_offset).min(last);
-        let local_end = (span.get_end() - file.global_offset).clamp(local_begin, last);
-        let start = byte_offsets[local_begin];
-        let end = byte_offsets[local_end];
-
-        let config = Self::config();
-
-        let mut report = Report::build(
-            self.severity.report_kind(),
-            (file.name.as_str(), start..end),
-        )
-        .with_config(config)
-        .with_message(&self.message);
+        let mut report = Report::build(self.severity.report_kind(), primary.id())
+            .with_config(Self::config())
+            .with_message(&self.message);
 
         report = report.with_label(
-            Label::new((file.name.as_str(), start..end))
+            Label::new(primary.id())
                 .with_message(self.label.as_deref().unwrap_or(&self.message))
                 .with_color(self.severity.color()),
         );
+
+        // Every file a label lands in, deduplicated, since `ariadne` wants one entry per source
+        // rather than one per label. The primary's file goes in whether or not a secondary
+        // shares it.
+        let mut located = vec![primary];
+        for secondary in &self.secondary {
+            let Some(at) = Located::of(secondary.span) else {
+                continue;
+            };
+            report = report.with_label(
+                Label::new(at.id())
+                    .with_message(&secondary.message)
+                    .with_color(SECONDARY_COLOR),
+            );
+            located.push(at);
+        }
 
         if let Some(help) = &self.help {
             report = report.with_help(help);
         }
 
-        report
-            .finish()
-            .eprint((file.name.as_str(), Source::from(text)))
-            .unwrap();
+        let mut cache: Vec<(&'static str, String)> = Vec::with_capacity(located.len());
+        for at in located {
+            if !cache.iter().any(|(name, _)| *name == at.name) {
+                cache.push((at.name, at.text));
+            }
+        }
+
+        report.finish().eprint(sources(cache)).unwrap();
     }
 
     /// Renders this diagnostic to stderr with no source snippet.
@@ -175,8 +218,10 @@ impl Diagnostic {
     /// `ariadne` gives them -- `Error: <message>`, then an indented `Help: <help>` -- so the two
     /// kinds of diagnostic sit together in one report without looking mismatched.
     ///
-    /// `self.label` is deliberately ignored: a label is text placed under an underline, and
-    /// there is no underline here.
+    /// `self.label` and `self.secondary` are deliberately ignored: a label is text placed under
+    /// an underline, and there is no underline here. Nor is one reachable -- a diagnostic gets
+    /// here because it has no locatable span of its own, which is exactly the case where the
+    /// stage that raised it had nothing to point a secondary label at either.
     fn eprint_bare(&self) {
         // `Fmt::fg` takes an `Option<Color>` and leaves the text unpainted for `None`, which is
         // how the no-color case stays a plain string rather than an escape-code sandwich.
@@ -203,6 +248,53 @@ impl Diagnostic {
 
     fn config() -> Config {
         Config::new().with_color(Self::config_colors())
+    }
+}
+
+/// The color secondary labels are drawn in.
+///
+/// Deliberately not the severity's own color: an underline in error red reads as a second error,
+/// and a secondary label is the opposite -- the context that explains the one error above it.
+const SECONDARY_COLOR: Color = Color::Blue;
+
+/// A [`SrcSpan`] resolved against the [`SrcMap`]: the file it lies in, that file's UTF-8 text,
+/// and the byte range the span covers there.
+///
+/// This is the translation `ariadne` needs. Spans are global and char-indexed, because that is
+/// what lets a stage raise a diagnostic without knowing which file it is in; `ariadne` addresses
+/// source per file and byte-indexed. Nothing else in the compiler needs the second form, so the
+/// conversion lives here, at the point of rendering.
+struct Located {
+    name: &'static str,
+    text: String,
+    range: Range<usize>,
+}
+
+impl Located {
+    /// Resolves `span`, or `None` if no registered file covers it.
+    fn of(span: SrcSpan) -> Option<Self> {
+        let file = SrcMap::file_containing(span.get_begin())?;
+        let (text, byte_offsets) = byte_source(&file.content);
+
+        // A span is half-open and `byte_offsets` has one entry per char plus a final one for
+        // the end, so both ends are in range for any span that lies within this file. Clamp
+        // anyway: a span running past the file's end is a bug in whichever stage built it, and
+        // it should surface as a slightly wide underline rather than an index-out-of-bounds
+        // panic that takes the whole diagnostic report down with it.
+        let last = byte_offsets.len() - 1;
+        let local_begin = (span.get_begin() - file.global_offset).min(last);
+        let local_end = (span.get_end() - file.global_offset).clamp(local_begin, last);
+
+        Some(Located {
+            name: file.name.as_str(),
+            text,
+            range: byte_offsets[local_begin]..byte_offsets[local_end],
+        })
+    }
+
+    /// How `ariadne` addresses this location: which source, and where in it.
+    fn id(&self) -> (&'static str, Range<usize>) {
+        (self.name, self.range.clone())
     }
 }
 
@@ -361,6 +453,56 @@ mod tests {
             SrcSpan::new(offset + 4, offset + chars.len() + 100),
         )
         .eprint();
+    }
+
+    /// A secondary label pointing into a *different* file than the primary one. Both files have
+    /// to reach `ariadne`, or it panics looking up the source it was asked to quote.
+    #[test]
+    fn rendering_a_cross_file_secondary_does_not_panic() {
+        let decl: Vec<char> = "trait Show { fun show(self); }\n".chars().collect();
+        let decl_at = SrcMap::add_file("<decl>".to_string(), decl.clone(), FileOrigin::User);
+        let use_: Vec<char> = "extend Foo with Show {}\n".chars().collect();
+        let use_at = SrcMap::add_file("<use>".to_string(), use_.clone(), FileOrigin::User);
+
+        Diagnostic::error("missing method `show`", SrcSpan::new(use_at, use_at + use_.len() - 1))
+            .with_label("`show` not implemented")
+            .with_secondary(
+                SrcSpan::new(decl_at + 13, decl_at + 28),
+                "declared here, with no default body",
+            )
+            .eprint();
+    }
+
+    /// A secondary label that resolves to no file is dropped, not escalated: the error it
+    /// elaborates on still gets rendered.
+    #[test]
+    fn an_unmapped_secondary_is_dropped_not_fatal() {
+        let chars: Vec<char> = "fun main() {}\n".chars().collect();
+        let offset = SrcMap::add_file("<dropped-secondary>".to_string(), chars, FileOrigin::User);
+        Diagnostic::error("something is wrong here", SrcSpan::new(offset, offset + 3))
+            .with_secondary(SrcSpan::new(UNMAPPED, UNMAPPED + 4), "and because of this")
+            .eprint();
+    }
+
+    /// Two labels in one file give `ariadne` one source, not the same one twice.
+    #[test]
+    fn rendering_two_labels_in_one_file_does_not_panic() {
+        let chars: Vec<char> = "fun main() { let x = 1; let x = 2; }\n".chars().collect();
+        let offset = SrcMap::add_file("<same-file>".to_string(), chars, FileOrigin::User);
+        Diagnostic::error("`x` is bound twice", SrcSpan::new(offset + 28, offset + 29))
+            .with_label("second binding")
+            .with_secondary(SrcSpan::new(offset + 17, offset + 18), "first binding")
+            .eprint();
+    }
+
+    #[test]
+    fn secondary_labels_keep_the_order_they_were_added() {
+        let span = SrcSpan::new(10, 15);
+        let diag = Diagnostic::error("conflict", span)
+            .with_secondary(SrcSpan::new(20, 25), "first")
+            .with_secondary(SrcSpan::new(30, 35), "second");
+        let messages: Vec<&str> = diag.secondary.iter().map(|s| s.message.as_str()).collect();
+        assert_eq!(messages, ["first", "second"]);
     }
 
     /// The point of sorting: diagnostics are emitted stage-major, but read source-major.
