@@ -1,4 +1,4 @@
-//! A trivial string interner for [`crate::ast::Symbol`].
+//! A trivial string interner for [`Symbol`].
 //!
 //! The interner is thread-local, mirroring [`crate::diag::DiagCtx`]. Pipeline
 //! stages call its associated functions directly, rather than threading an interner
@@ -7,16 +7,19 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::ast::Symbol;
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Symbol(u32);
 
-/// Interned text is leaked to `'static` rather than owned by this table, so that
-/// [`Interner::resolve`] can hand back a borrow instead of a clone.
-///
-/// Leaking is what makes that sound in the presence of [`Interner::clear`]: resetting the table
-/// drops the *index*, not the strings, so a `&'static str` handed out earlier stays valid even
-/// though the `Symbol` that produced it no longer resolves to it. The cost is that cleared text
-/// is never reclaimed, which is bounded by the total distinct text a process interns -- a
-/// compiler run interns every identifier once and then exits, and the tests that clear are short.
+impl Symbol {
+    pub(crate) fn from_id(id: u32) -> Symbol {
+        Symbol(id)
+    }
+
+    pub(crate) fn id(self) -> u32 {
+        self.0
+    }
+}
+
 struct InternerData {
     strings: Vec<&'static str>,
     lookup: HashMap<&'static str, Symbol>,
@@ -54,16 +57,11 @@ impl Interner {
     }
 
     /// Resolves a `Symbol` back to the text it was interned from.
-    ///
-    /// Borrowed rather than cloned: this is called wherever a name is compared or printed --
-    /// every primitive-type check, every diagnostic, every debug dump -- and an owned `String`
-    /// per call made each of those allocate to read a name the interner already held.
     pub fn resolve(sym: Symbol) -> &'static str {
         INTERNER.with(|interner| interner.borrow().strings[sym.id() as usize])
     }
 
     /// Discards every interned string on this thread.
-    ///
     /// Tests use this for isolation, exactly like [`crate::diag::DiagCtx::clear`].
     pub fn clear() {
         INTERNER.with(|interner| *interner.borrow_mut() = InternerData::new());

@@ -3,7 +3,40 @@
 use super::*;
 use crate::ast::interner::Interner;
 use crate::driver::source::{SrcMap, SrcSpan};
-use crate::lexer::{token::Token, unescape};
+use crate::lexer::token::Token;
+
+/// Maps the character following a `\` to the value it escapes. Returns unrecognized characters
+/// unchanged, so an unknown escape does not stop lexing.
+fn escape_char(c: char) -> char {
+    match c {
+        '\'' => '\'',
+        '"' => '"',
+        'n' => '\n',
+        't' => '\t',
+        'r' => '\r',
+        '\\' => '\\',
+        '0' => '\0',
+        other => other,
+    }
+}
+
+/// The lexer only checks that a string or char literal's escapes are valid. It does not convert
+/// them to their real values, since it works with spans, not owned strings. Later stages need
+/// the actual value, so this function does that conversion.
+fn unescape(chars: &[char]) -> String {
+    let mut out = String::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            out.push(escape_char(chars[i + 1]));
+            i += 2;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
 
 impl Expr {
     pub fn new(kind: ExprKind, span: SrcSpan) -> Self {

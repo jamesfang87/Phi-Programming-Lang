@@ -43,7 +43,7 @@ impl LoweringCtx {
     pub(super) fn lower_module(
         &mut self,
         def_id: DefId,
-        module: &ast::AstModule,
+        module: &ast::Module,
         child_modules: Vec<DefId>,
     ) {
         let mut items = child_modules;
@@ -85,7 +85,7 @@ impl LoweringCtx {
             // `Parser::assemble_file` sorts a file's `module` header and its imports out of its
             // items before [`ast::Ast`] groups them into modules, so neither reaches lowering.
             // `Error` stands in for an item the parser recovered from and declares nothing.
-            ast::ItemKind::Module(_) | ast::ItemKind::Import(_) | ast::ItemKind::Error => None,
+            ast::ItemKind::ModuleDecl(_) | ast::ItemKind::Import(_) | ast::ItemKind::Error => None,
         }
     }
 
