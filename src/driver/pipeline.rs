@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::ast::Ast;
 use crate::diag::DiagCtx;
-use crate::driver::cli::{BuildOptions, Config};
+use crate::driver::cli::{BuildOptions, Config, Mode};
 use crate::driver::emit_debug;
 use crate::driver::source::{SrcCollector, SrcMap};
 use crate::hir::lower::lower_unit;
@@ -28,12 +28,15 @@ fn collect_sources(src_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn note_unimplemented_dumps(options: &BuildOptions) {
+fn note_unimplemented_dumps(config: &Config, options: &BuildOptions) {
     if options.dumps.mir {
         eprintln!("note: MIR lowering is not implemented yet; --mir has no effect");
     }
     if options.dumps.llvm {
         eprintln!("note: LLVM IR generation is not implemented yet; --llvm has no effect");
+    }
+    if config.mode == Mode::Release {
+        eprintln!("note: release mode is not implemented yet; `mode = \"release\"` has no effect");
     }
 }
 
@@ -57,7 +60,7 @@ pub fn parse(token_streams: Vec<Vec<Token>>) -> Ast {
 }
 
 pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
-    note_unimplemented_dumps(options);
+    note_unimplemented_dumps(config, options);
     collect_sources(&config.src_dir)?;
     let ast = parse(lex());
 
