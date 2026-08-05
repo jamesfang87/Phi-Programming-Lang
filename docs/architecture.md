@@ -22,11 +22,12 @@ flowchart LR
     subgraph BackEnd[Back End - Synthesis]
         N --> O[Optimizer]
         O --> P[Optimized IR]
-        P --> Q[Code Generator]
-        Q --> R[Target Machine Code]
+        P --> Q[Lowering #3]
+        Q --> R[LLVM IR]
+        R --> S[Machine Code]
     end
     
-    EH[Error Handler] -.-> B
+    EH[Error Handling] -.-> B
     EH -.-> D
     EH -.-> F
     EH -.-> J
