@@ -1,15 +1,3 @@
-//! Temporary human-readable dumps of the compiler's intermediate results, for debugging the
-//! passes that produce them. Hooked up to `phi build --ast`, `--hir`, and the catch-all
-//! `--debug`, which runs the whole pipeline (through type checking) and prints all of it.
-//!
-//! A raw [`Symbol`] or [`DefId`] is just an integer, which makes the derived `Debug` output of
-//! [`ValueRes`] and [`TyKind`] tedious to read by hand. The HIR, name resolution, and type checking
-//! dumps here resolve a `Symbol` back to its interned string and a `DefId` back to the name and
-//! [`HirId`] of the definition it addresses, instead of leaving either as a bare number.
-//!
-//! `--no-core` filters all of that down to definitions from the user's own files, leaving out
-//! the core library that's linked into every build.
-
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, AstModule, Symbol};
 use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
@@ -54,16 +42,8 @@ fn fmt_def(hir: &Hir, def_id: DefId) -> String {
 }
 
 /// The kind of HIR node, as `Category::Variant` (e.g. `Expr::Call`, `Pat::Binding`).
-///
-/// The category comes from [`Node::kind_name`], so a new node kind needs no edit here. Only the
-/// five kinds that carry an inner `*Kind` enum worth naming are listed, and their inner variant
-/// is read off the derived `Debug` rather than matched by hand, so those stay in sync
-/// automatically as variants are added or renamed.
 fn node_kind(node: &Node) -> String {
     fn variant_name<T: std::fmt::Debug>(value: &T) -> String {
-        // A derived `Debug` on an enum always starts with the bare variant name, whether it's a
-        // unit, tuple, or struct variant -- so the leading identifier is exactly what we want,
-        // and nothing here needs to know the enum's actual variants.
         let debug = format!("{value:?}");
         let end = debug
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
