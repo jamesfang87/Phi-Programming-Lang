@@ -12,9 +12,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::driver::project;
-// `use crate::driver::pipeline;` belongs here too, but `pipeline` doesn't exist yet.
-// Task 4 adds it alongside the dispatch code that uses it.
+use crate::driver::{pipeline, project};
 
 /// Which of the pipeline's intermediate results to print.
 ///
@@ -217,6 +215,59 @@ pub fn print_usage() {
     eprintln!("  {prog} new <project_name>");
     eprintln!("  {prog} init");
     eprintln!("  {prog} help");
+}
+
+/// Parses `args`, dispatches, and returns the process exit code.
+///
+/// `args` is everything after the program name.
+pub fn main(args: &[String]) -> i32 {
+    let parsed = match CliArgs::from_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("error: {message}");
+            print_usage();
+            return 1;
+        }
+    };
+
+    match parsed {
+        CliArgs::Help => {
+            print_usage();
+            0
+        }
+        CliArgs::New(name) => exit_code(project::new(&name).map(|_| true)),
+        CliArgs::Init => exit_code(project::init().map(|()| true)),
+        CliArgs::Build(options) => with_config(|config| pipeline::build(config, &options)),
+        CliArgs::Check(options) => with_config(|config| pipeline::check(config, &options)),
+        CliArgs::Run => with_config(pipeline::run),
+    }
+}
+
+/// Turns a command's result into an exit code, printing any error.
+fn exit_code(result: io::Result<bool>) -> i32 {
+    match result {
+        Ok(true) => 0,
+        Ok(false) => 1,
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    }
+}
+
+/// Loads the current directory's manifest and hands it to `command`.
+///
+/// The three compilation commands all need a [`Config`] and none of the scaffolding commands
+/// do, so the loading lives here rather than in `main`'s match arms.
+fn with_config(command: impl FnOnce(&Config) -> io::Result<bool>) -> i32 {
+    let config = match Config::load(Path::new(".")) {
+        Ok(config) => config,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return 1;
+        }
+    };
+    exit_code(command(&config))
 }
 
 #[cfg(test)]

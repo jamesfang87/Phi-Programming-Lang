@@ -6,7 +6,7 @@
 //! prints the passes' intermediate results.
 
 pub mod cli;
-pub mod compiler;
 pub mod emit_debug;
+pub mod pipeline;
 pub mod project;
 pub mod source;
