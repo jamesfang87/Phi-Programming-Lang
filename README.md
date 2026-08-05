@@ -1,3 +1,6 @@
+# Important Info
+The `main` branch currently holds a deprecated C++ implementation of the Phi Programming Language Compiler. It does not have the complete features of Phi and lacks the architecture needed for future improvements to the compiler, such as incremental or parallelized compilation. However, it does compile successfully a small subset of the language, namely the one described below (largely). There are currently efforts to rewrite the compiler in Rust, which is in the `master` branch. When that rewrite is complete, it will be merged into `main`.
+
 # The Phi Programming Language
 
 Phi is a modern programming language written in C++23.
@@ -163,7 +166,7 @@ fun print_name(const shape: Shape) {
 Phi uses modules for imports and exports. A module is given at the top of a file, and the `public` keyword is used to export a symbol:
 
 ```phi
-module math
+module math;
 
 public struct Vector2D {
     public x: f64;
@@ -175,7 +178,7 @@ public struct Vector2D {
 The contents of the module above can be imported like so:
 
 ```phi
-import math::Vector2D
+import math::Vector2D;
 
 fun main() {
     const v = Vector2D { x: 1.0, y: 1.0 };
