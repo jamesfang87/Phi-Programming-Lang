@@ -1,9 +1,5 @@
 //! Parses expressions, blocks, and statements.
 //!
-//! These three grammars recurse into each other (an expression can hold a block, a block holds
-//! statements, and a statement can hold an expression), so `chumsky` builds them together as one
-//! set of mutually recursive parsers.
-//!
 //! Expression precedence goes from tightest to loosest as the file reads top to bottom: postfix
 //! operators, then prefix operators, then the binary operators in the usual arithmetic order,
 //! then ranges, then assignment.

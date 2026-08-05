@@ -1,35 +1,46 @@
 #![allow(dead_code)]
 
+mod builder;
 mod expr_impls;
 pub mod interner;
-mod tree;
 mod type_impls;
 
-pub use tree::{Ast, AstModule, ModId};
+use builder::AstBuilder;
+pub use interner::Symbol;
 
 use crate::driver::source::SrcSpan;
 
-// ===========================================================================
-// Identifiers, paths, literals
-// ===========================================================================
+#[derive(Debug)]
+pub struct Ast {
+    modules: Vec<Module>,
+    parents: Vec<ModId>,
+    root: ModId,
+}
 
-/// An interned string.
-///
-/// Comparing two `Symbol`s is a cheap integer comparison.
-///
-/// Use [`interner::Interner::resolve`] to get the underlying text back.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Symbol(u32);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct ModId(u32);
 
-impl Symbol {
-    pub(crate) fn from_id(id: u32) -> Symbol {
-        Symbol(id)
+impl ModId {
+    fn from_usize(index: usize) -> Self {
+        ModId(index as u32)
     }
 
-    pub(crate) fn id(self) -> u32 {
-        self.0
+    pub fn index(self) -> usize {
+        self.0 as usize
     }
 }
+
+#[derive(Debug)]
+pub struct Module {
+    pub path: Path,
+    pub imports: Vec<Import>,
+    pub items: Vec<Item>,
+    pub children: Vec<ModId>,
+}
+
+// ===========================================================================
+// Utils
+// ===========================================================================
 
 #[derive(Clone, Copy, Debug)]
 pub enum Visibility {
@@ -72,8 +83,14 @@ pub struct ParsedSrcFile {
 }
 
 #[derive(Clone, Debug)]
+pub struct Item {
+    pub kind: ItemKind,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
 pub enum ItemKind {
-    Module(ModuleDecl),
+    ModuleDecl(ModuleDecl),
     Import(Import),
     Function(Function),
     Struct(Struct),
@@ -90,20 +107,12 @@ pub struct ModuleDecl {
     pub span: SrcSpan,
 }
 
-/// An import statement, such as `import math as m;`, `import math::Vector2D;`, or
-/// `import math::*;`.
 #[derive(Clone, Debug)]
 pub struct Import {
     pub path: Path,
     /// This is `true` when the import is a glob import, such as `import math::*;`.
     pub glob: bool,
     pub alias: Option<Ident>,
-    pub span: SrcSpan,
-}
-
-#[derive(Clone, Debug)]
-pub struct Item {
-    pub kind: ItemKind,
     pub span: SrcSpan,
 }
 
@@ -150,9 +159,6 @@ pub struct Trait {
 #[derive(Clone, Debug)]
 pub struct Extend {
     /// The type parameters the `extend` block itself introduces, from `extend<T>`.
-    ///
-    /// These are declarations, like a `struct`'s or a `fun`'s, and are parsed as such. The two
-    /// groups below are argument lists that apply types -- possibly these ones.
     pub extend_generics: Option<Vec<Generic>>,
     /// The extended type's own generic arguments, from `Foo<T>`.
     pub adt_generics: Option<Vec<Ty>>,
@@ -253,44 +259,22 @@ pub enum TyKind {
         base: Box<Ty>,
         mutability: Mutability,
     },
-    /// `any T`. Only meaningful as a parameter or return type.
-    ///
-    /// It lets the callee hand back a projection into that parameter.
-    ///
-    /// Monomorphization picks a concrete `&T`, `&mut T`, or owned `T` for each call site at
-    /// compile time.
     Any(Box<Ty>),
     Tuple(Vec<Ty>),
     Array {
         elem: Box<Ty>,
         len: Option<Box<Expr>>,
     },
-    /// A function type, such as `fun(i32, i32) -> i32`.
-    ///
-    /// `ret` is `None` when there's no `->`. That means the function returns no value.
     Function {
         params: Vec<Ty>,
         ret: Option<Box<Ty>>,
     },
     SelfType,
-    /// `dyn Trait`, or `dyn Trait<K, V>` for a trait that declares parameters. `args` carries the
-    /// same thing it does in [`TyKind::Path`]: what the trait's own parameters were applied to,
-    /// empty when no `<..>` was written.
     Dyn {
         path: Path,
         args: Vec<Ty>,
     },
     Error,
-}
-
-// ===========================================================================
-// Block
-// ===========================================================================
-
-#[derive(Clone, Debug)]
-pub struct Block {
-    pub stmts: Vec<Stmt>,
-    pub span: SrcSpan,
 }
 
 // ===========================================================================
@@ -496,6 +480,12 @@ pub enum BinaryOp {
     Or,
 }
 
+#[derive(Clone, Debug)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
+    pub span: SrcSpan,
+}
+
 impl ExprKind {
     /// Reports whether this expression already ends in a `}`, such as `if`, `match`, or a
     /// bare block.
@@ -546,15 +536,11 @@ pub enum AccessArgs {
     Record(Vec<PayloadField<Expr>>),
 }
 
-/// One named field and the value bound to it: a field initializer in a struct literal
-/// ([`ExprKind::Ctor`]), or one field of a variant's record payload, whether the payload is
-/// being built or matched.
+/// This can represent either a field initalizer in
+/// ([`ExprKind::Ctor`]), or one field of a variant's record payload
 #[derive(Clone, Debug)]
 pub struct PayloadField<T> {
     pub name: Ident,
-    /// `value` is `None` for the field shorthand `{ l }`.
-    ///
-    /// In a pattern, the shorthand binds `l` to that field.
     pub value: Option<T>,
     pub span: SrcSpan,
 }
@@ -581,12 +567,56 @@ pub enum PatKind {
     Wildcard,
     Binding(Ident),
     Literal(Literal),
-    /// An enum variant pattern, such as `.circle(r)`, `.square { l }`, or bare `.none`.
+    /// An enum variant pattern, such as `.circle(r)`, `.square { l }`, or `.none`.
     Variant {
         variant: Ident,
         payload: Payload<Pat>,
     },
-    /// A tuple destructuring pattern, such as the `(x, y)` in `let (x, y) = point;`.
+    /// A tuple pattern, such as the `(x, y)` in `let (x, y) = point;`.
     Tuple(Vec<Pat>),
     Error,
+}
+
+impl Ast {
+    /// Collects every parsed file of a build into one module tree.
+    pub fn new(files: Vec<ParsedSrcFile>) -> Ast {
+        let mut builder = AstBuilder::new();
+        for file in files {
+            let module = match &file.module {
+                Some(decl) => builder.module_for_path(&decl.path.segments),
+                None => builder.ast.root,
+            };
+            let target = &mut builder.ast.modules[module.index()];
+            target.imports.extend(file.imports);
+            // `Parser::assemble_file` has already sorted this file's `module` header and its
+            // imports out of `items`, so what is left is definitions.
+            target.items.extend(file.items);
+        }
+        builder.ast
+    }
+    pub fn root(&self) -> &Module {
+        self.module(self.root)
+    }
+
+    pub fn root_id(&self) -> ModId {
+        self.root
+    }
+
+    pub fn module(&self, id: ModId) -> &Module {
+        &self.modules[id.index()]
+    }
+
+    /// Returns the module `id` is declared inside, or `None` if `id` names the root.
+    ///
+    /// The root is stored as its own parent, which is how the table stays dense. Reporting that
+    /// as `None` is what gives a caller walking upwards a termination condition.
+    pub fn parent(&self, id: ModId) -> Option<ModId> {
+        let parent = self.parents[id.index()];
+        (parent != id).then_some(parent)
+    }
+
+    /// Iterates every module, parents before children.
+    pub fn mod_ids(&self) -> impl Iterator<Item = ModId> + '_ {
+        (0..self.modules.len()).map(ModId::from_usize)
+    }
 }

@@ -1,15 +1,10 @@
 //! Exposes the block parser on its own.
-//!
-//! The real block grammar lives in `expr_parser`, next to the expression grammar it recurses
-//! with (a block holds statements, and statements hold expressions, and expressions can hold
-//! blocks). This file just gives that parser its own name and its own tests.
 
 use crate::ast::Block;
 
 use super::{BoxedP, Parser};
 
 impl Parser {
-    /// Parses a `{ ... }` block: a sequence of statements plus an optional tail expression.
     pub fn block_parser<'a>(&'a self) -> BoxedP<'a, Block> {
         self.expr_and_block_parsers().1
     }

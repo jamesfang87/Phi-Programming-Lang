@@ -1,18 +1,3 @@
-//! The [`Lexer`] converts UTF-8 source text into a stream of [`Token`]s for the
-//! parser to consume.
-//!
-//! The Lexer takes into consideration the global offsets and the tokens it
-//! produces already have global offsets.
-//!
-//! Source Text: The Lexer works on UTF-8 source text, which is decoded into
-//! chars. This allows us to support the use of various languages for writing
-//! source code.
-//!
-//! Error Handling: The Lexer does not stop on bad input. If it finds an
-//! unexpected character or an unterminated literal, it records a diagnostic
-//! through [`DiagCtx`]. After so, it keeps scanning. This way the parser still
-//! gets a full token stream to work with.
-
 use crate::diag::DiagCtx;
 use crate::driver::source::SrcSpan;
 use crate::lexer::token::{Token, TokenKind};
@@ -47,16 +32,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Record a diagnostic pointing at the span of the lexeme currently being scanned.
-    fn error(&self, message: impl Into<String>) {
-        let span = SrcSpan::new(
-            self.file_offset + self.lexeme_pos,
-            self.file_offset + self.cursor,
-        );
-        DiagCtx::error(message, span);
-    }
-
-    /// Scans the whole source and returns its tokens as one list.
+    /// Scans the source and returns its tokens as one list.
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut token_stream = Vec::new();
 
@@ -71,52 +47,6 @@ impl<'a> Lexer<'a> {
         }
 
         token_stream
-    }
-
-    /// Consumes whitespace and comments.
-    ///
-    /// `scan` calls this before each token. The error-recovery path in `scan` also calls this
-    /// after a bad character, so trivia is never re-lexed as a token by mistake.
-    fn skip_trivia(&mut self) {
-        loop {
-            if self.peek().is_ascii_whitespace() {
-                self.eat();
-                continue;
-            }
-
-            // Line comment: `//...`
-            if self.peek() == '/' && self.next() == '/' {
-                self.eat();
-                self.eat();
-                while !self.at_eof() && self.peek() != '\n' {
-                    self.eat();
-                }
-                continue;
-            }
-
-            // Block comment: `/* ... */`
-            if self.peek() == '/' && self.next() == '*' {
-                self.lexeme_pos = self.cursor;
-                self.eat();
-                self.eat();
-                loop {
-                    if self.at_eof() {
-                        self.error("unterminated block comment");
-                        break;
-                    }
-
-                    if self.peek() == '*' && self.next() == '/' {
-                        self.eat();
-                        self.eat();
-                        break;
-                    }
-                    self.eat();
-                }
-                continue;
-            }
-
-            break;
-        }
     }
 
     /// Scans and returns one token, starting at `self.cursor`.
@@ -247,20 +177,20 @@ impl<'a> Lexer<'a> {
                 // A lone `_` is the wildcard token, but `_foo` is an identifier. Thus we check
                 // the next character before deciding which one this is.
                 if self.peek().is_ascii_alphanumeric() || self.peek() == '_' {
-                    self.parse_identifier_or_kw()
+                    self.lex_identifier_or_kw()
                 } else {
                     self.make_token(TokenKind::Wildcard)
                 }
             }
 
-            '"' => self.parse_string(),
-            '\'' => self.parse_char(),
+            '"' => self.lex_string(),
+            '\'' => self.lex_char(),
 
             c => {
                 if c.is_ascii_alphabetic() || c == '_' {
-                    self.parse_identifier_or_kw()
+                    self.lex_identifier_or_kw()
                 } else if c.is_ascii_digit() {
-                    self.parse_number()
+                    self.lex_number()
                 } else {
                     self.error(format!("unexpected character '{}'", c));
                     // Skip the bad character and any trivia after it, then keep scanning. Thus a
@@ -336,7 +266,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn parse_number(&mut self) -> Token {
+    fn lex_number(&mut self) -> Token {
         while self.peek().is_ascii_digit() || self.peek() == '_' {
             self.eat();
         }
@@ -356,7 +286,7 @@ impl<'a> Lexer<'a> {
         self.make_token(TokenKind::FloatLiteral)
     }
 
-    fn parse_identifier_or_kw(&mut self) -> Token {
+    fn lex_identifier_or_kw(&mut self) -> Token {
         while self.peek().is_ascii_alphanumeric() || self.peek() == '_' {
             self.eat();
         }
@@ -419,7 +349,7 @@ impl<'a> Lexer<'a> {
     }
 
     // The opening quote is already consumed by `scan`.
-    fn parse_string(&mut self) -> Token {
+    fn lex_string(&mut self) -> Token {
         loop {
             if self.at_eof() || self.peek() == '"' {
                 break;
@@ -427,7 +357,7 @@ impl<'a> Lexer<'a> {
 
             if self.peek() == '\\' {
                 self.eat();
-                self.parse_escape_seq();
+                self.lex_escape_seq();
                 continue;
             }
 
@@ -444,7 +374,7 @@ impl<'a> Lexer<'a> {
     }
 
     // The opening quote is already consumed by `scan`.
-    fn parse_char(&mut self) -> Token {
+    fn lex_char(&mut self) -> Token {
         // `''` has no content, so we check for the closing quote before reading a character.
         if self.peek() == '\'' {
             self.eat();
@@ -456,7 +386,7 @@ impl<'a> Lexer<'a> {
             self.eat();
         } else {
             self.eat();
-            self.parse_escape_seq();
+            self.lex_escape_seq();
         }
 
         if self.peek() == '\'' {
@@ -479,46 +409,70 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn parse_escape_seq(&mut self) -> char {
+    fn lex_escape_seq(&mut self) -> char {
         if self.at_eof() {
             return '\0';
         }
 
-        escape_char(self.eat())
-    }
-}
+        self.eat()
 
-/// Maps the character following a `\` to the value it escapes. Returns unrecognized characters
-/// unchanged, so an unknown escape does not stop lexing.
-fn escape_char(c: char) -> char {
-    match c {
-        '\'' => '\'',
-        '"' => '"',
-        'n' => '\n',
-        't' => '\t',
-        'r' => '\r',
-        '\\' => '\\',
-        '0' => '\0',
-        other => other,
+        //escape_char(self.eat())
     }
-}
 
-/// The lexer only checks that a string or char literal's escapes are valid. It does not convert
-/// them to their real values, since it works with spans, not owned strings. Later stages need
-/// the actual value, so this function does that conversion.
-pub(crate) fn unescape(chars: &[char]) -> String {
-    let mut out = String::with_capacity(chars.len());
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            out.push(escape_char(chars[i + 1]));
-            i += 2;
-        } else {
-            out.push(chars[i]);
-            i += 1;
+    /// Record a diagnostic pointing at the span of the lexeme currently being scanned.
+    fn error(&self, message: impl Into<String>) {
+        let span = SrcSpan::new(
+            self.file_offset + self.lexeme_pos,
+            self.file_offset + self.cursor,
+        );
+        DiagCtx::error(message, span);
+    }
+
+    /// Consumes whitespace and comments.
+    ///
+    /// `scan` calls this before each token. The error-recovery path in `scan` also calls this
+    /// after a bad character, so trivia is never re-lexed as a token by mistake.
+    fn skip_trivia(&mut self) {
+        loop {
+            if self.peek().is_ascii_whitespace() {
+                self.eat();
+                continue;
+            }
+
+            // Line comment: `//...`
+            if self.peek() == '/' && self.next() == '/' {
+                self.eat();
+                self.eat();
+                while !self.at_eof() && self.peek() != '\n' {
+                    self.eat();
+                }
+                continue;
+            }
+
+            // Block comment: `/* ... */`
+            if self.peek() == '/' && self.next() == '*' {
+                self.lexeme_pos = self.cursor;
+                self.eat();
+                self.eat();
+                loop {
+                    if self.at_eof() {
+                        self.error("unterminated block comment");
+                        break;
+                    }
+
+                    if self.peek() == '*' && self.next() == '/' {
+                        self.eat();
+                        self.eat();
+                        break;
+                    }
+                    self.eat();
+                }
+                continue;
+            }
+
+            break;
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -681,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn range_after_int_literal_is_not_parsed_as_float() {
+    fn range_after_int_literal_is_not_lexed_as_float() {
         assert_eq!(
             kinds("5..10"),
             vec![

@@ -1,5 +1,5 @@
 use crate::ast::interner::Interner;
-use crate::ast::{Ast, AstModule, Symbol};
+use crate::ast::{Ast, Module, Symbol};
 use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
 use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
 use crate::nameres::results::{NameResolutions, SelfTyRes, TypeRes, ValueRes};
@@ -256,7 +256,7 @@ pub fn print_ast(ast: &Ast) {
 }
 
 /// A module's dotted path, or `<root>` for the root module, which has none.
-fn fmt_mod_path(module: &AstModule) -> String {
+fn fmt_mod_path(module: &Module) -> String {
     if module.path.segments.is_empty() {
         return "<root>".to_string();
     }

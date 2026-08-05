@@ -41,13 +41,10 @@ fn note_unimplemented_dumps(config: &Config, options: &BuildOptions) {
 }
 
 pub fn lex() -> Vec<Vec<Token>> {
-    // TODO: write this with .into_iter() and maps
-    let mut token_streams = Vec::with_capacity(SrcMap::files().len());
-    for file in SrcMap::files() {
-        let mut lexer = Lexer::new(&file.content, file.global_offset);
-        token_streams.push(lexer.tokenize());
-    }
-    token_streams
+    SrcMap::files()
+        .iter()
+        .map(|file| Lexer::new(&file.content, file.global_offset).tokenize())
+        .collect()
 }
 
 pub fn parse(token_streams: Vec<Vec<Token>>) -> Ast {

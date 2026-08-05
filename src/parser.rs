@@ -1,13 +1,3 @@
-//! [`Parser`] is an implementation of a parser using the `chumsky`
-//! parser-combinator library. [`Parser`] takes the token stream produced
-//! by the Lexer to output an Abstract Syntax Tree (AST)^1.
-//!
-//! 1. One should note that the AST outputted by the [`Parser`] is per-file,
-//! not per module. What this means is that the [`Parser`] does not immediately
-//! combine files implementing the same module, but instead keeps them separated
-//! to keep the beginnings of name resolution outside of the parser. Immediately
-//! after, however, this is done.
-
 use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
 use chumsky::extra;
@@ -28,12 +18,6 @@ mod item_parser;
 mod pattern_parser;
 mod type_parser;
 
-/// The grammar, and the entry points that run it over a file's tokens.
-///
-/// Deliberately holds no per-file state. Nothing the grammar is built from reads a token stream
-/// or a file offset -- [`Parser::kind`] filters on a token's kind, and the leaf parsers reach
-/// the source text through the global [`SrcMap`] -- so one built grammar parses every file in a
-/// build. That is what [`Parser::parse_all`] exploits; see its docs for why it matters.
 pub struct Parser {}
 
 impl Parser {
@@ -41,29 +25,11 @@ impl Parser {
         Parser {}
     }
 
-    /// Parses one file's token stream into a [`ParsedSrcFile`], reporting errors through
-    /// [`DiagCtx`]. `file_offset` is the stream's start position in the global [`SrcMap`], and
-    /// becomes the span of the fallback empty file if parsing fails.
-    ///
-    /// This builds a grammar for the one call. Use [`Parser::parse_all`] to parse a whole build.
     pub fn parse(&self, tokens: &[Token], file_offset: usize) -> ParsedSrcFile {
         let grammar = self.grammar();
         Self::run(&grammar, tokens, file_offset)
     }
 
-    /// Parses every file's token stream into the build's [`Ast`], building the grammar **once**
-    /// for all of them.
-    ///
-    /// Constructing the grammar is not free: it allocates the whole boxed combinator tree, and
-    /// does so more than once per build of it, since `item_parser` reaches for both
-    /// `type_parser` and `block_parser` and each of those builds its own expression grammar.
-    /// Paying that per file made it a fixed cost that scaled with file count rather than with
-    /// how much source there was -- roughly a third of the wall time on a 400-file build.
-    /// Hoisting it here is sound precisely because the grammar carries no per-file state.
-    ///
-    /// Files are parsed one at a time -- a [`ParsedSrcFile`] holds nothing but what one file
-    /// wrote, which is what keeps the grammar free of any notion of the build around it -- and
-    /// [`Ast::new`] groups them into modules once the last one is parsed.
     pub fn parse_all(&self, streams: &[(Vec<Token>, usize)]) -> Ast {
         let grammar = self.grammar();
         let files = streams
@@ -73,7 +39,6 @@ impl Parser {
         Ast::new(files)
     }
 
-    /// Runs an already-built `grammar` over one file's tokens.
     fn run<'a>(
         grammar: &impl ChumskyParser<'a, &'a [Token], Vec<Item>, Extra<'a>>,
         tokens: &'a [Token],
@@ -111,7 +76,7 @@ impl Parser {
         for item in items {
             match item.kind {
                 // Only the first `module` header counts. A file belongs to exactly one module.
-                ItemKind::Module(decl) => match module {
+                ItemKind::ModuleDecl(decl) => match module {
                     None => module = Some(decl),
                     Some(_) => Self::report_duplicate_module(item.span),
                 },
