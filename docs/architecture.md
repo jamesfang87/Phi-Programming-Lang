@@ -33,3 +33,4 @@ flowchart LR
     EH -.-> J
     EH -.-> N
 ```
+In the future, there are plans to move to incremental compilation, as well as to parallelize the lexer, parser, and codegen.
