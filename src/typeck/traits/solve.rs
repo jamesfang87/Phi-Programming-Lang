@@ -38,8 +38,8 @@ use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
 use crate::diag::{DiagCtx, Diagnostic};
+use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode};
-use crate::lexer::src_span::SrcSpan;
 use crate::nameres::results::TypeRes;
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;

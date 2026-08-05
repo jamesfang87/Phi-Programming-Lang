@@ -1,0 +1,274 @@
+//! Everything the compiler needs to read source text and address positions within it.
+//!
+//! A [`SrcSpan`] is a half-open range of *character* offsets into one global address space
+//! shared by every file the compiler has read. That is what lets a pipeline stage raise a
+//! diagnostic without knowing, or carrying, which file it came from. [`SrcMap`] owns that
+//! address space; [`SrcCollector`] fills it, first from the user's project and then from the
+//! embedded core library.
+
+use std::fs;
+use std::io;
+use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+
+/// [`SrcSpan`] is a half-open range of character (not byte) offsets into the
+/// compiler's source map.
+///
+/// Offsets stored in [`SrcSpan`] are global. Thus, the offsets of a span not
+/// only record information about a position in a file, but also which file.
+/// This removes the requirement to carry a separate file id, reducing the
+/// memory footprint of the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SrcSpan {
+    begin: usize,
+    end: usize,
+}
+
+#[allow(dead_code)]
+impl SrcSpan {
+    pub fn new(begin: usize, end: usize) -> SrcSpan {
+        SrcSpan { begin, end }
+    }
+
+    pub fn get_begin(&self) -> usize {
+        self.begin
+    }
+
+    pub fn get_end(&self) -> usize {
+        self.end
+    }
+
+    pub fn as_tuple(&self) -> (usize, usize) {
+        (self.begin, self.end)
+    }
+
+    /// Returns the smallest span that covers both `self` and `other`.
+    ///
+    /// Used to build a span for a larger syntax node out of its parts' spans, e.g. a whole
+    /// binary expression from its left and right operand spans.
+    pub fn merge(self, other: SrcSpan) -> SrcSpan {
+        SrcSpan::new(
+            self.begin.min(other.get_begin()),
+            self.end.max(other.get_end()),
+        )
+    }
+}
+
+/// Where a source file came from.
+///
+/// The core library is compiled into every unit alongside the user's own files, so the two are
+/// otherwise indistinguishable by the time they reach the `SrcMap`. Stages that report on "the
+/// program" -- `--ast` dumping it, for one -- use this to tell them apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FileOrigin {
+    /// A file the user wrote, found under the project root by the `FileCollector`.
+    User,
+    /// A file of the core library, embedded in the compiler binary itself.
+    Core,
+}
+
+/// A single source file the compiler has read, addressed within the shared `SrcMap` offset
+/// space rather than at file-local offsets.
+pub struct SrcFile {
+    pub name: String,
+    pub content: Vec<char>,
+    pub origin: FileOrigin,
+    /// The offset of this file's first char within the whole `SrcMap`'s global address space.
+    pub global_offset: usize,
+    /// The global offset at which each line of this file starts.
+    pub line_starts: Vec<usize>,
+}
+
+impl SrcFile {
+    /// Creates a new `SrcFile` and precomputes its line-start offsets.
+    ///
+    /// Precomputing lets [`SrcFile::line_col`] locate a position with a binary search instead
+    /// of rescanning the file on every call.
+    pub fn new(name: String, content: Vec<char>, origin: FileOrigin, global_offset: usize) -> Self {
+        // Line 1 starts at the file's own global offset.
+        let mut line_starts = vec![global_offset];
+
+        // Scan the file once to find every newline.
+        for (i, &char) in content.iter().enumerate() {
+            if char == '\n' {
+                // The next line starts right after the newline, in global offset space.
+                line_starts.push(global_offset + i + 1);
+            }
+        }
+
+        SrcFile {
+            name,
+            content,
+            origin,
+            global_offset,
+            line_starts,
+        }
+    }
+
+    /// Converts a *global* offset that falls within this file into a 1-based (line, column).
+    pub fn line_col(&self, pos: usize) -> (usize, usize) {
+        // Binary search for the line this position falls on: the largest line start that is
+        // less than or equal to `pos`.
+        let line_idx = match self.line_starts.binary_search(&pos) {
+            // `pos` sits exactly at a line start.
+            Ok(idx) => idx,
+            // `pos` sits between two line starts, so the enclosing line is the one before it.
+            Err(idx) => idx - 1,
+        };
+
+        let col_char_offset = pos - self.line_starts[line_idx];
+
+        // Converts the 0-based indices into 1-based, user-facing line and column numbers.
+        (line_idx + 1, col_char_offset + 1)
+    }
+}
+
+/// Mutable state for the global source map.
+///
+/// Tracks every file added so far, plus the running offset at which the next file gets
+/// appended. Files are never removed, and each `SrcFile` is leaked to `'static` when added,
+/// so handing out `&'static SrcFile` references stays sound even as this list grows.
+struct SrcMapState {
+    files: Vec<&'static SrcFile>,
+    cur_offset: usize,
+}
+
+static STATE: OnceLock<Mutex<SrcMapState>> = OnceLock::new();
+
+fn state() -> &'static Mutex<SrcMapState> {
+    STATE.get_or_init(|| {
+        Mutex::new(SrcMapState {
+            files: Vec::new(),
+            cur_offset: 0,
+        })
+    })
+}
+
+/// Namespace for the process-wide source map.
+///
+/// Every source file the compiler has read is indexed here by a shared global char-offset
+/// space, so spans can be resolved back to text without threading a source reference through
+/// every stage of the pipeline.
+pub struct SrcMap;
+
+impl SrcMap {
+    /// Returns every registered file, in the order it was added.
+    pub fn files() -> Vec<&'static SrcFile> {
+        state().lock().unwrap().files.clone()
+    }
+
+    /// Returns the file whose global offset range contains `offset`.
+    ///
+    /// Returns `None` if no registered file covers that offset.
+    pub fn file_containing(offset: usize) -> Option<&'static SrcFile> {
+        state()
+            .lock()
+            .unwrap()
+            .files
+            .iter()
+            .find(|f| offset >= f.global_offset && offset < f.global_offset + f.content.len())
+            .copied()
+    }
+
+    /// Returns the source text covered by `span` as an owned `String`.
+    ///
+    /// Returns `None` if `span` doesn't fall within any registered file.
+    pub fn text_of(span: SrcSpan) -> Option<String> {
+        Self::chars_of(span).map(|chars| chars.iter().collect())
+    }
+
+    /// Returns the chars covered by `span`, borrowed from the owning file's stored content.
+    ///
+    /// Returns `None` if `span` doesn't fall within any registered file.
+    pub fn chars_of(span: SrcSpan) -> Option<&'static [char]> {
+        let file = Self::file_containing(span.get_begin())?;
+        let begin = span.get_begin() - file.global_offset;
+        let end = span.get_end() - file.global_offset;
+        Some(&file.content[begin..end])
+    }
+
+    /// Registers a new source file, returning the global offset its content starts at.
+    pub fn add_file(name: String, content: Vec<char>, origin: FileOrigin) -> usize {
+        let mut st = state().lock().unwrap();
+        let offset = st.cur_offset;
+        let len = content.len();
+        let file: &'static SrcFile =
+            Box::leak(Box::new(SrcFile::new(name, content, origin, offset)));
+        st.files.push(file);
+        st.cur_offset += len;
+        offset
+    }
+}
+
+/// Every file of the core library, as `(name, source)`.
+///
+/// The names are what diagnostics pointing into `core` are rendered against, so they're written
+/// as paths relative to the compiler's own `lib/` directory rather than the absolute paths the
+/// files had when the binary was built.
+const CORE_FILES: &[(&str, &str)] = &[
+    ("core/iter.phi", include_str!("../../lib/core/iter.phi")),
+    ("core/ops.phi", include_str!("../../lib/core/ops.phi")),
+    ("core/option.phi", include_str!("../../lib/core/option.phi")),
+    (
+        "core/prelude.phi",
+        include_str!("../../lib/core/prelude.phi"),
+    ),
+    ("core/result.phi", include_str!("../../lib/core/result.phi")),
+];
+
+/// Namespace for discovering source files and registering them with the [`SrcMap`].
+pub struct SrcCollector;
+
+impl SrcCollector {
+    /// Recursively finds all `.phi` files under `root` and inserts them into the source map.
+    pub fn collect(root: &Path) -> io::Result<()> {
+        Self::visit_dir(root)
+    }
+
+    /// Registers every core library file with the [`SrcMap`], in the order [`CORE_FILES`]
+    /// lists them.
+    ///
+    /// Phi has no notion of a separately compiled library yet, so `core` is compiled into the
+    /// same unit as the user's own files, from source, on every build. Its files carry
+    /// ordinary `module core::..;` declarations, so lowering assembles them into the module
+    /// tree exactly as it does the user's -- nothing downstream needs to know `core` is
+    /// special.
+    ///
+    /// The one thing that is special is *when* they're registered: this runs after
+    /// [`SrcCollector::collect`] has walked the project, so `core` sits at the end of the
+    /// offset space and editing it doesn't shift the span of every user file in the build.
+    ///
+    /// Which items `core` is expected to declare is not recorded here but in
+    /// [`crate::langitems`], which resolves each one to its `DefId` after name resolution has
+    /// built `core`'s namespace.
+    pub fn collect_core() {
+        for &(name, source) in CORE_FILES {
+            SrcMap::add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
+        }
+    }
+
+    fn visit_dir(dir: &Path) -> io::Result<()> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+
+        // `read_dir`'s order is OS-dependent.
+        //
+        // Sort by file name so file collection, and therefore every downstream stage that
+        // depends on it, such as diagnostic output and `--ast` output, stays reproducible.
+        let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                Self::visit_dir(&path)?;
+            } else if path.extension().and_then(|s| s.to_str()) == Some("phi") {
+                let name = path.to_string_lossy().into_owned();
+                let content = fs::read_to_string(&path)?.chars().collect::<Vec<char>>();
+                SrcMap::add_file(name, content, FileOrigin::User);
+            }
+        }
+        Ok(())
+    }
+}

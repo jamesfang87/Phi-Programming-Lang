@@ -12,8 +12,7 @@
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, ParsedSrcFile};
 use crate::diag::DiagCtx;
-use crate::driver::src_file::FileOrigin;
-use crate::driver::src_map::SrcMap;
+use crate::driver::source::{FileOrigin, SrcMap};
 use crate::hir::lower::lower_unit;
 use crate::hir::{DefId, Hir, HirId, NameResolutions, Node, OwnerNode, StmtKind};
 use crate::lexer::Lexer;

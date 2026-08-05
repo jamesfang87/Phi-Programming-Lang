@@ -1,11 +1,11 @@
 //! [`OwnerLowerer`]: lowers one owner's AST subtree into its arena, plus the generic
 //! reserve/build/fill helpers every node kind is lowered through.
 
+use crate::driver::source::SrcSpan;
 use crate::hir::builder::ArenaBuilder;
 use crate::hir::ids::DefId;
 use crate::hir::lower::ctx::LoweringCtx;
 use crate::hir::{Arm, Block, Expr, HirId, Node, Pat, PatKind, Stmt, StmtKind, Ty, TyKind};
-use crate::lexer::src_span::SrcSpan;
 
 /// Lowers one owner's AST subtree into that owner's arena.
 ///

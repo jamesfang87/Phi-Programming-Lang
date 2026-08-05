@@ -12,7 +12,7 @@ use crate::ast::{
     Trait, Variant, VariantPayload, Visibility,
 };
 
-use crate::lexer::src_span::SrcSpan;
+use crate::driver::source::SrcSpan;
 use crate::lexer::token::TokenKind;
 
 use super::{BoxedP, Parser};

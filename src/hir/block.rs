@@ -6,8 +6,8 @@
 //! see the module-level docs in `src/hir.rs`.
 
 use crate::ast::Mutability;
+use crate::driver::source::SrcSpan;
 use crate::hir::ids::HirId;
-use crate::lexer::src_span::SrcSpan;
 
 /// A `{ ... }` block. It holds a sequence of statements, optionally followed by a trailing,
 /// non-semicolon expression that becomes the block's value.

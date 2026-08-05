@@ -7,7 +7,7 @@ mod type_impls;
 
 pub use tree::{Ast, AstModule, ModId};
 
-use crate::lexer::src_span::SrcSpan;
+use crate::driver::source::SrcSpan;
 
 // ===========================================================================
 // Identifiers, paths, literals

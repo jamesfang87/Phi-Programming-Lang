@@ -5,8 +5,8 @@
 #![allow(dead_code)]
 
 use crate::ast::{Ident, Path, SelfMode, Visibility};
+use crate::driver::source::SrcSpan;
 use crate::hir::ids::{DefId, HirId};
-use crate::lexer::src_span::SrcSpan;
 
 /// A module. `items` holds every definition declared directly inside it, each already lowered
 /// and given its own [`DefId`]; `imports` holds the `import` statements, which stay local to

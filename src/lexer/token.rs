@@ -2,7 +2,7 @@
 //! it consists of two part:, a [`TokenKind`] that records what type of token
 //! it is and a [`SrcSpan`].
 
-use crate::lexer::src_span::SrcSpan;
+use crate::driver::source::SrcSpan;
 
 /// [`TokenKind`] is the kind of a single token. See [`TokenKind::to_string`]
 /// for the exact source text each variant corresponds to.

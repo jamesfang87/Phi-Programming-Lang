@@ -129,8 +129,8 @@ impl ArenaBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver::source::SrcSpan;
     use crate::hir::block::Block;
-    use crate::lexer::src_span::SrcSpan;
 
     fn block(id: HirId) -> Node {
         Node::Block(Block {

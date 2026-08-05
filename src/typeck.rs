@@ -24,10 +24,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Literal, Mutability, SelfMode};
 use crate::diag::{DiagCtx, Diagnostic};
+use crate::driver::source::SrcSpan;
 use crate::hir::{
     DefId, ExprKind, Hir, HirId, NameResolutions, Node, OwnerNode, StmtKind, VariantPayload,
 };
-use crate::lexer::src_span::SrcSpan;
 use crate::nameres::results::{PrimTy, ValueRes};
 use crate::typeck::display::DisplayCx;
 use crate::typeck::results::TypeResolutions;
