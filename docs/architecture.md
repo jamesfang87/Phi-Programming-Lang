@@ -220,7 +220,7 @@ pub enum ItemKind {
 ```
 An important thing to note is that `ModuleDecl` only represents the module declaration at the top of a file, such as `module math::vector`. That is, it just stores information not what module this file is implementing, **not** the contents of that module. This is due to Phi semantics allowing modules to implement any separate module. When the AST is created, code is organized into `Module`s, which actually hold information about the `Items` and imports in a module. Each module is assigned an `ModId` (which is just a unique integer) to help with this process.
 
-`Parser::parse` (and `parse_all`, its whole-build counterpart) each produce one `ParsedSrcFile` per file — a file's own `module` header, its imports, and its items, still separate from every other file's. `Ast::new` is what turns a `Vec<ParsedSrcFile>` into the module tree, via a private `AstBuilder` that keeps the path index the merge needs and is thrown away once it's done:
+`Parser::parse` (and `parse_all`, its whole-build counterpart) each produce one `ParsedSrcFile` per file, which describes a file's own `module` header, its imports, and its items. `Ast::new` then turns a `Vec<ParsedSrcFile>` into the module tree, via a private `AstBuilder`:
 
 ```mermaid
 flowchart LR
@@ -239,11 +239,6 @@ flowchart LR
     Math --> Vector["Module math::vector (ModId 2)<br>items/imports merged from a.phi + b.phi"]
     Root -.->|"c.phi's items land here"| Root
 ```
-
-A module a file declares explicitly and one only ever named as another module's ancestor (`math`
-above) are the same module either way around — whichever file the build happens to reach first
-creates it, and later files declaring or implying it just merge into the existing `ModId`. This is
-what lets Phi's modules span multiple files without a separate merge pass elsewhere.
 
 ### Types
 To separate related work into distinct stages of the pipeline when possible, `ast::Ty` deliberately does not distinguish between primitives and nominal types to prevent name resolution from being done during parsing. Thus, there is one representation with `TyKind::Path`.
@@ -336,17 +331,14 @@ flowchart LR
     A2s1["slot 1: Node::Field x"] --> A2
 ```
 
-Every arena's slot 0 holds the definition that owns it (so a `DefId`'s own `HirId` is always
-`{ owner: that DefId, local_id: 0 }`), and every later slot holds one of its locals — parameters,
-statements, expressions, patterns. Desugaring is why the HIR has fewer expression kinds than the
-AST: `while`, `for`, and `while let` all lower to one `ExprKind::Loop`, and `if let` lowers to
-`ExprKind::Match`, so every later pass handles one canonical looping and matching form instead of
-several equivalent surface ones.
+Every arena's slot 0 holds the definition that owns it (so a `DefId`'s own `HirId` is always `{ owner: that DefId, local_id: 0 }`), and every later slot holds one of its locals, such as parameters, statements, expressions, patterns. 
 
+### Desugaring
+Desugaring allows Type Inference to consider fewer expression kinds than the AST. We desugar `while`, `for`, and `while let` to one `ExprKind::Loop`, and `if let`  to
+`ExprKind::Match`.
 
 ## Type Inference
-Type checking runs in three stages over the whole program, in a fixed order, implemented in
-`Typeck` (`src/typeck.rs`) and driven by `typeck::check(&hir, &nameres)`:
+Type checking runs in three stages over the whole program, collection, trait solving, and checking. Collection considers the annotated signatures of functions, structs, enums, etc. to gather type information which can be used later on. Trait solving can be viewed as an extension of collection, where we gather information about which types conform to which traits. Lastly, we use all the information above to check the bodies of Nodes.
 
 ```mermaid
 flowchart TD
@@ -371,17 +363,11 @@ flowchart TD
     S1 --> S2 --> S3
 ```
 
-The order is load-bearing, not incidental: collection has to finish before coherence, since
-coherence compares `extend`-block headers as `Ty`s, which don't exist until collection lowers
-them; and coherence has to finish before body checking, since a body's method calls ask the trait
-solver questions whose answers are only unique once coherence has ruled out two `extend` blocks
-both applying to the same type.
+### Type Representation
+To allow for unification of all instances of a type, the type checking stage uses its own representation of a type in the Phi Programming Language. Instead of storing types as values in previous stages, a `TyKind`, which represents a unique type, is interned in a `TyCtx` (type context. Users instead are given references to a canonical instance of `TyKind`.
 
 ### Trait Solving
-Trait solving answers one question — *does this type implement this trait?* — which is harder
-than a table lookup because `extend` block headers carrying their own generics make the header a
-*pattern*, not a fact, so two headers can both apply to one type. `typeck::traits` is six modules,
-each with one job in that answer:
+Trait solving answers one question *does this type implement this trait?*. Below is a diagram outlining the structure of `typeck::traits` with the responsibility of each module.
 
 ```mermaid
 flowchart LR
@@ -395,19 +381,5 @@ flowchart LR
     Bounds["bounds<br>asks the query where a bound is<br>instantiated, via an ObligationCx that<br>defers until inference has settled"] --> Method
     Method["method<br>x.foo() picks the one method meant, across<br>inherent blocks, impls, bounds, and dyn receivers"]
 ```
-
-Everything here is phrased in interned `Ty` (see [`TyCtx`](#tyctx) below) — the solver never
-resolves a name itself; by the time it runs, every `extend` header has already been lowered by
-collection, which is why this stage sits between collection and body checking and cannot move
-earlier or later.
-
-#### TyCtx
-`TyCtx` is the type checker's own arena: it owns every `TyKind` in the program and hands out the
-`Ty` handles that address them. A `TyKind` is only ever stored once — interning — so two
-structurally-equal types are always the same `Ty` handle, which turns comparing types into an
-integer comparison instead of a recursive walk, and lets a deeply nested type share storage with
-every type that repeats one of its components. `TyCtx` is created fresh per compilation rather
-than kept as a global, specifically so its handles can't silently mean something else in a second
-context existing at the same time (two tests running in parallel, for instance).
 
 ## Borrow Checking
