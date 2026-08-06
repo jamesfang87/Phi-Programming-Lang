@@ -22,18 +22,20 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Literal, Mutability, SelfMode, UnaryOp};
+use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{
     DefId, ExprKind, Hir, HirId, NameResolutions, Node, OwnerNode, StmtKind, VariantPayload,
 };
+use crate::langitems::LangItem;
 use crate::nameres::results::{PrimTy, ValueRes};
 use crate::typeck::display::DisplayCx;
 use crate::typeck::results::TypeResolutions;
+use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::bounds::ObligationCx;
 use crate::typeck::traits::index::ImplIndex;
-use crate::typeck::traits::solve::{Obligation, ParamEnv};
+use crate::typeck::traits::solve::{Obligation, ParamEnv, Solution};
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::{Unifier, UnifyError};
@@ -530,14 +532,25 @@ impl<'hir> Typeck<'hir> {
                 }
             }
             ExprKind::Unary { op, operand } => {
-                match op {
-                    UnaryOp::Neg => {}
-                    UnaryOp::Not => {}
-                }
+                let operand_ty = self.ty_of(*operand);
+                let resolved = self.unifier.root(operand_ty);
+                let is_primitive = matches!(self.tcx.kind(resolved), TyKind::Primitive(_));
 
-                todo!("check_expr: Unary")
+                let item = match op {
+                    UnaryOp::Neg => LangItem::Neg,
+                    UnaryOp::Not => LangItem::Not,
+                };
+
+                if is_primitive {
+                    // `-`/`!` on `i32`/`bool` and friends are built in -- no `extend` block
+                    // backs a primitive, so there is nothing for the solver to find.
+                    resolved
+                } else {
+                    self.check_operator_trait(item, resolved, id.owner, expr.span)
+                        .unwrap_or_else(|| self.tcx.error())
+                }
             }
-            ExprKind::Binary { lhs, rhs, .. } => {
+            ExprKind::Binary { op, lhs, rhs } => {
                 let (lhs, rhs) = (self.ty_of(*lhs), self.ty_of(*rhs));
                 if let Err(error) = self.unifier.unify(&self.tcx, lhs, rhs) {
                     DiagCtx::emit(
@@ -550,10 +563,73 @@ impl<'hir> Typeck<'hir> {
                         ),
                     );
                 }
+                let resolved = self.unifier.root(lhs);
+                let is_primitive = matches!(self.tcx.kind(resolved), TyKind::Primitive(_));
+                let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+
                 // What the operator itself demands of its operands -- that `+` takes numbers,
-                // that `&&` takes bools -- and what it produces is still unwritten; all that
-                // happens above is that the two sides are required to agree with each other.
-                todo!("check_expr: Binary")
+                // that `&&` takes bools -- and what it produces used to be unwritten here. Now
+                // each operator maps onto the `core::ops` trait its lang item names: unifying
+                // the two sides above is still required, but no longer sufficient.
+                match op {
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                        let item = match op {
+                            BinaryOp::Add => LangItem::Add,
+                            BinaryOp::Sub => LangItem::Sub,
+                            BinaryOp::Mul => LangItem::Mul,
+                            BinaryOp::Div => LangItem::Div,
+                            BinaryOp::Rem => LangItem::Rem,
+                            _ => unreachable!(),
+                        };
+                        if is_primitive {
+                            resolved
+                        } else {
+                            self.check_operator_trait(item, resolved, id.owner, expr.span)
+                                .unwrap_or_else(|| self.tcx.error())
+                        }
+                    }
+                    BinaryOp::Eq | BinaryOp::Ne => {
+                        if is_primitive
+                            || self
+                                .check_operator_trait(LangItem::Eq, resolved, id.owner, expr.span)
+                                .is_some()
+                        {
+                            bool_ty
+                        } else {
+                            self.tcx.error()
+                        }
+                    }
+                    BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                        if is_primitive
+                            || self
+                                .check_operator_trait(
+                                    LangItem::Comparable,
+                                    resolved,
+                                    id.owner,
+                                    expr.span,
+                                )
+                                .is_some()
+                        {
+                            bool_ty
+                        } else {
+                            self.tcx.error()
+                        }
+                    }
+                    BinaryOp::And | BinaryOp::Or => {
+                        // Not overloadable -- the core lib has no logic trait, so `&&`/`||`
+                        // only ever mean the primitive short-circuit operators.
+                        if let Err(error) = self.unifier.unify(&self.tcx, resolved, bool_ty) {
+                            DiagCtx::emit(
+                                Diagnostic::error(self.cx().show(error).to_string(), expr.span)
+                                    .with_label(format!(
+                                        "`&&`/`||` need bool operands, found {}",
+                                        self.cx().show(resolved)
+                                    )),
+                            );
+                        }
+                        bool_ty
+                    }
+                }
             }
             ExprKind::Assign { .. } => todo!("check_expr: Assign"),
             ExprKind::AssignOp { .. } => todo!("check_expr: AssignOp"),
@@ -594,6 +670,55 @@ impl<'hir> Typeck<'hir> {
         };
 
         ty
+    }
+
+    /// Asks the trait solver whether `self_ty` implements the operator trait `item` names --
+    /// `Add`, `Neg`, `Eq`, and so on -- and, if it does, hands back the type standing in for the
+    /// trait's own `Self`.
+    ///
+    /// Every operator trait in `core::ops` returns `Self` (`Eq` and `Comparable` return `bool`
+    /// instead, so their callers only ask whether this returns `Some` and ignore the type it
+    /// carries). That means there is no associated type to project here: `self_ty` itself is the
+    /// answer, and this is a thin wrapper around [`Typeck::implements`] rather than the general
+    /// case method resolution needs, which is why [`method`](traits::method) collects its own
+    /// candidates instead of calling this.
+    ///
+    /// Returns `None` once nothing more should be said about the expression: either a diagnostic
+    /// already went out (`DoesNotHold`), or the goal can't be settled from here (`Ambiguous`
+    /// because an operand is still an inference variable, `Error` because one side already is)
+    /// and piling another guess on top would just be noise.
+    fn check_operator_trait(
+        &mut self,
+        item: LangItem,
+        self_ty: Ty,
+        owner: DefId,
+        span: SrcSpan,
+    ) -> Option<Ty> {
+        // A lang item that failed to resolve was already reported by `langitems::collect`;
+        // saying anything more here would be a second diagnostic for the same mistake.
+        let trait_def = self.nameres.lang_items().get(item)?;
+
+        let trait_ref = TraitRef {
+            def: trait_def,
+            args: Vec::new(),
+        };
+        let goal = Obligation::new(self_ty, trait_ref, span);
+        let env = self.param_env(owner);
+
+        match self.implements(&goal, &env) {
+            Solution::Holds(_) => Some(self_ty),
+            Solution::DoesNotHold => {
+                DiagCtx::emit(
+                    Diagnostic::error(
+                        format!("{} does not implement `{item:?}`", self.cx().show(self_ty)),
+                        span,
+                    )
+                    .with_label("this operator needs an `extend .. with` block providing it"),
+                );
+                None
+            }
+            Solution::Ambiguous | Solution::Error => None,
+        }
     }
 
     /// The type of a literal. Every kind of literal is trivial except an unsuffixed number: `1`
@@ -852,6 +977,133 @@ mod tests {
     // -----------------------------------------------------------------
     // check_expr
     // -----------------------------------------------------------------
+
+    /// A checker with signatures collected and the impl index built, ready to answer trait
+    /// questions -- what [`Typeck::check_operator_trait`] needs, since it's reached through
+    /// [`Typeck::implements`] rather than the plain unifier.
+    fn checker_with_impls_built<'hir>(
+        hir: &'hir Hir,
+        nameres: &'hir NameResolutions,
+    ) -> Typeck<'hir> {
+        let mut checker = checker_with_signatures_collected(hir, nameres);
+        checker.build_impl_index();
+        checker
+    }
+
+    /// The `DefId` of the first item anywhere in `hir`'s module tree that `pred` accepts,
+    /// recursing into submodules.
+    ///
+    /// [`first_function`]/[`first_struct`] only look at the root module's own items, which is
+    /// enough for a fixture with no `module` header of its own. A lang item's own trait has to
+    /// live at its real path (`core::ops::Add`, for [`LangItem::path`]) to resolve at all, so
+    /// these tests nest their fixture's whole program under `module core::ops;` and need to find
+    /// their way back into it.
+    fn find_owner(hir: &Hir, from: DefId, pred: &impl Fn(&OwnerNode) -> bool) -> DefId {
+        find_owner_opt(hir, from, pred)
+            .unwrap_or_else(|| panic!("no item matching the predicate anywhere under {from:?}"))
+    }
+
+    fn find_owner_opt(hir: &Hir, from: DefId, pred: &impl Fn(&OwnerNode) -> bool) -> Option<DefId> {
+        let OwnerNode::Module(module) = hir.def(from) else {
+            unreachable!("find_owner only recurses into Module owners");
+        };
+
+        for &item in &module.items {
+            if pred(hir.def(item)) {
+                return Some(item);
+            }
+            if matches!(hir.def(item), OwnerNode::Module(_)) {
+                if let Some(found) = find_owner_opt(hir, item, pred) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// `a + b` on a struct with an `extend Foo with Add` block resolves through the solver:
+    /// [`Typeck::check_operator_trait`] asks [`Typeck::implements`] whether `Foo` implements the
+    /// trait `LangItem::Add` names, gets back `Solution::Holds`, and returns `Foo` itself as the
+    /// result -- every operator trait in `core::ops` returns `Self`, so there's no associated
+    /// type to project.
+    #[test]
+    fn binary_add_on_a_struct_with_an_add_impl_resolves_through_the_solver() {
+        let (hir, nameres) = resolve_src(
+            "module core::ops;
+
+             public trait Add {
+                 fun add(&self, other: &Self) -> Self;
+             }
+
+             struct Foo {
+                 x: i32,
+             }
+
+             extend Foo with Add {
+                 fun add(&self, other: &Self) -> Self {
+                     return .{ x: self.x };
+                 }
+             }
+
+             fun f(a: Foo, b: Foo) -> Foo {
+                 return a + b;
+             }",
+        );
+        let f = find_owner(&hir, hir.root_id(), &|def| matches!(def, OwnerNode::Function(_)));
+        let (stmt_id, _expr_id) = find_return(&hir, f);
+        let mut checker = checker_with_impls_built(&hir, &nameres);
+
+        DiagCtx::clear();
+        checker.check_stmt(stmt_id);
+        let diagnostics = DiagCtx::diagnostics();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    /// The same shape, minus the `extend` block: `Solution::DoesNotHold` reports that `Foo`
+    /// doesn't implement `Add`, the same way an unsatisfied bound would.
+    #[test]
+    fn binary_add_on_a_struct_with_no_add_impl_is_rejected() {
+        let (hir, nameres) = resolve_src(
+            "module core::ops;
+
+             public trait Add {
+                 fun add(&self, other: &Self) -> Self;
+             }
+
+             struct Foo {
+                 x: i32,
+             }
+
+             fun f(a: Foo, b: Foo) -> Foo {
+                 return a + b;
+             }",
+        );
+        let f = find_owner(&hir, hir.root_id(), &|def| matches!(def, OwnerNode::Function(_)));
+        let (stmt_id, _expr_id) = find_return(&hir, f);
+        let mut checker = checker_with_impls_built(&hir, &nameres);
+
+        DiagCtx::clear();
+        checker.check_stmt(stmt_id);
+        let diagnostics = DiagCtx::diagnostics();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(diagnostics[0].message.contains("Add"), "{diagnostics:?}");
+    }
+
+    /// `1 + 2` never reaches the solver at all: an operand still typed as a primitive short-
+    /// circuits `check_operator_trait` entirely, so ordinary arithmetic keeps working in a
+    /// fixture with no core library -- and so no lang items -- in sight.
+    #[test]
+    fn binary_add_on_primitives_bypasses_the_solver() {
+        let (hir, nameres) = resolve_src("fun f() -> i32 { return 1 + 2; }");
+        let def_id = first_function(&hir);
+        let (stmt_id, _expr_id) = find_return(&hir, def_id);
+        let mut checker = checker_with_impls_built(&hir, &nameres);
+
+        DiagCtx::clear();
+        checker.check_stmt(stmt_id);
+        let diagnostics = DiagCtx::diagnostics();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
 
     /// `ty_of` records on first use and reads through the unifier afterwards, so a type read
     /// back after it has been unified with something concrete comes back as the concrete type
