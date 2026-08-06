@@ -76,6 +76,35 @@ The CLI and Phi.toml parsing are implemented by the `driver::cli` module. The co
 2. `Config`, a struct read from the project's `Phi.toml`, holding project name/version/edition, the compilation mode (release/debug), and the project's root and `src/` directories.
 Based on what args are given, `driver::cli` either dispatches to the `driver::project` module, which handles project creation, or to the `driver::pipeline` module, which handles the actual compilation.
 
+```mermaid
+flowchart TD
+    Argv["process args"] --> Parse["driver::cli parses argv into CliArgs"]
+    Parse -->|"new / init"| Project["driver::project"]
+    Parse -->|"check / build / run"| Manifest["read & parse Phi.toml into Config"]
+
+    Project -->|"new"| New["project::new(name)<br>scaffolds a fresh Phi.toml + src/"]
+    Project -->|"init"| Init["project::init()<br>scaffolds in the current directory"]
+
+    Manifest --> Dispatch{command}
+    Dispatch -->|"check"| Check["pipeline::check(&Config, &BuildOptions)"]
+    Dispatch -->|"build"| Build["pipeline::build(&Config, &BuildOptions)"]
+    Dispatch -->|"run"| Run["pipeline::run(&Config)"]
+
+    Build --> Check
+    Run --> Build
+
+    Check --> ExitCode["exit code from DiagCtx::has_errors()"]
+    Build -.->|"prints a codegen note"| ExitCode
+    Run -.->|"always exits 1: no backend"| ExitCode
+```
+
+`build` and `run` are thin wrappers around `check`, not separate pipelines: `build` calls `check`
+and, only if it reported no errors, prints a note about code generation; `run` calls `build` and
+then unconditionally reports that there's no backend to run. This is why `check` is the only
+place in `pipeline.rs` that lexes, parses, lowers, resolves, and type-checks — the other two
+commands exist to describe what a real toolchain's `build`/`run` would additionally do once
+codegen lands.
+
 The public API in `driver::project` and `driver::pipeline` mirrors the CLI. In `project.rs`, there is `pub fn init()` and `pub fn new(project_name: &str)`, which mirror the two commands in the CLI with the same name. In `pipeline.rs`, there is `pub fn check(config: &Config, options: &BuildOptions)`, `pub fn build(config: &Config, options: &BuildOptions)`, and `pub fn run(config: &Config)`. `Config` and `BuildOptions` are kept as separate arguments rather than merged into one struct: `Config` carries the manifest -- what project this is -- while `BuildOptions` carries the flags given to the specific `build` or `check` invocation, and those two things vary independently.
 
 `build` and `check` accept the same flags and differ only in that `build` additionally prints a note that code generation is not implemented yet and that `build` currently only checks; `run` builds first, then reports that there is no backend to run and exits with status 1. `--mir` and `--llvm` are both accepted by `build` and `check`, but since neither stage exists yet, passing either just prints a note that the stage is not implemented and has no other effect. `--emit-debug` dumps every stage that is actually implemented, which includes the `NameResolutions` and `TypeResolutions` dumps even though those have no flag of their own to request them individually; `--no-emit-core` never affects compilation itself, only whether the core library's definitions show up in those dumps.
@@ -191,6 +220,31 @@ pub enum ItemKind {
 ```
 An important thing to note is that `ModuleDecl` only represents the module declaration at the top of a file, such as `module math::vector`. That is, it just stores information not what module this file is implementing, **not** the contents of that module. This is due to Phi semantics allowing modules to implement any separate module. When the AST is created, code is organized into `Module`s, which actually hold information about the `Items` and imports in a module. Each module is assigned an `ModId` (which is just a unique integer) to help with this process.
 
+`Parser::parse` (and `parse_all`, its whole-build counterpart) each produce one `ParsedSrcFile` per file — a file's own `module` header, its imports, and its items, still separate from every other file's. `Ast::new` is what turns a `Vec<ParsedSrcFile>` into the module tree, via a private `AstBuilder` that keeps the path index the merge needs and is thrown away once it's done:
+
+```mermaid
+flowchart LR
+    subgraph Files["one ParsedSrcFile per file"]
+        F1["file a.phi<br>module math::vector;"]
+        F2["file b.phi<br>module math::vector;"]
+        F3["file c.phi<br>(no header)"]
+    end
+
+    F1 --> Builder["AstBuilder::module_for_path"]
+    F2 --> Builder
+    F3 -->|"no header → root"| Builder
+
+    Builder -->|"synthesizes math as vector's<br>ancestor, since no file names it alone"| Root["Module (root, ModId 0)"]
+    Root --> Math["Module math (ModId 1)"]
+    Math --> Vector["Module math::vector (ModId 2)<br>items/imports merged from a.phi + b.phi"]
+    Root -.->|"c.phi's items land here"| Root
+```
+
+A module a file declares explicitly and one only ever named as another module's ancestor (`math`
+above) are the same module either way around — whichever file the build happens to reach first
+creates it, and later files declaring or implying it just merge into the existing `ModId`. This is
+what lets Phi's modules span multiple files without a separate merge pass elsewhere.
+
 ### Types
 To separate related work into distinct stages of the pipeline when possible, `ast::Ty` deliberately does not distinguish between primitives and nominal types to prevent name resolution from being done during parsing. Thus, there is one representation with `TyKind::Path`.
 
@@ -262,8 +316,98 @@ pub struct HirId {
 
 To have more uniform call sites and avoid multiple functions accepting either `DefId` or `HirId`, `definitions` are also assigned a `HirId` where `local_id` is 0 (remember that definitions are stored at the first slot: slot 0).
 
+```mermaid
+flowchart LR
+    subgraph Hir["Hir"]
+        direction LR
+        A0["Arena (DefId 0, root module)"]
+        A1["Arena (DefId 1, fun main)"]
+        A2["Arena (DefId 2, struct Point)"]
+    end
+
+    A1s0["slot 0: Node::Function (self)"] --> A1
+    A1s1["slot 1: Node::Param x"] --> A1
+    A1s2["slot 2: Node::Stmt ..."] --> A1
+    A1s3["slot 3: Node::Expr ..."] --> A1
+
+    HirId1["HirId { owner: DefId 1, local_id: 2 }"] -.->|addresses| A1s2
+
+    A2s0["slot 0: Node::Struct (self)"] --> A2
+    A2s1["slot 1: Node::Field x"] --> A2
+```
+
+Every arena's slot 0 holds the definition that owns it (so a `DefId`'s own `HirId` is always
+`{ owner: that DefId, local_id: 0 }`), and every later slot holds one of its locals — parameters,
+statements, expressions, patterns. Desugaring is why the HIR has fewer expression kinds than the
+AST: `while`, `for`, and `while let` all lower to one `ExprKind::Loop`, and `if let` lowers to
+`ExprKind::Match`, so every later pass handles one canonical looping and matching form instead of
+several equivalent surface ones.
+
+
 ## Type Inference
+Type checking runs in three stages over the whole program, in a fixed order, implemented in
+`Typeck` (`src/typeck.rs`) and driven by `typeck::check(&hir, &nameres)`:
+
+```mermaid
+flowchart TD
+    subgraph S1["1. Collection — signatures only, no body ever inspected"]
+        Collect["Typeck::collect_module<br>lowers every struct field, enum variant,<br>fn param/return annotation to a Ty"]
+    end
+
+    subgraph S2["2. Trait solving setup — see Trait Solving below"]
+        Impls["Typeck::build_impl_index"]
+        Coherence["Typeck::check_coherence"]
+        Members["Typeck::check_trait_members"]
+        Bounds["Typeck::check_declared_bounds"]
+        Headers["Typeck::check_impl_headers"]
+        Obligations["Typeck::select_program_obligations"]
+        Impls --> Coherence --> Members --> Bounds --> Headers --> Obligations
+    end
+
+    subgraph S3["3. Body checking"]
+        CheckBodies["Typeck::check_module<br>checks every function/closure body<br>against the signatures S1 collected"]
+    end
+
+    S1 --> S2 --> S3
+```
+
+The order is load-bearing, not incidental: collection has to finish before coherence, since
+coherence compares `extend`-block headers as `Ty`s, which don't exist until collection lowers
+them; and coherence has to finish before body checking, since a body's method calls ask the trait
+solver questions whose answers are only unique once coherence has ruled out two `extend` blocks
+both applying to the same type.
 
 ### Trait Solving
+Trait solving answers one question — *does this type implement this trait?* — which is harder
+than a table lookup because `extend` block headers carrying their own generics make the header a
+*pattern*, not a fact, so two headers can both apply to one type. `typeck::traits` is six modules,
+each with one job in that answer:
+
+```mermaid
+flowchart LR
+    Index["index<br>collects every extend block into an<br>ImplIndex, keyed for lookup"] --> Overlap
+    Overlap["overlap<br>can two impl headers both<br>apply to one type? (no diagnostics)"] --> Coherence
+    Coherence["coherence<br>whole-program conflict check,<br>built on overlap"] --> Members
+    Members["members<br>checks each impl against its trait:<br>right methods, right signatures"]
+
+    Coherence -.->|"index now safe to query"| Solve
+    Solve["solve<br>the query itself, plus the ParamEnv<br>of assumptions it's asked against"] --> Bounds
+    Bounds["bounds<br>asks the query where a bound is<br>instantiated, via an ObligationCx that<br>defers until inference has settled"] --> Method
+    Method["method<br>x.foo() picks the one method meant, across<br>inherent blocks, impls, bounds, and dyn receivers"]
+```
+
+Everything here is phrased in interned `Ty` (see [`TyCtx`](#tyctx) below) — the solver never
+resolves a name itself; by the time it runs, every `extend` header has already been lowered by
+collection, which is why this stage sits between collection and body checking and cannot move
+earlier or later.
+
+#### TyCtx
+`TyCtx` is the type checker's own arena: it owns every `TyKind` in the program and hands out the
+`Ty` handles that address them. A `TyKind` is only ever stored once — interning — so two
+structurally-equal types are always the same `Ty` handle, which turns comparing types into an
+integer comparison instead of a recursive walk, and lets a deeply nested type share storage with
+every type that repeats one of its components. `TyCtx` is created fresh per compilation rather
+than kept as a global, specifically so its handles can't silently mean something else in a second
+context existing at the same time (two tests running in parallel, for instance).
 
 ## Borrow Checking
