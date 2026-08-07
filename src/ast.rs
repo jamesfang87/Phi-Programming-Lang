@@ -278,7 +278,6 @@ pub enum TyKind {
         params: Vec<Ty>,
         ret: Option<Box<Ty>>,
     },
-    SelfType,
     Dyn {
         path: Path,
         args: Vec<Ty>,

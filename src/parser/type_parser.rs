@@ -13,7 +13,8 @@ use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
 use crate::ast::Mutability;
-use crate::ast::{Expr, NodeId, Path, Ty, TyKind};
+use crate::ast::interner::Interner;
+use crate::ast::{Expr, Ident, NodeId, Path, Ty, TyKind};
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -87,12 +88,29 @@ impl Parser {
                     })
                     .boxed();
 
+                // `Self` is an ordinary single-segment path in the AST, not its own `TyKind`:
+                // the AST resolver (still to come) can then treat it like any other name instead
+                // of needing a special case. HIR lowering recognizes this specific path shape and
+                // maps it back to `HirTyKind::SelfType`, so everything downstream of the AST
+                // keeps seeing `Self` as its own kind of type.
                 let self_ty = self
                     .kind(TokenKind::UpperSelfKw)
-                    .map(|self_tok| Ty {
-                        id: NodeId::next(),
-                        span: self_tok.span,
-                        kind: TyKind::SelfType,
+                    .map(|self_tok| {
+                        let span = self_tok.span;
+                        Ty {
+                            id: NodeId::next(),
+                            span,
+                            kind: TyKind::Path {
+                                path: Path {
+                                    segments: vec![Ident {
+                                        text: Interner::intern("Self"),
+                                        span,
+                                    }],
+                                    span,
+                                },
+                                args: Vec::new(),
+                            },
+                        }
                     })
                     .boxed();
 
@@ -428,9 +446,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_self_type() {
+    fn self_type_parses_as_a_single_segment_path() {
         let ty = parse_ty("Self");
-        assert!(matches!(ty.kind, TyKind::SelfType));
+        let TyKind::Path { path, args } = &ty.kind else {
+            panic!("expected `Self` to parse as a path, got {:?}", ty.kind);
+        };
+        assert_eq!(path.segments.len(), 1);
+        assert_eq!(Interner::resolve(path.segments[0].text), "Self");
+        assert!(args.is_empty());
     }
 
     #[test]
@@ -578,7 +601,14 @@ mod tests {
     fn parses_any_self_type() {
         let ty = parse_ty("any Self");
         match &ty.kind {
-            TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::SelfType)),
+            TyKind::Any(inner) => match &inner.kind {
+                TyKind::Path { path, args } => {
+                    assert_eq!(path.segments.len(), 1);
+                    assert_eq!(Interner::resolve(path.segments[0].text), "Self");
+                    assert!(args.is_empty());
+                }
+                other => panic!("expected `Self` to parse as a path, got {other:?}"),
+            },
             other => panic!("expected an any type, got {other:?}"),
         }
     }
