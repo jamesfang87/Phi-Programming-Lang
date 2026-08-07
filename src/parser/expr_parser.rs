@@ -14,7 +14,7 @@ use chumsky::recursive::Indirect;
 
 use crate::ast::{
     AccessArgs, Arm, BinaryOp, Block, ClosureParam, Expr, ExprKind, Ident, Literal, Mutability,
-    Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp, WithLend,
+    NodeId, Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp, WithLend,
 };
 
 use crate::ast::interner::Interner;
@@ -65,6 +65,7 @@ impl Parser {
                 block.clone().map(|b: Block| {
                     let span = b.span;
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Block(b),
                         span,
                     }
@@ -87,10 +88,12 @@ impl Parser {
                 self.kind(TokenKind::StrLiteral).map(|t| Expr::string(t)),
                 self.kind(TokenKind::CharLiteral).map(|t| Expr::char(t)),
                 self.kind(TokenKind::TrueKw).map(|t: Token| Expr {
+                    id: NodeId::next(),
                     kind: ExprKind::Literal(Literal::Bool(true)),
                     span: t.span,
                 }),
                 self.kind(TokenKind::FalseKw).map(|t: Token| Expr {
+                    id: NodeId::next(),
                     kind: ExprKind::Literal(Literal::Bool(false)),
                     span: t.span,
                 }),
@@ -109,6 +112,7 @@ impl Parser {
                         span: t.span,
                     };
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Path(Path {
                             segments: vec![name],
                             span: t.span,
@@ -132,8 +136,10 @@ impl Parser {
                     let callee_span = callee_path.span;
                     let span = callee_span.merge(close_tok.span);
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Call {
                             callee: Box::new(Expr {
+                                id: NodeId::next(),
                                 kind: ExprKind::Path(callee_path),
                                 span: callee_span,
                             }),
@@ -152,6 +158,7 @@ impl Parser {
                 .map(|(name, value)| {
                     let span = name.span.merge(value.span);
                     PayloadField {
+                        id: NodeId::next(),
                         name,
                         value: Some(value),
                         span,
@@ -177,6 +184,7 @@ impl Parser {
                     .map(|((ctor_path, payload), close_tok)| {
                         let span = ctor_path.span.merge(close_tok.span);
                         Expr {
+                            id: NodeId::next(),
                             kind: ExprKind::Ctor {
                                 path: Some(ctor_path),
                                 payload,
@@ -195,6 +203,7 @@ impl Parser {
                 .then(ctor_fields)
                 .then(self.kind(TokenKind::CloseBrace))
                 .map(|((dot_tok, payload), close_tok)| Expr {
+                    id: NodeId::next(),
                     kind: ExprKind::Ctor {
                         path: None,
                         payload,
@@ -220,7 +229,12 @@ impl Parser {
                                 Some(e) => name.span.merge(e.span),
                                 None => name.span,
                             };
-                            PayloadField { name, value, span }
+                            PayloadField {
+                                id: NodeId::next(),
+                                name,
+                                value,
+                                span,
+                            }
                         })
                         .separated_by(self.kind(TokenKind::Comma))
                         .allow_trailing()
@@ -258,6 +272,7 @@ impl Parser {
                         None => (Payload::None, dot_tok.span.merge(variant.span)),
                     };
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Variant { variant, payload },
                         span,
                     }
@@ -267,6 +282,7 @@ impl Parser {
             let decl_ref = path.clone().map(|p: Path| {
                 let span = p.span;
                 Expr {
+                    id: NodeId::next(),
                     kind: ExprKind::Path(p),
                     span,
                 }
@@ -288,6 +304,7 @@ impl Parser {
                         exprs.pop().expect("checked len == 1 above")
                     } else {
                         Expr {
+                            id: NodeId::next(),
                             kind: ExprKind::Tuple(exprs),
                             span: open_tok.span.merge(close_tok.span),
                         }
@@ -301,6 +318,7 @@ impl Parser {
                 .map(|b: Block| {
                     let span = b.span;
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Block(b),
                         span,
                     }
@@ -322,6 +340,7 @@ impl Parser {
                         None => if_tok.span.merge(then_block.span),
                     };
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::IfLet {
                             pat,
                             scrutinee: Box::new(scrutinee),
@@ -344,6 +363,7 @@ impl Parser {
                         None => if_tok.span.merge(then_block.span),
                     };
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::If {
                             cond: Box::new(cond),
                             then_block,
@@ -361,6 +381,7 @@ impl Parser {
                 .map(|(pat, body)| {
                     let span = pat.span.merge(body.span);
                     Arm {
+                        id: NodeId::next(),
                         pat,
                         body: Box::new(body),
                         span,
@@ -382,6 +403,7 @@ impl Parser {
                 .map(|(((match_tok, scrutinee), arms), close_tok)| {
                     let span = match_tok.span.merge(close_tok.span);
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Match {
                             scrutinee: Box::new(scrutinee),
                             arms,
@@ -397,6 +419,7 @@ impl Parser {
                 .map(|(spawn_tok, body)| {
                     let span = spawn_tok.span.merge(body.span);
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Spawn(body),
                         span,
                     }
@@ -409,6 +432,7 @@ impl Parser {
                 .map(|(concurrent_tok, body)| {
                     let span = concurrent_tok.span.merge(body.span);
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Concurrent(body),
                         span,
                     }
@@ -430,7 +454,12 @@ impl Parser {
                         Some(ty) => name.span.merge(ty.span),
                         None => name.span,
                     };
-                    ClosureParam { name, ty, span }
+                    ClosureParam {
+                        id: NodeId::next(),
+                        name,
+                        ty,
+                        span,
+                    }
                 });
 
             // `||` lexes as a single `DoublePipe` token, so an empty parameter list can't be
@@ -461,6 +490,7 @@ impl Parser {
                 .map(|(((params, params_span), ret), body)| {
                     let span = params_span.merge(body.span);
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Closure {
                             params,
                             ret,
@@ -551,6 +581,7 @@ impl Parser {
                     let span = receiver.span.merge(op_span);
                     match op {
                         Postfix::Access(member, args) => Expr {
+                            id: NodeId::next(),
                             kind: ExprKind::Access {
                                 base: Box::new(receiver),
                                 member,
@@ -559,6 +590,7 @@ impl Parser {
                             span,
                         },
                         Postfix::Index(index) => Expr {
+                            id: NodeId::next(),
                             kind: ExprKind::Index {
                                 base: Box::new(receiver),
                                 index: Box::new(index),
@@ -566,6 +598,7 @@ impl Parser {
                             span,
                         },
                         Postfix::Try => Expr {
+                            id: NodeId::next(),
                             kind: ExprKind::Try(Box::new(receiver)),
                             span,
                         },
@@ -600,6 +633,7 @@ impl Parser {
                     let span = op_span.merge(operand.span);
                     match op {
                         Prefix::Unary(op) => Expr {
+                            id: NodeId::next(),
                             kind: ExprKind::Unary {
                                 op,
                                 operand: Box::new(operand),
@@ -607,6 +641,7 @@ impl Parser {
                             span,
                         },
                         Prefix::Borrow(mutability) => Expr {
+                            id: NodeId::next(),
                             kind: ExprKind::Borrow {
                                 mutability,
                                 operand: Box::new(operand),
@@ -681,6 +716,7 @@ impl Parser {
                         None => op_span,
                     };
                     Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Range {
                             lo: None,
                             hi: hi.map(Box::new),
@@ -703,6 +739,7 @@ impl Parser {
                             None => lo_span.merge(op_span),
                         };
                         Expr {
+                            id: NodeId::next(),
                             kind: ExprKind::Range {
                                 lo: Some(Box::new(lo)),
                                 hi: hi.map(Box::new),
@@ -749,7 +786,11 @@ impl Parser {
                                 rhs: Box::new(rhs),
                             },
                         };
-                        Expr { kind, span }
+                        Expr {
+                            id: NodeId::next(),
+                            kind,
+                            span,
+                        }
                     }
                 })
                 .boxed()
@@ -776,6 +817,7 @@ impl Parser {
                 .map(|(((while_tok, pat), scrutinee), block)| {
                     let span = while_tok.span.merge(block.span);
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::WhileLet {
                             pat,
                             scrutinee,
@@ -793,6 +835,7 @@ impl Parser {
                 .map(|((while_tok, cond), block)| {
                     let span = while_tok.span.merge(block.span);
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::While { cond, block },
                         span,
                     }
@@ -808,6 +851,7 @@ impl Parser {
                 .map(|(((for_tok, pat), iter), block)| {
                     let span = for_tok.span.merge(block.span);
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::For { pat, iter, block },
                         span,
                     }
@@ -820,6 +864,7 @@ impl Parser {
                 .map(|(break_tok, semi_tok)| {
                     let span = break_tok.span.merge(semi_tok.span);
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::Break,
                         span,
                     }
@@ -831,6 +876,7 @@ impl Parser {
                 .map(|(continue_tok, semi_tok)| {
                     let span = continue_tok.span.merge(semi_tok.span);
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::Continue,
                         span,
                     }
@@ -843,6 +889,7 @@ impl Parser {
                 .map(|((ret_tok, value), semi_tok)| {
                     let span = ret_tok.span.merge(semi_tok.span);
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::Return(value),
                         span,
                     }
@@ -856,6 +903,7 @@ impl Parser {
                 .map(|((ret_tok, value), semi_tok)| {
                     let span = ret_tok.span.merge(semi_tok.span);
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::Defer(value),
                         span,
                     }
@@ -888,6 +936,7 @@ impl Parser {
                         };
                         let span = let_tok.span.merge(semi_tok.span);
                         Stmt {
+                            id: NodeId::next(),
                             kind: StmtKind::Let {
                                 mutability,
                                 pat: name,
@@ -913,6 +962,7 @@ impl Parser {
                 .map(|((pat, ty), value)| {
                     let span = pat.span.merge(value.span);
                     WithLend {
+                        id: NodeId::next(),
                         pat,
                         ty,
                         init: value,
@@ -933,6 +983,7 @@ impl Parser {
                 .map(|((with_tok, lends), block)| {
                     let span = with_tok.span.merge(block.span);
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::With { lends, block },
                         span,
                     }
@@ -954,6 +1005,7 @@ impl Parser {
                         None => value.span,
                     };
                     Ok(Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::Expr {
                             expr: value,
                             semi: semi_tok.is_some(),
@@ -991,6 +1043,7 @@ impl Parser {
                 .ignore_then(self.recover_to_boundary(
                     stmt_start,
                     Stmt {
+                        id: NodeId::next(),
                         kind: StmtKind::Error,
                         span: SrcSpan::new(0, 0),
                     },
@@ -1019,6 +1072,7 @@ impl Parser {
                     if let Some(tail) = tail {
                         let span = tail.span;
                         stmts.push(Stmt {
+                            id: NodeId::next(),
                             kind: StmtKind::Expr {
                                 expr: tail,
                                 semi: false,
@@ -1027,6 +1081,7 @@ impl Parser {
                         });
                     }
                     Block {
+                        id: NodeId::next(),
                         stmts,
                         span: open_tok.span.merge(close_tok.span),
                     }

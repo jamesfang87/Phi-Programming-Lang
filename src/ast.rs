@@ -3,39 +3,38 @@
 mod builder;
 mod expr_impls;
 pub mod interner;
+mod node_id;
 mod type_impls;
+
+use std::collections::HashMap;
 
 use builder::AstBuilder;
 pub use interner::Symbol;
+pub use node_id::NodeId;
 
 use crate::driver::source::SrcSpan;
 
 #[derive(Debug)]
 pub struct Ast {
     modules: Vec<Module>,
-    parents: Vec<ModId>,
-    root: ModId,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub struct ModId(u32);
-
-impl ModId {
-    fn from_usize(index: usize) -> Self {
-        ModId(index as u32)
-    }
-
-    pub fn index(self) -> usize {
-        self.0 as usize
-    }
+    /// Where each module in `modules` sits, keyed by its `NodeId`.
+    ///
+    /// A module's `NodeId` is allocated from the same global counter as every other AST node,
+    /// so it isn't a dense index into `modules` the way the old `ModId` was. This is what makes
+    /// looking a module back up by id an `O(1)` map lookup instead of direct indexing.
+    positions: HashMap<NodeId, usize>,
+    /// `parents[i]` is the parent of `modules[i]`, positionally aligned the same way.
+    parents: Vec<NodeId>,
+    root: NodeId,
 }
 
 #[derive(Debug)]
 pub struct Module {
+    pub id: NodeId,
     pub path: Path,
     pub imports: Vec<Import>,
     pub items: Vec<Item>,
-    pub children: Vec<ModId>,
+    pub children: Vec<NodeId>,
 }
 
 // ===========================================================================
@@ -84,6 +83,7 @@ pub struct ParsedSrcFile {
 
 #[derive(Clone, Debug)]
 pub struct Item {
+    pub id: NodeId,
     pub kind: ItemKind,
     pub span: SrcSpan,
 }
@@ -103,12 +103,14 @@ pub enum ItemKind {
 /// A module declaration, such as `module math::vector;`.
 #[derive(Clone, Debug)]
 pub struct ModuleDecl {
+    pub id: NodeId,
     pub path: Path,
     pub span: SrcSpan,
 }
 
 #[derive(Clone, Debug)]
 pub struct Import {
+    pub id: NodeId,
     pub path: Path,
     /// This is `true` when the import is a glob import, such as `import math::*;`.
     pub glob: bool,
@@ -176,6 +178,7 @@ pub struct Extend {
 
 #[derive(Clone, Debug)]
 pub struct SelfParam {
+    pub id: NodeId,
     pub mode: SelfMode,
     pub span: SrcSpan,
 }
@@ -195,6 +198,7 @@ pub enum SelfMode {
 
 #[derive(Clone, Debug)]
 pub struct Generic {
+    pub id: NodeId,
     pub name: Ident,
     pub bounds: Option<Vec<Path>>,
     pub span: SrcSpan,
@@ -202,6 +206,7 @@ pub struct Generic {
 
 #[derive(Clone, Debug)]
 pub struct Param {
+    pub id: NodeId,
     pub name: Ident,
     pub ty: Ty,
     pub span: SrcSpan,
@@ -209,6 +214,7 @@ pub struct Param {
 
 #[derive(Clone, Debug)]
 pub struct Field {
+    pub id: NodeId,
     pub visibility: Visibility,
     pub name: Ident,
     pub ty: Ty,
@@ -217,6 +223,7 @@ pub struct Field {
 
 #[derive(Clone, Debug)]
 pub struct Variant {
+    pub id: NodeId,
     pub name: Ident,
     pub payload: VariantPayload,
     pub span: SrcSpan,
@@ -234,6 +241,7 @@ pub enum VariantPayload {
 
 #[derive(Clone, Debug)]
 pub struct ClosureParam {
+    pub id: NodeId,
     pub name: Ident,
     pub ty: Option<Ty>,
     pub span: SrcSpan,
@@ -245,6 +253,7 @@ pub struct ClosureParam {
 
 #[derive(Clone, Debug)]
 pub struct Ty {
+    pub id: NodeId,
     pub kind: TyKind,
     pub span: SrcSpan,
 }
@@ -283,6 +292,7 @@ pub enum TyKind {
 
 #[derive(Clone, Debug)]
 pub struct Stmt {
+    pub id: NodeId,
     pub kind: StmtKind,
     pub span: SrcSpan,
 }
@@ -334,6 +344,7 @@ pub enum StmtKind {
 /// One binding in a `with` block, such as `px = &mut point.x`.
 #[derive(Clone, Debug)]
 pub struct WithLend {
+    pub id: NodeId,
     pub pat: Pat,
     pub ty: Option<Ty>,
     pub init: Expr,
@@ -346,6 +357,7 @@ pub struct WithLend {
 
 #[derive(Clone, Debug)]
 pub struct Expr {
+    pub id: NodeId,
     pub kind: ExprKind,
     pub span: SrcSpan,
 }
@@ -482,6 +494,7 @@ pub enum BinaryOp {
 
 #[derive(Clone, Debug)]
 pub struct Block {
+    pub id: NodeId,
     pub stmts: Vec<Stmt>,
     pub span: SrcSpan,
 }
@@ -540,6 +553,7 @@ pub enum AccessArgs {
 /// ([`ExprKind::Ctor`]), or one field of a variant's record payload
 #[derive(Clone, Debug)]
 pub struct PayloadField<T> {
+    pub id: NodeId,
     pub name: Ident,
     pub value: Option<T>,
     pub span: SrcSpan,
@@ -547,6 +561,7 @@ pub struct PayloadField<T> {
 
 #[derive(Clone, Debug)]
 pub struct Arm {
+    pub id: NodeId,
     pub pat: Pat,
     pub body: Box<Expr>,
     pub span: SrcSpan,
@@ -558,6 +573,7 @@ pub struct Arm {
 
 #[derive(Clone, Debug)]
 pub struct Pat {
+    pub id: NodeId,
     pub kind: PatKind,
     pub span: SrcSpan,
 }
@@ -586,7 +602,8 @@ impl Ast {
                 Some(decl) => builder.module_for_path(&decl.path.segments),
                 None => builder.ast.root,
             };
-            let target = &mut builder.ast.modules[module.index()];
+            let position = builder.ast.positions[&module];
+            let target = &mut builder.ast.modules[position];
             target.imports.extend(file.imports);
             // `Parser::assemble_file` has already sorted this file's `module` header and its
             // imports out of `items`, so what is left is definitions.
@@ -598,25 +615,25 @@ impl Ast {
         self.module(self.root)
     }
 
-    pub fn root_id(&self) -> ModId {
+    pub fn root_id(&self) -> NodeId {
         self.root
     }
 
-    pub fn module(&self, id: ModId) -> &Module {
-        &self.modules[id.index()]
+    pub fn module(&self, id: NodeId) -> &Module {
+        &self.modules[self.positions[&id]]
     }
 
     /// Returns the module `id` is declared inside, or `None` if `id` names the root.
     ///
-    /// The root is stored as its own parent, which is how the table stays dense. Reporting that
-    /// as `None` is what gives a caller walking upwards a termination condition.
-    pub fn parent(&self, id: ModId) -> Option<ModId> {
-        let parent = self.parents[id.index()];
+    /// The root is stored as its own parent, which is how callers get a termination condition
+    /// walking upwards, without needing a sentinel id.
+    pub fn parent(&self, id: NodeId) -> Option<NodeId> {
+        let parent = self.parents[self.positions[&id]];
         (parent != id).then_some(parent)
     }
 
     /// Iterates every module, parents before children.
-    pub fn mod_ids(&self) -> impl Iterator<Item = ModId> + '_ {
-        (0..self.modules.len()).map(ModId::from_usize)
+    pub fn mod_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.modules.iter().map(|module| module.id)
     }
 }
