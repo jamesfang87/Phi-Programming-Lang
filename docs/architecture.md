@@ -192,10 +192,10 @@ The structure of the parser module and its submodules is as follows:
     ├── pattern_parser.rs
     └── type_parser.rs
 ```
-Each submodule produces a specific sub-grammar for group of language features. There is a sub-grammar for blocks/statements, for expressions, for patterns, etc. which can be used. However, this is slightly misleading as to what goes on under the hood. Since sub-grammars recurse into each other, the `chumsky` library requires that we define "monolithic" grammars which is responsible for parsing all recursing sub-grammars. For example, types and expressions recurse into each other, requiring a single grammar for all expressions and types. We thus separate these grammars for a cleaner public-facing interface.
+Each submodule produces a specific sub-grammar for group of language features. There is a sub-grammar for blocks/statements, for expressions, for patterns, etc. which can be used. However, this is slightly misleading as to what goes on under the hood. Since sub-grammars recurse into each other, the  library requires that we define "monolithic" grammars which is responsible for parsing all recursing sub-grammars. For example, types and expressions recurse into each other, requiring a single grammar for all expressions and types. We thus separate these grammars for a cleaner public-facing interface.
 
 ## Abstract Syntax Tree (AST)
-The Abstract Syntax Tree is a tree representing the written program. The goal of the AST is convert the user's exact syntax into a tree form for semantic analysis. Nodes in the AST are heap-allocated, unlike the HIR later on. 
+The Abstract Syntax Tree is a tree representing the written program. The goal of the AST is convert the user's exact syntax into a tree form for semantic analysis. Nodes in the AST are heap-allocated, unlike the HIR later on. However, despite not being arena-allocated, nodes in the AST are still allocated a `NodeId` for identifcation during name resolution.
 
 ### Items
 An `Item` represents any top-level declaration or statement. The following describes exactly what an `Item` can be.
@@ -281,7 +281,7 @@ pub enum TyKind {
 ```
 
 ## Name Resolution
-Name Resolution operates on the AST to produce a side table mapping `Path`s in the AST to references to Nodes in the AST. 
+Name Resolution operates on the AST to produce a side table mapping `Path`s in the AST to references to Nodes in the AST. Since paths cannot uniquely identify variables (such as in the case of variable shadowing), we identify using each node's `NodeId` and append a list of two tuples where the first element is a Path owned by the node and the second element is what that Path names.
 
 ## High Intermediate Representation (HIR)
 The High Intermediate Representation (HIR) is an Intermediate Representation used for type inference. It is built using the AST from the `Parser` and results from `NameResolution`. The HIR has a few differences from the AST:
