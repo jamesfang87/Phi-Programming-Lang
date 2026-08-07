@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- **The existing HIR-based resolver stays live and passing.** `src/nameres/{symbol_table,results,resolve_*}.rs` and `src/driver/pipeline.rs` are NOT rewired in this plan. Only Tasks 1, 2, and 9 touch or extend live-code modules; Tasks 3-8, 10, and 11 add new code. Rewiring is the follow-up spec.
+- **The existing HIR-based resolver stays live and passing through Task 11.** `src/nameres/{symbol_table,results,resolve_*}.rs` and `src/driver/pipeline.rs` are not rewired until Task 12. Only Tasks 1, 2, and 9 touch or extend live-code modules before then; Tasks 3-8, 10, and 11 add new code alongside it. **Tasks 12-15 then perform the migration and delete the old resolver.** Do not delete or re-point any part of the HIR-side resolver before Task 15 — including `SelfTyRes`, which is load-bearing until then (see Task 1).
+- **No throwaway scaffolding.** If a task seems to need a temporary structure that Tasks 12-15 would delete, that is a signal the work belongs in Tasks 12-15 instead. Stop and report rather than building it.
 - **New code lives under `src/nameres/surface/`.** Inside that module, types are named exactly as the spec names them (`SymbolTable`, `Res`, `NameResolutions`). Module qualification (`surface::NameResolutions` vs `results::NameResolutions`) is what keeps the two apart while both exist. Do not rename the spec's types.
 - **`NodeId` values must never appear in any debug/golden output, and dumps must be ordered by source span, not by `NodeId`.** `NodeId` comes from a global atomic counter (`src/ast/node_id.rs:14`) and is only deterministic while parsing is sequential.
 - **`Res::Err` is recorded, never omitted.** Absence in `NameResolutions` must mean "never reached". Every failed resolution records `Res::Err` and emits exactly one diagnostic.
@@ -48,22 +49,29 @@
 
 ---
 
-## Task 1: Remove `TyKind::SelfType`
+## Task 1: Remove `TyKind::SelfType` from the AST
 
-`Self` becomes an ordinary `TyKind::Path` whose single segment is the symbol `Self`. This deletes the variant from both the AST and the HIR and re-points every consumer. It is deliberately its own commit — the spec calls this out as landing ahead of everything else (spec "Open risks" #3).
+`Self` becomes an ordinary **AST** `TyKind::Path` whose single segment is the symbol `Self`, so the new AST resolver can treat it like any other name. HIR lowering recognizes that path and maps it back to `HirTyKind::SelfType`.
+
+**`HirTyKind::SelfType` stays.** So do `SelfTyRes`, `src/nameres/resolve_ty.rs`, and every consumer in `typeck`. The spec's "this deletes the `self_tys` side table outright" describes the end state *after* the follow-up rewiring, which is out of scope here — this plan's Global Constraints require the HIR resolver to stay live and passing.
+
+Deleting `HirTyKind::SelfType` in this task would break two things that `src/typeck/lower_ty.rs:100-125` does and a plain `TypeRes::Def(adt)` cannot:
+
+1. `lower_base`'s `TypeRes::Def` arm calls `report_trait_as_ty` for `OwnerNode::Trait(_)`, so every `Self` written inside a trait body would become a diagnostic.
+2. Its arg-count check rejects `args.len() != declared`, so `Self` inside `struct Foo<T>` would report "expected 1 argument, got 0".
+
+`self_ty` does real work — applying a struct's own parameters, an `extend` block's target generics, a trait's `SelfTy` placeholder — that an ordinary path lookup does not reproduce. Leave it alone.
 
 **Files:**
-- Modify: `src/ast.rs:281` (delete `SelfType` from `TyKind`)
+- Modify: `src/ast.rs:281` (delete `SelfType` from the AST's `TyKind`)
 - Modify: `src/parser/type_parser.rs:95` (produce a `Path`), `:433`, `:581` (fix the two assertions)
-- Modify: `src/hir/types.rs:44` (delete `SelfType`)
-- Modify: `src/hir/lower/ty.rs:33` (delete the arm)
-- Modify: `src/hir/visit.rs:502` (drop `SelfType` from the arm)
-- Modify: `src/nameres/resolve_ty.rs` (resolve the `Self` symbol)
-- Modify: `src/typeck/lower_ty.rs:65` (delete the arm)
+- Modify: `src/hir/lower/ty.rs:33` (recognize the `Self` path)
+
+**Do NOT modify:** `src/hir/types.rs`, `src/hir/visit.rs`, `src/nameres/resolve_ty.rs`, `src/nameres/results.rs`, `src/nameres/resolve_item.rs`, or anything under `src/typeck/`. If you believe one of them needs changing, stop and report rather than changing it.
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `Self` is representable only as `TyKind::Path { path, args }` where `path.segments` is one `Ident` whose `text` is `Interner::intern("Self")`. Task 8 relies on this.
+- Produces: in the **AST**, `Self` is representable only as `TyKind::Path { path, args }` where `path.segments` is one `Ident` whose `text` is `Interner::intern("Self")`. Task 8 relies on this. The HIR is unchanged.
 
 - [ ] **Step 1: Write the failing parser test**
 
@@ -2170,11 +2178,11 @@ git commit -m "feat: span-ordered surface nameres debug dump"
 
 ---
 
-## Notes for the follow-up spec
+## The migration: Tasks 12-15
 
-Recorded here so the decision is not lost — **not in scope for this plan.**
+Tasks 1-11 build the AST resolver alongside the live HIR one. Tasks 12-15 switch the pipeline over and delete the old resolver.
 
-The HIR bridge will **not** use a `NodeId -> HirId` re-keying of a side table. Instead, `hir::Path` becomes its own type carrying the resolution inline:
+**The design.** The HIR bridge does **not** re-key a side table from `NodeId` to `HirId`. Instead `hir::Path` becomes its own type carrying its resolution inline:
 
 ```rust
 pub struct Path {
@@ -2184,12 +2192,311 @@ pub struct Path {
 }
 ```
 
-HIR nodes keep their `path` fields, so diagnostics and the debug dump still have the written name and span, and `NameResolutions` disappears from the HIR side entirely rather than being re-keyed.
+HIR nodes keep their `path` fields, so diagnostics and the debug dump still have the written name and span, and the HIR-side `NameResolutions` disappears entirely rather than being re-keyed.
 
-Two prerequisites, both confirmed against the current code:
+**Why this is the only route that deletes `SelfTyRes`.** `hir::Extend`'s `adt_path` and `trait_path` are bare `Path` fields with no `HirId` of their own (`src/hir/items.rs:126-127`). `resolve_item.rs:207-231` therefore stores both resolutions in `self_tys`, keyed by the `Extend`'s `DefId`, because the per-node `HirId -> TypeRes` table has room for only one entry per node. Giving `Path` its own `res` is what gives a node's second path somewhere to live. This only works once resolution runs *before* lowering, which is Task 14.
 
-1. **`lower_unit` must pre-allocate a `DefId` for every definition, not just modules.** Today `src/hir/lower.rs:32` pre-allocates only module `DefId`s; items get theirs lazily inside `lower_item`. A forward reference (`x: Foo` lowered before `Foo`) therefore has no `DefId` to write. Extending the existing first loop to walk all items into a `HashMap<NodeId, DefId>` is small and follows the pattern already documented there.
+---
 
-2. **`lower_trait` and `lower_extend` lower their methods before their own generics** (`src/hir/lower/ctx.rs:162`, `:184`). A method body naming its `extend` block's `<T>` needs a generic node that does not exist yet. This is not a statement swap: the current order exists because `self.lower_function` needs `&mut LoweringCtx` while `ow` holds that borrow. It is a real restructure of the owner-lowering borrow pattern and is the main risk in the follow-up.
+### Task 12: Pre-allocate a `DefId` for every definition
 
-Locals and generics in parameter position are fine as-is: bindings lower before uses in source order, and `HirId` is global, so a closure capturing an outer local works.
+Today `src/hir/lower.rs:32` pre-allocates `DefId`s only for modules; functions, structs, enums, traits, and `extend` blocks get theirs lazily inside `lower_item`. A forward reference (`x: Foo` lowered before `Foo`) therefore has no `DefId` to write into a node. Task 14 needs every definition's id up front.
+
+**Files:**
+- Modify: `src/hir/lower.rs` (extend the pre-allocation loop)
+- Modify: `src/hir/lower/ctx.rs` (take ids from the map rather than allocating)
+- Modify: `src/hir/lower/tests.rs`
+
+**Interfaces:**
+- Consumes: nothing from Tasks 1-11.
+- Produces: `LoweringCtx` gains `def_ids: HashMap<NodeId, DefId>`, populated before any lowering, mapping every `Item`'s `NodeId` (and every module's) to its `DefId`. Task 14 reads it.
+
+- [ ] **Step 1: Write the failing test**
+
+```rust
+#[test]
+fn every_definition_has_a_def_id_before_any_body_is_lowered() {
+    let ast = ast_from("struct A {} fun f() {} enum E { .x } trait T {} extend A {}");
+    let hir = lower_unit(&ast);
+    // Five definitions plus the root module.
+    assert_eq!(hir.def_ids().count(), 6);
+}
+
+#[test]
+fn a_forward_reference_resolves_to_an_already_allocated_def_id() {
+    // `Foo` is declared after the function that names it.
+    let ast = ast_from("fun f(x: Foo) {} struct Foo {}");
+    let hir = lower_unit(&ast);
+    assert_eq!(hir.def_ids().count(), 3);
+}
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `cargo test --lib hir::lower`
+Expected: the second test may already pass; the point is that neither regresses. If both pass before the change, keep them as regression tests and say so in your report.
+
+- [ ] **Step 3: Extend the pre-allocation loop**
+
+`lower_unit` currently walks `ast.mod_ids()` allocating module `DefId`s. Extend it: after (or within) that loop, walk each module's `items` and allocate a `DefId` for every `ItemKind::Function`/`Struct`/`Enum`/`Trait`/`Extend`, parented to that module, keyed by the `Item`'s `NodeId`.
+
+Order matters for the same reason the existing comment gives: a parent's `DefId` must exist before its children ask for it. Modules are allocated first, in `ast.mod_ids()` order (parents before children), then items within each module.
+
+Methods of a trait or `extend` block are parented to that trait or block, not to the module — see `lower_trait`/`lower_extend` in `src/hir/lower/ctx.rs:159-190`. Allocate them in a second nested pass once their parent item has an id.
+
+- [ ] **Step 4: Make lowering consume the map**
+
+`lower_item`, `lower_function`, `lower_struct`, `lower_enum`, `lower_trait`, and `lower_extend` currently call `self.items.alloc(Some(parent))`. Change each to look its id up in `def_ids` instead. Keep `DefIdAllocator` — it is what filled the map.
+
+Preserve the invariant `src/hir.rs:43-53` documents: every `DefId` slot must end up with an arena, so `finish` can order them into a dense `Vec<Arena>`. Allocating ids for definitions that are never lowered would break it. Verify the counts match.
+
+- [ ] **Step 5: Run the tests**
+
+Run: `cargo test`
+Expected: all pass, including the existing lowering tests.
+
+- [ ] **Step 6: Verify and commit**
+
+Run: `cargo build && cargo test && cargo fmt --check && cargo clippy -- -D warnings`
+
+```bash
+git add -A
+git commit -m "refactor: pre-allocate a DefId for every definition"
+```
+
+---
+
+### Task 13: Lower generics before methods in traits and `extend` blocks
+
+`lower_trait` (`src/hir/lower/ctx.rs:162`) and `lower_extend` (`:184`) lower their methods *before* their own generics. A method body naming its `extend` block's `<T>` needs a generic node that does not exist yet, which Task 14 cannot work around.
+
+This is not a statement swap. The current order exists because `self.lower_function` needs `&mut LoweringCtx` while the `OwnerLowerer` holds that borrow. Restructuring that borrow is the substance of this task and the main risk in the migration.
+
+**Files:**
+- Modify: `src/hir/lower/ctx.rs` (`lower_trait`, `lower_extend`)
+- Modify: `src/hir/lower/owner.rs` (if the borrow restructure needs it)
+- Modify: `src/hir/lower/tests.rs`
+
+**Interfaces:**
+- Consumes: Task 12's `def_ids` map.
+- Produces: for every owner, the generics it declares are lowered before any nested owner that could name them. Task 14 depends on this.
+
+- [ ] **Step 1: Write the failing test**
+
+```rust
+#[test]
+fn an_extend_blocks_generics_are_lowered_before_its_methods() {
+    let ast = ast_from("struct S {} extend<T> S { fun get(self) -> T {} }");
+    let hir = lower_unit(&ast);
+    let extend = find_extend(&hir);
+    let method = extend.methods[0];
+    // The generic node must already exist in the extend's arena when the method's arena is
+    // built, which shows up as the generic's HirId being allocated first.
+    assert!(!extend.extend_generics.is_empty());
+    assert!(hir.arena(method).owner().span().start >= hir.generic(extend.extend_generics[0]).span.start);
+}
+
+#[test]
+fn a_traits_generics_are_lowered_before_its_functions() {
+    let ast = ast_from("trait C<T> { fun get(self) -> T; }");
+    let hir = lower_unit(&ast);
+    let trait_ = find_trait(&hir);
+    assert!(!trait_.generics.is_empty());
+    assert_eq!(trait_.functions.len(), 1);
+}
+```
+
+These are weak assertions — ordering inside lowering is hard to observe directly. Prefer strengthening them: if you can add a debug assertion inside lowering that a nested owner is never built before its parent's generics, do that and test the assertion fires on the old order. Say in your report which approach you took.
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `cargo test --lib hir::lower`
+
+- [ ] **Step 3: Restructure the borrow**
+
+The shape to reach, for both functions: create the `OwnerLowerer`, reserve the root, lower the generics, then release the borrow before lowering the nested functions, then re-acquire to `fill` and `finish`.
+
+`OwnerLowerer::new(self, item_id)` borrows `LoweringCtx` mutably. Options, in order of preference:
+
+1. Split `OwnerLowerer` so the generic-lowering phase can finish and hand back its partial arena, with `lower_function` called between phases. Cleanest if `ArenaBuilder` supports being put down and picked up.
+2. Lower the generics into a detached `ArenaBuilder` not holding the `LoweringCtx` borrow, then merge.
+3. Collect the generic nodes first without the `OwnerLowerer` at all, since a `Generic`'s children are only its bound paths.
+
+Read `src/hir/lower/owner.rs` in full before choosing. Whichever you pick, keep the doc comment at `src/hir/lower/ctx.rs:160-162` accurate — it currently explains the *old* order and its reason, and must be rewritten to explain the new one.
+
+- [ ] **Step 4: Run the full suite**
+
+Run: `cargo test`
+Expected: all pass. Lowering is load-bearing for every later pass, so a regression here shows up far away — do not proceed on a partial pass.
+
+- [ ] **Step 5: Verify and commit**
+
+Run: `cargo build && cargo test && cargo fmt --check && cargo clippy -- -D warnings`
+
+```bash
+git add -A
+git commit -m "refactor: lower generics before nested owners in traits and extend blocks"
+```
+
+---
+
+### Task 14: `hir::Path` carries its resolution; reorder the pipeline
+
+The switch-over. Resolution runs on the AST, lowering consumes its output, and every `hir::Path` is built with its answer already in it.
+
+**Files:**
+- Create: `src/hir/path.rs` (or add to `src/hir/types.rs`) — the new `hir::Path`
+- Modify: `src/hir/items.rs`, `src/hir/types.rs`, `src/hir/expr.rs` (the `Path` fields)
+- Modify: `src/hir/lower.rs`, `src/hir/lower/{ctx,items,ty,expr,pat,block}.rs`
+- Modify: `src/driver/pipeline.rs`
+- Modify: `src/hir/lower/tests.rs`
+
+**Interfaces:**
+- Consumes: Task 10's `surface::resolve`, Task 11's dump, Task 12's `def_ids`, Task 13's ordering.
+- Produces:
+  - `hir::Path { segments: Vec<Ident>, span: SrcSpan, res: hir::Res }`
+  - `hir::Res` — the `HirId`/`DefId`-carrying analogue of `surface::Res`.
+  - `lower_unit(ast: &Ast, res: &surface::NameResolutions) -> Hir`
+  - Pipeline order becomes `parse -> surface::resolve -> lower_unit -> typeck`.
+
+- [ ] **Step 1: Define `hir::Res`**
+
+Mirror `surface::Res` arm for arm, with HIR ids in place of `NodeId`:
+
+```rust
+pub enum Res {
+    Type(Type),
+    Local(Local),
+    Function(DefId),
+    Module(DefId),
+    Err,
+}
+
+pub enum Type {
+    Prim(PrimTy),
+    Generic(HirId),
+    Def(TyDef),
+}
+
+pub enum TyDef {
+    Struct(DefId),
+    Enum(DefId),
+    Trait(DefId),
+}
+
+pub enum Local {
+    Param(HirId),
+    SelfParam(HirId),
+    Variable(HirId),
+}
+```
+
+Nominal items and functions carry `DefId` because they *are* definitions; locals and generics carry `HirId` because they are arena nodes with no `DefId` of their own (`src/hir/ids.rs:5-12`).
+
+- [ ] **Step 2: Write the translation**
+
+`LoweringCtx` gains `node_to_hir: HashMap<NodeId, HirId>`, filled as each node is lowered, and translates a `surface::Res` into a `hir::Res` at the point a `Path` is built:
+
+- `surface::Res::Function(node)` → `Res::Function(def_ids[&node])` — available from Task 12 regardless of lowering order.
+- `surface::Res::Type(Type::Def(TyDef::Struct(node)))` → `TyDef::Struct(def_ids[&node])`, and likewise for enum and trait.
+- `surface::Res::Type(Type::Generic(node))` → `Type::Generic(node_to_hir[&node])` — available because Task 13 lowers generics before anything that can name them.
+- `surface::Res::Local(..)` → the matching `Local` via `node_to_hir` — available because bindings lower before uses in source order, and `HirId` is global so a closure capturing an outer local works.
+- `surface::Res::Type(Type::Prim(p))` → `Type::Prim(p)`; `Err` → `Err`.
+
+If a `node_to_hir` lookup misses, that is a lowering-order bug, not a resolution failure. Panic with a message naming the `NodeId` and what it was expected to be — do not silently produce `Res::Err`, which would hide the bug as a type error somewhere else.
+
+- [ ] **Step 3: Replace `ast::Path` with `hir::Path` in HIR nodes**
+
+`Extend::adt_path`, `Extend::trait_path`, `Generic::bounds`, `TyKind::Path`, `TyKind::Dyn`, `ExprKind::Path`, `ExprKind::Ctor`'s `path`, `Module::path`, `Import::path` (see the grep at `src/hir/items.rs:7`). Each is built by looking the AST path's answer out of `NameResolutions` with `get(owner_node_id, path)`.
+
+`Module::path` and `Import::path` name no resolvable target in the same sense — keep them as `ast::Path`, or give them `Res::Err`, whichever reads better. State which you chose and why in your report.
+
+- [ ] **Step 4: Reorder the pipeline**
+
+In `src/driver/pipeline.rs::check`, move resolution ahead of lowering:
+
+```rust
+let ast = parse(lex());
+if options.dumps.ast { emit_debug::print_ast(&ast); }
+
+let nameres = surface::resolve(&ast);
+if options.dumps.nameres { emit_debug::print_surface_nameres(&ast, &nameres); }
+
+let hir = lower_unit(&ast, &nameres);
+if options.dumps.hir { emit_debug::print_hir(&hir, options.exclude_core_in_emit); }
+
+let checked = typeck::check(&hir, &nameres);
+```
+
+`typeck::check`'s second argument still takes the old `NameResolutions` at this point — Task 15 ports it. Keep both alive for exactly one task by having the pipeline still run the old `resolve(&hir)` for typeck's benefit. This is the one place a temporary double-run is correct, because it keeps Task 14 independently reviewable; Task 15 deletes it.
+
+- [ ] **Step 5: Run the full suite**
+
+Run: `cargo test`
+Expected: all pass. The old resolver still runs, so typeck's behavior should be unchanged.
+
+- [ ] **Step 6: Verify and commit**
+
+Run: `cargo build && cargo test && cargo fmt --check && cargo clippy -- -D warnings`
+
+```bash
+git add -A
+git commit -m "feat: hir::Path carries its resolution; resolve before lowering"
+```
+
+---
+
+### Task 15: Port `typeck` and `langitems`; delete the old resolver
+
+**Files:**
+- Modify: `src/typeck/lower_ty.rs`, `src/typeck/traits/*.rs`, `src/typeck.rs`
+- Modify: `src/langitems.rs`
+- Modify: `src/driver/pipeline.rs` (drop the double-run)
+- Delete: `src/nameres/{symbol_table,results,resolve_expr,resolve_item,resolve_ty}.rs`, `src/nameres/tests.rs`
+- Modify: `src/nameres.rs` (flatten `surface` up, or re-export it)
+
+**Interfaces:**
+- Consumes: Task 14's `hir::Path` and `hir::Res`.
+- Produces: `typeck::check(&Hir)` — no resolutions argument; every answer is in the nodes.
+
+- [ ] **Step 1: Port `lower_ty`**
+
+`lower_base` currently reads `self.nameres.ty(id)`. It now reads the `Path`'s own `res`. The `TypeRes::Def` arm's logic is unchanged apart from the source of its input.
+
+`HirTyKind::SelfType` and `self_ty` are what this task exists to delete. `Self` now arrives as a `TyKind::Path` whose `res` is `Type::Def(TyDef::Struct|Enum|Trait)` — resolved by `surface::SymbolTable::current_self` back in Task 8. But `lower_base`'s `Def` arm cannot handle it as-is, for the two reasons Task 1 documents:
+
+1. It reports `report_trait_as_ty` for a trait, and `Self` inside a trait body is legal.
+2. It rejects `args.len() != declared`, and `Self` is written with no arguments.
+
+So `Self` needs its own arm. Add a `res` discriminator distinguishing "this path was written as `Self`" — the simplest is a `Res::SelfTy(TyDef)` arm on `hir::Res`, produced by Task 14's translation when the AST path's single segment is `Self`. Its `lower_base` arm is today's `self_ty` body (`src/typeck/lower_ty.rs:200-239`): apply the struct's or enum's own parameters, the `extend` block's target generics, or the trait's `SelfTy` placeholder. Move that body across unchanged; only its input changes.
+
+Add the `Res::SelfTy` arm to `hir::Res` as part of this task, not Task 14, so Task 14 stays reviewable on its own.
+
+- [ ] **Step 2: Port the `trait_` consumers**
+
+Anything that asked `self_ty(def)` for its `trait_` companion now reads the `Extend` node's own `trait_path.res` — which is where Task 14 put it, and the whole reason `hir::Path` carries a `res`. Find them with `grep -rn "self_ty\|SelfTyRes" src/typeck/ src/langitems.rs`.
+
+`src/typeck/traits/members.rs`'s `TyKind::SelfTy(_)` is a *type-level* placeholder in typeck's own type layer, unrelated to `SelfTyRes`. Leave it alone.
+
+- [ ] **Step 3: Port `langitems`**
+
+`langitems::collect` takes the HIR `SymbolTable`. Replace it with the `collect_ast` written in Task 10 and delete the original.
+
+- [ ] **Step 4: Delete the old resolver**
+
+Remove the five modules and `src/nameres/tests.rs`, drop the double-run from `pipeline.rs`, and move `surface`'s contents up into `src/nameres/` so the module reads as the resolver rather than as one of two. Rename `surface::NameResolutions` to `NameResolutions` — the Global Constraint that kept the spec's names module-qualified expires here.
+
+`PrimTy` currently lives in the deleted `src/nameres/results.rs` (`:9`) and is used by `surface::res` and `typeck`. Move it rather than deleting it.
+
+- [ ] **Step 5: Verify against the real core library**
+
+Run: `cargo build && cargo test && cargo fmt --check && cargo clippy -- -D warnings`
+
+Then compile the core library end to end and diff the diagnostics against `master`'s output. Any new or missing diagnostic is a regression — report it rather than accepting it.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "refactor: delete the HIR-based resolver; typeck reads resolutions from nodes"
+```
