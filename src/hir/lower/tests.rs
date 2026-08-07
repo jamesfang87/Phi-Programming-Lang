@@ -1,6 +1,6 @@
 use super::*;
 use crate::ast::interner::Interner;
-use crate::ast::{Ast, BinaryOp, Ident, ModuleDecl, Mutability, Path, UnaryOp, Visibility};
+use crate::ast::{Ast, BinaryOp, Ident, ModuleDecl, Mutability, NodeId, Path, UnaryOp, Visibility};
 use crate::hir::ids::{DefId, HirId};
 use crate::hir::{
     AccessArgs, Arm, Block, Closure, Enum, Expr, ExprKind, Extend, Field, Function, LoopSource,
@@ -334,6 +334,7 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
     let mut unit = parse_src("fun helper() {}");
     let path_span = unit.span;
     unit.module = Some(ModuleDecl {
+        id: NodeId::next(),
         path: Path {
             segments: vec![
                 Ident {

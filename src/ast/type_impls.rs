@@ -15,6 +15,7 @@ impl Ty {
             span: tok.span,
         };
         Ty {
+            id: NodeId::next(),
             kind: TyKind::Path {
                 path: Path {
                     segments: vec![ident],

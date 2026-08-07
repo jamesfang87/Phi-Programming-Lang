@@ -2,21 +2,22 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{Ast, Ident, ModId, Module, Path, Symbol};
+use crate::ast::{Ast, Ident, Module, NodeId, Path, Symbol};
 use crate::driver::source::SrcSpan;
 
 /// Builds an [`Ast`]'s module tree, keeping the path index that only construction needs.
 pub(super) struct AstBuilder {
     pub(super) ast: Ast,
-    /// Module path -> its [`ModId`]
-    by_path: HashMap<Vec<Symbol>, ModId>,
+    /// Module path -> its [`NodeId`]
+    by_path: HashMap<Vec<Symbol>, NodeId>,
 }
 
 impl AstBuilder {
     pub(super) fn new() -> Self {
-        let root = ModId::from_usize(0);
+        let root = NodeId::next();
         let ast = Ast {
             modules: vec![Module {
+                id: root,
                 path: Path {
                     segments: Vec::new(),
                     span: SrcSpan::new(0, 0),
@@ -25,6 +26,7 @@ impl AstBuilder {
                 items: Vec::new(),
                 children: Vec::new(),
             }],
+            positions: HashMap::from([(root, 0)]),
             parents: vec![root],
             root,
         };
@@ -35,7 +37,7 @@ impl AstBuilder {
         }
     }
 
-    pub(super) fn module_for_path(&mut self, segments: &[Ident]) -> ModId {
+    pub(super) fn module_for_path(&mut self, segments: &[Ident]) -> NodeId {
         let mut current = self.ast.root;
         let mut prefix: Vec<Symbol> = Vec::new();
         for (i, seg) in segments.iter().enumerate() {
@@ -49,8 +51,10 @@ impl AstBuilder {
             let span = path_segments[0]
                 .span
                 .merge(path_segments[path_segments.len() - 1].span);
-            let id = ModId::from_usize(self.ast.modules.len());
+            let id = NodeId::next();
+            let position = self.ast.modules.len();
             self.ast.modules.push(Module {
+                id,
                 path: Path {
                     segments: path_segments,
                     span,
@@ -60,7 +64,9 @@ impl AstBuilder {
                 children: Vec::new(),
             });
             self.ast.parents.push(current);
-            self.ast.modules[current.index()].children.push(id);
+            self.ast.positions.insert(id, position);
+            let current_position = self.ast.positions[&current];
+            self.ast.modules[current_position].children.push(id);
             self.by_path.insert(prefix.clone(), id);
             current = id;
         }
@@ -72,7 +78,7 @@ impl AstBuilder {
 mod tests {
     use super::*;
     use crate::ast::interner::Interner;
-    use crate::ast::{ModuleDecl, ParsedSrcFile};
+    use crate::ast::{ModuleDecl, NodeId, ParsedSrcFile};
     use crate::testing::parse_src;
 
     /// Attaches a `module a::b;` header to a parsed file by hand. The parser doesn't currently
@@ -81,6 +87,7 @@ mod tests {
     fn with_header(mut file: ParsedSrcFile, segments: &[&str]) -> ParsedSrcFile {
         let span = file.span;
         file.module = Some(ModuleDecl {
+            id: NodeId::next(),
             path: Path {
                 segments: segments
                     .iter()
@@ -96,7 +103,7 @@ mod tests {
         file
     }
 
-    fn path_of(ast: &Ast, id: ModId) -> Vec<String> {
+    fn path_of(ast: &Ast, id: NodeId) -> Vec<String> {
         ast.module(id)
             .path
             .segments

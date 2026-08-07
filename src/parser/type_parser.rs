@@ -13,7 +13,7 @@ use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
 use crate::ast::Mutability;
-use crate::ast::{Expr, Path, Ty, TyKind};
+use crate::ast::{Expr, NodeId, Path, Ty, TyKind};
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -80,6 +80,7 @@ impl Parser {
                         };
 
                         Ty {
+                            id: NodeId::next(),
                             span,
                             kind: TyKind::Path { path: p, args },
                         }
@@ -89,6 +90,7 @@ impl Parser {
                 let self_ty = self
                     .kind(TokenKind::UpperSelfKw)
                     .map(|self_tok| Ty {
+                        id: NodeId::next(),
                         span: self_tok.span,
                         kind: TyKind::SelfType,
                     })
@@ -104,6 +106,7 @@ impl Parser {
                     )
                     .then(self.kind(TokenKind::CloseParen))
                     .map(|((open_tok, inside_types), close_tok)| Ty {
+                        id: NodeId::next(),
                         span: open_tok.span.merge(close_tok.span),
                         kind: TyKind::Tuple(inside_types.into_iter().collect::<Vec<_>>()),
                     })
@@ -119,6 +122,7 @@ impl Parser {
                     )
                     .then(self.kind(TokenKind::CloseBracket))
                     .map(|(((open_tok, elem_ty), len), close_tok)| Ty {
+                        id: NodeId::next(),
                         span: open_tok.span.merge(close_tok.span),
                         kind: TyKind::Array {
                             elem: Box::new(elem_ty),
@@ -142,6 +146,7 @@ impl Parser {
                     .kind(TokenKind::AnyKw)
                     .then(any_target)
                     .map(|(any_tok, inner_ty)| Ty {
+                        id: NodeId::next(),
                         span: any_tok.span.merge(inner_ty.span),
                         kind: TyKind::Any(Box::new(inner_ty)),
                     })
@@ -159,6 +164,7 @@ impl Parser {
                         };
 
                         Ty {
+                            id: NodeId::next(),
                             span: amp_tok.span.merge(ty.span),
                             kind: TyKind::Ref {
                                 base: Box::new(ty),
@@ -194,6 +200,7 @@ impl Parser {
                             };
 
                             Ty {
+                                id: NodeId::next(),
                                 span: dyn_tok.span.merge(end),
                                 kind: TyKind::Dyn { path, args },
                             }
@@ -220,6 +227,7 @@ impl Parser {
                             None => close_tok.span,
                         };
                         Ty {
+                            id: NodeId::next(),
                             span: fun_tok.span.merge(end_span),
                             kind: TyKind::Function {
                                 params: params.into_iter().collect(),

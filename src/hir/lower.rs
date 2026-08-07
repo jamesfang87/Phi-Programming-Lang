@@ -16,7 +16,9 @@ mod pat;
 mod tests;
 mod ty;
 
-use crate::ast::{Ast, ModId};
+use std::collections::HashMap;
+
+use crate::ast::{Ast, NodeId};
 use crate::hir::Hir;
 use crate::hir::ids::DefId;
 use ctx::LoweringCtx;
@@ -25,19 +27,20 @@ use ctx::LoweringCtx;
 ///
 /// Every module gets its `DefId` before any of them is lowered. That is what lets a module's
 /// `Module` node list the submodules nested in it while they are still unlowered, and it is sound
-/// because [`Ast`] numbers a module after the module above it, so a parent's id is always
-/// allocated before its children ask for it.
+/// because [`Ast::mod_ids`] visits a module after the module above it, so a parent's `DefId` is
+/// always allocated before its children ask for it.
 pub fn lower_unit(ast: &Ast) -> Hir {
     let mut cx = LoweringCtx::new();
 
-    let mut module_defs: Vec<DefId> = Vec::new();
+    // Keyed by `NodeId` rather than indexed positionally: a module's `NodeId` is allocated from
+    // the same global counter as every other AST node, so it isn't a dense index the way the old
+    // `ModId` was.
+    let mut module_defs: HashMap<NodeId, DefId> = HashMap::new();
     for mod_id in ast.mod_ids() {
-        // The parent is a lower `ModId` than the module itself, so its `DefId` is already in
-        // `module_defs` by the time this reaches for it. The annotation is there because this is
-        // the one place the two id spaces meet: `module_defs` is indexed by `ModId` and holds
-        // `DefId`s.
-        let parent: Option<ModId> = ast.parent(mod_id);
-        module_defs.push(cx.items.alloc(parent.map(|id| module_defs[id.index()])));
+        // `ast.mod_ids()` visits parents before children, so the parent's `DefId` is already in
+        // `module_defs` by the time this reaches for it.
+        let parent_def = ast.parent(mod_id).map(|id| module_defs[&id]);
+        module_defs.insert(mod_id, cx.items.alloc(parent_def));
     }
 
     for mod_id in ast.mod_ids() {
@@ -45,10 +48,10 @@ pub fn lower_unit(ast: &Ast) -> Hir {
         let child_defs = module
             .children
             .iter()
-            .map(|&child| module_defs[child.index()])
+            .map(|child| module_defs[child])
             .collect();
-        cx.lower_module(module_defs[mod_id.index()], module, child_defs);
+        cx.lower_module(module_defs[&mod_id], module, child_defs);
     }
 
-    cx.finish(module_defs[ast.root_id().index()])
+    cx.finish(module_defs[&ast.root_id()])
 }

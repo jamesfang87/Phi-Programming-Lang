@@ -11,7 +11,7 @@
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
-use crate::ast::{Expr, ExprKind, Ident, Literal, Pat, PatKind, Payload, PayloadField};
+use crate::ast::{Expr, ExprKind, Ident, Literal, NodeId, Pat, PatKind, Payload, PayloadField};
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -27,6 +27,7 @@ impl Parser {
                 let wildcard = self
                     .kind(TokenKind::Wildcard)
                     .map(|t: Token| Pat {
+                        id: NodeId::next(),
                         kind: PatKind::Wildcard,
                         span: t.span,
                     })
@@ -39,10 +40,12 @@ impl Parser {
                     self.kind(TokenKind::StrLiteral).map(|t| Expr::string(t)),
                     self.kind(TokenKind::CharLiteral).map(|t| Expr::char(t)),
                     self.kind(TokenKind::TrueKw).map(|t: Token| Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Literal(Literal::Bool(true)),
                         span: t.span,
                     }),
                     self.kind(TokenKind::FalseKw).map(|t: Token| Expr {
+                        id: NodeId::next(),
                         kind: ExprKind::Literal(Literal::Bool(false)),
                         span: t.span,
                     }),
@@ -53,6 +56,7 @@ impl Parser {
                         _ => unreachable!("literal parsers only ever produce `ExprKind::Literal`"),
                     };
                     Pat {
+                        id: NodeId::next(),
                         kind: PatKind::Literal(lit),
                         span: e.span,
                     }
@@ -70,6 +74,7 @@ impl Parser {
                     )
                     .then(self.kind(TokenKind::CloseParen))
                     .map(|((open_tok, pats), close_tok)| Pat {
+                        id: NodeId::next(),
                         kind: PatKind::Tuple(pats),
                         span: open_tok.span.merge(close_tok.span),
                     })
@@ -89,7 +94,12 @@ impl Parser {
                             Some(pat) => name.span.merge(pat.span),
                             None => name.span,
                         };
-                        PayloadField { name, value, span }
+                        PayloadField {
+                            id: NodeId::next(),
+                            name,
+                            value,
+                            span,
+                        }
                     })
                     .boxed();
 
@@ -127,6 +137,7 @@ impl Parser {
                             None => (Payload::None, dot_tok.span.merge(variant.span)),
                         };
                         Pat {
+                            id: NodeId::next(),
                             kind: PatKind::Variant { variant, payload },
                             span,
                         }
@@ -136,6 +147,7 @@ impl Parser {
                 let binding = ident
                     .clone()
                     .map(|name: Ident| Pat {
+                        id: NodeId::next(),
                         kind: PatKind::Binding(name),
                         span: name.span,
                     })

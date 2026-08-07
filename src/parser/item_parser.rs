@@ -8,8 +8,8 @@ use crate::ast::Ident;
 use crate::ast::Import;
 use crate::ast::ModuleDecl;
 use crate::ast::{
-    Enum, Extend, Field, Function, Generic, Item, ItemKind, Param, SelfMode, SelfParam, Struct,
-    Trait, Variant, VariantPayload, Visibility,
+    Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param, SelfMode, SelfParam,
+    Struct, Trait, Variant, VariantPayload, Visibility,
 };
 
 use crate::driver::source::SrcSpan;
@@ -63,7 +63,12 @@ impl Parser {
                     )
                 };
 
-                Generic { name, bounds, span }
+                Generic {
+                    id: NodeId::next(),
+                    name,
+                    bounds,
+                    span,
+                }
             })
             .boxed();
 
@@ -78,7 +83,12 @@ impl Parser {
             .then(type_p.clone())
             .map(|(name, ty)| {
                 let span = name.span.merge(ty.span);
-                Param { name, ty, span }
+                Param {
+                    id: NodeId::next(),
+                    name,
+                    ty,
+                    span,
+                }
             })
             .boxed();
 
@@ -93,22 +103,26 @@ impl Parser {
                 .then(self.kind(TokenKind::MutKw))
                 .then(self.kind(TokenKind::LowerSelfKw))
                 .map(|((amp_tok, _mut_tok), self_tok)| SelfParam {
+                    id: NodeId::next(),
                     mode: SelfMode::Mutable,
                     span: amp_tok.span.merge(self_tok.span),
                 }),
             self.kind(TokenKind::Amp)
                 .then(self.kind(TokenKind::LowerSelfKw))
                 .map(|(amp_tok, self_tok)| SelfParam {
+                    id: NodeId::next(),
                     mode: SelfMode::Immutable,
                     span: amp_tok.span.merge(self_tok.span),
                 }),
             self.kind(TokenKind::AnyKw)
                 .then(self.kind(TokenKind::LowerSelfKw))
                 .map(|(any_tok, self_tok)| SelfParam {
+                    id: NodeId::next(),
                     mode: SelfMode::Any,
                     span: any_tok.span.merge(self_tok.span),
                 }),
             self.kind(TokenKind::LowerSelfKw).map(|self_tok| SelfParam {
+                id: NodeId::next(),
                 mode: SelfMode::Move,
                 span: self_tok.span,
             }),
@@ -190,6 +204,7 @@ impl Parser {
                 };
 
                 Field {
+                    id: NodeId::next(),
                     visibility,
                     name,
                     ty,
@@ -234,6 +249,7 @@ impl Parser {
                 };
 
                 Item {
+                    id: NodeId::next(),
                     kind: ItemKind::Struct(struct_),
                     span,
                 }
@@ -250,6 +266,7 @@ impl Parser {
             .map(|(name, ty)| {
                 if ty.is_none() {
                     return Variant {
+                        id: NodeId::next(),
                         name,
                         payload: VariantPayload::Unit,
                         span: name.span,
@@ -258,6 +275,7 @@ impl Parser {
 
                 let span = name.span.merge(ty.clone().unwrap().span);
                 Variant {
+                    id: NodeId::next(),
                     name,
                     payload: VariantPayload::Type(ty.unwrap()),
                     span,
@@ -273,6 +291,7 @@ impl Parser {
                 let span = name.span.merge(ty.span);
 
                 Field {
+                    id: NodeId::next(),
                     visibility: Visibility::Public,
                     name,
                     ty,
@@ -301,6 +320,7 @@ impl Parser {
                         .span,
                 );
                 Variant {
+                    id: NodeId::next(),
                     name,
                     payload: VariantPayload::Record(fields),
                     span,
@@ -343,6 +363,7 @@ impl Parser {
                 };
 
                 Item {
+                    id: NodeId::next(),
                     kind: ItemKind::Enum(enum_),
                     span,
                 }
@@ -379,6 +400,7 @@ impl Parser {
                 };
 
                 Item {
+                    id: NodeId::next(),
                     kind: ItemKind::Trait(trait_),
                     span,
                 }
@@ -453,6 +475,7 @@ impl Parser {
                     };
 
                     Item {
+                        id: NodeId::next(),
                         kind: ItemKind::Extend(extend),
                         span,
                     }
@@ -465,9 +488,14 @@ impl Parser {
             .then(self.kind(TokenKind::Semicolon))
             .map(|((mod_tok, path), semi_tok)| {
                 let span = mod_tok.span.merge(semi_tok.span);
-                let module = ModuleDecl { path, span };
+                let module = ModuleDecl {
+                    id: NodeId::next(),
+                    path,
+                    span,
+                };
 
                 Item {
+                    id: NodeId::next(),
                     kind: ItemKind::ModuleDecl(module),
                     span,
                 }
@@ -505,6 +533,7 @@ impl Parser {
                     None => (None, false),
                 };
                 let import = Import {
+                    id: NodeId::next(),
                     path,
                     alias,
                     glob,
@@ -512,6 +541,7 @@ impl Parser {
                 };
 
                 Item {
+                    id: NodeId::next(),
                     kind: ItemKind::Import(import),
                     span,
                 }
@@ -522,6 +552,7 @@ impl Parser {
             function_decl.clone()(false).map(|fun: Function| {
                 let span = fun.span;
                 Item {
+                    id: NodeId::next(),
                     kind: ItemKind::Function(fun),
                     span,
                 }
