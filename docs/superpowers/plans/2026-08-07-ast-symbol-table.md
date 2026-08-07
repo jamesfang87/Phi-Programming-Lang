@@ -23,7 +23,8 @@
   - `\`dyn\` requires a trait`
   - `\`Self\` is not available here`
 - **All diagnostics go through `DiagCtx::emit`** with an `ariadne`-backed `Diagnostic`, matching the helpers at `src/nameres/symbol_table.rs:425-469`.
-- **Every task ends green:** `cargo build`, `cargo test`, `cargo fmt --check`, and `cargo clippy -- -D warnings` all pass before commit.
+- **Every task ends green:** `cargo build`, `cargo test`, and `cargo fmt --check` all pass before commit.
+- **Clippy must not regress.** `master` already fails `cargo clippy -- -D warnings` with ~23 pre-existing errors, so "clippy passes" is not achievable and is not the bar. The bar is that your change introduces **no new** clippy findings: capture the baseline (`git stash` your work, run clippy, restore) and diff. Report the comparison. Cleaning up pre-existing findings is out of scope for every task in this plan.
 - **Doc comments match house style:** the codebase writes substantial `///` docs explaining *why* a design choice was made, not just what the code does. Match the density of `src/nameres/symbol_table.rs` and `src/hir.rs`.
 
 ---
@@ -120,53 +121,40 @@ where `span` is the span the surrounding code already computed for the `Self` to
 
 Delete line `src/ast.rs:281` (`SelfType,`). Fix the assertion at `src/parser/type_parser.rs:581` — `TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::SelfType))` becomes a check that `inner.kind` is a single-segment `Self` path, same shape as Step 1.
 
-- [ ] **Step 5: Delete the HIR variant and its arms**
+- [ ] **Step 5: Map the `Self` path back to `HirTyKind::SelfType` in lowering**
 
-- `src/hir/types.rs:44` — delete `SelfType,`
-- `src/hir/lower/ty.rs:33` — delete `ast::TyKind::SelfType => TyKind::SelfType,`
-- `src/hir/visit.rs:502` — change `TyKind::SelfType | TyKind::Error => {}` to `TyKind::Error => {}`
-- `src/typeck/lower_ty.rs:65` — delete the `HirTyKind::SelfType => self.self_ty(id.owner, span),` arm
-
-- [ ] **Step 6: Resolve the `Self` symbol in the existing HIR resolver**
-
-`src/nameres/resolve_ty.rs` now receives `Self` as an ordinary path. Before the normal type-path lookup, special-case a single-segment path whose symbol is `Self`: read the existing `self_ty` table and map it into a `TypeRes`.
+`src/hir/lower/ty.rs`'s `ast::TyKind::Path` arm now receives `Self`. Recognize it *before* the ordinary path lowering and produce `HirTyKind::SelfType`, leaving the HIR exactly as it was:
 
 ```rust
-/// `Self` reaches this as an ordinary single-segment path since `TyKind::SelfType` was
-/// removed. It is answered from the enclosing definition's `SelfTyRes` rather than from any
-/// namespace: `Self` names no item, it names whatever definition encloses it.
-fn resolve_self_ty(&mut self, owner: DefId, span: SrcSpan) -> TypeRes {
-    match self.self_ty(owner) {
-        Some(SelfTyRes::Ty { adt, .. }) => TypeRes::Def(adt),
-        // Already reported where the `extend` target failed to resolve; recording `Err`
-        // here keeps it from being reported a second time per written `Self`.
-        Some(SelfTyRes::Err) => TypeRes::Err,
-        None => {
-            report_self_unavailable(span);
-            TypeRes::Err
-        }
-    }
+/// Whether `path` is the `Self` the parser produces for the `Self` keyword.
+///
+/// Matching on the segment's text is safe because `Self` is a reserved token: the lexer
+/// always emits `UpperSelfKw` for that spelling and never `Identifier`, and `path_parser` is
+/// built solely from `ident_parser`, which consumes only `Identifier`. So no user-written
+/// path segment can ever carry this text.
+fn is_self_path(path: &ast::Path) -> bool {
+    path.segments.len() == 1 && Interner::resolve(path.segments[0].text) == "Self"
 }
 ```
 
-Read `src/nameres.rs:159`'s note and `src/nameres/resolve_item.rs` to find the existing `self_ty` accessor and match its signature. Add a `report_self_unavailable` reporter to `src/nameres/symbol_table.rs` alongside the existing reporters:
+Nothing else in the HIR moves. `HirTyKind::SelfType`, `src/hir/visit.rs:502`, `src/nameres/*`, and `src/typeck/lower_ty.rs:65` all stay exactly as they are — see this task's "Do NOT modify" list and the reasoning above it. `SelfTyRes` is deleted in Task 15, not here.
 
-```rust
-pub fn report_self_unavailable(span: SrcSpan) {
-    DiagCtx::emit(
-        Diagnostic::error("`Self` is not available here".to_string(), span)
-            .with_label("no enclosing struct, enum, trait, or `extend` block")
-            .with_help("`Self` names the definition it is written inside"),
-    );
-}
+- [ ] **Step 6: Verify the whole suite is green**
+
+Run: `cargo build && cargo test && cargo fmt --check`
+Expected: all pass, with no test needing its expectations changed — the HIR is unchanged, so nothing downstream should observe a difference. A golden file needing an update means the mapping in Step 5 is wrong; investigate rather than re-blessing it.
+
+For clippy, follow the Global Constraint: capture a baseline and diff. **Do not run `git stash` after committing** — with a clean tree it is a no-op and the "baseline" run measures the same commit twice, proving nothing. Use a detached worktree at the base commit instead:
+
+```bash
+git worktree add --detach /tmp/phi-clippy-base b5a510e
+(cd /tmp/phi-clippy-base && cargo clippy -- -D warnings 2>&1 | grep '^error' | sort) > /tmp/base.txt
+cargo clippy -- -D warnings 2>&1 | grep '^error' | sort > /tmp/new.txt
+diff /tmp/base.txt /tmp/new.txt && echo "no new clippy findings"
+git worktree remove /tmp/phi-clippy-base
 ```
 
-- [ ] **Step 7: Verify the whole suite is green**
-
-Run: `cargo build && cargo test && cargo fmt --check && cargo clippy -- -D warnings`
-Expected: all pass. If a golden/snapshot test's expected output mentions `SelfType`, update the expected file — but confirm the change is only the type's rendering, not a resolution difference.
-
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
