@@ -572,7 +572,11 @@ impl<'hir> Typeck<'hir> {
                 // each operator maps onto the `core::ops` trait its lang item names: unifying
                 // the two sides above is still required, but no longer sufficient.
                 match op {
-                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                    BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Rem => {
                         let item = match op {
                             BinaryOp::Add => LangItem::Add,
                             BinaryOp::Sub => LangItem::Sub,
@@ -1049,7 +1053,9 @@ mod tests {
                  return a + b;
              }",
         );
-        let f = find_owner(&hir, hir.root_id(), &|def| matches!(def, OwnerNode::Function(_)));
+        let f = find_owner(&hir, hir.root_id(), &|def| {
+            matches!(def, OwnerNode::Function(_))
+        });
         let (stmt_id, _expr_id) = find_return(&hir, f);
         let mut checker = checker_with_impls_built(&hir, &nameres);
 
@@ -1078,7 +1084,9 @@ mod tests {
                  return a + b;
              }",
         );
-        let f = find_owner(&hir, hir.root_id(), &|def| matches!(def, OwnerNode::Function(_)));
+        let f = find_owner(&hir, hir.root_id(), &|def| {
+            matches!(def, OwnerNode::Function(_))
+        });
         let (stmt_id, _expr_id) = find_return(&hir, f);
         let mut checker = checker_with_impls_built(&hir, &nameres);
 

@@ -4,7 +4,7 @@ use chumsky::extra;
 use chumsky::prelude::*;
 
 use crate::ast::interner::Interner;
-use crate::ast::{Ast, Ident, Item, ItemKind, ParsedSrcFile, Path};
+use crate::ast::{Ast, Ident, Item, ItemKind, NodeId, ParsedSrcFile, Path};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::{SrcMap, SrcSpan};
 use crate::lexer::token::{Token, TokenKind};
@@ -190,6 +190,7 @@ impl Parser {
             .recover_with(via_parser(self.recover_to_boundary(
                 item_start,
                 Item {
+                    id: NodeId::next(),
                     kind: ItemKind::Error,
                     span: SrcSpan::new(0, 0),
                 },

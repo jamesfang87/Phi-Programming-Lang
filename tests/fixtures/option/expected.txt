@@ -3,6 +3,9 @@
 === stdout ===
 // module option
 Item {
+    id: NodeId(
+        9,
+    ),
     kind: Enum(
         Enum {
             visibility: Public,
@@ -18,6 +21,9 @@ Item {
             generics: Some(
                 [
                     Generic {
+                        id: NodeId(
+                            5,
+                        ),
                         name: Ident {
                             text: Symbol(
                                 2,
@@ -37,6 +43,9 @@ Item {
             ),
             variants: [
                 Variant {
+                    id: NodeId(
+                        7,
+                    ),
                     name: Ident {
                         text: Symbol(
                             3,
@@ -48,6 +57,9 @@ Item {
                     },
                     payload: Type(
                         Ty {
+                            id: NodeId(
+                                6,
+                            ),
                             kind: Path {
                                 path: Path {
                                     segments: [
@@ -80,6 +92,9 @@ Item {
                     },
                 },
                 Variant {
+                    id: NodeId(
+                        8,
+                    ),
                     name: Ident {
                         text: Symbol(
                             4,

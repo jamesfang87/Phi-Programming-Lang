@@ -40,7 +40,11 @@ fn unescape(chars: &[char]) -> String {
 
 impl Expr {
     pub fn new(kind: ExprKind, span: SrcSpan) -> Self {
-        Expr { kind, span }
+        Expr {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
     }
 
     /// Builds an integer literal expression from a value token and a suffix token.
@@ -55,6 +59,7 @@ impl Expr {
             .expect("lexer token span should always resolve to a source file");
 
         Expr {
+            id: NodeId::next(),
             kind: ExprKind::Literal(Literal::Int {
                 value: Interner::intern(&value_text),
                 suffix: Interner::intern(&suffix_text),
@@ -71,6 +76,7 @@ impl Expr {
             .expect("lexer token span should always resolve to a source file");
 
         Expr {
+            id: NodeId::next(),
             kind: ExprKind::Literal(Literal::Float {
                 value: Interner::intern(&value_text),
                 suffix: Interner::intern(&suffix_text),
@@ -86,6 +92,7 @@ impl Expr {
         // Drop the surrounding quote characters before unescaping.
         let inner: Vec<char> = chars[1..chars.len() - 1].chars().collect();
         Expr {
+            id: NodeId::next(),
             kind: ExprKind::Literal(Literal::Str(Interner::intern(&unescape(&inner)))),
             span: tok.span,
         }
@@ -103,6 +110,7 @@ impl Expr {
         let inner: Vec<char> = chars[1..chars.len() - 1].chars().collect();
         let ch = unescape(&inner).chars().next().unwrap_or('\0');
         Expr {
+            id: NodeId::next(),
             kind: ExprKind::Literal(Literal::Char(ch)),
             span: tok.span,
         }
