@@ -9,7 +9,7 @@ use crate::driver::source::{SrcCollector, SrcMap};
 use crate::hir::lower::lower_unit;
 use crate::lexer::Lexer;
 use crate::lexer::token::Token;
-use crate::nameres::resolve;
+use crate::nameres;
 use crate::parser::Parser;
 use crate::typeck;
 
@@ -65,21 +65,26 @@ pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
         emit_debug::print_ast(&ast);
     }
 
-    // Desugars the whole program's AST into one HIR.
-    let hir = lower_unit(&ast);
+    // Name resolution runs on the AST, ahead of lowering: `lower_unit` below consumes its
+    // answers directly, writing each into the `hir::Path` of the node it belongs to as that node
+    // is built (see `crate::hir::path`).
+    let res = nameres::resolve(&ast);
+
+    if options.dumps.nameres || options.dumps.surface_nameres {
+        emit_debug::print_nameres(&ast, &res);
+    }
+
+    // Desugars the whole program's AST into one HIR, carrying `res` forward as it goes -- every
+    // `hir::Path` built along the way gets its answer from here, inline.
+    let hir = lower_unit(&ast, &res);
 
     if options.dumps.hir {
         emit_debug::print_hir(&hir, options.exclude_core_in_emit);
     }
 
-    // Resolves names within the HIR, which is what lets type checking below know which
-    // definition each identifier refers to.
-    let nameres = resolve(&hir);
-    let checked = typeck::check(&hir, &nameres);
-
-    if options.dumps.nameres {
-        emit_debug::print_nameres(&hir, &nameres, options.exclude_core_in_emit);
-    }
+    // Every answer `typeck` needs is already on the `hir::Path`s `lower_unit` just built (or, for
+    // lang items, on `hir.lang_items()`), so nothing further is threaded through here.
+    let checked = typeck::check(&hir);
 
     if options.dumps.typeck {
         emit_debug::print_typeck(

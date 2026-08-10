@@ -15,7 +15,7 @@ use std::fmt;
 use crate::ast::Mutability;
 use crate::ast::interner::Interner;
 use crate::hir::{DefId, Hir, HirId, OwnerNode};
-use crate::nameres::results::PrimTy;
+use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::UnifyError;
@@ -184,7 +184,8 @@ fn write_args(f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>, args: &[Ty]) -> fm
     write!(f, ">")
 }
 
-/// The keyword a primitive type is written with, exactly as `resolve_ty` recognizes it.
+/// The keyword a primitive type is written with, exactly as
+/// [`nameres::symbol_table::prim_ty`](crate::nameres::symbol_table::prim_ty) recognizes it.
 fn prim_name(prim: PrimTy) -> &'static str {
     match prim {
         PrimTy::I8 => "i8",

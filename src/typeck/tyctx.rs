@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
-use crate::nameres::results::PrimTy;
+use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 
 pub struct TyCtx {

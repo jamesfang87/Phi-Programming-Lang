@@ -15,6 +15,13 @@ pub struct Dumps {
     pub llvm: bool,
     pub nameres: bool,
     pub typeck: bool,
+    /// A second flag for the same dump `nameres` controls, kept as its own flag rather than
+    /// folded away: the compiler used to run two resolvers, an AST-level one and an HIR-based
+    /// one, and this flag named the AST-level one's dump specifically. Only one resolver exists
+    /// now (see `crate::nameres`), so both flags print the same thing today, but keeping this
+    /// one around costs nothing and avoids breaking whatever a caller's build scripts already
+    /// pass.
+    pub surface_nameres: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -25,13 +32,14 @@ pub struct BuildOptions {
 
 impl BuildOptions {
     /// The flags accepted after `build` and `check`.
-    const KNOWN: [&'static str; 6] = [
+    const KNOWN: [&'static str; 7] = [
         "--ast",
         "--hir",
         "--mir",
         "--llvm",
         "--emit-debug",
         "--no-emit-core",
+        "--surface-nameres",
     ];
 
     pub fn from_args(args: &[String]) -> Result<Self, String> {
@@ -53,6 +61,7 @@ impl BuildOptions {
                 llvm: has("--llvm"),
                 nameres: debug,
                 typeck: debug,
+                surface_nameres: debug || has("--surface-nameres"),
             },
             exclude_core_in_emit: has("--no-emit-core"),
         })
@@ -177,8 +186,12 @@ impl CliArgs {
 pub fn print_usage() {
     let prog = env::args().next().unwrap_or_else(|| "phi".into());
     eprintln!("Usage:");
-    eprintln!("  {prog} build [--ast] [--hir] [--mir] [--llvm] [--emit-debug] [--no-emit-core]");
-    eprintln!("  {prog} check [--ast] [--hir] [--mir] [--llvm] [--emit-debug] [--no-emit-core]");
+    eprintln!(
+        "  {prog} build [--ast] [--hir] [--mir] [--llvm] [--emit-debug] [--no-emit-core] [--surface-nameres]"
+    );
+    eprintln!(
+        "  {prog} check [--ast] [--hir] [--mir] [--llvm] [--emit-debug] [--no-emit-core] [--surface-nameres]"
+    );
     eprintln!("  {prog} run");
     eprintln!("  {prog} new <project_name>");
     eprintln!("  {prog} init");
@@ -278,6 +291,21 @@ mod tests {
                 llvm: false,
                 nameres: true,
                 typeck: true,
+                surface_nameres: true,
+            }
+        );
+    }
+
+    #[test]
+    fn surface_nameres_dumps_only_the_surface_resolver() {
+        let dumps = opts(&["--surface-nameres"])
+            .expect("--surface-nameres is valid")
+            .dumps;
+        assert_eq!(
+            dumps,
+            Dumps {
+                surface_nameres: true,
+                ..Dumps::default()
             }
         );
     }

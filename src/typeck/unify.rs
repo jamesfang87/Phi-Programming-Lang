@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::nameres::results::PrimTy;
+use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
 

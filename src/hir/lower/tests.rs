@@ -1,11 +1,12 @@
+use super::ctx::LoweringCtx;
 use super::*;
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, BinaryOp, Ident, ModuleDecl, Mutability, NodeId, Path, UnaryOp, Visibility};
 use crate::hir::ids::{DefId, HirId};
 use crate::hir::{
-    AccessArgs, Arm, Block, Closure, Enum, Expr, ExprKind, Extend, Field, Function, LoopSource,
-    Module, Node, OwnerNode, Param, Pat, PatKind, Payload, Stmt, StmtKind, Struct, Trait, Ty,
-    TyKind, VariantPayload,
+    AccessArgs, Arm, Block, Closure, Enum, Expr, ExprKind, Extend, Field, Function, Local,
+    LoopSource, Module, Node, OwnerNode, Param, Pat, PatKind, Payload, Res, Stmt, StmtKind, Struct,
+    Trait, Ty, TyKind, VariantPayload,
 };
 use crate::testing::{lower_src, parse_src};
 
@@ -156,6 +157,82 @@ fn only_function(hir: &Hir) -> (DefId, &Function) {
 }
 
 // -----------------------------------------------------------------
+// DefId pre-allocation
+// -----------------------------------------------------------------
+
+/// Every top-level definition -- struct, function, enum, trait, `extend` block -- gets a `DefId`,
+/// plus the root module: six in total.
+#[test]
+fn every_definition_has_a_def_id_before_any_body_is_lowered() {
+    let hir = lower_src("struct A {} fun f() {} enum E { x } trait T {} extend A {}");
+    assert_eq!(hir.def_ids().count(), 6);
+}
+
+/// `Foo` is declared after the function that names it in a parameter position. Name resolution
+/// already resolved that reference before lowering runs; what this test exercises is that
+/// `Foo`'s `DefId` exists by the time lowering reaches for it to build the `hir::Path`, even
+/// though `Foo`'s own item is pre-allocated after `f`'s.
+#[test]
+fn a_forward_reference_resolves_to_an_already_allocated_def_id() {
+    let hir = lower_src("fun f(x: Foo) {} struct Foo {}");
+    assert_eq!(hir.def_ids().count(), 3);
+}
+
+/// This is the test that actually exercises pre-allocation rather than just its end result:
+/// it drives the pass only as far as `prealloc_item` and checks every item already has a `DefId`
+/// in `cx.def_ids`, before `lower_module` -- which builds any arena -- has run at all. Before
+/// `def_ids`/`prealloc_item` existed, every one of `lower_item`, `lower_function`,
+/// `lower_struct`, ... allocated its own `DefId` lazily instead, so this assertion had nothing to
+/// check and could not have failed the way it now would if pre-allocation regressed.
+#[test]
+fn every_item_gets_a_def_id_before_lower_module_runs() {
+    let unit = parse_src("fun f(x: Foo) {} struct Foo {} trait T { fun m(self) {} }");
+    let ast = Ast::new(vec![unit]);
+    let surface_results = crate::nameres::resolve(&ast);
+    let mut cx = LoweringCtx::new(&surface_results);
+
+    for mod_id in ast.mod_ids() {
+        let parent_def = ast.parent(mod_id).map(|id| cx.def_ids[&id]);
+        let def_id = cx.items.alloc(parent_def);
+        cx.def_ids.insert(mod_id, def_id);
+    }
+    for mod_id in ast.mod_ids() {
+        let module_def = cx.def_ids[&mod_id];
+        for item in &ast.module(mod_id).items {
+            cx.prealloc_item(module_def, item);
+        }
+    }
+
+    // No arena exists yet -- `lower_module` was never called -- but every item's `NodeId`
+    // already maps to a `DefId`, including the trait's method, which needed the trait's own id
+    // to be allocated first.
+    assert!(cx.owners.is_empty());
+    let root = ast.module(ast.root_id());
+    assert_eq!(root.items.len(), 3);
+    for item in &root.items {
+        assert!(
+            cx.def_ids.contains_key(&item.id),
+            "item {:?} has no pre-allocated DefId",
+            item.kind
+        );
+    }
+    let trait_item = root
+        .items
+        .iter()
+        .find(|item| matches!(item.kind, crate::ast::ItemKind::Trait(_)))
+        .expect("fixture declares a trait");
+    assert_eq!(
+        cx.method_defs
+            .get(&trait_item.id)
+            .expect("trait's methods were pre-allocated")
+            .len(),
+        1
+    );
+    // Root module + fun f + struct Foo + trait T.
+    assert_eq!(cx.def_ids.len(), 4);
+}
+
+// -----------------------------------------------------------------
 // Items
 // -----------------------------------------------------------------
 
@@ -291,6 +368,59 @@ fn extend_methods_and_generics_are_lowered() {
     assert_eq!(text(method.name), "get");
 }
 
+/// Regression test: a trait's generics must be lowered before its functions, since a function's
+/// signature or body can name them (`fun get(self) -> T` inside `trait C<T>`), and path lowering
+/// needs the generic's `HirId` to already exist when it resolves such a reference.
+///
+/// This can't observe *when* the generic node was built from outside -- both the old, buggy
+/// order and the fixed one produce the same final `Trait`/`Function` shape, since a function is
+/// lowered into its own separate arena from the trait's. The actual regression guard is the
+/// `debug_assert!` in `LoweringCtx::lower_trait`, right before each `self.lower_function(id, f)`
+/// call, checking that the trait's own `DefId` is already in `generics_ready`. That assertion was
+/// confirmed non-vacuous by hand: temporarily reverting `lower_trait` to the pre-fix order (lower
+/// every function, *then* lower the trait's own generics) while keeping the assertion in place
+/// made it panic, failing this test, `trait_functions_are_lowered_as_independent_owners`, and
+/// `a_methods_parent_is_its_trait_or_extend_block` -- the three tests in this file that exercise a
+/// trait's functions. There is no standing test that re-exercises the pre-fix order on every
+/// run (a debug-assert regression test would need a seam into `lower_trait`'s ordering that has
+/// no other reason to exist); the `debug_assert!` itself is the permanent guard. This test is the
+/// weaker, black-box check the task brief asks for regardless: that both the generics and the
+/// functions came out right.
+#[test]
+fn a_traits_generics_are_lowered_before_its_functions() {
+    let hir = lower_src("trait C<T> { fun get(self) -> T; }");
+    let m = hir.root();
+    let id = find_type(&hir, m, "C");
+    let t = as_trait(&hir, id);
+    assert_eq!(t.generics.len(), 1);
+    assert!(matches!(node_in(&hir, t.generics[0]), Node::Generic(_)));
+    assert_eq!(t.functions.len(), 1);
+    let f = as_function(&hir, t.functions[0]);
+    assert_eq!(text(f.name), "get");
+}
+
+/// Same regression, for an `extend` block's own (`extend<T>`) generics against its methods.
+#[test]
+fn an_extend_blocks_generics_are_lowered_before_its_methods() {
+    let hir = lower_src("struct S {} extend<T> S { fun get(self) -> T {} }");
+    let m = hir.root();
+    let extend_id = m
+        .items
+        .iter()
+        .copied()
+        .find(|&id| matches!(hir.def(id), OwnerNode::Extend(_)))
+        .expect("no extend block in the module's items");
+    let e = as_extend(&hir, extend_id);
+    assert_eq!(e.extend_generics.len(), 1);
+    assert!(matches!(
+        node_in(&hir, e.extend_generics[0]),
+        Node::Generic(_)
+    ));
+    assert_eq!(e.methods.len(), 1);
+    let method = as_function(&hir, e.methods[0]);
+    assert_eq!(text(method.name), "get");
+}
+
 #[test]
 fn generic_params_carry_their_bounds() {
     let hir = lower_src("struct Wrapper<T: Clone> { value: T }");
@@ -351,7 +481,9 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
         span: path_span,
     });
 
-    let hir = lower_unit(&Ast::new(vec![unit]));
+    let ast = Ast::new(vec![unit]);
+    let surface_results = crate::nameres::resolve(&ast);
+    let hir = lower_unit(&ast, &surface_results);
     let root = hir.root();
     // The root's only item is the synthesized `math`, which in turn holds `math::vector`.
     assert_eq!(root.items.len(), 1);
@@ -723,6 +855,84 @@ fn record_pattern_field_shorthand_is_desugared() {
             }
         }
         other => panic!("expected a variant pattern, got {other:?}"),
+    }
+}
+
+/// The pattern-side shorthand's synthesized binding has no `ast::Pat` of its own, so AST-level
+/// resolution keys it under the `PayloadField`'s `NodeId` instead (see
+/// `Resolver::visit_record_pat_fields` in `src/nameres/resolver.rs`). This checks the
+/// two sides agree end to end: a name shorthand-bound in the pattern actually resolves, inside
+/// the arm's own body, to the binding the shorthand introduced -- not `Res::Err`, and not a
+/// lowering panic.
+#[test]
+fn record_pattern_shorthand_binds_reachable_in_the_arm_body() {
+    let hir = lower_src("fun f() { match x { .rect { w, h } => w, _ => 0 } }");
+    let (_, f) = only_function(&hir);
+    let body = block(&hir, f.block.unwrap());
+    let ExprKind::Match { arms, .. } = &expr(&hir, body.expr.unwrap()).kind else {
+        panic!("expected a match expr")
+    };
+    let matched_arm = arm(&hir, arms[0]);
+
+    let PatKind::Variant { payload, .. } = &pat(&hir, matched_arm.pat).kind else {
+        panic!("expected a variant pattern")
+    };
+    let Payload::Record(fields) = payload else {
+        panic!("expected a record payload, got {payload:?}")
+    };
+    let w_binding = fields
+        .iter()
+        .find(|f| text(f.name) == "w")
+        .expect("fixture shorthand-binds `w`")
+        .value;
+
+    let arm_body = block(&hir, matched_arm.block);
+    let tail = arm_body.expr.expect("arm body has a tail expression");
+    match &expr(&hir, tail).kind {
+        ExprKind::Path(path) => {
+            assert_eq!(text(path.segments[0]), "w");
+            assert_eq!(
+                path.res,
+                Res::Local(Local::Variable(w_binding)),
+                "the arm body's `w` should resolve to the shorthand's own binding, not Res::Err"
+            );
+        }
+        other => panic!("expected a path expr, got {other:?}"),
+    }
+}
+
+/// Symmetric to the pattern-side test above: a record *expression* shorthand field's implicit
+/// value is keyed the same way (`PayloadField::id`, not an `Expr`'s), so this checks a name in
+/// scope resolves through it rather than landing on `Res::Err`.
+#[test]
+fn record_expr_shorthand_resolves_the_name_it_names() {
+    let hir = lower_src("fun f(w: i32) { let x = .square { w }; }");
+    let (_, f) = only_function(&hir);
+    let w_param = f.params[0];
+
+    let body = block(&hir, f.block.unwrap());
+    let StmtKind::Let { init, .. } = &stmt(&hir, body.stmts[0]).kind else {
+        panic!("expected a let statement")
+    };
+    match &expr(&hir, *init).kind {
+        ExprKind::Variant { payload, .. } => {
+            let Payload::Record(fields) = payload else {
+                panic!("expected a record payload, got {payload:?}")
+            };
+            match &expr(&hir, fields[0].value).kind {
+                ExprKind::Path(path) => {
+                    assert_eq!(text(path.segments[0]), "w");
+                    assert_eq!(
+                        path.res,
+                        Res::Local(Local::Param(w_param)),
+                        "the shorthand's implicit value should resolve to the `w` parameter, \
+                         not Res::Err"
+                    );
+                }
+                other => panic!("expected the shorthand to become a path, got {other:?}"),
+            }
+        }
+        other => panic!("expected a variant expr, got {other:?}"),
     }
 }
 

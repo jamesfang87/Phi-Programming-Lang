@@ -1,30 +1,30 @@
 //! Lowers AST types.
 
 use crate::ast;
-use crate::ast::interner::Interner;
 use crate::driver::source::SrcSpan;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{HirId, TyKind};
 
-impl OwnerLowerer<'_> {
+impl OwnerLowerer<'_, '_> {
     pub(super) fn lower_ty(&mut self, ty: &ast::Ty) -> HirId {
-        self.lower_ty_kind(&ty.kind, ty.span)
+        self.lower_ty_kind(ty.id, &ty.kind, ty.span)
     }
 
-    pub(super) fn lower_ty_kind(&mut self, kind: &ast::TyKind, span: SrcSpan) -> HirId {
+    pub(super) fn lower_ty_kind(
+        &mut self,
+        node_id: ast::NodeId,
+        kind: &ast::TyKind,
+        span: SrcSpan,
+    ) -> HirId {
         self.synth_ty(span, |low, _id| match kind {
-            // The AST parses `Self` as an ordinary single-segment path (so the AST resolver can
-            // treat it like any other name), but the HIR still gives it its own `TyKind`: the
-            // rest of the HIR pipeline -- name resolution's `self_tys` table, `typeck::self_ty`'s
-            // generic-substitution logic -- keys off `Self` being unmistakable at this level, and
-            // `Self` can never collide with a real path segment since the lexer always tokenizes
-            // the text `Self` as the reserved `UpperSelfKw`, never as an `Identifier`.
-            ast::TyKind::Path { path, args } if is_self_path(path) => {
-                debug_assert!(args.is_empty(), "the parser never gives `Self` arguments");
-                TyKind::SelfType
-            }
+            // `Self` is an ordinary single-segment path -- both in the AST, so the AST resolver
+            // can treat it like any other name, and here: `LoweringCtx::lower_path` recognizes
+            // the written text and gives it a `Res::SelfTy` instead of an ordinary
+            // `Res::Type(Type::Def(_))`, which is what lets `lower_ty`'s `Def` arm skip the two
+            // checks that don't hold for `Self` (a trait is legal here; no argument list is
+            // expected). See `hir::Res::SelfTy` and `LoweringCtx::as_self_ty`.
             ast::TyKind::Path { path, args } => TyKind::Path {
-                path: path.clone(),
+                path: low.cx.lower_path(node_id, path),
                 args: args.iter().map(|a| low.lower_ty(a)).collect(),
             },
             ast::TyKind::Ref { base, mutability } => TyKind::Ref {
@@ -42,21 +42,10 @@ impl OwnerLowerer<'_> {
                 ret: ret.as_ref().map(|r| low.lower_ty(r)),
             },
             ast::TyKind::Dyn { path, args } => TyKind::Dyn {
-                path: path.clone(),
+                path: low.cx.lower_path(node_id, path),
                 args: args.iter().map(|a| low.lower_ty(a)).collect(),
             },
             ast::TyKind::Error => TyKind::Error,
         })
-    }
-}
-
-/// Whether `path` is exactly the single-segment `Self` path the parser produces for the `Self`
-/// keyword -- never true of a user-written path, since the lexer tokenizes `Self` as the
-/// reserved `UpperSelfKw`, not as an `Identifier`, so no ordinary path segment can ever carry
-/// that text.
-fn is_self_path(path: &ast::Path) -> bool {
-    match path.segments.as_slice() {
-        [segment] => Interner::resolve(segment.text) == "Self",
-        _ => false,
     }
 }

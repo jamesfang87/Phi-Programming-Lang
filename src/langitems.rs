@@ -8,20 +8,23 @@
 //! the whole of that agreement: moving `Add` from `core::ops` to somewhere else means changing
 //! its entry there and nowhere else.
 //!
-//! [`collect`] resolves every path in the table to a [`DefId`] once name resolution has built
-//! the module namespaces, and reports the ones that are missing. Lookups afterwards go through
-//! [`LangItems::get`], which returns `None` for a lang item that failed to resolve rather than
-//! panicking -- by then the error has already been reported, and a later pass carrying on with
-//! one missing lang item produces better diagnostics than one that aborts.
+//! [`collect_ast`] resolves every path in the table to a [`NodeId`] once AST-level name
+//! resolution has built the module namespaces, and reports the ones that are missing.
+//! [`translate`] then carries that answer across lowering, into the [`DefId`]-keyed [`LangItems`]
+//! every later pass actually reads. Lookups go through [`LangItems::get`], which returns `None`
+//! for a lang item that failed to resolve rather than panicking -- by then the error has already
+//! been reported, and a later pass carrying on with one missing lang item produces better
+//! diagnostics than one that aborts.
 
 use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
-use crate::ast::{Ident, Path};
+use crate::ast::{Ident, NodeId, Path};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::DefId;
-use crate::nameres::symbol_table::SymbolTable;
+use crate::nameres::res::Type as AstType;
+use crate::nameres::symbol_table::SymbolTable as AstSymbolTable;
 
 /// One definition in the core library that the compiler knows by name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -47,7 +50,7 @@ pub enum LangItem {
 }
 
 impl LangItem {
-    /// Every lang item, in the order [`collect`] resolves and reports them.
+    /// Every lang item, in the order [`collect_ast`] resolves and reports them.
     pub const ALL: &'static [LangItem] = &[
         LangItem::Option,
         LangItem::Result,
@@ -95,7 +98,7 @@ impl LangItem {
 
 /// Every lang item the core library declares, resolved to the definition it names.
 ///
-/// A lang item that failed to resolve is absent rather than recorded as an error: [`collect`]
+/// A lang item that failed to resolve is absent rather than recorded as an error: [`collect_ast`]
 /// has already reported it, and the passes that consume this table treat a missing entry as "no
 /// candidate", which is the same answer they'd reach for a type that doesn't implement the
 /// trait.
@@ -116,26 +119,54 @@ impl LangItems {
     }
 }
 
+/// The AST-side twin of [`LangItems`], keyed by [`NodeId`] rather than [`DefId`] since AST-level
+/// lang-item resolution (see [`collect_ast`]) runs before any HIR -- and its `DefId`s -- exist.
+/// [`translate`] is what turns one of these into the [`LangItems`] every pass after lowering
+/// actually reads.
+///
+/// A separate struct rather than a generic `LangItems<Id>`: the two only ever need `get`/`is`
+/// (and, here, an iterator for [`translate`] to walk), so the handful of duplicated lines are
+/// cheaper than a generic parameter and a hand-written `Default` impl to dodge an `Id: Default`
+/// bound.
+#[derive(Default, Debug)]
+pub struct AstLangItems {
+    items: HashMap<LangItem, NodeId>,
+}
+
+impl AstLangItems {
+    /// The definition `item` names, or `None` if it failed to resolve.
+    pub fn get(&self, item: LangItem) -> Option<NodeId> {
+        self.items.get(&item).copied()
+    }
+
+    /// Whether `node_id` is the definition `item` names.
+    pub fn is(&self, item: LangItem, node_id: NodeId) -> bool {
+        self.get(item) == Some(node_id)
+    }
+}
+
 /// Resolves every lang item against `symbol_tab`, reporting each one that the core library
 /// doesn't declare.
 ///
 /// This runs against the type namespace only: every lang item is an enum or a trait, and both
-/// live there. It must run after [`SymbolTable::new`] has collected every module's namespace and
-/// resolved its imports, which is what makes a path like `core::ops::Add` resolvable at all.
-pub fn collect(symbol_tab: &SymbolTable<'_>, root: DefId) -> LangItems {
+/// live there. It must run after [`AstSymbolTable::new`] has collected every module's namespace
+/// and resolved its imports, which is what makes a path like `core::ops::Add` resolvable at all.
+pub fn collect_ast(symbol_tab: &AstSymbolTable<'_>, root: NodeId) -> AstLangItems {
     let mut items = HashMap::new();
 
     for &item in LangItem::ALL {
         let path = synth_path(item);
         match symbol_tab.lookup_type_path(root, &path) {
-            Some(def_id) => {
-                items.insert(item, def_id);
+            Some(AstType::Def(def)) => {
+                items.insert(item, def.node_id());
             }
-            None => report_missing(item),
+            // `Prim` and `Generic` never name a lang item, and a `None` result means the core
+            // library doesn't declare it at all -- both are the same "missing" outcome here.
+            _ => report_missing(item),
         }
     }
 
-    LangItems { items }
+    AstLangItems { items }
 }
 
 /// Builds the [`Path`] for a lang item so it can go through the ordinary path lookup.
@@ -155,6 +186,39 @@ fn synth_path(item: LangItem) -> Path {
         .collect();
 
     Path { segments, span }
+}
+
+/// Carries [`collect_ast`]'s answer across lowering: every lang item AST-level resolution found,
+/// translated from the `NodeId` it resolved to into the `DefId` that node lowered to.
+///
+/// `to_def_id` is a closure rather than a `HashMap` because lowering doesn't keep one lying
+/// around for this alone -- `LoweringCtx::def_ids`, already built for translating every ordinary
+/// `hir::Path`, is exactly the lookup this needs too. A lang item that resolved at all is always
+/// a struct, enum, or trait item, which is preallocated a `DefId` before any lowering proper
+/// starts (see `hir::lower::lower_unit`), so `to_def_id` is expected to answer `Some` for every
+/// `NodeId` `ast_items` holds -- `None` here would mean that invariant broke, not that the lang
+/// item failed to resolve (a failure already left no entry in `ast_items` to translate; see
+/// [`collect_ast`]).
+pub fn translate(
+    ast_items: &AstLangItems,
+    to_def_id: impl Fn(NodeId) -> Option<DefId>,
+) -> LangItems {
+    let mut items = HashMap::new();
+
+    for &item in LangItem::ALL {
+        if let Some(node_id) = ast_items.get(item) {
+            let def_id = to_def_id(node_id).unwrap_or_else(|| {
+                panic!(
+                    "lowering bug: lang item `{}` resolved to {node_id:?}, which lowering never \
+                     gave a DefId",
+                    item.display_path()
+                )
+            });
+            items.insert(item, def_id);
+        }
+    }
+
+    LangItems { items }
 }
 
 /// Reports a lang item the core library doesn't declare.

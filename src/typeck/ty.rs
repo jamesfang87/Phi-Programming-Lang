@@ -13,7 +13,7 @@
 
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
-use crate::nameres::results::PrimTy;
+use crate::nameres::PrimTy;
 
 /// A handle to a type interned in a [`TyCtx`](crate::typeck::tyctx::TyCtx).
 ///
@@ -78,7 +78,7 @@ pub enum TyKind {
     /// It is addressed by the [`HirId`] of the [`Node::Generic`](crate::hir::Node::Generic) that
     /// declares it -- including an `extend` block's own `<T>` list, which the parser reads as
     /// declarations like any other. That is exactly what name resolution
-    /// hands back in [`TypeRes::Generic`](crate::nameres::results::TypeRes::Generic), so no
+    /// hands back in [`Type::Generic`](crate::nameres::res::Type::Generic), so no
     /// separate numbering has to be built or kept in sync to name a parameter here.
     Generic(HirId),
     /// The implicit `Self` parameter a trait declares, naming the trait it belongs to.

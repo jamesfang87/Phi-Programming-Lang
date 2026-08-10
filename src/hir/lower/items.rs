@@ -8,14 +8,21 @@ use crate::hir::{
     VariantPayload,
 };
 
-impl OwnerLowerer<'_> {
+impl OwnerLowerer<'_, '_> {
     pub(super) fn lower_generics(&mut self, generics: &[ast::Generic]) -> Vec<HirId> {
         generics.iter().map(|g| self.lower_generic(g)).collect()
     }
 
     fn lower_generic(&mut self, g: &ast::Generic) -> HirId {
         let hir_id = self.reserve();
-        let bounds = g.bounds.clone().unwrap_or_default();
+        self.cx.record_hir_id(g.id, hir_id);
+        let bounds = g
+            .bounds
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|bound| self.cx.lower_path(g.id, bound))
+            .collect();
         self.fill(
             hir_id,
             Node::Generic(Generic {
@@ -30,6 +37,7 @@ impl OwnerLowerer<'_> {
 
     pub(super) fn lower_self_param(&mut self, sp: &ast::SelfParam) -> HirId {
         let hir_id = self.reserve();
+        self.cx.record_hir_id(sp.id, hir_id);
         self.fill(
             hir_id,
             Node::SelfParam(SelfParam {
@@ -43,6 +51,7 @@ impl OwnerLowerer<'_> {
 
     pub(super) fn lower_param(&mut self, p: &ast::Param) -> HirId {
         let hir_id = self.reserve();
+        self.cx.record_hir_id(p.id, hir_id);
         let ty = self.lower_ty(&p.ty);
         self.fill(
             hir_id,
@@ -58,6 +67,7 @@ impl OwnerLowerer<'_> {
 
     pub(super) fn lower_closure_param(&mut self, p: &ast::ClosureParam) -> HirId {
         let hir_id = self.reserve();
+        self.cx.record_hir_id(p.id, hir_id);
         let ty = p.ty.as_ref().map(|t| self.lower_ty(t));
         self.fill(
             hir_id,

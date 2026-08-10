@@ -4,7 +4,7 @@ use crate::ast;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{HirId, StmtKind, WithLend};
 
-impl OwnerLowerer<'_> {
+impl OwnerLowerer<'_, '_> {
     /// Lowers a block. If the last statement is a bare expression without a trailing semicolon,
     /// it becomes the block's tail value instead of an ordinary statement; every other statement
     /// lowers as-is.

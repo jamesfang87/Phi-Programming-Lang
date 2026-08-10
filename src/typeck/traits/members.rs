@@ -621,8 +621,8 @@ fn show_self_mode(mode: Option<SelfMode>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::diag::DiagCtx;
-    use crate::hir::{Hir, NameResolutions, OwnerNode};
-    use crate::nameres::results::PrimTy;
+    use crate::hir::{Hir, OwnerNode};
+    use crate::nameres::PrimTy;
     use crate::testing::resolve_src;
     use crate::typeck::Typeck;
     use crate::typeck::ty::TyKind;
@@ -634,8 +634,8 @@ mod tests {
     /// shows up as an extra message rather than passing silently. Diagnostics are cleared after
     /// the index is built: a fixture is resolved without the core library, so name resolution
     /// reports the whole set of missing lang items first.
-    fn members(hir: &Hir, nameres: &NameResolutions) -> Vec<String> {
-        let mut checker = Typeck::new(hir, nameres);
+    fn members(hir: &Hir) -> Vec<String> {
+        let mut checker = Typeck::new(hir);
         checker.collect_module(hir.root_id());
         checker.build_impl_index();
         checker.check_coherence();
@@ -654,25 +654,25 @@ mod tests {
 
     #[test]
     fn an_implementation_providing_exactly_the_declared_methods_is_accepted() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     #[test]
     fn a_missing_method_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show {}",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["missing method in the implementation of trait `Show` for `Foo`: `show`"]
         );
     }
@@ -681,14 +681,14 @@ mod tests {
     /// methods is one mistake with four parts.
     #[test]
     fn every_missing_method_is_named_in_one_diagnostic() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); fun size(&self); }
              struct Foo {}
              extend Foo with Show {}",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["missing methods in the implementation of trait `Show` for `Foo`: `show`, `size`"]
         );
     }
@@ -697,13 +697,13 @@ mod tests {
     /// methods points at the ones that are actually missing rather than at itself.
     #[test]
     fn every_missing_method_is_underlined_where_it_is_declared() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); fun size(&self); fun free(&self) {} }
              struct Foo {}
              extend Foo with Show {}",
         );
 
-        let mut checker = Typeck::new(&hir, &nameres);
+        let mut checker = Typeck::new(&hir);
         checker.collect_module(hir.root_id());
         checker.build_impl_index();
         checker.check_coherence();
@@ -731,36 +731,36 @@ mod tests {
     /// omission.
     #[test]
     fn a_method_with_a_default_body_need_not_be_implemented() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self) {} }
              struct Foo {}
              extend Foo with Show {}",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     #[test]
     fn a_method_with_a_default_body_may_still_be_overridden() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self) {} }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     #[test]
     fn a_method_the_trait_does_not_declare_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} fun extra(&self) {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["method `extra` is not a member of trait `Show`"]
         );
     }
@@ -769,12 +769,12 @@ mod tests {
     /// it.
     #[test]
     fn an_inherent_block_may_define_whatever_it_likes() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Foo {}
              extend Foo { fun anything(&self) -> i32 {} }",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     // -----------------------------------------------------------------
@@ -783,42 +783,42 @@ mod tests {
 
     #[test]
     fn too_few_parameters_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self, width: i32); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["method `show` takes 0 parameters where its declaration takes 1"]
         );
     }
 
     #[test]
     fn a_parameter_of_the_wrong_type_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self, width: i32); }
              struct Foo {}
              extend Foo with Show { fun show(&self, width: bool) {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["parameter `width` of method `show` has type `bool` where its declaration has `i32`"]
         );
     }
 
     #[test]
     fn a_wrong_return_type_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self) -> i32; }
              struct Foo {}
              extend Foo with Show { fun show(&self) -> bool {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["method `show` returns `bool` where its declaration returns `i32`"]
         );
     }
@@ -827,56 +827,56 @@ mod tests {
     /// so rather than inventing a `()` the user never wrote.
     #[test]
     fn a_missing_return_type_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self) -> i32; }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["method `show` returns nothing where its declaration returns `i32`"]
         );
     }
 
     #[test]
     fn the_wrong_receiver_mode_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&mut self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["method `show` takes `&self` where its declaration takes `&mut self`"]
         );
     }
 
     #[test]
     fn a_receiver_where_the_declaration_has_none_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun make(); }
              struct Foo {}
              extend Foo with Show { fun make(&self) {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["method `make` takes `&self` where its declaration takes no receiver"]
         );
     }
 
     #[test]
     fn a_different_number_of_type_parameters_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show<U>(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["method `show` declares 0 type parameters where its declaration declares 1"]
         );
     }
@@ -885,27 +885,27 @@ mod tests {
     /// substitution does.
     #[test]
     fn a_methods_own_type_parameters_are_matched_up_positionally() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show<U>(&self, value: U); }
              struct Foo {}
              extend Foo with Show { fun show<U>(&self, value: U) {} }",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     /// A signature that would *unify* with the declaration is still wrong: `T` accepts arguments
     /// the trait never promised the implementation would take.
     #[test]
     fn a_signature_that_merely_unifies_is_still_rejected() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self, width: i32); }
              struct Foo {}
              extend<T> Foo with Show { fun show(&self, width: T) {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["parameter `width` of method `show` has type `T` where its declaration has `i32`"]
         );
     }
@@ -917,18 +917,18 @@ mod tests {
     /// `Self` in the declaration means the implementing type, so both spellings check.
     #[test]
     fn self_in_a_declaration_stands_for_the_implementing_type() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Clone { fun clone(&self) -> Self; fun copy(&self) -> Self; }
              struct Foo {}
              extend Foo with Clone { fun clone(&self) -> Foo {} fun copy(&self) -> Self {} }",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     #[test]
     fn a_declaration_returning_self_is_not_satisfied_by_another_type() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Clone { fun clone(&self) -> Self; }
              struct Foo {}
              struct Bar {}
@@ -936,7 +936,7 @@ mod tests {
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["method `clone` returns `Bar` where its declaration returns `Foo`"]
         );
     }
@@ -945,25 +945,25 @@ mod tests {
     /// implementation in whatever the block applied the trait to.
     #[test]
     fn a_generic_traits_parameters_are_substituted_from_the_blocks_arguments() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index<i32, bool> { fun get(&self, key: i32) -> bool {} }",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     #[test]
     fn a_generic_traits_parameters_are_not_satisfied_by_the_wrong_arguments() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index<i32, bool> { fun get(&self, key: bool) -> bool {} }",
         );
 
         assert_eq!(
-            members(&hir, &nameres),
+            members(&hir),
             ["parameter `key` of method `get` has type `bool` where its declaration has `i32`"]
         );
     }
@@ -972,25 +972,25 @@ mod tests {
     /// declaration substitutes to a signature that is itself open.
     #[test]
     fn a_blocks_own_parameters_may_be_the_traits_arguments() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map<T> { inner: T }
              extend<T> Map<T> with Index<i32, T> { fun get(&self, key: i32) -> T {} }",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     /// A composite type is rewritten through, not just a bare `Self` or a bare parameter.
     #[test]
     fn substitution_reaches_inside_composite_types() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Index<K, V> { fun get(&self, key: (K, &Self)) -> V; }
              struct Map {}
              extend Map with Index<i32, bool> { fun get(&self, key: (i32, &Map)) -> bool {} }",
         );
 
-        assert!(members(&hir, &nameres).is_empty());
+        assert!(members(&hir).is_empty());
     }
 
     // -----------------------------------------------------------------
@@ -1001,8 +1001,8 @@ mod tests {
     /// touched.
     #[test]
     fn substituting_self_rewrites_every_occurrence_and_only_those() {
-        let (hir, nameres) = resolve_src("struct Foo {}");
-        let mut checker = Typeck::new(&hir, &nameres);
+        let hir = resolve_src("struct Foo {}");
+        let mut checker = Typeck::new(&hir);
         checker.collect_module(hir.root_id());
 
         let foo = hir

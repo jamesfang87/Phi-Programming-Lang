@@ -1,22 +1,27 @@
 //! Lowers expressions, including promoting closures to their own owner.
 
 use crate::ast;
-use crate::ast::Path;
 use crate::driver::source::SrcSpan;
 use crate::hir::ids::DefId;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{AccessArgs, Closure, ExprKind, HirId, OwnerNode, Payload, PayloadField};
 
-impl OwnerLowerer<'_> {
+impl OwnerLowerer<'_, '_> {
     pub(super) fn lower_expr(&mut self, e: &ast::Expr) -> HirId {
         let span = e.span;
-        self.synth_expr(span, |low, _id| low.lower_expr_kind(&e.kind, span))
+        let node_id = e.id;
+        self.synth_expr(span, |low, _id| low.lower_expr_kind(node_id, &e.kind, span))
     }
 
-    fn lower_expr_kind(&mut self, kind: &ast::ExprKind, span: SrcSpan) -> ExprKind {
+    fn lower_expr_kind(
+        &mut self,
+        node_id: ast::NodeId,
+        kind: &ast::ExprKind,
+        span: SrcSpan,
+    ) -> ExprKind {
         match kind {
             ast::ExprKind::Literal(lit) => ExprKind::Literal(*lit),
-            ast::ExprKind::Path(path) => ExprKind::Path(path.clone()),
+            ast::ExprKind::Path(path) => ExprKind::Path(self.cx.lower_path(node_id, path)),
             ast::ExprKind::Unary { op, operand } => ExprKind::Unary {
                 op: *op,
                 operand: self.lower_expr(operand),
@@ -63,8 +68,15 @@ impl OwnerLowerer<'_> {
                 base: self.lower_expr(base),
                 index: self.lower_expr(index),
             },
+            // `path` is looked up through `lower_ctor_path`, not `lower_path`: unlike every
+            // other path kind, `Resolver::visit_expr` (`src/nameres/resolver.rs`) does
+            // not yet record an entry for a struct literal's own name, so a missing entry here
+            // is a known gap in AST-level resolution rather than a lowering bug. See
+            // `LoweringCtx::lower_ctor_path`.
             ast::ExprKind::Ctor { path, payload } => ExprKind::Ctor {
-                path: path.clone(),
+                path: path
+                    .as_ref()
+                    .map(|path| self.cx.lower_ctor_path(node_id, path)),
                 payload: self.lower_record_fields(payload),
             },
             ast::ExprKind::Variant { variant, payload } => ExprKind::Variant {
@@ -119,6 +131,14 @@ impl OwnerLowerer<'_> {
 
     /// Lowers a record payload's fields, desugaring the `{ l }` shorthand into `{ l: l }` so
     /// that every field has a real expression behind it in the HIR.
+    ///
+    /// The shorthand's implicit value has no `ast::Expr` behind it -- it's synthesized here,
+    /// during lowering, from the field's own name -- so AST-level resolution can't key its
+    /// answer under an `Expr`'s `NodeId` the way [`Self::lower_expr`] does. It keys under the
+    /// `PayloadField`'s own `NodeId` instead, against the same single-segment path this
+    /// synthesizes (`Resolver::visit_record_fields` in `src/nameres/resolver.rs`), which
+    /// is why this looks the answer up with `f.id` as the owner rather than treating it as
+    /// unresolved.
     fn lower_record_fields(
         &mut self,
         fields: &[ast::PayloadField<ast::Expr>],
@@ -130,12 +150,12 @@ impl OwnerLowerer<'_> {
                     Some(value) => self.lower_expr(value),
                     None => {
                         let name = f.name;
-                        self.synth_expr(f.span, move |_, _| {
-                            ExprKind::Path(Path {
-                                segments: vec![name],
-                                span: name.span,
-                            })
-                        })
+                        let path = ast::Path {
+                            segments: vec![name],
+                            span: name.span,
+                        };
+                        let path = self.cx.lower_path(f.id, &path);
+                        self.synth_expr(f.span, move |_, _| ExprKind::Path(path))
                     }
                 };
                 PayloadField {
