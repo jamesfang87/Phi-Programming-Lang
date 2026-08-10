@@ -57,8 +57,7 @@ use crate::ast::interner::Interner;
 use crate::ast::{Ident, Mutability, SelfMode, Symbol};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
-use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Node, OwnerNode};
-use crate::nameres::results::ValueRes;
+use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Node, OwnerNode, Res};
 use crate::typeck::Typeck;
 use crate::typeck::traits::index::ImplId;
 use crate::typeck::traits::solve::match_ty;
@@ -110,28 +109,27 @@ impl<'hir> Typeck<'hir> {
 
     /// Checks `base.member`, in whichever of its readings applies.
     ///
-    /// `id` names the access itself, which is the key name resolution records a variant under.
+    /// `base.member` where `base` names an enum (`Shape.circle`, an enum variant reached through
+    /// its type) is **not** disambiguated here, nor by name resolution: the design deliberately
+    /// gives `Res` no `Variant` arm, since which enum a variant belongs to is only knowable once
+    /// the expected type is (see `hir::path::Res`'s docs and `hir::path::Local`'s). Nothing in
+    /// this pass currently fills that gap either -- `base` is checked as an ordinary expression
+    /// below, which for `Shape.circle` means a value-position lookup on `Shape` that name
+    /// resolution cannot satisfy (`Res::Err`), so `base`'s type comes out `Error` and every arm
+    /// below short-circuits on it silently. Recognizing an enum-named base and dispatching to
+    /// variant construction is real, missing functionality, not something the AST-level resolver
+    /// took away: the old HIR-based resolver's `resolve_access` used to settle
+    /// this before typeck ran, keyed by this very `id`, but nothing downstream of it actually
+    /// built a variant expression from the answer -- the fast path below just routed straight to
+    /// `todo!()`.
     pub(crate) fn check_access(
         &mut self,
-        id: HirId,
+        _id: HirId,
         base: HirId,
         member: Ident,
         args: &AccessArgs,
         span: SrcSpan,
     ) -> Ty {
-        // `Shape.circle` is settled before typeck ever runs -- see
-        // [`resolve_access`](crate::nameres::Resolver) -- so an access with a value recorded
-        // against it names a variant, and its base is a *type* path that must not be checked as
-        // an expression at all.
-        if let Some(res) = self.nameres.value(id) {
-            return match res {
-                // Already reported by name resolution; staying quiet here keeps one mistake from
-                // producing a second diagnostic.
-                ValueRes::Err => self.tcx.error(),
-                _ => todo!("check_expr: Access (enum variant)"),
-            };
-        }
-
         match args {
             AccessArgs::Call(args) => self.check_method_call(base, member, args, span),
             AccessArgs::None => self.check_field(base, member),
@@ -181,14 +179,14 @@ impl<'hir> Typeck<'hir> {
         let Node::Expr(expr) = self.hir.node(callee) else {
             unreachable!("a call's callee always names an expression");
         };
-        let is_path = matches!(expr.kind, ExprKind::Path(_));
 
-        // Anything else -- a closure, a field holding a function, a parenthesized expression --
-        // has no declaration behind it to instantiate, so its type is already the signature.
-        if !is_path {
+        // Anything but a path -- a closure, a field holding a function, a parenthesized
+        // expression -- has no declaration behind it to instantiate, so its type is already the
+        // signature.
+        let ExprKind::Path(path) = &expr.kind else {
             return (self.ty_of(callee), None);
-        }
-        let Some(ValueRes::Def(def)) = self.nameres.value(callee) else {
+        };
+        let Res::Function(def) = path.res else {
             return (self.ty_of(callee), None);
         };
         let OwnerNode::Function(function) = self.hir.def(def) else {
@@ -1072,12 +1070,12 @@ fn show_self_mode(mode: SelfMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hir::{Hir, NameResolutions};
+    use crate::hir::Hir;
     use crate::testing::resolve_src;
 
     /// Everything up to body checking, which is what candidate collection reads.
-    fn collected<'hir>(hir: &'hir Hir, nameres: &'hir NameResolutions) -> Typeck<'hir> {
-        let mut checker = Typeck::new(hir, nameres);
+    fn collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
+        let mut checker = Typeck::new(hir);
         checker.collect_module(hir.root_id());
         checker.build_impl_index();
         DiagCtx::clear();
@@ -1118,11 +1116,11 @@ mod tests {
 
     #[test]
     fn an_inherent_block_offers_the_methods_it_defines() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Foo {}
              extend Foo { fun show(&self) {} }",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (foo, root) = (named(&checker, "Foo"), hir.root_id());
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 
@@ -1140,12 +1138,12 @@ mod tests {
 
     #[test]
     fn a_trait_impl_offers_what_the_trait_declares() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (foo, show, root) = (
             named(&checker, "Foo"),
             named(&checker, "Show"),
@@ -1162,12 +1160,12 @@ mod tests {
     /// trait's own declaration.
     #[test]
     fn a_defaulted_method_is_offered_by_an_impl_that_does_not_write_it() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self) {} }
              struct Foo {}
              extend Foo with Show {}",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (foo, show, root) = (
             named(&checker, "Foo"),
             named(&checker, "Show"),
@@ -1187,11 +1185,11 @@ mod tests {
     /// that can answer.
     #[test]
     fn a_bound_in_scope_offers_its_traits_methods_on_a_parameter() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              fun f<T: Show>(x: T) {}",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
         let OwnerNode::Function(function) = hir.def(f) else {
             unreachable!("`f` is a function");
@@ -1206,11 +1204,11 @@ mod tests {
     /// A bound on some *other* parameter says nothing about this one.
     #[test]
     fn a_bound_on_another_parameter_is_not_offered() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              fun f<T, U: Show>(x: T) {}",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let f = named(&checker, "f");
         let OwnerNode::Function(function) = hir.def(f) else {
             unreachable!("`f` is a function");
@@ -1226,11 +1224,11 @@ mod tests {
 
     #[test]
     fn a_dyn_receiver_offers_exactly_its_traits_methods() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              trait Other { fun other(&self); }",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (show, root) = (named(&checker, "Show"), hir.root_id());
         let dyn_show = checker.tcx.mk_dyn(show, vec![]);
 
@@ -1250,13 +1248,13 @@ mod tests {
     /// lines up.
     #[test]
     fn an_impl_whose_header_does_not_match_is_not_a_candidate() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Wrap<T> { inner: T }
              struct Foo {}
              struct Bar {}
              extend Wrap<Foo> { fun show(&self) {} }",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (wrap, foo, bar, root) = (
             named(&checker, "Wrap"),
             named(&checker, "Foo"),
@@ -1289,11 +1287,11 @@ mod tests {
     /// and itself.
     #[test]
     fn the_same_method_reached_twice_is_one_candidate() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              fun f<T: Show + Show>(x: T) {}",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let f = named(&checker, "f");
         let OwnerNode::Function(function) = hir.def(f) else {
             unreachable!("`f` is a function");
@@ -1354,12 +1352,12 @@ mod tests {
 
     #[test]
     fn an_inherent_candidate_wins_over_a_trait_one() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo { fun show(&self) {} }",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let inherent = extend_method(&checker, "show");
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
@@ -1386,11 +1384,11 @@ mod tests {
 
     #[test]
     fn a_single_trait_candidate_is_picked() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Foo {}",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
         let member = Ident {
@@ -1409,12 +1407,12 @@ mod tests {
 
     #[test]
     fn two_trait_candidates_are_an_ambiguity_naming_both() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait A { fun size(&self); }
              trait B { fun size(&self); }
              struct Foo {}",
         );
-        let mut checker = collected(&hir, &nameres);
+        let mut checker = collected(&hir);
         let (foo, a, b) = (
             named(&checker, "Foo"),
             named(&checker, "A"),
@@ -1463,9 +1461,9 @@ mod tests {
     /// The clear comes before collection, because a fixture is resolved without the core library
     /// and name resolution reports the whole set of missing lang items first.
     fn check(src: &str) -> Vec<String> {
-        let (hir, nameres) = resolve_src(src);
+        let hir = resolve_src(src);
         DiagCtx::clear();
-        crate::typeck::check(&hir, &nameres);
+        crate::typeck::check(&hir);
 
         DiagCtx::diagnostics()
             .into_iter()

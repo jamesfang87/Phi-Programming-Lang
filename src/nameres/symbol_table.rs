@@ -1,187 +1,271 @@
-use std::collections::HashMap;
+//! The symbol table AST-level name resolution builds and queries.
+//!
+//! [`SymbolTable::new`] builds the table in three phases: [`SymbolTable::collect`] walks the
+//! AST's module tree once, building one [`ModuleScope`] per module out of that module's own
+//! declarations; [`SymbolTable::resolve_imports`] then resolves every `import` statement into
+//! the importing module's own scope, because an import can name any module in the tree by an
+//! absolute path -- resolving one needs every module's scope to already exist, not just the
+//! importing module's; and [`SymbolTable::find_prelude`] locates `core::prelude` last, since the
+//! prelude's own scope is filled in by the imports it declares.
 
-use crate::ast::interner::Interner;
-use crate::ast::{Ident, Path, Symbol};
-use crate::diag::{DiagCtx, Diagnostic};
-use crate::hir::{DefId, Hir, Import, OwnerNode};
-use crate::nameres::results::ValueRes;
+use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
-struct Scope {
-    scope: HashMap<Symbol, ValueRes>,
-}
-
-impl Scope {
-    fn new() -> Self {
-        Self {
-            scope: HashMap::new(),
-        }
-    }
-}
-
-/// One module's declared items, split into its value namespace (functions) and its type
-/// namespace (structs, enums, traits), keyed by name.
-struct ModuleNamespace {
-    values: HashMap<Symbol, DefId>,
-    types: HashMap<Symbol, DefId>,
-    mods: HashMap<Symbol, DefId>,
-}
-
-impl ModuleNamespace {
-    /// Inserts `name` into the value namespace, reporting a conflict (and keeping the earlier
-    /// binding) if `name` is already declared there.
-    fn insert_value(&mut self, name: Ident, def_id: DefId) {
-        match self.values.entry(name.text) {
-            Entry::Occupied(_) => report_conflict(name),
-            Entry::Vacant(e) => {
-                e.insert(def_id);
-            }
-        }
-    }
-
-    /// Same as [`Self::insert_value`], but for the type namespace.
-    fn insert_type(&mut self, name: Ident, def_id: DefId) {
-        match self.types.entry(name.text) {
-            Entry::Occupied(_) => report_conflict(name),
-            Entry::Vacant(e) => {
-                e.insert(def_id);
-            }
-        }
-    }
-
-    fn insert_mod(&mut self, name: Ident, def_id: DefId) {
-        match self.mods.entry(name.text) {
-            Entry::Occupied(_) => report_conflict(name),
-            Entry::Vacant(e) => {
-                e.insert(def_id);
-            }
-        }
-    }
-}
+use crate::ast::interner::Interner;
+use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol};
+use crate::nameres::diagnostics::{
+    report_ambiguous_import, report_conflict, report_dyn_not_trait, report_not_found,
+    report_self_unavailable,
+};
+use crate::nameres::res::PrimTy;
+use crate::nameres::res::{Local, Res, TyDef, Type};
 
 /// The module unqualified lookups fall back to once the enclosing module chain is exhausted.
 /// It re-exports the core library's most-used items, so a program can name `Option` or `Add`
 /// without importing anything.
 const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
 
-pub struct SymbolTable<'hir> {
-    scopes: Vec<Scope>,
-    modules: HashMap<DefId, ModuleNamespace>,
-    /// The prelude module, once [`Self::new`] has found it. `None` if the core library isn't
-    /// part of this unit -- which shouldn't happen in a real build, since the compiler embeds
-    /// it, but leaves the resolver working (minus the prelude) rather than panicking if it is
-    /// ever driven without one.
-    prelude: Option<DefId>,
-    hir: &'hir Hir,
+pub struct SymbolTable<'ast> {
+    /// Locals, generics, and `Self` are all pushed on entering the construct that introduces
+    /// them and popped on leaving it: locals per block and per match arm, generics per
+    /// definition declaring `<...>`, `Self` per struct, enum, trait, and `extend`. A method
+    /// seeing its `extend` block's `<T>` falls out of the stack rather than needing an
+    /// owner-chain walk against a side table -- which is why `NameResolutions` has no
+    /// `generics` table.
+    local_scopes: Vec<HashMap<Symbol, Local>>,
+    generic_scopes: Vec<HashMap<Symbol, Type>>,
+    /// `None` marks a scope that was opened for a definition whose own target failed to
+    /// resolve -- an `extend Nope with Show` whose `adt_path` didn't find `Nope`. The scope is
+    /// still pushed (so the stack stays balanced with its matching `pop_self`), but with nothing
+    /// in it, which is what lets [`Self::resolve_type_path`] tell "no enclosing definition at
+    /// all" (empty stack, report `Self is not available here`) apart from "the enclosing
+    /// definition's own target already failed and was already reported" (a `None` on top,
+    /// return `Res::Err` silently -- see [`Self::push_self_unresolved`]).
+    self_scopes: Vec<Option<TyDef>>,
+    modules: HashMap<NodeId, ModuleScope>,
+    /// Every item in the tree, keyed by its own `NodeId`. `ast::Ast` has no `item(NodeId)`
+    /// accessor of its own, so this is what lets [`Self::lookup_variant`] reach an enum's
+    /// declaration from the `NodeId` a type-position lookup handed back -- and what the
+    /// debug dump (a later task) uses to print a resolved item's contents. Built once here,
+    /// during the same walk that fills [`Self::modules`], rather than duplicated per consumer.
+    items: HashMap<NodeId, &'ast Item>,
+    /// A canonical, span-free path to the module it names, so a fully-qualified path resolves
+    /// in one hash rather than a segment-by-segment walk.
+    by_path: HashMap<Box<[Symbol]>, NodeId>,
+    /// The prelude, once found. `None` if the core library is not part of this unit -- which
+    /// should not happen in a real build, but leaves the resolver working rather than
+    /// panicking if it is ever driven without one.
+    prelude: Option<NodeId>,
+    ast: &'ast Ast,
 }
 
-impl<'hir> SymbolTable<'hir> {
-    pub fn new(hir: &'hir Hir) -> Self {
-        let mut modules = HashMap::new();
-        Self::collect_module(hir, hir.root_id(), &mut modules);
-        let mut table = Self {
-            scopes: Vec::new(),
-            modules,
-            prelude: None,
-            hir,
-        };
-        table.resolve_imports(hir.root_id());
-        // The prelude's own namespace is filled in by the imports it declares, so it isn't
-        // usable as a fallback until those have been resolved.
+/// One module's declared items, split by namespace.
+///
+/// `types` holds `TyDef`, not `Type`: `Prim` and `Generic` can never live in a module's
+/// namespace, and the narrower type says so.
+struct ModuleScope {
+    functions: HashMap<Symbol, NodeId>,
+    types: HashMap<Symbol, TyDef>,
+    mods: HashMap<Symbol, NodeId>,
+}
+
+impl ModuleScope {
+    fn new() -> Self {
+        Self {
+            functions: HashMap::new(),
+            types: HashMap::new(),
+            mods: HashMap::new(),
+        }
+    }
+
+    /// Inserts `name` into the function namespace, reporting a conflict (and keeping the
+    /// earlier binding) if `name` is already declared there.
+    fn insert_function(&mut self, name: Ident, id: NodeId) {
+        match self.functions.entry(name.text) {
+            Entry::Occupied(_) => report_conflict(name),
+            Entry::Vacant(e) => {
+                e.insert(id);
+            }
+        }
+    }
+
+    /// Same as [`Self::insert_function`], but for the type namespace.
+    fn insert_type(&mut self, name: Ident, def: TyDef) {
+        match self.types.entry(name.text) {
+            Entry::Occupied(_) => report_conflict(name),
+            Entry::Vacant(e) => {
+                e.insert(def);
+            }
+        }
+    }
+
+    /// Same as [`Self::insert_function`], but for the module namespace.
+    fn insert_mod(&mut self, name: Ident, id: NodeId) {
+        match self.mods.entry(name.text) {
+            Entry::Occupied(_) => report_conflict(name),
+            Entry::Vacant(e) => {
+                e.insert(id);
+            }
+        }
+    }
+}
+
+/// The primitive named by `name`, if any. Type lookup consults this first, which is sound
+/// because `insert_*` rejects any declaration that would shadow one.
+pub fn prim_ty(name: Symbol) -> Option<PrimTy> {
+    Some(match Interner::resolve(name) {
+        "i8" => PrimTy::I8,
+        "i16" => PrimTy::I16,
+        "i32" => PrimTy::I32,
+        "i64" => PrimTy::I64,
+        "u8" => PrimTy::U8,
+        "u16" => PrimTy::U16,
+        "u32" => PrimTy::U32,
+        "u64" => PrimTy::U64,
+        "f32" => PrimTy::F32,
+        "f64" => PrimTy::F64,
+        "bool" => PrimTy::Bool,
+        "char" => PrimTy::Char,
+        _ => return None,
+    })
+}
+
+impl<'ast> SymbolTable<'ast> {
+    /// Builds the full symbol table: every module's own declarations, then every `import`
+    /// resolved into the scope of the module that wrote it, then the prelude.
+    ///
+    /// The three phases run in that order and only in that order. [`Self::collect`] must finish
+    /// for the whole tree before [`Self::resolve_imports`] starts, because an import can name
+    /// any module in the tree by an absolute path -- including one `collect` has not yet
+    /// visited if it ran interleaved. And [`Self::find_prelude`] must run last because the
+    /// prelude's own scope is filled in by the imports it declares, so it is not usable as a
+    /// fallback until those have resolved.
+    pub fn new(ast: &'ast Ast) -> Self {
+        let mut table = Self::collect(ast);
+        table.resolve_imports();
         table.prelude = table.find_prelude();
         table
     }
 
+    /// The prelude module, if this unit has a core library. `None` if it does not -- which
+    /// should not happen in a real build, but leaves the resolver working (minus the prelude)
+    /// rather than panicking if it is ever driven without one.
+    ///
+    /// No caller outside this module's own tests yet -- part of the public API the design spec
+    /// lists, kept for a future consumer.
+    #[allow(dead_code)]
+    pub fn prelude(&self) -> Option<NodeId> {
+        self.prelude
+    }
+
     /// Walks [`PRELUDE_PATH`] down from the root to find the prelude module.
-    fn find_prelude(&self) -> Option<DefId> {
-        let mut current = self.hir.root_id();
+    ///
+    /// This must run after imports, because the prelude's own namespace *is* the set of imports
+    /// it declares.
+    fn find_prelude(&self) -> Option<NodeId> {
+        let mut current = self.ast.root_id();
         for segment in PRELUDE_PATH {
             current = self.lookup_mod(current, Interner::intern(segment))?;
         }
         Some(current)
     }
 
-    fn collect_module(
-        hir: &'hir Hir,
-        module_id: DefId,
-        modules: &mut HashMap<DefId, ModuleNamespace>,
-    ) {
-        let OwnerNode::Module(module) = hir.def(module_id) else {
-            unreachable!("{module_id:?} does not name a module");
+    /// Walks `ast`'s module tree, building one [`ModuleScope`] per module out of that module's
+    /// own declared items and submodules.
+    ///
+    /// This is a partial constructor: it does not resolve imports or find the prelude, so
+    /// looking a name up right after `collect` only finds what a module declared directly.
+    /// [`Self::new`] layers imports and the prelude on top.
+    pub fn collect(ast: &'ast Ast) -> Self {
+        let mut table = Self {
+            local_scopes: Vec::new(),
+            generic_scopes: Vec::new(),
+            self_scopes: Vec::new(),
+            modules: HashMap::new(),
+            items: HashMap::new(),
+            by_path: HashMap::new(),
+            prelude: None,
+            ast,
         };
-
-        let mut namespace = ModuleNamespace {
-            values: HashMap::new(),
-            types: HashMap::new(),
-            mods: HashMap::new(),
-        };
-        for &item in &module.items {
-            match hir.def(item) {
-                OwnerNode::Function(f) => {
-                    namespace.insert_value(f.name, item);
-                }
-                OwnerNode::Struct(s) => {
-                    namespace.insert_type(s.name, item);
-                }
-                OwnerNode::Enum(e) => {
-                    namespace.insert_type(e.name, item);
-                }
-                OwnerNode::Trait(t) => {
-                    namespace.insert_type(t.name, item);
-                }
-                OwnerNode::Module(child) => {
-                    let name = *child
-                        .path
-                        .segments
-                        .last()
-                        .expect("a module's path always has at least one segment");
-                    namespace.insert_mod(name, item);
-                    Self::collect_module(hir, item, modules);
-                }
-                // `extend` blocks and closures aren't named, so neither namespace can hold them.
-                OwnerNode::Extend(_) | OwnerNode::Closure(_) => {}
-            }
-        }
-        modules.insert(module_id, namespace);
+        table.collect_module(ast.root_id());
+        table
     }
 
-    /// Resolves every `import` statement in `module_id` and its descendants, inserting each one
-    /// into the *importing* module's own namespace -- so that after this runs, an imported name
-    /// is looked up exactly like a name the module declared itself, with no separate "imports"
-    /// concept anywhere else in the resolver.
-    ///
-    /// This must run after [`Self::collect_module`] has built every module's namespace, not just
-    /// `module_id`'s: an import can name any module in the tree by its absolute path (see
-    /// [`Self::resolve_import`]), including one this pass hasn't recursed into yet.
-    /// [`Self::new`] enforces that ordering by calling this only once `collect_module` has
-    /// finished for the whole tree.
-    fn resolve_imports(&mut self, module_id: DefId) {
-        let arena = self.hir.arena(module_id);
-        let OwnerNode::Module(module) = arena.owner() else {
-            unreachable!("{module_id:?} does not name a module");
-        };
+    /// Builds `module_id`'s [`ModuleScope`] from its own items, records its canonical path in
+    /// [`Self::by_path`], and recurses into each of its submodules.
+    fn collect_module(&mut self, module_id: NodeId) {
+        let module = self.ast.module(module_id);
 
-        for &import_id in &module.imports {
-            self.resolve_import(module_id, self.hir.import(import_id));
+        let path: Box<[Symbol]> = module.path.segments.iter().map(|seg| seg.text).collect();
+        self.by_path.insert(path, module_id);
+
+        let mut scope = ModuleScope::new();
+        for item in &module.items {
+            self.items.insert(item.id, item);
+            match &item.kind {
+                ItemKind::Function(f) => scope.insert_function(f.name, item.id),
+                ItemKind::Struct(s) => scope.insert_type(s.name, TyDef::Struct(item.id)),
+                ItemKind::Enum(e) => scope.insert_type(e.name, TyDef::Enum(item.id)),
+                ItemKind::Trait(t) => scope.insert_type(t.name, TyDef::Trait(item.id)),
+                // `extend` blocks are unnamed, so neither namespace can hold them.
+                ItemKind::Extend(_) => {}
+                ItemKind::ModuleDecl(_) | ItemKind::Import(_) | ItemKind::Error => {}
+            }
         }
 
-        for &item in &module.items {
-            if let OwnerNode::Module(_) = self.hir.def(item) {
-                self.resolve_imports(item);
-            }
+        // Submodules come from `Module::children`, not `items` -- a module's own item list
+        // never contains its children directly.
+        let children = module.children.clone();
+        for &child_id in &children {
+            let child = self.ast.module(child_id);
+            let name = *child
+                .path
+                .segments
+                .last()
+                .expect("a module's path always has at least one segment");
+            scope.insert_mod(name, child_id);
+        }
+
+        self.modules.insert(module_id, scope);
+
+        for &child_id in &children {
+            self.collect_module(child_id);
         }
     }
 
-    /// Resolves one `import` statement declared inside `importing_module` and binds it there.
+    /// Resolves every `import` statement in the tree, inserting each one into the *importing*
+    /// module's own scope -- so that after this runs, an imported name is looked up exactly
+    /// like a name the module declared itself, with no separate "imports" concept anywhere else
+    /// in the resolver.
     ///
-    /// Every import path is absolute -- resolved from the root module down, per its own path
+    /// This must run after [`Self::collect`] has built every module's scope, not just the
+    /// importing one's: an import can name any module in the tree by its absolute path (see
+    /// [`Self::resolve_import`]), including one `collect` reached after the importing module.
+    /// [`Self::new`] enforces that ordering by calling this only once `collect` has finished for
+    /// the whole tree. Iterating [`Ast::mod_ids`] rather than recursing down from the root is
+    /// what lets this rely on that ordering instead of re-deriving it: every module is already
+    /// in [`Self::modules`] by the time this runs, so there is nothing left to discover by
+    /// walking the tree shape again.
+    fn resolve_imports(&mut self) {
+        for module_id in self.ast.mod_ids() {
+            let module = self.ast.module(module_id);
+            for import in &module.imports {
+                self.resolve_import(module_id, import);
+            }
+        }
+    }
+
+    /// Resolves one `import` statement declared inside `importing_module` and binds it into that
+    /// module's own scope.
+    ///
+    /// Every import path is absolute -- resolved from the root module down, by its own path
     /// segments -- regardless of where the `import` statement itself appears, which is why the
-    /// lookups below start from [`Hir::root_id`] rather than `importing_module`.
-    fn resolve_import(&mut self, importing_module: DefId, import: &Import) {
-        let root = self.hir.root_id();
+    /// lookups below start from [`Ast::root_id`] rather than `importing_module`.
+    fn resolve_import(&mut self, importing_module: NodeId, import: &Import) {
+        let root = self.ast.root_id();
 
         if import.glob {
-            let Some(source) = self.lookup_mod_path(root, &import.path) else {
+            let Some(source) = self.resolve_import_mod_path(root, &import.path) else {
                 report_not_found(
                     *import
                         .path
@@ -195,9 +279,9 @@ impl<'hir> SymbolTable<'hir> {
             return;
         }
 
-        let type_res = self.lookup_type_path(root, &import.path);
-        let val_res = self.lookup_value_path(root, &import.path);
-        let mod_res = self.lookup_mod_path(root, &import.path);
+        let type_res = self.resolve_import_type_path(root, &import.path);
+        let val_res = self.resolve_import_value_path(root, &import.path);
+        let mod_res = self.resolve_import_mod_path(root, &import.path);
 
         let name = import.alias.unwrap_or(
             *import
@@ -208,44 +292,44 @@ impl<'hir> SymbolTable<'hir> {
         );
 
         match (type_res, val_res, mod_res) {
-            (Some(def_id), None, None) => self
+            (Some(def), None, None) => self
                 .modules
                 .get_mut(&importing_module)
                 .unwrap()
-                .insert_type(name, def_id),
-            (None, Some(def_id), None) => self
+                .insert_type(name, def),
+            (None, Some(id), None) => self
                 .modules
                 .get_mut(&importing_module)
                 .unwrap()
-                .insert_value(name, def_id),
-            (None, None, Some(def_id)) => self
+                .insert_function(name, id),
+            (None, None, Some(id)) => self
                 .modules
                 .get_mut(&importing_module)
                 .unwrap()
-                .insert_mod(name, def_id),
+                .insert_mod(name, id),
             (None, None, None) => report_not_found(name),
             _ => report_ambiguous_import(name),
         }
     }
 
-    /// Copies every name `source` declares -- values, types, and submodules alike -- into
-    /// `into`'s own namespace, for a glob import (`import math::*;`).
+    /// Copies every name `source` declares -- functions, types, and submodules alike -- into
+    /// `into`'s own scope, for a glob import (`import math::*;`).
     ///
-    /// Each name goes through the same [`ModuleNamespace::insert_value`]/`insert_type`/
+    /// Each name goes through the same [`ModuleScope::insert_function`]/`insert_type`/
     /// `insert_mod` conflict check as an ordinary declaration, so a name the glob brings in that
     /// collides with something `into` already has -- declared directly, or brought in by an
     /// earlier import -- is reported exactly like any other redefinition. There's no separate
     /// "imports don't conflict with declarations" carve-out: the point of the glob is to behave
     /// as if its contents had been spelled out by hand, and a hand-written duplicate would
     /// conflict too.
-    fn import_glob(&mut self, into: DefId, source: DefId, import: &Import) {
-        let (values, types, mods) = {
+    fn import_glob(&mut self, into: NodeId, source: NodeId, import: &Import) {
+        let (functions, types, mods) = {
             let source = self
                 .modules
                 .get(&source)
-                .expect("every module in the tree has a namespace by the time imports resolve");
+                .expect("every module in the tree has a scope by the time imports resolve");
             (
-                source.values.clone(),
+                source.functions.clone(),
                 source.types.clone(),
                 source.mods.clone(),
             )
@@ -254,216 +338,387 @@ impl<'hir> SymbolTable<'hir> {
         // A glob import doesn't name each item itself, so there's no per-name span to blame a
         // conflict on -- the import statement's own span is the closest thing to one.
         let dest = self.modules.get_mut(&into).unwrap();
-        for (text, def_id) in values {
-            dest.insert_value(
+        for (text, id) in functions {
+            dest.insert_function(
                 Ident {
                     text,
                     span: import.span,
                 },
-                def_id,
+                id,
             );
         }
-        for (text, def_id) in types {
+        for (text, def) in types {
             dest.insert_type(
                 Ident {
                     text,
                     span: import.span,
                 },
-                def_id,
+                def,
             );
         }
-        for (text, def_id) in mods {
+        for (text, id) in mods {
             dest.insert_mod(
                 Ident {
                     text,
                     span: import.span,
                 },
-                def_id,
+                id,
             );
         }
     }
 
-    pub fn push_scope(&mut self) {
-        self.scopes.push(Scope::new());
-    }
-
-    pub fn pop_scope(&mut self) {
-        self.scopes.pop();
-    }
-
-    /// Binds `name` to `res` in the innermost scope, opening one first if none is open yet (e.g.
-    /// for module-level bindings like imports, resolved before any block scope exists).
-    pub fn bind(&mut self, name: Ident, res: ValueRes) {
-        if self.scopes.is_empty() {
-            self.push_scope();
-        }
-        self.scopes.last_mut().unwrap().scope.insert(name.text, res);
-    }
-
-    /// Looks `name` up in every open scope, innermost first.
-    pub fn lookup(&self, name: Symbol) -> Option<ValueRes> {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|s| s.scope.get(&name).copied())
-    }
-
-    /// Looks `name` up among `module`'s function items.
-    pub fn lookup_value(&self, module: DefId, name: Symbol) -> Option<DefId> {
-        self.modules.get(&module)?.values.get(&name).copied()
-    }
-
-    /// Looks `name` up among `module`'s struct/enum/trait items. Submodules live in their own
-    /// namespace -- see [`Self::lookup_mod`].
-    pub fn lookup_type(&self, module: DefId, name: Symbol) -> Option<DefId> {
-        self.modules.get(&module)?.types.get(&name).copied()
-    }
-
-    /// Resolves a (possibly multi-segment) path against the value namespace: every segment but
-    /// the last is stepped through as a submodule, and the final segment is looked up among that
-    /// module's functions. `from` is the definition the path is written in -- see
-    /// [`Self::module_chain`] for which modules that makes the path relative to.
-    pub fn lookup_value_path(&self, from: DefId, path: &Path) -> Option<DefId> {
-        let (name, modules) = path.segments.split_last()?;
-        self.in_module_chain(from, |base| {
-            let module = self.walk_modules(base, modules)?;
-            self.lookup_value(module, name.text)
-        })
-    }
-
-    /// Same as [`Self::lookup_value_path`], but against the type namespace.
-    pub fn lookup_type_path(&self, from: DefId, path: &Path) -> Option<DefId> {
-        let (name, modules) = path.segments.split_last()?;
-        self.in_module_chain(from, |base| {
-            let module = self.walk_modules(base, modules)?;
-            self.lookup_type(module, name.text)
-        })
-    }
-
-    pub fn lookup_mod_path(&self, from: DefId, path: &Path) -> Option<DefId> {
-        let (name, modules) = path.segments.split_last()?;
-        self.in_module_chain(from, |base| {
-            let module = self.walk_modules(base, modules)?;
-            self.lookup_mod(module, name.text)
-        })
-    }
-
-    /// The modules a path written inside `from` is resolved against, innermost first: the module
-    /// `from` is declared in, then each of its ancestors, ending at the root.
+    /// Resolves `path`, which is *absolute* (as every import path is -- see
+    /// [`Self::resolve_import`]), against the function namespace: every segment but the last is
+    /// stepped through as a submodule starting from `base` (the root, in practice), and the
+    /// final segment is looked up among that module's functions.
     ///
-    /// Resolving relative to the enclosing module first is what makes a reference to a sibling
-    /// item work without qualification; falling back through the ancestors, and finally the
-    /// root, is what keeps a fully-qualified path (`math::vector::dot`) resolving from anywhere.
-    fn module_chain(&self, from: DefId) -> Vec<DefId> {
+    /// This is deliberately a single walk from `base` with no chain and no prelude fallback --
+    /// unlike [`Self::lookup_value_path`], which a written path in a program goes through.
+    /// Resolving an `import` statement's own path never wants either of those: the path is
+    /// already absolute, and the whole point of resolving it here is to *populate* the
+    /// importing module's scope, not to consult a fallback that a scope this early may not
+    /// have yet (the prelude in particular isn't found until after every import resolves).
+    fn resolve_import_value_path(&self, base: NodeId, path: &Path) -> Option<NodeId> {
+        let (name, modules) = path.segments.split_last()?;
+        let module = self.walk_modules(base, modules)?;
+        self.lookup_function(module, name.text)
+    }
+
+    /// Same as [`Self::resolve_import_value_path`], but against the type namespace.
+    fn resolve_import_type_path(&self, base: NodeId, path: &Path) -> Option<TyDef> {
+        let (name, modules) = path.segments.split_last()?;
+        let module = self.walk_modules(base, modules)?;
+        self.lookup_type_name(module, name.text)
+    }
+
+    /// Same as [`Self::resolve_import_value_path`], but against the module namespace.
+    fn resolve_import_mod_path(&self, base: NodeId, path: &Path) -> Option<NodeId> {
+        let (name, modules) = path.segments.split_last()?;
+        let module = self.walk_modules(base, modules)?;
+        self.lookup_mod(module, name.text)
+    }
+
+    /// The modules a path written inside `from` resolves against, innermost first: `from`, then
+    /// each ancestor in turn, then the root.
+    ///
+    /// Resolving against the enclosing module first is what makes a reference to a sibling item
+    /// work unqualified. Falling through the ancestors to the root is what keeps a
+    /// fully-qualified path (`math::vector::dot`) resolving from anywhere.
+    fn module_chain(&self, from: NodeId) -> Vec<NodeId> {
         let mut chain = Vec::new();
-        let mut current = Some(self.hir.module_of(from));
+        let mut current = Some(from);
         while let Some(module) = current {
             chain.push(module);
-            // A module's parent is always the module that encloses it.
-            current = self.hir.parent(module);
+            current = self.ast.parent(module);
         }
         chain
     }
 
-    /// Runs `lookup` against each module in `from`'s chain in turn, yielding the first hit, and
-    /// falls back to the prelude if none of them has one.
+    /// Runs `lookup` against each module in `from`'s chain, yielding the first hit, and falls
+    /// back to the prelude if none of them has one.
     ///
     /// The prelude comes last, after the root, so it can only ever supply a name nothing else
-    /// in scope already does. An item the user declares themselves shadows the core library's
-    /// of the same name, rather than colliding with it -- unlike a glob import, whose names go
-    /// into a module's own namespace and do collide (see [`Self::import_glob`]).
-    fn in_module_chain<T>(&self, from: DefId, lookup: impl Fn(DefId) -> Option<T>) -> Option<T> {
+    /// in scope already does: an item the user declares shadows the core library's of the same
+    /// name rather than colliding with it. That is exactly the opposite of a glob import, whose
+    /// names enter the module's own scope and therefore do collide.
+    fn in_module_chain<T>(&self, from: NodeId, lookup: impl Fn(NodeId) -> Option<T>) -> Option<T> {
         self.module_chain(from)
             .into_iter()
             .chain(self.prelude)
             .find_map(lookup)
     }
 
+    /// Resolves a written path in *value* position: `local_scopes` (innermost first, and only
+    /// for a single-segment path -- a local can never be named by a qualified path), then each
+    /// module in `from`'s chain's function namespace, then the prelude.
+    ///
+    /// `from` is the enclosing module's `NodeId`, which the AST traversal already tracks --
+    /// unlike the HIR-side resolver, nothing here needs to walk up from a non-module node to
+    /// find one.
+    pub fn lookup_value_path(&self, from: NodeId, path: &Path) -> Option<Res> {
+        let (last, prefix) = path.segments.split_last()?;
+
+        if prefix.is_empty()
+            && let Some(local) = self.lookup_local(last.text)
+        {
+            return Some(Res::Local(local));
+        }
+
+        self.in_module_chain(from, |base| {
+            let module = self.walk_modules(base, prefix)?;
+            self.lookup_function(module, last.text).map(Res::Function)
+        })
+    }
+
+    /// Resolves a written path in *type* position: `Prim`, then `generic_scopes` (innermost
+    /// first), then `Self`, then the module chain, then the prelude -- but the first three only
+    /// for a single-segment path. A multi-segment path such as `math::T` can never name a
+    /// primitive or a generic parameter, so it skips straight to the module walk.
+    ///
+    /// Primitives are checked first: a primitive name can never reach a namespace to shadow in
+    /// the first place, since it never lexes as `TokenKind::Identifier` (each has its own
+    /// dedicated token kind, e.g. `TokenKind::I32`) -- so there is no source text that both
+    /// parses as a declaration and names one. Checking it first is simply cheaper than making
+    /// every `i32` walk the whole module chain to fail to find one.
+    pub fn lookup_type_path(&self, from: NodeId, path: &Path) -> Option<Type> {
+        let (last, prefix) = path.segments.split_last()?;
+
+        if prefix.is_empty() {
+            if let Some(prim) = prim_ty(last.text) {
+                return Some(Type::Prim(prim));
+            }
+            if let Some(generic) = self.lookup_generic(last.text) {
+                return Some(generic);
+            }
+            if last.text == Interner::intern("Self") {
+                return self.current_self().map(Type::Def);
+            }
+        }
+
+        self.in_module_chain(from, |base| {
+            let module = self.walk_modules(base, prefix)?;
+            self.lookup_type_name(module, last.text).map(Type::Def)
+        })
+    }
+
+    /// Resolves a written path in *module* position: the plain module chain walk, with no
+    /// local/generic/prim/`Self` special-casing -- a module can never be shadowed by any of
+    /// those.
+    ///
+    /// No caller and no test anywhere yet: nothing in the AST currently writes a path in module
+    /// position (an `import`'s path resolves through [`Self::resolve_import_mod_path`] instead,
+    /// which needs no chain or prelude fallback). Part of the public API the design spec lists,
+    /// kept for a future consumer -- flag this if it stays uncalled much longer.
+    #[allow(dead_code)]
+    pub fn lookup_mod_path(&self, from: NodeId, path: &Path) -> Option<NodeId> {
+        let (last, prefix) = path.segments.split_last()?;
+        self.in_module_chain(from, |base| {
+            let module = self.walk_modules(base, prefix)?;
+            self.lookup_mod(module, last.text)
+        })
+    }
+
+    /// Resolves a type-position path, reporting and returning [`Res::Err`] on failure rather
+    /// than `None`.
+    ///
+    /// This, not [`Self::lookup_type_path`], is the entry point the AST traversal calls: a
+    /// failed resolution has to be *recorded*, so that absence from `NameResolutions` keeps
+    /// meaning "never reached" rather than "resolved, unsuccessfully" (see the module doc on
+    /// [`Res::Err`]).
+    ///
+    /// A bare path resolving to a trait is **legal** here and means static dispatch -- the
+    /// function is monomorphized over the concrete type, exactly as Rust's `impl Trait` is.
+    /// `dyn` is the dynamic-dispatch form, and it is a distinct node kind ([`Self::lookup_dyn_path`]
+    /// handles it), so the two are told apart structurally by which method the caller reaches
+    /// through -- never by inspecting the `Res` this returns.
+    ///
+    /// `Self` is special-cased here rather than left to [`Self::lookup_type_path`]'s own `Self`
+    /// handling, so that writing `Self` with an empty `self_scopes` stack gets its own
+    /// diagnostic ("`Self` is not available here") instead of the generic "cannot find `Self`
+    /// in this scope".
+    ///
+    /// An empty stack and a stack whose top is [`Self::push_self_unresolved`]'s `None` are told
+    /// apart here, deliberately: the first has nothing else to blame and reports; the second sits
+    /// inside a definition (an `extend` block, in practice) whose own target already failed to
+    /// resolve and was already reported there, so reporting `Self` too would be a redundant
+    /// second diagnostic for the one root cause.
+    pub fn resolve_type_path(&self, from: NodeId, path: &Path) -> Res {
+        let last = *path
+            .segments
+            .last()
+            .expect("a path always has at least one segment");
+
+        if path.segments.len() == 1 && last.text == Interner::intern("Self") {
+            return match self.self_scopes.last() {
+                Some(Some(def)) => Res::Type(Type::Def(*def)),
+                Some(None) => Res::Err,
+                None => {
+                    report_self_unavailable(last.span);
+                    Res::Err
+                }
+            };
+        }
+
+        match self.lookup_type_path(from, path) {
+            Some(ty) => Res::Type(ty),
+            None => {
+                report_not_found(last);
+                Res::Err
+            }
+        }
+    }
+
+    /// Resolves a `TyKind::Dyn`'s path, which **must** name a trait.
+    ///
+    /// Anything else -- a struct, an enum, a generic, a primitive, or an unresolved name -- is
+    /// an error, recorded as [`Res::Err`] so the diagnostic fires exactly once here rather than
+    /// cascading into typeck as a mismatched-type error with no clear origin.
+    ///
+    /// `dyn Self` falls into the "not a trait" arm via [`Self::lookup_type_path`]'s own `Self`
+    /// handling: `Self` never names a trait in a position where `dyn` is legal, so this is the
+    /// correct outcome rather than a case that needs its own arm.
+    pub fn lookup_dyn_path(&self, from: NodeId, path: &Path) -> Res {
+        let last = *path
+            .segments
+            .last()
+            .expect("a path always has at least one segment");
+
+        match self.lookup_type_path(from, path) {
+            Some(Type::Def(TyDef::Trait(id))) => Res::Type(Type::Def(TyDef::Trait(id))),
+            Some(_) => {
+                report_dyn_not_trait(path.span);
+                Res::Err
+            }
+            None => {
+                report_not_found(last);
+                Res::Err
+            }
+        }
+    }
+
+    /// Looks `name` up among `enum_`'s variants.
+    ///
+    /// There is deliberately no way to search for a variant by name alone: the enum comes from
+    /// the expected type, and typeck calls this once it knows it. Scanning every enum in scope
+    /// for a matching variant name is exactly the ambiguity the leading `.` on a variant
+    /// reference exists to avoid.
+    ///
+    /// No caller outside this module's own tests yet -- typeck doesn't consult the AST-level
+    /// table for this today. Part of the public API the design spec lists, kept for a future
+    /// consumer.
+    #[allow(dead_code)]
+    pub fn lookup_variant(&self, enum_: NodeId, name: Symbol) -> Option<NodeId> {
+        let item = self.item(enum_)?;
+        let ItemKind::Enum(e) = &item.kind else {
+            return None;
+        };
+        e.variants
+            .iter()
+            .find(|v| v.name.text == name)
+            .map(|v| v.id)
+    }
+
+    /// The `Item` declared with `id`, if any. Backs [`Self::lookup_variant`], and is what a
+    /// later pass reaches an item's contents through once a path has resolved to its `NodeId`.
+    /// Dead along with [`Self::lookup_variant`], its only caller.
+    #[allow(dead_code)]
+    fn item(&self, id: NodeId) -> Option<&'ast Item> {
+        self.items.get(&id).copied()
+    }
+
     /// Steps through each of `segments` as a submodule name, starting from `base`.
-    fn walk_modules(&self, base: DefId, segments: &[Ident]) -> Option<DefId> {
+    fn walk_modules(&self, base: NodeId, segments: &[Ident]) -> Option<NodeId> {
         let mut current = base;
         for segment in segments {
-            current = self.step_into_module(current, segment.text)?;
+            current = self.lookup_mod(current, segment.text)?;
         }
         Some(current)
     }
 
-    /// Looks `name` up among `module`'s submodules and steps into it, failing if `name` doesn't
-    /// name one.
-    fn step_into_module(&self, module: DefId, name: Symbol) -> Option<DefId> {
-        let next = self.lookup_mod(module, name)?;
-        debug_assert!(matches!(self.hir.def(next), OwnerNode::Module(_)));
-        Some(next)
+    /// Looks `name` up among `module`'s function items.
+    pub fn lookup_function(&self, module: NodeId, name: Symbol) -> Option<NodeId> {
+        self.modules.get(&module)?.functions.get(&name).copied()
+    }
+
+    /// Looks `name` up among `module`'s struct/enum/trait items. Submodules live in their own
+    /// namespace -- see [`Self::lookup_mod`].
+    pub fn lookup_type_name(&self, module: NodeId, name: Symbol) -> Option<TyDef> {
+        self.modules.get(&module)?.types.get(&name).copied()
     }
 
     /// Looks `name` up among `module`'s submodules.
-    pub fn lookup_mod(&self, module: DefId, name: Symbol) -> Option<DefId> {
+    pub fn lookup_mod(&self, module: NodeId, name: Symbol) -> Option<NodeId> {
         self.modules.get(&module)?.mods.get(&name).copied()
     }
 
-    /// Looks `name` up among `enum_def`'s variants.
+    /// The module named by `segments`, a canonical, fully-qualified path (e.g.
+    /// `["math", "vector"]`), if any module in the tree has that path.
     ///
-    /// A `.variant` names no enum of its own, so there is deliberately no way to search for a
-    /// variant by name alone: the enum comes from the expected type, and typeck calls this once
-    /// it knows it. Scanning every enum in scope for a matching variant name -- which is what
-    /// bare, undotted variant names would require -- is exactly the ambiguity the leading `.`
-    /// exists to avoid.
-    pub fn lookup_variant(&self, enum_def: DefId, name: Symbol) -> Option<ValueRes> {
-        let OwnerNode::Enum(enum_) = self.hir.def(enum_def) else {
-            return None;
-        };
-
-        for &variant_id in &enum_.variants {
-            if self.hir.variant(variant_id).name.text == name {
-                return Some(ValueRes::Variant(variant_id));
-            }
-        }
-        None
+    /// Widely exercised by this module's own tests to reach a module by name, but no
+    /// non-test caller yet.
+    #[allow(dead_code)]
+    pub fn module_by_path(&self, segments: &[Symbol]) -> Option<NodeId> {
+        self.by_path.get(segments).copied()
     }
-}
 
-pub fn report_not_found(name: Ident) {
-    DiagCtx::emit(
-        Diagnostic::error(
-            format!(
-                "cannot find `{}` in this scope",
-                Interner::resolve(name.text)
-            ),
-            name.span,
-        )
-        .with_label("not found in this scope"),
-    );
-}
+    /// Opens a new local scope, e.g. on entering a block or a match arm.
+    pub fn push_scope(&mut self) {
+        self.local_scopes.push(HashMap::new());
+    }
 
-pub fn report_conflict(name: Ident) {
-    DiagCtx::emit(
-        Diagnostic::error(
-            format!(
-                "the name `{}` is defined multiple times",
-                Interner::resolve(name.text)
-            ),
-            name.span,
-        )
-        .with_label("redefined here")
-        .with_help("a name with the same spelling is already in scope"),
-    );
-}
+    /// Closes the innermost local scope, discarding every binding it holds.
+    pub fn pop_scope(&mut self) {
+        self.local_scopes.pop();
+    }
 
-/// Reports an import whose path matches more than one namespace at once -- e.g. a value and
-/// a type both named the same thing -- so there's no single answer for what the imported
-/// name should mean.
-pub fn report_ambiguous_import(name: Ident) {
-    DiagCtx::emit(
-        Diagnostic::error(
-            format!(
-                "ambiguous import: `{}` refers to more than one item",
-                Interner::resolve(name.text)
-            ),
-            name.span,
-        )
-        .with_label("ambiguous import")
-        .with_help(
-            "this path matches more than one declaration; use a more specific path to disambiguate",
-        ),
-    );
+    /// Binds `name` in the innermost scope.
+    ///
+    /// Takes an `Ident`, not a `Path`: a local is always one segment, and accepting a `Path`
+    /// would imply `let a::b = ...` is representable. Returns `()`, not `Result` -- shadowing is
+    /// legal, so the innermost map is simply overwritten and there is no failure to report.
+    pub fn insert_local(&mut self, name: Ident, local: Local) {
+        self.local_scopes
+            .last_mut()
+            .expect("insert_local requires an open scope")
+            .insert(name.text, local);
+    }
+
+    /// Looks `name` up in every open local scope, innermost first.
+    pub fn lookup_local(&self, name: Symbol) -> Option<Local> {
+        self.local_scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.get(&name).copied())
+    }
+
+    /// Opens a new generic scope, e.g. on entering a definition declaring `<...>`.
+    pub fn push_generics(&mut self, params: HashMap<Symbol, Type>) {
+        self.generic_scopes.push(params);
+    }
+
+    /// Closes the innermost generic scope.
+    pub fn pop_generics(&mut self) {
+        self.generic_scopes.pop();
+    }
+
+    /// Looks `name` up in every open generic scope, innermost first. A method seeing its
+    /// `extend` block's `<T>` is just the outer scope still being on the stack.
+    pub fn lookup_generic(&self, name: Symbol) -> Option<Type> {
+        self.generic_scopes
+            .iter()
+            .rev()
+            .find_map(|s| s.get(&name).copied())
+    }
+
+    /// Opens a `Self` scope, e.g. on entering a struct, enum, trait, or `extend` block.
+    pub fn push_self(&mut self, ty: TyDef) {
+        self.self_scopes.push(Some(ty));
+    }
+
+    /// Opens a `Self` scope for a definition whose own target failed to resolve -- an `extend`
+    /// block whose `adt_path` didn't find anything. Keeps the stack balanced with the matching
+    /// `pop_self` the definition's `visit_*` still calls, while making a `Self` written inside
+    /// report nothing: [`Self::resolve_type_path`] sees a non-empty stack (so it doesn't emit its
+    /// own "not available" diagnostic) whose top is empty (so it can't resolve to a definition
+    /// either), and returns `Res::Err` silently. Without this, `Self` inside the block would
+    /// report a second, redundant diagnostic on top of whatever already explained why `adt_path`
+    /// failed.
+    pub fn push_self_unresolved(&mut self) {
+        self.self_scopes.push(None);
+    }
+
+    /// Closes the innermost `Self` scope.
+    pub fn pop_self(&mut self) {
+        self.self_scopes.pop();
+    }
+
+    /// What `Self` stands for here: the innermost enclosing struct, enum, trait, or `extend`
+    /// target. Neither a function nor a closure pushes a scope of its own, which is what lets a
+    /// method body and a closure inside it both see the enclosing definition's `Self`. `None`
+    /// when the innermost scope is open but unresolved ([`Self::push_self_unresolved`]) as well
+    /// as when no scope is open at all -- callers that need to tell those two apart (only
+    /// [`Self::resolve_type_path`] does) read `self_scopes` directly instead.
+    pub fn current_self(&self) -> Option<TyDef> {
+        self.self_scopes.last().copied().flatten()
+    }
 }

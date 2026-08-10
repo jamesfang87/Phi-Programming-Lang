@@ -14,10 +14,10 @@ use crate::ast::{Ast, ParsedSrcFile};
 use crate::diag::DiagCtx;
 use crate::driver::source::{FileOrigin, SrcMap};
 use crate::hir::lower::lower_unit;
-use crate::hir::{DefId, Hir, HirId, NameResolutions, Node, OwnerNode, StmtKind};
+use crate::hir::{DefId, Hir, HirId, Node, OwnerNode, StmtKind};
 use crate::lexer::Lexer;
 use crate::lexer::token::Token;
-use crate::nameres::resolve;
+use crate::nameres;
 use crate::parser::Parser;
 
 // -----------------------------------------------------------------
@@ -46,20 +46,33 @@ pub fn parse_src(src: &str) -> ParsedSrcFile {
 }
 
 /// Lexes, parses, and lowers `src`, asserting no diagnostics were raised along the way.
+///
+/// Runs AST-level name resolution first, as the real pipeline does, so `lower_unit` has
+/// something to consume -- but only asserts on diagnostics up through parsing: many fixtures
+/// name things that don't exist (a bare `fun f() { let x = y; }`, say), which is fine for
+/// exercising lowering's shape but would make AST-level resolution report "not found". Those
+/// diagnostics are left in `DiagCtx` rather than asserted on, same as `resolve_src` below.
 pub fn lower_src(src: &str) -> Hir {
-    lower_unit(&Ast::new(vec![parse_src(src)]))
+    let ast = Ast::new(vec![parse_src(src)]);
+    let res = nameres::resolve(&ast);
+    lower_unit(&ast, &res)
 }
 
-/// Lexes, parses, lowers, and name-resolves `src`, asserting no diagnostics were raised up to
-/// and including lowering.
+/// Lexes, parses, and lowers `src`, asserting no diagnostics were raised up to and including
+/// lowering.
 ///
 /// Name resolution's own diagnostics are left in [`DiagCtx`] rather than asserted on: a fixture
 /// is resolved without the core library, so every one of them reports the whole set of missing
 /// lang items. A caller that goes on to assert about a later pass clears them first.
-pub fn resolve_src(src: &str) -> (Hir, NameResolutions) {
-    let hir = lower_src(src);
-    let nameres = resolve(&hir);
-    (hir, nameres)
+///
+/// This used to hand back a second `NameResolutions` value, from a second, HIR-based resolver
+/// that ran purely for `typeck`'s benefit. That resolver is gone -- every `hir::Path` already
+/// carries its own resolution (see `crate::hir::path`) -- so `lower_src` and this are now the
+/// same function. Kept as a distinct name anyway: it is the name every caller downstream of
+/// lowering already uses, and dropping it would mean touching every one of them for a rename
+/// that carries no information.
+pub fn resolve_src(src: &str) -> Hir {
+    lower_src(src)
 }
 
 fn assert_clean(src: &str) {

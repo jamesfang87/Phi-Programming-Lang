@@ -2,12 +2,12 @@
 //! into a [`Ty`], which is what the checker reasons about.
 //!
 //! The conversion is mostly mechanical, because name resolution has already done the hard part:
-//! every path in a `hir::Ty` was resolved to a [`TypeRes`] and recorded under that node's
-//! [`HirId`], so this pass reads the answer instead of doing its own lookups. What is left is to
-//! replace each nested `HirId` with the `Ty` it lowers to, and to check the things that only
-//! become checkable once a path has a definition behind it: that a type is applied to as many
-//! generic arguments as it declares parameters, and that what a path names can be used as a type
-//! at all.
+//! every path in a `hir::Ty` carries its own [`hir::Res`](crate::hir::Res) (see
+//! `crate::hir::path`), so this pass reads that answer off the node instead of doing its own
+//! lookups. What is left is to replace each nested `HirId` with the `Ty` it lowers to, and to
+//! check the things that only become checkable once a path has a definition behind it: that a
+//! type is applied to as many generic arguments as it declares parameters, and that what a path
+//! names can be used as a type at all.
 //!
 //! Every annotation lowered here is recorded in [`TypeResolutions`](crate::typeck::results::TypeResolutions)
 //! under its own `HirId`, so later passes can ask what a written type meant without repeating
@@ -15,8 +15,7 @@
 
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, Node, OwnerNode, TyKind as HirTyKind};
-use crate::nameres::results::{SelfTyRes, TypeRes};
+use crate::hir::{DefId, HirId, Node, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
 use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
 
@@ -30,11 +29,11 @@ impl<'hir> Typeck<'hir> {
         let span = ty.span;
 
         let lowered = match &ty.kind {
-            HirTyKind::Path { args, .. } => {
+            HirTyKind::Path { path, args } => {
                 // Collected first so the `&self` borrow of the node ends before lowering the
                 // arguments, which needs `&mut self`.
-                let args: Vec<HirId> = args.clone();
-                self.lower_base(id, &args, span)
+                let (res, args) = (path.res, args.clone());
+                self.lower_base(id, res, &args, span)
             }
             HirTyKind::Ref { base, mutability } => {
                 let (base, mutability) = (*base, *mutability);
@@ -62,10 +61,9 @@ impl<'hir> Typeck<'hir> {
                 let ret = ret.map(|ret| self.lower_ty(ret));
                 self.tcx.mk_fun(params, ret)
             }
-            HirTyKind::SelfType => self.self_ty(id.owner, span),
-            HirTyKind::Dyn { args, .. } => {
-                let args: Vec<HirId> = args.clone();
-                self.lower_dyn(id, &args, span)
+            HirTyKind::Dyn { path, args } => {
+                let (res, args) = (path.res, args.clone());
+                self.lower_dyn(id, res, &args, span)
             }
             HirTyKind::Error => self.tcx.error(),
         };
@@ -80,60 +78,85 @@ impl<'hir> Typeck<'hir> {
         ids.iter().map(|&id| self.lower_ty(id)).collect()
     }
 
-    /// Lowers a named type: `i32`, `T`, `Map<K, V>`, and so on. `id` addresses the annotation
-    /// itself, which is the key name resolution recorded its answer under.
-    fn lower_base(&mut self, id: HirId, args: &[HirId], span: SrcSpan) -> Ty {
-        // A missing entry means name resolution gave up on this annotation before recording an
-        // answer -- an `extend` block's own `<...>` list holding something that isn't a bare
-        // parameter name is the one way that happens. It has already been reported, so this
-        // stays quiet.
-        let Some(res) = self.nameres.ty(id) else {
-            return self.tcx.error();
-        };
-
+    /// Lowers a named type: `i32`, `T`, `Map<K, V>`, `Self`, and so on. `id` addresses the
+    /// annotation itself, whose `HirId` is where the lowered `Ty` gets recorded; `res` is the
+    /// answer name resolution already gave the path this annotation names.
+    fn lower_base(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
         match res {
-            TypeRes::PrimTy(prim) => {
+            Res::Type(Type::Prim(prim)) => {
                 Self::expect_no_args(args, span, "a primitive type");
                 self.tcx.mk_prim(prim)
             }
-            TypeRes::Generic(param) => {
+            Res::Type(Type::Generic(param)) => {
                 Self::expect_no_args(args, span, "a generic type parameter");
                 self.tcx.mk_generic(param)
             }
-            TypeRes::Def(def_id) => {
+            Res::Type(Type::Def(TyDef::Trait(_))) => {
+                // A trait names a set of types rather than one type, so it can only be used in
+                // type position through `dyn`.
+                Self::report_trait_as_ty(span);
+                self.tcx.error()
+            }
+            Res::Type(Type::Def(tydef @ (TyDef::Struct(def_id) | TyDef::Enum(def_id)))) => {
                 let declared = match self.hir.def(def_id) {
                     OwnerNode::Struct(struct_) => struct_.generics.len(),
                     OwnerNode::Enum(enum_) => enum_.generics.len(),
-                    // A trait names a set of types rather than one type, so it can only be used
-                    // in type position through `dyn`.
-                    OwnerNode::Trait(_) => {
-                        Self::report_trait_as_ty(span);
-                        return self.tcx.error();
-                    }
-                    _ => {
-                        // Name resolution only ever puts structs, enums, and traits in the type
-                        // namespace, so nothing else can turn up here.
-                        Self::report_not_a_ty(span);
-                        return self.tcx.error();
-                    }
+                    _ => unreachable!("a TyDef::Struct/Enum always names a Struct/Enum owner"),
                 };
-
-                if args.len() != declared {
-                    Self::report_arg_count(span, declared, args.len());
-                    return self.tcx.error();
-                }
-
-                let args = self.lower_tys(args);
-                // Writing the type is what instantiates it, so this is where its declared bounds
-                // become something to prove. Deferred rather than proved: the arguments may still
-                // be inference variables, and the index may not exist yet. See
-                // [`bounds`](crate::typeck::traits::bounds).
-                self.register_bound_obligations(def_id, &args, span, id.owner);
-                self.tcx.mk_adt(def_id, args)
+                self.lower_def(tydef, def_id, declared, args, span, id.owner)
+            }
+            // `Self` needs its own arm rather than falling into the `Def` case above: it is
+            // legal with no argument list even where a struct declares parameters, and legal on
+            // its own inside a trait body, where an ordinary bare trait name is not. The `TyDef`
+            // this arm carries is discarded rather than threaded through: it names whichever
+            // struct, enum, or trait `Self` resolved to, but [`Typeck::self_ty`] needs to know
+            // *where* the `Self` was written (a struct's own body reads differently from an
+            // `extend` targeting it), which it works out for itself by walking up from `id.owner`
+            // -- see its own docs.
+            Res::SelfTy(_) => {
+                Self::expect_no_args(args, span, "`Self`");
+                self.self_ty(id.owner, span)
             }
             // Already reported by name resolution; staying quiet here keeps one mistake from
             // producing a second diagnostic.
-            TypeRes::Err => self.tcx.error(),
+            Res::Err => self.tcx.error(),
+            // Name resolution only ever puts a primitive, a generic parameter, a struct, an
+            // enum, or a trait in the type namespace (or `Self`, handled above) -- a local, a
+            // function, or a module can never come back from a type-position lookup.
+            Res::Local(_) | Res::Function(_) | Res::Module(_) => {
+                unreachable!(
+                    "name resolution never resolves a type-position path to a local, a \
+                     function, or a module"
+                )
+            }
+        }
+    }
+
+    /// The shared tail of an ordinary (non-`Self`) named type: check its argument count, lower
+    /// the arguments, and register what its declared bounds demand of them.
+    fn lower_def(
+        &mut self,
+        tydef: TyDef,
+        def_id: DefId,
+        declared: usize,
+        args: &[HirId],
+        span: SrcSpan,
+        owner: DefId,
+    ) -> Ty {
+        if args.len() != declared {
+            Self::report_arg_count(span, declared, args.len());
+            return self.tcx.error();
+        }
+
+        let args = self.lower_tys(args);
+        // Writing the type is what instantiates it, so this is where its declared bounds become
+        // something to prove. Deferred rather than proved: the arguments may still be inference
+        // variables, and the index may not exist yet. See
+        // [`bounds`](crate::typeck::traits::bounds).
+        self.register_bound_obligations(def_id, &args, span, owner);
+        match tydef {
+            TyDef::Struct(_) | TyDef::Enum(_) => self.tcx.mk_adt(def_id, args),
+            TyDef::Trait(_) => unreachable!("lower_base's Trait arm never reaches lower_def"),
         }
     }
 
@@ -142,13 +165,9 @@ impl<'hir> Typeck<'hir> {
     /// A trait applied to the wrong number of arguments is an error for the same reason a struct
     /// is: a half-applied trait is not a type, and letting one reach the solver would mean
     /// matching a goal against an argument list nobody wrote.
-    fn lower_dyn(&mut self, id: HirId, args: &[HirId], span: SrcSpan) -> Ty {
-        let Some(res) = self.nameres.ty(id) else {
-            return self.tcx.error();
-        };
-
+    fn lower_dyn(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
         match res {
-            TypeRes::Def(def_id) if matches!(self.hir.def(def_id), OwnerNode::Trait(_)) => {
+            Res::Type(Type::Def(TyDef::Trait(def_id))) => {
                 if !self.check_arg_count(def_id, args.len(), span) {
                     return self.tcx.error();
                 }
@@ -158,7 +177,7 @@ impl<'hir> Typeck<'hir> {
                 self.register_bound_obligations(def_id, &args, span, id.owner);
                 self.tcx.mk_dyn(def_id, args)
             }
-            TypeRes::Err => self.tcx.error(),
+            Res::Err => self.tcx.error(),
             _ => {
                 Self::report_dyn_not_a_trait(span);
                 self.tcx.error()
@@ -168,9 +187,11 @@ impl<'hir> Typeck<'hir> {
 
     /// What `Self` means inside `owner_id`.
     ///
-    /// Name resolution already worked out *which* definition `Self` refers to; what is left is to
-    /// give that definition its generic arguments, and those depend on where the `Self` was
-    /// written:
+    /// Which definition `Self` refers to is worked out here, by walking up from `owner_id` to
+    /// the nearest enclosing `struct`, `enum`, `trait`, or `extend` -- the same walk name
+    /// resolution's own `SymbolTable::current_self` does at the point `Self` is written, since
+    /// the answer depends only on lexical position. What is left is to give that definition its
+    /// generic arguments, and those depend on which of the four it is:
     ///
     /// - inside a `struct` or `enum`, `Self` is that type applied to its own parameters, so
     ///   `Self` inside `struct Map<K, V>` is `Map<K, V>`;
@@ -180,15 +201,27 @@ impl<'hir> Typeck<'hir> {
     /// - inside a trait, there is no concrete type yet, so it stays the trait's own
     ///   [`SelfTy`](crate::typeck::ty::TyKind::SelfTy) until an `extend` substitutes it.
     ///
+    /// Called two ways: from [`Typeck::lower_base`]'s `Res::SelfTy` arm, when `Self` is written
+    /// out; and directly by `collect_struct`/`collect_enum`/`collect_trait`/`collect_extend`,
+    /// which each ask what their *own* type is without any `Self` having been written at all.
+    /// The second is why this takes a bare `owner_id` rather than a `TyDef` name resolution
+    /// already settled -- a `collect_*` call has no path, and so no `Res`, to read one from.
+    ///
     /// Results are cached per definition, since `Self` is typically written many times in one
     /// body and the `extend` case has to lower a list of arguments each time it is computed.
     pub fn self_ty(&mut self, owner_id: DefId, span: SrcSpan) -> Ty {
         // `Self` is introduced by an enclosing definition, not necessarily by `owner_id` itself:
         // a method names the `Self` of the `extend` block or trait it is declared in.
         let mut introducer = owner_id;
-        let res = loop {
-            if let Some(res) = self.nameres.self_ty(introducer) {
-                break res;
+        loop {
+            if matches!(
+                self.hir.def(introducer),
+                OwnerNode::Struct(_)
+                    | OwnerNode::Enum(_)
+                    | OwnerNode::Trait(_)
+                    | OwnerNode::Extend(_)
+            ) {
+                break;
             }
             match self.hir.parent(introducer) {
                 Some(parent) => introducer = parent,
@@ -197,7 +230,7 @@ impl<'hir> Typeck<'hir> {
                     return self.tcx.error();
                 }
             }
-        };
+        }
 
         if let Some(&cached) = self.self_tys.get(&introducer) {
             return cached;
@@ -210,12 +243,6 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         }
 
-        let SelfTyRes::Ty { adt, .. } = res else {
-            // `resolve_extend` records `SelfTyRes::Err` when the extended path did not resolve.
-            self.computing_self_tys.remove(&introducer);
-            return self.tcx.error();
-        };
-
         let self_ty = match self.hir.def(introducer) {
             OwnerNode::Struct(struct_) => {
                 let params = struct_.generics.clone();
@@ -225,11 +252,21 @@ impl<'hir> Typeck<'hir> {
                 let params = enum_.generics.clone();
                 self.adt_of_own_params(introducer, &params)
             }
-            OwnerNode::Trait(_) => self.tcx.mk_self_param(adt),
+            OwnerNode::Trait(_) => self.tcx.mk_self_param(introducer),
             OwnerNode::Extend(extend) => {
+                // Unlike a struct/enum/trait, an `extend` block's `Self` is not itself -- it is
+                // whatever the block's own `adt_path` targets, exactly as `SymbolTable::push_self`
+                // pushed when this same path was resolved (`resolver.rs`'s `visit_extend`).
+                let adt_res = extend.adt_path.res;
                 let args = extend.adt_generics.clone();
                 let args = self.lower_tys(&args);
-                self.tcx.mk_adt(adt, args)
+                match adt_res {
+                    Res::Type(Type::Def(tydef)) => self.tcx.mk_adt(tydef.def_id(), args),
+                    // The extended path failed to resolve, or named something that is not a
+                    // struct or enum -- `impl_self_head` is what reports why; staying quiet here
+                    // keeps that one mistake from producing a second diagnostic.
+                    _ => self.tcx.error(),
+                }
             }
             _ => unreachable!("only a struct, enum, trait, or extend block introduces a `Self`"),
         };
@@ -283,12 +320,6 @@ impl<'hir> Typeck<'hir> {
         );
     }
 
-    fn report_not_a_ty(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("this path does not name a type", span).with_label("not a type"),
-        );
-    }
-
     fn report_dyn_not_a_trait(span: SrcSpan) {
         DiagCtx::emit(
             Diagnostic::error("`dyn` must be applied to a trait", span)
@@ -326,7 +357,7 @@ mod tests {
     use crate::ast::interner::Interner;
     use crate::diag::DiagCtx;
     use crate::hir::{DefId, Hir, HirId, OwnerNode};
-    use crate::nameres::results::PrimTy;
+    use crate::nameres::PrimTy;
     use crate::testing::resolve_src;
     use crate::typeck::results::TypeResolutions;
     use crate::typeck::ty::{Ty, TyKind};
@@ -348,10 +379,10 @@ mod tests {
     /// missing here: the core library is not registered for these tests, since compiling it
     /// alongside a two-line fixture would swamp what each test is actually about.
     fn check(src: &str) -> Checked {
-        let (hir, nameres) = resolve_src(src);
+        let hir = resolve_src(src);
         DiagCtx::clear();
 
-        let checked = crate::typeck::check(&hir, &nameres);
+        let checked = crate::typeck::check(&hir);
         Checked {
             hir,
             tcx: checked.tcx,

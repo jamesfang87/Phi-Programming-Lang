@@ -1,18 +1,23 @@
+use std::collections::HashMap;
+
 use crate::ast::interner::Interner;
-use crate::ast::{Ast, Module, Symbol};
+use crate::ast::visit::{self, Visitor as AstVisitor};
+use crate::ast::{
+    Ast, Expr as AstExpr, Extend as AstExtend, Generic as AstGeneric, Ident as AstIdent,
+    Item as AstItem, ItemKind as AstItemKind, Module, NodeId as AstNodeId, Param as AstParam,
+    Pat as AstPat, PatKind as AstPatKind, Path as AstPath, SelfParam as AstSelfParam, Symbol,
+    Ty as AstTy,
+};
 use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
 use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
-use crate::nameres::results::{NameResolutions, SelfTyRes, TypeRes, ValueRes};
+use crate::nameres::results::NameResolutions;
+use crate::nameres::{Local as NameResLocal, Res as NameResRes, TyDef, Type as NameResType};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
 fn is_user_def(hir: &Hir, def_id: DefId) -> bool {
     is_user_span(hir.def(def_id).span())
-}
-
-fn fmt_symbol(sym: Symbol) -> String {
-    format!("{} (symbol: {})", Interner::resolve(sym), sym.id())
 }
 
 fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
@@ -113,44 +118,6 @@ fn block(open: &str, close: &str, items: &[String], indent: usize) -> String {
         .map(|item| format!("{inner}{item},\n"))
         .collect();
     format!("{open}\n{body}{}{close}", pad(indent))
-}
-
-fn fmt_value_res(hir: &Hir, res: ValueRes) -> String {
-    match res {
-        ValueRes::Local(id) => format!("Local({id:?})"),
-        ValueRes::SelfVal(id) => format!("SelfVal({id:?})"),
-        ValueRes::Variant(id) => format!("Variant({id:?})"),
-        ValueRes::Def(id) => format!("Def({})", fmt_def(hir, id)),
-        ValueRes::Err => "Err".to_string(),
-    }
-}
-
-fn fmt_type_res(hir: &Hir, res: TypeRes) -> String {
-    match res {
-        TypeRes::PrimTy(prim) => format!("PrimTy({prim:?})"),
-        TypeRes::Generic(id) => format!("Generic({id:?})"),
-        TypeRes::Def(id) => format!("Def({})", fmt_def(hir, id)),
-        TypeRes::Err => "Err".to_string(),
-    }
-}
-
-fn fmt_self_ty_res(hir: &Hir, res: SelfTyRes, indent: usize) -> String {
-    match res {
-        SelfTyRes::Ty { adt, trait_ } => {
-            let trait_ = match trait_ {
-                Some(t) => fmt_def(hir, t),
-                None => "None".to_string(),
-            };
-            let inner = pad(indent + 1);
-            format!(
-                "SelfTy {{\n{inner}adt: {},\n{inner}trait_: {},\n{}}}",
-                fmt_def(hir, adt),
-                trait_,
-                pad(indent)
-            )
-        }
-        SelfTyRes::Err => "Err".to_string(),
-    }
 }
 
 fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
@@ -284,57 +251,6 @@ pub fn print_hir(hir: &Hir, exclude_core_in_emit: bool) {
     }
 }
 
-pub fn print_nameres(hir: &Hir, results: &NameResolutions, exclude_core_in_emit: bool) {
-    let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(hir, def_id);
-
-    println!("=== NameResolution results: values ===");
-    for (hir_id, res) in results.iter_values().filter(|(id, _)| keep(id.owner)) {
-        println!(
-            "{hir_id:?} :: {} ->\n{}{}",
-            fmt_node_summary(hir, hir_id),
-            pad(1),
-            fmt_value_res(hir, res)
-        );
-    }
-
-    println!("=== NameResolution results: types ===");
-    for (hir_id, res) in results.iter_types().filter(|(id, _)| keep(id.owner)) {
-        println!(
-            "{hir_id:?} :: {} ->\n{}{}",
-            fmt_node_summary(hir, hir_id),
-            pad(1),
-            fmt_type_res(hir, res)
-        );
-    }
-
-    println!("--- Self types ---");
-    for (def_id, res) in results.iter_self_tys().filter(|(id, _)| keep(*id)) {
-        let hir_id = def_id.owner_id();
-        println!(
-            "{} :: {} ->\n{}{}",
-            fmt_def(hir, def_id),
-            fmt_node_summary(hir, hir_id),
-            pad(1),
-            fmt_self_ty_res(hir, res, 1)
-        );
-    }
-
-    println!("--- Generics ---");
-    for (def_id, params) in results.iter_generics().filter(|(id, _)| keep(*id)) {
-        let hir_id = def_id.owner_id();
-        for (&name, &res) in params {
-            println!(
-                "{} :: {} :: {} ->\n{}{}",
-                fmt_def(hir, def_id),
-                fmt_symbol(name),
-                fmt_node_summary(hir, hir_id),
-                pad(1),
-                fmt_type_res(hir, res)
-            );
-        }
-    }
-}
-
 pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_core_in_emit: bool) {
     let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(hir, def_id);
 
@@ -347,4 +263,275 @@ pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_c
             fmt_ty(hir, tcx, ty, 1)
         );
     }
+}
+
+// ===========================================================================
+// Name resolution dump
+//
+// `crate::nameres::resolve` runs on the `Ast`, before lowering -- see `pipeline.rs`. This dump
+// makes its output inspectable directly, without going through the `hir::Path`s it ends up
+// attached to.
+// ===========================================================================
+
+/// Everything [`fmt_res`] needs to turn a `Res` into readable text without ever
+/// printing the `NodeId` it carries: a lookup from that id back to the declaration it names,
+/// built by one walk over the whole AST.
+///
+/// `NameResolutions` records only ids -- `Res::Function(NodeId)`,
+/// `Res::Local(Local::Variable(NodeId))`, and so on -- so turning one back into a name needs
+/// somewhere to look the id up. `SymbolTable` already keeps a `NodeId -> &Item` map for
+/// exactly this reason (see its doc comment), but a `Generic`, a `Param`, a `SelfParam`, and a
+/// pattern binding are none of them `Item`s, and `nameres_to_string` only receives an
+/// `Ast`, not a `SymbolTable`. So this dump builds its own table, covering every kind of node a
+/// `Res` can name, in the one walk that also drives [`Self::owners`].
+struct Names<'ast> {
+    items: HashMap<AstNodeId, &'ast AstItem>,
+    generics: HashMap<AstNodeId, &'ast AstGeneric>,
+    params: HashMap<AstNodeId, &'ast AstParam>,
+    self_params: HashMap<AstNodeId, &'ast AstSelfParam>,
+    bindings: HashMap<AstNodeId, AstIdent>,
+    /// Every node that can own an entry in `NameResolutions`: a `Generic`'s own id (bounds), an
+    /// `extend` item's id (`adt_path`/`trait_path`), a `Ty`'s id, an `Expr`'s id --  see
+    /// `resolver.rs`'s calls to `results.record`, which this list mirrors. `entries(owner)`
+    /// needs the *owner*, not the `Res`, so collecting every owner here in one walk is what lets
+    /// [`nameres_to_string`] find every entry there is without re-walking the AST a
+    /// second time just to rediscover them.
+    owners: Vec<AstNodeId>,
+    /// The `Item` currently being walked, if any. Mirrors `resolver.rs`'s own `current_item`:
+    /// `Extend` has no `NodeId` of its own, so [`Self::visit_extend`] reads this to know which
+    /// owner its `adt_path`/`trait_path` entries were recorded under.
+    current_item: Option<AstNodeId>,
+}
+
+impl<'ast> Names<'ast> {
+    fn new() -> Self {
+        Self {
+            items: HashMap::new(),
+            generics: HashMap::new(),
+            params: HashMap::new(),
+            self_params: HashMap::new(),
+            bindings: HashMap::new(),
+            owners: Vec::new(),
+            current_item: None,
+        }
+    }
+}
+
+impl<'ast> AstVisitor<'ast> for Names<'ast> {
+    fn visit_item(&mut self, item: &'ast AstItem) {
+        self.items.insert(item.id, item);
+        self.current_item = Some(item.id);
+        visit::walk_item(self, item);
+    }
+
+    fn visit_generic(&mut self, g: &'ast AstGeneric) {
+        self.generics.insert(g.id, g);
+        self.owners.push(g.id);
+        visit::walk_generic(self, g);
+    }
+
+    fn visit_extend(&mut self, e: &'ast AstExtend) {
+        let item_id = self
+            .current_item
+            .expect("visit_extend is reached only through visit_item, which sets current_item");
+        self.owners.push(item_id);
+        visit::walk_extend(self, e);
+    }
+
+    fn visit_param(&mut self, p: &'ast AstParam) {
+        self.params.insert(p.id, p);
+        visit::walk_param(self, p);
+    }
+
+    fn visit_self_param(&mut self, p: &'ast AstSelfParam) {
+        self.self_params.insert(p.id, p);
+    }
+
+    fn visit_pat(&mut self, p: &'ast AstPat) {
+        if let AstPatKind::Binding(name) = &p.kind {
+            self.bindings.insert(p.id, *name);
+        }
+        visit::walk_pat(self, p);
+    }
+
+    fn visit_ty(&mut self, t: &'ast AstTy) {
+        self.owners.push(t.id);
+        visit::walk_ty(self, t);
+    }
+
+    fn visit_expr(&mut self, e: &'ast AstExpr) {
+        self.owners.push(e.id);
+        visit::walk_expr(self, e);
+    }
+}
+
+/// A written name's `file:line:col`, or `<unknown>` if `span` doesn't land in any registered
+/// file -- which should not happen for anything actually parsed, but keeps this printable
+/// rather than panicking if it's ever asked about a synthetic span.
+fn res_location(span: SrcSpan) -> String {
+    match SrcMap::file_containing(span.get_begin()) {
+        Some(file) => {
+            let (line, col) = file.line_col(span.get_begin());
+            format!("{}:{line}:{col}", file.name)
+        }
+        None => "<unknown>".to_string(),
+    }
+}
+
+/// Renders a resolved name as `` Kind `name` (location) `` -- what every arm of
+/// [`fmt_res`] reduces to once the `NodeId` it started from has been swapped for the
+/// declaration it names.
+fn fmt_named(kind: &str, name: Symbol, span: SrcSpan) -> String {
+    format!(
+        "{kind} `{}` ({})",
+        Interner::resolve(name),
+        res_location(span)
+    )
+}
+
+/// Renders a `TyDef`'s target -- a struct, enum, or trait item -- by its declared name, not its
+/// `NodeId`. `kind` is one of `"Struct"`, `"Enum"`, `"Trait"`, matching which `TyDef` variant
+/// `id` came from.
+fn fmt_ty_def(names: &Names, kind: &str, id: AstNodeId) -> String {
+    let item =
+        names.items.get(&id).copied().unwrap_or_else(|| {
+            panic!("a `TyDef::{kind}` names an item the AST walk should collect")
+        });
+    let name = match &item.kind {
+        AstItemKind::Struct(s) => s.name,
+        AstItemKind::Enum(e) => e.name,
+        AstItemKind::Trait(t) => t.name,
+        other => {
+            panic!("a `TyDef::{kind}` should name a struct, enum, or trait item, got {other:?}")
+        }
+    };
+    fmt_named(kind, name.text, name.span)
+}
+
+/// Renders `res` by what it names, never by the `NodeId` it carries.
+///
+/// This is the load-bearing half of the no-`NodeId` rule described on
+/// [`nameres_to_string`]: every arm below reaches into `names` (or, for
+/// `Res::Module`, `ast` directly) to recover a written name and span, and formats *that*.
+/// `names` is [`Names`], built by walking the whole AST once; `ast` is only needed here
+/// for `Res::Module`, whose target is an `ast::Module`, not an `Item`.
+fn fmt_res(names: &Names, ast: &Ast, res: NameResRes) -> String {
+    match res {
+        NameResRes::Err => "Err".to_string(),
+        NameResRes::Module(id) => format!("Module `{}`", fmt_mod_path(ast.module(id))),
+        NameResRes::Function(id) => {
+            let item = names
+                .items
+                .get(&id)
+                .copied()
+                .expect("a `Res::Function` names an item the AST walk should collect");
+            let AstItemKind::Function(f) = &item.kind else {
+                panic!(
+                    "a `Res::Function` should name a function item, got {:?}",
+                    item.kind
+                );
+            };
+            fmt_named("Function", f.name.text, f.name.span)
+        }
+        NameResRes::Local(NameResLocal::Param(id)) => {
+            let p = names
+                .params
+                .get(&id)
+                .copied()
+                .expect("a `Local::Param` names a parameter the AST walk should collect");
+            fmt_named("Param", p.name.text, p.name.span)
+        }
+        NameResRes::Local(NameResLocal::SelfParam(id)) => {
+            let p =
+                names.self_params.get(&id).copied().expect(
+                    "a `Local::SelfParam` names a self parameter the AST walk should collect",
+                );
+            format!("SelfParam `self` ({})", res_location(p.span))
+        }
+        NameResRes::Local(NameResLocal::Variable(id)) => {
+            let name = names
+                .bindings
+                .get(&id)
+                .copied()
+                .expect("a `Local::Variable` names a binding the AST walk should collect");
+            fmt_named("Variable", name.text, name.span)
+        }
+        NameResRes::Type(NameResType::Prim(prim)) => format!("{prim:?}"),
+        NameResRes::Type(NameResType::Generic(id)) => {
+            let g = names
+                .generics
+                .get(&id)
+                .copied()
+                .expect("a `Type::Generic` names a generic the AST walk should collect");
+            fmt_named("Generic", g.name.text, g.name.span)
+        }
+        NameResRes::Type(NameResType::Def(TyDef::Struct(id))) => fmt_ty_def(names, "Struct", id),
+        NameResRes::Type(NameResType::Def(TyDef::Enum(id))) => fmt_ty_def(names, "Enum", id),
+        NameResRes::Type(NameResType::Def(TyDef::Trait(id))) => fmt_ty_def(names, "Trait", id),
+    }
+}
+
+/// A span-ordered, `NodeId`-free rendering of name resolution's output.
+///
+/// **Span-ordered.** [`crate::ast::NodeId`] comes from a single global atomic counter, and the
+/// order it hands ids out in is deterministic only because parsing currently runs sequentially,
+/// file by file -- the counter is global *specifically* so parsing can go parallel later. Once
+/// it does, the order two files' nodes receive ids in stops being predictable at all, and a
+/// dump ordered by `NodeId` (or by hash-map iteration order, which is no better) would start
+/// flapping between otherwise-identical runs for no reason a diff could explain. Sorting by
+/// each entry's source span instead costs nothing today -- while parsing is sequential, span
+/// order and id order agree -- and pins the dump's order to the one thing about a program that
+/// parallelizing the parser can never change: where its text sits in its own file.
+///
+/// **Never prints a `NodeId`.** Same reason: an id that isn't stable across parallel parsing
+/// has no business in a file meant to be diffed for meaning rather than mechanism. Every `Res`
+/// is rendered by what it names instead of by its id -- the declaration's own written name and
+/// span, recovered through [`Names`], the lookup table this function builds by walking
+/// `ast` once. See [`fmt_res`] for how each `Res` variant does that.
+///
+/// Structured as a pure string builder -- with [`print_nameres`] as the thin `println!`
+/// wrapper around it -- so a test can assert on the string directly instead of capturing stdout.
+pub fn nameres_to_string(ast: &Ast, results: &NameResolutions) -> String {
+    let mut names = Names::new();
+    names.visit_module(ast.module(ast.root_id()), ast);
+
+    let mut entries: Vec<(SrcSpan, &AstPath, NameResRes)> = names
+        .owners
+        .iter()
+        .flat_map(|&owner| {
+            results
+                .entries(owner)
+                .iter()
+                .map(|(path, res)| (path.span, path, *res))
+        })
+        .collect();
+    // Rule 1: sorted by source span -- never by `NodeId`, never by hash-map iteration order.
+    // See the doc comment above.
+    entries.sort_by_key(|(span, _, _)| span.get_begin());
+
+    let mut out = String::new();
+    out.push_str("=== NameResolution results ===\n");
+    for (span, path, res) in entries {
+        let path_text = path
+            .segments
+            .iter()
+            .map(|seg| Interner::resolve(seg.text))
+            .collect::<Vec<_>>()
+            .join("::");
+        out.push_str(&format!(
+            "{path_text} ({}) ->\n{}{}\n",
+            res_location(span),
+            pad(1),
+            // Rule 2: rendered by what `res` names, never by its `NodeId`. See the doc comment
+            // above and `fmt_res`.
+            fmt_res(&names, ast, res)
+        ));
+    }
+    out
+}
+
+/// Thin `println!` wrapper around [`nameres_to_string`]; see its doc comment for what
+/// the dump guarantees (span order, no `NodeId`) and why.
+pub fn print_nameres(ast: &Ast, results: &NameResolutions) {
+    println!("{}", nameres_to_string(ast, results));
 }

@@ -88,11 +88,11 @@ impl Parser {
                     })
                     .boxed();
 
-                // `Self` is an ordinary single-segment path in the AST, not its own `TyKind`:
-                // the AST resolver (still to come) can then treat it like any other name instead
-                // of needing a special case. HIR lowering recognizes this specific path shape and
-                // maps it back to `HirTyKind::SelfType`, so everything downstream of the AST
-                // keeps seeing `Self` as its own kind of type.
+                // `Self` is an ordinary single-segment path in the AST, not its own `TyKind`, so
+                // the AST resolver can treat it like any other name instead of needing a special
+                // case. HIR lowering keeps it an ordinary `TyKind::Path` too; what marks it as
+                // `Self` is `path.res` (`hir::Res::SelfTy`), not a distinct HIR node kind -- see
+                // `LoweringCtx::as_self_ty`.
                 let self_ty = self
                     .kind(TokenKind::UpperSelfKw)
                     .map(|self_tok| {
