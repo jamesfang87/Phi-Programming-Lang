@@ -39,8 +39,7 @@ use std::collections::HashMap;
 use crate::ast::interner::Interner;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, OwnerNode};
-use crate::nameres::results::TypeRes;
+use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::index::ImplId;
@@ -490,16 +489,13 @@ impl<'hir> Typeck<'hir> {
     /// declaration rather than once per environment the parameter appears in. Skipping it here
     /// means it can never be assumed, which is the safe answer.
     pub(crate) fn collect_bounds(&mut self, generic: HirId, bounds: &mut Vec<Obligation>) {
-        let span = self.hir.generic(generic).span;
-        let resolutions: Vec<TypeRes> = self.nameres.bounds(generic).to_vec();
+        let hir: &'hir crate::hir::Hir = self.hir;
+        let span = hir.generic(generic).span;
 
-        for res in resolutions {
-            let TypeRes::Def(def) = res else {
+        for path in &hir.generic(generic).bounds {
+            let Res::Type(Type::Def(TyDef::Trait(def))) = path.res else {
                 continue;
             };
-            if !matches!(self.hir.def(def), OwnerNode::Trait(_)) {
-                continue;
-            }
 
             let self_ty = self.tcx.mk_generic(generic);
             // A bound is a bare path with no argument list, so a trait's own parameters can never
@@ -680,8 +676,8 @@ fn trait_name(hir: &crate::hir::Hir, def: DefId) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hir::{Hir, NameResolutions};
-    use crate::nameres::results::PrimTy;
+    use crate::hir::Hir;
+    use crate::nameres::PrimTy;
     use crate::testing::resolve_src;
 
     // -----------------------------------------------------------------
@@ -843,8 +839,8 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Collects `src` and builds the impl index, which is everything the query reads.
-    fn solver<'hir>(hir: &'hir Hir, nameres: &'hir NameResolutions) -> Typeck<'hir> {
-        let mut checker = Typeck::new(hir, nameres);
+    fn solver<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
+        let mut checker = Typeck::new(hir);
         checker.collect_module(hir.root_id());
         checker.build_impl_index();
         DiagCtx::clear();
@@ -897,8 +893,8 @@ mod tests {
 
     #[test]
     fn a_matching_impl_proves_the_goal() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 
@@ -911,8 +907,8 @@ mod tests {
 
     #[test]
     fn a_type_with_no_impl_does_not_implement() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let (bare, show) = (named(&checker, "Bare"), named(&checker, "Show"));
         let bare_ty = checker.tcx.mk_adt(bare, vec![]);
 
@@ -926,8 +922,8 @@ mod tests {
     /// A goal whose self type is still an inference variable is not "no" -- it is "not yet".
     #[test]
     fn an_unresolved_self_type_is_ambiguous() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let show = named(&checker, "Show");
         let var = checker.tcx.next_ty_var();
 
@@ -941,8 +937,8 @@ mod tests {
 
     #[test]
     fn a_goal_containing_an_error_answers_error_without_reporting() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let show = named(&checker, "Show");
         let error = checker.tcx.error();
 
@@ -963,8 +959,8 @@ mod tests {
     fn a_reference_implements_nothing() {
         use crate::ast::Mutability;
 
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
         let ref_ty = checker.tcx.mk_ref(foo_ty, Mutability::Immutable);
@@ -978,11 +974,11 @@ mod tests {
 
     #[test]
     fn dyn_implements_exactly_the_trait_it_names() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              trait Other { fun other(&self); }",
         );
-        let mut checker = solver(&hir, &nameres);
+        let mut checker = solver(&hir);
         let (show, other) = (named(&checker, "Show"), named(&checker, "Other"));
         let dyn_show = checker.tcx.mk_dyn(show, vec![]);
 
@@ -1003,11 +999,11 @@ mod tests {
     /// goal about a bare type parameter.
     #[test]
     fn a_bound_in_the_environment_proves_a_goal_about_a_parameter() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              fun f<T: Show>(x: T) {}",
         );
-        let mut checker = solver(&hir, &nameres);
+        let mut checker = solver(&hir);
         let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
         let OwnerNode::Function(function) = hir.def(f) else {
             unreachable!("`f` is a function");
@@ -1027,11 +1023,11 @@ mod tests {
 
     #[test]
     fn a_parameter_with_no_bound_implements_nothing() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              fun f<T>(x: T) {}",
         );
-        let mut checker = solver(&hir, &nameres);
+        let mut checker = solver(&hir);
         let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
         let OwnerNode::Function(function) = hir.def(f) else {
             unreachable!("`f` is a function");
@@ -1046,8 +1042,8 @@ mod tests {
     /// Inside a trait, `Self` implements that trait by definition.
     #[test]
     fn a_traits_own_self_implements_it() {
-        let (hir, nameres) = resolve_src("trait Show { fun show(&self); }");
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src("trait Show { fun show(&self); }");
+        let mut checker = solver(&hir);
         let show = named(&checker, "Show");
         let self_ty = checker.tcx.mk_self_param(show);
 
@@ -1062,12 +1058,12 @@ mod tests {
     /// A method sees the bounds of the `extend` block it is declared in, not just its own.
     #[test]
     fn a_method_inherits_its_extend_blocks_bounds() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Wrap<T> { inner: T }
              extend<T: Show> Wrap<T> { fun get(&self) {} }",
         );
-        let mut checker = solver(&hir, &nameres);
+        let mut checker = solver(&hir);
         let extend = hir
             .def_ids()
             .find(|&id| matches!(hir.def(id), OwnerNode::Extend(_)))
@@ -1087,7 +1083,7 @@ mod tests {
     /// A conditional impl is honored: `Wrap<T>: Show` holds exactly when `T: Show` does.
     #[test]
     fn a_conditional_impls_own_bounds_are_proved_recursively() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Wrap<T> { inner: T }
              struct Foo {}
@@ -1095,7 +1091,7 @@ mod tests {
              extend Foo with Show { fun show(&self) {} }
              extend<T: Show> Wrap<T> with Show { fun show(&self) {} }",
         );
-        let mut checker = solver(&hir, &nameres);
+        let mut checker = solver(&hir);
         let (show, wrap) = (named(&checker, "Show"), named(&checker, "Wrap"));
         let (foo, bare) = (named(&checker, "Foo"), named(&checker, "Bare"));
 
@@ -1129,8 +1125,8 @@ mod tests {
 
     #[test]
     fn a_goal_already_in_progress_is_reported_as_a_cycle() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
         let goal = goal(&mut checker, foo_ty, show);
@@ -1150,8 +1146,8 @@ mod tests {
     /// part of what the cycle check compares.
     #[test]
     fn the_cycle_check_ignores_where_the_goal_was_raised() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 
@@ -1168,8 +1164,8 @@ mod tests {
 
     #[test]
     fn a_goal_deeper_than_the_recursion_limit_is_reported() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 
@@ -1195,8 +1191,8 @@ mod tests {
     /// One below the limit still answers the question rather than giving up.
     #[test]
     fn a_goal_just_inside_the_recursion_limit_is_answered() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 
@@ -1218,8 +1214,8 @@ mod tests {
     /// look deeper than it is.
     #[test]
     fn the_in_progress_stack_is_empty_once_a_query_returns() {
-        let (hir, nameres) = resolve_src(SRC);
-        let mut checker = solver(&hir, &nameres);
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 

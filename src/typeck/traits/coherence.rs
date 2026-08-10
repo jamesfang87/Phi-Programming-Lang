@@ -210,7 +210,7 @@ impl<'hir> Typeck<'hir> {
 #[cfg(test)]
 mod tests {
     use crate::diag::DiagCtx;
-    use crate::hir::{Hir, NameResolutions};
+    use crate::hir::Hir;
     use crate::testing::resolve_src;
     use crate::typeck::Typeck;
 
@@ -218,8 +218,8 @@ mod tests {
     ///
     /// Diagnostics from name resolution are cleared first: a fixture is resolved without the core
     /// library, so every one of them reports the whole set of missing lang items.
-    fn coherence(hir: &Hir, nameres: &NameResolutions) -> Vec<String> {
-        let mut checker = Typeck::new(hir, nameres);
+    fn coherence(hir: &Hir) -> Vec<String> {
+        let mut checker = Typeck::new(hir);
         checker.collect_module(hir.root_id());
         checker.build_impl_index();
         DiagCtx::clear();
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn implementing_one_trait_twice_for_one_type_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }
@@ -245,7 +245,7 @@ mod tests {
         );
 
         assert_eq!(
-            coherence(&hir, &nameres),
+            coherence(&hir),
             [
                 "conflicting implementations of trait `Show` for type `Foo`",
                 // The same pair collides on `show` as well, which is check 2 speaking.
@@ -258,14 +258,14 @@ mod tests {
     /// which is what has to change, and the earlier one it collides with.
     #[test]
     fn a_conflict_points_at_both_blocks() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Marker {}
              struct Foo {}
              extend Foo with Marker {}
              extend Foo with Marker {}",
         );
 
-        let mut checker = Typeck::new(&hir, &nameres);
+        let mut checker = Typeck::new(&hir);
         checker.collect_module(hir.root_id());
         checker.build_impl_index();
         DiagCtx::clear();
@@ -290,7 +290,7 @@ mod tests {
     /// two checks are separate.
     #[test]
     fn implementing_a_method_less_trait_twice_is_still_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Marker {}
              struct Foo {}
              extend Foo with Marker {}
@@ -298,7 +298,7 @@ mod tests {
         );
 
         assert_eq!(
-            coherence(&hir, &nameres),
+            coherence(&hir),
             ["conflicting implementations of trait `Marker` for type `Foo`"]
         );
     }
@@ -307,7 +307,7 @@ mod tests {
     /// literally a duplicate of the other.
     #[test]
     fn a_generic_impl_conflicts_with_a_concrete_one() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Marker {}
              struct Wrap<T> { inner: T }
              extend<T> Wrap<T> with Marker {}
@@ -315,26 +315,26 @@ mod tests {
         );
 
         assert_eq!(
-            coherence(&hir, &nameres),
+            coherence(&hir),
             ["conflicting implementations of trait `Marker` for type `Wrap<i32>`"]
         );
     }
 
     #[test]
     fn impls_for_disjoint_arguments_do_not_conflict() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Marker {}
              struct Wrap<T> { inner: T }
              extend Wrap<i32> with Marker {}
              extend Wrap<bool> with Marker {}",
         );
 
-        assert!(coherence(&hir, &nameres).is_empty());
+        assert!(coherence(&hir).is_empty());
     }
 
     #[test]
     fn impls_of_different_traits_for_one_type_do_not_conflict() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait A {}
              trait B {}
              struct Foo {}
@@ -342,12 +342,12 @@ mod tests {
              extend Foo with B {}",
         );
 
-        assert!(coherence(&hir, &nameres).is_empty());
+        assert!(coherence(&hir).is_empty());
     }
 
     #[test]
     fn one_trait_implemented_for_two_types_does_not_conflict() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Marker {}
              struct Foo {}
              struct Bar {}
@@ -355,21 +355,21 @@ mod tests {
              extend Bar with Marker {}",
         );
 
-        assert!(coherence(&hir, &nameres).is_empty());
+        assert!(coherence(&hir).is_empty());
     }
 
     /// Bounds are not consulted, so these conflict even though no type could pick the wrong one.
     /// Proving otherwise takes negative reasoning, and the help text says as much.
     #[test]
     fn a_conditional_impl_still_conflicts_with_a_concrete_one() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Marker {}
              struct Wrap<T> { inner: T }
              extend<T: Marker> Wrap<T> with Marker {}
              extend Wrap<i32> with Marker {}",
         );
 
-        assert_eq!(coherence(&hir, &nameres).len(), 1);
+        assert_eq!(coherence(&hir).len(), 1);
     }
 
     // -----------------------------------------------------------------
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn two_traits_declaring_one_method_name_conflict_for_a_type_implementing_both() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait A { fun size(&self); }
              trait B { fun size(&self); }
              struct Foo {}
@@ -387,7 +387,7 @@ mod tests {
         );
 
         assert_eq!(
-            coherence(&hir, &nameres),
+            coherence(&hir),
             ["the method `size` is defined more than once for type `Foo`"]
         );
     }
@@ -396,7 +396,7 @@ mod tests {
     /// makes every defaulted method available on the type, and so still collides.
     #[test]
     fn an_impl_supplying_only_defaults_still_collides() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait A { fun size(&self) {} }
              struct Foo {}
              extend Foo with A {}
@@ -404,14 +404,14 @@ mod tests {
         );
 
         assert_eq!(
-            coherence(&hir, &nameres),
+            coherence(&hir),
             ["the method `size` is defined more than once for type `Foo`"]
         );
     }
 
     #[test]
     fn an_inherent_method_conflicts_with_a_trait_method_of_the_same_name() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait A { fun size(&self); }
              struct Foo {}
              extend Foo with A { fun size(&self) {} }
@@ -419,45 +419,45 @@ mod tests {
         );
 
         assert_eq!(
-            coherence(&hir, &nameres),
+            coherence(&hir),
             ["the method `size` is defined more than once for type `Foo`"]
         );
     }
 
     #[test]
     fn two_inherent_blocks_with_different_method_names_do_not_conflict() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Foo {}
              extend Foo { fun a(&self) {} }
              extend Foo { fun b(&self) {} }",
         );
 
-        assert!(coherence(&hir, &nameres).is_empty());
+        assert!(coherence(&hir).is_empty());
     }
 
     /// Impls that cannot both apply to one type are never compared for method names, however
     /// many names they share.
     #[test]
     fn impls_for_disjoint_types_may_share_method_names() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Wrap<T> { inner: T }
              extend Wrap<i32> { fun size(&self) {} }
              extend Wrap<bool> { fun size(&self) {} }",
         );
 
-        assert!(coherence(&hir, &nameres).is_empty());
+        assert!(coherence(&hir).is_empty());
     }
 
     #[test]
     fn every_shared_method_name_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Foo {}
              extend Foo { fun a(&self) {} fun b(&self) {} }
              extend Foo { fun a(&self) {} fun b(&self) {} }",
         );
 
         assert_eq!(
-            coherence(&hir, &nameres),
+            coherence(&hir),
             [
                 "the method `a` is defined more than once for type `Foo`",
                 "the method `b` is defined more than once for type `Foo`",
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn a_program_with_no_extend_blocks_reports_nothing() {
-        let (hir, nameres) = resolve_src("struct Foo {}");
-        assert!(coherence(&hir, &nameres).is_empty());
+        let hir = resolve_src("struct Foo {}");
+        assert!(coherence(&hir).is_empty());
     }
 }

@@ -26,10 +26,10 @@ use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{
-    DefId, ExprKind, Hir, HirId, NameResolutions, Node, OwnerNode, StmtKind, VariantPayload,
+    DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, Res, StmtKind, VariantPayload,
 };
 use crate::langitems::LangItem;
-use crate::nameres::results::{PrimTy, ValueRes};
+use crate::nameres::PrimTy;
 use crate::typeck::display::DisplayCx;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::TraitRef;
@@ -50,10 +50,6 @@ pub mod unify;
 
 pub struct Typeck<'hir> {
     hir: &'hir Hir,
-
-    /// What every path in the program resolved to. Type lowering reads this instead of doing its
-    /// own name lookups -- see [`lower_ty`].
-    nameres: &'hir NameResolutions,
 
     /// Owns every type this pass builds. Handed back by [`check`] along with the results,
     /// since a [`Ty`] means nothing without it.
@@ -110,10 +106,9 @@ impl<'hir> Typeck<'hir> {
     /// A checker that has looked at nothing yet. Every stage below is driven from
     /// [`check`], which is what puts them in the right order; this exists so that a test can
     /// stop after any one of them.
-    pub fn new(hir: &'hir Hir, nameres: &'hir NameResolutions) -> Self {
+    pub fn new(hir: &'hir Hir) -> Self {
         Typeck {
             hir,
-            nameres,
             tcx: TyCtx::new(),
             types: TypeResolutions::new(),
             unifier: Unifier::new(),
@@ -489,14 +484,8 @@ impl<'hir> Typeck<'hir> {
                 let tys = elems.iter().map(|&elem| self.ty_of(elem)).collect();
                 self.tcx.mk_tuple(tys)
             }
-            ExprKind::Path(_) => {
-                let Some(res) = self.nameres.value(id) else {
-                    unreachable!(
-                        "every Path expr is resolved by name resolution before typeck runs"
-                    );
-                };
-
-                match res {
+            ExprKind::Path(path) => {
+                match path.res {
                     // A local's type was already recorded if it names a parameter
                     // (`collect_function`).
                     //
@@ -508,27 +497,32 @@ impl<'hir> Typeck<'hir> {
                     // unifying one use constrains the rest. Nothing ever *binds* that variable,
                     // so the local's type stays unknown -- this stands in for the missing
                     // inference rather than doing any of it.
-                    ValueRes::Local(local) => self.recorded_ty(local).unwrap_or_else(|| {
-                        let ty = self.tcx.next_ty_var();
-                        self.types.record(local, ty);
-                        ty
-                    }),
-                    ValueRes::SelfVal(self_param) => self
+                    Res::Local(Local::Param(local) | Local::Variable(local)) => {
+                        self.recorded_ty(local).unwrap_or_else(|| {
+                            let ty = self.tcx.next_ty_var();
+                            self.types.record(local, ty);
+                            ty
+                        })
+                    }
+                    Res::Local(Local::SelfParam(self_param)) => self
                         .recorded_ty(self_param)
                         .expect("collect_self_param always records the self parameter's type"),
-                    ValueRes::Def(def) => self
+                    Res::Function(def) => self
                         .recorded_ty_of_def(def)
                         .expect("collect_function always records a function's own signature"),
                     // Already reported by name resolution; staying quiet here keeps one mistake
                     // from producing a second diagnostic.
-                    ValueRes::Err => self.tcx.error(),
+                    Res::Err => self.tcx.error(),
 
-                    // A variant is reached through `.v`, which lowers to `ExprKind::Access`, not
-                    // through a path. Everything the type namespace can answer with is not in
-                    // `ValueRes` at all, so there is nothing further to rule out here.
-                    ValueRes::Variant(_) => {
-                        unreachable!("a variant is named through an Access, not a Path")
-                    }
+                    // Name resolution only ever resolves a value-position path to a local or a
+                    // function (see `SymbolTable::lookup_value_path`); a type, a module, or
+                    // `Self` can never come back from it. A variant is reached through `.v`,
+                    // which lowers to `ExprKind::Access`, not through a path, so it is not among
+                    // `Res`'s value-position answers either.
+                    Res::Type(_) | Res::Module(_) | Res::SelfTy(_) => unreachable!(
+                        "name resolution never resolves a value-position path to a type, a \
+                         module, or Self"
+                    ),
                 }
             }
             ExprKind::Unary { op, operand } => {
@@ -700,7 +694,7 @@ impl<'hir> Typeck<'hir> {
     ) -> Option<Ty> {
         // A lang item that failed to resolve was already reported by `langitems::collect`;
         // saying anything more here would be a second diagnostic for the same mistake.
-        let trait_def = self.nameres.lang_items().get(item)?;
+        let trait_def = self.hir.lang_items().get(item)?;
 
         let trait_ref = TraitRef {
             def: trait_def,
@@ -877,8 +871,8 @@ pub struct TypeckOutput {
 }
 
 /// Checks the whole program, as described in the [module docs](self).
-pub fn check(hir: &Hir, nameres: &NameResolutions) -> TypeckOutput {
-    let mut checker = Typeck::new(hir, nameres);
+pub fn check(hir: &Hir) -> TypeckOutput {
+    let mut checker = Typeck::new(hir);
     checker.collect_module(hir.root_id());
     checker.build_impl_index();
     checker.check_coherence();
@@ -897,18 +891,15 @@ pub fn check(hir: &Hir, nameres: &NameResolutions) -> TypeckOutput {
 mod tests {
     use super::*;
     use crate::diag::Severity;
-    use crate::nameres::results::PrimTy;
+    use crate::nameres::PrimTy;
     use crate::testing::{
         find_return, first_extend_method, first_function, first_struct, first_trait, resolve_src,
     };
 
     /// Builds a `Typeck` with every signature collected, ready for `check_stmt` to be called
     /// directly on one of `def_id`'s statements.
-    fn checker_with_signatures_collected<'hir>(
-        hir: &'hir Hir,
-        nameres: &'hir NameResolutions,
-    ) -> Typeck<'hir> {
-        let mut checker = Typeck::new(hir, nameres);
+    fn checker_with_signatures_collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
+        let mut checker = Typeck::new(hir);
         checker.collect_module(hir.root_id());
         checker
     }
@@ -916,11 +907,11 @@ mod tests {
     #[test]
     fn return_stmt_accepts_a_value_matching_the_return_type() {
         // `0`'s int-inference var unifies fine with the declared `i32` return type.
-        let (hir, nameres) = resolve_src("fun f() -> i32 { return 0; }");
+        let hir = resolve_src("fun f() -> i32 { return 0; }");
         let def_id = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def_id);
 
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         DiagCtx::clear();
         checker.check_stmt(stmt_id);
@@ -930,11 +921,11 @@ mod tests {
 
     #[test]
     fn return_stmt_rejects_a_value_not_matching_the_return_type() {
-        let (hir, nameres) = resolve_src("fun f() -> i32 { return true; }");
+        let hir = resolve_src("fun f() -> i32 { return true; }");
         let def_id = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def_id);
 
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         DiagCtx::clear();
         checker.check_stmt(stmt_id);
@@ -948,11 +939,11 @@ mod tests {
         // No `-> T` means the function returns `Unit`, so returning a `bool` from it is an
         // error. This used to lower to `Never` instead, which unifies with everything and so
         // accepted any returned value at all.
-        let (hir, nameres) = resolve_src("fun f() { return true; }");
+        let hir = resolve_src("fun f() { return true; }");
         let def_id = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def_id);
 
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         DiagCtx::clear();
         checker.check_stmt(stmt_id);
@@ -966,11 +957,11 @@ mod tests {
     /// functions are individually valid, and checking them together must stay that way.
     #[test]
     fn two_functions_with_no_return_type_do_not_interfere() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "fun f() -> bool { return true; }
              fun g() -> i32 { return 1; }",
         );
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         DiagCtx::clear();
         checker.check_module(hir.root_id());
@@ -985,11 +976,8 @@ mod tests {
     /// A checker with signatures collected and the impl index built, ready to answer trait
     /// questions -- what [`Typeck::check_operator_trait`] needs, since it's reached through
     /// [`Typeck::implements`] rather than the plain unifier.
-    fn checker_with_impls_built<'hir>(
-        hir: &'hir Hir,
-        nameres: &'hir NameResolutions,
-    ) -> Typeck<'hir> {
-        let mut checker = checker_with_signatures_collected(hir, nameres);
+    fn checker_with_impls_built<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
+        let mut checker = checker_with_signatures_collected(hir);
         checker.build_impl_index();
         checker
     }
@@ -1032,7 +1020,7 @@ mod tests {
     /// type to project.
     #[test]
     fn binary_add_on_a_struct_with_an_add_impl_resolves_through_the_solver() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "module core::ops;
 
              public trait Add {
@@ -1057,7 +1045,7 @@ mod tests {
             matches!(def, OwnerNode::Function(_))
         });
         let (stmt_id, _expr_id) = find_return(&hir, f);
-        let mut checker = checker_with_impls_built(&hir, &nameres);
+        let mut checker = checker_with_impls_built(&hir);
 
         DiagCtx::clear();
         checker.check_stmt(stmt_id);
@@ -1069,7 +1057,7 @@ mod tests {
     /// doesn't implement `Add`, the same way an unsatisfied bound would.
     #[test]
     fn binary_add_on_a_struct_with_no_add_impl_is_rejected() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "module core::ops;
 
              public trait Add {
@@ -1088,7 +1076,7 @@ mod tests {
             matches!(def, OwnerNode::Function(_))
         });
         let (stmt_id, _expr_id) = find_return(&hir, f);
-        let mut checker = checker_with_impls_built(&hir, &nameres);
+        let mut checker = checker_with_impls_built(&hir);
 
         DiagCtx::clear();
         checker.check_stmt(stmt_id);
@@ -1102,10 +1090,10 @@ mod tests {
     /// fixture with no core library -- and so no lang items -- in sight.
     #[test]
     fn binary_add_on_primitives_bypasses_the_solver() {
-        let (hir, nameres) = resolve_src("fun f() -> i32 { return 1 + 2; }");
+        let hir = resolve_src("fun f() -> i32 { return 1 + 2; }");
         let def_id = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_impls_built(&hir, &nameres);
+        let mut checker = checker_with_impls_built(&hir);
 
         DiagCtx::clear();
         checker.check_stmt(stmt_id);
@@ -1118,10 +1106,10 @@ mod tests {
     /// rather than the variable that was originally recorded.
     #[test]
     fn a_type_read_back_after_unification_is_the_unified_type() {
-        let (hir, nameres) = resolve_src("fun f() -> i32 { return 1; }");
+        let hir = resolve_src("fun f() -> i32 { return 1; }");
         let def_id = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         // An unsuffixed literal starts out as an integer inference variable.
         let recorded = checker.ty_of(expr_id);
@@ -1143,10 +1131,10 @@ mod tests {
     /// gets the table and the `TyCtx`, but no union-find -- reads settled types.
     #[test]
     fn writeback_leaves_no_unresolved_variables_behind() {
-        let (hir, nameres) = resolve_src("fun f() -> i32 { return 1; }");
+        let hir = resolve_src("fun f() -> i32 { return 1; }");
         let def_id = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         checker.check_function(def_id);
 
@@ -1163,10 +1151,10 @@ mod tests {
 
     #[test]
     fn bool_literal_checks_to_the_bool_primitive() {
-        let (hir, nameres) = resolve_src("fun f() -> bool { return true; }");
+        let hir = resolve_src("fun f() -> bool { return true; }");
         let def_id = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         let ty = checker.ty_of(expr_id);
         assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::Bool));
@@ -1175,10 +1163,10 @@ mod tests {
 
     #[test]
     fn char_literal_checks_to_the_char_primitive() {
-        let (hir, nameres) = resolve_src("fun f() -> char { return 'a'; }");
+        let hir = resolve_src("fun f() -> char { return 'a'; }");
         let def_id = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         let ty = checker.ty_of(expr_id);
         assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::Char));
@@ -1186,10 +1174,10 @@ mod tests {
 
     #[test]
     fn unsuffixed_int_literal_checks_to_an_int_inference_var() {
-        let (hir, nameres) = resolve_src("fun f() -> i32 { return 0; }");
+        let hir = resolve_src("fun f() -> i32 { return 0; }");
         let def_id = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         let ty = checker.ty_of(expr_id);
         assert!(matches!(
@@ -1200,10 +1188,10 @@ mod tests {
 
     #[test]
     fn unsuffixed_float_literal_checks_to_a_float_inference_var() {
-        let (hir, nameres) = resolve_src("fun f() -> f64 { return 0.0; }");
+        let hir = resolve_src("fun f() -> f64 { return 0.0; }");
         let def_id = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         let ty = checker.ty_of(expr_id);
         assert!(matches!(
@@ -1214,10 +1202,10 @@ mod tests {
 
     #[test]
     fn tuple_expr_checks_to_a_tuple_of_its_elements_types() {
-        let (hir, nameres) = resolve_src("fun f() -> (bool, char) { return (true, 'a'); }");
+        let hir = resolve_src("fun f() -> (bool, char) { return (true, 'a'); }");
         let def_id = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         let ty = checker.ty_of(expr_id);
         let TyKind::Tuple(elems) = checker.tcx.kind(ty) else {
@@ -1242,10 +1230,10 @@ mod tests {
 
     #[test]
     fn path_to_a_parameter_checks_to_the_parameters_type() {
-        let (hir, nameres) = resolve_src("fun f(x: i32) -> i32 { return x; }");
+        let hir = resolve_src("fun f(x: i32) -> i32 { return x; }");
         let def_id = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def_id);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         let ty = checker.ty_of(expr_id);
         assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::I32));
@@ -1253,7 +1241,7 @@ mod tests {
 
     #[test]
     fn path_to_a_function_checks_to_its_signature() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "fun g() -> bool { return true; }
              fun f() -> bool { return g; }",
         );
@@ -1269,7 +1257,7 @@ mod tests {
             .find(|&item| matches!(hir.def(item), OwnerNode::Function(_)) && item != g_def)
             .expect("fixture declares a second top-level function");
         let (_stmt_id, expr_id) = find_return(&hir, f_def);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         let ty = checker.ty_of(expr_id);
         let TyKind::Fun { params, ret } = checker.tcx.kind(ty) else {
@@ -1284,13 +1272,13 @@ mod tests {
 
     #[test]
     fn path_to_self_checks_to_the_self_parameters_type() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct S {}
              extend S { fun m(&self) -> i32 { return self; } }",
         );
         let method_def = first_extend_method(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, method_def);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
 
         let ty = checker.ty_of(expr_id);
         assert_eq!(checker.cx().show(ty).to_string(), "&S");
@@ -1302,54 +1290,54 @@ mod tests {
 
     #[test]
     fn primitive_displays_as_its_keyword() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_prim(PrimTy::I32);
         assert_eq!(checker.cx().show(ty).to_string(), "i32");
     }
 
     #[test]
     fn any_ty_var_displays_as_underscore() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.next_ty_var();
         assert_eq!(checker.cx().show(ty).to_string(), "_");
     }
 
     #[test]
     fn int_var_displays_as_integer_placeholder() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.next_int_var();
         assert_eq!(checker.cx().show(ty).to_string(), "{integer}");
     }
 
     #[test]
     fn float_var_displays_as_float_placeholder() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.next_float_var();
         assert_eq!(checker.cx().show(ty).to_string(), "{float}");
     }
 
     #[test]
     fn never_displays_as_bang() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let checker = checker_with_signatures_collected(&hir);
         assert_eq!(checker.cx().show(checker.tcx.never()).to_string(), "!");
     }
 
     #[test]
     fn unit_displays_as_empty_parens() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let checker = checker_with_signatures_collected(&hir);
         assert_eq!(checker.cx().show(checker.tcx.unit()).to_string(), "()");
     }
 
     #[test]
     fn unit_is_a_singleton_distinct_from_the_empty_tuple() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let unit = checker.tcx.unit();
         let empty_tuple = checker.tcx.mk_tuple(vec![]);
         assert_ne!(unit, empty_tuple);
@@ -1362,8 +1350,8 @@ mod tests {
 
     #[test]
     fn error_displays_as_placeholder() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let checker = checker_with_signatures_collected(&hir);
         assert_eq!(
             checker.cx().show(checker.tcx.error()).to_string(),
             "{error}"
@@ -1372,8 +1360,8 @@ mod tests {
 
     #[test]
     fn immutable_ref_displays_with_ampersand() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_ref(bool_ty, Mutability::Immutable);
         assert_eq!(checker.cx().show(ty).to_string(), "&bool");
@@ -1381,8 +1369,8 @@ mod tests {
 
     #[test]
     fn mutable_ref_displays_with_ampersand_mut() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_ref(bool_ty, Mutability::Mutable);
         assert_eq!(checker.cx().show(ty).to_string(), "&mut bool");
@@ -1390,8 +1378,8 @@ mod tests {
 
     #[test]
     fn any_ty_displays_with_any_keyword() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_any(bool_ty);
         assert_eq!(checker.cx().show(ty).to_string(), "any bool");
@@ -1399,16 +1387,16 @@ mod tests {
 
     #[test]
     fn empty_tuple_displays_as_empty_parens() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_tuple(vec![]);
         assert_eq!(checker.cx().show(ty).to_string(), "()");
     }
 
     #[test]
     fn one_element_tuple_displays_with_a_trailing_comma() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_tuple(vec![bool_ty]);
         assert_eq!(checker.cx().show(ty).to_string(), "(bool,)");
@@ -1416,8 +1404,8 @@ mod tests {
 
     #[test]
     fn multi_element_tuple_displays_comma_separated() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let char_ty = checker.tcx.mk_prim(PrimTy::Char);
         let ty = checker.tcx.mk_tuple(vec![bool_ty, char_ty]);
@@ -1426,8 +1414,8 @@ mod tests {
 
     #[test]
     fn array_displays_with_brackets_and_a_placeholder_length() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
         let ty = checker.tcx.mk_array(i32_ty, None);
         assert_eq!(checker.cx().show(ty).to_string(), "[i32; _]");
@@ -1435,16 +1423,16 @@ mod tests {
 
     #[test]
     fn fun_with_no_params_or_ret_displays_as_bare_fun() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_fun(vec![], None);
         assert_eq!(checker.cx().show(ty).to_string(), "fun()");
     }
 
     #[test]
     fn fun_with_params_and_ret_displays_with_arrow() {
-        let (hir, nameres) = resolve_src("fun f() {}");
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let hir = resolve_src("fun f() {}");
+        let mut checker = checker_with_signatures_collected(&hir);
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_fun(vec![i32_ty, i32_ty], Some(bool_ty));
@@ -1453,22 +1441,22 @@ mod tests {
 
     #[test]
     fn generic_displays_with_its_declared_name() {
-        let (hir, nameres) = resolve_src("struct Wrap<T> { inner: T }");
+        let hir = resolve_src("struct Wrap<T> { inner: T }");
         let def_id = first_struct(&hir);
         let OwnerNode::Struct(s) = hir.def(def_id) else {
             unreachable!("first_struct only returns a struct's DefId");
         };
         let generic_id = s.generics[0];
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_generic(generic_id);
         assert_eq!(checker.cx().show(ty).to_string(), "T");
     }
 
     #[test]
     fn adt_displays_with_its_name_and_generic_args() {
-        let (hir, nameres) = resolve_src("struct Wrap<T> { inner: T }");
+        let hir = resolve_src("struct Wrap<T> { inner: T }");
         let def_id = first_struct(&hir);
-        let checker = checker_with_signatures_collected(&hir, &nameres);
+        let checker = checker_with_signatures_collected(&hir);
 
         let ty = checker
             .types
@@ -1479,9 +1467,9 @@ mod tests {
 
     #[test]
     fn adt_with_no_generics_displays_with_just_its_name() {
-        let (hir, nameres) = resolve_src("struct Unit {}");
+        let hir = resolve_src("struct Unit {}");
         let def_id = first_struct(&hir);
-        let checker = checker_with_signatures_collected(&hir, &nameres);
+        let checker = checker_with_signatures_collected(&hir);
 
         let ty = checker
             .types
@@ -1492,9 +1480,9 @@ mod tests {
 
     #[test]
     fn self_param_displays_as_self() {
-        let (hir, nameres) = resolve_src("trait Greet { fun hello(); }");
+        let hir = resolve_src("trait Greet { fun hello(); }");
         let def_id = first_trait(&hir);
-        let checker = checker_with_signatures_collected(&hir, &nameres);
+        let checker = checker_with_signatures_collected(&hir);
 
         let ty = checker
             .types
@@ -1505,9 +1493,9 @@ mod tests {
 
     #[test]
     fn dyn_displays_with_dyn_keyword_and_trait_name() {
-        let (hir, nameres) = resolve_src("trait Greet { fun hello(); }");
+        let hir = resolve_src("trait Greet { fun hello(); }");
         let def_id = first_trait(&hir);
-        let mut checker = checker_with_signatures_collected(&hir, &nameres);
+        let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_dyn(def_id, vec![]);
         assert_eq!(checker.cx().show(ty).to_string(), "dyn Greet");
     }
@@ -1516,7 +1504,7 @@ mod tests {
     /// rather than in a `match` somewhere in the checker.
     #[test]
     fn a_mismatch_names_both_types_as_the_user_wrote_them() {
-        let (hir, _nameres) = resolve_src("fun f() {}");
+        let hir = resolve_src("fun f() {}");
         let mut tcx = TyCtx::new();
         let (expected, found) = (tcx.mk_prim(PrimTy::I32), tcx.mk_prim(PrimTy::Bool));
         let cx = DisplayCx::new(&hir, &tcx);
@@ -1530,7 +1518,7 @@ mod tests {
 
     #[test]
     fn an_int_var_mismatch_says_an_integer_type_was_expected() {
-        let (hir, _nameres) = resolve_src("fun f() {}");
+        let hir = resolve_src("fun f() {}");
         let mut tcx = TyCtx::new();
         let var = tcx.next_int_var();
         let found = tcx.mk_prim(PrimTy::Bool);

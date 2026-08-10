@@ -196,7 +196,7 @@ impl SrcCollector {
     }
 
     /// Registers every core library file with the [`SrcMap`], in the order [`CORE_FILES`]
-    /// lists them.
+    /// lists them, and returns exactly the [`SrcFile`]s this call registered.
     ///
     /// Phi has no notion of a separately compiled library yet, so `core` is compiled into the
     /// same unit as the user's own files, from source, on every build. Its files carry
@@ -211,10 +211,25 @@ impl SrcCollector {
     /// Which items `core` is expected to declare is not recorded here but in
     /// [`crate::langitems`], which resolves each one to its `DefId` after name resolution has
     /// built `core`'s namespace.
-    pub fn collect_core() {
-        for &(name, source) in CORE_FILES {
-            SrcMap::add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
-        }
+    ///
+    /// The return value identifies "the files just registered" by the files themselves, not by
+    /// a before/after count of [`SrcMap::files`] -- `SrcMap` is a process-wide map behind a
+    /// shared lock (unlike `Interner` and `DiagCtx`, which are thread-local), so under a
+    /// multi-threaded test runner some other thread can register a file of its own in between
+    /// two calls here. A length snapshot taken before this call and compared to one taken after
+    /// would be racy: it can capture a file this call never registered. Each `add_file` call
+    /// instead reports back exactly the offset -- and so exactly the file -- it created, which
+    /// stays correct no matter what any other thread does concurrently.
+    pub fn collect_core() -> Vec<&'static SrcFile> {
+        CORE_FILES
+            .iter()
+            .map(|&(name, source)| {
+                let offset =
+                    SrcMap::add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
+                SrcMap::file_containing(offset)
+                    .expect("the file this call just registered at `offset`")
+            })
+            .collect()
     }
 
     fn visit_dir(dir: &Path) -> io::Result<()> {

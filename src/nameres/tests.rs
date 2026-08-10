@@ -1,212 +1,1228 @@
-//! Tests that the resolver's traversal reaches every part of the tree, and that what it finds
-//! there resolves to the right declaration.
-//!
-//! The bug these were written for is the one this walk is structurally prone to: every child
-//! reference in the HIR is a bare [`HirId`], so handing an `if`'s `else_block` -- a
-//! [`Node::Block`](crate::hir::Node::Block) -- to `resolve_expr` instead of `resolve_block`
-//! compiles cleanly and only fails at run time. A traversal that never reaches a branch, or
-//! reaches it through the wrong door, is invisible unless a test names something inside that
-//! branch and checks the answer, which is what each test below does.
+use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
-use crate::hir::{DefId, ExprKind, Hir, HirId, Node, OwnerNode};
-use crate::nameres::results::{NameResolutions, ValueRes};
-use crate::testing::{first_function, resolve_src};
+use crate::ast::{
+    Ast, Expr, ExprKind, Function, Ident, Item, ItemKind, NodeId, ParsedSrcFile, Path, Payload,
+    PayloadField, StmtKind,
+};
+use crate::diag::{DiagCtx, Diagnostic};
+use crate::driver::emit_debug;
+use crate::driver::source::{FileOrigin, SrcCollector, SrcMap, SrcSpan};
+use crate::lexer::Lexer;
+use crate::nameres::res::PrimTy;
+use crate::nameres::res::{Local, Res, TyDef, Type};
+use crate::nameres::resolve;
+use crate::nameres::results::NameResolutions;
+use crate::nameres::symbol_table::SymbolTable;
+use crate::parser::Parser;
 
-/// Every expression in `def`'s arena that is a bare, single-segment path naming `name`.
-///
-/// Walking the arena directly rather than the tree is deliberate: a test asserting that the
-/// traversal reaches a branch cannot use that same traversal to find what to assert on. The arena
-/// holds every node the owner has, reachable or not.
-fn refs_to(hir: &Hir, def: DefId, name: &str) -> Vec<HirId> {
-    let symbol = Interner::intern(name);
-    hir.arena(def)
-        .nodes
-        .iter()
-        .filter_map(|node| match node {
-            Node::Expr(expr) => match &expr.kind {
-                ExprKind::Path(path) => match path.segments.as_slice() {
-                    [segment] if segment.text == symbol => Some(expr.hir_id),
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect()
-}
-
-/// The `HirId` of the parameter `name` in `def`'s parameter list.
-fn param_named(hir: &Hir, def: DefId, name: &str) -> HirId {
-    let OwnerNode::Function(function) = hir.def(def) else {
-        panic!("fixture item is not a function");
-    };
-    let symbol = Interner::intern(name);
-    *function
-        .params
-        .iter()
-        .find(|&&id| hir.param(id).name.text == symbol)
-        .unwrap_or_else(|| panic!("fixture function declares no parameter `{name}`"))
-}
-
-/// Asserts that the sole reference to `name` in the fixture's only function resolved to that
-/// function's parameter of the same name.
-///
-/// "Sole" is asserted too: if the resolver had skipped the branch the reference sits in, the
-/// lookup would simply be absent, and an assertion that quietly passes over an empty set would
-/// be exactly the wrong shape for a test about a traversal that panics or misses nodes.
-fn assert_names_param(hir: &Hir, nameres: &NameResolutions, def: DefId, name: &str) {
-    let refs = refs_to(hir, def, name);
-    assert_eq!(refs.len(), 1, "expected exactly one reference to `{name}`");
-    let param = param_named(hir, def, name);
-
-    match nameres.value(refs[0]) {
-        Some(ValueRes::Local(id)) if id == param => {}
-        other => panic!("`{name}` resolved to {other:?}, expected ValueRes::Local({param:?})"),
+/// Builds an `Ident` naming `text`, with a throwaway span -- for tests exercising the scope
+/// stacks, where the span is never inspected.
+fn ident(text: &str) -> Ident {
+    Ident {
+        text: Interner::intern(text),
+        span: SrcSpan::new(0, 1),
     }
 }
 
-/// The only function the fixture declares.
-fn only_function(hir: &Hir) -> DefId {
-    let items = &hir.root().items;
-    assert_eq!(items.len(), 1, "fixture declares more than one item");
-    items[0]
+// -----------------------------------------------------------------
+// Driving the parser, for `SymbolTable::collect` tests
+// -----------------------------------------------------------------
+
+/// Lexes and parses `src` into a [`ParsedSrcFile`], asserting no diagnostics were raised.
+/// `DiagCtx` and `Interner` are *not* cleared here -- callers building an `Ast` out of several
+/// files need each one parsed against the same interner and source map.
+fn parse_one(src: &str) -> ParsedSrcFile {
+    let chars: Vec<char> = src.chars().collect();
+    let offset = SrcMap::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
+    let tokens = Lexer::new(&chars, offset).tokenize();
+    Parser::new().parse(&tokens, offset)
 }
 
-/// The crash this file exists for. Lowering wraps whatever follows `else` in a block, so the
-/// `else_block` field names a `Node::Block`; resolving it as an expression panicked before it
-/// ever got as far as `b`.
-#[test]
-fn if_else_resolves_names_in_both_branches() {
-    let (hir, nameres) = resolve_src(
-        "fun f(a: i32, b: i32) -> i32 {
-             if true { a } else { b }
-         }",
-    );
-    let def = only_function(&hir);
-
-    assert_names_param(&hir, &nameres, def, "a");
-    assert_names_param(&hir, &nameres, def, "b");
+/// Lexes, parses, and assembles `src` as a single-file `Ast`, asserting no diagnostics were
+/// raised along the way.
+fn ast_from(src: &str) -> Ast {
+    ast_from_files(&[src])
 }
 
-/// `else if` reaches the same field by a different route: the `else` block lowering synthesizes
-/// holds a nested `If` as its tail expression, so the resolver has to descend a block, an
-/// expression, and a block again to reach the last branch.
-#[test]
-fn else_if_chain_resolves_names_in_every_branch() {
-    let (hir, nameres) = resolve_src(
-        "fun f(a: i32, b: i32, c: i32) -> i32 {
-             if true { a } else if false { b } else { c }
-         }",
-    );
-    let def = only_function(&hir);
-
-    assert_names_param(&hir, &nameres, def, "a");
-    assert_names_param(&hir, &nameres, def, "b");
-    assert_names_param(&hir, &nameres, def, "c");
-}
-
-/// `if let ... else` never reaches `ExprKind::If` at all -- lowering turns it into a `Match` whose
-/// wildcard arm holds the `else` block -- but it routes through the same `lower_expr_as_block`, so
-/// it is worth pinning that the arm's block is walked as a block here too.
-#[test]
-fn if_let_with_else_resolves_names_in_both_branches() {
-    let (hir, nameres) = resolve_src(
-        "fun f(a: i32, b: i32) -> i32 {
-             if let .some(x) = a { x } else { b }
-         }",
-    );
-    let def = only_function(&hir);
-
-    // `a` is the scrutinee rather than a branch, but it shares the walk, so it is checked too.
-    assert_names_param(&hir, &nameres, def, "a");
-    assert_names_param(&hir, &nameres, def, "b");
-}
-
-/// A binding the matched arm's pattern introduces has to be visible in that arm's block. This is
-/// the counterpart of the test above: it checks the *other* arm of the same desugaring.
-#[test]
-fn if_let_binding_is_visible_in_the_matched_branch() {
-    let (hir, nameres) = resolve_src(
-        "fun f(a: i32, b: i32) -> i32 {
-             if let .some(x) = a { x } else { b }
-         }",
-    );
-    let def = only_function(&hir);
-
-    let refs = refs_to(&hir, def, "x");
-    assert_eq!(refs.len(), 1, "expected exactly one reference to `x`");
+/// Lexes, parses, and assembles `sources` -- one `Ast` built out of several files, the way a
+/// real build combines them -- asserting no diagnostics were raised along the way.
+fn ast_from_files(sources: &[&str]) -> Ast {
+    DiagCtx::clear();
+    Interner::clear();
+    let files: Vec<ParsedSrcFile> = sources.iter().map(|src| parse_one(src)).collect();
+    let diagnostics = DiagCtx::diagnostics();
     assert!(
-        matches!(nameres.value(refs[0]), Some(ValueRes::Local(_))),
-        "`x` did not resolve to the binding its pattern introduces"
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {sources:?}: {diagnostics:?}"
     );
+    Ast::new(files)
+}
+
+/// Builds `src`'s `Ast` and runs [`SymbolTable::collect`] over it, returning the table alongside
+/// every diagnostic the collect walk itself raised (parsing is asserted clean by [`ast_from`],
+/// so nothing from that stage leaks in).
+fn collect_with_diags(src: &str) -> (SymbolTable<'_>, Vec<Diagnostic>) {
+    fn inner(ast: &Ast) -> (SymbolTable<'_>, Vec<Diagnostic>) {
+        DiagCtx::clear();
+        let table = SymbolTable::collect(ast);
+        (table, DiagCtx::diagnostics())
+    }
+    // `ast_from` isn't inlined into this function because the `Ast` it returns must outlive the
+    // `SymbolTable<'_>` borrowing it, and a local behind `collect_with_diags`'s own stack frame
+    // can't do that -- so this leaks it, which is fine for a test helper.
+    let ast: &'static Ast = Box::leak(Box::new(ast_from(src)));
+    inner(ast)
 }
 
 // -----------------------------------------------------------------
-// Subtrees the hand-written walk used to skip
+// Driving the parser, for `SymbolTable::new` tests
 // -----------------------------------------------------------------
 
-/// Every `Node::Ty` in `def`'s arena that is a single-segment path naming `name`.
-fn ty_paths_to(hir: &Hir, def: DefId, name: &str) -> Vec<HirId> {
-    let symbol = Interner::intern(name);
-    hir.arena(def)
-        .nodes
+/// Builds `ast`'s `SymbolTable` via [`SymbolTable::new`], returning it alongside every
+/// diagnostic construction raised.
+fn new_with_diags(ast: &Ast) -> (SymbolTable<'_>, Vec<Diagnostic>) {
+    DiagCtx::clear();
+    let table = SymbolTable::new(ast);
+    (table, DiagCtx::diagnostics())
+}
+
+/// Same as [`new_with_diags`], but builds the `Ast` out of `sources` first -- see
+/// [`ast_from_files`] -- leaking it for the same reason [`collect_with_diags`] does.
+fn new_with_diags_from(sources: &[&str]) -> (SymbolTable<'static>, Vec<Diagnostic>) {
+    let ast: &'static Ast = Box::leak(Box::new(ast_from_files(sources)));
+    new_with_diags(ast)
+}
+
+/// Builds an `Ast` containing the real core library, the way a full build does -- see
+/// [`SrcCollector::collect_core`] -- so a [`SymbolTable`] built over it has a `core::prelude`
+/// to find.
+///
+/// Only the files this call itself registers are lexed and parsed, not the whole process-wide
+/// [`SrcMap`]: other tests may already have registered files of their own by the time this
+/// runs, or concurrently while it runs -- `SrcMap` sits behind a single process-wide lock,
+/// unlike the thread-local `Interner` and `DiagCtx`, so a length snapshot taken before and after
+/// `collect_core` would be racy under the default multi-threaded test runner. `collect_core`
+/// sidesteps that by handing back exactly the [`SrcFile`]s it registered, identified by the
+/// files themselves rather than by a before/after count -- see its doc comment. Re-parsing any
+/// file besides those five would raise diagnostics -- duplicate declarations, mostly -- that
+/// belong to unrelated tests, not to this `Ast`.
+fn ast_with_core() -> Ast {
+    DiagCtx::clear();
+    Interner::clear();
+    let core_files = SrcCollector::collect_core();
+    let files: Vec<ParsedSrcFile> = core_files
         .iter()
-        .filter_map(|node| match node {
-            Node::Ty(ty) => match &ty.kind {
-                crate::hir::TyKind::Path { path, .. } => match path.segments.as_slice() {
-                    [segment] if segment.text == symbol => Some(ty.hir_id),
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
+        .map(|file| {
+            let tokens = Lexer::new(&file.content, file.global_offset).tokenize();
+            Parser::new().parse(&tokens, file.global_offset)
         })
+        .collect();
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics loading the core library: {diagnostics:?}"
+    );
+    Ast::new(files)
+}
+
+/// Runs `f` against a freshly cleared `DiagCtx`, returning its result alongside every
+/// diagnostic `f` raised.
+///
+/// Mirrors [`new_with_diags`]'s clear-then-collect pattern, but for a single call rather than
+/// a whole `SymbolTable::new`, so a lookup entry point's own diagnostics can be checked in
+/// isolation.
+fn with_diags<T>(f: impl FnOnce() -> T) -> (T, Vec<Diagnostic>) {
+    DiagCtx::clear();
+    let result = f();
+    (result, DiagCtx::diagnostics())
+}
+
+/// Filters out "missing lang item" diagnostics -- `resolve` (unlike `SymbolTable::new` alone)
+/// always runs `langitems::collect_ast`, which reports one for every lang item the core library
+/// would declare, and none of the fixtures below build a unit with a core library in it. That
+/// noise is expected and unrelated to what these tests check.
+fn non_lang_item_diags(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
+    diags
+        .iter()
+        .filter(|d| !d.message.contains("missing lang item"))
         .collect()
 }
 
-/// A `let`'s type annotation is a subtree of the statement, not of its initializer, and the
-/// hand-written walk destructured `StmtKind::Let` with a `..` that swallowed it -- so the
-/// annotation got no resolution at all and type lowering silently produced `TyKind::Error`.
-#[test]
-fn a_let_annotation_is_resolved() {
-    let (hir, nameres) = resolve_src("struct S {} fun f() { let x: S = g(); }");
-    let def = first_function(&hir);
-    let annotations = ty_paths_to(&hir, def, "S");
-    assert_eq!(annotations.len(), 1, "fixture writes `S` once, in the let");
-    assert!(
-        nameres.ty(annotations[0]).is_some(),
-        "the let's type annotation was never resolved"
-    );
+fn path(segments: &[&str]) -> Path {
+    let span = SrcSpan::new(0, 1);
+    Path {
+        segments: segments
+            .iter()
+            .map(|s| Ident {
+                text: Interner::intern(s),
+                span,
+            })
+            .collect(),
+        span,
+    }
 }
 
-/// The `else` block of a `let ... else` is executable code, and was never walked, so every name
-/// inside one went unresolved.
 #[test]
-fn a_let_else_block_is_resolved() {
-    let (hir, nameres) = resolve_src("fun f(x: i32) { let y = g() else { h(x); }; }");
-    let def = first_function(&hir);
-    let refs = refs_to(&hir, def, "x");
+fn get_returns_the_entry_matching_the_path() {
+    let mut r = NameResolutions::new();
+    let owner = NodeId::next();
+    let target = NodeId::next();
+    r.record(owner, path(&["Vec"]), Res::Err);
+    r.record(owner, path(&["Show"]), Res::Local(Local::Param(target)));
+
     assert_eq!(
-        refs.len(),
-        1,
-        "fixture names `x` once, inside the else block"
+        r.get(owner, &path(&["Show"])),
+        Some(Res::Local(Local::Param(target)))
     );
+    assert_eq!(r.get(owner, &path(&["Vec"])), Some(Res::Err));
+}
+
+#[test]
+fn get_is_none_for_a_path_the_node_does_not_own() {
+    let mut r = NameResolutions::new();
+    let owner = NodeId::next();
+    r.record(owner, path(&["Vec"]), Res::Err);
+    assert_eq!(r.get(owner, &path(&["Show"])), None);
+}
+
+#[test]
+fn get_is_none_for_a_node_with_no_entries() {
+    let r = NameResolutions::new();
+    assert_eq!(r.get(NodeId::next(), &path(&["Vec"])), None);
+}
+
+#[test]
+fn entries_are_returned_in_the_order_recorded() {
+    let mut r = NameResolutions::new();
+    let owner = NodeId::next();
+    r.record(owner, path(&["a"]), Res::Err);
+    r.record(owner, path(&["b"]), Res::Err);
+    let got: Vec<_> = r.entries(owner).iter().map(|(p, _)| p.clone()).collect();
+    assert_eq!(got, vec![path(&["a"]), path(&["b"])]);
+}
+
+#[test]
+fn entries_is_empty_for_an_unrecorded_node() {
+    let r = NameResolutions::new();
+    assert!(r.entries(NodeId::next()).is_empty());
+}
+
+/// `paths` inlines two entries before spilling to the heap (see the `SmallVec<[_; 2]>` doc
+/// comment on `NameResolutions::paths`). A third entry on one node exercises that spill, and
+/// this confirms it isn't dropped in the process.
+#[test]
+fn a_node_with_three_recorded_paths_retrieves_all_three() {
+    let mut r = NameResolutions::new();
+    let owner = NodeId::next();
+    r.record(owner, path(&["a"]), Res::Err);
+    r.record(owner, path(&["b"]), Res::Err);
+    r.record(owner, path(&["c"]), Res::Err);
+
+    assert_eq!(r.get(owner, &path(&["a"])), Some(Res::Err));
+    assert_eq!(r.get(owner, &path(&["b"])), Some(Res::Err));
+    assert_eq!(r.get(owner, &path(&["c"])), Some(Res::Err));
+
+    let got: Vec<_> = r.entries(owner).iter().map(|(p, _)| p.clone()).collect();
+    assert_eq!(got, vec![path(&["a"]), path(&["b"]), path(&["c"])]);
+}
+
+// -----------------------------------------------------------------
+// `SymbolTable::collect`
+// -----------------------------------------------------------------
+
+#[test]
+fn collect_puts_a_function_in_the_value_namespace() {
+    let ast = ast_from("fun f() {}");
+    let table = SymbolTable::collect(&ast);
     assert!(
-        matches!(nameres.value(refs[0]), Some(ValueRes::Local(_))),
-        "`x` inside the let-else block was never resolved"
+        table
+            .lookup_function(ast.root_id(), Interner::intern("f"))
+            .is_some()
     );
 }
 
-/// A `with` binding's annotation was skipped for the same reason a `let`'s was.
 #[test]
-fn a_with_lend_annotation_is_resolved() {
-    let (hir, nameres) = resolve_src("struct S {} fun f() { with a: S = g() { h(); } }");
-    let def = first_function(&hir);
-    let annotations = ty_paths_to(&hir, def, "S");
-    assert_eq!(annotations.len(), 1, "fixture writes `S` once, in the lend");
+fn collect_puts_a_struct_in_the_type_namespace() {
+    let ast = ast_from("struct S {}");
+    let table = SymbolTable::collect(&ast);
+    assert!(matches!(
+        table.lookup_type_name(ast.root_id(), Interner::intern("S")),
+        Some(TyDef::Struct(_))
+    ));
+}
+
+#[test]
+fn collect_keeps_a_trait_and_an_enum_apart_by_tydef_kind() {
+    let ast = ast_from("enum E { a } trait T {}");
+    let table = SymbolTable::collect(&ast);
+    assert!(matches!(
+        table.lookup_type_name(ast.root_id(), Interner::intern("E")),
+        Some(TyDef::Enum(_))
+    ));
+    assert!(matches!(
+        table.lookup_type_name(ast.root_id(), Interner::intern("T")),
+        Some(TyDef::Trait(_))
+    ));
+}
+
+#[test]
+fn two_declarations_of_one_name_in_one_namespace_conflict() {
+    let (_, diags) = collect_with_diags("fun f() {} fun f() {}");
+    assert_eq!(diags.len(), 1);
+    assert!(diags[0].message.contains("is defined multiple times"));
+}
+
+#[test]
+fn by_path_maps_a_canonical_path_to_its_module() {
+    let ast = ast_from_files(&["module math::vector; fun dot() {}"]);
+    let table = SymbolTable::collect(&ast);
+    let id = table.module_by_path(&[Interner::intern("math"), Interner::intern("vector")]);
+    assert!(id.is_some());
+}
+
+// -----------------------------------------------------------------
+// `SymbolTable::new` -- import resolution and the prelude
+// -----------------------------------------------------------------
+
+#[test]
+fn an_import_binds_into_the_importing_modules_own_scope() {
+    let ast = ast_from_files(&[
+        "module math; public fun dot() {}",
+        "module app; import math::dot;",
+    ]);
+    let table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
     assert!(
-        nameres.ty(annotations[0]).is_some(),
-        "the with binding's type annotation was never resolved"
+        table
+            .lookup_function(app, Interner::intern("dot"))
+            .is_some()
+    );
+}
+
+#[test]
+fn an_import_resolves_absolutely_from_the_root_not_relative_to_where_it_is_written() {
+    // `deep::inner` is written inside `app::nested`, and still resolves from the root.
+    let ast = ast_from_files(&[
+        "module deep; public fun inner() {}",
+        "module app::nested; import deep::inner;",
+    ]);
+    let table = SymbolTable::new(&ast);
+    let nested = table
+        .module_by_path(&[Interner::intern("app"), Interner::intern("nested")])
+        .unwrap();
+    assert!(
+        table
+            .lookup_function(nested, Interner::intern("inner"))
+            .is_some()
+    );
+}
+
+#[test]
+fn an_import_may_name_a_module_the_collect_pass_had_not_reached() {
+    // The importing module is parsed first; the imported one second.
+    let ast = ast_from_files(&[
+        "module app; import later::thing;",
+        "module later; public fun thing() {}",
+    ]);
+    let (table, diags) = new_with_diags(&ast);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    assert!(
+        table
+            .lookup_function(app, Interner::intern("thing"))
+            .is_some()
+    );
+}
+
+#[test]
+fn a_glob_import_copies_every_name_from_the_source_module() {
+    let ast = ast_from_files(&[
+        "module math; public fun dot() {} public struct Vec2 {}",
+        "module app; import math::*;",
+    ]);
+    let table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    assert!(
+        table
+            .lookup_function(app, Interner::intern("dot"))
+            .is_some()
+    );
+    assert!(
+        table
+            .lookup_type_name(app, Interner::intern("Vec2"))
+            .is_some()
+    );
+}
+
+#[test]
+fn a_glob_import_colliding_with_a_declaration_conflicts() {
+    let (_, diags) = new_with_diags_from(&[
+        "module math; public fun dot() {}",
+        "module app; import math::*; fun dot() {}",
+    ]);
+    assert_eq!(diags.len(), 1);
+    assert!(diags[0].message.contains("is defined multiple times"));
+}
+
+#[test]
+fn an_import_matching_two_namespaces_is_ambiguous() {
+    let (_, diags) = new_with_diags_from(&[
+        "module math; public fun thing() {} public struct thing {}",
+        "module app; import math::thing;",
+    ]);
+    assert!(diags.iter().any(|d| d.message.contains("ambiguous import")));
+}
+
+#[test]
+fn an_import_naming_nothing_reports_not_found() {
+    let (_, diags) = new_with_diags_from(&["module app; import nowhere::gone;"]);
+    assert_eq!(diags.len(), 1);
+    assert!(diags[0].message.contains("cannot find"));
+}
+
+#[test]
+fn the_prelude_is_found_after_imports_resolve() {
+    let ast = ast_with_core();
+    let table = SymbolTable::new(&ast);
+    assert!(table.prelude().is_some());
+}
+
+#[test]
+fn the_prelude_is_none_without_a_core_library() {
+    let ast = ast_from("fun main() {}");
+    let table = SymbolTable::new(&ast);
+    assert!(table.prelude().is_none());
+}
+
+// -----------------------------------------------------------------
+// The scope stacks -- locals, generics, `Self`
+// -----------------------------------------------------------------
+
+#[test]
+fn a_local_shadows_an_outer_one_and_the_outer_is_restored_on_pop() {
+    let ast = ast_from("fun main() {}");
+    let mut t = SymbolTable::new(&ast);
+    let outer = NodeId::next();
+    let inner = NodeId::next();
+    let x = Interner::intern("x");
+
+    t.push_scope();
+    t.insert_local(ident("x"), Local::Variable(outer));
+    assert_eq!(t.lookup_local(x), Some(Local::Variable(outer)));
+
+    t.push_scope();
+    t.insert_local(ident("x"), Local::Variable(inner));
+    assert_eq!(t.lookup_local(x), Some(Local::Variable(inner)));
+
+    t.pop_scope();
+    assert_eq!(t.lookup_local(x), Some(Local::Variable(outer)));
+    t.pop_scope();
+    assert_eq!(t.lookup_local(x), None);
+}
+
+#[test]
+fn rebinding_in_one_scope_overwrites_rather_than_conflicting() {
+    let ast = ast_from("fun main() {}");
+    let mut t = SymbolTable::new(&ast);
+    let first = NodeId::next();
+    let second = NodeId::next();
+    t.push_scope();
+    t.insert_local(ident("x"), Local::Variable(first));
+    t.insert_local(ident("x"), Local::Variable(second));
+    assert_eq!(
+        t.lookup_local(Interner::intern("x")),
+        Some(Local::Variable(second))
+    );
+}
+
+#[test]
+fn a_generic_is_visible_inside_its_definition_and_not_outside() {
+    let ast = ast_from("fun main() {}");
+    let mut t = SymbolTable::new(&ast);
+    let g = NodeId::next();
+    let name = Interner::intern("T");
+
+    t.push_generics(HashMap::from([(name, Type::Generic(g))]));
+    assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
+    t.pop_generics();
+    assert_eq!(t.lookup_generic(name), None);
+}
+
+#[test]
+fn an_inner_generic_scope_shadows_an_outer_one() {
+    let ast = ast_from("fun main() {}");
+    let mut t = SymbolTable::new(&ast);
+    let outer = NodeId::next();
+    let inner = NodeId::next();
+    let name = Interner::intern("T");
+
+    t.push_generics(HashMap::from([(name, Type::Generic(outer))]));
+    t.push_generics(HashMap::from([(name, Type::Generic(inner))]));
+    assert_eq!(t.lookup_generic(name), Some(Type::Generic(inner)));
+    t.pop_generics();
+    assert_eq!(t.lookup_generic(name), Some(Type::Generic(outer)));
+}
+
+#[test]
+fn self_reads_the_innermost_scope_and_is_none_when_the_stack_is_empty() {
+    let ast = ast_from("fun main() {}");
+    let mut t = SymbolTable::new(&ast);
+    let s = NodeId::next();
+    assert_eq!(t.current_self(), None);
+    t.push_self(TyDef::Struct(s));
+    assert_eq!(t.current_self(), Some(TyDef::Struct(s)));
+    t.pop_self();
+    assert_eq!(t.current_self(), None);
+}
+
+// -----------------------------------------------------------------
+// Path lookup
+// -----------------------------------------------------------------
+
+#[test]
+fn a_sibling_item_resolves_without_qualification() {
+    let ast = ast_from_files(&["module app; fun helper() {} fun main() {}"]);
+    let table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    assert!(matches!(
+        table.lookup_value_path(app, &path(&["helper"])),
+        Some(Res::Function(_))
+    ));
+}
+
+#[test]
+fn a_name_falls_back_to_an_ancestor_module() {
+    let ast = ast_from_files(&[
+        "module app; public fun shared() {}",
+        "module app::inner; fun main() {}",
+    ]);
+    let table = SymbolTable::new(&ast);
+    let inner = table
+        .module_by_path(&[Interner::intern("app"), Interner::intern("inner")])
+        .unwrap();
+    assert!(table.lookup_value_path(inner, &path(&["shared"])).is_some());
+}
+
+#[test]
+fn a_fully_qualified_path_resolves_from_anywhere() {
+    let ast = ast_from_files(&[
+        "module math::vector; public fun dot() {}",
+        "module app::deep; fun main() {}",
+    ]);
+    let table = SymbolTable::new(&ast);
+    let deep = table
+        .module_by_path(&[Interner::intern("app"), Interner::intern("deep")])
+        .unwrap();
+    assert!(
+        table
+            .lookup_value_path(deep, &path(&["math", "vector", "dot"]))
+            .is_some()
+    );
+}
+
+#[test]
+fn a_primitive_resolves_before_anything_else_in_type_position() {
+    let ast = ast_from("fun main() {}");
+    let table = SymbolTable::new(&ast);
+    assert_eq!(
+        table.lookup_type_path(ast.root_id(), &path(&["i32"])),
+        Some(Type::Prim(PrimTy::I32))
+    );
+}
+
+#[test]
+fn a_generic_shadows_a_module_level_type() {
+    let ast = ast_from_files(&["module app; struct T {}"]);
+    let mut table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let g = NodeId::next();
+    table.push_generics(HashMap::from([(Interner::intern("T"), Type::Generic(g))]));
+    assert_eq!(
+        table.lookup_type_path(app, &path(&["T"])),
+        Some(Type::Generic(g))
+    );
+    table.pop_generics();
+    assert!(matches!(
+        table.lookup_type_path(app, &path(&["T"])),
+        Some(Type::Def(TyDef::Struct(_)))
+    ));
+}
+
+#[test]
+fn a_local_shadows_a_module_level_function_in_value_position() {
+    let ast = ast_from_files(&["module app; fun x() {}"]);
+    let mut table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let local = NodeId::next();
+    table.push_scope();
+    table.insert_local(ident("x"), Local::Variable(local));
+    assert_eq!(
+        table.lookup_value_path(app, &path(&["x"])),
+        Some(Res::Local(Local::Variable(local)))
+    );
+}
+
+#[test]
+fn a_multi_segment_path_walks_submodules_then_looks_up_the_last_segment() {
+    let ast = ast_from_files(&[
+        "module app; fun main() {}",
+        "module app::inner; public struct S {}",
+    ]);
+    let table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    assert!(matches!(
+        table.lookup_type_path(app, &path(&["inner", "S"])),
+        Some(Type::Def(TyDef::Struct(_)))
+    ));
+}
+
+#[test]
+fn an_unresolvable_path_is_none() {
+    let ast = ast_from("fun main() {}");
+    let table = SymbolTable::new(&ast);
+    assert!(
+        table
+            .lookup_value_path(ast.root_id(), &path(&["nope"]))
+            .is_none()
+    );
+}
+
+#[test]
+fn pushing_generics_leaves_locals_and_self_untouched() {
+    let ast = ast_from("fun main() {}");
+    let mut t = SymbolTable::new(&ast);
+    let local = NodeId::next();
+    let self_def = TyDef::Struct(NodeId::next());
+    let x = Interner::intern("x");
+
+    t.push_scope();
+    t.insert_local(ident("x"), Local::Variable(local));
+    t.push_self(self_def);
+
+    t.push_generics(HashMap::from([(
+        Interner::intern("T"),
+        Type::Generic(NodeId::next()),
+    )]));
+    assert_eq!(t.lookup_local(x), Some(Local::Variable(local)));
+    assert_eq!(t.current_self(), Some(self_def));
+    t.pop_generics();
+
+    assert_eq!(t.lookup_local(x), Some(Local::Variable(local)));
+    assert_eq!(t.current_self(), Some(self_def));
+}
+
+#[test]
+fn pushing_a_local_scope_or_self_leaves_generics_untouched() {
+    let ast = ast_from("fun main() {}");
+    let mut t = SymbolTable::new(&ast);
+    let name = Interner::intern("T");
+    let g = NodeId::next();
+
+    t.push_generics(HashMap::from([(name, Type::Generic(g))]));
+
+    t.push_scope();
+    t.insert_local(ident("x"), Local::Variable(NodeId::next()));
+    assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
+    t.pop_scope();
+
+    t.push_self(TyDef::Struct(NodeId::next()));
+    assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
+    t.pop_self();
+
+    assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
+}
+
+// -----------------------------------------------------------------
+// `Self`, bare traits, and `dyn`
+// -----------------------------------------------------------------
+
+#[test]
+fn a_bare_trait_path_in_type_position_resolves_to_a_trait() {
+    // Static dispatch: the function is monomorphized over the concrete type, as Rust's
+    // `impl Trait` does. This is legal and is not an error.
+    let ast = ast_from_files(&["module app; trait Show {}"]);
+    let table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    assert!(matches!(
+        table.resolve_type_path(app, &path(&["Show"])),
+        Res::Type(Type::Def(TyDef::Trait(_)))
+    ));
+}
+
+#[test]
+fn dyn_on_a_trait_resolves() {
+    let ast = ast_from_files(&["module app; trait Show {}"]);
+    let table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    assert!(matches!(
+        table.lookup_dyn_path(app, &path(&["Show"])),
+        Res::Type(Type::Def(TyDef::Trait(_)))
+    ));
+}
+
+#[test]
+fn dyn_on_a_struct_errors() {
+    let ast = ast_from_files(&["module app; struct S {}"]);
+    let table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let (res, diags) = with_diags(|| table.lookup_dyn_path(app, &path(&["S"])));
+    assert_eq!(res, Res::Err);
+    assert_eq!(diags.len(), 1);
+    assert!(diags[0].message.contains("`dyn` requires a trait"));
+}
+
+#[test]
+fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
+    let ast = ast_from("fun main() {}");
+    let mut table = SymbolTable::new(&ast);
+    for def in [
+        TyDef::Struct(NodeId::next()),
+        TyDef::Enum(NodeId::next()),
+        TyDef::Trait(NodeId::next()),
+    ] {
+        table.push_self(def);
+        assert_eq!(
+            table.resolve_type_path(ast.root_id(), &path(&["Self"])),
+            Res::Type(Type::Def(def))
+        );
+        table.pop_self();
+    }
+}
+
+#[test]
+fn self_outside_a_definition_errors() {
+    let ast = ast_from("fun main() {}");
+    let table = SymbolTable::new(&ast);
+    let (res, diags) = with_diags(|| table.resolve_type_path(ast.root_id(), &path(&["Self"])));
+    assert_eq!(res, Res::Err);
+    assert_eq!(diags.len(), 1);
+    assert!(diags[0].message.contains("`Self` is not available here"));
+}
+
+#[test]
+fn an_unresolvable_type_path_reports_not_found_and_records_err() {
+    let ast = ast_from("fun main() {}");
+    let table = SymbolTable::new(&ast);
+    let (res, diags) = with_diags(|| table.resolve_type_path(ast.root_id(), &path(&["Nope"])));
+    assert_eq!(res, Res::Err);
+    assert_eq!(diags.len(), 1);
+    assert!(diags[0].message.contains("cannot find"));
+}
+
+#[test]
+fn lookup_variant_finds_a_variant_by_name() {
+    let ast = ast_from_files(&["module app; enum Shape { circle, square }"]);
+    let table = SymbolTable::new(&ast);
+    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let Some(Type::Def(TyDef::Enum(e))) = table.lookup_type_path(app, &path(&["Shape"])) else {
+        panic!("Shape did not resolve to an enum");
+    };
+    assert!(
+        table
+            .lookup_variant(e, Interner::intern("circle"))
+            .is_some()
+    );
+    assert!(
+        table
+            .lookup_variant(e, Interner::intern("triangle"))
+            .is_none()
+    );
+}
+
+// -----------------------------------------------------------------
+// `resolve` -- the full AST traversal
+// -----------------------------------------------------------------
+
+/// Finds the one item in `ast` matching `pred`, across every module. Every fixture below
+/// declares exactly the one item under test, so panicking when `pred` matches nothing (a fixture
+/// that stopped parsing the way the test expects) is preferable to returning an `Option` every
+/// caller would just `unwrap` anyway.
+fn find_item(ast: &Ast, pred: impl Fn(&ItemKind) -> bool) -> &Item {
+    ast.mod_ids()
+        .find_map(|mod_id| {
+            ast.module(mod_id)
+                .items
+                .iter()
+                .find(|item| pred(&item.kind))
+        })
+        .expect("expected the fixture to declare a matching item")
+}
+
+fn extend_item_id(ast: &Ast) -> NodeId {
+    find_item(ast, |kind| matches!(kind, ItemKind::Extend(_))).id
+}
+
+/// The first generic parameter declared anywhere in `ast`, wherever it's found -- every fixture
+/// that uses this declares exactly one.
+fn first_generic_id(ast: &Ast) -> NodeId {
+    let item = find_item(
+        ast,
+        |kind| matches!(kind, ItemKind::Function(f) if !f.generics.is_empty()),
+    );
+    let ItemKind::Function(f) = &item.kind else {
+        unreachable!("find_item's predicate only matches ItemKind::Function");
+    };
+    f.generics[0].id
+}
+
+/// The `NodeId` of the first parameter's type annotation in `ast`'s one function.
+fn param_ty_id(ast: &Ast) -> NodeId {
+    only_function(ast).params[0].ty.id
+}
+
+/// The one function `ast` declares, wherever it's found -- a top-level `fun`, an `extend`
+/// block's method, or a trait's. Every fixture using this has exactly one, so the first found
+/// (in item-declaration order) is the one under test.
+fn only_function(ast: &Ast) -> &Function {
+    for mod_id in ast.mod_ids() {
+        for item in &ast.module(mod_id).items {
+            match &item.kind {
+                ItemKind::Function(f) => return f,
+                ItemKind::Extend(e) if !e.methods.is_empty() => return &e.methods[0],
+                ItemKind::Trait(t) if !t.functions.is_empty() => return &t.functions[0],
+                _ => {}
+            }
+        }
+    }
+    panic!("expected the fixture to declare a function somewhere");
+}
+
+/// For a fixture of the shape `fun f() { let x = 1; let y = x; }`: the `NodeId` of the `x` path
+/// expression on the right of the second `let`, and the `NodeId` of the `Pat` the first `let`
+/// binds `x` with.
+fn x_use_and_binding(ast: &Ast) -> (NodeId, NodeId) {
+    let f = only_function(ast);
+    let block = f
+        .block
+        .as_ref()
+        .expect("expected the fixture's function to have a body");
+    let StmtKind::Let { pat: binding, .. } = &block.stmts[0].kind else {
+        panic!("expected the first statement to be a let binding");
+    };
+    let StmtKind::Let { init, .. } = &block.stmts[1].kind else {
+        panic!("expected the second statement to be a let binding");
+    };
+    assert!(
+        matches!(init.kind, ExprKind::Path(_)),
+        "expected the second let's initializer to be a path expression, got {init:?}"
+    );
+    (init.id, binding.id)
+}
+
+#[test]
+fn an_extend_blocks_two_paths_are_told_apart_by_what_they_name() {
+    let ast =
+        ast_from_files(&["module app; struct Vec2 {} trait Show {} extend Vec2 with Show {}"]);
+    let r = resolve(&ast);
+    let item = extend_item_id(&ast);
+    assert!(matches!(
+        r.get(item, &path(&["Vec2"])),
+        Some(Res::Type(Type::Def(TyDef::Struct(_))))
+    ));
+    assert!(matches!(
+        r.get(item, &path(&["Show"])),
+        Some(Res::Type(Type::Def(TyDef::Trait(_))))
+    ));
+}
+
+#[test]
+fn an_extend_blocks_two_identical_paths_conflict_and_only_the_adt_path_is_recorded() {
+    let ast = ast_from_files(&["module app; struct Vec2 {} extend Vec2 with Vec2 {}"]);
+    let item = extend_item_id(&ast);
+    let (r, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        diags.iter().any(|d| d
+            .message
+            .contains("`extend` target and trait are the same type")),
+        "expected a self-extend diagnostic, got {diags:?}"
+    );
+    assert!(matches!(
+        r.get(item, &path(&["Vec2"])),
+        Some(Res::Type(Type::Def(TyDef::Struct(_))))
+    ));
+    // Only one entry for `Vec2` -- the invariant `NameResolutions::record`'s `debug_assert!`
+    // guards would otherwise be violated by recording the same path twice.
+    assert_eq!(r.entries(item).len(), 1);
+}
+
+#[test]
+fn a_generics_bounds_are_entries_on_the_generic_node_in_source_order() {
+    let ast = ast_from_files(&["module app; trait A {} trait B {} fun f<T: A + B>() {}"]);
+    let r = resolve(&ast);
+    let g = first_generic_id(&ast);
+    let names: Vec<_> = r
+        .entries(g)
+        .iter()
+        .map(|(p, _)| Interner::resolve(p.segments[0].text))
+        .collect();
+    assert_eq!(names, vec!["A", "B"]);
+}
+
+#[test]
+fn a_duplicate_bound_conflicts_and_only_the_first_writing_is_recorded() {
+    let ast = ast_from_files(&["module app; trait A {} fun f<T: A + A>() {}"]);
+    let g = first_generic_id(&ast);
+    let (r, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        diags.iter().any(|d| d.message.contains("duplicate bound")),
+        "expected a duplicate-bound diagnostic, got {diags:?}"
+    );
+    assert_eq!(r.entries(g).len(), 1);
+}
+
+#[test]
+fn a_block_scoped_binding_drops_at_the_closing_brace() {
+    let ast = ast_from_files(&["module app; fun f() { { let x = 1; } let y = x; }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(diags.iter().any(|d| d.message.contains("cannot find `x`")));
+}
+
+#[test]
+fn a_match_arm_binding_is_scoped_to_that_arm() {
+    let ast = ast_from_files(&[
+        "module app; enum E { a: i32 } fun f(e: E) { match e { .a(n) => n, } let y = n; }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(diags.iter().any(|d| d.message.contains("cannot find `n`")));
+}
+
+#[test]
+fn a_generic_is_visible_in_a_method_of_the_extend_block_that_declares_it() {
+    let ast = ast_from_files(&[
+        "module app; struct S {} extend<T> S { fun get(self) -> T { let x = 1; } }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn an_unresolved_path_records_err_rather_than_leaving_the_entry_absent() {
+    let ast = ast_from_files(&["module app; fun f(x: Nope) {}"]);
+    let r = resolve(&ast);
+    let ty = param_ty_id(&ast);
+    assert_eq!(r.get(ty, &path(&["Nope"])), Some(Res::Err));
+}
+
+#[test]
+fn a_path_expression_resolves_to_the_local_it_names() {
+    let ast = ast_from_files(&["module app; fun f() { let x = 1; let y = x; }"]);
+    let r = resolve(&ast);
+    let (expr_id, pat_id) = x_use_and_binding(&ast);
+    assert_eq!(
+        r.get(expr_id, &path(&["x"])),
+        Some(Res::Local(Local::Variable(pat_id)))
+    );
+}
+
+#[test]
+fn a_let_rhs_sees_the_outer_x_not_the_one_it_declares() {
+    // The classic bug: binding the pattern before walking the initializer would make `x` on the
+    // right resolve to itself instead of the outer binding.
+    let ast = ast_from_files(&["module app; fun f() { let x = 1; { let x = x; } }"]);
+    let r = resolve(&ast);
+    let f = only_function(&ast);
+    let block = f.block.as_ref().unwrap();
+    let StmtKind::Let { pat: outer_pat, .. } = &block.stmts[0].kind else {
+        panic!("expected the first statement to be a let binding");
+    };
+    let StmtKind::Expr { expr, .. } = &block.stmts[1].kind else {
+        panic!("expected the second statement to be a block-bodied expression statement");
+    };
+    let ExprKind::Block(inner) = &expr.kind else {
+        panic!("expected a bare block expression");
+    };
+    let StmtKind::Let { init, .. } = &inner.stmts[0].kind else {
+        panic!("expected the inner statement to be a let binding");
+    };
+    assert_eq!(
+        r.get(init.id, &path(&["x"])),
+        Some(Res::Local(Local::Variable(outer_pat.id)))
+    );
+}
+
+#[test]
+fn a_closure_sees_its_enclosing_definitions_generic_and_self() {
+    let ast = ast_from_files(&[
+        "module app; struct S {} extend<T> S { fun get(self) -> T { let f = || -> T { self; }; } }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn self_outside_any_definition_records_err() {
+    let ast = ast_from_files(&["module app; fun f() -> Self {}"]);
+    let (r, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("`Self` is not available here"))
+    );
+    let f = only_function(&ast);
+    let ty = f.ret.as_ref().unwrap().id;
+    assert_eq!(r.get(ty, &path(&["Self"])), Some(Res::Err));
+}
+
+#[test]
+fn dyn_on_a_non_trait_records_err() {
+    let ast = ast_from_files(&["module app; struct S {} fun f(x: dyn S) {}"]);
+    let (r, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("`dyn` requires a trait"))
+    );
+    let ty = param_ty_id(&ast);
+    assert_eq!(r.get(ty, &path(&["S"])), Some(Res::Err));
+}
+
+/// When `adt_path` fails to resolve at all, a suppressed `Self` scope is pushed
+/// (`SymbolTable::push_self_unresolved`), so a `Self` written inside the block records
+/// `Res::Err` without reporting its own diagnostic -- only the one explaining why `Nope` itself
+/// failed to resolve. Exactly one diagnostic, matching master's behavior for this case.
+#[test]
+fn an_extends_unresolved_adt_path_suppresses_the_self_diagnostic() {
+    let ast = ast_from_files(&["module app; extend Nope { fun f(&self) -> Self {} }"]);
+    let (r, diags) = with_diags(|| resolve(&ast));
+    let diags = non_lang_item_diags(&diags);
+    assert_eq!(
+        diags.len(),
+        1,
+        "expected exactly one diagnostic, got {diags:?}"
+    );
+    assert!(
+        diags[0].message.contains("cannot find `Nope`"),
+        "expected `Nope` itself to fail to resolve, got {diags:?}"
+    );
+    let f = only_function(&ast);
+    let ty = f.ret.as_ref().unwrap().id;
+    assert_eq!(r.get(ty, &path(&["Self"])), Some(Res::Err));
+}
+
+// Note: the parser itself rejects `extend i32 ...` (a primitive is a dedicated token, not an
+// `Identifier`, so it can never appear as `adt_path` -- see `typeck/traits/index.rs:224,433`),
+// so the "adt_path resolved but not to a TyDef" branch above can't be exercised from source text.
+// It is exercised indirectly: every extend fixture elsewhere that resolves cleanly (e.g.
+// `self_resolves_to_each_of_struct_enum_trait_and_extend`) takes the `Res::Type(Type::Def(_))`
+// arm, and the `_ => false` arm is straightforward enough by inspection not to need a dedicated
+// (unreachable-from-source) fixture.
+
+// -----------------------------------------------------------------
+// `emit_debug::nameres_to_string`
+// -----------------------------------------------------------------
+
+/// `B` is written before `A` in source order, so it must come first in the dump regardless of
+/// the `NodeId`s the global counter happened to hand out -- see the rationale on
+/// `emit_debug::nameres_to_string`. Also guards the companion rule: the dump must never
+/// print a `NodeId` at all.
+#[test]
+fn the_dump_is_ordered_by_span_and_contains_no_node_ids() {
+    let ast = ast_from_files(&["module app; struct A {} struct B {} fun f(x: B, y: A) {}"]);
+    let r = resolve(&ast);
+    let dump = emit_debug::nameres_to_string(&ast, &r);
+
+    let b = dump.find('B').expect("B missing from dump");
+    let a = dump.find('A').expect("A missing from dump");
+    assert!(b < a, "dump is not span-ordered:\n{dump}");
+
+    assert!(
+        !dump.contains("NodeId"),
+        "NodeId leaked into the dump:\n{dump}"
+    );
+}
+
+/// A more thorough version of the ordering check above: three entries, written out of
+/// declaration order relative to their uses, must appear in the dump in the order their own
+/// spans start -- not in the order `collect`/`resolve` happened to visit or record them.
+#[test]
+fn three_entries_out_of_declaration_order_still_print_span_ordered() {
+    let ast = ast_from_files(&[
+        "module app; struct Third {} struct Second {} struct First {} \
+         fun f(a: First, b: Second, c: Third) {}",
+    ]);
+    let r = resolve(&ast);
+    let dump = emit_debug::nameres_to_string(&ast, &r);
+
+    let first = dump.find("First").expect("First missing from dump");
+    let second = dump.find("Second").expect("Second missing from dump");
+    let third = dump.find("Third").expect("Third missing from dump");
+    assert!(
+        first < second && second < third,
+        "dump is not span-ordered:\n{dump}"
+    );
+}
+
+/// Every `Res` variant renders as a name, not an id: a function, a local (param, self param,
+/// and a `let`-bound variable), a generic parameter, a primitive, and each of struct/enum/trait
+/// all appear in the dump by name.
+#[test]
+fn every_res_kind_renders_by_name_not_by_node_id() {
+    let ast = ast_from_files(&["module app; \
+         struct AStruct {} \
+         enum AnEnum { a } \
+         trait ATrait {} \
+         fun helper() {} \
+         fun f<TParam: ATrait>(z: TParam, w: i32, y: AStruct) -> AnEnum { \
+             let local_var = y; \
+             helper(); \
+             local_var; \
+         } \
+         extend<T> AStruct { fun m(&self) -> T { self; } }"]);
+    let (r, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+    let dump = emit_debug::nameres_to_string(&ast, &r);
+
+    for expected in [
+        "Struct `AStruct`",
+        "Enum `AnEnum`",
+        "Trait `ATrait`",
+        "Function `helper`",
+        "Param `y`",
+        "Variable `local_var`",
+        "Generic `TParam`",
+        "SelfParam `self`",
+        "I32",
+    ] {
+        assert!(
+            dump.contains(expected),
+            "expected {expected:?} in dump:\n{dump}"
+        );
+    }
+    assert!(
+        !dump.contains("NodeId"),
+        "NodeId leaked into the dump:\n{dump}"
+    );
+}
+
+// -----------------------------------------------------------------
+// `ExprKind::Ctor` and record-payload shorthand fields (fix round 2)
+// -----------------------------------------------------------------
+
+/// The one function `ast` declares's first `let`'s initializer expression -- every fixture below
+/// declares exactly one function with exactly one `let` as its first statement.
+fn first_let_init(ast: &Ast) -> &Expr {
+    let f = only_function(ast);
+    let block = f
+        .block
+        .as_ref()
+        .expect("expected the fixture's function to have a body");
+    let StmtKind::Let { init, .. } = &block.stmts[0].kind else {
+        panic!("expected the first statement to be a let binding");
+    };
+    init
+}
+
+#[test]
+fn a_struct_literals_path_resolves_to_its_struct() {
+    let ast = ast_from_files(&["module app; struct S { a: i32 } fun f() { let v = S { a: 1 }; }"]);
+    let r = resolve(&ast);
+    let init = first_let_init(&ast);
+    assert!(
+        matches!(init.kind, ExprKind::Ctor { path: Some(_), .. }),
+        "expected a struct literal, got {init:?}"
+    );
+    assert!(matches!(
+        r.get(init.id, &path(&["S"])),
+        Some(Res::Type(Type::Def(TyDef::Struct(_))))
+    ));
+}
+
+#[test]
+fn the_elided_ctor_forms_type_comes_from_context_so_nothing_is_recorded() {
+    let ast =
+        ast_from_files(&["module app; struct S { a: i32 } fun f() { let v: S = .{ a: 1 }; }"]);
+    let r = resolve(&ast);
+    let init = first_let_init(&ast);
+    assert!(
+        matches!(init.kind, ExprKind::Ctor { path: None, .. }),
+        "expected the elided ctor form, got {init:?}"
+    );
+    assert!(
+        r.entries(init.id).is_empty(),
+        "the elided form has no path to record anything against"
+    );
+}
+
+#[test]
+fn an_unresolved_struct_literal_path_records_err() {
+    let ast = ast_from_files(&["module app; fun f() { let v = Nope { a: 1 }; }"]);
+    let r = resolve(&ast);
+    let init = first_let_init(&ast);
+    assert_eq!(r.get(init.id, &path(&["Nope"])), Some(Res::Err));
+}
+
+/// The fields of the one variant-construction expression in `ast`'s function -- the last `let`'s
+/// initializer, an `ExprKind::Variant` with a record payload.
+fn variant_record_fields(ast: &Ast) -> &[PayloadField<Expr>] {
+    let f = only_function(ast);
+    let block = f.block.as_ref().expect("expected a function body");
+    let StmtKind::Let { init, .. } = &block.stmts.last().unwrap().kind else {
+        panic!("expected the last statement to be a let binding");
+    };
+    let ExprKind::Variant { payload, .. } = &init.kind else {
+        panic!("expected a variant construction expression, got {init:?}");
+    };
+    let Payload::Record(fields) = payload else {
+        panic!("expected a record payload, got {payload:?}");
+    };
+    fields
+}
+
+/// A record payload's shorthand field (`{ w }`, meaning `{ w: w }`) has no `Expr` of its own for
+/// the implicit value -- `ast::visit`'s `payload_values` helper silently drops it. This confirms
+/// the fix keys the lookup off the field's own `NodeId` instead and still finds the local.
+#[test]
+fn a_variant_record_payloads_shorthand_field_resolves_its_implicit_value() {
+    let ast = ast_from_files(&["module app; enum Shape { rect: { w: i32, h: i32 } } \
+         fun f() { let w = 1; let h = 2; let s = .rect { w, h }; }"]);
+    let r = resolve(&ast);
+    let fields = variant_record_fields(&ast);
+    assert_eq!(fields.len(), 2);
+    for field in fields {
+        assert!(
+            field.value.is_none(),
+            "expected {field:?} to be the shorthand form"
+        );
+        let name = Interner::resolve(field.name.text);
+        assert!(
+            matches!(
+                r.get(field.id, &path(&[name])),
+                Some(Res::Local(Local::Variable(_)))
+            ),
+            "expected the shorthand field {name:?} to resolve to a local"
+        );
+    }
+}
+
+/// A record *pattern* payload's shorthand field (`{ w }`) binds `w`, the same as an ordinary
+/// `PatKind::Binding` would -- but again has no `Pat` of its own for `payload_values` to hand
+/// back, so nothing binds it without the fix. Verified indirectly: `w` resolves inside the arm
+/// (no diagnostic there) and is out of scope again immediately after it (one diagnostic, not
+/// zero or two).
+#[test]
+fn a_match_arms_record_payload_shorthand_binds_its_fields() {
+    let ast = ast_from_files(&["module app; enum Shape { rect: { w: i32, h: i32 } } \
+         fun f(s: Shape) { match s { .rect { w, h } => w, } let y = w; }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    let not_found_w: Vec<_> = non_lang_item_diags(&diags)
+        .into_iter()
+        .filter(|d| d.message.contains("cannot find `w`"))
+        .collect();
+    assert_eq!(
+        not_found_w.len(),
+        1,
+        "expected exactly one `cannot find \\`w\\`` (the use after the match, once the arm's \
+         scope has popped) -- zero would mean the arm-scoped use also failed, two would mean the \
+         shorthand never bound `w` at all: {diags:?}"
     );
 }

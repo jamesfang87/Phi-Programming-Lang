@@ -2,9 +2,10 @@
 //! a return type, and so on. This is distinct from the types the type checker infers and works
 //! with internally.
 
-use crate::ast::{Mutability, Path};
+use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
 use crate::hir::ids::HirId;
+use crate::hir::path::Path;
 
 #[derive(Debug)]
 pub struct Ty {
@@ -16,6 +17,11 @@ pub struct Ty {
 #[derive(Debug)]
 pub enum TyKind {
     /// A named type, optionally with generic arguments, such as `i32`, `String`, or `Array<T>`.
+    ///
+    /// `Self` lowers to this kind too, rather than to a kind of its own: it is an ordinary
+    /// single-segment path as far as the AST and lowering are concerned, and what sets it apart
+    /// is carried on `path.res` instead, as `Res::SelfTy` rather than an ordinary
+    /// `Res::Type(Type::Def(_))` -- see `crate::hir::path::Res::SelfTy`.
     Path {
         path: Path,
         args: Vec<HirId>, // -> Node::Ty
@@ -39,9 +45,6 @@ pub enum TyKind {
         params: Vec<HirId>, // -> Node::Ty
         ret: Option<HirId>, // -> Node::Ty
     },
-    /// Represents `Self`, which refers back to the type being defined or extended, used inside
-    /// that type's own `struct`, `trait`, or `extend` body.
-    SelfType,
     /// Represents `dyn Trait`, a type implementing `Trait` that is resolved dynamically,
     /// applied to the trait's own generic arguments if it declares any.
     Dyn {

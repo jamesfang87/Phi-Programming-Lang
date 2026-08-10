@@ -317,7 +317,7 @@ mod tests {
     use crate::ast::Mutability;
     use crate::driver::source::SrcSpan;
     use crate::hir::DefId;
-    use crate::nameres::results::PrimTy;
+    use crate::nameres::PrimTy;
     use crate::typeck::traits::TraitRef;
 
     /// A stand-in `HirId`. Only its identity matters here: nothing in `overlaps` looks a

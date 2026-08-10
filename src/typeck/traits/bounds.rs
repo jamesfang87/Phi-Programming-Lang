@@ -51,12 +51,10 @@
 use std::collections::HashMap;
 use std::mem;
 
-use crate::ast::Path;
 use crate::ast::interner::Interner;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, OwnerNode};
-use crate::nameres::results::TypeRes;
+use crate::hir::{DefId, HirId, OwnerNode, Path, Res, TyDef, Type};
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::index::ImplId;
@@ -338,25 +336,19 @@ impl<'hir> Typeck<'hir> {
         let hir = self.hir;
         for def in hir.def_ids() {
             for &generic in &self.declared_generics(def) {
-                // The two lists are built side by side -- see `resolve_generics` -- so a bound's
-                // resolution sits at the index of the path that produced it, which is where the
-                // span to report at comes from.
-                let paths = &hir.generic(generic).bounds;
-                let resolutions = self.nameres.bounds(generic).to_vec();
-
-                for (path, res) in paths.iter().zip(resolutions) {
-                    self.check_declared_bound(path, res);
+                for path in &hir.generic(generic).bounds {
+                    Self::check_declared_bound(path);
                 }
             }
         }
     }
 
-    fn check_declared_bound(&self, path: &Path, res: TypeRes) {
-        match res {
-            TypeRes::Def(def) if matches!(self.hir.def(def), OwnerNode::Trait(_)) => {}
+    fn check_declared_bound(path: &Path) {
+        match path.res {
+            Res::Type(Type::Def(TyDef::Trait(_))) => {}
             // Already reported by name resolution; staying quiet here keeps one mistake from
             // producing a second diagnostic.
-            TypeRes::Err => {}
+            Res::Err => {}
             _ => Self::report_bound_is_not_a_trait(path),
         }
     }
@@ -561,8 +553,8 @@ impl<'hir> Typeck<'hir> {
 mod tests {
     use super::*;
     use crate::diag::DiagCtx;
-    use crate::hir::{Hir, NameResolutions};
-    use crate::nameres::results::PrimTy;
+    use crate::hir::Hir;
+    use crate::nameres::PrimTy;
     use crate::testing::resolve_src;
     use crate::typeck::tyctx::TyCtx;
 
@@ -740,10 +732,10 @@ mod tests {
     ///
     /// Bodies are deliberately not checked -- most of `check_expr` is still `todo!()` -- so what is
     /// exercised here is the program-level context.
-    fn bounds(hir: &Hir, nameres: &NameResolutions) -> Vec<String> {
+    fn bounds(hir: &Hir) -> Vec<String> {
         DiagCtx::clear();
 
-        let mut checker = Typeck::new(hir, nameres);
+        let mut checker = Typeck::new(hir);
         checker.collect_module(hir.root_id());
         checker.build_impl_index();
         checker.check_coherence();
@@ -760,7 +752,7 @@ mod tests {
 
     #[test]
     fn a_bound_that_is_not_met_by_the_argument_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Bare {}
@@ -768,7 +760,7 @@ mod tests {
         );
 
         assert_eq!(
-            bounds(&hir, &nameres),
+            bounds(&hir),
             ["the trait bound `Bare: Show` is not satisfied"]
         );
     }
@@ -778,7 +770,7 @@ mod tests {
     /// being re-raised against the instantiation to get there.
     #[test]
     fn an_unmet_bound_points_at_the_declaration_that_requires_it() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Bare {}
@@ -786,7 +778,7 @@ mod tests {
         );
 
         DiagCtx::clear();
-        let mut checker = Typeck::new(&hir, &nameres);
+        let mut checker = Typeck::new(&hir);
         checker.collect_module(hir.root_id());
         checker.build_impl_index();
         checker.select_program_obligations();
@@ -807,7 +799,7 @@ mod tests {
 
     #[test]
     fn a_bound_met_by_an_impl_is_accepted() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Foo {}
@@ -815,14 +807,14 @@ mod tests {
              fun f(x: Sorted<Foo>) {}",
         );
 
-        assert!(bounds(&hir, &nameres).is_empty());
+        assert!(bounds(&hir).is_empty());
     }
 
     /// The conditional impl's own bound is proved recursively, so the whole chain either holds or
     /// fails as one.
     #[test]
     fn a_bound_met_through_a_conditional_impl_is_accepted() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Wrap<T> { inner: T }
@@ -832,16 +824,12 @@ mod tests {
              fun f(x: Sorted<Wrap<Foo>>) {}",
         );
 
-        assert!(
-            bounds(&hir, &nameres).is_empty(),
-            "{:?}",
-            bounds(&hir, &nameres)
-        );
+        assert!(bounds(&hir).is_empty(), "{:?}", bounds(&hir));
     }
 
     #[test]
     fn a_conditional_impl_whose_own_bound_fails_does_not_satisfy_the_goal() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Wrap<T> { inner: T }
@@ -851,7 +839,7 @@ mod tests {
         );
 
         assert_eq!(
-            bounds(&hir, &nameres),
+            bounds(&hir),
             ["the trait bound `Wrap<Bare>: Show` is not satisfied"]
         );
     }
@@ -860,34 +848,31 @@ mod tests {
     /// and that is enough.
     #[test]
     fn a_bound_met_by_an_assumption_in_scope_is_accepted() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              fun f<U: Show>(x: Sorted<U>) {}",
         );
 
-        assert!(bounds(&hir, &nameres).is_empty());
+        assert!(bounds(&hir).is_empty());
     }
 
     #[test]
     fn a_parameter_passed_on_without_the_bound_it_needs_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              fun f<U>(x: Sorted<U>) {}",
         );
 
-        assert_eq!(
-            bounds(&hir, &nameres),
-            ["the trait bound `U: Show` is not satisfied"]
-        );
+        assert_eq!(bounds(&hir), ["the trait bound `U: Show` is not satisfied"]);
     }
 
     /// An `extend` block instantiates the type it extends, so its arguments are checked like any
     /// other.
     #[test]
     fn an_extend_blocks_arguments_have_to_satisfy_the_extended_types_bounds() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Bare {}
@@ -895,7 +880,7 @@ mod tests {
         );
 
         assert_eq!(
-            bounds(&hir, &nameres),
+            bounds(&hir),
             ["the trait bound `Bare: Show` is not satisfied"]
         );
     }
@@ -906,12 +891,12 @@ mod tests {
 
     #[test]
     fn a_bound_naming_a_struct_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Foo {}
              fun f<T: Foo>(x: T) {}",
         );
 
-        assert_eq!(bounds(&hir, &nameres), ["`Foo` is not a trait"]);
+        assert_eq!(bounds(&hir), ["`Foo` is not a trait"]);
     }
 
     /// The other nominal thing a bound can name. A primitive cannot be written in bound position
@@ -920,45 +905,45 @@ mod tests {
     /// kinds it might have been.
     #[test]
     fn a_bound_naming_an_enum_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "enum Direction { up, down }
              fun f<T: Direction>(x: T) {}",
         );
 
-        assert_eq!(bounds(&hir, &nameres), ["`Direction` is not a trait"]);
+        assert_eq!(bounds(&hir), ["`Direction` is not a trait"]);
     }
 
     /// Reported once per declaration, however many environments the parameter turns up in: the
     /// block's `<T>` is collected again for every method it holds.
     #[test]
     fn a_bad_bound_on_an_extend_block_is_reported_once() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Foo {}
              struct Wrap<T> { inner: T }
              extend<T: Foo> Wrap<T> { fun a(&self) {} fun b(&self) {} }",
         );
 
-        assert_eq!(bounds(&hir, &nameres), ["`Foo` is not a trait"]);
+        assert_eq!(bounds(&hir), ["`Foo` is not a trait"]);
     }
 
     #[test]
     fn a_bound_that_did_not_resolve_reports_nothing_further() {
-        let (hir, nameres) = resolve_src("fun f<T: Nope>(x: T) {}");
+        let hir = resolve_src("fun f<T: Nope>(x: T) {}");
 
         assert!(
-            bounds(&hir, &nameres).is_empty(),
+            bounds(&hir).is_empty(),
             "name resolution already reported the missing name"
         );
     }
 
     #[test]
     fn a_bound_naming_a_trait_is_accepted() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              fun f<T: Show>(x: T) {}",
         );
 
-        assert!(bounds(&hir, &nameres).is_empty());
+        assert!(bounds(&hir).is_empty());
     }
 
     // -----------------------------------------------------------------
@@ -967,40 +952,40 @@ mod tests {
 
     #[test]
     fn a_with_clause_missing_the_traits_arguments_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index { fun get(&self, key: i32) -> bool {} }",
         );
 
         assert_eq!(
-            bounds(&hir, &nameres),
+            bounds(&hir),
             ["`Index` takes 2 generic arguments but 0 were supplied"]
         );
     }
 
     #[test]
     fn a_with_clause_with_the_right_number_of_arguments_is_accepted() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index<i32, bool> { fun get(&self, key: i32) -> bool {} }",
         );
 
-        assert!(bounds(&hir, &nameres).is_empty());
+        assert!(bounds(&hir).is_empty());
     }
 
     /// Unlike a written annotation, the type an `extend` block names is built without counting --
     /// so this is the one place the count was never checked before.
     #[test]
     fn an_extend_block_applying_the_wrong_number_of_arguments_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Wrap<T> { inner: T }
              extend Wrap<i32, bool> { fun get(&self) {} }",
         );
 
         assert_eq!(
-            bounds(&hir, &nameres),
+            bounds(&hir),
             ["`Wrap` takes 1 generic argument but 2 were supplied"]
         );
     }
@@ -1010,13 +995,13 @@ mod tests {
     /// `dyn` carries its own argument list, one with a spelling that fixes it.
     #[test]
     fn a_dyn_naming_a_trait_with_parameters_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              fun f(x: &dyn Index) {}",
         );
 
         assert_eq!(
-            bounds(&hir, &nameres),
+            bounds(&hir),
             ["`Index` takes 2 generic arguments but 0 were supplied"]
         );
     }

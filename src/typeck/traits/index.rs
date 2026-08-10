@@ -21,8 +21,7 @@ use std::collections::HashMap;
 use crate::ast::Symbol;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, OwnerNode};
-use crate::nameres::results::{SelfTyRes, TypeRes};
+use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
 use crate::typeck::ty::Ty;
@@ -224,39 +223,38 @@ impl<'hir> Typeck<'hir> {
     /// identifiers: there is no syntax for `extend &T`, `extend (A, B)` or `extend dyn Show` to
     /// reject, and a primitive is a keyword rather than an identifier, so `extend i32` is a parse
     /// error before it ever gets here. The arms below are still written out, because what a path
-    /// may resolve to is [`TypeRes`]'s business rather than this function's, and a widened path
+    /// may resolve to is [`Res`]'s business rather than this function's, and a widened path
     /// grammar should meet a diagnostic here rather than an `unreachable!`.
     fn impl_self_head(&mut self, extend: DefId, span: SrcSpan) -> Option<DefId> {
-        // What the block's `adt_path` named, kept undiscarded by name resolution precisely so
-        // that the wording below can tell these cases apart; see `resolve_extend`.
-        let res = self.nameres.ty(extend.owner_id());
+        let OwnerNode::Extend(block) = self.hir.def(extend) else {
+            unreachable!("root of an Extend owner is always OwnerNode::Extend");
+        };
 
-        match res {
-            Some(TypeRes::Def(def)) => match self.hir.def(def) {
-                OwnerNode::Struct(_) | OwnerNode::Enum(_) => Some(def),
-                OwnerNode::Trait(_) => {
-                    Self::report_extend_trait(span);
-                    None
-                }
-                _ => {
-                    unreachable!(
-                        "name resolution only ever puts a struct, enum, or trait in the type \
-                         namespace, so an extended path names one of the three"
-                    )
-                }
-            },
-            Some(TypeRes::PrimTy(_)) => {
+        // What the block's own `adt_path` named, kept undiscarded by name resolution precisely
+        // so that the wording below can tell these cases apart; see `resolver::visit_extend`.
+        match block.adt_path.res {
+            Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => Some(def),
+            Res::Type(Type::Def(TyDef::Trait(_))) => {
+                Self::report_extend_trait(span);
+                None
+            }
+            Res::Type(Type::Prim(_)) => {
                 Self::report_extend_primitive(span);
                 None
             }
-            Some(TypeRes::Generic(_)) => {
+            Res::Type(Type::Generic(_)) => {
                 Self::report_extend_generic(span);
                 None
             }
             // Already reported by name resolution; staying quiet here keeps one mistake from
-            // producing a second diagnostic. `None` is the same case: nothing recorded means the
-            // path was never resolved at all.
-            Some(TypeRes::Err) | None => None,
+            // producing a second diagnostic.
+            Res::Err => None,
+            // `extend`'s own path is parsed like any other, never as the `Self` keyword or a
+            // value/module name -- see `LoweringCtx::as_self_ty` and `SymbolTable::lookup_type_path`.
+            Res::SelfTy(_) | Res::Local(_) | Res::Function(_) | Res::Module(_) => unreachable!(
+                "an extend block's own path cannot resolve to Self, a local, a function, or a \
+                 module"
+            ),
         }
     }
 
@@ -268,17 +266,23 @@ impl<'hir> Typeck<'hir> {
         trait_generics: &[HirId],
         span: SrcSpan,
     ) -> Option<TraitRef> {
-        let Some(SelfTyRes::Ty {
-            trait_: Some(def), ..
-        }) = self.nameres.self_ty(extend)
+        let OwnerNode::Extend(block) = self.hir.def(extend) else {
+            unreachable!("root of an Extend owner is always OwnerNode::Extend");
+        };
+
+        let Some(Res::Type(Type::Def(tydef))) = block.trait_path.as_ref().map(|path| path.res)
         else {
-            // Either an inherent `extend Foo { .. }`, or a `with` clause whose path did not
-            // resolve -- which name resolution has already reported. Both leave the block with
-            // inherent methods and no trait, which is a consistent thing for later passes to see.
+            // Either an inherent `extend Foo { .. }` (no `trait_path` at all), or a `with`
+            // clause whose path resolved to something other than a struct/enum/trait -- a
+            // primitive, a generic parameter, or nothing at all because it failed to resolve,
+            // which name resolution has already reported. All three leave the block with
+            // inherent methods and no trait, which is a consistent thing for later passes to
+            // see.
             return None;
         };
 
-        if !matches!(self.hir.def(def), OwnerNode::Trait(_)) {
+        let def = tydef.def_id();
+        if !matches!(tydef, TyDef::Trait(_)) {
             // `extend Foo with Bar` where `Bar` is a struct. Reported here rather than left to
             // fail confusingly later: a `TraitRef` naming a non-trait would break every consumer's
             // assumption that `def` has a method list.
@@ -343,7 +347,7 @@ impl<'hir> Typeck<'hir> {
 #[cfg(test)]
 mod tests {
     use crate::diag::DiagCtx;
-    use crate::hir::{Hir, NameResolutions};
+    use crate::hir::Hir;
     use crate::testing::{lex_src, resolve_src};
     use crate::typeck::Typeck;
 
@@ -354,8 +358,8 @@ mod tests {
     /// fixture would have to be written around the checker rather than around what is being
     /// tested. Diagnostics from name resolution are cleared first, since a fixture is resolved
     /// without the core library and so reports every lang item as missing.
-    fn indexed<'hir>(hir: &'hir Hir, nameres: &'hir NameResolutions) -> Typeck<'hir> {
-        let mut checker = Typeck::new(hir, nameres);
+    fn indexed<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
+        let mut checker = Typeck::new(hir);
         checker.collect_module(hir.root_id());
         DiagCtx::clear();
         checker.build_impl_index();
@@ -371,11 +375,11 @@ mod tests {
 
     #[test]
     fn an_inherent_extend_is_indexed_against_the_type_it_extends() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Foo {}
              extend Foo { fun get(&self) {} }",
         );
-        let checker = indexed(&hir, &nameres);
+        let checker = indexed(&hir);
 
         assert_eq!(checker.impls.len(), 1);
         let header = checker
@@ -391,12 +395,12 @@ mod tests {
 
     #[test]
     fn a_trait_extend_records_the_trait_it_implements() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
         );
-        let checker = indexed(&hir, &nameres);
+        let checker = indexed(&hir);
 
         let header = checker
             .impls
@@ -413,11 +417,11 @@ mod tests {
     /// parameter entirely and must not leak in.
     #[test]
     fn an_impls_generics_are_the_blocks_own_parameters() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Wrap<T> { inner: T }
              extend<T> Wrap<T> { fun get(&self) {} }",
         );
-        let checker = indexed(&hir, &nameres);
+        let checker = indexed(&hir);
         let header = checker
             .impls
             .header(checker.impls.for_self(wrap(&checker))[0]);
@@ -448,11 +452,11 @@ mod tests {
     /// The reachable non-nominal case: a path that names a type parameter rather than a type.
     #[test]
     fn extending_a_type_parameter_is_reported_and_dropped() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              extend<T> T with Show { fun show(&self) {} }",
         );
-        let checker = indexed(&hir, &nameres);
+        let checker = indexed(&hir);
 
         assert_eq!(messages(), ["a generic type parameter cannot be extended"]);
         assert!(
@@ -463,11 +467,11 @@ mod tests {
 
     #[test]
     fn extending_a_trait_is_reported_and_dropped() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "trait Show { fun show(&self); }
              extend Show { fun show(&self) {} }",
         );
-        let checker = indexed(&hir, &nameres);
+        let checker = indexed(&hir);
 
         assert_eq!(messages(), ["a trait cannot be extended"]);
         assert!(checker.impls.is_empty());
@@ -475,8 +479,8 @@ mod tests {
 
     #[test]
     fn extending_an_unresolved_path_reports_nothing_further() {
-        let (hir, nameres) = resolve_src("extend Nope { fun get(&self) {} }");
-        let checker = indexed(&hir, &nameres);
+        let hir = resolve_src("extend Nope { fun get(&self) {} }");
+        let checker = indexed(&hir);
 
         assert!(
             messages().is_empty(),
@@ -488,12 +492,12 @@ mod tests {
 
     #[test]
     fn implementing_something_that_is_not_a_trait_is_reported() {
-        let (hir, nameres) = resolve_src(
+        let hir = resolve_src(
             "struct Foo {}
              struct Bar {}
              extend Foo with Bar {}",
         );
-        let checker = indexed(&hir, &nameres);
+        let checker = indexed(&hir);
 
         assert_eq!(messages(), ["`with` must name a trait"]);
         // The block itself is still a perfectly good inherent impl, so it stays in the index.
@@ -504,8 +508,8 @@ mod tests {
     /// which is what keeps the query from needing an "unimplemented" case of its own.
     #[test]
     fn a_type_with_no_impls_has_an_empty_bucket() {
-        let (hir, nameres) = resolve_src("struct Foo {}");
-        let checker = indexed(&hir, &nameres);
+        let hir = resolve_src("struct Foo {}");
+        let checker = indexed(&hir);
 
         assert!(checker.impls.for_self(foo(&checker)).is_empty());
         assert!(checker.impls.extended_types().is_empty());

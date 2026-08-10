@@ -5,6 +5,7 @@ mod expr_impls;
 pub mod interner;
 mod node_id;
 mod type_impls;
+pub mod visit;
 
 use std::collections::HashMap;
 
@@ -65,6 +66,34 @@ pub struct Ident {
 pub struct Path {
     pub segments: Vec<Ident>,
     pub span: SrcSpan,
+}
+
+/// `Path` compares and hashes over its segment symbols alone, ignoring every span: a `Path`
+/// identifies a name, not a source location, and two writings of `math::vector` are the same
+/// path. `NameResolutions::get` matches a node's recorded paths this way, which is what lets
+/// an `extend` block's two entries be told apart by what they name rather than by position.
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        self.segments.len() == other.segments.len()
+            && self
+                .segments
+                .iter()
+                .zip(&other.segments)
+                .all(|(a, b)| a.text == b.text)
+    }
+}
+
+impl Eq for Path {}
+
+impl std::hash::Hash for Path {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Must agree with `PartialEq` above: hash exactly what `eq` compares, and nothing
+        // else. Hashing the length too keeps `[a, b]` and `[ab]` apart.
+        self.segments.len().hash(state);
+        for segment in &self.segments {
+            segment.text.hash(state);
+        }
+    }
 }
 
 // ===========================================================================
@@ -634,5 +663,51 @@ impl Ast {
     /// Iterates every module, parents before children.
     pub fn mod_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.modules.iter().map(|module| module.id)
+    }
+}
+
+#[cfg(test)]
+mod path_eq_tests {
+    use super::*;
+    use interner::Interner;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    fn path(segments: &[&str], start: usize) -> Path {
+        let span = SrcSpan::new(start, start + 1);
+        Path {
+            segments: segments
+                .iter()
+                .map(|s| Ident {
+                    text: Interner::intern(s),
+                    span,
+                })
+                .collect(),
+            span,
+        }
+    }
+
+    fn hash_of(p: &Path) -> u64 {
+        let mut h = DefaultHasher::new();
+        p.hash(&mut h);
+        h.finish()
+    }
+
+    #[test]
+    fn paths_with_the_same_segments_but_different_spans_are_equal() {
+        let a = path(&["math", "vector"], 0);
+        let b = path(&["math", "vector"], 500);
+        assert_eq!(a, b);
+        assert_eq!(hash_of(&a), hash_of(&b));
+    }
+
+    #[test]
+    fn paths_with_different_segments_are_not_equal() {
+        assert_ne!(path(&["math"], 0), path(&["vector"], 0));
+    }
+
+    #[test]
+    fn paths_of_different_lengths_are_not_equal() {
+        assert_ne!(path(&["math"], 0), path(&["math", "vector"], 0));
     }
 }

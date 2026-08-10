@@ -23,10 +23,9 @@ mod ids;
 mod items;
 pub mod lower;
 mod pat;
+mod path;
 mod types;
-pub mod visit;
 
-pub use crate::nameres::results::NameResolutions;
 pub use arena::{Arena, Node, OwnerNode};
 pub use block::{Block, Stmt, StmtKind, WithLend};
 pub use expr::{AccessArgs, Expr, ExprKind, LoopSource, Payload, PayloadField};
@@ -36,6 +35,7 @@ pub use items::{
     SelfParam, Struct, Trait, Variant, VariantPayload,
 };
 pub use pat::{Arm, BindingMode, Pat, PatKind};
+pub use path::{Local, Path, Res, TyDef, Type};
 pub use types::{Ty, TyKind};
 
 #[derive(Debug)]
@@ -66,6 +66,17 @@ pub struct Hir {
 
     /// The root module, which transitively contains every other definition in the program.
     root_module: DefId,
+
+    /// The core-library definitions the compiler itself knows by name -- the enums `?` and `for`
+    /// desugar through, and the traits the operators dispatch to.
+    ///
+    /// Resolved at the AST level, before any `DefId` exists (see [`crate::langitems::collect_ast`]),
+    /// and translated into this `DefId`-keyed form as the last step of lowering (see
+    /// [`crate::langitems::translate`]) -- lowering is what has both a lang item's `NodeId` and
+    /// the `DefId` it became, so this is where the two get joined. Carried on `Hir` itself,
+    /// rather than handed back from `lower_unit` alongside it, because every later pass already
+    /// has a `Hir` in hand and needs nothing else to ask what a lang item resolved to.
+    lang_items: crate::langitems::LangItems,
 }
 
 impl Hir {
@@ -115,6 +126,11 @@ impl Hir {
     /// Returns the [`DefId`] of the root module.
     pub fn root_id(&self) -> DefId {
         self.root_module
+    }
+
+    /// The core-library definitions the compiler knows by name.
+    pub fn lang_items(&self) -> &crate::langitems::LangItems {
+        &self.lang_items
     }
 
     /// Returns the definition that `def_id` is lexically declared inside, or `None` if `def_id`

@@ -3,13 +3,13 @@
 
 use crate::ast;
 use crate::ast::interner::Interner;
-use crate::ast::{Ident, Mutability, Path};
+use crate::ast::{Ident, Mutability};
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{
     AccessArgs, BindingMode, ExprKind, HirId, LoopSource, PatKind, Payload, StmtKind,
 };
 
-impl OwnerLowerer<'_> {
+impl OwnerLowerer<'_, '_> {
     /// `if let pat = scrutinee { then } else { else }` desugars to
     /// `match scrutinee { pat => { then }, _ => { else } }`.
     pub(super) fn lower_if_let(
@@ -165,10 +165,17 @@ impl OwnerLowerer<'_> {
                     let loop_body = low.synth_block(span, |low, _loop_block_id| {
                         let match_expr = low.synth_expr(span, |low, _match_id| {
                             let next_call = low.synth_expr(span, move |low, _call_id| {
+                                // `__iter` is bound just above, in this same desugaring, so its
+                                // `HirId` is already at hand -- no need to go through
+                                // `NameResolutions`, which (being AST-level) never saw this
+                                // synthesized binding or this synthesized use of it at all.
                                 let receiver = low.synth_expr(span, move |_, _| {
-                                    ExprKind::Path(Path {
+                                    ExprKind::Path(crate::hir::Path {
                                         segments: vec![iter_ident],
                                         span,
+                                        res: crate::hir::Res::Local(crate::hir::Local::Variable(
+                                            iter_pat,
+                                        )),
                                     })
                                 });
                                 ExprKind::Access {

@@ -4,26 +4,35 @@
 
 #![allow(dead_code)]
 
-use crate::ast::{Ident, Path, SelfMode, Visibility};
+use crate::ast::{Ident, Path as AstPath, SelfMode, Visibility};
 use crate::driver::source::SrcSpan;
 use crate::hir::ids::{DefId, HirId};
+use crate::hir::path::Path;
 
 /// A module. `items` holds every definition declared directly inside it, each already lowered
 /// and given its own [`DefId`]; `imports` holds the `import` statements, which stay local to
 /// this module's arena since an import is not itself a definition.
+///
+/// `path` stays an `ast::Path`, not an `hir::Path`: a module names no resolvable target in the
+/// sense `Res` answers for -- it doesn't refer to something else, it *is* the thing, addressed
+/// here by its own `hir_id`. There is no answer to attach.
 #[derive(Debug)]
 pub struct Module {
     pub hir_id: HirId,
-    pub path: Path,
+    pub path: AstPath,
     pub items: Vec<DefId>,
     pub imports: Vec<HirId>, // -> Node::Import
     pub span: SrcSpan,
 }
 
+/// `path` stays an `ast::Path`, for the same reason as [`Module::path`]: an import statement
+/// names the thing it brings into scope, but nothing here needs to answer "what did this path
+/// resolve to" the way a use of it elsewhere in the program does. Its effect is on the importing
+/// module's namespace, not on some downstream consumer reading `res` back out.
 #[derive(Debug)]
 pub struct Import {
     pub hir_id: HirId,
-    pub path: Path,
+    pub path: AstPath,
     pub glob: bool,
     pub alias: Option<Ident>,
     pub span: SrcSpan,
@@ -123,6 +132,10 @@ pub struct Extend {
     pub extend_generics: Vec<HirId>, // -> Node::Generic
     pub adt_generics: Vec<HirId>,    // -> Node::Ty
     pub trait_generics: Vec<HirId>,  // -> Node::Ty
+    /// `adt_path` and `trait_path` are the reason `hir::Path` carries its own `res` at all:
+    /// `Extend` has no `HirId` of its own to key a second per-node table entry on, so a table
+    /// re-keyed by `HirId` alone would have nowhere to put the second path. Giving each `Path`
+    /// its own `res` field is what gives both fields somewhere to live on the same node.
     pub adt_path: Path,
     pub trait_path: Option<Path>,
     pub methods: Vec<DefId>,
@@ -145,6 +158,9 @@ pub struct Closure {
 pub struct Generic {
     pub hir_id: HirId,
     pub name: Ident,
+    /// A bound is a bare path on the parameter rather than a node of its own, so each one's
+    /// resolution lives on the `Path` itself, in source order, rather than in a table keyed by
+    /// some id the bound doesn't have.
     pub bounds: Vec<Path>,
     pub span: SrcSpan,
 }
