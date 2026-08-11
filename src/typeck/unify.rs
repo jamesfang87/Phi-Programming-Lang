@@ -61,7 +61,7 @@ impl Unifier {
         }
     }
 
-    /// The representative of `ty`'s equivalence class, registering `ty` as its own class if this
+    /// The representative of `ty`'s equivalence class, registering `ty` as its equivalence class if this
     /// is the first time it has been seen.
     ///
     /// Written iteratively rather than recursively. Union by size already bounds a class's
@@ -143,7 +143,7 @@ impl Unifier {
         for (t_component, u_component) in components {
             self.unify(tcx, t_component, u_component).map_err(|err| {
                 // Re-report a mismatch found inside as a mismatch of the two types the caller
-                // actually wrote: "expected `(i32, i32)`, found `(bool, bool)`" says more than
+                // wrote: "expected `(i32, i32)`, found `(bool, bool)`" says more than
                 // "expected `i32`, found `bool`" with no hint of where it came from. The
                 // variable-kind errors already name the variable they are about, so they are
                 // more specific than the outer types and pass through untouched.
@@ -1382,7 +1382,7 @@ mod tests {
         ));
     }
 
-    /// The indirect case: neither bind contains its own variable syntactically, but the second
+    /// The indirect case: neither bind contains a variable syntactically, but the second
     /// closes a loop through the first. `occurs` resolves as it descends, which is what sees it.
     #[test]
     fn a_cycle_closed_through_another_variable_is_caught() {

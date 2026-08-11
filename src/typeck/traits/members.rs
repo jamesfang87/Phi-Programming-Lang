@@ -20,7 +20,7 @@
 //! ## Equality, not unification
 //!
 //! The comparison is `==` on interned [`Ty`] handles, which is what the design asks for: a method
-//! that merely *could* unify with the declaration is still wrong. `fun show(&self, x: T)` where
+//! that can unify with the declaration is still wrong. `fun show(&self, x: T)` where
 //! the trait declared `fun show(&self, x: i32)` would unify happily by binding `T := i32`, and
 //! accepting it would mean the implementation promises more than it delivers -- a caller with a
 //! `bool` would type-check against the trait and land in a body expecting an `i32`.

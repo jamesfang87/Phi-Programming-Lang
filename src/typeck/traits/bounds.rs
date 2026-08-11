@@ -1,4 +1,4 @@
-//! Bound checking: making `T: Show` mean something at every place a `T` is chosen.
+//! Bound checking: enforcing `T: Show` at every place a `T` is chosen.
 //!
 //! A declaration writes its requirements once -- `struct Sorted<T: Comparable>`,
 //! `fun sort<T: Comparable>(..)` -- and every instantiation of it has to meet them. This module
@@ -9,8 +9,8 @@
 //!
 //! ## Why deferral
 //!
-//! The obvious implementation -- prove the bound where the instantiation is written -- does not
-//! work, because at that moment the arguments are usually still inference variables. `let x = f(v)`
+//! A direct implementation -- prove the bound where the instantiation is written -- fails,
+//! because at that moment the arguments are usually still inference variables. `let x = f(v)`
 //! fixes `f`'s parameters from `v`'s type, which may itself be settled several statements later.
 //! Asking early gets [`Solution::Ambiguous`], which is neither a pass nor a failure.
 //!
@@ -64,7 +64,7 @@ use crate::typeck::ty::{Ty, TyKind};
 /// One goal waiting to be proved, together with the definition whose assumptions it is proved
 /// under.
 ///
-/// The design sketched `ObligationCx` as a bare `Vec<Obligation>`. It cannot be: the context
+/// An initial design specified `ObligationCx` as a bare `Vec<Obligation>`. It cannot be: the context
 /// outlives the moment of registration, and by the time a goal is attempted there is nothing left
 /// on the stack saying which `<T: ..>` list was in scope where it came from. A `Foo<T>` written
 /// inside `fun f<T: Show>` and the identical one written inside a struct declaration are different
@@ -105,7 +105,7 @@ impl ObligationCx {
     }
 }
 
-/// What the fixpoint loop needs, and nothing else.
+/// The interface the fixpoint loop requires.
 ///
 /// The loop is separated from the checker behind this trait for the same reason
 /// [`overlaps`](crate::typeck::traits::overlap::overlaps) takes no diagnostic context: its bugs are
@@ -123,7 +123,7 @@ trait Prover {
     /// instantiate something bounded -- and they belong to this drain rather than to the next one.
     fn newly_registered(&mut self) -> Vec<PendingObligation>;
 
-    /// The goal is answerably false: report it.
+    /// The goal does not hold: report it.
     fn unsatisfied(&mut self, pending: &PendingObligation);
 
     /// The goal is still ambiguous and no pass will change that: report it.
@@ -132,7 +132,7 @@ trait Prover {
 
 /// Proves `pending` to a fixpoint, reporting whatever is left over.
 ///
-/// Each pass discharges what it can and keeps what is merely not-yet-knowable. Two things end the
+/// Each pass discharges what it can and keeps what is not yet knowable. Two things end the
 /// loop. The pending set going empty is the ordinary one. The other is a pass that discharges
 /// nothing and raises nothing: the set it started with and the set it ended with are the same, so
 /// every later pass would do the same again, and those goals are reported as needing an annotation
@@ -173,7 +173,7 @@ fn select_all(mut pending: Vec<PendingObligation>, prover: &mut impl Prover) {
     }
 }
 
-/// The real prover: the checker itself, plus which of its two contexts this drain owns.
+/// The concrete prover: the checker itself, plus which of its two contexts this drain owns.
 ///
 /// The context is reached through a function pointer rather than held as a borrow because the
 /// drain hands the checker out mutably to prove each goal, and mid-pass registrations land back in
@@ -262,7 +262,7 @@ impl<'hir> Typeck<'hir> {
                 .map(|&arg| self.subst_ty(arg, &subst))
                 .collect();
             // The goal is raised at the instantiation, but it exists because of the bound the
-            // declaration writes, and that is a second place worth pointing at. `collect_bounds`
+            // declaration writes, and that is a second location to show in the diagnostic. `collect_bounds`
             // left it in the bound's own `cause`, which is about to be replaced by this one.
             let mut goal = Obligation::new(
                 self_ty,
@@ -561,7 +561,7 @@ mod tests {
     // -----------------------------------------------------------------
     // The fixpoint loop
     //
-    // Driven against a fake prover, because what is interesting about the loop is how it behaves
+    // Driven against a fake prover, because the key property of the loop is how it behaves
     // when inference moves between two passes -- and inference cannot move during a drain that the
     // test itself is running. See `Prover`.
     // -----------------------------------------------------------------
@@ -845,7 +845,7 @@ mod tests {
     }
 
     /// The case the `ParamEnv` exists for: nothing is known about `U` except what `f` declared,
-    /// and that is enough.
+    /// which is sufficient to discharge the bound.
     #[test]
     fn a_bound_met_by_an_assumption_in_scope_is_accepted() {
         let hir = resolve_src(

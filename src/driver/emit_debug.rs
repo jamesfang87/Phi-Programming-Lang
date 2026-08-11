@@ -66,8 +66,8 @@ fn node_kind(node: &Node) -> String {
 /// function body.
 const MAX_SNIPPET_LEN: usize = 60;
 
-/// Collapses `text` down to a single line (folding away the newlines and indentation a
-/// multi-line span would otherwise carry) and truncates it to [`MAX_SNIPPET_LEN`].
+/// Collapses `text` to a single line (removing newlines and indentation from multi-line spans)
+/// and truncates it to [`MAX_SNIPPET_LEN`].
 fn snippet(text: &str) -> String {
     let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if one_line.chars().count() > MAX_SNIPPET_LEN {
@@ -275,7 +275,7 @@ pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_c
 
 /// Everything [`fmt_res`] needs to turn a `Res` into readable text without ever
 /// printing the `NodeId` it carries: a lookup from that id back to the declaration it names,
-/// built by one walk over the whole AST.
+/// built by a single traversal of the whole AST.
 ///
 /// `NameResolutions` records only ids -- `Res::Function(NodeId)`,
 /// `Res::Local(Local::Variable(NodeId))`, and so on -- so turning one back into a name needs
@@ -410,7 +410,7 @@ fn fmt_ty_def(names: &Names, kind: &str, id: AstNodeId) -> String {
 
 /// Renders `res` by what it names, never by the `NodeId` it carries.
 ///
-/// This is the load-bearing half of the no-`NodeId` rule described on
+/// This is the essential half of the no-`NodeId` rule described on
 /// [`nameres_to_string`]: every arm below reaches into `names` (or, for
 /// `Res::Module`, `ast` directly) to recover a written name and span, and formats *that*.
 /// `names` is [`Names`], built by walking the whole AST once; `ast` is only needed here
@@ -473,18 +473,17 @@ fn fmt_res(names: &Names, ast: &Ast, res: NameResRes) -> String {
 
 /// A span-ordered, `NodeId`-free rendering of name resolution's output.
 ///
-/// **Span-ordered.** [`crate::ast::NodeId`] comes from a single global atomic counter, and the
-/// order it hands ids out in is deterministic only because parsing currently runs sequentially,
-/// file by file -- the counter is global *specifically* so parsing can go parallel later. Once
-/// it does, the order two files' nodes receive ids in stops being predictable at all, and a
-/// dump ordered by `NodeId` (or by hash-map iteration order, which is no better) would start
-/// flapping between otherwise-identical runs for no reason a diff could explain. Sorting by
-/// each entry's source span instead costs nothing today -- while parsing is sequential, span
-/// order and id order agree -- and pins the dump's order to the one thing about a program that
-/// parallelizing the parser can never change: where its text sits in its own file.
+/// **Span-ordered.** [`crate::ast::NodeId`] comes from a single global atomic counter, and its
+/// assignment order is deterministic only because parsing currently runs sequentially, file by
+/// file. The counter is global specifically to enable parallel parsing later. Once it does, the
+/// id order for nodes across files becomes unpredictable. A dump ordered by `NodeId` (or by
+/// hash-map iteration order) would vary between runs for no reason a diff could explain. Sorting
+/// by source span instead costs nothing today (while parsing is sequential, span order and id
+/// order agree) and pins the dump to the one thing about a program that remains stable when
+/// parsing parallelizes: where its text sits in its own file.
 ///
 /// **Never prints a `NodeId`.** Same reason: an id that isn't stable across parallel parsing
-/// has no business in a file meant to be diffed for meaning rather than mechanism. Every `Res`
+/// should not appear in a file meant to be diffed for meaning rather than mechanism. Every `Res`
 /// is rendered by what it names instead of by its id -- the declaration's own written name and
 /// span, recovered through [`Names`], the lookup table this function builds by walking
 /// `ast` once. See [`fmt_res`] for how each `Res` variant does that.

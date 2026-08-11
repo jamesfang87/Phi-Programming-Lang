@@ -11,7 +11,7 @@ use crate::hir::{
 use crate::testing::{lower_src, parse_src};
 
 // -----------------------------------------------------------------
-// Driving the pipeline
+// Running the lowering pipeline
 // -----------------------------------------------------------------
 
 fn text(ident: Ident) -> &'static str {
@@ -178,8 +178,8 @@ fn a_forward_reference_resolves_to_an_already_allocated_def_id() {
     assert_eq!(hir.def_ids().count(), 3);
 }
 
-/// This is the test that actually exercises pre-allocation rather than just its end result:
-/// it drives the pass only as far as `prealloc_item` and checks every item already has a `DefId`
+/// This test exercises pre-allocation directly rather than just its end result:
+/// it runs the pass only as far as `prealloc_item` and checks every item already has a `DefId`
 /// in `cx.def_ids`, before `lower_module` -- which builds any arena -- has run at all. Before
 /// `def_ids`/`prealloc_item` existed, every one of `lower_item`, `lower_function`,
 /// `lower_struct`, ... allocated its own `DefId` lazily instead, so this assertion had nothing to
@@ -459,7 +459,7 @@ fn import_glob_and_alias_are_lowered_into_the_module() {
 
 #[test]
 fn nested_module_declaration_synthesizes_ancestor_modules() {
-    // The parser doesn't currently wire a file's `module` header into `ParsedSrcFile::module`,
+    // The parser does not wire a file's `module` header into `ParsedSrcFile::module`,
     // so this attaches the decl by hand to reach the module tree `Ast::new` builds from it.
     let mut unit = parse_src("fun helper() {}");
     let path_span = unit.span;
@@ -519,8 +519,8 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
     let helper_id = vector_module.items[0];
     assert_eq!(text(as_function(&hir, helper_id).name), "helper");
 
-    // Synthesized ancestors are parented just like declared ones, so a def in the innermost
-    // module can still be walked all the way back to the root.
+    // Synthesized ancestors are parented like declared ones, so a def in the innermost
+    // module is walkable all the way back to the root.
     assert_eq!(hir.parent(helper_id), Some(vector_id));
     assert_eq!(hir.parent(vector_id), Some(math_id));
     assert_eq!(hir.parent(math_id), Some(hir.root_id()));
@@ -564,8 +564,8 @@ fn a_methods_parent_is_its_trait_or_extend_block() {
     let t_id = as_trait(&hir, trait_id).functions[0];
     let m_id = as_extend(&hir, extend_id).methods[0];
 
-    // A method hangs off the item that declares it, not off the module the item sits in --
-    // which is what lets `Self` be recovered from the method's id alone.
+    // A method is parented to the item that declares it, not to the module -- this allows
+    // `Self` to be inferred from the method's id alone.
     assert_eq!(hir.parent(t_id), Some(trait_id));
     assert_eq!(hir.parent(m_id), Some(extend_id));
     // ...while `module_of` still skips past it to the enclosing module.
@@ -649,7 +649,7 @@ fn lowers_ctor_tuple_and_range_exprs() {
     };
     match &expr(&hir, *p_init).kind {
         ExprKind::Ctor { path, payload } => {
-            let path = path.as_ref().expect("`Point { .. }` names its type");
+            let path = path.as_ref().expect("`Point { .. }` specifies its type");
             assert_eq!(text(path.segments[0]), "Point");
             assert_eq!(payload.len(), 2);
             assert_eq!(text(payload[0].name), "x");
@@ -967,7 +967,7 @@ fn closure_is_lowered_as_its_own_owner() {
     assert_eq!(c.params.len(), 2);
     assert!(c.ret.is_some());
     // A closure owns a block directly. The body here was already written as `{ x + y }`, so it
-    // lowers to that block without picking up a redundant wrapper, and the addition is its tail.
+    // lowers to that block without acquiring a redundant wrapper, and the addition is its tail.
     let closure_block = block(&hir, c.block);
     assert!(matches!(
         expr(&hir, closure_block.expr.unwrap()).kind,
@@ -1008,8 +1008,8 @@ fn a_trailing_semicolon_discards_the_block_value() {
     assert!(body.expr.is_none());
 }
 
-/// The same holds for a block-bodied expression, which may drop its `;` but doesn't have to --
-/// so both spellings stay distinguishable in the last position.
+/// The same holds for a block-bodied expression, which may omit its `;` but doesn't have to --
+/// so both spellings remain distinguishable in the last position.
 #[test]
 fn a_block_bodied_expression_is_a_tail_only_without_a_semicolon() {
     let hir = lower_src("fun f() { if c { 1 } else { 2 } }");
