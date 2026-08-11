@@ -16,8 +16,8 @@ use crate::nameres::results::NameResolutions;
 use crate::nameres::symbol_table::SymbolTable;
 use crate::parser::Parser;
 
-/// Builds an `Ident` naming `text`, with a throwaway span -- for tests exercising the scope
-/// stacks, where the span is never inspected.
+/// Builds an `Ident` naming `text`, with a throwaway span (for tests exercising scope
+/// stacks, where the span is never inspected).
 fn ident(text: &str) -> Ident {
     Ident {
         text: Interner::intern(text),
@@ -45,8 +45,8 @@ fn ast_from(src: &str) -> Ast {
     ast_from_files(&[src])
 }
 
-/// Lexes, parses, and assembles `sources` -- one `Ast` built out of several files, the way a
-/// real build combines them -- asserting no diagnostics were raised along the way.
+/// Lexes, parses, and assembles `sources` into one `Ast` (built from multiple files, the way a
+/// real build combines them). Asserts no diagnostics were raised.
 fn ast_from_files(sources: &[&str]) -> Ast {
     DiagCtx::clear();
     Interner::clear();
@@ -68,9 +68,9 @@ fn collect_with_diags(src: &str) -> (SymbolTable<'_>, Vec<Diagnostic>) {
         let table = SymbolTable::collect(ast);
         (table, DiagCtx::diagnostics())
     }
-    // `ast_from` isn't inlined into this function because the `Ast` it returns must outlive the
-    // `SymbolTable<'_>` borrowing it, and a local behind `collect_with_diags`'s own stack frame
-    // can't do that -- so this leaks it, which is fine for a test helper.
+    // `ast_from` is not inlined because the returned `Ast` must outlive the `SymbolTable<'_>`
+    // that borrows it. A local in `collect_with_diags`'s stack frame can't. So this leaks it,
+    // which is fine for a test helper.
     let ast: &'static Ast = Box::leak(Box::new(ast_from(src)));
     inner(ast)
 }
@@ -87,26 +87,23 @@ fn new_with_diags(ast: &Ast) -> (SymbolTable<'_>, Vec<Diagnostic>) {
     (table, DiagCtx::diagnostics())
 }
 
-/// Same as [`new_with_diags`], but builds the `Ast` out of `sources` first -- see
-/// [`ast_from_files`] -- leaking it for the same reason [`collect_with_diags`] does.
+/// Builds a `SymbolTable` via [`SymbolTable::new`], but constructs the `Ast` from `sources`
+/// first (see [`ast_from_files`]). Leaks the `Ast` for the same reason as [`collect_with_diags`].
 fn new_with_diags_from(sources: &[&str]) -> (SymbolTable<'static>, Vec<Diagnostic>) {
     let ast: &'static Ast = Box::leak(Box::new(ast_from_files(sources)));
     new_with_diags(ast)
 }
 
-/// Builds an `Ast` containing the real core library, the way a full build does -- see
-/// [`SrcCollector::collect_core`] -- so a [`SymbolTable`] built over it has a `core::prelude`
-/// to find.
+/// Builds an `Ast` containing the real core library (the way a full build does; see
+/// [`SrcCollector::collect_core`]) so a [`SymbolTable`] built over it has `core::prelude` to find.
 ///
 /// Only the files this call itself registers are lexed and parsed, not the whole process-wide
-/// [`SrcMap`]: other tests may already have registered files of their own by the time this
-/// runs, or concurrently while it runs -- `SrcMap` sits behind a single process-wide lock,
-/// unlike the thread-local `Interner` and `DiagCtx`, so a length snapshot taken before and after
-/// `collect_core` would be racy under the default multi-threaded test runner. `collect_core`
-/// sidesteps that by handing back exactly the [`SrcFile`]s it registered, identified by the
-/// files themselves rather than by a before/after count -- see its doc comment. Re-parsing any
-/// file besides those five would raise diagnostics -- duplicate declarations, mostly -- that
-/// belong to unrelated tests, not to this `Ast`.
+/// [`SrcMap`]. Other tests may register files before or concurrently. `SrcMap` sits behind a
+/// single process-wide lock (unlike thread-local `Interner` and `DiagCtx`), so a length
+/// snapshot would be racy under the default multi-threaded test runner. `collect_core`
+/// sidesteps this by returning exactly the [`SrcFile`]s it registered, identified by the files
+/// themselves (not a before/after count; see its doc comment). Re-parsing files beyond those
+/// five would raise diagnostics (duplicate declarations, mostly) that belong to other tests.
 fn ast_with_core() -> Ast {
     DiagCtx::clear();
     Interner::clear();
@@ -138,10 +135,10 @@ fn with_diags<T>(f: impl FnOnce() -> T) -> (T, Vec<Diagnostic>) {
     (result, DiagCtx::diagnostics())
 }
 
-/// Filters out "missing lang item" diagnostics -- `resolve` (unlike `SymbolTable::new` alone)
+/// Filters out "missing lang item" diagnostics. `resolve` (unlike `SymbolTable::new` alone)
 /// always runs `langitems::collect_ast`, which reports one for every lang item the core library
-/// would declare, and none of the fixtures below build a unit with a core library in it. That
-/// noise is expected and unrelated to what these tests check.
+/// would declare. None of the fixtures below build a unit with a core library. That noise is
+/// expected and unrelated to what these tests check.
 fn non_lang_item_diags(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
     diags
         .iter()

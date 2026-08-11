@@ -69,7 +69,7 @@ impl ModuleScope {
         }
     }
 
-    /// Same as [`Self::insert_function`], but for the type namespace.
+    /// Inserts `name` into the type namespace, reporting a conflict if already declared.
     fn insert_type(&mut self, name: Ident, def: TyDef) {
         match self.types.entry(name.text) {
             Entry::Occupied(_) => report_conflict(name),
@@ -79,7 +79,7 @@ impl ModuleScope {
         }
     }
 
-    /// Same as [`Self::insert_function`], but for the module namespace.
+    /// Inserts `name` into the module namespace, reporting a conflict if already declared.
     fn insert_mod(&mut self, name: Ident, id: NodeId) {
         match self.mods.entry(name.text) {
             Entry::Occupied(_) => report_conflict(name),
@@ -193,8 +193,8 @@ impl<'ast> SymbolTable<'ast> {
             }
         }
 
-        // Submodules come from `Module::children`, not `items` -- a module's own item list
-        // never contains its children directly.
+        // Submodules come from `Module::children`, not `items`. A module's own item list
+        // keeps only its direct declarations, not children.
         let children = module.children.clone();
         for &child_id in &children {
             let child = self.ast.module(child_id);
@@ -213,19 +213,15 @@ impl<'ast> SymbolTable<'ast> {
         }
     }
 
-    /// Resolves every `import` statement in the tree, inserting each one into the *importing*
-    /// module's own scope -- so that after this runs, an imported name is looked up exactly
-    /// like a name the module declared itself, with no separate "imports" concept anywhere else
-    /// in the resolver.
+    /// Resolves every `import` statement in the tree, inserting each one into the importing
+    /// module's scope. After this runs, imported names are looked up exactly like names the
+    /// module declared itself, with no separate "imports" concept in the resolver.
     ///
-    /// This must run after [`Self::collect`] has built every module's scope, not just the
-    /// importing one's: an import can name any module in the tree by its absolute path (see
-    /// [`Self::resolve_import`]), including one `collect` reached after the importing module.
-    /// [`Self::new`] enforces that ordering by calling this only once `collect` has finished for
-    /// the whole tree. Iterating [`Ast::mod_ids`] rather than recursing down from the root is
-    /// what lets this rely on that ordering instead of re-deriving it: every module is already
-    /// in [`Self::modules`] by the time this runs, so there is nothing left to discover by
-    /// walking the tree shape again.
+    /// This must run after [`Self::collect`] finishes for every module. An import can name any
+    /// module by its absolute path (see [`Self::resolve_import`]), including one `collect`
+    /// reaches after the importing module. [`Self::new`] enforces this ordering. Using
+    /// [`Ast::mod_ids`] instead of recursing from the root avoids re-deriving tree shape: every
+    /// module is already in [`Self::modules`], so the flat iteration suffices.
     fn resolve_imports(&mut self) {
         for module_id in self.ast.mod_ids() {
             let module = self.ast.module(module_id);
@@ -292,16 +288,14 @@ impl<'ast> SymbolTable<'ast> {
         }
     }
 
-    /// Copies every name `source` declares -- functions, types, and submodules alike -- into
-    /// `into`'s own scope, for a glob import (`import math::*;`).
+    /// Copies every name `source` declares (functions, types, and submodules) into `into`'s
+    /// scope for a glob import (`import math::*;`).
     ///
     /// Each name goes through the same [`ModuleScope::insert_function`]/`insert_type`/
-    /// `insert_mod` conflict check as an ordinary declaration, so a name the glob brings in that
-    /// collides with something `into` already has -- declared directly, or brought in by an
-    /// earlier import -- is reported exactly like any other redefinition. There's no separate
-    /// "imports don't conflict with declarations" carve-out: the point of the glob is to behave
-    /// as if its contents had been spelled out by hand, and a hand-written duplicate would
-    /// conflict too.
+    /// `insert_mod` conflict check as any ordinary declaration. A collision is reported like
+    /// any other redefinition, whether with a direct declaration or an earlier import. Glob
+    /// imports have no special carve-out: their names enter the module's scope and collide
+    /// just as hand-written duplicates would.
     fn import_glob(&mut self, into: NodeId, source: NodeId, import: &Import) {
         let (functions, types, mods) = {
             let source = self
@@ -364,14 +358,16 @@ impl<'ast> SymbolTable<'ast> {
         self.lookup_function(module, name.text)
     }
 
-    /// Same as [`Self::resolve_import_value_path`], but against the type namespace.
+    /// Resolves an absolute path against the type namespace. Like [`Self::resolve_import_value_path`]
+    /// but for types.
     fn resolve_import_type_path(&self, base: NodeId, path: &Path) -> Option<TyDef> {
         let (name, modules) = path.segments.split_last()?;
         let module = self.walk_modules(base, modules)?;
         self.lookup_type_name(module, name.text)
     }
 
-    /// Same as [`Self::resolve_import_value_path`], but against the module namespace.
+    /// Resolves an absolute path against the module namespace. Like [`Self::resolve_import_value_path`]
+    /// but for modules.
     fn resolve_import_mod_path(&self, base: NodeId, path: &Path) -> Option<NodeId> {
         let (name, modules) = path.segments.split_last()?;
         let module = self.walk_modules(base, modules)?;
@@ -435,11 +431,10 @@ impl<'ast> SymbolTable<'ast> {
     /// for a single-segment path. A multi-segment path such as `math::T` can never name a
     /// primitive or a generic parameter, so it skips straight to the module walk.
     ///
-    /// Primitives are checked first: a primitive name can never reach a namespace to shadow in
-    /// the first place, since it never lexes as `TokenKind::Identifier` (each has its own
-    /// dedicated token kind, e.g. `TokenKind::I32`) -- so there is no source text that both
-    /// parses as a declaration and names one. Checking it first is simply cheaper than making
-    /// every `i32` walk the whole module chain to fail to find one.
+    /// Primitives are checked first: a primitive name can never shadow anything in a namespace
+    /// because it never lexes as `TokenKind::Identifier` (each has its own token kind, e.g.
+    /// `TokenKind::I32`). No source text both parses as a declaration and names one. Checking
+    /// primitives first is cheaper than making every `i32` walk the module chain to fail.
     pub fn lookup_type_path(&self, from: NodeId, path: &Path) -> Option<Type> {
         let (last, prefix) = path.segments.split_last()?;
 
@@ -486,22 +481,21 @@ impl<'ast> SymbolTable<'ast> {
     /// meaning "never reached" rather than "resolved, unsuccessfully" (see the module doc on
     /// [`Res::Err`]).
     ///
-    /// A bare path resolving to a trait is **legal** here and means static dispatch -- the
-    /// function is monomorphized over the concrete type, exactly as Rust's `impl Trait` is.
-    /// `dyn` is the dynamic-dispatch form, and it is a distinct node kind ([`Self::lookup_dyn_path`]
-    /// handles it), so the two are told apart structurally by which method the caller reaches
-    /// through -- never by inspecting the `Res` this returns.
+    /// A bare path resolving to a trait is **legal** here (it means static dispatch; the
+    /// function monomorphizes over the concrete type, like Rust's `impl Trait`). `dyn` is the
+    /// dynamic-dispatch form (a distinct node kind, handled by [`Self::lookup_dyn_path`]). The
+    /// two are told apart by which method the caller reaches, not by inspecting the `Res`.
     ///
     /// `Self` is special-cased here rather than left to [`Self::lookup_type_path`]'s own `Self`
     /// handling, so that writing `Self` with an empty `self_scopes` stack gets its own
     /// diagnostic ("`Self` is not available here") instead of the generic "cannot find `Self`
     /// in this scope".
     ///
-    /// An empty stack and a stack whose top is [`Self::push_self_unresolved`]'s `None` are told
-    /// apart here, deliberately: the first has nothing else to blame and reports; the second sits
-    /// inside a definition (an `extend` block, in practice) whose own target already failed to
-    /// resolve and was already reported there, so reporting `Self` too would be a redundant
-    /// second diagnostic for the one root cause.
+    /// An empty stack and a stack topped with [`Self::push_self_unresolved`]'s `None` are told
+    /// apart here. The first (empty) stack reports "not available" because nothing else can
+    /// blame the error. The second (topped with `None`) sits inside a definition (an `extend`
+    /// block) whose target already failed and was reported, so reporting `Self` would duplicate
+    /// the error for the same root cause.
     pub fn resolve_type_path(&self, from: NodeId, path: &Path) -> Res {
         let last = *path
             .segments
@@ -558,10 +552,9 @@ impl<'ast> SymbolTable<'ast> {
 
     /// Looks `name` up among `enum_`'s variants.
     ///
-    /// There is deliberately no way to search for a variant by name alone: the enum comes from
-    /// the expected type, and typeck calls this once it knows it. Scanning every enum in scope
-    /// for a matching variant name is exactly the ambiguity the leading `.` on a variant
-    /// reference exists to avoid.
+    /// No way exists to search for a variant by name alone. The enum comes from the expected
+    /// type, and typeck calls this once it knows it. Scanning every enum in scope would
+    /// duplicate the ambiguity that the leading `.` on a variant reference exists to avoid.
     ///
     /// No caller outside this module's own tests yet -- typeck doesn't consult the AST-level
     /// table for this today. Part of the public API the design spec lists, kept for a future
@@ -633,9 +626,9 @@ impl<'ast> SymbolTable<'ast> {
 
     /// Binds `name` in the innermost scope.
     ///
-    /// Takes an `Ident`, not a `Path`: a local is always one segment, and accepting a `Path`
-    /// would imply `let a::b = ...` is representable. Returns `()`, not `Result` -- shadowing is
-    /// legal, so the innermost map is simply overwritten and there is no failure to report.
+    /// Takes an `Ident`, not a `Path`: a local is always one segment; accepting `Path` would
+    /// imply `let a::b = ...` is possible. Returns `()`, not `Result`, because shadowing is
+    /// legal. The innermost map is overwritten, with no failure to report.
     pub fn insert_local(&mut self, name: Ident, local: Local) {
         self.local_scopes
             .last_mut()

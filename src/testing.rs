@@ -47,11 +47,11 @@ pub fn parse_src(src: &str) -> ParsedSrcFile {
 
 /// Lexes, parses, and lowers `src`, asserting no diagnostics were raised along the way.
 ///
-/// Runs AST-level name resolution first, as the real pipeline does, so `lower_unit` has
-/// something to consume -- but only asserts on diagnostics up through parsing: many fixtures
-/// name things that don't exist (a bare `fun f() { let x = y; }`, say), which is fine for
-/// exercising lowering's shape but would make AST-level resolution report "not found". Those
-/// diagnostics are left in `DiagCtx` rather than asserted on, same as `resolve_src` below.
+/// Runs AST-level name resolution first, so `lower_unit` has something to consume. Only
+/// diagnostics up through parsing are asserted. Many fixtures name things that don't exist
+/// (a bare `fun f() { let x = y; }`, say), which is fine for exercising lowering but causes
+/// AST-level resolution to report "not found". Those diagnostics are left in `DiagCtx` rather
+/// than asserted, same as `resolve_src` below.
 pub fn lower_src(src: &str) -> Hir {
     let ast = Ast::new(vec![parse_src(src)]);
     let res = nameres::resolve(&ast);
@@ -66,12 +66,11 @@ pub fn lower_src(src: &str) -> Hir {
 /// A test that needs to verify a later pass clears diagnostics first, so language items are not
 /// conflated with the pass's own errors.
 ///
-/// Previously this function handed back a second `NameResolutions` value from a dedicated
-/// HIR-based resolver, which ran only for type checking. That resolver no longer exists: every
+/// Previously this function returned a second `NameResolutions` value from a dedicated
+/// HIR-based resolver run only for type checking. That resolver no longer exists: every
 /// `hir::Path` carries its resolution inline (see `crate::hir::path`), and `lower_src` produces
-/// it as a side effect. This function now produces the same result as `lower_src`. The name is
-/// retained because it matches the expectations of every downstream caller, and renaming would
-/// require changes throughout the test infrastructure without adding precision.
+/// it as a side effect. This function now produces the same result as `lower_src`. The name
+/// persists to match downstream caller expectations and avoid refactoring the test infrastructure.
 pub fn resolve_src(src: &str) -> Hir {
     lower_src(src)
 }
@@ -79,10 +78,10 @@ pub fn resolve_src(src: &str) -> Hir {
 /// Runs the whole pipeline over `src`, type checking included, and hands back the messages type
 /// checking reported.
 ///
-/// Diagnostics are cleared after name resolution rather than asserted on, for the reason given on
+/// Diagnostics are cleared after name resolution rather than checked, for the reason given on
 /// [`resolve_src`]: a fixture is resolved without the core library, so name resolution reports the
-/// whole set of missing lang items first and only what a fixture declares for itself resolves at
-/// all. What comes back is therefore exactly what `typeck` had to say.
+/// whole set of missing lang items. Only what a fixture declares for itself resolves. The result
+/// is exactly what type checking reported.
 pub fn typeck_src(src: &str) -> Vec<String> {
     let hir = resolve_src(src);
     DiagCtx::clear();
@@ -102,9 +101,8 @@ pub fn typeck_accepts(src: &str) {
 
 /// Asserts that `src` is rejected by exactly one diagnostic, whose message contains `needle`.
 ///
-/// One rather than at least one, because a second diagnostic from the same fixture is usually a
-/// cascade -- the thing this pass is careful to avoid -- and a test that tolerated it would stop
-/// noticing.
+/// One rather than at least one. A second diagnostic from the same fixture is usually a
+/// cascade, which this pass prevents, and tolerating it would mask real failures.
 pub fn typeck_rejects(src: &str, needle: &str) {
     let reported = typeck_src(src);
     assert_eq!(reported.len(), 1, "for {src:?}: {reported:?}");

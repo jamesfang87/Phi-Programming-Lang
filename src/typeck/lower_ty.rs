@@ -110,7 +110,7 @@ impl<'hir> Typeck<'hir> {
             // its own inside a trait body, where an ordinary bare trait name is not. The `TyDef`
             // this arm carries is discarded rather than threaded through: it names whichever
             // struct, enum, or trait `Self` resolved to, but [`Typeck::self_ty`] needs to know
-            // *where* the `Self` was written (a struct's own body reads differently from an
+            // *where* the `Self` was written (a struct body reads differently from an
             // `extend` targeting it), which it works out for itself by walking up from `id.owner`
             // -- see its own docs.
             Res::SelfTy(_) => {
@@ -193,17 +193,17 @@ impl<'hir> Typeck<'hir> {
     /// the answer depends only on lexical position. What is left is to give that definition its
     /// generic arguments, and those depend on which of the four it is:
     ///
-    /// - inside a `struct` or `enum`, `Self` is that type applied to its own parameters, so
+    /// - inside a `struct` or `enum`, `Self` is that type applied to its parameters, so
     ///   `Self` inside `struct Map<K, V>` is `Map<K, V>`;
     /// - inside an `extend` block, it is whatever the block targets, so `Self` inside
     ///   `extend<K, V> Map<K, V>` is again `Map<K, V>` -- but by way of the block's arguments,
     ///   which need not be bare parameters (`extend Map<i32, bool>` gives `Map<i32, bool>`);
-    /// - inside a trait, there is no concrete type yet, so it stays the trait's own
-    ///   [`SelfTy`](crate::typeck::ty::TyKind::SelfTy) until an `extend` substitutes it.
+    /// - inside a trait, there is no concrete type yet, so it stays a
+    ///   [`SelfTy`](crate::typeck::ty::TyKind::SelfTy) placeholder until an `extend` substitutes it.
     ///
     /// Called two ways: from [`Typeck::lower_base`]'s `Res::SelfTy` arm, when `Self` is written
     /// out; and directly by `collect_struct`/`collect_enum`/`collect_trait`/`collect_extend`,
-    /// which each ask what their *own* type is without any `Self` having been written at all.
+    /// which each ask what their type is without any `Self` having been written at all.
     /// The second is why this takes a bare `owner_id` rather than a `TyDef` name resolution
     /// already settled -- a `collect_*` call has no path, and so no `Res`, to read one from.
     ///
@@ -255,7 +255,7 @@ impl<'hir> Typeck<'hir> {
             OwnerNode::Trait(_) => self.tcx.mk_self_param(introducer),
             OwnerNode::Extend(extend) => {
                 // Unlike a struct/enum/trait, an `extend` block's `Self` is not itself -- it is
-                // whatever the block's own `adt_path` targets, exactly as `SymbolTable::push_self`
+                // whatever the block's `adt_path` targets, exactly as `SymbolTable::push_self`
                 // pushed when this same path was resolved (`resolver.rs`'s `visit_extend`).
                 let adt_res = extend.adt_path.res;
                 let args = extend.adt_generics.clone();
@@ -377,7 +377,7 @@ mod tests {
     /// Diagnostics are cleared after name resolution, so what a test sees afterwards is only
     /// what type collection itself reported. Name resolution always reports every lang item as
     /// missing here: the core library is not registered for these tests, since compiling it
-    /// alongside a two-line fixture would swamp what each test is actually about.
+    /// alongside a two-line fixture would swamp what each test is about.
     fn check(src: &str) -> Checked {
         let hir = resolve_src(src);
         DiagCtx::clear();
@@ -432,7 +432,7 @@ mod tests {
         fn def_ty(&self, def: DefId) -> Ty {
             self.types
                 .ty_of_def(def)
-                .expect("this definition's own type was never recorded")
+                .expect("this definition's type was never recorded")
         }
 
         fn ty(&self, hir_id: HirId) -> Ty {
@@ -448,7 +448,7 @@ mod tests {
         /// The signature of the function `name` declares, as `(params, ret)`.
         fn sig(&self, def_id: DefId) -> (&[Ty], Option<Ty>) {
             let TyKind::Fun { params, ret } = self.kind(self.def_ty(def_id)) else {
-                panic!("a function's own type is always a Fun type");
+                panic!("a function's type is always a Fun type");
             };
             (params, *ret)
         }

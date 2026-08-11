@@ -62,9 +62,8 @@ pub struct SecondaryLabel {
 /// diagnostic doesn't need to know which file it came from until it's actually rendered.
 ///
 /// It is `None` for a diagnostic that names no source location at all -- see
-/// [`Diagnostic::error_global`]. That is a genuinely different thing from a zero-length span
-/// at offset 0, which points at the first character of whichever file happens to have been
-/// registered first.
+/// [`Diagnostic::error_global`]. This differs from a zero-length span at offset 0, which points
+/// at the first character of whichever file was registered first.
 ///
 /// `span` is where the mistake *is* -- the place whose text has to change to fix it.
 /// [`secondary`](SecondaryLabel) labels are the places that explain why it's a mistake, and a
@@ -116,7 +115,7 @@ impl Diagnostic {
         Self::new(Severity::Error, message, None)
     }
 
-    /// Sets the text shown right under the highlighted span, so it doesn't just repeat the
+    /// Sets the text shown right under the highlighted span, avoiding repetition of the
     /// diagnostic message.
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
@@ -150,10 +149,10 @@ impl Diagnostic {
     /// without a span, or whose span belongs to no registered file, is rendered as a bare
     /// message by [`Diagnostic::eprint_bare`].
     ///
-    /// The no-covering-file case falls back rather than panicking. It should not happen for a
-    /// span a stage actually built out of source text, but a diagnostic that cannot find its
-    /// file is still a diagnostic worth showing, and losing it -- along with every diagnostic
-    /// queued behind it -- to a panic is strictly worse than showing it without its snippet.
+    /// The no-covering-file case degrades gracefully instead of panicking. It should not happen
+    /// for a span that a stage built from source text, but a diagnostic that cannot find its
+    /// file still needs to be shown. Losing it — along with every diagnostic queued behind it —
+    /// to a panic is worse than rendering it without its source snippet.
     /// A secondary label that can't be located is dropped on the same reasoning taken one step
     /// further: it is the elaboration, so showing the error without it beats showing neither.
     ///
@@ -211,19 +210,18 @@ impl Diagnostic {
 
     /// Renders this diagnostic to stderr with no source snippet.
     ///
-    /// `ariadne` is built around quoting source, and asking it for a label-less report still
-    /// draws the empty snippet frame, which reads as a rendering failure rather than as a
-    /// deliberate choice. So this writes the header and help lines directly, matching the shape
-    /// `ariadne` gives them -- `Error: <message>`, then an indented `Help: <help>` -- so the two
-    /// kinds of diagnostic sit together in one report without looking mismatched.
+    /// `ariadne` renders a label-less report with an empty snippet frame, which reads as a
+    /// rendering failure rather than a deliberate choice. This method writes header and help lines
+    /// directly, matching `ariadne`'s format (`Error: <message>`, then indented `Help: <help>`),
+    /// so both diagnostic kinds appear together without visual mismatch.
     ///
-    /// `self.label` and `self.secondary` are deliberately ignored: a label is text placed under
-    /// an underline, and there is no underline here. Nor is one reachable -- a diagnostic gets
-    /// here because it has no locatable span of its own, which is exactly the case where the
-    /// stage that raised it had nothing to point a secondary label at either.
+    /// `self.label` and `self.secondary` are ignored: a label is text placed under an underline,
+    /// and there is no underline here. A secondary label cannot be added — a diagnostic reaches
+    /// this method because it has no locatable span, which means the raising stage had no target
+    /// for a secondary label.
     fn eprint_bare(&self) {
-        // `Fmt::fg` takes an `Option<Color>` and leaves the text unpainted for `None`, which is
-        // how the no-color case stays a plain string rather than an escape-code sandwich.
+        // `Fmt::fg` takes an `Option<Color>` and leaves text unpainted for `None`, preserving
+        // plain text when colors are disabled instead of rendering escape codes.
         let color = Self::config_colors().then(|| self.severity.color());
 
         let kind = match self.severity {
@@ -238,9 +236,8 @@ impl Diagnostic {
 
     /// Whether rendered diagnostics should carry ANSI color.
     ///
-    /// Colored escape codes are only useful, and only correctly interpreted, by an actual
-    /// terminal. Emit plain text instead when stderr is redirected to a file, a pipe, or, as in
-    /// the golden tests under `tests/`, captured from a child process.
+    /// Colored escape codes work in terminal output. Emit plain text when stderr is redirected to
+    /// a file, a pipe, or (as in tests under `tests/`) captured from a child process.
     fn config_colors() -> bool {
         std::io::stderr().is_terminal()
     }
@@ -252,8 +249,8 @@ impl Diagnostic {
 
 /// The color secondary labels are drawn in.
 ///
-/// Deliberately not the severity's own color: an underline in error red reads as a second error,
-/// and a secondary label is the opposite -- the context that explains the one error above it.
+/// Using a different color from the severity (not error red) prevents confusion: an underline in
+/// error red reads as a second error, while a secondary label provides context for the primary.
 const SECONDARY_COLOR: Color = Color::Blue;
 
 /// A [`SrcSpan`] resolved against the [`SrcMap`]: the file it lies in, that file's UTF-8 text,
@@ -276,10 +273,10 @@ impl Located {
         let (text, byte_offsets) = byte_source(&file.content);
 
         // A span is half-open and `byte_offsets` has one entry per char plus a final one for
-        // the end, so both ends are in range for any span that lies within this file. Clamp
-        // anyway: a span running past the file's end is a bug in whichever stage built it, and
-        // it should surface as a slightly wide underline rather than an index-out-of-bounds
-        // panic that takes the whole diagnostic report down with it.
+        // the end, so both ends fall within range for any span inside this file. Clamp to handle
+        // spans that exceed the file end (a bug in the stage that built it): render a slightly
+        // wide underline instead of panicking on out-of-bounds access, which would suppress all
+        // queued diagnostics.
         let last = byte_offsets.len() - 1;
         let local_begin = (span.get_begin() - file.global_offset).min(last);
         let local_end = (span.get_end() - file.global_offset).clamp(local_begin, last);
@@ -369,36 +366,32 @@ impl DiagCtx {
 
     /// Renders every diagnostic collected so far to stderr, in source order.
     ///
-    /// Diagnostics are *collected* in emission order, which is stage-major: every diagnostic the
-    /// lexer raised across all files, then every one the parser raised, and so on. That is an
-    /// artifact of how the compiler is structured and means nothing to someone reading the
-    /// output, who is working through their file top to bottom. So they are ordered by span
-    /// before being printed.
+    /// Diagnostics are collected in emission order (stage-major: lexer across all files, then
+    /// parser, and so on). Emission order reflects compiler architecture, not source position.
+    /// Readers working top-to-bottom through their file need source order, so diagnostics are
+    /// sorted by span before printing.
     ///
-    /// Location-less diagnostics (see [`Diagnostic::error_global`]) sort first. They describe the
-    /// build as a whole rather than a place in it -- a missing lang item means the compiler
-    /// itself is broken -- so they belong at the top, where they frame everything after them,
-    /// rather than buried under a screen of ordinary errors.
+    /// Location-less diagnostics (see [`Diagnostic::error_global`]) sort first. They describe
+    /// build-level failures (e.g., missing lang items indicate compiler bugs) and need to frame
+    /// all ordinary errors, not be buried under them.
     ///
     /// The sort is stable, so two diagnostics about the same span stay in the order the stage
     /// that raised them meant: a note elaborating on an error keeps sitting next to it.
     ///
-    /// Only the printing is ordered. [`DiagCtx::diagnostics`] still hands back emission order,
-    /// which is what its callers -- tests asserting on what a single pass raised -- are asking
-    /// about.
+    /// Only the printing is ordered. [`DiagCtx::diagnostics`] returns emission order, which is
+    /// what callers need (tests asserting on what a single pass raised).
     pub fn report() {
         for diag in Self::report_order(Self::diagnostics()) {
             diag.eprint();
         }
     }
 
-    /// Puts `diagnostics` into the order [`DiagCtx::report`] prints them in.
+    /// Sorts diagnostics into the order [`DiagCtx::report`] prints them.
     ///
-    /// Split out from `report` so the ordering can be asserted on without capturing stderr.
+    /// Separated from `report` to allow testing sort order without capturing stderr.
     fn report_order(mut diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
-        // `sort_by_key` is stable, which is what keeps equal spans in emission order.
-        // `Option`'s own ordering puts `None` first, which is where location-less diagnostics
-        // are documented to go.
+        // Stable sort preserves emission order for equal spans. `Option` ordering places `None`
+        // first, so location-less diagnostics appear at the top as documented.
         diagnostics.sort_by_key(|diag| diag.span.map(|span| (span.get_begin(), span.get_end())));
         diagnostics
     }
@@ -415,8 +408,8 @@ mod tests {
 
     /// An offset far past the end of anything the rest of the test suite could have registered.
     ///
-    /// `SrcMap` is process-wide and shared by every test, so a span that is guaranteed to have
-    /// no owning file has to be picked by being absurd rather than by emptying the map.
+    /// `SrcMap` is process-wide and shared by every test, so an unmapped span must be selected
+    /// by using an absurdly large offset rather than clearing the map.
     const UNMAPPED: usize = usize::MAX / 2;
 
     #[test]
@@ -435,14 +428,14 @@ mod tests {
             .eprint();
     }
 
-    /// A span that belongs to no registered file degrades to the same location-less rendering
-    /// rather than taking the whole report down with it.
+    /// A span belonging to no registered file renders as location-less output instead of
+    /// crashing the entire report.
     #[test]
     fn rendering_an_unmapped_span_does_not_panic() {
         Diagnostic::error("span points nowhere", SrcSpan::new(UNMAPPED, UNMAPPED + 4)).eprint();
     }
 
-    /// A span running past the end of its file is clamped rather than indexed out of bounds.
+    /// A span exceeding its file's end is clamped instead of causing an out-of-bounds panic.
     #[test]
     fn rendering_an_overlong_span_does_not_panic() {
         let chars: Vec<char> = "fun main() {}\n".chars().collect();
@@ -507,12 +500,12 @@ mod tests {
         assert_eq!(messages, ["first", "second"]);
     }
 
-    /// The point of sorting: diagnostics are emitted stage-major, but read source-major.
+    /// Sorting reconciles two orderings: diagnostics emit in stage-major order but readers need
+    /// source-major order.
     #[test]
     fn report_orders_by_span_not_emission() {
         let ordered = DiagCtx::report_order(vec![
-            // As the pipeline would emit them: the lexer's diagnostic about the end of the
-            // file, then the parser's about the start of it.
+            // Pipeline emission: lexer diagnostic at file end, then parser diagnostic at start.
             Diagnostic::error("late", SrcSpan::new(90, 95)),
             Diagnostic::error("early", SrcSpan::new(10, 15)),
             Diagnostic::error("middle", SrcSpan::new(50, 55)),
@@ -532,8 +525,8 @@ mod tests {
         );
     }
 
-    /// Two diagnostics about the same place keep the order the stage that raised them chose, so
-    /// a note elaborating on an error stays attached to it.
+    /// Diagnostics at the same location preserve emission order, keeping elaborating notes
+    /// attached to their error.
     #[test]
     fn equal_spans_keep_emission_order() {
         let span = SrcSpan::new(10, 15);
@@ -545,8 +538,8 @@ mod tests {
         assert_eq!(messages(ordered), ["earlier", "first note", "second note"]);
     }
 
-    /// Sorting happens on the way to stderr only, so tests that assert on what a single pass
-    /// raised still see emission order.
+    /// Sorting happens only during rendering to stderr; tests asserting on single-pass output
+    /// see emission order.
     #[test]
     fn diagnostics_are_stored_in_emission_order() {
         DiagCtx::clear();

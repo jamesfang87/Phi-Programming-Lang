@@ -46,8 +46,8 @@ impl<'hir> Typeck<'hir> {
     ///
     /// Whether the *binding* on the left was declared `mut` is not checked here. Nothing in this
     /// pass tracks a local's mutability -- [`StmtKind::Let`](crate::hir::StmtKind::Let) records it
-    /// and this pass reads only the pattern -- so assigning to an immutable binding is left to the
-    /// pass that will own that question.
+    /// and this pass reads only the pattern -- so assigning to an immutable binding is checked
+    /// in a later pass that enforces mutability constraints.
     pub(crate) fn check_assign(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) -> Ty {
         let lhs_ty = self.ty_of(lhs);
         if !self.is_place_expr(lhs) {
@@ -133,7 +133,7 @@ impl<'hir> Typeck<'hir> {
     /// backs `[i32; 4]`, so there is nothing for the solver to find. Everything else goes through
     /// the `index` method of the [`LangItem::Index`] trait, dispatched by the same machinery a
     /// written `base.index(index)` would use -- which is what makes an `extend<K, V> Map<K, V>
-    /// with Index<K, V>` block apply here, including reading `V` back out of the block's own
+    /// with Index<K, V>` block apply here, including reading `V` back out of the block's
     /// arguments.
     ///
     /// So the type of `m[k]` is whatever that trait's `index` returns, which `lib/core/ops.phi`
@@ -190,7 +190,7 @@ impl<'hir> Typeck<'hir> {
 
     /// Checks a struct literal: `Pair { fst: 1, snd: 2 }`, or the elided `.{ fst: 1, snd: 2 }`.
     ///
-    /// The written form names its own struct; the elided form has only the expectation, which is
+    /// The written form names its struct; the elided form has only the expectation, which is
     /// the reason the form exists. Either way the struct's generic arguments are inference
     /// variables the field initializers settle -- `Wrap { inner: 1 }` is `Wrap<{integer}>` until
     /// something says otherwise -- so a written path is unified with the expectation as well, which
@@ -467,7 +467,7 @@ impl<'hir> Typeck<'hir> {
     /// however long the chain was.
     ///
     /// With both branches present the `if` is an expression and the two have to agree, which is
-    /// what its own type is. With only one branch there is nothing for a value to be on the path
+    /// what its type is. With only one branch there is nothing for a value to be on the path
     /// not taken, so the `if` produces `Unit` and its block has to as well.
     pub(crate) fn check_if(
         &mut self,
@@ -516,7 +516,7 @@ impl<'hir> Typeck<'hir> {
     /// Checks `match scrutinee { pat => { .. }, .. }`.
     ///
     /// Every arm's pattern is checked against the scrutinee's type -- which is what binds the names
-    /// each arm's body then uses -- and every arm's body against one type, the `match`'s own.
+    /// each arm's body then uses -- and every arm's body against one type, the `match` result's type.
     ///
     /// Whether the arms *cover* the scrutinee is not checked here. Exhaustiveness is a question
     /// about the set of patterns rather than about any one of them, and needs a pass that can see
@@ -629,8 +629,8 @@ impl<'hir> Typeck<'hir> {
             return;
         }
 
-        // A `Result`'s error type is what actually leaves the function, so it is the one thing
-        // about the return type that has to line up rather than merely be the same enum.
+        // A `Result`'s error type leaves the function, so it is the one thing
+        // about the return type that has to match exactly rather than merely be the same enum.
         if let (Some(error_ty), Some(ret_error)) = (error_ty, args.get(1).copied())
             && let Err(err) = self.unifier.unify(&self.tcx, ret_error, error_ty)
         {
@@ -646,7 +646,7 @@ impl<'hir> Typeck<'hir> {
     /// The return type the definition `owner` names declares, if it declares one.
     ///
     /// Reads the signature the table holds rather than the HIR, so it answers for a closure as
-    /// well as a function -- [`Typeck::check_closure`] records one under the closure's own
+    /// well as a function -- [`Typeck::check_closure`] records one under the closure's
     /// definition before checking its body, exactly so that a `return` or a `?` inside it has
     /// something to check against.
     fn owner_ret(&mut self, owner: DefId) -> Option<Ty> {
@@ -695,7 +695,7 @@ impl<'hir> Typeck<'hir> {
 
     /// Checks a closure literal and produces its function type.
     ///
-    /// A closure owns its own arena, so this is the one place a body is checked from inside
+    /// A closure owns its arena, so this is the one place a body is checked from inside
     /// another body rather than from the stage-two walk -- which is why
     /// [`Check::visit_closure`](crate::typeck::Typeck) asserts it is never reached from there.
     ///
@@ -763,7 +763,7 @@ impl<'hir> Typeck<'hir> {
         let sig = self.tcx.mk_fun(param_tys, ret);
         self.types.record_def(def, sig);
 
-        // The closure's nodes live in its own arena, so the enclosing function's writeback would
+        // The closure's nodes live in its arena, so the enclosing function's writeback would
         // never reach them.
         self.writeback(def);
         sig
@@ -1297,7 +1297,7 @@ mod tests {
     }
 
     /// A variant pattern's payload binds at the type the variant declares, read through the
-    /// scrutinee's own generic arguments.
+    /// scrutinee's generic arguments.
     #[test]
     fn a_variant_pattern_binds_its_payload_at_the_declared_type() {
         accepts(
@@ -1322,7 +1322,7 @@ mod tests {
     }
 
     /// Everything that is not an array indexes through the `Index` trait, so `V` is read back out
-    /// of the `extend` block's own arguments.
+    /// of the `extend` block's arguments.
     #[test]
     fn a_type_with_an_index_impl_is_indexed_through_it() {
         accepts(
@@ -1367,8 +1367,8 @@ mod tests {
         );
     }
 
-    /// The error type is what actually leaves the function, so it is the part of the return type
-    /// that has to line up.
+    /// The error type leaves the function, so it is the part of the return type
+    /// that has to match.
     #[test]
     fn try_checks_the_error_against_the_enclosing_return_type() {
         rejects(

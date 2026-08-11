@@ -72,7 +72,7 @@ pub struct Typeck<'hir> {
     /// before then.
     impls: ImplIndex,
 
-    /// What each definition may assume about its own type parameters, worked out on first use.
+    /// What each definition may assume about its type parameters, determined on first use.
     /// See [`ParamEnv`].
     param_envs: HashMap<DefId, ParamEnv>,
 
@@ -219,7 +219,7 @@ impl<'hir> Typeck<'hir> {
         let (generics, fields, span) =
             (&struct_node.generics, &struct_node.fields, struct_node.span);
 
-        // The generics have to be recorded first: the struct's own type is itself applied to
+        // The generics have to be recorded first: the struct's type is itself applied to
         // them.
         self.collect_generics(generics);
         let self_ty = self.self_ty(r#struct, span);
@@ -273,7 +273,7 @@ impl<'hir> Typeck<'hir> {
     /// holds.
     ///
     /// The three groups scope differently -- see [`Extend`](crate::hir::Extend) -- but all three
-    /// lower the same way here. The block's own `<T>` list is written as types even though it
+    /// lower the same way here. The block's `<T>` list is written as types even though it
     /// declares parameters, and name resolution has already bound each entry to itself, so
     /// lowering one yields the [`Generic`](crate::typeck::ty::TyKind::Generic) it declares.
     pub fn collect_extend(&mut self, extend: DefId) {
@@ -300,7 +300,7 @@ impl<'hir> Typeck<'hir> {
         self.types.record_def(extend, self_ty);
     }
 
-    /// Records the type each of `def_id`'s own type parameters stands for: itself.
+    /// Records the type each of `def_id`'s type parameters stands for: itself.
     fn collect_generics(&mut self, generics: &[HirId]) {
         for &id in generics {
             debug_assert!(
@@ -385,7 +385,7 @@ impl<'hir> Typeck<'hir> {
         Some(self.unifier.root(ty))
     }
 
-    /// [`Typeck::recorded_ty`] for a definition's own type: a `struct`'s type, a `fun`'s
+    /// [`Typeck::recorded_ty`] for a definition's type: a `struct`'s type, a `fun`'s
     /// signature.
     fn recorded_ty_of_def(&mut self, def: DefId) -> Option<Ty> {
         let ty = self.types.ty_of_def(def)?;
@@ -639,7 +639,7 @@ impl<'hir> Typeck<'hir> {
                 };
                 if is_primitive || self.operator_holds(item, operand, owner, span) {
                     // Every `core::ops` trait an operator dispatches to returns `Self`, so the
-                    // operand's own type is the result.
+                    // operand's type is the result.
                     operand
                 } else {
                     self.tcx.error()
@@ -839,7 +839,7 @@ impl<'hir> Typeck<'hir> {
         ret.unwrap_or_else(|| self.tcx.unit())
     }
 
-    /// Everything needed to render this pass's types the way the user wrote them. Build one
+    /// Display context for rendering this pass's types as the user wrote them. Build one
     /// where a diagnostic is emitted rather than holding on to it -- it borrows `self`.
     fn cx(&self) -> DisplayCx<'_> {
         DisplayCx::new(self.hir, &self.tcx)

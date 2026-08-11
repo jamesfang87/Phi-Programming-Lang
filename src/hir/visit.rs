@@ -16,8 +16,8 @@
 //! A pass implements [`Visitor`] and overrides only the nodes it cares about. Each `visit_*`
 //! defaults to the matching free `walk_*` function, which visits the node's children and nothing
 //! else -- so an override that still wants the subtree calls `walk_*` itself, and one that does
-//! not simply omits it. Overriding is also how a pass gets *between* the children: opening a scope
-//! around a block, say, calls `walk_block` bracketed by the scope push and pop.
+//! not simply omits it. Overriding is also how a pass interleaves code with the children: opening
+//! a scope around a block, say, calls `walk_block` bracketed by the scope push and pop.
 //!
 //! Two properties of the walk constrain how a pass overrides it.
 //!
@@ -396,7 +396,7 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
             v.visit_expr(*index);
         }
         ExprKind::Ctor { path, payload } => {
-            // `None` for the elided `.{ .. }` form, whose type typeck recovers from context.
+            // `None` for the elided `.{ .. }` form, whose type typeck infers from context.
             if let Some(path) = path {
                 v.visit_path(path);
             }
@@ -426,8 +426,8 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         } => {
             v.visit_expr(*cond);
             v.visit_block(*then_block);
-            // Both branches are blocks; an `else if` lowers to `else { if .. }`. Reaching this
-            // one with `visit_expr` is what used to crash the compiler.
+            // Both branches are blocks; an `else if` lowers to `else { if .. }`. Visiting this
+            // with `visit_expr` used to crash the compiler.
             if let Some(else_block) = *else_block {
                 v.visit_block(else_block);
             }
@@ -514,8 +514,8 @@ mod tests {
     use crate::testing::lower_src;
 
     /// Records the `HirId` of every node the walk reaches, every `DefId` it enters, and every
-    /// `Path` it passes to `visit_path`. Overrides `visit_nested_owner` to descend, so that the
-    /// per-arena comparison below covers all the arenas rather than only the root's.
+    /// `Path` it passes to `visit_path`. Overrides `visit_nested_owner` to traverse nested owners,
+    /// so that the per-arena comparison below covers all the arenas rather than only the root's.
     struct Recorder<'hir> {
         hir: &'hir Hir,
         visited: Vec<HirId>,
@@ -535,8 +535,8 @@ mod tests {
             r
         }
 
-        /// Every node in every arena except slot zero of each, which holds the owner. An owner
-        /// is reached by `DefId` through an owner hook, not by `HirId` through a child list, so
+        /// Every node in every arena except slot zero of each, which contains the owner. An owner
+        /// is accessed by `DefId` through an owner hook, not by `HirId` through a child list, so
         /// it never appears in `visited`.
         fn every_child_node(hir: &Hir) -> Vec<HirId> {
             hir.def_ids()
@@ -550,9 +550,9 @@ mod tests {
             self.hir
         }
 
-        /// Follows every nested owner, since the exhaustiveness check runs over all the arenas
-        /// and each one has to be entered from somewhere. `walk_item` dispatches to the owner
-        /// hook below, which is what records it.
+        /// Enters every nested owner, since the exhaustiveness check runs over all the arenas
+        /// and each one must be visited from some entry point. `walk_item` dispatches to the owner
+        /// hook below, which records it.
         fn visit_nested_owner(&mut self, def_id: DefId) {
             walk_item(self, def_id);
         }
@@ -684,8 +684,8 @@ mod tests {
     "#;
 
     /// Every `HirId` allocated in an arena is reached by the walk. A child field omitted from a
-    /// `walk_*` function fails here rather than producing a subtree that one pass traverses and
-    /// another skips.
+    /// `walk_*` function results in test failure, catching a subtree that one pass would traverse
+    /// and another would skip.
     #[test]
     fn the_walk_reaches_every_node_in_every_arena() {
         let hir = lower_src(EVERYTHING);
@@ -762,7 +762,7 @@ mod tests {
         assert!(named.iter().any(|n| n == "Pair"), "got {named:?}");
     }
 
-    /// A `Visitor` that leaves `visit_nested_owner` at its default sees the closure's `DefId`
+    /// A `Visitor` that does not override `visit_nested_owner` sees the closure's `DefId`
     /// but none of the nodes in the closure's arena.
     #[test]
     fn the_walk_stops_at_a_nested_owner_unless_the_pass_follows_it() {

@@ -3,17 +3,17 @@
 //!
 //! Phi identifies them by path rather than by an attribute on the declaration. There is exactly
 //! one core library, it is embedded in the compiler binary (see [`crate::driver::source::SrcCollector`]),
-//! and nothing outside it may declare a lang item -- so the path a lang item lives at is already
-//! a fact both sides agree on, and spelling it out here costs no syntax. [`LangItem::path`] is
+//! and nothing outside it may declare a lang item. The path a lang item lives at is a fact both
+//! sides agree on, so spelling it out here requires no syntax. [`LangItem::path`] is
 //! the whole of that agreement: moving `Add` from `core::ops` to somewhere else means changing
 //! its entry there and nowhere else.
 //!
 //! [`collect_ast`] resolves every path in the table to a [`NodeId`] once AST-level name
 //! resolution has built the module namespaces, and reports the ones that are missing.
 //! [`translate`] then carries that answer across lowering, into the [`DefId`]-keyed [`LangItems`]
-//! every later pass actually reads. Lookups go through [`LangItems::get`], which returns `None`
-//! for a lang item that failed to resolve rather than panicking -- by then the error has already
-//! been reported, and a later pass carrying on with one missing lang item produces better
+//! every later pass reads. Lookups go through [`LangItems::get`], which returns `None`
+//! for a lang item that failed to resolve rather than panicking. By then the error has been
+//! reported, and a later pass carrying on with one missing lang item produces better
 //! diagnostics than one that aborts.
 
 use std::collections::HashMap;
@@ -120,9 +120,8 @@ impl LangItems {
 }
 
 /// The AST-side twin of [`LangItems`], keyed by [`NodeId`] rather than [`DefId`] since AST-level
-/// lang-item resolution (see [`collect_ast`]) runs before any HIR -- and its `DefId`s -- exist.
-/// [`translate`] is what turns one of these into the [`LangItems`] every pass after lowering
-/// actually reads.
+/// lang-item resolution (see [`collect_ast`]) runs before any HIR and its `DefId`s exist.
+/// [`translate`] converts one of these into the [`LangItems`] every pass after lowering reads.
 ///
 /// A separate struct rather than a generic `LangItems<Id>`: the two only ever need `get`/`is`
 /// (and, here, an iterator for [`translate`] to walk), so the handful of duplicated lines are
@@ -150,7 +149,7 @@ impl AstLangItems {
 ///
 /// This runs against the type namespace only: every lang item is an enum or a trait, and both
 /// live there. It must run after [`AstSymbolTable::new`] has collected every module's namespace
-/// and resolved its imports, which is what makes a path like `core::ops::Add` resolvable at all.
+/// and resolved its imports, enabling paths like `core::ops::Add` to resolve.
 pub fn collect_ast(symbol_tab: &AstSymbolTable<'_>, root: NodeId) -> AstLangItems {
     let mut items = HashMap::new();
 
@@ -191,13 +190,13 @@ fn synth_path(item: LangItem) -> Path {
 /// Carries [`collect_ast`]'s answer across lowering: every lang item AST-level resolution found,
 /// translated from the `NodeId` it resolved to into the `DefId` that node lowered to.
 ///
-/// `to_def_id` is a closure rather than a `HashMap` because lowering doesn't keep one lying
-/// around for this alone -- `LoweringCtx::def_ids`, already built for translating every ordinary
-/// `hir::Path`, is exactly the lookup this needs too. A lang item that resolved at all is always
+/// `to_def_id` is a closure rather than a `HashMap` because lowering doesn't maintain a
+/// global HashMap. `LoweringCtx::def_ids`, built for translating every ordinary `hir::Path`,
+/// provides the same lookup. A lang item that resolved at all is always
 /// a struct, enum, or trait item, which is preallocated a `DefId` before any lowering proper
 /// starts (see `hir::lower::lower_unit`), so `to_def_id` is expected to answer `Some` for every
-/// `NodeId` `ast_items` holds -- `None` here would mean that invariant broke, not that the lang
-/// item failed to resolve (a failure already left no entry in `ast_items` to translate; see
+/// `NodeId` `ast_items` holds. `None` here would mean that invariant broke, not that the lang
+/// item failed to resolve (failed resolution leaves no entry in `ast_items` to translate; see
 /// [`collect_ast`]).
 pub fn translate(
     ast_items: &AstLangItems,

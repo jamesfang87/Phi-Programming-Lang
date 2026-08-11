@@ -5,11 +5,11 @@
 //! replaced by another [`Ty`].
 //!
 //! A [`Ty`] is a handle into the [`TyCtx`](crate::typeck::tyctx::TyCtx) that produced it, not a
-//! tree. Structurally equal types intern to the same handle, so `==` on two `Ty`s answers "are
+//! tree. Structurally equal types intern to the same handle, so `==` on two `Ty`s checks "are
 //! these the same type?" in one integer comparison, and a `Ty` is `Copy` no matter how large the
-//! type it stands for. The flip side is that a handle only means something paired with its own
-//! `TyCtx`: [`TyCtx::kind`](crate::typeck::tyctx::TyCtx::kind) is the only way to look one back
-//! up, and handles must never be mixed between two contexts.
+//! type it represents. A handle is only meaningful when paired with its own `TyCtx`:
+//! [`TyCtx::kind`](crate::typeck::tyctx::TyCtx::kind) is required to retrieve the type, and
+//! handles must never be mixed between two contexts.
 
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
@@ -35,9 +35,9 @@ impl Ty {
 /// An inference variable: a type the checker has not pinned down yet.
 ///
 /// The three kinds differ in what they are allowed to unify with. [`TyVar::Any`] accepts any
-/// type at all; [`TyVar::Int`] and [`TyVar::Float`] are the fallback-carrying variables an
-/// unsuffixed literal such as `1` or `1.0` starts out as, and only unify with an integer or
-/// float type respectively. Ids come from a single counter in the [`TyCtx`], so no two variables
+/// type at all. [`TyVar::Int`] and [`TyVar::Float`] are fallback-carrying variables assigned to
+/// unsuffixed literals such as `1` or `1.0` and only unify with integer or float types
+/// respectively. Ids come from a single counter in the [`TyCtx`], so no two variables
 /// share one, whatever their kind.
 ///
 /// [`TyCtx`]: crate::typeck::tyctx::TyCtx
@@ -94,8 +94,8 @@ pub enum TyKind {
     Any(Ty),
     /// `()`, the type of an expression evaluated only for its side effects, such as a function
     /// with no declared return type or a block with no trailing expression. Distinct from
-    /// [`TyKind::Tuple`] with no elements even though both are written `()`, so that "this
-    /// produces nothing" is one type instead of an incidental zero-length tuple.
+    /// [`TyKind::Tuple`] with no elements even though both are written `()`. This separation
+    /// means "produces no value" is one type rather than a zero-element tuple.
     Unit,
     /// `(T, U, ..)`.
     Tuple(Vec<Ty>),
