@@ -66,8 +66,9 @@ impl Pretty for Ty {
     fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>) -> fmt::Result {
         let (hir, tcx) = (cx.hir, cx.tcx);
         match tcx.kind(*self) {
-            // An inference variable that never got pinned down still needs to be shown as
-            // *something* -- these match how rustc spells the same three cases.
+            // An inference variable that remained unbound after type checking cannot be
+            // displayed as an internal handle. These placeholders match rustc's conventions
+            // for rendering unsolved variables to users.
             TyKind::Var(TyVar::Any(_)) => write!(f, "_"),
             TyKind::Var(TyVar::Int(_)) => write!(f, "{{integer}}"),
             TyKind::Var(TyVar::Float(_)) => write!(f, "{{float}}"),
@@ -205,7 +206,12 @@ fn prim_name(prim: PrimTy) -> &'static str {
 
 /// The name a `struct`, `enum`, or `trait` was declared with -- the only three `OwnerNode`s a
 /// `TyKind::Adt` or `TyKind::Dyn` can point at.
-fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
+///
+/// `pub(crate)` because a trait in a diagnostic has no [`Ty`] to render through [`Pretty`]: a
+/// trait is a `DefId`, and only [`TyKind::Dyn`] ever wraps one in a type.
+/// [`require_extends`](crate::typeck::Typeck::require_extends) holds the bare `DefId` and needs
+/// the declared name for its message.
+pub(crate) fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
     match hir.def(def_id) {
         OwnerNode::Struct(s) => Interner::resolve(s.name.text),
         OwnerNode::Enum(e) => Interner::resolve(e.name.text),

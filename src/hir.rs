@@ -25,6 +25,7 @@ pub mod lower;
 mod pat;
 mod path;
 mod types;
+pub mod visit;
 
 pub use arena::{Arena, Node, OwnerNode};
 pub use block::{Block, Stmt, StmtKind, WithLend};
@@ -171,24 +172,23 @@ impl Hir {
     }
 }
 
-/// Generates the typed node accessors on [`Hir`], one per child-bearing [`Node`] variant.
+/// Generates typed node accessors on [`Hir`], one per child-bearing [`Node`] variant.
 ///
-/// Every child reference in the HIR is a bare [`HirId`], so nothing in the type system says which
-/// [`Node`] variant one addresses -- only the `// -> Node::Block` comment beside the field does.
-/// A pass that follows such an id therefore has to unwrap the variant itself, and the natural way
-/// to write that is a `let ... else { unreachable!(..) }` naming the kind the author *believed*
-/// was there. Written out by hand at every child reference, that is both noise and a place to be
-/// wrong: passing a block id to a function expecting an expression is a one-word mistake that
-/// compiles cleanly and panics at run time (it did, for `if`/`else`'s `else_block`).
+/// Every child reference in the HIR is a bare [`HirId`]. The type system provides no enforcement
+/// that a particular id addresses the expected [`Node`] variant — only a comment like `// -> Node::Block`
+/// beside the field indicates what kind is expected. Code that follows such an id must unwrap the
+/// variant; untyped unwraps written by hand are both verbose and error-prone. For example, passing
+/// a block id to a function expecting an expression id is a one-word mistake that compiles cleanly
+/// but panics at runtime (this happened with `if`/`else`'s `else_block`, where the wrong walk was
+/// used for the block traversal).
 ///
-/// Routing every such unwrap through one generated accessor per kind makes the mistake obvious at
-/// the call site -- `hir.block(id)` versus `hir.expr(id)` reads as a claim about the id -- and
-/// gives every failure the same message, naming both the kind expected and the kind found. The
-/// bodies are identical apart from two names, so they are generated rather than repeated
-/// fourteen times over.
+/// Generated typed accessors (`hir.block(id)` vs. `hir.expr(id)`) make the type expectation
+/// explicit at the call site and report uniform diagnostic messages that name both the expected
+/// variant and what was actually found. The bodies are generated once rather than written fourteen
+/// times over, eliminating duplication and transposition errors.
 ///
-/// [`Hir::node`] stays the untyped escape hatch for code that genuinely has to dispatch on the
-/// variant, such as the `--debug` dump.
+/// [`Hir::node`] remains as an untyped escape hatch for code that legitimately needs to dispatch
+/// on the variant dynamically, such as the `--debug` diagnostic dump.
 macro_rules! node_accessors {
     ($($method:ident => $variant:ident -> $node_ty:ty),* $(,)?) => {
         impl Hir {
