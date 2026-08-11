@@ -1,6 +1,7 @@
 //! Unification over [`Ty`] handles, implemented as a union-find so that two types once unified
 //! stay merged no matter which order later queries visit them in.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::nameres::PrimTy;
@@ -167,27 +168,27 @@ impl Unifier {
     /// about them -- and merging them would fold a per-pass singleton such as `Unit` into an
     /// unrelated class.
     ///
+    /// Which of the two becomes the representative is decided by how much each one says about the
+    /// type, since the representative is what every later read of the class answers with and
+    /// anything the other one knew is lost. See [`constraint`].
+    ///
     /// `t` and `u` must both be roots.
     fn merge(&mut self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<(), UnifyError> {
-        let t_is_var = matches!(tcx.kind(t), TyKind::Var(_));
-        let u_is_var = matches!(tcx.kind(u), TyKind::Var(_));
-
-        // A concrete type is always kept as the representative over an inference variable, so
-        // that once a variable is unified with something concrete, later lookups resolve
-        // straight to that concrete type instead of bouncing through the variable. Between two
-        // variables fall back to the size heuristic (see optimizations for disjoint set unions).
-        let (root, child) = match (t_is_var, u_is_var) {
-            (true, false) => (u, t),
-            (false, true) => (t, u),
-            (true, true) => {
+        let (root, child) = match constraint(tcx, t).cmp(&constraint(tcx, u)) {
+            Ordering::Less => (u, t),
+            Ordering::Greater => (t, u),
+            // Two concrete types, already proven equal componentwise. Nothing to merge.
+            Ordering::Equal if constraint(tcx, t) == Constraint::Concrete => return Ok(()),
+            // Two variables that constrain equally -- two `Any`s, or two `Int`s. Neither knows
+            // anything the other does not, so fall back to the size heuristic (see optimizations
+            // for disjoint set unions).
+            Ordering::Equal => {
                 if self.sizes[&t] < self.sizes[&u] {
                     (u, t)
                 } else {
                     (t, u)
                 }
             }
-            // Two concrete types, already proven equal componentwise. Nothing to merge.
-            (false, false) => return Ok(()),
         };
 
         // The occurs check. Binding a variable to a type it appears inside would make the type
@@ -427,6 +428,39 @@ impl Unifier {
 
             _ => Err(mismatch()),
         }
+    }
+}
+
+/// How much a type says about itself, ordered from least to most.
+///
+/// This is what [`Unifier::merge`] ranks two types by. Merging points one at the other, and every
+/// later [`Unifier::root`] of the class answers with whichever one it pointed *at*, so the more
+/// constrained of the two has to be the one kept: what the other knew is not recorded anywhere
+/// else.
+///
+/// Both steps of the order matter, and the second was not always here. A concrete type over a
+/// variable is what makes a resolved variable read back as the type it resolved to instead of
+/// bouncing through itself. `Int`/`Float` over `Any` is the same rule one level down: `{integer}`
+/// only unifies with an integer type, and `_` unifies with anything, so folding an `{integer}`
+/// into an `_` drops the restriction and lets the class go on to unify with `bool`. That is
+/// reachable from any two expressions unified in either order -- a `match` whose first arm
+/// produces `1` and whose second produces `true` used to be accepted, with the literal typed
+/// `bool`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Constraint {
+    /// `_`: unifies with anything.
+    AnyVar,
+    /// `{integer}` or `{float}`: unifies only within its own family of primitives.
+    NumericVar,
+    /// Not a variable at all.
+    Concrete,
+}
+
+fn constraint(tcx: &TyCtx, ty: Ty) -> Constraint {
+    match tcx.kind(ty) {
+        TyKind::Var(TyVar::Any(_)) => Constraint::AnyVar,
+        TyKind::Var(TyVar::Int(_) | TyVar::Float(_)) => Constraint::NumericVar,
+        _ => Constraint::Concrete,
     }
 }
 
@@ -1248,6 +1282,50 @@ mod tests {
         assert_eq!(u.unify(&tcx, a, i32_ty), Ok(()));
         assert_eq!(u.unify(&tcx, a, b), Ok(()));
         assert_eq!(u.root(b), i32_ty);
+    }
+
+    /// An `{integer}` merged with an `_` has to stay the representative: `_` unifies with
+    /// anything, so pointing the integer variable at it would drop the one thing the class knew.
+    #[test]
+    fn a_numeric_var_outranks_an_unconstrained_var() {
+        let mut tcx = TyCtx::new();
+        let any = tcx.next_ty_var();
+        let int = tcx.next_int_var();
+        let mut u = Unifier::new();
+
+        assert_eq!(u.unify(&tcx, any, int), Ok(()));
+        assert_eq!(u.root(any), int);
+
+        // Same in the other order: which side it was passed on must not decide this.
+        let mut tcx = TyCtx::new();
+        let any = tcx.next_ty_var();
+        let float = tcx.next_float_var();
+        let mut u = Unifier::new();
+
+        assert_eq!(u.unify(&tcx, float, any), Ok(()));
+        assert_eq!(u.root(any), float);
+    }
+
+    /// The end-to-end shape of the same defect: `match .. { _ => 1, _ => true }` checks both arms
+    /// against one type, and the first unification is `_` against `{integer}`. With the `_` kept
+    /// as the representative, the second arm then unified `bool` against an unconstrained
+    /// variable and the whole `match` was accepted.
+    #[test]
+    fn a_var_that_absorbed_an_int_var_still_rejects_bool() {
+        let mut tcx = TyCtx::new();
+        let result = tcx.next_ty_var();
+        let int = tcx.next_int_var();
+        let bool_ty = tcx.mk_prim(PrimTy::Bool);
+        let mut u = Unifier::new();
+
+        assert_eq!(u.unify(&tcx, result, int), Ok(()));
+        assert_eq!(
+            u.unify(&tcx, result, bool_ty),
+            Err(UnifyError::ExpectedInteger {
+                var: int,
+                found: bool_ty
+            })
+        );
     }
 
     #[test]

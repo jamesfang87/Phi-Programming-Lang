@@ -26,35 +26,15 @@ use crate::nameres::res::{Local, Res, TyDef, Type};
 const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
 
 pub struct SymbolTable<'ast> {
-    /// Locals, generics, and `Self` are all pushed on entering the construct that introduces
-    /// them and popped on leaving it: locals per block and per match arm, generics per
-    /// definition declaring `<...>`, `Self` per struct, enum, trait, and `extend`. A method
-    /// seeing its `extend` block's `<T>` falls out of the stack rather than needing an
-    /// owner-chain walk against a side table -- which is why `NameResolutions` has no
-    /// `generics` table.
     local_scopes: Vec<HashMap<Symbol, Local>>,
     generic_scopes: Vec<HashMap<Symbol, Type>>,
-    /// `None` marks a scope that was opened for a definition whose own target failed to
-    /// resolve -- an `extend Nope with Show` whose `adt_path` didn't find `Nope`. The scope is
-    /// still pushed (so the stack stays balanced with its matching `pop_self`), but with nothing
-    /// in it, which is what lets [`Self::resolve_type_path`] tell "no enclosing definition at
-    /// all" (empty stack, report `Self is not available here`) apart from "the enclosing
-    /// definition's own target already failed and was already reported" (a `None` on top,
-    /// return `Res::Err` silently -- see [`Self::push_self_unresolved`]).
     self_scopes: Vec<Option<TyDef>>,
+
     modules: HashMap<NodeId, ModuleScope>,
-    /// Every item in the tree, keyed by its own `NodeId`. `ast::Ast` has no `item(NodeId)`
-    /// accessor of its own, so this is what lets [`Self::lookup_variant`] reach an enum's
-    /// declaration from the `NodeId` a type-position lookup handed back -- and what the
-    /// debug dump (a later task) uses to print a resolved item's contents. Built once here,
-    /// during the same walk that fills [`Self::modules`], rather than duplicated per consumer.
     items: HashMap<NodeId, &'ast Item>,
-    /// A canonical, span-free path to the module it names, so a fully-qualified path resolves
-    /// in one hash rather than a segment-by-segment walk.
+
     by_path: HashMap<Box<[Symbol]>, NodeId>,
-    /// The prelude, once found. `None` if the core library is not part of this unit -- which
-    /// should not happen in a real build, but leaves the resolver working rather than
-    /// panicking if it is ever driven without one.
+
     prelude: Option<NodeId>,
     ast: &'ast Ast,
 }
@@ -367,17 +347,17 @@ impl<'ast> SymbolTable<'ast> {
         }
     }
 
-    /// Resolves `path`, which is *absolute* (as every import path is -- see
-    /// [`Self::resolve_import`]), against the function namespace: every segment but the last is
-    /// stepped through as a submodule starting from `base` (the root, in practice), and the
-    /// final segment is looked up among that module's functions.
+    /// Resolves an absolute path (all import paths are absolute; see [`Self::resolve_import`])
+    /// against the function namespace: steps through every segment except the last as a
+    /// submodule starting from `base` (the root), then looks up the final segment among that
+    /// module's function declarations.
     ///
-    /// This is deliberately a single walk from `base` with no chain and no prelude fallback --
-    /// unlike [`Self::lookup_value_path`], which a written path in a program goes through.
-    /// Resolving an `import` statement's own path never wants either of those: the path is
-    /// already absolute, and the whole point of resolving it here is to *populate* the
-    /// importing module's scope, not to consult a fallback that a scope this early may not
-    /// have yet (the prelude in particular isn't found until after every import resolves).
+    /// This performs a single walk from `base` without consulting the local scope chain or
+    /// prelude fallback, unlike [`Self::lookup_value_path`] which a written path in source code
+    /// traverses. Import path resolution never needs these fallbacks: the path is already
+    /// absolute by construction, and the goal is to populate the importing module's namespace,
+    /// not to consult scope chains. Additionally, consulting the prelude would be incorrect
+    /// because the prelude is not populated until all imports have resolved.
     fn resolve_import_value_path(&self, base: NodeId, path: &Path) -> Option<NodeId> {
         let (name, modules) = path.segments.split_last()?;
         let module = self.walk_modules(base, modules)?;

@@ -258,9 +258,124 @@ fn match_all(
             .all(|(&a, &b)| match_ty(tcx, generics, a, b, subst))
 }
 
+/// How a caller identifies the trait in a goal, before it is resolved to a [`DefId`].
+///
+/// The two variants differ in whether the lookup can fail. [`TraitName::Def`] carries a `DefId`
+/// name resolution already produced, so it is infallible. [`TraitName::Lang`] carries a
+/// [`LangItem`](crate::langitems::LangItem), which [`LangItems::get`](crate::langitems::LangItems::get)
+/// resolves to a `DefId` only if the core library declared it -- it returns `None` otherwise,
+/// which [`Typeck::extends`] maps to [`Solution::Error`].
+///
+/// Both variants exist so that [`Typeck::extends`] has one signature rather than one per lookup
+/// kind. `Obligation` stores the resolved `DefId`, so this type appears only in the argument
+/// position and never inside a goal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TraitName {
+    /// Resolved through [`Hir::lang_items`](crate::hir::Hir::lang_items). Yields no `DefId` when
+    /// the item is missing.
+    Lang(crate::langitems::LangItem),
+    /// Already resolved by name resolution: a bound's `Path::res`, an `extend` header's
+    /// `trait_path`, or a `dyn` type's trait.
+    Def(DefId),
+}
+
 impl<'hir> Typeck<'hir> {
+    /// Resolves `name` to a `DefId`, builds the [`Obligation`] for `self_ty: name<args>`, reads
+    /// `owner`'s [`ParamEnv`], and calls [`Typeck::implements`] with the two.
+    ///
+    /// Those four steps are what separates a caller holding a [`Ty`] and a trait from the solver,
+    /// which takes a constructed goal and an environment. `implements` remains available for
+    /// callers inside [`traits`](super) that already hold both -- [`bounds`](super::bounds)
+    /// replays stored `Obligation`s, and `solve` recurses on substituted ones.
+    ///
+    /// Returns [`Solution::Error`] when `name` is a [`TraitName::Lang`] that did not resolve.
+    /// This is distinct from [`Solution::DoesNotHold`] in what the caller must do: `Error` means
+    /// [`collect_ast`](crate::langitems::collect_ast) has already emitted a diagnostic for the
+    /// missing item and the caller must not emit another, while `DoesNotHold` is an answer about
+    /// the program that the caller is expected to report. Reporting `DoesNotHold` for an
+    /// unresolved lang item would attribute a missing core library to the program under
+    /// compilation.
+    pub fn extends(
+        &mut self,
+        self_ty: Ty,
+        name: TraitName,
+        args: Vec<Ty>,
+        owner: DefId,
+        span: SrcSpan,
+    ) -> Solution {
+        let Some(def) = self.trait_def(name) else {
+            return Solution::Error;
+        };
+
+        let goal = Obligation::new(self_ty, TraitRef { def, args }, span);
+        let env = self.param_env(owner);
+        self.implements(&goal, &env)
+    }
+
+    /// [`Typeck::extends`], collapsing the four-variant [`Solution`] to a `bool` and emitting the
+    /// diagnostic for [`Solution::DoesNotHold`].
+    ///
+    /// Returns `true` only for [`Solution::Holds`]. The other three variants all return `false`
+    /// and differ only in whether a diagnostic is emitted, which is the caller's reason for not
+    /// needing to distinguish them:
+    ///
+    /// - `DoesNotHold`: emits one error here, naming `self_ty` and the trait.
+    /// - `Ambiguous`: `self_ty` is an unresolved [`TyKind::Var`], so no impl can be selected yet.
+    ///   Emits nothing, since the goal may hold once unification resolves the variable.
+    /// - `Error`: `self_ty` contains [`TyKind::Error`], or `name` is an unresolved lang item.
+    ///   Emits nothing, since a diagnostic for the underlying failure already exists.
+    ///
+    /// `because` is interpolated into the label as "`{because}` needs an `extend .. with T`
+    /// block providing it", naming the construct that raised the goal -- an operator, an index
+    /// expression, a `for` loop. [`Obligation::cause`] records only a [`SrcSpan`], so the
+    /// construct's identity is not recoverable from the goal itself.
+    pub fn require_extends(
+        &mut self,
+        self_ty: Ty,
+        name: TraitName,
+        args: Vec<Ty>,
+        owner: DefId,
+        span: SrcSpan,
+        because: &str,
+    ) -> bool {
+        match self.extends(self_ty, name, args, owner, span) {
+            Solution::Holds(_) => true,
+            Solution::DoesNotHold => {
+                let trait_name = self
+                    .trait_def(name)
+                    .map(|def| crate::typeck::display::def_name(self.hir, def))
+                    .unwrap_or("<unresolved trait>");
+                DiagCtx::emit(
+                    Diagnostic::error(
+                        format!(
+                            "`{}` does not implement `{trait_name}`",
+                            self.cx().show(self_ty)
+                        ),
+                        span,
+                    )
+                    .with_label(format!(
+                        "{because} needs an `extend .. with {trait_name}` block providing it"
+                    )),
+                );
+                false
+            }
+            Solution::Ambiguous | Solution::Error => false,
+        }
+    }
+
+    /// The definition a [`TraitName`] names, or `None` for a lang item that did not resolve.
+    fn trait_def(&self, name: TraitName) -> Option<DefId> {
+        match name {
+            TraitName::Lang(item) => self.hir.lang_items().get(item),
+            TraitName::Def(def) => Some(def),
+        }
+    }
+
     /// Answers whether `goal` holds, assuming `env`. See the [module docs](self) for the order
     /// the steps run in and why.
+    ///
+    /// Prefer [`Typeck::extends`] from outside this module: it builds the goal and the
+    /// environment, which is what a caller holding a type and a trait actually has.
     pub fn implements(&mut self, goal: &Obligation, env: &ParamEnv) -> Solution {
         // Step 1. Everything below compares interned handles, which only means "same type" once
         // every inference variable that has been resolved is replaced by what it resolved to.
@@ -1222,5 +1337,159 @@ mod tests {
         let goal = goal(&mut checker, foo_ty, show);
         checker.implements(&goal, &ParamEnv::empty());
         assert!(checker.goal_stack.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // extends
+    // -----------------------------------------------------------------
+
+    /// `TraitName::Def` reaches the same solver path as an operator's `TraitName::Lang` does,
+    /// without consulting `Hir::lang_items` at all.
+    #[test]
+    fn extends_answers_for_a_user_written_trait() {
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        assert!(matches!(
+            checker.extends(
+                foo_ty,
+                TraitName::Def(show),
+                Vec::new(),
+                hir.root_id(),
+                SrcSpan::new(0, 0),
+            ),
+            Solution::Holds(_)
+        ));
+    }
+
+    #[test]
+    fn extends_reports_no_for_a_user_written_trait_with_no_impl() {
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
+        let (bare, show) = (named(&checker, "Bare"), named(&checker, "Show"));
+        let bare_ty = checker.tcx.mk_adt(bare, vec![]);
+
+        assert_eq!(
+            checker.extends(
+                bare_ty,
+                TraitName::Def(show),
+                Vec::new(),
+                hir.root_id(),
+                SrcSpan::new(0, 0),
+            ),
+            Solution::DoesNotHold
+        );
+    }
+
+    /// `SRC` declares no core library, so `LangItems::get` returns `None` for every item.
+    /// `extends` maps that to `Solution::Error` rather than `Solution::DoesNotHold`, so the
+    /// caller suppresses its diagnostic instead of reporting `Foo` as lacking an `Add` impl.
+    #[test]
+    fn extends_treats_an_unresolved_lang_item_as_already_reported() {
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
+        let foo = named(&checker, "Foo");
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        assert_eq!(
+            checker.extends(
+                foo_ty,
+                TraitName::Lang(crate::langitems::LangItem::Add),
+                Vec::new(),
+                hir.root_id(),
+                SrcSpan::new(0, 0),
+            ),
+            Solution::Error
+        );
+    }
+
+    /// `Solution::DoesNotHold` produces exactly one diagnostic, containing the self type's
+    /// rendered name and the trait's declared name.
+    #[test]
+    fn require_extends_reports_the_type_and_the_trait_by_name() {
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
+        let (bare, show) = (named(&checker, "Bare"), named(&checker, "Show"));
+        let bare_ty = checker.tcx.mk_adt(bare, vec![]);
+
+        let held = checker.require_extends(
+            bare_ty,
+            TraitName::Def(show),
+            Vec::new(),
+            hir.root_id(),
+            SrcSpan::new(0, 0),
+            "this index",
+        );
+
+        assert!(!held);
+        let messages = messages();
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].contains("Bare") && messages[0].contains("Show"),
+            "{messages:?}"
+        );
+    }
+
+    /// `Ambiguous` and `Error` both return `false` without emitting: an unresolved `TyKind::Var`
+    /// may still resolve to a type that implements the trait, and an unresolved lang item was
+    /// already reported by `langitems::collect_ast`.
+    #[test]
+    fn require_extends_stays_quiet_when_the_question_has_no_answer() {
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
+        let show = named(&checker, "Show");
+        let var = checker.tcx.next_ty_var();
+
+        // Ambiguous: the self type is still an inference variable.
+        assert!(!checker.require_extends(
+            var,
+            TraitName::Def(show),
+            Vec::new(),
+            hir.root_id(),
+            SrcSpan::new(0, 0),
+            "this operator",
+        ));
+        // Error: an unresolved lang item, already reported by `langitems::collect_ast`.
+        let foo_ty = {
+            let foo = named(&checker, "Foo");
+            checker.tcx.mk_adt(foo, vec![])
+        };
+        assert!(!checker.require_extends(
+            foo_ty,
+            TraitName::Lang(crate::langitems::LangItem::Add),
+            Vec::new(),
+            hir.root_id(),
+            SrcSpan::new(0, 0),
+            "this operator",
+        ));
+
+        assert!(messages().is_empty(), "{:?}", messages());
+    }
+
+    /// `extends` performs no matching of its own: for the same self type, trait, and owner, it
+    /// returns exactly what `implements` returns for the goal and `ParamEnv` built by hand.
+    #[test]
+    fn extends_agrees_with_implements() {
+        let hir = resolve_src(SRC);
+        let mut checker = solver(&hir);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        let direct = {
+            let goal = goal(&mut checker, foo_ty, show);
+            let env = checker.param_env(hir.root_id());
+            checker.implements(&goal, &env)
+        };
+        let through_extends = checker.extends(
+            foo_ty,
+            TraitName::Def(show),
+            Vec::new(),
+            hir.root_id(),
+            SrcSpan::new(0, 0),
+        );
+
+        assert_eq!(direct, through_extends);
     }
 }

@@ -28,13 +28,15 @@
 //!
 //! ## Picking
 //!
-//! An inherent candidate wins outright over every trait candidate: an `extend Foo` block is about
-//! `Foo` specifically, so a trait method it shadows was never the more specific answer. More than
-//! one surviving *trait* candidate is an ambiguity. Coherence has already ruled out two impls for
-//! one type offering one name, so this only ever fires across unrelated bounds in a
-//! [`ParamEnv`](crate::typeck::traits::solve::ParamEnv) -- `fun f<T: A + B>` where `A` and `B`
-//! both declare `size` -- which coherence cannot see, because neither `A` nor `B` is implemented
-//! for anything in particular there.
+//! An inherent method (defined in an `extend Foo { .. }` block without a trait) takes precedence
+//! over any trait method: because the block targets a specific type, it is more specific than any
+//! trait's method that it shadows. More than one surviving *trait* candidate indicates an
+//! ambiguity: the receiver could dispatch to multiple methods with no clear priority. Coherence
+//! rules out two impls for the same type providing the same method, so multiple candidates only
+//! arise across independent trait bounds in a [`ParamEnv`](crate::typeck::traits::solve::ParamEnv)
+//! -- for example, `fun f<T: A + B>` where both trait `A` and trait `B` declare a `size` method.
+//! Coherence cannot detect this overlap because neither `A` nor `B` is implemented for a concrete
+//! type; the conflict is only visible when both are bounds on the same parameter.
 //!
 //! ## Receivers
 //!
@@ -66,7 +68,7 @@ use crate::typeck::ty::{Ty, TyKind};
 /// One way the member being called could be reached, and everything it takes to read that
 /// method's signature in the caller's terms.
 #[derive(Clone, Debug)]
-struct Candidate {
+pub(crate) struct Candidate {
     /// The function that would run. For a trait method the block wrote out, this is the block's
     /// method; for one it inherited, the trait's own declaration and its default body.
     method: DefId,
@@ -97,7 +99,7 @@ enum CandidateSource {
 
 /// One layer peeled off a receiver on the way to the type its methods live on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Layer {
+pub(crate) enum Layer {
     Ref(Mutability),
     Any,
 }
@@ -239,7 +241,7 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Checks `receiver.member(args)`.
-    fn check_method_call(
+    pub(crate) fn check_method_call(
         &mut self,
         receiver: HirId,
         member: Ident,
@@ -316,7 +318,7 @@ impl<'hir> Typeck<'hir> {
     /// Deduplicated by the function each one would call, which is what keeps `T: Show + Show` --
     /// or a bound that also happens to be provable from an impl -- from reading as an ambiguity
     /// between a candidate and itself.
-    fn method_candidates(&mut self, base: Ty, member: Symbol, owner: DefId) -> Vec<Candidate> {
+    pub(crate) fn method_candidates(&mut self, base: Ty, member: Symbol, owner: DefId) -> Vec<Candidate> {
         let mut candidates = Vec::new();
 
         // Inherent blocks and impls, both keyed on the head of the self type.
@@ -630,7 +632,7 @@ impl<'hir> Typeck<'hir> {
     /// The layers are the receiver adjustment: their count is how many dereferences the call
     /// performs, and the outermost one is what decides whether a `&mut self` method can be reached
     /// through what the caller has.
-    fn peel_receiver(&self, ty: Ty) -> (Ty, Vec<Layer>) {
+    pub(crate) fn peel_receiver(&self, ty: Ty) -> (Ty, Vec<Layer>) {
         let mut layers = Vec::new();
         let mut current = ty;
         loop {
@@ -708,7 +710,7 @@ impl<'hir> Typeck<'hir> {
     /// Only the forms that certainly do. A call, a literal or an arithmetic expression produces a
     /// temporary; anything not listed here is treated as one, which errs towards reporting rather
     /// than towards silently borrowing something with nowhere to live.
-    fn is_place_expr(&self, id: HirId) -> bool {
+    pub(crate) fn is_place_expr(&self, id: HirId) -> bool {
         match &self.hir.expr(id).kind {
             // A path names a local, a parameter, or `self`.
             ExprKind::Path(_) => true,
@@ -1071,7 +1073,7 @@ fn show_self_mode(mode: SelfMode) -> &'static str {
 mod tests {
     use super::*;
     use crate::hir::Hir;
-    use crate::testing::resolve_src;
+    use crate::testing::{resolve_src, typeck_src as check};
 
     /// Everything up to body checking, which is what candidate collection reads.
     fn collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
@@ -1449,27 +1451,6 @@ mod tests {
     // -----------------------------------------------------------------
     // Source-level
     // -----------------------------------------------------------------
-
-    /// Runs the whole of type checking over `src`, bodies included, and hands back what it
-    /// reported.
-    ///
-    /// Unlike the helpers beside the other passes in this module, this one checks bodies -- which
-    /// is the point, since method resolution only happens inside one. Every fixture below is
-    /// therefore written out of the expression kinds `check_expr` handles today; the rest are
-    /// still `todo!()` and would panic rather than fail.
-    ///
-    /// The clear comes before collection, because a fixture is resolved without the core library
-    /// and name resolution reports the whole set of missing lang items first.
-    fn check(src: &str) -> Vec<String> {
-        let hir = resolve_src(src);
-        DiagCtx::clear();
-        crate::typeck::check(&hir);
-
-        DiagCtx::diagnostics()
-            .into_iter()
-            .map(|diagnostic| diagnostic.message)
-            .collect()
-    }
 
     #[test]
     fn an_inherent_method_call_checks() {

@@ -1,14 +1,16 @@
 //! A shared walk over the AST.
 //!
-//! Every AST pass needs the same answer to "what are this node's children", and until now each
-//! pass re-derived it independently. The HIR's own visitor module built the same walk for the HIR
-//! and gives the rationale, from the same problem there: name resolution once reached an `if`'s else
-//! branch with the expression walk instead of the block walk and crashed the compiler on every
-//! `if`/`else`, and separately never walked a `let`'s type annotation, its `else` block, or a
-//! `with` binding's annotation at all. One walk that every pass shares turns a later addition to
-//! the tree into a compile error here (an unmatched enum variant) rather than a subtree that some
-//! passes visit and others silently skip. This module is the same idea applied to the AST, which
-//! name resolution is moving onto.
+//! Every AST pass requires consistent traversal of a node's children, and code duplication across
+//! passes created bugs that manifested in multiple ways. The HIR's own visitor ([`crate::hir::visit`])
+//! uses the same pattern and documents the rationale: duplicated traversal logic led to mismatches
+//! where name resolution visited an `if`'s else branch using the expression walk (which only covers
+//! direct operands) instead of the block walk (which covers statements). This caused diagnostic
+//! cascades on every `if`/`else` expression. Separately, unvisited subtrees such as a `let`'s type
+//! annotation, its `else` block, or a `with` binding's type annotation went silently untraversed,
+//! leaving portions of the tree unresolved. A shared visitor enforces correctness: any new node
+//! added to the AST produces a compile error (unmatched enum variant in the visitor) rather than
+//! silent skips in some passes. This module applies the same approach to the AST, which is the
+//! target of the name resolution pass.
 //!
 //! A pass implements [`Visitor`] and overrides only the nodes it cares about. Each `visit_*`
 //! defaults to the matching free `walk_*` function, which visits the node's children and nothing
@@ -26,7 +28,7 @@
 //!   [`Ast`].
 //!
 //! One more difference is specific to closures. The HIR gives a closure its own arena and its own
-//! `DefId`, so the HIR's own visitor took that id like every other owner. The AST
+//! `DefId`, so the HIR's own visitor takes that id like every other owner. The AST
 //! has no such wrapper: `ExprKind::Closure` is an inline variant holding its params, return type,
 //! and body directly, with no `Closure` struct to point at. So [`Visitor::visit_closure`] and
 //! [`walk_closure`] here take those three fields separately rather than a single node reference.

@@ -25,6 +25,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
+use crate::hir::visit::{self, Visitor};
 use crate::hir::{
     DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, Res, StmtKind, VariantPayload,
 };
@@ -32,16 +33,17 @@ use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
 use crate::typeck::display::DisplayCx;
 use crate::typeck::results::TypeResolutions;
-use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::bounds::ObligationCx;
 use crate::typeck::traits::index::ImplIndex;
-use crate::typeck::traits::solve::{Obligation, ParamEnv, Solution};
+use crate::typeck::traits::solve::{Obligation, ParamEnv, TraitName};
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::{Unifier, UnifyError};
 
 pub mod display;
+pub mod expr;
 pub mod lower_ty;
+pub mod pat;
 pub mod results;
 pub mod traits;
 pub mod ty;
@@ -100,6 +102,18 @@ pub struct Typeck<'hir> {
     /// The definitions whose `Self` is being computed right now, used to cut off a `Self` that
     /// is defined in terms of itself instead of recursing forever.
     computing_self_tys: HashSet<DefId>,
+
+    /// What the context around the expression *about to be checked* demands of it, if it demands
+    /// anything. Set by [`Typeck::ty_of_expecting`] for the duration of one call and taken by
+    /// [`Typeck::check_expr`] at its top, so exactly one expression ever sees it -- a child that
+    /// happens to be checked underneath does not inherit it, and an arm that wants to pass it on
+    /// does so explicitly.
+    ///
+    /// A field rather than a parameter because [`Typeck::ty_of`] sits between the two: it is
+    /// where a type enters the table, so every expectation has to travel through it, and giving it
+    /// a second parameter would put one on every call site that has nothing to expect. See the
+    /// [`expr` module docs](crate::typeck::expr) for what depends on this.
+    expectation: Option<Ty>,
 }
 
 impl<'hir> Typeck<'hir> {
@@ -120,29 +134,14 @@ impl<'hir> Typeck<'hir> {
             in_body: false,
             self_tys: HashMap::new(),
             computing_self_tys: HashSet::new(),
+            expectation: None,
         }
     }
 
+    /// Stage one: records the type of every declaration under `module_id`, without checking a
+    /// body. See [`Collect`] for how the traversal is driven.
     pub fn collect_module(&mut self, module_id: DefId) {
-        let OwnerNode::Module(module) = self.hir.def(module_id) else {
-            unreachable!("root of a Module owner is always OwnerNode::Module");
-        };
-
-        for &item in &module.items {
-            match self.hir.def(item) {
-                OwnerNode::Module(_) => self.collect_module(item),
-                OwnerNode::Function(_) => self.collect_function(item),
-                OwnerNode::Struct(_) => self.collect_struct(item),
-                OwnerNode::Enum(_) => self.collect_enum(item),
-                OwnerNode::Trait(_) => self.collect_trait(item),
-                OwnerNode::Extend(_) => self.collect_extend(item),
-                _ => {
-                    unreachable!(
-                        "A module should not contain fields, variants, type params, and closures in the top level"
-                    )
-                }
-            }
-        }
+        Collect(self).visit_module(module_id);
     }
 
     /// Collects a function's signature: its type parameters, the type of `self` if it is a
@@ -151,10 +150,11 @@ impl<'hir> Typeck<'hir> {
     /// The body is deliberately skipped. Checking it needs every other signature in the program
     /// to be collected first, which is exactly what this pass is producing.
     pub fn collect_function(&mut self, function: DefId) {
-        // Read the HIR at its own lifetime rather than through `self`. `&'hir Hir` is `Copy` and
-        // outlives the borrow of `self`, so the nodes below stay readable across the `&mut self`
-        // calls that follow -- which is what the signature is being copied out of, and why none
-        // of it has to be cloned first.
+        // Reborrow the HIR at its declaration lifetime rather than through `self`. Since `&'hir Hir`
+        // is `Copy` and has a longer lifetime than `self`'s mutable borrow, field reads on this
+        // reference remain valid across all `&mut self` method calls below. This allows the
+        // signature components to be extracted without cloning, because they are directly borrowed
+        // from the arena.
         let hir: &'hir Hir = self.hir;
         let OwnerNode::Function(function_node) = hir.def(function) else {
             unreachable!("root of a Function owner is always OwnerNode::Function");
@@ -260,18 +260,13 @@ impl<'hir> Typeck<'hir> {
         let OwnerNode::Trait(trait_node) = hir.def(r#trait) else {
             unreachable!("root of a Trait owner is always OwnerNode::Trait");
         };
-        let (generics, functions, span) =
-            (&trait_node.generics, &trait_node.functions, trait_node.span);
+        let (generics, span) = (&trait_node.generics, trait_node.span);
 
         self.collect_generics(generics);
         // A trait names no type of its own, so what it gets recorded as is the `Self` it stands
         // for: the placeholder every implementing type substitutes.
         let self_ty = self.self_ty(r#trait, span);
         self.types.record_def(r#trait, self_ty);
-
-        for &function in functions {
-            self.collect_function(function);
-        }
     }
 
     /// Collects an `extend` block's three bracket groups and the signature of each method it
@@ -286,11 +281,10 @@ impl<'hir> Typeck<'hir> {
         let OwnerNode::Extend(extend_node) = hir.def(extend) else {
             unreachable!("root of an Extend owner is always OwnerNode::Extend");
         };
-        let (extend_generics, adt_generics, trait_generics, methods, span) = (
+        let (extend_generics, adt_generics, trait_generics, span) = (
             &extend_node.extend_generics,
             &extend_node.adt_generics,
             &extend_node.trait_generics,
-            &extend_node.methods,
             extend_node.span,
         );
 
@@ -301,13 +295,9 @@ impl<'hir> Typeck<'hir> {
         self.lower_tys(trait_generics);
 
         // Which is the extended type applied to `adt_generics`, so this is also what `Self`
-        // means inside each method below.
+        // means inside each method of the block.
         let self_ty = self.self_ty(extend, span);
         self.types.record_def(extend, self_ty);
-
-        for &method in methods {
-            self.collect_function(method);
-        }
     }
 
     /// Records the type each of `def_id`'s own type parameters stands for: itself.
@@ -335,28 +325,10 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
+    /// Stage two: checks every body under `module`, against the signatures
+    /// [`Typeck::collect_module`] recorded. See [`Check`] for how the traversal is driven.
     pub fn check_module(&mut self, module: DefId) {
-        let OwnerNode::Module(module_node) = self.hir.def(module) else {
-            unreachable!("root of a Module owner is always OwnerNode::Module");
-        };
-
-        for &item in &module_node.items {
-            match self.hir.def(item) {
-                OwnerNode::Module(_) => self.check_module(item),
-                OwnerNode::Function(_) => self.check_function(item),
-                OwnerNode::Trait(_) => self.check_trait(item),
-                OwnerNode::Extend(_) => self.check_extend(item),
-                // A struct or enum has no body of its own to check -- `collect_module` already
-                // recorded the types its fields and variants declare, and it introduces no
-                // executable code beyond that.
-                OwnerNode::Struct(_) | OwnerNode::Enum(_) => {}
-                _ => {
-                    unreachable!(
-                        "A module should not contain fields, variants, type params, and closures in the top level"
-                    )
-                }
-            }
-        }
+        Check(self).visit_module(module);
     }
 
     /// The type of the expression `id` names, worked out on first use and remembered afterwards.
@@ -374,6 +346,33 @@ impl<'hir> Typeck<'hir> {
         let ty = self.check_expr(id);
         self.types.record(id, ty);
         ty
+    }
+
+    /// [`Typeck::ty_of`], telling the expression what type the context around it wants.
+    ///
+    /// The expectation is a hint, not a constraint: this does not unify `expected` with what came
+    /// back, because what to say when the two disagree is the caller's to decide -- a `let`'s
+    /// annotation, an argument, and a `return` each report it differently. What it does is give
+    /// the forms that name no type of their own something to be checked against; see the
+    /// [`expr` module docs](crate::typeck::expr).
+    ///
+    /// The previous expectation is restored rather than cleared, so that an arm which checks one
+    /// child with an expectation and another without does not have to put it back by hand.
+    fn ty_of_expecting(&mut self, id: HirId, expected: Ty) -> Ty {
+        let saved = self.expectation.replace(expected);
+        let ty = self.ty_of(id);
+        self.expectation = saved;
+        ty
+    }
+
+    /// [`Typeck::ty_of_expecting`] where the caller may or may not have an expectation to pass on,
+    /// which is the shape most of them are in: a `let` has one only if it was annotated, and an
+    /// argument only if the signature it is measured against lined up.
+    fn ty_of_maybe_expecting(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
+        match expected {
+            Some(expected) => self.ty_of_expecting(id, expected),
+            None => self.ty_of(id),
+        }
     }
 
     /// The type already recorded for `id`, resolved to what it has since unified with.
@@ -478,25 +477,27 @@ impl<'hir> Typeck<'hir> {
             unreachable!("Node that is not an expr passed to check_expr");
         };
 
+        // Taken rather than read, so that the expectation reaches this expression and no other:
+        // every `ty_of` below re-enters here with nothing set, and an arm that wants to pass it
+        // down does so by name.
+        let expected = self.expectation.take();
+
         let ty = match &expr.kind {
-            ExprKind::Literal(lit) => self.check_literal(lit),
+            ExprKind::Literal(lit) => self.check_literal(lit, expr.span),
             ExprKind::Tuple(elems) => {
                 let tys = elems.iter().map(|&elem| self.ty_of(elem)).collect();
                 self.tcx.mk_tuple(tys)
             }
             ExprKind::Path(path) => {
                 match path.res {
-                    // A local's type was already recorded if it names a parameter
-                    // (`collect_function`).
+                    // Every local was typed before this point: a parameter by `collect_function`,
+                    // a `let`/`with` binding by `check_pat`, which records the type on the very
+                    // `Node::Pat` that `Local::Variable` addresses.
                     //
-                    // A `let`/`with` binding's is not: inferring one from the initializer and
-                    // the annotation is still unwritten (see `check_stmt`'s `StmtKind::Let`
-                    // arm, which checks nothing but the `else` block). Until it is, the binding
-                    // gets one inference variable recorded against the pattern that introduced
-                    // it, so at least every use of the same local agrees with every other and
-                    // unifying one use constrains the rest. Nothing ever *binds* that variable,
-                    // so the local's type stays unknown -- this stands in for the missing
-                    // inference rather than doing any of it.
+                    // The fallback covers a use that somehow reaches its binding's pattern before
+                    // the pattern was checked. One inference variable recorded against the
+                    // pattern at least makes every use of that local agree with every other,
+                    // instead of each one inventing a type of its own.
                     Res::Local(Local::Param(local) | Local::Variable(local)) => {
                         self.recorded_ty(local).unwrap_or_else(|| {
                             let ty = self.tcx.next_ty_var();
@@ -539,9 +540,12 @@ impl<'hir> Typeck<'hir> {
                     // `-`/`!` on `i32`/`bool` and friends are built in -- no `extend` block
                     // backs a primitive, so there is nothing for the solver to find.
                     resolved
+                } else if self.operator_holds(item, resolved, id.owner, expr.span) {
+                    // Every `core::ops` trait an operator dispatches to returns `Self`, so the
+                    // operand's own type is the result -- there is no associated type to project.
+                    resolved
                 } else {
-                    self.check_operator_trait(item, resolved, id.owner, expr.span)
-                        .unwrap_or_else(|| self.tcx.error())
+                    self.tcx.error()
                 }
             }
             ExprKind::Binary { op, lhs, rhs } => {
@@ -558,165 +562,139 @@ impl<'hir> Typeck<'hir> {
                     );
                 }
                 let resolved = self.unifier.root(lhs);
-                let is_primitive = matches!(self.tcx.kind(resolved), TyKind::Primitive(_));
-                let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-
-                // What the operator itself demands of its operands -- that `+` takes numbers,
-                // that `&&` takes bools -- and what it produces used to be unwritten here. Now
-                // each operator maps onto the `core::ops` trait its lang item names: unifying
-                // the two sides above is still required, but no longer sufficient.
-                match op {
-                    BinaryOp::Add
-                    | BinaryOp::Sub
-                    | BinaryOp::Mul
-                    | BinaryOp::Div
-                    | BinaryOp::Rem => {
-                        let item = match op {
-                            BinaryOp::Add => LangItem::Add,
-                            BinaryOp::Sub => LangItem::Sub,
-                            BinaryOp::Mul => LangItem::Mul,
-                            BinaryOp::Div => LangItem::Div,
-                            BinaryOp::Rem => LangItem::Rem,
-                            _ => unreachable!(),
-                        };
-                        if is_primitive {
-                            resolved
-                        } else {
-                            self.check_operator_trait(item, resolved, id.owner, expr.span)
-                                .unwrap_or_else(|| self.tcx.error())
-                        }
-                    }
-                    BinaryOp::Eq | BinaryOp::Ne => {
-                        if is_primitive
-                            || self
-                                .check_operator_trait(LangItem::Eq, resolved, id.owner, expr.span)
-                                .is_some()
-                        {
-                            bool_ty
-                        } else {
-                            self.tcx.error()
-                        }
-                    }
-                    BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                        if is_primitive
-                            || self
-                                .check_operator_trait(
-                                    LangItem::Comparable,
-                                    resolved,
-                                    id.owner,
-                                    expr.span,
-                                )
-                                .is_some()
-                        {
-                            bool_ty
-                        } else {
-                            self.tcx.error()
-                        }
-                    }
-                    BinaryOp::And | BinaryOp::Or => {
-                        // Not overloadable -- the core lib has no logic trait, so `&&`/`||`
-                        // only ever mean the primitive short-circuit operators.
-                        if let Err(error) = self.unifier.unify(&self.tcx, resolved, bool_ty) {
-                            DiagCtx::emit(
-                                Diagnostic::error(self.cx().show(error).to_string(), expr.span)
-                                    .with_label(format!(
-                                        "`&&`/`||` need bool operands, found {}",
-                                        self.cx().show(resolved)
-                                    )),
-                            );
-                        }
-                        bool_ty
-                    }
-                }
+                self.check_operator(*op, resolved, id.owner, expr.span)
             }
-            ExprKind::Assign { .. } => todo!("check_expr: Assign"),
-            ExprKind::AssignOp { .. } => todo!("check_expr: AssignOp"),
-            ExprKind::Borrow { .. } => todo!("check_expr: Borrow"),
+            ExprKind::Assign { lhs, rhs } => self.check_assign(*lhs, *rhs, expr.span),
+            ExprKind::AssignOp { op, lhs, rhs } => {
+                self.check_assign_op(*op, *lhs, *rhs, expr.span)
+            }
+            ExprKind::Borrow {
+                mutability,
+                operand,
+            } => self.check_borrow(*mutability, *operand, expected),
             ExprKind::Call { callee, args } => self.check_call(*callee, args, expr.span),
             ExprKind::Access { base, member, args } => {
                 self.check_access(id, *base, *member, args, expr.span)
             }
-            ExprKind::Index { .. } => todo!("check_expr: Index"),
-            ExprKind::Ctor { .. } => todo!("check_expr: Ctor"),
-            ExprKind::Variant { .. } => todo!("check_expr: Variant"),
-            ExprKind::Range { .. } => todo!("check_expr: Range"),
-            ExprKind::Try(_) => todo!("check_expr: Try"),
-            ExprKind::If { .. } => todo!("check_expr: If"),
-            ExprKind::Match { .. } => todo!("check_expr: Match"),
+            ExprKind::Index { base, index } => self.check_index(*base, *index, expr.span),
+            ExprKind::Ctor { path, payload } => {
+                self.check_ctor(path.as_ref(), payload, expected, expr.span, id.owner)
+            }
+            ExprKind::Variant { variant, payload } => {
+                self.check_variant_expr(*variant, payload, expected, expr.span)
+            }
+            ExprKind::Range { lo, hi, .. } => self.check_range(*lo, *hi, expr.span),
+            ExprKind::Try(operand) => self.check_try(*operand, expr.span, id.owner),
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => self.check_if(*cond, *then_block, *else_block, expected, expr.span),
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_match(*scrutinee, arms, expected)
+            }
             ExprKind::Loop { block, .. } => {
                 self.check_block(*block);
                 // A `loop`/`while`/`for` expression produces no value of its own.
                 self.tcx.unit()
             }
-            ExprKind::Spawn(_) => todo!("check_expr: Spawn"),
-            ExprKind::Concurrent(_) => todo!("check_expr: Concurrent"),
-            ExprKind::Block(block_id) => {
-                let block_id = *block_id;
-                self.check_block(block_id);
-
-                let Node::Block(block) = self.hir.node(block_id) else {
-                    unreachable!("Node which is not Node::Block found for a block expr's id")
-                };
-
-                match block.expr {
-                    Some(tail) => self.ty_of(tail),
-                    None => self.tcx.unit(),
-                }
+            // Both run their block for its effects rather than for a value: `spawn` starts it
+            // elsewhere, and `concurrent` runs its statements against each other. Neither has a
+            // value to hand back to the expression it sits in.
+            ExprKind::Spawn(block) | ExprKind::Concurrent(block) => {
+                self.check_block(*block);
+                self.tcx.unit()
             }
-            ExprKind::Closure(_) => todo!("check_expr: Closure"),
+            ExprKind::Block(block_id) => self.check_block_expecting(*block_id, expected),
+            ExprKind::Closure(def) => self.check_closure(*def, expected),
             ExprKind::Error => self.tcx.error(),
         };
 
         ty
     }
 
-    /// Asks the trait solver whether `self_ty` implements the operator trait `item` names --
-    /// `Add`, `Neg`, `Eq`, and so on -- and, if it does, hands back the type standing in for the
-    /// trait's own `Self`.
+    /// The type `op` produces for two operands that have already been unified into `operand`, and
+    /// the check that `op` applies to that type at all.
     ///
-    /// Every operator trait in `core::ops` returns `Self` (`Eq` and `Comparable` return `bool`
-    /// instead, so their callers only ask whether this returns `Some` and ignore the type it
-    /// carries). That means there is no associated type to project here: `self_ty` itself is the
-    /// answer, and this is a thin wrapper around [`Typeck::implements`] rather than the general
-    /// case method resolution needs, which is why [`method`](traits::method) collects its own
-    /// candidates instead of calling this.
+    /// Each operator maps onto the `core::ops` trait its lang item names, so unifying the two
+    /// sides is required but not sufficient: `foo + bar` also needs an `extend Foo with Add`
+    /// block. A primitive short-circuits that -- no `extend` block backs `i32`, so there would be
+    /// nothing for the solver to find.
     ///
-    /// Returns `None` once nothing more should be said about the expression: either a diagnostic
-    /// already went out (`DoesNotHold`), or the goal can't be settled from here (`Ambiguous`
-    /// because an operand is still an inference variable, `Error` because one side already is)
-    /// and piling another guess on top would just be noise.
-    fn check_operator_trait(
-        &mut self,
-        item: LangItem,
-        self_ty: Ty,
-        owner: DefId,
-        span: SrcSpan,
-    ) -> Option<Ty> {
-        // A lang item that failed to resolve was already reported by `langitems::collect`;
-        // saying anything more here would be a second diagnostic for the same mistake.
-        let trait_def = self.hir.lang_items().get(item)?;
+    /// Shared with [`Typeck::check_assign_op`], which asks the same question of `+=` as this does
+    /// of `+`.
+    fn check_operator(&mut self, op: BinaryOp, operand: Ty, owner: DefId, span: SrcSpan) -> Ty {
+        let is_primitive = matches!(self.tcx.kind(operand), TyKind::Primitive(_));
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
 
-        let trait_ref = TraitRef {
-            def: trait_def,
-            args: Vec::new(),
-        };
-        let goal = Obligation::new(self_ty, trait_ref, span);
-        let env = self.param_env(owner);
-
-        match self.implements(&goal, &env) {
-            Solution::Holds(_) => Some(self_ty),
-            Solution::DoesNotHold => {
-                DiagCtx::emit(
-                    Diagnostic::error(
-                        format!("{} does not implement `{item:?}`", self.cx().show(self_ty)),
-                        span,
-                    )
-                    .with_label("this operator needs an `extend .. with` block providing it"),
-                );
-                None
+        match op {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                let item = match op {
+                    BinaryOp::Add => LangItem::Add,
+                    BinaryOp::Sub => LangItem::Sub,
+                    BinaryOp::Mul => LangItem::Mul,
+                    BinaryOp::Div => LangItem::Div,
+                    BinaryOp::Rem => LangItem::Rem,
+                    _ => unreachable!("the outer match admits only the five arithmetic operators"),
+                };
+                if is_primitive || self.operator_holds(item, operand, owner, span) {
+                    // Every `core::ops` trait an operator dispatches to returns `Self`, so the
+                    // operand's own type is the result.
+                    operand
+                } else {
+                    self.tcx.error()
+                }
             }
-            Solution::Ambiguous | Solution::Error => None,
+            BinaryOp::Eq | BinaryOp::Ne => {
+                if is_primitive || self.operator_holds(LangItem::Eq, operand, owner, span) {
+                    bool_ty
+                } else {
+                    self.tcx.error()
+                }
+            }
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                if is_primitive || self.operator_holds(LangItem::Comparable, operand, owner, span) {
+                    bool_ty
+                } else {
+                    self.tcx.error()
+                }
+            }
+            BinaryOp::And | BinaryOp::Or => {
+                // Not overloadable -- the core lib has no logic trait, so `&&`/`||` only ever
+                // mean the primitive short-circuit operators.
+                if let Err(error) = self.unifier.unify(&self.tcx, operand, bool_ty) {
+                    DiagCtx::emit(
+                        Diagnostic::error(self.cx().show(error).to_string(), span).with_label(
+                            format!(
+                                "`&&`/`||` need bool operands, found {}",
+                                self.cx().show(operand)
+                            ),
+                        ),
+                    );
+                }
+                bool_ty
+            }
         }
+    }
+
+    /// Whether `self_ty` implements the operator trait `item` names -- `Add`, `Neg`, `Eq`, and so
+    /// on.
+    ///
+    /// A one-line wrapper over [`Typeck::require_extends`] that supplies the two things every
+    /// operator has in common: an operator trait takes no generic arguments of its own, and the
+    /// label to put on the diagnostic is always "this operator". What it does *not* do is work
+    /// out the operator's result type, because that differs per operator -- every `core::ops`
+    /// trait returns `Self` except `Eq` and `Comparable`, which return `bool` -- so the caller
+    /// keeps that decision.
+    fn operator_holds(&mut self, item: LangItem, self_ty: Ty, owner: DefId, span: SrcSpan) -> bool {
+        self.require_extends(
+            self_ty,
+            TraitName::Lang(item),
+            Vec::new(),
+            owner,
+            span,
+            "this operator",
+        )
     }
 
     /// The type of a literal. Every kind of literal is trivial except an unsuffixed number: `1`
@@ -724,7 +702,11 @@ impl<'hir> Typeck<'hir> {
     /// and [`TyVar::Float`](crate::typeck::ty::TyVar::Float) inference variables described on
     /// [`TyVar`](crate::typeck::ty::TyVar), narrowed once unification meets a concrete type or
     /// falls back to `i32`/`f64` if it never does.
-    fn check_literal(&mut self, lit: &Literal) -> Ty {
+    ///
+    /// Shared with [`Typeck::check_pat`], since a literal in a pattern is the same literal and
+    /// takes the same type -- `span` is what lets the one case that reports do so against
+    /// whichever of the two it was written in.
+    pub(crate) fn check_literal(&mut self, lit: &Literal, span: SrcSpan) -> Ty {
         match lit {
             Literal::Bool(_) => self.tcx.mk_prim(PrimTy::Bool),
             Literal::Char(_) => self.tcx.mk_prim(PrimTy::Char),
@@ -732,7 +714,21 @@ impl<'hir> Typeck<'hir> {
             // lower straight to that `PrimTy` instead of an inference variable.
             Literal::Int { .. } => self.tcx.next_int_var(),
             Literal::Float { .. } => self.tcx.next_float_var(),
-            Literal::Str(_) => todo!("check_literal: Str (needs the `String` lang item)"),
+            // A string literal is a value of some string type, and there is nothing here for it to
+            // be: the core library declares no `String`, and `LangItem` names none, so there is no
+            // definition to resolve one to. Reported rather than given a stand-in type, which
+            // would make every use of it check against something no later pass could lower.
+            Literal::Str(_) => {
+                DiagCtx::emit(
+                    Diagnostic::error("a string literal has no type yet", span)
+                        .with_label("`str` is not a type the core library declares")
+                        .with_help(
+                            "the core library declares no string type and no lang item names one, \
+                             so there is nothing for this literal to be",
+                        ),
+                );
+                self.tcx.error()
+            }
         }
     }
 
@@ -742,41 +738,51 @@ impl<'hir> Typeck<'hir> {
         };
 
         match &stmt.kind {
-            StmtKind::Let { else_block, .. } => {
-                // pat, ty, init
+            StmtKind::Let {
+                pat,
+                ty,
+                init,
+                else_block,
+                ..
+            } => {
+                let (pat, ty, init, else_block) = (*pat, *ty, *init, *else_block);
+                self.check_binding(pat, ty, init, stmt.span);
 
-                if let Some(&block) = else_block.as_ref() {
+                if let Some(block) = else_block {
                     self.check_block(block);
                 }
             }
-            StmtKind::With { block, .. } => {
+            StmtKind::With { lends, block } => {
+                // Copied out of the node first: every lend is checked with `&mut self`, and the
+                // list lives in the arena the borrow above reads.
+                let lends: Vec<(HirId, Option<HirId>, HirId, SrcSpan)> = lends
+                    .iter()
+                    .map(|lend| (lend.pat, lend.ty, lend.init, lend.span))
+                    .collect();
+                for (pat, ty, init, span) in lends {
+                    self.check_binding(pat, ty, init, span);
+                }
                 self.check_block(*block);
             }
             StmtKind::Return(Some(expr)) => {
                 let expr = *expr;
-                let expr_ty = self.ty_of(expr);
-
-                let OwnerNode::Function(_) = self.hir.def(id.owner) else {
-                    unreachable!("Return statement found in non-function");
-                };
-
-                let sig = self
-                    .recorded_ty_of_def(id.owner)
-                    .expect("a function's signature is collected before its body is checked");
-                let TyKind::Fun { ret, .. } = self.tcx.kind(sig) else {
-                    unreachable!("a function's own signature always lowers to TyKind::Fun");
-                };
-                // A function with no declared return type produces nothing, which is exactly
-                // what `Unit` means. `Never` would be wrong here: it unifies with everything,
-                // so `return <anything>` from a function that returns nothing would be accepted
-                // silently.
-                let ret = ret.unwrap_or_else(|| self.tcx.unit());
+                let ret = self.return_ty(id.owner);
 
                 // The declared return type is what the context demands, so it goes in `expected`
                 // and the returned expression in `found` -- otherwise the diagnostic reads
                 // backwards ("expected `bool`, found `()`" for a `bool` returned from a function
                 // declared to return nothing).
+                let expr_ty = self.ty_of_expecting(expr, ret);
                 if let Err(err) = self.unifier.unify(&self.tcx, ret, expr_ty) {
+                    self.report_return_mismatch(err, stmt.span);
+                }
+            }
+            // `return;` with no value produces nothing, which the enclosing definition has to
+            // agree to.
+            StmtKind::Return(None) => {
+                let ret = self.return_ty(id.owner);
+                let unit = self.tcx.unit();
+                if let Err(err) = self.unifier.unify(&self.tcx, ret, unit) {
                     self.report_return_mismatch(err, stmt.span);
                 }
             }
@@ -785,6 +791,52 @@ impl<'hir> Typeck<'hir> {
             }
             _ => {}
         }
+    }
+
+    /// Checks one binding form -- a `let`, or one lend of a `with` -- and gives the names its
+    /// pattern introduces their types.
+    ///
+    /// The two are the same shape and the same rule: an annotation, if written, is what the
+    /// initializer is checked against and what the pattern is bound at; without one the
+    /// initializer's own type is both. Checking the initializer *expecting* the annotation is what
+    /// makes `let s: Shape = .circle(1.0);` work at all, since `.circle` names no enum of its own.
+    fn check_binding(&mut self, pat: HirId, ty: Option<HirId>, init: HirId, span: SrcSpan) {
+        let declared = ty.map(|ty| self.lower_ty(ty));
+        let init_ty = self.ty_of_maybe_expecting(init, declared);
+
+        let bound = match declared {
+            Some(declared) => {
+                if let Err(err) = self.unifier.unify(&self.tcx, declared, init_ty) {
+                    DiagCtx::emit(
+                        Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
+                            "the value this binding is given does not match its declared type",
+                        ),
+                    );
+                }
+                declared
+            }
+            None => init_ty,
+        };
+        self.check_pat(pat, bound);
+    }
+
+    /// What a `return` inside `owner` has to produce.
+    ///
+    /// A definition with no declared return type produces nothing, which is exactly what `Unit`
+    /// means. `Never` would be wrong here: it unifies with everything, so `return <anything>` from
+    /// a function declared to return nothing would be accepted silently.
+    ///
+    /// `owner` is a function or a closure. A closure records a signature for itself before its
+    /// body is checked ([`Typeck::check_closure`]) precisely so that this reads the same way for
+    /// both.
+    fn return_ty(&mut self, owner: DefId) -> Ty {
+        let sig = self
+            .recorded_ty_of_def(owner)
+            .expect("a signature is recorded before the body it belongs to is checked");
+        let TyKind::Fun { ret, .. } = self.tcx.kind(sig) else {
+            unreachable!("a function's or closure's own signature always lowers to TyKind::Fun");
+        };
+        ret.unwrap_or_else(|| self.tcx.unit())
     }
 
     /// Everything needed to render this pass's types the way the user wrote them. Build one
@@ -804,23 +856,66 @@ impl<'hir> Typeck<'hir> {
         );
     }
 
-    pub fn check_block(&mut self, id: HirId) {
+    /// Checks every statement in the block, and its trailing expression if it has one, and returns
+    /// the block's own type.
+    pub fn check_block(&mut self, id: HirId) -> Ty {
+        self.check_block_expecting(id, None)
+    }
+
+    /// [`Typeck::check_block`], passing an expectation on to the trailing expression.
+    ///
+    /// A block's type is its trailing expression's, so an expectation on the block is an
+    /// expectation on that expression and on nothing else in it. This is what carries a `match`
+    /// arm's expected type down to the `.variant` the arm ends with.
+    fn check_block_expecting(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
         let Node::Block(block) = self.hir.node(id) else {
             unreachable!("Node which is not a block passed to check_block");
         };
         let tail = block.expr;
 
+        let mut diverges = false;
         for &stmt in &block.stmts {
             self.check_stmt(stmt);
+            diverges |= matches!(
+                self.hir.stmt(stmt).kind,
+                StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue
+            );
         }
 
         // A block's trailing expression is not a statement, so the loop above never reaches it.
-        // Checking it here is what types a function body written as a bare expression.
-        if let Some(tail) = tail {
-            self.ty_of(tail);
+        // Checking it here is what types a function body written as a bare expression -- and it
+        // happens even for a block that has already diverged, since those nodes still need types.
+        let tail_ty = match tail {
+            Some(tail) => self.ty_of_maybe_expecting(tail, expected),
+            // A block that ends in a statement produces nothing.
+            None => self.tcx.unit(),
+        };
+
+        // A block that leaves through a `return`, `break`, or `continue` never reaches its own
+        // end, so it produces no value of any type -- which is what `Never` says, and why it
+        // unifies with whatever the context wanted. Without this, `|x| { return x; }` would be
+        // read as producing `()`.
+        //
+        // Only a statement *of* this block is looked at. Divergence hidden inside an expression
+        // -- a call to a function that never returns -- is not tracked, so this errs towards
+        // treating a block as completing normally.
+        if diverges {
+            self.tcx.never()
+        } else {
+            tail_ty
         }
     }
 
+    /// Checks `def_id`'s body against the signature stage one collected for it, and bakes the
+    /// resulting types into the table.
+    ///
+    /// The body's *trailing expression* is deliberately not checked against the declared return
+    /// type, though [`Typeck::check_block`] now hands one back. Doing so needs divergence to be
+    /// tracked further than it is: `fun f() -> i32 { if c { return 1; } else { return 2; } }` ends
+    /// in a block that produces no value and reaches no `return` statement of its own, so a check
+    /// here would reject it. A `return` inside the body is checked, which is what a body that ends
+    /// in one is relying on; a closure's body, which cannot use a bare `return` to stand in for
+    /// its value the same way, is checked -- see [`Typeck::check_closure`].
     pub fn check_function(&mut self, def_id: DefId) {
         let OwnerNode::Function(function) = self.hir.def(def_id) else {
             unreachable!("root of a Function owner is always OwnerNode::Function");
@@ -838,25 +933,108 @@ impl<'hir> Typeck<'hir> {
         }
         self.writeback(def_id);
     }
+}
 
-    pub fn check_trait(&mut self, def_id: DefId) {
-        let OwnerNode::Trait(trait_) = self.hir.def(def_id) else {
-            unreachable!("root of a Trait owner is always OwnerNode::Trait");
-        };
+/// Drives stage one over the HIR: the traversal behind [`Typeck::collect_module`].
+///
+/// A wrapper rather than an `impl Visitor for Typeck` because the two stages are two different
+/// traversals of the same tree and a type may implement a trait once. The wrapper holds
+/// `&mut Typeck`, so each hook delegates to the `collect_*` method of the same name.
+///
+/// Three hooks depart from calling the matching `walk_*`, each for a stated reason:
+///
+/// - `visit_function` does not walk. [`Typeck::collect_function`] reads the same children the
+///   walk would, but has to build one `Vec<Ty>` of parameter types in declaration order with the
+///   `self` parameter first, which a per-child hook cannot accumulate.
+/// - `visit_struct`, `visit_enum` and `visit_trait` interleave: `Self` for a definition is
+///   `TyKind::Adt` applied to that definition's own generics, so [`Typeck::self_ty`] must run
+///   after the generics are recorded and before any field or variant type that could mention
+///   `Self` is lowered. The `collect_*` methods do all three in that order.
+/// - `visit_nested_owner` descends, so that a trait's and an `extend` block's methods have their
+///   signatures collected. Stage one visits no body, so descending here cannot reach one.
+struct Collect<'a, 'hir>(&'a mut Typeck<'hir>);
 
-        for &function in &trait_.functions {
-            self.check_function(function);
-        }
+impl<'hir> Visitor<'hir> for Collect<'_, 'hir> {
+    fn hir(&self) -> &'hir Hir {
+        self.0.hir
     }
 
-    pub fn check_extend(&mut self, def_id: DefId) {
-        let OwnerNode::Extend(extend) = self.hir.def(def_id) else {
-            unreachable!("root of an Extend owner is always OwnerNode::Extend");
-        };
+    fn visit_nested_owner(&mut self, def_id: DefId) {
+        visit::walk_item(self, def_id);
+    }
 
-        for &method in &extend.methods {
-            self.check_function(method);
-        }
+    fn visit_function(&mut self, def_id: DefId) {
+        self.0.collect_function(def_id);
+    }
+
+    fn visit_struct(&mut self, def_id: DefId) {
+        self.0.collect_struct(def_id);
+    }
+
+    fn visit_enum(&mut self, def_id: DefId) {
+        self.0.collect_enum(def_id);
+    }
+
+    fn visit_trait(&mut self, def_id: DefId) {
+        self.0.collect_trait(def_id);
+        // Reaches the trait's methods through `visit_nested_owner`; `collect_trait` itself
+        // records only the trait's generics and its `Self`.
+        visit::walk_trait(self, def_id);
+    }
+
+    fn visit_extend(&mut self, def_id: DefId) {
+        self.0.collect_extend(def_id);
+        visit::walk_extend(self, def_id);
+    }
+
+    /// A closure is an owner, so `walk_item` has an arm for it, but no traversal here can reach
+    /// one: a closure's `DefId` is stored in an `ExprKind::Closure` inside a body, and stage one
+    /// enters no body. Reaching this means a closure was reached as a module item or as a method,
+    /// which lowering does not produce.
+    fn visit_closure(&mut self, def_id: DefId) {
+        unreachable!("stage one reached a closure ({def_id:?}), which owns no signature to collect")
+    }
+}
+
+/// Drives stage two over the HIR: the traversal behind [`Typeck::check_module`].
+///
+/// The counterpart to [`Collect`], and the reason both are wrappers. Where stage one records a
+/// type for every declaration, this one visits only the definitions that own a body:
+///
+/// - `visit_struct` and `visit_enum` are overridden to do nothing, replacing the walk's descent
+///   into fields and variants. Stage one already recorded those types, and neither declaration
+///   contains an expression to check.
+/// - `visit_function` calls [`Typeck::check_function`] and does not walk. Checking a body is a
+///   traversal with a result type at every step -- [`Typeck::check_expr`] returns the [`Ty`] its
+///   caller unifies against -- which the walk's `()`-returning hooks cannot carry.
+/// - `visit_nested_owner` descends, reaching the methods of a trait or `extend` block. A closure
+///   is also a nested owner, but stage two never reaches one from here: `walk_item` is called
+///   only from the hooks below, and `check_function` does not walk into its own body.
+struct Check<'a, 'hir>(&'a mut Typeck<'hir>);
+
+impl<'hir> Visitor<'hir> for Check<'_, 'hir> {
+    fn hir(&self) -> &'hir Hir {
+        self.0.hir
+    }
+
+    fn visit_nested_owner(&mut self, def_id: DefId) {
+        visit::walk_item(self, def_id);
+    }
+
+    fn visit_function(&mut self, def_id: DefId) {
+        self.0.check_function(def_id);
+    }
+
+    fn visit_struct(&mut self, _def_id: DefId) {}
+
+    fn visit_enum(&mut self, _def_id: DefId) {}
+
+    /// Unreachable for the same reason as [`Collect::visit_closure`]: `check_function` checks a
+    /// body without walking it, so no closure's `DefId` is ever handed to this traversal. The
+    /// `ExprKind::Closure` arm of [`Typeck::check_expr`] is what will check one, from inside the
+    /// body that declares it.
+    fn visit_closure(&mut self, def_id: DefId) {
+        unreachable!("stage two reached a closure ({def_id:?}) outside the body declaring it")
     }
 }
 
@@ -974,8 +1152,8 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// A checker with signatures collected and the impl index built, ready to answer trait
-    /// questions -- what [`Typeck::check_operator_trait`] needs, since it's reached through
-    /// [`Typeck::implements`] rather than the plain unifier.
+    /// questions -- what [`Typeck::operator_holds`] needs, since it's reached through
+    /// [`Typeck::extends`] rather than the plain unifier.
     fn checker_with_impls_built<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
         let mut checker = checker_with_signatures_collected(hir);
         checker.build_impl_index();
@@ -1014,9 +1192,9 @@ mod tests {
     }
 
     /// `a + b` on a struct with an `extend Foo with Add` block resolves through the solver:
-    /// [`Typeck::check_operator_trait`] asks [`Typeck::implements`] whether `Foo` implements the
-    /// trait `LangItem::Add` names, gets back `Solution::Holds`, and returns `Foo` itself as the
-    /// result -- every operator trait in `core::ops` returns `Self`, so there's no associated
+    /// [`Typeck::operator_holds`] asks [`Typeck::extends`] whether `Foo` implements the trait
+    /// `LangItem::Add` names, gets back `Solution::Holds`, and the arm returns `Foo` itself as
+    /// the result -- every operator trait in `core::ops` returns `Self`, so there's no associated
     /// type to project.
     #[test]
     fn binary_add_on_a_struct_with_an_add_impl_resolves_through_the_solver() {
@@ -1086,7 +1264,7 @@ mod tests {
     }
 
     /// `1 + 2` never reaches the solver at all: an operand still typed as a primitive short-
-    /// circuits `check_operator_trait` entirely, so ordinary arithmetic keeps working in a
+    /// circuits `operator_holds` entirely, so ordinary arithmetic keeps working in a
     /// fixture with no core library -- and so no lang items -- in sight.
     #[test]
     fn binary_add_on_primitives_bypasses_the_solver() {
