@@ -11,17 +11,16 @@ use crate::nameres::res::Res;
 /// Every path written in the program, grouped by the node that owns it, plus the lang items.
 ///
 /// One table serves what the HIR-side resolver split into four. An `ast::Generic` owns its
-/// bound paths, so bounds are simply further entries in that node's list, in source order.
-/// `Self` is an ordinary path since `TyKind::SelfType` was removed. Generics are
-/// resolver-internal scope-stack state rather than output.
+/// bound paths as further entries in that node's list (in source order). `Self` is an ordinary
+/// path since `TyKind::SelfType` was removed. Generics are resolver-internal scope-stack state.
 ///
 /// `lang_items` stays pass output: resolving it is name resolution's job and can only be done
 /// while the symbol table exists, but every consumer of it is a later pass.
 #[derive(Debug, Default)]
 pub struct NameResolutions {
-    /// `SmallVec<[_; 2]>` is inline capacity, not a cap. Two is the common maximum --
-    /// `extend Vec<T> with Show` puts `adt_path` and `trait_path` on one `Item` node. A
-    /// generic with three bounds spills to the heap and stays correct.
+    /// `SmallVec<[_; 2]>` carries inline capacity (not a cap). Two is the common maximum:
+    /// `extend Vec<T> with Show` puts `adt_path` and `trait_path` on one `Item`. A generic with
+    /// three bounds spills to the heap and stays correct.
     paths: HashMap<NodeId, SmallVec<[(Path, Res); 2]>>,
     lang_items: AstLangItems,
 }

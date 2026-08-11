@@ -21,15 +21,15 @@ pub enum PrimTy {
 
 /// What one written path named.
 ///
-/// `Err` is *recorded*, never left absent: absence in `NameResolutions` has to mean "never
-/// reached", and conflating it with "resolved, unsuccessfully" leaves every consumer telling
-/// the two apart from context it does not have.
+/// `Err` is always recorded. Absence in `NameResolutions` must mean "never reached", not
+/// "resolved, unsuccessfully". Conflating them forces consumers to disambiguate from context
+/// they may not have.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Res {
     Type(Type),
     Local(Local),
-    /// The `Item` wrapping a `fun`. `Function`, like `Struct`/`Enum`/`Trait`/`Extend`, has no
-    /// `NodeId` of its own -- it sits inside `Item`, which does (`src/ast.rs:85`).
+    /// The `Item` wrapping a `fun`. `Function`, like `Struct`/`Enum`/`Trait`/`Extend`, carries
+    /// no `NodeId` (it sits inside `Item`, which does; see `src/ast.rs:85`).
     Function(NodeId),
     /// Never constructed today: nothing in the AST writes a path in module position (an
     /// `import`'s path resolves through a dedicated walk instead, not through this `Res`). Kept
@@ -77,8 +77,8 @@ impl TyDef {
 /// `Self`. Every consumer handles it specially anyway; a distinct variant forces that to be
 /// exhaustive.
 ///
-/// There is deliberately no `Variant` arm. A `.variant` names no enum of its own -- the enum
-/// comes from the expected type, so typeck resolves it once it knows that type.
+/// No `Variant` arm exists. A `.variant` names no enum until the expected type is known.
+/// Typeck resolves it once it has that type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Local {
     Param(NodeId),

@@ -1,5 +1,5 @@
 //! The High-level Intermediate Representation (HIR) is the tree that lowering produces from the
-//! AST. Future passes, such as name resolution and type checking, operate on the HIR rather than
+//! AST. Later passes, such as name resolution and type checking, operate on the HIR rather than
 //! the AST.
 //!
 //! The HIR differs from the AST in two ways. First, it addresses nodes differently. Instead of
@@ -46,9 +46,9 @@ pub struct Hir {
     ///
     /// Every slot is filled once lowering has finished: a field, a variant, or a generic type
     /// parameter is addressed by a [`HirId`] within its owner's arena and never gets a `DefId`
-    /// at all (see [`DefId`]), so it never claims a slot here to leave empty. That density is
-    /// what lets this be a plain `Vec<Arena>` rather than a `Vec<Option<Arena>>` -- lookups
-    /// need no unwrap, and there is no unreachable "missing arena" case to explain.
+    /// at all (see [`DefId`]), so no unused slots exist. This allows a plain `Vec<Arena>` rather
+    /// than a `Vec<Option<Arena>>` -- lookups need no unwrap, and there is no unreachable
+    /// "missing arena" case to handle.
     ///
     /// `LoweringCtx::finish` is what upholds it, ordering the arenas it collected by `DefId`
     /// rather than scattering them into placeholders.
@@ -58,11 +58,10 @@ pub struct Hir {
     /// lexically declared inside. That enclosing definition is an item's module, a method's
     /// `extend` block or trait, or a closure's enclosing owner.
     ///
-    /// The root module is its own parent. That keeps this dense -- a `Vec<DefId>` rather than a
-    /// `Vec<Option<DefId>>` -- while leaving "has no parent" representable, since the root is
-    /// the only definition that can be its own. [`Hir::parent`] is what turns that back into an
-    /// `Option`, so a caller walking up the chain still gets a `None` to stop at rather than
-    /// looping on the root forever.
+    /// The root module is its own parent. This allows a plain `Vec<DefId>` rather than a
+    /// `Vec<Option<DefId>>` and makes "has no parent" representable, since the root is the only
+    /// definition that can reference itself. [`Hir::parent`] converts this to an `Option`, so a
+    /// caller walking up the chain gets a `None` termination condition instead of looping.
     parents: Vec<DefId>,
 
     /// The root module, which transitively contains every other definition in the program.
@@ -73,10 +72,10 @@ pub struct Hir {
     ///
     /// Resolved at the AST level, before any `DefId` exists (see [`crate::langitems::collect_ast`]),
     /// and translated into this `DefId`-keyed form as the last step of lowering (see
-    /// [`crate::langitems::translate`]) -- lowering is what has both a lang item's `NodeId` and
-    /// the `DefId` it became, so this is where the two get joined. Carried on `Hir` itself,
-    /// rather than handed back from `lower_unit` alongside it, because every later pass already
-    /// has a `Hir` in hand and needs nothing else to ask what a lang item resolved to.
+    /// [`crate::langitems::translate`]) -- lowering has both a lang item's `NodeId` and
+    /// the `DefId` it became, so this is where the mapping occurs. Stored on `Hir` itself
+    /// rather than returned from `lower_unit` alongside it, because every later pass already
+    /// has a `Hir` in hand and needs nothing else to resolve a lang item.
     lang_items: crate::langitems::LangItems,
 }
 
@@ -91,14 +90,13 @@ impl Hir {
 
     /// Looks up the [`Node`] a [`HirId`] addresses.
     ///
-    /// The assertion checks that an arena agrees with itself: the node stored at a slot is the
-    /// one whose own [`HirId`] names that slot. It catches a node filled in under an id other
-    /// than the one it was built with.
+    /// The assertion verifies arena consistency: the node stored at a slot has the [`HirId`]
+    /// that addresses that slot. This catches a node filled with an incorrect id.
     ///
-    /// It does *not* catch a child reference into a foreign arena. Following such an id lands
-    /// on a real node in that other arena, which stores exactly the id that was followed, so
-    /// nothing here disagrees. That invariant is enforced where a child id is stored instead,
-    /// by `ArenaBuilder::fill`.
+    /// This does not catch child references into other arenas. Following such an id lands
+    /// on a real node in that arena, which has the id that was followed, so the assertion
+    /// would pass. That constraint is enforced instead during child storage via
+    /// `ArenaBuilder::fill`.
     pub fn node(&self, id: HirId) -> &Node {
         let node = self.arena(id.owner).get(id);
         debug_assert_eq!(
@@ -135,10 +133,10 @@ impl Hir {
     }
 
     /// Returns the definition that `def_id` is lexically declared inside, or `None` if `def_id`
-    /// names the root module.
+    /// is the root module.
     ///
-    /// Together with [`Hir::module_of`], this lets a pass recover its surrounding context from
-    /// an id alone, instead of threading that context through its own traversal.
+    /// Together with [`Hir::module_of`], this lets a pass retrieve its enclosing context from
+    /// an id alone, without maintaining context state during traversal.
     pub fn parent(&self, def_id: DefId) -> Option<DefId> {
         let parent = self.parents[def_id.index()];
         // The root is stored as its own parent, which is how the table stays dense. Reporting
@@ -147,7 +145,7 @@ impl Hir {
     }
 
     /// Iterates every `DefId` that owns an arena, in the order they were allocated. Used by the
-    /// `--debug` dump to walk the whole program without needing its own traversal; see
+    /// `--debug` dump to traverse the program without needing its own traversal; see
     /// [`crate::driver::emit_debug`].
     pub fn def_ids(&self) -> impl Iterator<Item = DefId> + '_ {
         self.arenas
@@ -179,8 +177,8 @@ impl Hir {
 /// beside the field indicates what kind is expected. Code that follows such an id must unwrap the
 /// variant; untyped unwraps written by hand are both verbose and error-prone. For example, passing
 /// a block id to a function expecting an expression id is a one-word mistake that compiles cleanly
-/// but panics at runtime (this happened with `if`/`else`'s `else_block`, where the wrong walk was
-/// used for the block traversal).
+/// but panics at runtime (this happened with `if`/`else`'s `else_block`, where the wrong traversal
+/// was used for the block).
 ///
 /// Generated typed accessors (`hir.block(id)` vs. `hir.expr(id)`) make the type expectation
 /// explicit at the call site and report uniform diagnostic messages that name both the expected

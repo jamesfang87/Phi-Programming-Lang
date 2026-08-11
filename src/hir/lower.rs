@@ -1,6 +1,6 @@
 //! AST -> HIR lowering.
 //!
-//! Split across submodules by what's being lowered: [`ctx`] drives the pass and assembles
+//! Split across submodules by what's being lowered: [`ctx`] orchestrates lowering and assembles
 //! modules, [`owner`] holds the per-owner arena builder and its generic node-building helpers,
 //! and [`items`], [`ty`], [`block`], [`expr`], [`pat`], and [`desugar`] each lower one corner of
 //! the AST against it.
@@ -21,7 +21,7 @@ use crate::hir::Hir;
 use crate::nameres::NameResolutions;
 use ctx::LoweringCtx;
 
-/// Lowers a build's whole [`Ast`] into one `Hir`.
+/// Lowers the full [`Ast`] into one `Hir`.
 ///
 /// Every definition in the program -- every module, and every function, struct, enum, trait, and
 /// `extend` block declared in one -- gets its `DefId` before any of them is lowered, recorded in
@@ -31,11 +31,11 @@ use ctx::LoweringCtx;
 /// exist yet. It is also what lets a module's `Module` node list the submodules nested in it
 /// while they are still unlowered.
 ///
-/// Getting this right takes three passes, each depending on the last having finished everywhere
+/// This requires three passes, each depending on the last having finished everywhere
 /// before it starts anywhere:
 ///
 ///  1. Every module gets its `DefId`, in [`Ast::mod_ids`] order. That order visits a module after
-///     the module above it, so a parent's `DefId` is always allocated before its children ask for
+///     the module above it, so a parent's `DefId` is always allocated before children reference
 ///     it.
 ///  2. Every module's own items -- functions, structs, enums, traits, `extend` blocks -- get
 ///     theirs, parented to that module. This is sound only because every module already has an

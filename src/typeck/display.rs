@@ -79,7 +79,7 @@ impl Pretty for Ty {
                 write_args(f, cx, args)
             }
             TyKind::Generic(hir_id) => write!(f, "{}", generic_name(hir, *hir_id)),
-            // Only appears inside a trait's own body, where `Self` names no concrete type yet.
+            // Only appears inside a trait's body, where `Self` names no concrete type yet.
             TyKind::SelfTy(_) => write!(f, "Self"),
             TyKind::Ref { base, mutability } => {
                 match mutability {
@@ -102,7 +102,7 @@ impl Pretty for Ty {
                     elem.pretty(f, cx)?;
                 }
                 // `(T,)` disambiguates a one-element tuple from a merely parenthesized `T`,
-                // exactly as in the language's own surface syntax.
+                // exactly as in the language's surface syntax.
                 if elems.len() == 1 {
                     write!(f, ",")?;
                 }

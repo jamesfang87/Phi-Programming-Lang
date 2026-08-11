@@ -6,7 +6,7 @@ use crate::typeck::ty::Ty;
 /// The output of type checking: every node whose type the checker worked out, mapped to that
 /// type.
 ///
-/// A definition's own type -- the type a `struct` names, the signature of a `fun` -- is in here
+/// A definition's type -- the type a `struct` names, the signature of a `fun` -- is in here
 /// too, stored under its owner node -- see [`DefId::owner_id`](crate::hir::DefId::owner_id).
 /// Nothing else can be stored under that id, so definitions need no table of their own.
 ///

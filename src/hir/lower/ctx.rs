@@ -1,4 +1,4 @@
-//! Drives the whole lowering pass: allocates `DefId`s, lowers each module's items into their own
+//! Orchestrates lowering: allocates `DefId`s, lowers each module's items into their own
 //! owners, and assembles the final `Hir` once every item has been lowered.
 
 use std::collections::{HashMap, HashSet};
@@ -13,7 +13,7 @@ use crate::hir::{
 use crate::nameres::NameResolutions;
 use crate::nameres::{Local as SLocal, Res as SRes, TyDef as STyDef, Type as SType};
 
-/// `LoweringCtx` tracks the state threaded through the whole lowering pass. It holds:
+/// `LoweringCtx` tracks the state threaded through lowering. It holds:
 ///
 /// - The `DefId` allocator, which assigns every definition its global id.
 /// - `def_ids`, which is how a definition's pre-allocated id is found again once lowering
@@ -35,7 +35,7 @@ use crate::nameres::{Local as SLocal, Res as SRes, TyDef as STyDef, Type as STyp
 /// contents into modules, so [`lower_unit`](super::lower_unit) walks a finished tree and this
 /// only has to give each module a `DefId` and lower what is in it.
 ///
-/// [`LoweringCtx::finish`] consumes this state after every item has been lowered and packs it
+/// [`LoweringCtx::finish`] consumes this state after every item has been lowered and assembles it
 /// into the final `Hir`.
 ///
 /// `'res` is the lifetime of the [`NameResolutions`] this pass consumes -- AST-level name
@@ -104,8 +104,8 @@ impl<'res> LoweringCtx<'res> {
     /// The `HirId` `node` lowered to, expected because `node` is `what`.
     ///
     /// See [`LoweringCtx::node_to_hir`] for why every lookup here is expected to already be
-    /// populated. A miss is a lowering-order bug: panicking is what keeps it visible as itself,
-    /// per the task's own instruction, rather than degrading to `Res::Err` and reappearing later
+    /// populated. A miss is a lowering-order bug: panicking keeps the bug visible as itself,
+    /// per the task's own instruction, rather than converting to `Res::Err` and reappearing later
     /// as an unexplained type error.
     fn hir_id_of(&self, node: NodeId, what: &str) -> HirId {
         *self.node_to_hir.get(&node).unwrap_or_else(|| {
@@ -151,10 +151,10 @@ impl<'res> LoweringCtx<'res> {
     /// recorded under in [`NameResolutions`] (see `NameResolutions::get`).
     ///
     /// Every path AST-level resolution visits records an entry, `Res::Err` included (see
-    /// the AST-level `Res`'s own docs on why absence and failure are kept apart) -- so a missing
-    /// entry here means `owner` is wrong, not that resolution failed. This is *not* the same
-    /// failure mode as a missing `node_to_hir`/`def_ids` entry inside [`Self::translate_res`],
-    /// which is checked (and panics) separately once an entry is found.
+    /// the AST-level `Res`'s own docs on why absence and failure are kept apart). A missing
+    /// entry here indicates `owner` is wrong, not that resolution failed. This differs from a
+    /// missing `node_to_hir`/`def_ids` entry inside [`Self::translate_res`], which is checked
+    /// (and panics) separately once an entry is found.
     pub(super) fn lower_path(&self, owner: NodeId, path: &ast::Path) -> crate::hir::Path {
         let res = self.nameres.get(owner, path).unwrap_or_else(|| {
             panic!(
@@ -180,13 +180,13 @@ impl<'res> LoweringCtx<'res> {
     ///
     /// `Self` resolves through the ordinary type-namespace lookup, same as any other path (see
     /// `SymbolTable::lookup_type_path`), so `res` arrives as an ordinary `Res::Type(Type::Def(_))`
-    /// -- there is no AST-level `Res::SelfTy` to translate. What makes `Self` different is not
-    /// what it resolved to but that it was *written* as `Self`, which is exactly what
+    /// -- there is no AST-level `Res::SelfTy` to translate. The distinguishing characteristic
+    /// of `Self` is not its resolution target but its written form as the keyword `Self`, which
     /// [`is_self_path`] recognizes: the lexer tokenizes the text `Self` as the reserved
-    /// `UpperSelfKw`, never as an `Identifier`, so no ordinary path segment can ever collide with
-    /// it. Giving `Self` its own `Res` arm, here rather than at the resolver, is what lets
-    /// `lower_ty`'s `Def` arm skip the two struct/enum-only checks that don't hold for `Self` --
-    /// see `hir::Res::SelfTy`'s own docs.
+    /// `UpperSelfKw`, never as an `Identifier`, so no ordinary path segment can collide with it.
+    /// Giving `Self` its own `Res` arm, here rather than at the resolver, lets `lower_ty`'s
+    /// `Def` arm skip the two struct/enum-only checks that don't hold for `Self` -- see
+    /// `hir::Res::SelfTy`'s own docs.
     fn as_self_ty(&self, path: &ast::Path, res: Res) -> Res {
         match res {
             Res::Type(Type::Def(tydef)) if is_self_path(path) => Res::SelfTy(tydef),
@@ -199,13 +199,11 @@ impl<'res> LoweringCtx<'res> {
     ///
     /// `Resolver::visit_expr`'s `Ctor` arm (`src/nameres/resolver.rs`) does record an entry for
     /// this, keyed on the expression's own `NodeId` exactly like an ordinary `ExprKind::Path` --
-    /// so in practice this behaves the same as [`Self::lower_path`]. The fallback stays as a
-    /// deliberately softer landing than that function's panic: this is a single, narrow call
-    /// site (one `Option<Path>` field on one node kind) rather than the general path-lookup
-    /// every other caller shares, so keeping it non-panicking costs little and leaves the corner
-    /// cheap to re-check by hand if some future edit ever reintroduces a gap here -- unlike
-    /// `Self::lower_path`'s panic, whose whole point is to surface a miss loudly rather than let
-    /// it degrade.
+    /// so this behaves the same as [`Self::lower_path`]. The fallback avoids panicking because
+    /// this is a single, narrow call site (one `Option<Path>` field on one node kind) rather than
+    /// the general path-lookup every other caller shares. Re-checking this by hand remains
+    /// straightforward if some future edit reintroduces a gap here, unlike `Self::lower_path`'s
+    /// panic, whose whole point is to surface a miss loudly rather than let it hide.
     pub(super) fn lower_ctor_path(&self, owner: NodeId, path: &ast::Path) -> crate::hir::Path {
         let res = self
             .nameres
@@ -532,7 +530,7 @@ impl<'res> LoweringCtx<'res> {
         ow.finish()
     }
 
-    /// Packs the whole pass's bookkeeping into a dense `Hir`, once every module and item has been
+    /// Assembles lowering's bookkeeping into a dense `Hir`, once every module and item has been
     /// lowered. `root_module` is the `DefId` given to [`ast::Ast`]'s root.
     pub(super) fn finish(self, root_module: DefId) -> Hir {
         // Every allocated `DefId` owns exactly one arena, so the finished table is dense and

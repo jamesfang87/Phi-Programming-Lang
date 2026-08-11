@@ -9,20 +9,20 @@
 //! annotation, its `else` block, or a `with` binding's type annotation went silently untraversed,
 //! leaving portions of the tree unresolved. A shared visitor enforces correctness: any new node
 //! added to the AST produces a compile error (unmatched enum variant in the visitor) rather than
-//! silent skips in some passes. This module applies the same approach to the AST, which is the
-//! target of the name resolution pass.
+//! silent skips in some passes. This module uses the same approach for the AST,
+//! the target of the name resolution pass.
 //!
 //! A pass implements [`Visitor`] and overrides only the nodes it cares about. Each `visit_*`
-//! defaults to the matching free `walk_*` function, which visits the node's children and nothing
-//! else -- so an override that still wants the subtree calls `walk_*` itself, and one that does
-//! not simply omits it. Overriding is also how a pass gets *between* the children: opening a
-//! scope around a block, say, calls `walk_block` bracketed by the scope push and pop.
+//! defaults to the matching free `walk_*` function (which visits children only). An override that
+//! still wants the subtree calls `walk_*` itself; one that does not omits it. Overriding also
+//! lets a pass get *between* the children: opening a scope around a block, for example, calls
+//! `walk_block` bracketed by the scope push and pop.
 //!
 //! Two things differ from the HIR version, both forced by the AST being a `Box`-linked tree
 //! rather than an arena addressed by id:
 //!
-//! - Every `visit_*`/`walk_*` pair takes a `&'ast` reference to the node itself, not an id --
-//!   there is no arena to resolve an id against.
+//! - Every `visit_*`/`walk_*` pair takes a `&'ast` reference to the node itself, not an id
+//!   (there is no arena to resolve an id against).
 //! - A [`Module`]'s children are `NodeId`s (see `src/ast.rs`), resolved through [`Ast::module`],
 //!   so [`Visitor::visit_module`] and [`walk_module`] are the only pair that also take the
 //!   [`Ast`].
@@ -201,10 +201,9 @@ pub fn walk_trait<'ast, V: Visitor<'ast>>(v: &mut V, t: &'ast Trait) {
     }
 }
 
-/// Visits `extend_generics`, `adt_generics`, `trait_generics`, and `methods`. Deliberately does
-/// not visit `adt_path` or `trait_path`: a `Path` is not itself a visitable node, and a pass that
-/// needs what an `extend` block extends or implements reads those two fields directly off the
-/// `Extend`.
+/// Visits `extend_generics`, `adt_generics`, `trait_generics`, and `methods`. Does not visit
+/// `adt_path` or `trait_path`: a `Path` is not a visitable node. A pass that needs what an
+/// `extend` block extends or implements reads those fields directly off the `Extend`.
 pub fn walk_extend<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Extend) {
     if let Some(generics) = &e.extend_generics {
         for g in generics {
@@ -230,18 +229,17 @@ pub fn walk_extend<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Extend) {
 // Declarations nested in an item
 // -----------------------------------------------------------------
 
-/// A generic parameter has nothing to visit: its bounds are `Path`s, and a `Path` is not itself a
-/// visitable node. Exists for the same reason `visit_generic` has a default at all -- so a caller
-/// that wants the "no children" behavior spelled out can call it, and so the free-function
-/// convention holds uniformly across every declaration kind.
+/// A generic parameter carries no visitable nodes: its bounds are `Path`s, which are not visitable.
+/// This function exists so callers can spell out "no children" explicitly and so the free-function
+/// convention holds uniformly across all declaration kinds.
 pub fn walk_generic<'ast, V: Visitor<'ast>>(_v: &mut V, _g: &'ast Generic) {}
 
 pub fn walk_param<'ast, V: Visitor<'ast>>(v: &mut V, p: &'ast Param) {
     v.visit_ty(&p.ty);
 }
 
-/// A `self` parameter has nothing to visit: its binding mode (`&self`, `&mut self`, ...) is not
-/// itself a node.
+/// A `self` parameter carries no visitable nodes. Its binding mode (`&self`, `&mut self`, ...)
+/// is not a node.
 pub fn walk_self_param<'ast, V: Visitor<'ast>>(_v: &mut V, _p: &'ast SelfParam) {}
 
 pub fn walk_closure_param<'ast, V: Visitor<'ast>>(v: &mut V, p: &'ast ClosureParam) {
@@ -463,7 +461,7 @@ pub fn walk_pat<'ast, V: Visitor<'ast>>(v: &mut V, pat: &'ast Pat) {
     }
 }
 
-/// An array's length is a constant *expression*, not a type.
+/// An array's length is a constant expression, not a type.
 pub fn walk_ty<'ast, V: Visitor<'ast>>(v: &mut V, ty: &'ast Ty) {
     match &ty.kind {
         TyKind::Path { args, .. } | TyKind::Dyn { args, .. } => {
@@ -512,9 +510,9 @@ pub fn walk_closure<'ast, V: Visitor<'ast>>(
     v.visit_expr(body);
 }
 
-/// The nodes a variant's payload holds -- expressions when it is being built
-/// ([`ExprKind::Variant`]), patterns when it is being matched ([`PatKind::Variant`]). [`Payload`]
-/// is shared between the two, so this is too.
+/// The nodes a variant's payload holds: expressions when it is being built
+/// ([`ExprKind::Variant`]) or patterns when it is being matched ([`PatKind::Variant`]).
+/// [`Payload`] is shared between the two, as is this helper.
 fn payload_values<T>(payload: &Payload<T>) -> Vec<&T> {
     match payload {
         Payload::None => Vec::new(),

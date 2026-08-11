@@ -21,7 +21,7 @@ use crate::typeck::Typeck;
 use crate::typeck::ty::{Ty, TyKind};
 
 /// One enum variant found by name on an enum type, with its declared payload already read through
-/// that type's own generic arguments -- so the payload of `some` on `Option<i32>` is `i32`, not
+/// that type's generic arguments -- so the payload of `some` on `Option<i32>` is `i32`, not
 /// `T`.
 pub(crate) struct VariantDef {
     /// The `Node::Variant` that declares it, for pointing a diagnostic at the declaration.
@@ -263,7 +263,7 @@ impl<'hir> Typeck<'hir> {
             .iter()
             .find(|&&id| hir.variant(id).name.text == name)?;
 
-        // A variant's declared payload is written in the enum's own terms, so it is read through
+        // A variant's declared payload is written in the enum's terms, so it is read through
         // the arguments the matched type applied -- `some`'s payload on `Option<i32>` is `i32`.
         let subst: HashMap<HirId, Ty> = enum_.generics.iter().copied().zip(args).collect();
 
@@ -293,7 +293,7 @@ impl<'hir> Typeck<'hir> {
         Some(VariantDef { id, payload })
     }
 
-    /// The fields the struct `ty` names declares, each read through that type's own generic
+    /// The fields the struct `ty` names declares, each read through that type's generic
     /// arguments. `None` if `ty` is not a struct.
     pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<Vec<(Ident, Ty)>> {
         let hir = self.hir;
