@@ -1,15 +1,3 @@
-//! Checking a pattern against the type of the value it is matched against, and the two
-//! declaration lookups -- an enum's variant, a struct's fields -- that both patterns and the
-//! expressions that build the same shapes need.
-//!
-//! A pattern is checked *against* a type rather than having one worked out for it. That is the
-//! whole difference from [`check_expr`](Typeck::check_expr): an expression's type comes from its
-//! parts, while `let x = 1` has nothing to say about what `x` is until the initializer does. So
-//! [`Typeck::check_pat`] takes the type it is checked against and pushes it down, which is also
-//! what gives a binding its type -- [`PatKind::Binding`] records the type it was handed, and
-//! [`Res::Local(Local::Variable(..))`](crate::hir::Local::Variable) addresses exactly that
-//! `Node::Pat`, so a later use of the name reads it straight back out.
-
 use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
@@ -17,19 +5,14 @@ use crate::ast::{Ident, Symbol};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, Node, OwnerNode, PatKind, Payload, VariantPayload};
-use crate::typeck::Typeck;
 use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::Typeck;
 
-/// One enum variant found by name on an enum type, with its declared payload already read through
-/// that type's generic arguments -- so the payload of `some` on `Option<i32>` is `i32`, not
-/// `T`.
 pub(crate) struct VariantDef {
-    /// The `Node::Variant` that declares it, for pointing a diagnostic at the declaration.
     pub id: HirId,
     pub payload: VariantTys,
 }
 
-/// What a variant carries, in the same three shapes [`VariantPayload`] declares.
 pub(crate) enum VariantTys {
     Unit,
     Single(Ty),
@@ -37,7 +20,6 @@ pub(crate) enum VariantTys {
 }
 
 impl VariantTys {
-    /// How this payload reads in a diagnostic that says a use site got its shape wrong.
     pub(crate) fn describe(&self) -> &'static str {
         match self {
             VariantTys::Unit => "no payload",
@@ -48,21 +30,13 @@ impl VariantTys {
 }
 
 impl<'hir> Typeck<'hir> {
-    /// Checks `id` against `expected`, recording a type for it and for every pattern nested inside
-    /// it.
-    ///
-    /// Every pattern gets a recorded type, not only the ones that bind: the table is what the
-    /// `--debug` dump and every later pass read, and a `_` or a literal in the middle of a tuple
-    /// is as much a node as the binding beside it.
     pub(crate) fn check_pat(&mut self, id: HirId, expected: Ty) {
         let Node::Pat(pat) = self.hir.node(id) else {
             unreachable!("Node that is not a pattern passed to check_pat");
         };
         let span = pat.span;
 
-        // A pattern below an already-failed one is still walked, so that the names it binds have
-        // types and a use of one does not produce a second, unrelated error. `Error` propagates
-        // down instead of each level reporting again.
+        // Keep checking a pattern below a failed one
         if matches!(self.tcx.kind(expected), TyKind::Error) {
             self.types.record(id, expected);
             for child in self.pat_children(id) {
@@ -72,8 +46,6 @@ impl<'hir> Typeck<'hir> {
         }
 
         let ty = match &pat.kind {
-            // A binding takes whatever it is matched against; a wildcard binds nothing but is
-            // still that type.
             PatKind::Wildcard | PatKind::Binding { .. } => expected,
             PatKind::Literal(lit) => {
                 let found = self.check_literal(lit, span);
@@ -88,9 +60,6 @@ impl<'hir> Typeck<'hir> {
             }
             PatKind::Tuple(elems) => {
                 let elems = elems.clone();
-                // The arity is the whole of what the pattern says about the type, so it is stated
-                // as a tuple of fresh variables and unified. A mismatch is then one diagnostic
-                // naming both tuples, rather than one per element that failed to line up.
                 let vars: Vec<Ty> = elems.iter().map(|_| self.tcx.next_ty_var()).collect();
                 let tuple = self.tcx.mk_tuple(vars.clone());
                 if let Err(err) = self.unifier.unify(&self.tcx, expected, tuple) {
@@ -121,7 +90,6 @@ impl<'hir> Typeck<'hir> {
         self.types.record(id, ty);
     }
 
-    /// Checks `.circle(r)`, `.square { l }`, or a bare `.none` against the type being matched.
     fn check_variant_pat(
         &mut self,
         expected: Ty,
@@ -162,8 +130,6 @@ impl<'hir> Typeck<'hir> {
             (VariantTys::Record(declared), PayloadIds::Record(written)) => {
                 self.check_record_pats(declared, written, found.id);
             }
-            // The variant exists but is not built the way the pattern writes it: `.circle` with no
-            // payload against a `circle: f64`, or `.circle { r }` against the same.
             _ => {
                 self.report_payload_shape(variant, span, found);
                 self.fail_payload(payload);
@@ -188,13 +154,10 @@ impl<'hir> Typeck<'hir> {
                 }
             }
         }
-
-        // Unlike a struct literal, a pattern that names fewer fields than the variant declares is
-        // not an error: the ones left out are simply not bound.
     }
 
-    /// Walks the sub-patterns of a payload that has already been reported on, so that the names
-    /// they bind still have types.
+    /// Walks the sub-patterns of a failed payload (one that has an error) so
+    /// that the names they bind still have types.
     fn fail_payload(&mut self, payload: &PayloadIds) {
         let error = self.tcx.error();
         match payload {
@@ -208,8 +171,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The sub-patterns of `id`, read out so the borrow of the node ends before any of them is
-    /// checked.
     fn pat_children(&self, id: HirId) -> Vec<HirId> {
         match &self.hir.pat(id).kind {
             PatKind::Wildcard | PatKind::Binding { .. } | PatKind::Literal(_) | PatKind::Error => {
@@ -224,7 +185,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Copies a payload's ids out of the node, for the same reason as [`Typeck::pat_children`].
     fn payload_ids(&self, payload: &Payload) -> PayloadIds {
         match payload {
             Payload::None => PayloadIds::None,
@@ -240,16 +200,8 @@ impl<'hir> Typeck<'hir> {
 
     // -----------------------------------------------------------------
     // Declaration lookups
-    //
-    // Both of these are used from `expr` as well: `.circle(1.0)` and `.circle(r)` ask the same
-    // question of the same enum, and differ only in what they do with the answer.
     // -----------------------------------------------------------------
 
-    /// Looks `name` up as a variant of the enum `ty` names.
-    ///
-    /// `None` covers both "not an enum" and "no such variant", because the caller reports them the
-    /// same way -- it holds the span and knows whether it is checking a pattern or building a
-    /// value, and this does not.
     pub(crate) fn lookup_variant(&mut self, ty: Ty, name: Symbol) -> Option<VariantDef> {
         let hir = self.hir;
         let TyKind::Adt { def, args } = self.tcx.kind(ty).clone() else {
@@ -293,8 +245,6 @@ impl<'hir> Typeck<'hir> {
         Some(VariantDef { id, payload })
     }
 
-    /// The fields the struct `ty` names declares, each read through that type's generic
-    /// arguments. `None` if `ty` is not a struct.
     pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<Vec<(Ident, Ty)>> {
         let hir = self.hir;
         let TyKind::Adt { def, args } = self.tcx.kind(ty).clone() else {
@@ -325,8 +275,7 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Reported when a `.variant` pattern is matched against a type that is still an inference
-    /// variable. Unlike a trait bound this cannot be deferred: which enum is meant decides what
-    /// the pattern binds, and everything after it is checked against that.
+    /// variable.
     fn report_variant_type_unknown(&self, variant: Ident, span: SrcSpan) {
         DiagCtx::emit(
             Diagnostic::error(
@@ -389,11 +338,6 @@ impl<'hir> Typeck<'hir> {
     }
 }
 
-/// A payload's child ids, copied out of the node that holds them.
-///
-/// [`Payload`] borrows the arena, and every arm below needs `&mut self` to check what it found, so
-/// the ids are taken first. The field names come along for a record payload because matching them
-/// against the declaration is the point.
 enum PayloadIds {
     None,
     Single(HirId),
@@ -408,9 +352,7 @@ mod tests {
     /// that type -- which is the same question `1 == x` asks, asked in the other direction.
     #[test]
     fn a_literal_pattern_has_to_match_the_scrutinees_type() {
-        accepts(
-            "fun f(n: i32) -> i32 { return match n { 0 => 1, _ => 2, }; }",
-        );
+        accepts("fun f(n: i32) -> i32 { return match n { 0 => 1, _ => 2, }; }");
         rejects(
             "fun f(n: i32) -> i32 { return match n { true => 1, _ => 2, }; }",
             "mismatched types",

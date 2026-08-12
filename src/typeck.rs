@@ -1,25 +1,3 @@
-//! Type checking runs in two stages, for the same reason name resolution runs before it: a
-//! definition's body can refer to any other definition in the program, including ones declared
-//! later, so nothing about a body can be checked until every *signature* is known.
-//!
-//! [`check`] runs both stages in order. The first is [`Typeck::collect_module`], which walks
-//! every declaration in the program -- a struct's fields, an enum's variants, a function's
-//! parameters and return type -- and converts each type annotation the user wrote into the
-//! [`Ty`] the checker reasons about, recording it in [`TypeResolutions`]. It never looks inside
-//! a function body. The second is [`Typeck::check_module`], which checks those bodies against
-//! the signatures the first stage collected. Every `collect_*` therefore runs before any
-//! `check_*`.
-//!
-//! A third stage sits between them: [`Typeck::build_impl_index`], [`Typeck::check_coherence`],
-//! [`Typeck::check_trait_members`], [`Typeck::check_declared_bounds`],
-//! [`Typeck::check_impl_headers`] and [`Typeck::select_program_obligations`], which collect every
-//! `extend` block in the program into an index the trait solver can look up in, check that no two
-//! of them can both apply to one type, check each of them against the trait it implements, and
-//! then prove the bounds collection raised while that index did not yet exist. Its position is
-//! exact. Coherence needs every `extend` header lowered to a [`Ty`], so it cannot run before
-//! collection; bodies ask the solver questions, so they cannot be checked before coherence has
-//! made the answer to those questions unique. See [`traits`].
-
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp};
@@ -53,18 +31,8 @@ pub mod unify;
 pub struct Typeck<'hir> {
     hir: &'hir Hir,
 
-    /// Owns every type this pass builds. Handed back by [`check`] along with the results,
-    /// since a [`Ty`] means nothing without it.
     tcx: TyCtx,
-
-    /// The type of every node this pass has worked out. Reached through [`Typeck::ty_of`] and
-    /// [`Typeck::recorded_ty`] rather than directly, which is what keeps the table and the
-    /// unifier from drifting apart.
     types: TypeResolutions,
-
-    /// The union-find over every [`Ty`] the checker has unified so far. Lives for the whole
-    /// pass, alongside `tcx`, rather than being created fresh per call, so that equivalences
-    /// established while checking one expression are still known while checking the next.
     unifier: Unifier,
 
     /// Every `extend` block in the program, keyed for lookup. Empty until
@@ -117,9 +85,6 @@ pub struct Typeck<'hir> {
 }
 
 impl<'hir> Typeck<'hir> {
-    /// A checker that has looked at nothing yet. Every stage below is driven from
-    /// [`check`], which is what puts them in the right order; this exists so that a test can
-    /// stop after any one of them.
     pub fn new(hir: &'hir Hir) -> Self {
         Typeck {
             hir,
@@ -138,23 +103,12 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Stage one: records the type of every declaration under `module_id`, without checking a
-    /// body. See [`Collect`] for how the traversal is driven.
     pub fn collect_module(&mut self, module_id: DefId) {
         Collect(self).visit_module(module_id);
     }
 
-    /// Collects a function's signature: its type parameters, the type of `self` if it is a
-    /// method, each parameter's type, and its return type.
-    ///
-    /// The body is deliberately skipped. Checking it needs every other signature in the program
-    /// to be collected first, which is exactly what this pass is producing.
     pub fn collect_function(&mut self, function: DefId) {
-        // Reborrow the HIR at its declaration lifetime rather than through `self`. Since `&'hir Hir`
-        // is `Copy` and has a longer lifetime than `self`'s mutable borrow, field reads on this
-        // reference remain valid across all `&mut self` method calls below. This allows the
-        // signature components to be extracted without cloning, because they are directly borrowed
-        // from the arena.
+        // this allows us to avoid clones
         let hir: &'hir Hir = self.hir;
         let OwnerNode::Function(function_node) = hir.def(function) else {
             unreachable!("root of a Function owner is always OwnerNode::Function");
@@ -168,9 +122,7 @@ impl<'hir> Typeck<'hir> {
 
         self.collect_generics(generics);
 
-        // A method's `self` counts as its first parameter, so that a signature says everything
-        // a call has to be checked against without the caller having to look the receiver up
-        // separately.
+        // We desugar so we only have to check the signature
         let mut param_tys = Vec::with_capacity(params.len() + usize::from(self_param.is_some()));
         if let Some(id) = self_param {
             param_tys.push(self.collect_self_param(id));
@@ -190,10 +142,6 @@ impl<'hir> Typeck<'hir> {
         self.types.record_def(function, sig);
     }
 
-    /// Gives the `self` parameter of a method its type: the enclosing `Self`, wrapped according
-    /// to how the method takes it. `any self` accepts every one of the other three forms at
-    /// once, which no single type describes, so it keeps the bare `Self` type and leaves the
-    /// distinction to be enforced at the call site.
     fn collect_self_param(&mut self, id: HirId) -> Ty {
         let Node::SelfParam(self_param) = self.hir.node(id) else {
             unreachable!("Node that is not a self param found in a function's self param slot");
@@ -269,13 +217,6 @@ impl<'hir> Typeck<'hir> {
         self.types.record_def(r#trait, self_ty);
     }
 
-    /// Collects an `extend` block's three bracket groups and the signature of each method it
-    /// holds.
-    ///
-    /// The three groups scope differently -- see [`Extend`](crate::hir::Extend) -- but all three
-    /// lower the same way here. The block's `<T>` list is written as types even though it
-    /// declares parameters, and name resolution has already bound each entry to itself, so
-    /// lowering one yields the [`Generic`](crate::typeck::ty::TyKind::Generic) it declares.
     pub fn collect_extend(&mut self, extend: DefId) {
         let hir: &'hir Hir = self.hir;
         let OwnerNode::Extend(extend_node) = hir.def(extend) else {
@@ -288,8 +229,7 @@ impl<'hir> Typeck<'hir> {
             extend_node.span,
         );
 
-        // The first group declares parameters, the other two apply arguments -- so the first is
-        // collected like any other generics list and the others are lowered as types.
+        // The first group declares parameters, the other two apply arguments
         self.collect_generics(extend_generics);
         self.lower_tys(adt_generics);
         self.lower_tys(trait_generics);
@@ -300,7 +240,6 @@ impl<'hir> Typeck<'hir> {
         self.types.record_def(extend, self_ty);
     }
 
-    /// Records the type each of `def_id`'s type parameters stands for: itself.
     fn collect_generics(&mut self, generics: &[HirId]) {
         for &id in generics {
             debug_assert!(
@@ -313,7 +252,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Records the declared type of each field in a struct or a record variant.
     fn collect_fields(&mut self, fields: &[HirId]) {
         for &id in fields {
             let Node::Field(field) = self.hir.node(id) else {
@@ -325,8 +263,8 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Stage two: checks every body under `module`, against the signatures
-    /// [`Typeck::collect_module`] recorded. See [`Check`] for how the traversal is driven.
+    //-------------------------------------------------------------------------
+
     pub fn check_module(&mut self, module: DefId) {
         Check(self).visit_module(module);
     }
@@ -368,7 +306,7 @@ impl<'hir> Typeck<'hir> {
     /// [`Typeck::ty_of_expecting`] where the caller may or may not have an expectation to pass on,
     /// which is the shape most of them are in: a `let` has one only if it was annotated, and an
     /// argument only if the signature it is measured against lined up.
-    fn ty_of_maybe_expecting(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
+    fn ty_of_expecting_opt(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
         match expected {
             Some(expected) => self.ty_of_expecting(id, expected),
             None => self.ty_of(id),
@@ -565,9 +503,7 @@ impl<'hir> Typeck<'hir> {
                 self.check_operator(*op, resolved, id.owner, expr.span)
             }
             ExprKind::Assign { lhs, rhs } => self.check_assign(*lhs, *rhs, expr.span),
-            ExprKind::AssignOp { op, lhs, rhs } => {
-                self.check_assign_op(*op, *lhs, *rhs, expr.span)
-            }
+            ExprKind::AssignOp { op, lhs, rhs } => self.check_assign_op(*op, *lhs, *rhs, expr.span),
             ExprKind::Borrow {
                 mutability,
                 operand,
@@ -590,9 +526,7 @@ impl<'hir> Typeck<'hir> {
                 then_block,
                 else_block,
             } => self.check_if(*cond, *then_block, *else_block, expected, expr.span),
-            ExprKind::Match { scrutinee, arms } => {
-                self.check_match(*scrutinee, arms, expected)
-            }
+            ExprKind::Match { scrutinee, arms } => self.check_match(*scrutinee, arms, expected),
             ExprKind::Loop { block, .. } => {
                 self.check_block(*block);
                 // A `loop`/`while`/`for` expression produces no value of its own.
@@ -802,7 +736,7 @@ impl<'hir> Typeck<'hir> {
     /// makes `let s: Shape = .circle(1.0);` work at all, since `.circle` names no enum of its own.
     fn check_binding(&mut self, pat: HirId, ty: Option<HirId>, init: HirId, span: SrcSpan) {
         let declared = ty.map(|ty| self.lower_ty(ty));
-        let init_ty = self.ty_of_maybe_expecting(init, declared);
+        let init_ty = self.ty_of_expecting_opt(init, declared);
 
         let bound = match declared {
             Some(declared) => {
@@ -886,7 +820,7 @@ impl<'hir> Typeck<'hir> {
         // Checking it here is what types a function body written as a bare expression -- and it
         // happens even for a block that has already diverged, since those nodes still need types.
         let tail_ty = match tail {
-            Some(tail) => self.ty_of_maybe_expecting(tail, expected),
+            Some(tail) => self.ty_of_expecting_opt(tail, expected),
             // A block that ends in a statement produces nothing.
             None => self.tcx.unit(),
         };
