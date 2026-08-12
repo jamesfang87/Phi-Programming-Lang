@@ -1,53 +1,21 @@
-//! The expression forms whose checking needs more than a line: the ones that assign, the ones
-//! that build a nominal value, the ones that branch, and the closure literal.
-//!
-//! [`check_expr`](Typeck::check_expr) keeps the arms that are a couple of lines each -- a literal,
-//! a tuple, a path, an operator -- and dispatches the rest here. The split is by size, not by
-//! kind; [`traits::method`](crate::typeck::traits::method) already holds the two forms whose
-//! checking is a resolution problem rather than a typing one.
-//!
-//! ## Expectation
-//!
-//! Three of these forms cannot be checked bottom-up at all. `.{ x: 1 }` names no struct,
-//! `.circle(1.0)` names no enum, and `|x| { x + 1 }` may annotate neither its parameters nor its
-//! return type. Each is checked against the type its context demands instead, which
-//! [`Typeck::ty_of_expecting`] is what carries: a `let`'s annotation, a call's parameter, the
-//! enclosing function's return type, the left side of an assignment.
-//!
-//! An expectation is a hint and never a constraint on its own. Every one of these forms still
-//! unifies what it produced with what the context wanted, at the site that established the
-//! expectation, so a wrong expectation is reported there rather than silently taking effect here.
-
 use std::collections::HashSet;
 
 use crate::ast::interner::Interner;
 use crate::ast::{BinaryOp, Ident, Mutability};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
-use crate::hir::{
-    DefId, Hir, HirId, OwnerNode, Path, Payload, PayloadField, Res, TyDef, Type,
-};
+use crate::hir::{DefId, Hir, HirId, OwnerNode, Path, Payload, PayloadField, Res, TyDef, Type};
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
-use crate::typeck::Typeck;
 use crate::typeck::pat::VariantTys;
 use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
     // Assignment
     // -----------------------------------------------------------------
 
-    /// Checks `lhs = rhs`.
-    ///
-    /// An assignment produces no value, so its type is `Unit` however the two sides check. What it
-    /// requires is that the left side names somewhere a value can be put and that the right side
-    /// fits there.
-    ///
-    /// Whether the *binding* on the left was declared `mut` is not checked here. Nothing in this
-    /// pass tracks a local's mutability -- [`StmtKind::Let`](crate::hir::StmtKind::Let) records it
-    /// and this pass reads only the pattern -- so assigning to an immutable binding is checked
-    /// in a later pass that enforces mutability constraints.
     pub(crate) fn check_assign(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) -> Ty {
         let lhs_ty = self.ty_of(lhs);
         if !self.is_place_expr(lhs) {
@@ -64,12 +32,6 @@ impl<'hir> Typeck<'hir> {
         self.tcx.unit()
     }
 
-    /// Checks `lhs += rhs` and the rest of the compound assignments.
-    ///
-    /// The same two requirements as [`Typeck::check_assign`], plus the one that makes it compound:
-    /// the operator has to apply to the type on the left, exactly as it would in `lhs + rhs`. That
-    /// check is [`Typeck::check_operator`], shared with [`ExprKind::Binary`](crate::hir::ExprKind::Binary), so an `extend Foo
-    /// with Add` block is what makes `foo += bar` legal as much as `foo + bar`.
     pub(crate) fn check_assign_op(
         &mut self,
         op: BinaryOp,
@@ -94,7 +56,7 @@ impl<'hir> Typeck<'hir> {
         let operand = self.unifier.root(lhs_ty);
         let produced = self.check_operator(op, operand, lhs.owner, span);
         // `foo += bar` stores the operator's result back into `foo`, so an operator that produces
-        // something else -- `Eq` produces `bool` -- cannot be compounded.
+        // something else cannot be compounded.
         if let Err(err) = self.unifier.unify(&self.tcx, operand, produced) {
             DiagCtx::emit(
                 Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
@@ -106,9 +68,6 @@ impl<'hir> Typeck<'hir> {
     }
 
     /// Checks `&operand` and `&mut operand`.
-    ///
-    /// An expectation of `&T` is passed down as `T`, so `let p: &Pair = &.{ x: 1 };` reaches the
-    /// struct literal with something to name it by.
     pub(crate) fn check_borrow(
         &mut self,
         mutability: Mutability,
@@ -116,10 +75,13 @@ impl<'hir> Typeck<'hir> {
         expected: Option<Ty>,
     ) -> Ty {
         let inner = expected.and_then(|expected| match *self.tcx.kind(expected) {
-            TyKind::Ref { base, mutability: m } if m == mutability => Some(base),
+            TyKind::Ref {
+                base,
+                mutability: m,
+            } if m == mutability => Some(base),
             _ => None,
         });
-        let ty = self.ty_of_maybe_expecting(operand, inner);
+        let ty = self.ty_of_expecting_opt(operand, inner);
         self.tcx.mk_ref(ty, mutability)
     }
 
@@ -128,18 +90,6 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Checks `base[index]`.
-    ///
-    /// An array is indexed built-in, exactly as a primitive is added built-in: no `extend` block
-    /// backs `[i32; 4]`, so there is nothing for the solver to find. Everything else goes through
-    /// the `index` method of the [`LangItem::Index`] trait, dispatched by the same machinery a
-    /// written `base.index(index)` would use -- which is what makes an `extend<K, V> Map<K, V>
-    /// with Index<K, V>` block apply here, including reading `V` back out of the block's
-    /// arguments.
-    ///
-    /// So the type of `m[k]` is whatever that trait's `index` returns, which `lib/core/ops.phi`
-    /// declares as `&V`. Nothing here inserts a dereference: this pass has no adjustment for one,
-    /// and inventing a deref that no later pass would carry out would make the recorded type a
-    /// lie.
     pub(crate) fn check_index(&mut self, base: HirId, index: HirId, span: SrcSpan) -> Ty {
         let base_ty = self.ty_of(base);
         let base_ty = self.resolve_deep(base_ty);
@@ -154,8 +104,6 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         }
 
-        // A reference to an array indexes as the array does, the same way a reference to a struct
-        // reaches its fields.
         let (peeled, _layers) = self.peel_receiver(base_ty);
         if let TyKind::Array { elem, .. } = *self.tcx.kind(peeled) {
             let int = self.tcx.next_int_var();
@@ -188,13 +136,6 @@ impl<'hir> Typeck<'hir> {
     // Building a nominal value
     // -----------------------------------------------------------------
 
-    /// Checks a struct literal: `Pair { fst: 1, snd: 2 }`, or the elided `.{ fst: 1, snd: 2 }`.
-    ///
-    /// The written form names its struct; the elided form has only the expectation, which is
-    /// the reason the form exists. Either way the struct's generic arguments are inference
-    /// variables the field initializers settle -- `Wrap { inner: 1 }` is `Wrap<{integer}>` until
-    /// something says otherwise -- so a written path is unified with the expectation as well, which
-    /// is what makes `let w: Wrap<i32> = Wrap { inner: 1 };` pin `T` from the annotation.
     pub(crate) fn check_ctor(
         &mut self,
         path: Option<&'hir Path>,
@@ -223,7 +164,10 @@ impl<'hir> Typeck<'hir> {
             if !written.insert(field.name.text) {
                 self.report_duplicate_field(field.name);
             }
-            match declared.iter().find(|(name, _)| name.text == field.name.text) {
+            match declared
+                .iter()
+                .find(|(name, _)| name.text == field.name.text)
+            {
                 Some(&(_, want)) => {
                     let got = self.ty_of_expecting(field.value, want);
                     if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
@@ -243,8 +187,6 @@ impl<'hir> Typeck<'hir> {
             }
         }
 
-        // Every field has to be given a value: a struct with a field left out is not a value of
-        // that struct, and there is no default to fall back on.
         let missing: Vec<&'static str> = declared
             .iter()
             .filter(|(name, _)| !written.contains(&name.text))
@@ -257,8 +199,6 @@ impl<'hir> Typeck<'hir> {
         self_ty
     }
 
-    /// Which struct a [`ExprKind::Ctor`](crate::hir::ExprKind::Ctor) builds: the one its path names, or -- for the elided
-    /// form -- the one the expectation is.
     fn ctor_ty(
         &mut self,
         path: Option<&Path>,
@@ -280,10 +220,6 @@ impl<'hir> Typeck<'hir> {
 
         match path.res {
             Res::Type(Type::Def(TyDef::Struct(def))) => {
-                // The literal writes no argument list, so the struct's parameters start out as
-                // variables. Unifying with the expectation is what settles them from an
-                // annotation; a failure is left for the site that set the expectation to report,
-                // since it is the one that knows what to say about it.
                 let OwnerNode::Struct(struct_) = self.hir.def(def) else {
                     unreachable!("a TyDef::Struct always names a Struct owner");
                 };
@@ -299,8 +235,7 @@ impl<'hir> Typeck<'hir> {
                 Some(ty)
             }
             Res::SelfTy(_) => Some(self.self_ty(owner, span)),
-            // Already reported by name resolution.
-            Res::Err => None,
+            Res::Err => None, // already reported by name resolution
             _ => {
                 self.report_ctor_not_a_struct(span);
                 None
@@ -309,11 +244,6 @@ impl<'hir> Typeck<'hir> {
     }
 
     /// Checks an enum variant being built: `.none`, `.circle(1.0)`, `.square { l: 2.0 }`.
-    ///
-    /// A variant names no enum of its own -- see [`Res`], which deliberately has no `Variant` arm
-    /// -- so the expectation is the only thing that says which enum is meant. That is what makes
-    /// `fun f() -> Result<Option<i32>, bool> { return .ok(.none); }` check: the return type reaches
-    /// `.ok`, whose declared payload then reaches `.none`.
     pub(crate) fn check_variant_expr(
         &mut self,
         variant: Ident,
@@ -393,7 +323,10 @@ impl<'hir> Typeck<'hir> {
             if !seen.insert(field.name.text) {
                 self.report_duplicate_field(field.name);
             }
-            match declared.iter().find(|(name, _)| name.text == field.name.text) {
+            match declared
+                .iter()
+                .find(|(name, _)| name.text == field.name.text)
+            {
                 Some(&(_, want)) => {
                     let got = self.ty_of_expecting(field.value, want);
                     if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
@@ -461,14 +394,6 @@ impl<'hir> Typeck<'hir> {
     // Branching
     // -----------------------------------------------------------------
 
-    /// Checks `if cond { .. } else { .. }`.
-    ///
-    /// An `else if` chain lowered to `else { if .. }`, so there is only ever one `else` block here
-    /// however long the chain was.
-    ///
-    /// With both branches present the `if` is an expression and the two have to agree, which is
-    /// what its type is. With only one branch there is nothing for a value to be on the path
-    /// not taken, so the `if` produces `Unit` and its block has to as well.
     pub(crate) fn check_if(
         &mut self,
         cond: HirId,
@@ -514,13 +439,6 @@ impl<'hir> Typeck<'hir> {
     }
 
     /// Checks `match scrutinee { pat => { .. }, .. }`.
-    ///
-    /// Every arm's pattern is checked against the scrutinee's type -- which is what binds the names
-    /// each arm's body then uses -- and every arm's body against one type, the `match` result's type.
-    ///
-    /// Whether the arms *cover* the scrutinee is not checked here. Exhaustiveness is a question
-    /// about the set of patterns rather than about any one of them, and needs a pass that can see
-    /// them all at once.
     pub(crate) fn check_match(
         &mut self,
         scrutinee: HirId,
@@ -562,11 +480,6 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Checks `operand?`.
-    ///
-    /// Two shapes, both keyed on a lang item: a `Result<T, E>` produces `T` and propagates `E`, an
-    /// `Option<T>` produces `T` and propagates `none`. Which means the enclosing function's return
-    /// type has to be able to carry what is propagated -- there is nowhere else for it to go -- so
-    /// that is checked here rather than left to whatever the `?` desugars into later.
     pub(crate) fn check_try(&mut self, operand: HirId, span: SrcSpan, owner: DefId) -> Ty {
         let operand_ty = self.ty_of(operand);
         let operand_ty = self.resolve_deep(operand_ty);
@@ -643,12 +556,7 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The return type the definition `owner` names declares, if it declares one.
-    ///
-    /// Reads the signature the table holds rather than the HIR, so it answers for a closure as
-    /// well as a function -- [`Typeck::check_closure`] records one under the closure's
-    /// definition before checking its body, exactly so that a `return` or a `?` inside it has
-    /// something to check against.
+    /// Gets the return type the definition `owner` names declares, if it declares one.
     fn owner_ret(&mut self, owner: DefId) -> Option<Ty> {
         let sig = self.recorded_ty_of_def(owner)?;
         let TyKind::Fun { ret, .. } = self.tcx.kind(sig) else {
@@ -662,11 +570,6 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Checks `lo..hi`.
-    ///
-    /// Both endpoints are checked and required to agree, and then there is nothing to give the
-    /// expression as a type: a range is a value of some `Range` type, and the core library
-    /// declares none -- there is no lang item for one either. So this reports rather than
-    /// inventing a type no later pass could lower.
     pub(crate) fn check_range(
         &mut self,
         lo: Option<HirId>,
@@ -685,6 +588,7 @@ impl<'hir> Typeck<'hir> {
             );
         }
 
+        // TODO: unify with the std::Range
         self.report_no_range_type(span);
         self.tcx.error()
     }
@@ -693,27 +597,13 @@ impl<'hir> Typeck<'hir> {
     // Closures
     // -----------------------------------------------------------------
 
-    /// Checks a closure literal and produces its function type.
-    ///
-    /// A closure owns its arena, so this is the one place a body is checked from inside
-    /// another body rather than from the stage-two walk -- which is why
-    /// [`Check::visit_closure`](crate::typeck::Typeck) asserts it is never reached from there.
-    ///
-    /// What a closure may leave out is what makes this more than a second `check_function`. An
-    /// unannotated parameter takes its type from the expectation if the context supplied a
-    /// function type of the right arity, and otherwise starts as an inference variable the body
-    /// settles. The return type is always recorded as a variable before the body is checked, even
-    /// when it was declared, so that a `return` inside the body has a signature to check against
-    /// exactly as it would in a function.
     pub(crate) fn check_closure(&mut self, def: DefId, expected: Option<Ty>) -> Ty {
         let hir: &'hir Hir = self.hir;
         let OwnerNode::Closure(closure) = hir.def(def) else {
             unreachable!("root of a Closure owner is always OwnerNode::Closure");
         };
 
-        // Only a function type of matching arity is a usable hint: a shorter or longer one says
-        // nothing about which parameter is which, and reporting that mismatch belongs to whoever
-        // set the expectation.
+        // Only a function type of matching arity is a usable hint:
         let hint = expected.and_then(|expected| match self.tcx.kind(expected).clone() {
             TyKind::Fun { params, ret } if params.len() == closure.params.len() => {
                 Some((params, ret))
@@ -744,8 +634,8 @@ impl<'hir> Typeck<'hir> {
 
         // Recorded before the body is checked, so a `return` or a `?` inside it resolves the
         // enclosing signature through `owner_ret` the same way it would in a function.
-        let provisional = self.tcx.mk_fun(param_tys.clone(), Some(ret_var));
-        self.types.record_def(def, provisional);
+        let temp = self.tcx.mk_fun(param_tys.clone(), Some(ret_var));
+        self.types.record_def(def, temp);
 
         let body = self.check_block_expecting(closure.block, Some(ret_var));
         if let Err(err) = self.unifier.unify(&self.tcx, ret_var, body) {
@@ -836,12 +726,9 @@ impl<'hir> Typeck<'hir> {
 
     fn report_not_a_struct_literal(&self, ty: Ty, span: SrcSpan) {
         DiagCtx::emit(
-            Diagnostic::error(
-                format!("`{}` is not a struct", self.cx().show(ty)),
-                span,
-            )
-            .with_label("only a struct is built with `{ .. }`")
-            .with_help("an enum variant is built with `.variant`, not with a struct literal"),
+            Diagnostic::error(format!("`{}` is not a struct", self.cx().show(ty)), span)
+                .with_label("only a struct is built with `{ .. }`")
+                .with_help("an enum variant is built with `.variant`, not with a struct literal"),
         );
     }
 
@@ -875,11 +762,7 @@ impl<'hir> Typeck<'hir> {
     fn report_missing_fields(&self, missing: &[&str], ty: Ty, span: SrcSpan) {
         DiagCtx::emit(
             Diagnostic::error(
-                format!(
-                    "`{}` is missing {}",
-                    self.cx().show(ty),
-                    list(missing)
-                ),
+                format!("`{}` is missing {}", self.cx().show(ty), list(missing)),
                 span,
             )
             .with_label("every field has to be given a value"),
@@ -935,7 +818,9 @@ impl<'hir> Typeck<'hir> {
                 span,
             )
             .with_label("not a `Result` or an `Option`")
-            .with_help("`?` takes the value out of a `Result` or an `Option`, propagating the rest"),
+            .with_help(
+                "`?` takes the value out of a `Result` or an `Option`, propagating the rest",
+            ),
         );
     }
 
@@ -987,7 +872,6 @@ impl<'hir> Typeck<'hir> {
     }
 }
 
-/// `a`, `a and b`, `a, b and c` -- the field names in a diagnostic, read as a sentence.
 fn list(names: &[&str]) -> String {
     let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
     match quoted.split_last() {
@@ -1019,10 +903,7 @@ mod tests {
     #[test]
     fn a_let_annotation_is_what_the_initializer_is_checked_against() {
         accepts("fun f() -> i64 { let x: i64 = 1; return x; }");
-        rejects(
-            "fun f() { let x: bool = 1; }",
-            "mismatched types",
-        );
+        rejects("fun f() { let x: bool = 1; }", "mismatched types");
     }
 
     #[test]
@@ -1113,7 +994,10 @@ mod tests {
     #[test]
     fn a_mutable_borrow_is_not_a_shared_one() {
         accepts("fun f(x: i32) -> &mut i32 { return &mut x; }");
-        rejects("fun f(x: i32) -> &mut i32 { return &x; }", "mismatched types");
+        rejects(
+            "fun f(x: i32) -> &mut i32 { return &x; }",
+            "mismatched types",
+        );
     }
 
     // -----------------------------------------------------------------
@@ -1318,7 +1202,10 @@ mod tests {
     #[test]
     fn an_array_is_indexed_by_an_integer_and_produces_its_element() {
         accepts("fun f(a: [i32; 4]) -> i32 { return a[0]; }");
-        rejects("fun f(a: [i32; 4]) -> i32 { return a[true]; }", "mismatched types");
+        rejects(
+            "fun f(a: [i32; 4]) -> i32 { return a[true]; }",
+            "mismatched types",
+        );
     }
 
     /// Everything that is not an array indexes through the `Index` trait, so `V` is read back out

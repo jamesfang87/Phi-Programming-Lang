@@ -1,24 +1,7 @@
-//! The types the type checker reasons about, as opposed to [`hir::Ty`](crate::hir::Ty), which is
-//! the type *annotation* the user wrote. The two differ in what they address: a `hir::Ty` holds
-//! unresolved paths and points at sibling nodes by [`HirId`](crate::hir::HirId), while a
-//! [`Ty`] here has every path already resolved to the definition it names, and every nested type
-//! replaced by another [`Ty`].
-//!
-//! A [`Ty`] is a handle into the [`TyCtx`](crate::typeck::tyctx::TyCtx) that produced it, not a
-//! tree. Structurally equal types intern to the same handle, so `==` on two `Ty`s checks "are
-//! these the same type?" in one integer comparison, and a `Ty` is `Copy` no matter how large the
-//! type it represents. A handle is only meaningful when paired with its own `TyCtx`:
-//! [`TyCtx::kind`](crate::typeck::tyctx::TyCtx::kind) is required to retrieve the type, and
-//! handles must never be mixed between two contexts.
-
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
 use crate::nameres::PrimTy;
 
-/// A handle to a type interned in a [`TyCtx`](crate::typeck::tyctx::TyCtx).
-///
-/// See the [module docs](self) for why types are addressed this way instead of being passed
-/// around as trees.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct Ty(u32);
 
@@ -32,15 +15,6 @@ impl Ty {
     }
 }
 
-/// An inference variable: a type the checker has not pinned down yet.
-///
-/// The three kinds differ in what they are allowed to unify with. [`TyVar::Any`] accepts any
-/// type at all. [`TyVar::Int`] and [`TyVar::Float`] are fallback-carrying variables assigned to
-/// unsuffixed literals such as `1` or `1.0` and only unify with integer or float types
-/// respectively. Ids come from a single counter in the [`TyCtx`], so no two variables
-/// share one, whatever their kind.
-///
-/// [`TyCtx`]: crate::typeck::tyctx::TyCtx
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TyVar {
     Any(u32),
@@ -49,6 +23,7 @@ pub enum TyVar {
 }
 
 impl TyVar {
+    #![allow(dead_code)]
     pub fn id(self) -> u32 {
         match self {
             TyVar::Any(id) | TyVar::Int(id) | TyVar::Float(id) => id,
@@ -60,63 +35,35 @@ impl TyVar {
     }
 }
 
-/// What a [`Ty`] actually is. Every nested position holds a [`Ty`] rather than a `Box<TyKind>`,
-/// so a `TyKind` is shallow: it names its components, it doesn't contain them.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
-    /// A type not yet known, standing in until inference resolves it.
     Var(TyVar),
-    /// A built-in type such as `i32` or `bool`.
     Primitive(PrimTy),
-    /// A user-declared `struct` / `enum`/ trait, applied to its generic arguments. `args` always has
-    /// exactly as many entries as `def` declares type parameters -- a mismatch is reported and
-    /// becomes [`TyKind::Error`] instead, so later passes can substitute positionally without
-    /// re-checking.
-    Adt { def: DefId, args: Vec<Ty> },
-    /// A generic type parameter, such as `T` inside `fun identity<T>(x: T) -> T`.
-    ///
-    /// It is addressed by the [`HirId`] of the [`Node::Generic`](crate::hir::Node::Generic) that
-    /// declares it -- including an `extend` block's own `<T>` list, which the parser reads as
-    /// declarations like any other. That is exactly what name resolution
-    /// hands back in [`Type::Generic`](crate::nameres::res::Type::Generic), so no
-    /// separate numbering has to be built or kept in sync to name a parameter here.
+    Adt {
+        def: DefId,
+        args: Vec<Ty>,
+    },
     Generic(HirId),
-    /// The implicit `Self` parameter a trait declares, naming the trait it belongs to.
-    ///
-    /// This only ever appears inside a trait's own body, where `Self` stands for whichever type
-    /// eventually implements the trait and so has no structure to speak of. Inside an `extend`
-    /// block `Self` is concrete, so it lowers to the extended [`TyKind::Adt`] directly and never
-    /// reaches this variant.
     SelfTy(DefId),
-    /// `&T` or `&mut T`.
-    Ref { base: Ty, mutability: Mutability },
-    /// `any T`.
+    Ref {
+        base: Ty,
+        mutability: Mutability,
+    },
     Any(Ty),
-    /// `()`, the type of an expression evaluated only for its side effects, such as a function
-    /// with no declared return type or a block with no trailing expression. Distinct from
-    /// [`TyKind::Tuple`] with no elements even though both are written `()`. This separation
-    /// means "produces no value" is one type rather than a zero-element tuple.
     Unit,
-    /// `(T, U, ..)`.
     Tuple(Vec<Ty>),
-    /// A fixed-size array, `[T; N]`.
-    ///
-    /// `len` addresses the constant expression `N` rather than its value, because constant
-    /// evaluation does not exist yet. Two array types whose lengths are written as two separate
-    /// expressions therefore intern as two distinct types even when both evaluate to the same
-    /// number; that resolves itself once `len` can hold an evaluated constant instead.
     Array {
         elem: Ty,
         len: Option<HirId>, // -> Node::Expr, the constant expression `N`
     },
-    /// A function type, such as `fun(i32, i32) -> i32`.
-    Fun { params: Vec<Ty>, ret: Option<Ty> },
-    /// `dyn Trait`: some type implementing `Trait`, known only at run time.
-    Dyn { trait_: DefId, args: Vec<Ty> },
-    /// The type of an expression that never produces a value, such as a `return`. It coerces to
-    /// every other type, since there is no value for the coercion to be wrong about.
+    Fun {
+        params: Vec<Ty>,
+        ret: Option<Ty>,
+    },
+    Dyn {
+        trait_: DefId,
+        args: Vec<Ty>,
+    },
     Never,
-    /// A type that could not be determined because of an error already reported. It unifies with
-    /// anything, so one mistake does not cascade into a second diagnostic.
     Error,
 }

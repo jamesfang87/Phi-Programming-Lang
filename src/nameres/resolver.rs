@@ -1,11 +1,3 @@
-//! The AST walk that populates `NameResolutions`.
-//!
-//! The traversal is `ast::visit`'s, so "what are this node's children" is answered in one
-//! place for every AST pass rather than re-derived here. Only the nodes that need something
-//! *around* or *instead of* the default walk are overridden: a block opens a scope, a path
-//! records what it named, a binding pattern binds. Everything else (expressions with no path
-//! of their own, a struct's fields, a variant's payload) uses `ast::visit`'s defaults untouched.
-
 use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
@@ -16,67 +8,80 @@ use crate::ast::{
     Ty, TyKind,
 };
 use crate::driver::source::SrcSpan;
-use crate::nameres::diagnostics::{report_duplicate_bound, report_not_found, report_self_extend};
+use crate::nameres::diagnostics::{
+    report_duplicate_bound, report_not_found, report_self_extend, report_self_unavailable,
+};
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::nameres::results::NameResolutions;
 use crate::nameres::symbol_table::SymbolTable;
 
-/// Manages [`SymbolTable`]'s three scope stacks across the whole AST, recording an entry in
-/// [`NameResolutions`] for every path written in the program.
-struct Resolver<'ast> {
-    table: SymbolTable<'ast>,
+pub(super) struct Resolver<'ast> {
+    pub(super) table: SymbolTable<'ast>,
     results: NameResolutions,
-    /// The module the node currently being walked is written in. `SymbolTable`'s lookups take
-    /// this as `from`. Unlike on the HIR side, the traversal already tracks it: [`resolve`]
-    /// updates it once per module, before that module's items are visited. No separate `module_of`
-    /// walk is needed.
-    module: NodeId,
-    /// The `Item` currently being walked, if any. `Struct`, `Enum`, `Trait`, and `Extend` carry
-    /// no `NodeId` (they sit inside `Item`, which does; see `src/ast.rs:85`).
-    /// [`Visitor::visit_struct`]/`visit_enum`/`visit_trait`/`visit_extend` use this to know
-    /// which node owns their path entries and `Self` scope. [`Visitor::visit_item`] sets it
-    /// before dispatching. Since no `Item` nests inside another, this is a simple value, not a
-    /// stack.
+    /// The module the node currently inside is written in. This is used
+    /// as `from` in lookups SymbolTable
+    current_module: NodeId,
+    /// The `Item` currently being considered, if any.
     current_item: Option<NodeId>,
 }
 
-/// The entry point for the debug dump (`--surface-nameres`, see `crate::driver::emit_debug`) and
-/// pipeline (`crate::driver::pipeline`). Walks every module of `ast`, manages `SymbolTable`'s
-/// scope stacks, and returns the completed `NameResolutions`.
 pub fn resolve(ast: &Ast) -> NameResolutions {
-    let table = SymbolTable::new(ast);
-    let mut r = Resolver {
-        module: ast.root_id(),
-        table,
-        results: NameResolutions::new(),
-        current_item: None,
-    };
+    let mut r = Resolver::new(SymbolTable::new(ast), ast.root_id());
+
     for mod_id in ast.mod_ids() {
-        r.module = mod_id;
+        r.current_module = mod_id;
         r.resolve_module(ast, mod_id);
     }
-    // Lang items can only be collected while the symbol table exists, but every consumer of
-    // them is a later pass. See `langitems::collect_ast`.
+
     let lang_items = crate::langitems::collect_ast(&r.table, ast.root_id());
     r.results.record_lang_items(lang_items);
     r.results
 }
 
 impl<'ast> Resolver<'ast> {
-    /// Visits every item `module_id` declares directly.
-    ///
-    /// Not a `Visitor::visit_module` override: `ast.mod_ids()` (see [`resolve`]) already yields
-    /// every module flat. Recursing into `Module::children` here, as `ast::visit::walk_module`
-    /// does, would visit every module's items twice.
+    pub(super) fn new(table: SymbolTable<'ast>, current_module: NodeId) -> Self {
+        Resolver {
+            table,
+            results: NameResolutions::new(),
+            current_module,
+            current_item: None,
+        }
+    }
+
+    /// This should be used instead of a lookup_type_path due to the case of
+    /// `Self`, which can have multiple reasons of failing
+    pub(super) fn resolve_type_path(&self, path: &Path) -> Res {
+        let last = *path
+            .segments
+            .last()
+            .expect("a path always has at least one segment");
+
+        if path.segments.len() == 1 && last.text == Interner::intern("Self") {
+            return match self.table.current_self_entry() {
+                Some(Some(def)) => Res::Type(Type::Def(def)),
+                Some(None) => Res::Err,
+                None => {
+                    report_self_unavailable(last.span);
+                    Res::Err
+                }
+            };
+        }
+
+        match self.table.lookup_type_path(self.current_module, path) {
+            Some(ty) => Res::Type(ty),
+            None => {
+                report_not_found(last);
+                Res::Err
+            }
+        }
+    }
+
     fn resolve_module(&mut self, ast: &'ast Ast, module_id: NodeId) {
         for item in &ast.module(module_id).items {
             self.visit_item(item);
         }
     }
 
-    /// Opens a generic scope binding every one of `generics`, then resolves each one's bounds
-    /// against it. A bound can see every sibling generic the same `<...>` clause declares,
-    /// not just the ones written before it in source order.
     fn push_generics(&mut self, generics: &'ast [Generic]) {
         let params: HashMap<_, _> = generics
             .iter()
@@ -88,19 +93,10 @@ impl<'ast> Resolver<'ast> {
         }
     }
 
-    /// Pushes generics for the `Option<Vec<Generic>>` shape `Struct`/`Enum`/`Trait`/`Extend`
-    /// declare. When generics are present, `Some(Vec<Generic>)` wraps them; `None` indicates
-    /// no `<...>` clause. `Function::generics` is always a `Vec`, never `Option`.
     fn push_generics_opt(&mut self, generics: &'ast Option<Vec<Generic>>) {
         self.push_generics(generics.as_deref().unwrap_or(&[]));
     }
 
-    /// Records each of `g`'s bounds as an entry on `g` itself, in source order.
-    ///
-    /// Skips any bound that repeats one already recorded (e.g., `T: Show + Show`). Reports it
-    /// as a duplicate. `NameResolutions::record`'s no-two-equal-paths invariant is a
-    /// `debug_assert!` that compiles out in release. This check enforces it for the one case
-    /// under this resolver's control.
     fn resolve_bounds(&mut self, g: &'ast Generic) {
         let Some(bounds) = &g.bounds else {
             return;
@@ -115,23 +111,11 @@ impl<'ast> Resolver<'ast> {
                 );
                 continue;
             }
-            let res = self.table.resolve_type_path(self.module, bound);
+            let res = self.resolve_type_path(bound);
             self.results.record(g.id, bound.clone(), res);
         }
     }
 
-    /// Visits an expression payload's fields (a `Ctor`'s, an `Access`'s record args, or a
-    /// `Variant`'s record payload): each field with an explicit value visits it as an ordinary
-    /// expression, and each shorthand field (`{ l }`, meaning `{ l: l }`) resolves what its
-    /// implicit value names.
-    ///
-    /// Not delegated to `ast::visit::walk_expr`. The default walk visits field values via
-    /// [`crate::ast::visit::Visitor::visit_expr`] (or a helper for `Payload`), which works for
-    /// fields with explicit values. Shorthand fields have no `Expr` behind them. Instead, resolve
-    /// them as a value-position lookup, keyed on `PayloadField::id` rather than an `Expr`'s node
-    /// ID. Every field, shorthand or not, carries a `NodeId`. This mirrors HIR lowering's
-    /// desugaring of shorthand into `{ l: l }` (`src/hir/lower/expr.rs`), recorded here instead
-    /// of synthesized there.
     fn visit_record_fields(&mut self, fields: &'ast [PayloadField<Expr>]) {
         for field in fields {
             match &field.value {
@@ -140,7 +124,7 @@ impl<'ast> Resolver<'ast> {
                     let path = single_segment_path(field.name);
                     let res = self
                         .table
-                        .lookup_value_path(self.module, &path)
+                        .lookup_value_path(self.current_module, &path)
                         .unwrap_or_else(|| {
                             report_not_found(field.name);
                             Res::Err
@@ -151,10 +135,6 @@ impl<'ast> Resolver<'ast> {
         }
     }
 
-    /// Visits a record pattern's shorthand fields. A shorthand like `{ l }` binds `l`, as
-    /// `PatKind::Binding` would, but there is no `Pat` behind it. The field's `NodeId` stands
-    /// in as the binding site, just as [`Self::visit_record_fields`] uses it for lookups on the
-    /// expression side.
     fn visit_record_pat_fields(&mut self, fields: &'ast [PayloadField<Pat>]) {
         for field in fields {
             match &field.value {
@@ -166,9 +146,6 @@ impl<'ast> Resolver<'ast> {
         }
     }
 
-    /// Visits an expression `Payload`: either a single value (`.circle(1.24)`) or record fields
-    /// (`.square { l }`). Record fields go through [`Self::visit_record_fields`] instead of
-    /// the default's value-only walk, so shorthand fields get resolved.
     fn visit_expr_payload(&mut self, payload: &'ast Payload<Expr>) {
         match payload {
             Payload::None => {}
@@ -177,7 +154,6 @@ impl<'ast> Resolver<'ast> {
         }
     }
 
-    /// Visits a pattern's payload, handling all variants the same way [`Self::visit_expr_payload`] does.
     fn visit_pat_payload(&mut self, payload: &'ast Payload<Pat>) {
         match payload {
             Payload::None => {}
@@ -206,27 +182,11 @@ fn self_ident(span: SrcSpan) -> Ident {
 }
 
 impl<'ast> Visitor<'ast> for Resolver<'ast> {
-    // -----------------------------------------------------------------
-    // Items -- each pushes whatever scopes it introduces, walks its children through the
-    // matching `walk_*`, then pops. `current_item` is what lets `Struct`/`Enum`/`Trait`/
-    // `Extend`, none of which carry a `NodeId` of their own, record path entries and a `Self`
-    // scope against the right owner.
-    // -----------------------------------------------------------------
-
     fn visit_item(&mut self, item: &'ast Item) {
         self.current_item = Some(item.id);
         visit::walk_item(self, item);
     }
 
-    /// A function pushes its own generic scope. It does not push a `Self` scope: `Self` inside a
-    /// method or closure refers to the enclosing struct/enum/trait/`extend`, already on the
-    /// stack (see `SymbolTable::current_self`).
-    ///
-    /// Parameter and return types are resolved before the function's local scope opens. They
-    /// can see the generics just pushed, but not `self` or the parameters themselves (those are
-    /// bound after all signature types have been read). `self` and each parameter are inserted
-    /// directly, bypassing `visit_self_param`/`visit_param` (which already ran to resolve types),
-    /// to avoid re-walking a type.
     fn visit_function(&mut self, f: &'ast Function) {
         self.push_generics(&f.generics);
 
@@ -286,38 +246,18 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         self.table.pop_self();
     }
 
-    /// Resolves `adt_path` and `trait_path` against `item_id` (the `Extend` has no `NodeId` of
-    /// its own to record them under), guards the `extend Foo with Foo` duplicate-path case, then
-    /// pushes generics and `Self` for the method bodies.
-    ///
-    /// Three outcomes for `adt_path`, each with different behavior:
-    /// - It resolved to a `TyDef` (`extend Foo with Show`): push that `Self`.
-    /// - It resolved to something else, e.g. a primitive (`extend i32 with Show`): push nothing.
-    ///   No diagnostic was raised for `adt_path` itself, so `Self` inside the block reports
-    ///   "not available" (same as with no enclosing `extend`). This prevents duplicate errors.
-    /// - It failed to resolve (`extend Nope with Show`): push a suppressed scope
-    ///   ([`SymbolTable::push_self_unresolved`]). `resolve_type_path` already reported the
-    ///   failure. A `Self` inside would otherwise duplicate that diagnostic.
     fn visit_extend(&mut self, e: &'ast Extend) {
         let item_id = self
             .current_item
             .expect("visit_extend is reached only through visit_item, which sets current_item");
 
-        // The block's own generics have to be in scope before `adt_path`/`trait_path` are
-        // resolved, not just before the method bodies are walked: `extend<T> T with Show` names
-        // the type parameter `T` as the extended type itself, and `extend<T> Box<T>` names it as
-        // a generic argument inside `adt_path`. Both are written in the same source span as the
-        // `<T>` that introduces them, so both need it pushed first.
         self.push_generics_opt(&e.extend_generics);
 
-        let adt_res = self.table.resolve_type_path(self.module, &e.adt_path);
+        let adt_res = self.resolve_type_path(&e.adt_path);
         self.results.record(item_id, e.adt_path.clone(), adt_res);
 
         if let Some(trait_path) = &e.trait_path {
             if *trait_path == e.adt_path {
-                // `extend Foo with Foo`: recording both would put two textually identical paths
-                // on `item_id`, which `NameResolutions::record`'s invariant forbids. `adt_path`
-                // is already recorded above, so only the second writing is reported.
                 report_self_extend(
                     *trait_path
                         .segments
@@ -325,7 +265,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
                         .expect("a path always has at least one segment"),
                 );
             } else {
-                let trait_res = self.table.resolve_type_path(self.module, trait_path);
+                let trait_res = self.resolve_type_path(trait_path);
                 self.results.record(item_id, trait_path.clone(), trait_res);
             }
         }
@@ -350,19 +290,16 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         self.table.pop_generics();
     }
 
-    // -----------------------------------------------------------------
-    // Types -- a path in type position records what it named, then its own children (generic
-    // arguments, array length, ...) are walked exactly as `ast::visit`'s default would.
-    // -----------------------------------------------------------------
+    //------------------------------------------------------------------------
 
     fn visit_ty(&mut self, ty: &'ast Ty) {
         match &ty.kind {
             TyKind::Path { path, .. } => {
-                let res = self.table.resolve_type_path(self.module, path);
+                let res = self.resolve_type_path(path);
                 self.results.record(ty.id, path.clone(), res);
             }
             TyKind::Dyn { path, .. } => {
-                let res = self.table.lookup_dyn_path(self.module, path);
+                let res = self.table.lookup_dyn_path(self.current_module, path);
                 self.results.record(ty.id, path.clone(), res);
             }
             TyKind::Ref { .. }
@@ -375,24 +312,14 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         visit::walk_ty(self, ty);
     }
 
-    // -----------------------------------------------------------------
-    // Expressions, statements, patterns -- blocks and match arms open a local scope; a `Let`'s
-    // ordering (initializer before the pattern binds) is already `ast::visit::walk_stmt`'s
-    // default, so `let x = x;` reads the outer `x` without any extra work here.
-    // -----------------------------------------------------------------
+    // ------------------------------------------------------------------------
 
-    /// `Ctor`, `Access`, and `Variant` return here without reaching the trailing `walk_expr`
-    /// call. Other arms extend the default recording and still need `walk_expr` for child nodes.
-    /// Why the difference: `PayloadField`. Record payloads need a field-aware walk
-    /// (see [`Self::visit_record_fields`]) to handle shorthand fields. The default's
-    /// `payload_values` helper skips fields without explicit values. Falling through to
-    /// `walk_expr` would visit explicit-value fields again.
     fn visit_expr(&mut self, expr: &'ast Expr) {
         match &expr.kind {
             ExprKind::Path(path) => {
                 let res = self
                     .table
-                    .lookup_value_path(self.module, path)
+                    .lookup_value_path(self.current_module, path)
                     .unwrap_or_else(|| {
                         report_not_found(
                             *path
@@ -407,24 +334,18 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             ExprKind::Ctor { path, payload } => {
                 match path {
                     Some(path) => {
-                        // A struct literal names its type, so its path is resolved in type position
-                        // (like `TyKind::Path`). Although written on an expression, `Foo` here
-                        // names the struct, not a value called `Foo`.
-                        let res = self.table.resolve_type_path(self.module, path);
+                        let res = self.resolve_type_path(path);
                         self.results.record(expr.id, path.clone(), res);
                     }
                     None => {
-                        // The elided form, `.{ a: 1 }`, takes its type from context. There is no
-                        // path here, so nothing is recorded.
+                        // The elided form, `.{ a: 1 }`, takes its type from context.
                     }
                 }
                 self.visit_record_fields(payload);
                 return;
             }
             ExprKind::Access { base, args, .. } => {
-                // `member`'s reading as a field, a method, or a payload-carrying variant is not
-                // resolved here. See the `AccessArgs` doc comment: the grammar can't tell the
-                // three apart. Later analysis (typeck, once `base`'s type is known) does.
+                // We defer to after typeck
                 self.visit_expr(base);
                 match args {
                     AccessArgs::None => {}
@@ -438,9 +359,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
                 return;
             }
             ExprKind::Variant { payload, .. } => {
-                // `variant`'s own name is not resolved here. A bare `.variant` names no enum
-                // until typeck knows the expected type. Scanning every enum in scope for a
-                // matching name is the ambiguity the leading `.` avoids.
+                // We defer to after typeck
                 self.visit_expr_payload(payload);
                 return;
             }
@@ -455,18 +374,12 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         self.table.pop_scope();
     }
 
-    /// A match arm's scope includes both its pattern and body. Bindings the pattern introduces
-    /// must be visible in the body.
     fn visit_arm(&mut self, arm: &'ast Arm) {
         self.table.push_scope();
         visit::walk_arm(self, arm);
         self.table.pop_scope();
     }
 
-    /// `While`/`WhileLet`/`For` each get a scope around their pattern (if any) and body, same
-    /// as a match arm. A `WhileLet`/`For` pattern's bindings must outlive the block they guard.
-    /// Plain `While` has no pattern to bind, so its scope is never written to. Wrapping all
-    /// three uniformly keeps the logic consistent.
     fn visit_stmt(&mut self, stmt: &'ast Stmt) {
         match &stmt.kind {
             StmtKind::While { .. } | StmtKind::WhileLet { .. } | StmtKind::For { .. } => {
@@ -478,11 +391,6 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         }
     }
 
-    /// `Variant`'s record payload gets the same field-aware treatment `visit_expr` gives
-    /// `Ctor`/`Access`/`Variant`, and for the same reason: a shorthand field (`{ w }`, binding
-    /// `w`) has no `Pat` behind it for the default walk's `payload_values` helper to hand back,
-    /// so it is silently never bound without this. Returns early like those do, to avoid
-    /// re-visiting an explicit-value field a second time through `walk_pat`'s own handling.
     fn visit_pat(&mut self, pat: &'ast Pat) {
         match &pat.kind {
             PatKind::Binding(name) => {
@@ -497,10 +405,6 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         visit::walk_pat(self, pat);
     }
 
-    /// A closure pushes a local scope for its own parameters. Like a function, it has no
-    /// generic or `Self` scope, so it sees whatever its enclosing definition already has on those
-    /// stacks. `visit_closure_param` (below) does the binding, since
-    /// `walk_closure` is what reaches each parameter.
     fn visit_closure(
         &mut self,
         params: &'ast [ClosureParam],

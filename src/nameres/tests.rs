@@ -12,6 +12,7 @@ use crate::lexer::Lexer;
 use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::nameres::resolve;
+use crate::nameres::resolver::Resolver;
 use crate::nameres::results::NameResolutions;
 use crate::nameres::symbol_table::SymbolTable;
 use crate::parser::Parser;
@@ -232,11 +233,9 @@ fn a_node_with_three_recorded_paths_retrieves_all_three() {
 fn collect_puts_a_function_in_the_value_namespace() {
     let ast = ast_from("fun f() {}");
     let table = SymbolTable::collect(&ast);
-    assert!(
-        table
-            .lookup_function(ast.root_id(), Interner::intern("f"))
-            .is_some()
-    );
+    assert!(table
+        .lookup_function(ast.root_id(), Interner::intern("f"))
+        .is_some());
 }
 
 #[test]
@@ -244,7 +243,7 @@ fn collect_puts_a_struct_in_the_type_namespace() {
     let ast = ast_from("struct S {}");
     let table = SymbolTable::collect(&ast);
     assert!(matches!(
-        table.lookup_type_name(ast.root_id(), Interner::intern("S")),
+        table.lookup_type(ast.root_id(), Interner::intern("S")),
         Some(TyDef::Struct(_))
     ));
 }
@@ -254,11 +253,11 @@ fn collect_keeps_a_trait_and_an_enum_apart_by_tydef_kind() {
     let ast = ast_from("enum E { a } trait T {}");
     let table = SymbolTable::collect(&ast);
     assert!(matches!(
-        table.lookup_type_name(ast.root_id(), Interner::intern("E")),
+        table.lookup_type(ast.root_id(), Interner::intern("E")),
         Some(TyDef::Enum(_))
     ));
     assert!(matches!(
-        table.lookup_type_name(ast.root_id(), Interner::intern("T")),
+        table.lookup_type(ast.root_id(), Interner::intern("T")),
         Some(TyDef::Trait(_))
     ));
 }
@@ -290,11 +289,9 @@ fn an_import_binds_into_the_importing_modules_own_scope() {
     ]);
     let table = SymbolTable::new(&ast);
     let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
-    assert!(
-        table
-            .lookup_function(app, Interner::intern("dot"))
-            .is_some()
-    );
+    assert!(table
+        .lookup_function(app, Interner::intern("dot"))
+        .is_some());
 }
 
 #[test]
@@ -308,11 +305,9 @@ fn an_import_resolves_absolutely_from_the_root_not_relative_to_where_it_is_writt
     let nested = table
         .module_by_path(&[Interner::intern("app"), Interner::intern("nested")])
         .unwrap();
-    assert!(
-        table
-            .lookup_function(nested, Interner::intern("inner"))
-            .is_some()
-    );
+    assert!(table
+        .lookup_function(nested, Interner::intern("inner"))
+        .is_some());
 }
 
 #[test]
@@ -325,11 +320,9 @@ fn an_import_may_name_a_module_the_collect_pass_had_not_reached() {
     let (table, diags) = new_with_diags(&ast);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
     let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
-    assert!(
-        table
-            .lookup_function(app, Interner::intern("thing"))
-            .is_some()
-    );
+    assert!(table
+        .lookup_function(app, Interner::intern("thing"))
+        .is_some());
 }
 
 #[test]
@@ -340,16 +333,10 @@ fn a_glob_import_copies_every_name_from_the_source_module() {
     ]);
     let table = SymbolTable::new(&ast);
     let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
-    assert!(
-        table
-            .lookup_function(app, Interner::intern("dot"))
-            .is_some()
-    );
-    assert!(
-        table
-            .lookup_type_name(app, Interner::intern("Vec2"))
-            .is_some()
-    );
+    assert!(table
+        .lookup_function(app, Interner::intern("dot"))
+        .is_some());
+    assert!(table.lookup_type(app, Interner::intern("Vec2")).is_some());
 }
 
 #[test]
@@ -511,11 +498,9 @@ fn a_fully_qualified_path_resolves_from_anywhere() {
     let deep = table
         .module_by_path(&[Interner::intern("app"), Interner::intern("deep")])
         .unwrap();
-    assert!(
-        table
-            .lookup_value_path(deep, &path(&["math", "vector", "dot"]))
-            .is_some()
-    );
+    assert!(table
+        .lookup_value_path(deep, &path(&["math", "vector", "dot"]))
+        .is_some());
 }
 
 #[test]
@@ -578,11 +563,9 @@ fn a_multi_segment_path_walks_submodules_then_looks_up_the_last_segment() {
 fn an_unresolvable_path_is_none() {
     let ast = ast_from("fun main() {}");
     let table = SymbolTable::new(&ast);
-    assert!(
-        table
-            .lookup_value_path(ast.root_id(), &path(&["nope"]))
-            .is_none()
-    );
+    assert!(table
+        .lookup_value_path(ast.root_id(), &path(&["nope"]))
+        .is_none());
 }
 
 #[test]
@@ -641,8 +624,9 @@ fn a_bare_trait_path_in_type_position_resolves_to_a_trait() {
     let ast = ast_from_files(&["module app; trait Show {}"]);
     let table = SymbolTable::new(&ast);
     let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let r = Resolver::new(table, app);
     assert!(matches!(
-        table.resolve_type_path(app, &path(&["Show"])),
+        r.resolve_type_path(&path(&["Show"])),
         Res::Type(Type::Def(TyDef::Trait(_)))
     ));
 }
@@ -672,18 +656,19 @@ fn dyn_on_a_struct_errors() {
 #[test]
 fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
     let ast = ast_from("fun main() {}");
-    let mut table = SymbolTable::new(&ast);
+    let table = SymbolTable::new(&ast);
+    let mut r = Resolver::new(table, ast.root_id());
     for def in [
         TyDef::Struct(NodeId::next()),
         TyDef::Enum(NodeId::next()),
         TyDef::Trait(NodeId::next()),
     ] {
-        table.push_self(def);
+        r.table.push_self(def);
         assert_eq!(
-            table.resolve_type_path(ast.root_id(), &path(&["Self"])),
+            r.resolve_type_path(&path(&["Self"])),
             Res::Type(Type::Def(def))
         );
-        table.pop_self();
+        r.table.pop_self();
     }
 }
 
@@ -691,7 +676,8 @@ fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
 fn self_outside_a_definition_errors() {
     let ast = ast_from("fun main() {}");
     let table = SymbolTable::new(&ast);
-    let (res, diags) = with_diags(|| table.resolve_type_path(ast.root_id(), &path(&["Self"])));
+    let r = Resolver::new(table, ast.root_id());
+    let (res, diags) = with_diags(|| r.resolve_type_path(&path(&["Self"])));
     assert_eq!(res, Res::Err);
     assert_eq!(diags.len(), 1);
     assert!(diags[0].message.contains("`Self` is not available here"));
@@ -701,7 +687,8 @@ fn self_outside_a_definition_errors() {
 fn an_unresolvable_type_path_reports_not_found_and_records_err() {
     let ast = ast_from("fun main() {}");
     let table = SymbolTable::new(&ast);
-    let (res, diags) = with_diags(|| table.resolve_type_path(ast.root_id(), &path(&["Nope"])));
+    let r = Resolver::new(table, ast.root_id());
+    let (res, diags) = with_diags(|| r.resolve_type_path(&path(&["Nope"])));
     assert_eq!(res, Res::Err);
     assert_eq!(diags.len(), 1);
     assert!(diags[0].message.contains("cannot find"));
@@ -715,16 +702,12 @@ fn lookup_variant_finds_a_variant_by_name() {
     let Some(Type::Def(TyDef::Enum(e))) = table.lookup_type_path(app, &path(&["Shape"])) else {
         panic!("Shape did not resolve to an enum");
     };
-    assert!(
-        table
-            .lookup_variant(e, Interner::intern("circle"))
-            .is_some()
-    );
-    assert!(
-        table
-            .lookup_variant(e, Interner::intern("triangle"))
-            .is_none()
-    );
+    assert!(table
+        .lookup_variant(e, Interner::intern("circle"))
+        .is_some());
+    assert!(table
+        .lookup_variant(e, Interner::intern("triangle"))
+        .is_none());
 }
 
 // -----------------------------------------------------------------
@@ -957,11 +940,9 @@ fn a_closure_sees_its_enclosing_definitions_generic_and_self() {
 fn self_outside_any_definition_records_err() {
     let ast = ast_from_files(&["module app; fun f() -> Self {}"]);
     let (r, diags) = with_diags(|| resolve(&ast));
-    assert!(
-        diags
-            .iter()
-            .any(|d| d.message.contains("`Self` is not available here"))
-    );
+    assert!(diags
+        .iter()
+        .any(|d| d.message.contains("`Self` is not available here")));
     let f = only_function(&ast);
     let ty = f.ret.as_ref().unwrap().id;
     assert_eq!(r.get(ty, &path(&["Self"])), Some(Res::Err));
@@ -971,11 +952,9 @@ fn self_outside_any_definition_records_err() {
 fn dyn_on_a_non_trait_records_err() {
     let ast = ast_from_files(&["module app; struct S {} fun f(x: dyn S) {}"]);
     let (r, diags) = with_diags(|| resolve(&ast));
-    assert!(
-        diags
-            .iter()
-            .any(|d| d.message.contains("`dyn` requires a trait"))
-    );
+    assert!(diags
+        .iter()
+        .any(|d| d.message.contains("`dyn` requires a trait")));
     let ty = param_ty_id(&ast);
     assert_eq!(r.get(ty, &path(&["S"])), Some(Res::Err));
 }

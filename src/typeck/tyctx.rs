@@ -1,18 +1,3 @@
-//! [`TyCtx`] is the type checker's arena: it owns every [`TyKind`] in the program and hands out
-//! the [`Ty`] handles that address them.
-//!
-//! Interning is what makes those handles work. A `TyKind` is only ever stored once, so two types
-//! that are structurally equal always come back as the same `Ty`, and comparing types is an
-//! integer comparison instead of a recursive walk. It also bounds memory: a deeply nested type
-//! shares storage with every type that repeats one of its components.
-//!
-//! A `TyCtx` is created per compilation and passed to whoever needs it. It is deliberately not a
-//! global: the handles it hands out are indices into its own storage and mean nothing anywhere
-//! else, so two contexts existing at once (two tests running in parallel, say) silently
-//! reinterpreting each other's handles is exactly the failure a singleton would invite. Owning
-//! it also puts the inference variable counter somewhere that resets with the compilation
-//! instead of accumulating for the life of the process.
-
 use std::collections::HashMap;
 
 use crate::ast::Mutability;
@@ -28,21 +13,11 @@ pub struct TyCtx {
     /// a second time.
     interned: HashMap<TyKind, Ty>,
 
-    /// Counts the inference variables handed out so far. One counter serves all three kinds of
-    /// [`TyVar`], so no two variables ever share an id.
+    /// Type variable counter
     next_var: u32,
 
-    /// [`TyKind::Error`], interned once up front so it can be handed out without a `&mut self`.
-    /// Error recovery reaches for it constantly, often from a position that only holds a shared
-    /// borrow.
     error: Ty,
-
-    /// [`TyKind::Never`], interned up front for the same reason as [`TyCtx::error`].
     never: Ty,
-
-    /// [`TyKind::Unit`], interned up front for the same reason as [`TyCtx::error`]. A function
-    /// with no declared return type reaches for this on every `collect_function` call, which is
-    /// often enough to be worth not re-interning.
     unit: Ty,
 }
 
@@ -78,8 +53,7 @@ impl TyCtx {
 
     /// Looks up what `ty` stands for.
     ///
-    /// Panics if `ty` was interned by a different [`TyCtx`], which is a bug at the call site --
-    /// handles are only meaningful paired with the context that produced them.
+    /// Panics if `ty` was interned by a different [`TyCtx`]
     pub fn kind(&self, ty: Ty) -> &TyKind {
         self.kinds
             .get(ty.index())
@@ -138,9 +112,6 @@ impl TyCtx {
         self.intern(TyKind::Dyn { trait_, args })
     }
 
-    /// Hands out a fresh inference variable of the given kind, along with the type standing for
-    /// it. Each call returns a variable distinct from every other, so callers never have to
-    /// coordinate ids.
     pub fn next_ty_var(&mut self) -> Ty {
         let var = TyVar::Any(self.take_var_id());
         self.intern(TyKind::Var(var))
