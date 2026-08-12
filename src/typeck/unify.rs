@@ -1,6 +1,3 @@
-//! Unification over [`Ty`] handles, implemented as a union-find so that two types once unified
-//! stay merged no matter which order later queries visit them in.
-
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -8,46 +5,17 @@ use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
 
-/// Why [`Unifier::unify`] refused to merge two types, carried back instead of a bare `bool` so the
-/// caller can turn it into a diagnostic without re-deriving what went wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnifyError {
-    /// `expected` and `found` are incompatible outright: different shapes entirely (a tuple
-    /// against a function type), or matching shapes whose immediate contents differ (two
-    /// `Adt`s naming different definitions, two tuples of different arity, mismatched
-    /// mutability on a `&`/`&mut`, and so on).
     Mismatch { expected: Ty, found: Ty },
-    /// An integer-only inference variable (from an unsuffixed literal such as `1`) met a
-    /// non-integer type.
     ExpectedInteger { var: Ty, found: Ty },
-    /// A float-only inference variable (from an unsuffixed literal such as `1.0`) met a
-    /// non-float type.
     ExpectedFloat { var: Ty, found: Ty },
-    /// Binding `var` to `ty` would make the type contain itself, as in `?0 = (?0, i32)`.
-    ///
-    /// The union-find would take this happily -- `?0` simply points at the tuple, and nothing
-    /// about that is a cycle. The cycle is *structural*: resolving the tuple resolves `?0`, which
-    /// resolves to the tuple again. Anything that walks a type's structure, such as
-    /// [`Typeck::resolve_deep`](crate::typeck::Typeck), would then never terminate, so the bind
-    /// is refused here instead.
     Infinite { var: Ty, ty: Ty },
 }
 
-/// Tracks which [`Ty`] handles the checker has decided must denote the same type.
-///
-/// Every method that needs to inspect a [`TyKind`] takes the owning [`TyCtx`] as a parameter
-/// rather than [`Unifier`] holding a borrow of one. A [`Unifier`] is meant to live for the whole of a
-/// type-checking pass (see [`Typeck`](crate::typeck::Typeck)), which also owns its [`TyCtx`] --
-/// storing a borrow of one field inside a sibling field would make the containing struct
-/// self-referential, which safe Rust can't express.
 #[derive(Default)]
 pub struct Unifier {
-    /// Let an entry in parents be (Q, V). V is the representative type for Q
-    /// and all Ty's which are equivalent to Q. For example, Q could be an
-    /// unknown type. After unifying Q with i32 (for example), V, the
-    /// representative Ty for all Ty's equivalent to Q would be i32.
     parents: HashMap<Ty, Ty>,
-
     /// [`Unifier::sizes`] is used SOLELY for optimization purposes (see optimizations
     /// for disjoint set unions). It has no other use.
     sizes: HashMap<Ty, u32>,
@@ -61,16 +29,8 @@ impl Unifier {
         }
     }
 
-    /// The representative of `ty`'s equivalence class, registering `ty` as its equivalence class if this
-    /// is the first time it has been seen.
-    ///
-    /// Written iteratively rather than recursively. Union by size already bounds a class's
-    /// height to `O(log n)`, so this is not guarding against a stack overflow -- it is that this
-    /// runs on every read of every type ([`Typeck::ty_of`](crate::typeck::Typeck) goes through
-    /// it), and the loop form leaves nothing on the read path whose depth depends on the program
-    /// being compiled. The two passes below are the standard path-compression split: walk to the
-    /// root, then point every link on the way at it, so the next lookup on any of them is a
-    /// single step.
+    /// The representative of `ty`'s equivalence class, registering `ty` as its
+    /// equivalence class if this is the first time it has been seen.
     pub fn root(&mut self, ty: Ty) -> Ty {
         if !self.parents.contains_key(&ty) {
             self.parents.insert(ty, ty);
@@ -97,27 +57,6 @@ impl Unifier {
         root
     }
 
-    /// Attempts to unify `expected` and `found`, binding inference variables so that the two
-    /// denote the same type.
-    ///
-    /// The two are named for how a failure reads: `expected` is the type the context demands and
-    /// `found` is the type that turned up, which is the order [`UnifyError::Mismatch`] reports
-    /// them in. Unification itself is symmetric.
-    ///
-    /// Unification is *structural*: two composites unify when their shapes agree and every
-    /// corresponding component unifies. Interning alone cannot answer this, because it only makes
-    /// handle equality mean type equality for types with no variables left in them -- `(?0, i32)`
-    /// and `(i32, i32)` are two different handles that should nonetheless unify, and only
-    /// recursing into the elements discovers that.
-    ///
-    /// # Failure
-    ///
-    /// A failure never merges the two classes it was handed, so the caller can report the
-    /// returned [`UnifyError`] and carry on. It may, however, leave components merged that were
-    /// unified before the failing one was reached: unifying `(i32, i32)` with `(?0, bool)` binds
-    /// `?0` to `i32` before discovering that `i32` and `bool` do not unify. Undoing those would
-    /// need a trail to roll back, which does not exist; in practice the caller has already
-    /// reported an error and the bindings only affect types downstream of one.
     pub fn unify(&mut self, tcx: &TyCtx, expected: Ty, found: Ty) -> Result<(), UnifyError> {
         let t = self.root(expected);
         let u = self.root(found);
@@ -126,35 +65,21 @@ impl Unifier {
             return Ok(());
         }
 
-        // `Error` and `Never` absorb: they succeed against anything without merging. Merging is
-        // what has to be skipped rather than merely allowed -- all three of `Error`, `Never` and
-        // `Unit` are interned once per pass, so folding one into some class would make every
-        // later `root` of it answer with that class's type and silently re-type unrelated code
-        // elsewhere in the program.
+        // `Error` and `Never` can match against anything, but we record nothing
         if absorbs(tcx, t) || absorbs(tcx, u) {
             return Ok(());
         }
 
-        // Shape first -- arity, `def`, mutability, and so on -- so that a mismatch there is
-        // reported against the types the caller passed rather than against whatever components
-        // happened to line up before the arity ran out.
         let components = self.decompose(tcx, t, u)?;
-
         for (t_component, u_component) in components {
-            self.unify(tcx, t_component, u_component).map_err(|err| {
-                // Re-report a mismatch found inside as a mismatch of the two types the caller
-                // wrote: "expected `(i32, i32)`, found `(bool, bool)`" says more than
-                // "expected `i32`, found `bool`" with no hint of where it came from. The
-                // variable-kind errors already name the variable they are about, so they are
-                // more specific than the outer types and pass through untouched.
-                match err {
+            self.unify(tcx, t_component, u_component)
+                .map_err(|err| match err {
                     UnifyError::Mismatch { .. } => UnifyError::Mismatch {
                         expected: t,
                         found: u,
                     },
                     other => other,
-                }
-            })?;
+                })?;
         }
 
         self.merge(tcx, t, u)?;
@@ -162,26 +87,14 @@ impl Unifier {
     }
 
     /// Points one of `t`, `u` at the other, once the two are known to unify.
-    ///
-    /// Only an inference variable is ever pointed at something else. Two concrete types that got
-    /// this far are already equal by the structural check above, so there is nothing to record
-    /// about them -- and merging them would fold a per-pass singleton such as `Unit` into an
-    /// unrelated class.
-    ///
-    /// Which of the two becomes the representative is decided by how much each one says about the
-    /// type, since the representative is what every later read of the class answers with and
-    /// anything the other one knew is lost. See [`constraint`].
-    ///
     /// `t` and `u` must both be roots.
     fn merge(&mut self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<(), UnifyError> {
         let (root, child) = match constraint(tcx, t).cmp(&constraint(tcx, u)) {
             Ordering::Less => (u, t),
             Ordering::Greater => (t, u),
-            // Two concrete types, already proven equal componentwise. Nothing to merge.
             Ordering::Equal if constraint(tcx, t) == Constraint::Concrete => return Ok(()),
-            // Two variables that constrain equally -- two `Any`s, or two `Int`s. Neither knows
-            // anything the other does not, so fall back to the size heuristic (see optimizations
-            // for disjoint set unions).
+            // Two variables that constrain equally
+            // use the size heuristic (see optimizations for disjoint set unions).
             Ordering::Equal => {
                 if self.sizes[&t] < self.sizes[&u] {
                     (u, t)
@@ -191,9 +104,7 @@ impl Unifier {
             }
         };
 
-        // The occurs check. Binding a variable to a type it appears inside would make the type
-        // contain itself; see `UnifyError::Infinite`. This is the only place a variable is ever
-        // bound, so it is the only place the check has to happen.
+        // Make sure we don't create a type of infinite size
         if self.occurs(tcx, child, root) {
             return Err(UnifyError::Infinite {
                 var: child,
@@ -218,14 +129,6 @@ impl Unifier {
         Ok(())
     }
 
-    /// Whether the inference variable `var` appears anywhere inside `ty`.
-    ///
-    /// Resolves as it descends, so a variable already bound to a composite is followed into that
-    /// composite rather than treated as opaque -- which is what catches the indirect case, where
-    /// `?0` and `?1` are each other's containers.
-    ///
-    /// Terminates because it only ever runs *before* a bind that would introduce a cycle, so the
-    /// structure it walks is still acyclic.
     fn occurs(&mut self, tcx: &TyCtx, var: Ty, ty: Ty) -> bool {
         let ty = self.root(ty);
         if ty == var {
@@ -255,20 +158,12 @@ impl Unifier {
 
     /// Checks that `t` and `u` have the same immediate shape, and returns the component pairs
     /// that must themselves unify for the two to be the same type.
-    ///
-    /// Everything decided without looking at a component is decided here: which variant each
-    /// type is, an `Adt`'s `def`, a `Ref`'s mutability, a tuple's arity, an array's length
-    /// expression. A type with no components at all -- a primitive, a bare variable -- yields an
-    /// empty list, which is what makes this the whole of the answer for those.
-    ///
     /// `t` and `u` must both be roots.
     fn decompose(&self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<Vec<(Ty, Ty)>, UnifyError> {
         debug_assert_eq!(self.parents.get(&t), Some(&t));
         debug_assert_eq!(self.parents.get(&u), Some(&u));
 
-        // `Error` and `Never` are compatible with anything: `Error` so one mistake doesn't
-        // cascade into more diagnostics, `Never` because a `return`/`break`-typed expression
-        // coerces to whatever the surrounding context expects. Neither has components.
+        // `Error` and `Never` are compatible with anything
         if absorbs(tcx, t) || absorbs(tcx, u) {
             return Ok(Vec::new());
         }
@@ -337,8 +232,6 @@ impl Unifier {
                     Err(mismatch())
                 }
             }
-            // Interned once per pass, so `unify`'s `t == u` check already covers this in
-            // practice; spelled out so that `decompose` is a complete answer on its own.
             (TyKind::Unit, TyKind::Unit) => no_components,
 
             (TyKind::Adt { def: d1, args: a1 }, TyKind::Adt { def: d2, args: a2 }) => {
@@ -377,9 +270,7 @@ impl Unifier {
             }
 
             (TyKind::Array { elem: e1, len: l1 }, TyKind::Array { elem: e2, len: l2 }) => {
-                // `len` addresses the constant expression rather than its value, so two lengths
-                // only agree when they are literally the same expression. See
-                // [`TyKind::Array`](crate::typeck::ty::TyKind::Array).
+                // TODO: const-checking for these
                 if l1 == l2 {
                     Ok(vec![(*e1, *e2)])
                 } else {
@@ -431,21 +322,6 @@ impl Unifier {
     }
 }
 
-/// How much a type says about itself, ordered from least to most.
-///
-/// This is what [`Unifier::merge`] ranks two types by. Merging points one at the other, and every
-/// later [`Unifier::root`] of the class answers with whichever one it pointed *at*, so the more
-/// constrained of the two has to be the one kept: what the other knew is not recorded anywhere
-/// else.
-///
-/// Both steps of the order matter, and the second was not always here. A concrete type over a
-/// variable is what makes a resolved variable read back as the type it resolved to instead of
-/// bouncing through itself. `Int`/`Float` over `Any` is the same rule one level down: `{integer}`
-/// only unifies with an integer type, and `_` unifies with anything, so folding an `{integer}`
-/// into an `_` drops the restriction and lets the class go on to unify with `bool`. That is
-/// reachable from any two expressions unified in either order -- a `match` whose first arm
-/// produces `1` and whose second produces `true` used to be accepted, with the literal typed
-/// `bool`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Constraint {
     /// `_`: unifies with anything.
@@ -464,12 +340,10 @@ fn constraint(tcx: &TyCtx, ty: Ty) -> Constraint {
     }
 }
 
-/// Whether `ty` succeeds against every other type without constraining it.
 fn absorbs(tcx: &TyCtx, ty: Ty) -> bool {
     matches!(tcx.kind(ty), TyKind::Error | TyKind::Never)
 }
 
-/// Pairs two equal-length component lists up positionally.
 fn zip(a: &[Ty], b: &[Ty]) -> Vec<(Ty, Ty)> {
     debug_assert_eq!(a.len(), b.len());
     a.iter().copied().zip(b.iter().copied()).collect()

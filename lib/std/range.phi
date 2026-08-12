@@ -1,0 +1,4 @@
+struct Range<T> {
+    left: Option<T>,
+    right: Option<T>,
+}

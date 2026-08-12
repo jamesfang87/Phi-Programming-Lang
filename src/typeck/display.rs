@@ -1,29 +1,13 @@
-//! A user-facing rendering for the checker's types, meant for diagnostics: `i32`, `&mut
-//! Foo<T>`, `(bool, char)`, `fun(i32) -> bool`, the same surface syntax the user would have
-//! written. This is deliberately distinct from
-//! [`emit_debug::print_typeck`](crate::driver::emit_debug::print_typeck)'s formatting, which
-//! dumps a type's internal structure (`Adt { def: ..., args: [...] }`) for the `--debug` output
-//! rather than reading like source.
-//!
-//! Rendering a [`Ty`] needs the [`TyCtx`] that interned it and the [`Hir`] that names the
-//! definitions inside it. [`DisplayCx`] carries that pair once, so neither the trait nor its
-//! implementations thread it by hand, and anything else worth showing to a user -- a
-//! [`UnifyError`], say -- implements [`Pretty`] and prints the same way.
-
 use std::fmt;
 
-use crate::ast::Mutability;
 use crate::ast::interner::Interner;
+use crate::ast::Mutability;
 use crate::hir::{DefId, Hir, HirId, OwnerNode};
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::UnifyError;
 
-/// What is needed to turn the checker's internal handles back into the words the user wrote.
-///
-/// Borrows for only as long as it takes to format, so build one where it is printed rather than
-/// holding on to it.
 #[derive(Clone, Copy)]
 pub struct DisplayCx<'a> {
     hir: &'a Hir,
@@ -41,16 +25,10 @@ impl<'a> DisplayCx<'a> {
     }
 }
 
-/// Something the user should see rendered as they would have written it.
-///
-/// Kept separate from [`fmt::Display`] because none of these can be printed on their own: a
-/// [`Ty`] is an index into a [`TyCtx`] and means nothing without one.
 pub trait Pretty {
     fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>) -> fmt::Result;
 }
 
-/// A [`Pretty`] value paired with the context needed to render it. Returned by
-/// [`DisplayCx::show`].
 pub struct Show<'a, T> {
     cx: DisplayCx<'a>,
     value: T,
@@ -101,8 +79,7 @@ impl Pretty for Ty {
                     }
                     elem.pretty(f, cx)?;
                 }
-                // `(T,)` disambiguates a one-element tuple from a merely parenthesized `T`,
-                // exactly as in the language's surface syntax.
+                // `(T,)` disambiguates a one-element tuple from a merely parenthesized `T`
                 if elems.len() == 1 {
                     write!(f, ",")?;
                 }
@@ -140,8 +117,6 @@ impl Pretty for Ty {
     }
 }
 
-/// Each variant's wording lives next to the variant it explains, so adding a way for
-/// unification to fail comes with the sentence that reports it.
 impl Pretty for UnifyError {
     fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>) -> fmt::Result {
         match *self {
@@ -185,8 +160,6 @@ fn write_args(f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>, args: &[Ty]) -> fm
     write!(f, ">")
 }
 
-/// The keyword a primitive type is written with, exactly as
-/// [`nameres::symbol_table::prim_ty`](crate::nameres::symbol_table::prim_ty) recognizes it.
 fn prim_name(prim: PrimTy) -> &'static str {
     match prim {
         PrimTy::I8 => "i8",
@@ -204,13 +177,6 @@ fn prim_name(prim: PrimTy) -> &'static str {
     }
 }
 
-/// The name a `struct`, `enum`, or `trait` was declared with -- the only three `OwnerNode`s a
-/// `TyKind::Adt` or `TyKind::Dyn` can point at.
-///
-/// `pub(crate)` because a trait in a diagnostic has no [`Ty`] to render through [`Pretty`]: a
-/// trait is a `DefId`, and only [`TyKind::Dyn`] ever wraps one in a type.
-/// [`require_extends`](crate::typeck::Typeck::require_extends) holds the bare `DefId` and needs
-/// the declared name for its message.
 pub(crate) fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
     match hir.def(def_id) {
         OwnerNode::Struct(s) => Interner::resolve(s.name.text),
@@ -220,7 +186,6 @@ pub(crate) fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
     }
 }
 
-/// The name a generic parameter was declared with.
 fn generic_name(hir: &Hir, hir_id: HirId) -> &'static str {
     Interner::resolve(hir.generic(hir_id).name.text)
 }

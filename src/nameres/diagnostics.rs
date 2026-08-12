@@ -1,7 +1,7 @@
 //! The diagnostics AST-level name resolution emits. All seven go through `DiagCtx::emit`.
 
-use crate::ast::Ident;
 use crate::ast::interner::Interner;
+use crate::ast::Ident;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 
@@ -32,9 +32,6 @@ pub fn report_conflict(name: Ident) {
     );
 }
 
-/// A generic parameter's bound list repeats the same path -- `T: Show + Show`. Nothing is being
-/// redefined, so this is deliberately distinct from [`report_conflict`]: only the first writing
-/// is kept as an entry (see `Resolver::resolve_bounds`).
 pub fn report_duplicate_bound(name: Ident) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -46,9 +43,6 @@ pub fn report_duplicate_bound(name: Ident) {
     );
 }
 
-/// An `extend` block whose target and trait name the same path -- `extend Foo with Foo`. Nothing
-/// is being redefined, so this is deliberately distinct from [`report_conflict`]: only the `adt`
-/// writing is kept as an entry (see `Resolver::visit_extend`).
 pub fn report_self_extend(name: Ident) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -63,8 +57,6 @@ pub fn report_self_extend(name: Ident) {
     );
 }
 
-/// An import whose path matches more than one namespace at once, so there is no single answer
-/// for what the imported name should mean.
 pub fn report_ambiguous_import(name: Ident) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -81,8 +73,6 @@ pub fn report_ambiguous_import(name: Ident) {
     );
 }
 
-/// `dyn` applied to something that is not a trait. Recorded as `Res::Err` so this fires once
-/// here rather than cascading into typeck.
 pub fn report_dyn_not_trait(span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error("`dyn` requires a trait".to_string(), span)
@@ -93,7 +83,6 @@ pub fn report_dyn_not_trait(span: SrcSpan) {
     );
 }
 
-/// `Self` written outside any definition that introduces one.
 pub fn report_self_unavailable(span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error("`Self` is not available here".to_string(), span)
