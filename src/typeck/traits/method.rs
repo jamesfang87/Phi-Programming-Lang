@@ -318,7 +318,12 @@ impl<'hir> Typeck<'hir> {
     /// Deduplicated by the function each one would call, which is what keeps `T: Show + Show` --
     /// or a bound that also happens to be provable from an impl -- from reading as an ambiguity
     /// between a candidate and itself.
-    pub(crate) fn method_candidates(&mut self, base: Ty, member: Symbol, owner: DefId) -> Vec<Candidate> {
+    pub(crate) fn method_candidates(
+        &mut self,
+        base: Ty,
+        member: Symbol,
+        owner: DefId,
+    ) -> Vec<Candidate> {
         let mut candidates = Vec::new();
 
         // Inherent blocks and impls, both keyed on the head of the self type.
@@ -1534,8 +1539,8 @@ mod tests {
             check(
                 "trait Show { fun show(&self) -> bool; }
                  struct Foo {}
-                 extend Foo with Show { fun show(&self) -> bool {} }
-                 extend Foo { fun show(&self) -> i32 {} }
+                 extend Foo with Show { fun show(&self) -> bool { return true; } }
+                 extend Foo { fun show(&self) -> i32 { return 0; } }
                  fun f(x: Foo) -> i32 { return x.show(); }"
             ),
             ["the method `show` is defined more than once for type `Foo`"]
@@ -1712,8 +1717,8 @@ mod tests {
         assert_eq!(
             check(
                 "struct Foo {}
-                 extend Foo { fun show(&self) {} fun make() -> Foo {} }
-                 fun make() -> Foo {}
+                 extend Foo { fun show(&self) {} fun make() -> Foo { return Foo {}; } }
+                 fun make() -> Foo { return Foo {}; }
                  fun f() { make().show(); }"
             ),
             ["`show` takes `&self`, and this receiver is a temporary"]
@@ -1753,7 +1758,7 @@ mod tests {
         assert_eq!(
             check(
                 "struct Wrap<T> { inner: T }
-                 extend<T> Wrap<T> { fun get(&self) -> T {} }
+                 extend<T> Wrap<T> { fun get(&self) -> T { return self.inner; } }
                  fun f(x: Wrap<i32>) -> bool { return x.get(); }"
             ),
             ["mismatched types: expected `bool`, found `i32`"]
@@ -1829,6 +1834,88 @@ mod tests {
                 "type annotations needed: the type of the value `show` is reached on is still \
                  unknown"
             ]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `any self`, generic methods, and index-through-a-generic-trait
+    // -----------------------------------------------------------------
+
+    /// `any self` accepts every receiver shape: by value, by reference, and by `any`.
+    #[test]
+    fn any_self_accepts_every_receiver_shape() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(any self) {} }
+                 fun f(a: Foo, b: &Foo, c: &mut Foo, d: any Foo) {
+                     a.show();
+                     b.show();
+                     c.show();
+                     d.show();
+                 }"
+            )
+            .is_empty()
+        );
+    }
+
+    /// A method's own generic parameters are instantiated fresh per call, independent of the
+    /// receiver's type.
+    #[test]
+    fn a_methods_own_generic_parameter_is_inferred_from_its_argument() {
+        assert!(
+            check(
+                "struct Box_ {}
+                 extend Box_ { fun identity<T>(&self, x: T) -> T { return x; } }
+                 fun f(b: Box_, n: i32) -> i32 { return b.identity(n); }"
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            check(
+                "struct Box_ {}
+                 extend Box_ { fun identity<T>(&self, x: T) -> T { return x; } }
+                 fun f(b: Box_, n: i32) -> bool { return b.identity(n); }"
+            ),
+            ["mismatched types: expected `bool`, found `i32`"]
+        );
+    }
+
+    /// `Index<K, V>` read through a generic `extend` block: `V` is recovered from the receiver's
+    /// own type arguments, not left as the block's bare parameter.
+    #[test]
+    fn indexing_a_generic_type_reads_v_through_the_receivers_own_arguments() {
+        assert!(
+            check(
+                "module core::ops;
+
+                 public trait Index<K, V> { fun index(&self, key: K) -> &V; }
+
+                 struct Map<V> { value: V }
+
+                 extend<V> Map<V> with Index<i32, V> {
+                     fun index(&self, key: i32) -> &V { return &self.value; }
+                 }
+
+                 fun f(m: Map<bool>) -> &bool { return m[0]; }"
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            check(
+                "module core::ops;
+
+                 public trait Index<K, V> { fun index(&self, key: K) -> &V; }
+
+                 struct Map<V> { value: V }
+
+                 extend<V> Map<V> with Index<i32, V> {
+                     fun index(&self, key: i32) -> &V { return &self.value; }
+                 }
+
+                 fun f(m: Map<bool>) -> &i32 { return m[0]; }"
+            ),
+            ["mismatched types: expected `&i32`, found `&bool`"]
         );
     }
 }

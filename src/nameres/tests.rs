@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ast::interner::Interner;
 use crate::ast::{
     Ast, Expr, ExprKind, Function, Ident, Item, ItemKind, NodeId, ParsedSrcFile, Path, Payload,
-    PayloadField, StmtKind,
+    PayloadField, StmtKind, Symbol,
 };
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::emit_debug;
@@ -58,6 +58,14 @@ fn ast_from_files(sources: &[&str]) -> Ast {
         "unexpected diagnostics for {sources:?}: {diagnostics:?}"
     );
     Ast::new(files)
+}
+
+/// Walks `segments` from `ast`'s root module through `table`'s module namespace, resolving a
+/// canonical path to its module the way tests need to but nothing in `SymbolTable` itself does.
+fn module_by_path(ast: &Ast, table: &SymbolTable, segments: &[Symbol]) -> Option<NodeId> {
+    segments.iter().try_fold(ast.root_id(), |current, &seg| {
+        table.lookup_mod(current, seg)
+    })
 }
 
 /// Builds `src`'s `Ast` and runs [`SymbolTable::collect`] over it, returning the table alongside
@@ -233,9 +241,11 @@ fn a_node_with_three_recorded_paths_retrieves_all_three() {
 fn collect_puts_a_function_in_the_value_namespace() {
     let ast = ast_from("fun f() {}");
     let table = SymbolTable::collect(&ast);
-    assert!(table
-        .lookup_function(ast.root_id(), Interner::intern("f"))
-        .is_some());
+    assert!(
+        table
+            .lookup_function(ast.root_id(), Interner::intern("f"))
+            .is_some()
+    );
 }
 
 #[test]
@@ -273,7 +283,11 @@ fn two_declarations_of_one_name_in_one_namespace_conflict() {
 fn by_path_maps_a_canonical_path_to_its_module() {
     let ast = ast_from_files(&["module math::vector; fun dot() {}"]);
     let table = SymbolTable::collect(&ast);
-    let id = table.module_by_path(&[Interner::intern("math"), Interner::intern("vector")]);
+    let id = module_by_path(
+        &ast,
+        &table,
+        &[Interner::intern("math"), Interner::intern("vector")],
+    );
     assert!(id.is_some());
 }
 
@@ -288,10 +302,12 @@ fn an_import_binds_into_the_importing_modules_own_scope() {
         "module app; import math::dot;",
     ]);
     let table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
-    assert!(table
-        .lookup_function(app, Interner::intern("dot"))
-        .is_some());
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    assert!(
+        table
+            .lookup_function(app, Interner::intern("dot"))
+            .is_some()
+    );
 }
 
 #[test]
@@ -302,12 +318,17 @@ fn an_import_resolves_absolutely_from_the_root_not_relative_to_where_it_is_writt
         "module app::nested; import deep::inner;",
     ]);
     let table = SymbolTable::new(&ast);
-    let nested = table
-        .module_by_path(&[Interner::intern("app"), Interner::intern("nested")])
-        .unwrap();
-    assert!(table
-        .lookup_function(nested, Interner::intern("inner"))
-        .is_some());
+    let nested = module_by_path(
+        &ast,
+        &table,
+        &[Interner::intern("app"), Interner::intern("nested")],
+    )
+    .unwrap();
+    assert!(
+        table
+            .lookup_function(nested, Interner::intern("inner"))
+            .is_some()
+    );
 }
 
 #[test]
@@ -319,10 +340,12 @@ fn an_import_may_name_a_module_the_collect_pass_had_not_reached() {
     ]);
     let (table, diags) = new_with_diags(&ast);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
-    assert!(table
-        .lookup_function(app, Interner::intern("thing"))
-        .is_some());
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    assert!(
+        table
+            .lookup_function(app, Interner::intern("thing"))
+            .is_some()
+    );
 }
 
 #[test]
@@ -332,10 +355,12 @@ fn a_glob_import_copies_every_name_from_the_source_module() {
         "module app; import math::*;",
     ]);
     let table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
-    assert!(table
-        .lookup_function(app, Interner::intern("dot"))
-        .is_some());
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    assert!(
+        table
+            .lookup_function(app, Interner::intern("dot"))
+            .is_some()
+    );
     assert!(table.lookup_type(app, Interner::intern("Vec2")).is_some());
 }
 
@@ -468,7 +493,7 @@ fn self_reads_the_innermost_scope_and_is_none_when_the_stack_is_empty() {
 fn a_sibling_item_resolves_without_qualification() {
     let ast = ast_from_files(&["module app; fun helper() {} fun main() {}"]);
     let table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     assert!(matches!(
         table.lookup_value_path(app, &path(&["helper"])),
         Some(Res::Function(_))
@@ -482,9 +507,12 @@ fn a_name_falls_back_to_an_ancestor_module() {
         "module app::inner; fun main() {}",
     ]);
     let table = SymbolTable::new(&ast);
-    let inner = table
-        .module_by_path(&[Interner::intern("app"), Interner::intern("inner")])
-        .unwrap();
+    let inner = module_by_path(
+        &ast,
+        &table,
+        &[Interner::intern("app"), Interner::intern("inner")],
+    )
+    .unwrap();
     assert!(table.lookup_value_path(inner, &path(&["shared"])).is_some());
 }
 
@@ -495,12 +523,17 @@ fn a_fully_qualified_path_resolves_from_anywhere() {
         "module app::deep; fun main() {}",
     ]);
     let table = SymbolTable::new(&ast);
-    let deep = table
-        .module_by_path(&[Interner::intern("app"), Interner::intern("deep")])
-        .unwrap();
-    assert!(table
-        .lookup_value_path(deep, &path(&["math", "vector", "dot"]))
-        .is_some());
+    let deep = module_by_path(
+        &ast,
+        &table,
+        &[Interner::intern("app"), Interner::intern("deep")],
+    )
+    .unwrap();
+    assert!(
+        table
+            .lookup_value_path(deep, &path(&["math", "vector", "dot"]))
+            .is_some()
+    );
 }
 
 #[test]
@@ -517,7 +550,7 @@ fn a_primitive_resolves_before_anything_else_in_type_position() {
 fn a_generic_shadows_a_module_level_type() {
     let ast = ast_from_files(&["module app; struct T {}"]);
     let mut table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     let g = NodeId::next();
     table.push_generics(HashMap::from([(Interner::intern("T"), Type::Generic(g))]));
     assert_eq!(
@@ -535,7 +568,7 @@ fn a_generic_shadows_a_module_level_type() {
 fn a_local_shadows_a_module_level_function_in_value_position() {
     let ast = ast_from_files(&["module app; fun x() {}"]);
     let mut table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     let local = NodeId::next();
     table.push_scope();
     table.insert_local(ident("x"), Local::Variable(local));
@@ -552,7 +585,7 @@ fn a_multi_segment_path_walks_submodules_then_looks_up_the_last_segment() {
         "module app::inner; public struct S {}",
     ]);
     let table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     assert!(matches!(
         table.lookup_type_path(app, &path(&["inner", "S"])),
         Some(Type::Def(TyDef::Struct(_)))
@@ -563,9 +596,11 @@ fn a_multi_segment_path_walks_submodules_then_looks_up_the_last_segment() {
 fn an_unresolvable_path_is_none() {
     let ast = ast_from("fun main() {}");
     let table = SymbolTable::new(&ast);
-    assert!(table
-        .lookup_value_path(ast.root_id(), &path(&["nope"]))
-        .is_none());
+    assert!(
+        table
+            .lookup_value_path(ast.root_id(), &path(&["nope"]))
+            .is_none()
+    );
 }
 
 #[test]
@@ -623,7 +658,7 @@ fn a_bare_trait_path_in_type_position_resolves_to_a_trait() {
     // `impl Trait` does. This is legal and is not an error.
     let ast = ast_from_files(&["module app; trait Show {}"]);
     let table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     let r = Resolver::new(table, app);
     assert!(matches!(
         r.resolve_type_path(&path(&["Show"])),
@@ -635,7 +670,7 @@ fn a_bare_trait_path_in_type_position_resolves_to_a_trait() {
 fn dyn_on_a_trait_resolves() {
     let ast = ast_from_files(&["module app; trait Show {}"]);
     let table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     assert!(matches!(
         table.lookup_dyn_path(app, &path(&["Show"])),
         Res::Type(Type::Def(TyDef::Trait(_)))
@@ -646,7 +681,7 @@ fn dyn_on_a_trait_resolves() {
 fn dyn_on_a_struct_errors() {
     let ast = ast_from_files(&["module app; struct S {}"]);
     let table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     let (res, diags) = with_diags(|| table.lookup_dyn_path(app, &path(&["S"])));
     assert_eq!(res, Res::Err);
     assert_eq!(diags.len(), 1);
@@ -698,16 +733,20 @@ fn an_unresolvable_type_path_reports_not_found_and_records_err() {
 fn lookup_variant_finds_a_variant_by_name() {
     let ast = ast_from_files(&["module app; enum Shape { circle, square }"]);
     let table = SymbolTable::new(&ast);
-    let app = table.module_by_path(&[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     let Some(Type::Def(TyDef::Enum(e))) = table.lookup_type_path(app, &path(&["Shape"])) else {
         panic!("Shape did not resolve to an enum");
     };
-    assert!(table
-        .lookup_variant(e, Interner::intern("circle"))
-        .is_some());
-    assert!(table
-        .lookup_variant(e, Interner::intern("triangle"))
-        .is_none());
+    assert!(
+        table
+            .lookup_variant(e, Interner::intern("circle"))
+            .is_some()
+    );
+    assert!(
+        table
+            .lookup_variant(e, Interner::intern("triangle"))
+            .is_none()
+    );
 }
 
 // -----------------------------------------------------------------
@@ -940,9 +979,11 @@ fn a_closure_sees_its_enclosing_definitions_generic_and_self() {
 fn self_outside_any_definition_records_err() {
     let ast = ast_from_files(&["module app; fun f() -> Self {}"]);
     let (r, diags) = with_diags(|| resolve(&ast));
-    assert!(diags
-        .iter()
-        .any(|d| d.message.contains("`Self` is not available here")));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("`Self` is not available here"))
+    );
     let f = only_function(&ast);
     let ty = f.ret.as_ref().unwrap().id;
     assert_eq!(r.get(ty, &path(&["Self"])), Some(Res::Err));
@@ -952,9 +993,11 @@ fn self_outside_any_definition_records_err() {
 fn dyn_on_a_non_trait_records_err() {
     let ast = ast_from_files(&["module app; struct S {} fun f(x: dyn S) {}"]);
     let (r, diags) = with_diags(|| resolve(&ast));
-    assert!(diags
-        .iter()
-        .any(|d| d.message.contains("`dyn` requires a trait")));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("`dyn` requires a trait"))
+    );
     let ty = param_ty_id(&ast);
     assert_eq!(r.get(ty, &path(&["S"])), Some(Res::Err));
 }
@@ -1200,5 +1243,351 @@ fn a_match_arms_record_payload_shorthand_binds_its_fields() {
         "expected exactly one `cannot find \\`w\\`` (the use after the match, once the arm's \
          scope has popped) -- zero would mean the arm-scoped use also failed, two would mean the \
          shorthand never bound `w` at all: {diags:?}"
+    );
+}
+
+// -----------------------------------------------------------------
+// Namespaces and module structure
+// -----------------------------------------------------------------
+
+/// A function and a struct are declared into separate namespaces (see
+/// `SymbolTable::collect_module`'s three-way match), so sharing a spelling is not a conflict --
+/// only two declarations *in the same namespace* are.
+#[test]
+fn a_function_and_a_struct_of_the_same_name_do_not_conflict() {
+    let ast = ast_from_files(&["module app; fun Point() {} struct Point {}"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// Likewise a function and a module: `insert_mod` and `insert_function` write to different maps.
+#[test]
+fn a_function_and_a_submodule_of_the_same_name_do_not_conflict() {
+    let ast = ast_from_files(&[
+        "module app; fun helper() {}",
+        "module app::helper; fun f() {}",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// Two modules may each declare a function of the same name: each module owns its own
+/// namespace, so `collect_module`'s per-module `ModuleScope` never even compares the two.
+#[test]
+fn two_unrelated_modules_may_each_declare_a_function_of_the_same_name() {
+    let ast = ast_from_files(&["module a; fun helper() {}", "module b; fun helper() {}"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// `Visibility` is parsed onto every item (see `ast::Visibility`) and `SymbolTable` reads it
+/// back at every lookup that can reach across module boundaries (`lookup_value_path`,
+/// `lookup_type_path`, and import resolution): a private item (the default; there is no
+/// `private` keyword, only the absence of `public`) is visible only from its own declaring
+/// module and that module's descendants, so importing it into an unrelated module is rejected.
+#[test]
+fn a_private_item_is_not_importable_from_an_unrelated_module() {
+    let ast = ast_from_files(&[
+        "module math; fun secret() {}",
+        "module app; import math::secret; fun f() { secret(); }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        !non_lang_item_diags(&diags).is_empty(),
+        "`secret` is declared without `public` in `math`, so importing it into the unrelated \
+         module `app` should be rejected: {diags:?}"
+    );
+}
+
+/// The module chain only walks upward through ancestors ([`SymbolTable::module_chain`]), so a
+/// parent never sees a child module's declarations.
+#[test]
+fn a_parent_module_cannot_see_a_childs_declaration() {
+    let ast = ast_from_files(&[
+        "module app; fun f() { helper(); }",
+        "module app::inner; fun helper() {}",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags)
+            .iter()
+            .any(|d| d.message.contains("cannot find `helper`")),
+        "expected `helper` to be unresolvable from the parent: {diags:?}"
+    );
+}
+
+/// Two sibling modules -- neither an ancestor of the other -- do not see each other's
+/// declarations without an explicit `import`.
+#[test]
+fn sibling_modules_do_not_see_each_other() {
+    let ast = ast_from_files(&[
+        "module a; fun helper() {}",
+        "module b; fun f() { helper(); }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags)
+            .iter()
+            .any(|d| d.message.contains("cannot find `helper`")),
+        "expected `helper` to be unresolvable from an unrelated module: {diags:?}"
+    );
+}
+
+/// The module-chain fallback keeps walking past a direct parent to every ancestor, not just one
+/// level up.
+#[test]
+fn a_name_falls_back_through_three_levels_of_ancestry() {
+    let ast = ast_from_files(&[
+        "module app; public fun shared() {}",
+        "module app::mid; fun unused() {}",
+        "module app::mid::deep; fun f() { shared(); }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// A path segment that names a function rather than a module is not found by `walk_modules`
+/// (which only ever consults the module namespace), so the whole path fails.
+#[test]
+fn a_function_used_as_a_path_qualifier_does_not_resolve() {
+    let ast = ast_from_files(&["module app; fun helper() {} fun f() { helper::thing(); }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags)
+            .iter()
+            .any(|d| d.message.contains("cannot find")),
+        "expected the qualified path to fail: {diags:?}"
+    );
+}
+
+/// A multi-segment path whose prefix resolves but whose final segment does not is still exactly
+/// one "not found" -- not a separate diagnostic for each segment.
+#[test]
+fn an_existing_modules_missing_member_reports_once() {
+    let ast = ast_from_files(&[
+        "module math; public fun dot() {}",
+        "module app; fun f() { math::cross(); }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    let diags = non_lang_item_diags(&diags);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert!(diags[0].message.contains("cannot find `cross`"));
+}
+
+// -----------------------------------------------------------------
+// Imports: aliasing and glob collisions
+// -----------------------------------------------------------------
+
+/// An aliased import binds under the alias; the original name is not also bound.
+#[test]
+fn an_aliased_import_binds_under_the_alias_only() {
+    let ast = ast_from_files(&[
+        "module math; public fun dot() {}",
+        "module app; import math::dot as scalar_product;",
+    ]);
+    let table = SymbolTable::new(&ast);
+    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    assert!(
+        table
+            .lookup_function(app, Interner::intern("scalar_product"))
+            .is_some()
+    );
+    assert!(
+        table
+            .lookup_function(app, Interner::intern("dot"))
+            .is_none()
+    );
+}
+
+/// Two glob imports that each bring in a name of the same spelling conflict exactly as two
+/// ordinary declarations would -- `import_glob` calls the same `insert_*` that reports it.
+#[test]
+fn two_glob_imports_colliding_on_a_name_conflict() {
+    let (_, diags) = new_with_diags_from(&[
+        "module a; public fun thing() {}",
+        "module b; public fun thing() {}",
+        "module app; import a::*; import b::*;",
+    ]);
+    assert_eq!(diags.len(), 1);
+    assert!(diags[0].message.contains("is defined multiple times"));
+}
+
+/// An imported struct is usable in an ordinary type position, the same as a locally declared one.
+#[test]
+fn an_imported_struct_is_usable_in_a_type_position() {
+    let ast = ast_from_files(&[
+        "module shapes; public struct Circle { r: i32 }",
+        "module app; import shapes::Circle; fun f(c: Circle) {}",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// An imported trait is usable as a bound.
+#[test]
+fn an_imported_trait_is_usable_as_a_bound() {
+    let ast = ast_from_files(&[
+        "module traits; public trait Show { fun show(&self); }",
+        "module app; import traits::Show; fun f<T: Show>(x: T) {}",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+// -----------------------------------------------------------------
+// Scoping edge cases
+// -----------------------------------------------------------------
+
+/// `visit_stmt`'s `With` arm visits each lend's pattern (binding it into whatever scope is
+/// already open) and only then visits `block`, which pushes a scope of its own -- there is no
+/// scope bracketing the `with` statement itself. So a lend's binding outlives the block written
+/// after it, for the rest of the *enclosing* block. Documents this today; a design that meant a
+/// lend to be scoped to its own `with` would need its own push/pop around the whole statement.
+#[test]
+fn a_with_lends_binding_outlives_its_own_written_block() {
+    let ast = ast_from_files(&["module app; fun f() { with x = 1 { } let y = x; }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "expected `x` to still be in scope after the `with`'s block: {diags:?}"
+    );
+}
+
+/// A `for` loop's pattern binding is scoped to the loop: `visit_stmt` pushes a scope around the
+/// whole `For` statement before `walk_stmt` binds the pattern, so (unlike `with`, above) nothing
+/// leaks past the closing brace.
+#[test]
+fn a_for_loops_pattern_binding_does_not_outlive_the_loop() {
+    let ast = ast_from_files(&["module app; fun f(xs: i32) { for x in xs { } let y = x; }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags)
+            .iter()
+            .any(|d| d.message.contains("cannot find `x`")),
+        "expected `x` to have dropped out of scope: {diags:?}"
+    );
+}
+
+/// Likewise `while let`'s pattern binding.
+#[test]
+fn a_while_lets_pattern_binding_does_not_outlive_the_loop() {
+    let ast =
+        ast_from_files(&["module app; fun f(opt: bool) { while let x = opt { } let y = x; }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags)
+            .iter()
+            .any(|d| d.message.contains("cannot find `x`")),
+        "expected `x` to have dropped out of scope: {diags:?}"
+    );
+}
+
+/// A closure's own parameter shadows an outer local of the same name for the closure's body, and
+/// the outer one is unaffected once the closure literal ends.
+#[test]
+fn a_closure_parameter_shadows_an_outer_local_of_the_same_name() {
+    let ast =
+        ast_from_files(&["module app; fun f() { let x = 1; let g = |x: i32| { x }; let y = x; }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// Two generic parameters of the same name conflict the same way two module-level declarations
+/// of one name do: `Resolver::push_generics` inserts them one at a time and calls
+/// `report_conflict` on a repeat, rather than building the scope with a plain `HashMap::collect`
+/// that would silently keep only the last.
+#[test]
+fn two_generic_parameters_of_the_same_name_conflict() {
+    let ast = ast_from_files(&["module app; fun f<T, T>(x: T) {}"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags)
+            .iter()
+            .any(|d| d.message.contains("is defined multiple times")),
+        "expected a duplicate generic parameter name to be reported: {diags:?}"
+    );
+}
+
+// -----------------------------------------------------------------
+// Forward references and self-reference
+// -----------------------------------------------------------------
+
+/// `SymbolTable::collect` walks every module's declarations before `resolve_module` looks inside
+/// any of their bodies, so a function may call itself.
+#[test]
+fn a_function_may_call_itself_recursively() {
+    let ast = ast_from_files(&["module app; fun fact(n: i32) -> i32 { return fact(n); }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// Two functions may call each other regardless of which is declared first in the file, for the
+/// same reason: both are in the module's `ModuleScope` before either body is visited.
+#[test]
+fn two_functions_may_call_each_other_regardless_of_declaration_order() {
+    let ast = ast_from_files(&["module app; fun a() { b(); } fun b() { a(); }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// A struct may reference itself through a field, so long as the reference is indirect (a
+/// pointer-sized reference here, rather than the struct embedding itself by value).
+#[test]
+fn a_struct_may_reference_itself_through_a_field_type() {
+    let ast = ast_from_files(&["module app; struct Node { next: &Node }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// Two structs may reference each other regardless of declaration order, for the same
+/// forward-declaration reason functions can.
+#[test]
+fn two_structs_may_reference_each_other_regardless_of_declaration_order() {
+    let ast = ast_from_files(&["module app; struct A { b: &B } struct B { a: &A }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// An enum variant may reference its own enum through a reference, the same as a struct field.
+#[test]
+fn an_enum_variant_may_reference_its_own_enum_through_a_reference() {
+    let ast = ast_from_files(&["module app; enum List { cons: &List, nil }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
     );
 }

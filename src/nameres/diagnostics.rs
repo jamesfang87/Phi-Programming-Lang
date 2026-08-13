@@ -1,7 +1,5 @@
-//! The diagnostics AST-level name resolution emits. All seven go through `DiagCtx::emit`.
-
-use crate::ast::interner::Interner;
 use crate::ast::Ident;
+use crate::ast::interner::Interner;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 
@@ -70,6 +68,17 @@ pub fn report_ambiguous_import(name: Ident) {
         .with_help(
             "this path matches more than one declaration; use a more specific path to disambiguate",
         ),
+    );
+}
+
+pub fn report_private_item(name: Ident) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("`{}` is private", Interner::resolve(name.text)),
+            name.span,
+        )
+        .with_label("not visible from here")
+        .with_help("mark the declaration `public` to use it outside its own module"),
     );
 }
 

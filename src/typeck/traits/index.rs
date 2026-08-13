@@ -30,9 +30,11 @@ use crate::typeck::ty::Ty;
 /// rest of the compiler addresses things by.
 ///
 /// An `extend` block already has a `DefId`, so this is not the only way to name one. It exists
-/// because the solver's answers travel with a handle to the impl they came from
-/// ([`ImplSource::FromImpl`](crate::typeck::traits::solve::ImplSource::FromImpl)), and resolving
-/// a `DefId` back to its header would mean a second map for a lookup that is an array index.
+/// because `select` (in [`solve`](crate::typeck::traits::solve)) picks one impl out of a bucket
+/// and then has to read its header back -- to substitute into its own obligations, and to reach
+/// the `extend` block's `def` for a [`ParamEnv`](crate::typeck::traits::solve::ParamEnv) -- and
+/// resolving a `DefId` back to a header would mean a second map for a lookup that is already an
+/// array index.
 ///
 /// [`LocalId`]: crate::hir::DefId
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use crate::ast::interner::Interner;
 use crate::ast::visit::{self, Visitor};
@@ -9,7 +10,8 @@ use crate::ast::{
 };
 use crate::driver::source::SrcSpan;
 use crate::nameres::diagnostics::{
-    report_duplicate_bound, report_not_found, report_self_extend, report_self_unavailable,
+    report_conflict, report_duplicate_bound, report_not_found, report_self_extend,
+    report_self_unavailable,
 };
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::nameres::results::NameResolutions;
@@ -83,10 +85,17 @@ impl<'ast> Resolver<'ast> {
     }
 
     fn push_generics(&mut self, generics: &'ast [Generic]) {
-        let params: HashMap<_, _> = generics
-            .iter()
-            .map(|g| (g.name.text, Type::Generic(g.id)))
-            .collect();
+        // Built one at a time, rather than a bare `collect`, so that a repeated name is caught
+        // instead of silently letting the later parameter win.
+        let mut params = HashMap::new();
+        for g in generics {
+            match params.entry(g.name.text) {
+                Entry::Occupied(_) => report_conflict(g.name),
+                Entry::Vacant(e) => {
+                    e.insert(Type::Generic(g.id));
+                }
+            }
+        }
         self.table.push_generics(params);
         for g in generics {
             self.resolve_bounds(g);

@@ -120,9 +120,21 @@ impl ParamEnv {
 }
 
 /// The answer to a query.
-#[derive(Clone, PartialEq, Eq, Debug)]
+///
+/// `Holds` carries no payload. An earlier design had it carry an `ImplSource` recording *why*
+/// the goal held -- which impl matched and under what substitution, or that a bound or `dyn`
+/// answered it instead -- meant for method resolution to instantiate the method it found with.
+/// Method resolution never ended up asking this query at all: a call site has its own candidates
+/// to collect, because a bound and a `dyn` receiver offer methods this query has no impl to point
+/// at (see [`method`](crate::typeck::traits::method)), so it re-derives a matching impl's
+/// substitution itself rather than reading one out of a `Solution`. With nothing left to read it,
+/// carrying it was a second bookkeeping burden for no reader -- every real caller already
+/// collapsed `Holds(_)` to `()`. What a match still needs internally (which impl, and under what
+/// substitution) is computed and used locally inside [`Typeck::implements`], and never has to
+/// leave it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Solution {
-    Holds(ImplSource),
+    Holds,
     DoesNotHold,
     /// The goal still contains inference variables, so it can be neither proved nor disproved
     /// yet. Ask again once more of the body has been checked.
@@ -131,27 +143,6 @@ pub enum Solution {
     /// exists, and this exists so that one earlier mistake does not cascade into a second --
     /// exactly the role `TyKind::Error` plays in unification.
     Error,
-}
-
-/// *Why* a goal holds. Carried back rather than discarded because method resolution has to
-/// instantiate the method it found, which takes the substitution that made the impl match.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum ImplSource {
-    /// An `extend` block matched, under `subst`: what each of the block's own parameters had to
-    /// be for its header to become the goal.
-    FromImpl {
-        impl_id: ImplId,
-        subst: HashMap<HirId, Ty>,
-    },
-    /// A bound declared on a type parameter in scope.
-    FromEnv { param: HirId },
-    /// The implicit `Self` of a trait, which implements that trait by definition.
-    FromSelf,
-    /// A `dyn Trait` value, which implements exactly the trait it names. Not in the original
-    /// design's three variants, which had nowhere to put the built-in `dyn` rule they also
-    /// specified; folding it into [`ImplSource::FromSelf`] would have told method resolution
-    /// something untrue about where the methods live.
-    FromDyn,
 }
 
 /// Matches the open type `impl_ty` against the closed type `goal_ty`, recording in `subst` what
@@ -339,7 +330,7 @@ impl<'hir> Typeck<'hir> {
         because: &str,
     ) -> bool {
         match self.extends(self_ty, name, args, owner, span) {
-            Solution::Holds(_) => true,
+            Solution::Holds => true,
             Solution::DoesNotHold => {
                 let trait_name = self
                     .trait_def(name)
@@ -420,22 +411,15 @@ impl<'hir> Typeck<'hir> {
     fn solve(&mut self, goal: &Obligation, env: &ParamEnv) -> Solution {
         // Step 2. Bounds are ground in their parameter's own terms -- `TyKind::Generic` or
         // `TyKind::SelfTy` -- so this is equality, not matching.
-        if let Some(bound) = env.bounds.iter().find(|bound| bound.same_goal(goal)) {
-            return Solution::Holds(match *self.tcx.kind(bound.self_ty) {
-                TyKind::Generic(param) => ImplSource::FromEnv { param },
-                TyKind::SelfTy(_) => ImplSource::FromSelf,
-                ref other => unreachable!(
-                    "a ParamEnv bound is always about a type parameter or `Self`, but one is \
-                     about {other:?}"
-                ),
-            });
+        if env.bounds.iter().any(|bound| bound.same_goal(goal)) {
+            return Solution::Holds;
         }
 
         // Step 3.
         if let TyKind::Dyn { trait_, args } = self.tcx.kind(goal.self_ty) {
             let holds = *trait_ == goal.trait_ref.def && *args == goal.trait_ref.args;
             return if holds {
-                Solution::Holds(ImplSource::FromDyn)
+                Solution::Holds
             } else {
                 Solution::DoesNotHold
             };
@@ -475,14 +459,14 @@ impl<'hir> Typeck<'hir> {
             };
 
             match self.implements(&sub_goal, env) {
-                Solution::Holds(_) => {}
+                Solution::Holds => {}
                 Solution::DoesNotHold => return Solution::DoesNotHold,
                 Solution::Ambiguous => return Solution::Ambiguous,
                 Solution::Error => return Solution::Error,
             }
         }
 
-        Solution::Holds(ImplSource::FromImpl { impl_id, subst })
+        Solution::Holds
     }
 
     /// The one impl of `goal`'s trait whose header matches `goal`, if there is one.
@@ -1014,10 +998,10 @@ mod tests {
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 
         let goal = goal(&mut checker, foo_ty, show);
-        assert!(matches!(
+        assert_eq!(
             checker.implements(&goal, &ParamEnv::empty()),
-            Solution::Holds(ImplSource::FromImpl { .. })
-        ));
+            Solution::Holds
+        );
     }
 
     #[test]
@@ -1100,7 +1084,7 @@ mod tests {
         let its_own = goal(&mut checker, dyn_show, show);
         assert_eq!(
             checker.implements(&its_own, &ParamEnv::empty()),
-            Solution::Holds(ImplSource::FromDyn)
+            Solution::Holds
         );
 
         let another = goal(&mut checker, dyn_show, other);
@@ -1130,10 +1114,7 @@ mod tests {
         assert_eq!(env.bounds.len(), 1, "`T: Show` is the only bound in scope");
 
         let goal = goal(&mut checker, t, show);
-        assert_eq!(
-            checker.implements(&goal, &env),
-            Solution::Holds(ImplSource::FromEnv { param })
-        );
+        assert_eq!(checker.implements(&goal, &env), Solution::Holds);
     }
 
     #[test]
@@ -1164,10 +1145,7 @@ mod tests {
 
         let env = checker.param_env(show);
         let goal = goal(&mut checker, self_ty, show);
-        assert_eq!(
-            checker.implements(&goal, &env),
-            Solution::Holds(ImplSource::FromSelf)
-        );
+        assert_eq!(checker.implements(&goal, &env), Solution::Holds);
     }
 
     /// A method sees the bounds of the `extend` block it is declared in, not just its own.
@@ -1216,10 +1194,10 @@ mod tests {
         let wrap_bare = checker.tcx.mk_adt(wrap, vec![bare_ty]);
 
         let holds = goal(&mut checker, wrap_foo, show);
-        assert!(matches!(
+        assert_eq!(
             checker.implements(&holds, &ParamEnv::empty()),
-            Solution::Holds(ImplSource::FromImpl { .. })
-        ));
+            Solution::Holds
+        );
 
         // `Bare: Show` fails, so `Wrap<Bare>: Show` fails with it.
         let fails = goal(&mut checker, wrap_bare, show);
@@ -1318,10 +1296,10 @@ mod tests {
         }
 
         let goal = goal(&mut checker, foo_ty, show);
-        assert!(matches!(
+        assert_eq!(
             checker.implements(&goal, &ParamEnv::empty()),
-            Solution::Holds(_)
-        ));
+            Solution::Holds
+        );
         assert!(messages().is_empty(), "{:?}", messages());
     }
 
@@ -1352,7 +1330,7 @@ mod tests {
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 
-        assert!(matches!(
+        assert_eq!(
             checker.extends(
                 foo_ty,
                 TraitName::Def(show),
@@ -1360,8 +1338,8 @@ mod tests {
                 hir.root_id(),
                 SrcSpan::new(0, 0),
             ),
-            Solution::Holds(_)
-        ));
+            Solution::Holds
+        );
     }
 
     #[test]
