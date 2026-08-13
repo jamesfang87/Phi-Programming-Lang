@@ -98,13 +98,6 @@ flowchart TD
     Run -.->|"always exits 1: no backend"| ExitCode
 ```
 
-`build` and `run` are thin wrappers around `check`, not separate pipelines: `build` calls `check`
-and, only if it reported no errors, prints a note about code generation; `run` calls `build` and
-then unconditionally reports that there's no backend to run. This is why `check` is the only
-place in `pipeline.rs` that lexes, parses, lowers, resolves, and type-checks — the other two
-commands exist to describe what a real toolchain's `build`/`run` would additionally do once
-codegen lands.
-
 The public API in `driver::project` and `driver::pipeline` mirrors the CLI. In `project.rs`, there is `pub fn init()` and `pub fn new(project_name: &str)`, which mirror the two commands in the CLI with the same name. In `pipeline.rs`, there is `pub fn check(config: &Config, options: &BuildOptions)`, `pub fn build(config: &Config, options: &BuildOptions)`, and `pub fn run(config: &Config)`. `Config` and `BuildOptions` are kept as separate arguments rather than merged into one struct: `Config` carries the manifest -- what project this is -- while `BuildOptions` carries the flags given to the specific `build` or `check` invocation, and those two things vary independently.
 
 `build` and `check` accept the same flags and differ only in that `build` additionally prints a note that code generation is not implemented yet and that `build` currently only checks; `run` builds first, then reports that there is no backend to run and exits with status 1. `--mir` and `--llvm` are both accepted by `build` and `check`, but since neither stage exists yet, passing either just prints a note that the stage is not implemented and has no other effect. `--emit-debug` dumps every stage that is actually implemented, which includes the `NameResolutions` and `TypeResolutions` dumps even though those have no flag of their own to request them individually; `--no-emit-core` never affects compilation itself, only whether the core library's definitions show up in those dumps.
@@ -195,7 +188,7 @@ The structure of the parser module and its submodules is as follows:
 Each submodule produces a specific sub-grammar for group of language features. There is a sub-grammar for blocks/statements, for expressions, for patterns, etc. which can be used. However, this is slightly misleading as to what goes on under the hood. Since sub-grammars recurse into each other, the  library requires that we define "monolithic" grammars which is responsible for parsing all recursing sub-grammars. For example, types and expressions recurse into each other, requiring a single grammar for all expressions and types. We thus separate these grammars for a cleaner public-facing interface.
 
 ## Abstract Syntax Tree (AST)
-The Abstract Syntax Tree is a tree representing the written program. The goal of the AST is convert the user's exact syntax into a tree form for semantic analysis. Nodes in the AST are heap-allocated, unlike the HIR later on. However, despite not being arena-allocated, nodes in the AST are still allocated a `NodeId` for identifcation during name resolution.
+The Abstract Syntax Tree is a tree representing the written program. The goal of the AST is convert the user's exact syntax into a tree form for semantic analysis. Nodes in the AST are heap-allocated, unlike the HIR later on. However, despite not being arena-allocated, nodes in the AST are still allocated a `NodeId` for identification during name resolution. To facilitate lookup using `NodeId`, there are plans to arena-allocate the AST in a similar fashion to the HIR. We note that this is current a low-priority refactor.
 
 ### Items
 An `Item` represents any top-level declaration or statement. The following describes exactly what an `Item` can be.
@@ -220,7 +213,7 @@ pub enum ItemKind {
 ```
 An important thing to note is that `ModuleDecl` only represents the module declaration at the top of a file, such as `module math::vector`. That is, it just stores information not what module this file is implementing, **not** the contents of that module. This is due to Phi semantics allowing modules to implement any separate module. When the AST is created, code is organized into `Module`s, which actually hold information about the `Items` and imports in a module. Each module is assigned an `ModId` (which is just a unique integer) to help with this process.
 
-`Parser::parse` (and `parse_all`, its whole-build counterpart) each produce one `ParsedSrcFile` per file, which describes a file's own `module` header, its imports, and its items. `Ast::new` then turns a `Vec<ParsedSrcFile>` into the module tree, via a private `AstBuilder`:
+`Parser::parse` (and `parse_all`) each produce one `ParsedSrcFile` per file, which describes a file's own `module` header, its imports, and its items. `Ast::new` then turns a `Vec<ParsedSrcFile>` into the module tree, via a private `AstBuilder`:
 
 ```mermaid
 flowchart LR
@@ -281,7 +274,70 @@ pub enum TyKind {
 ```
 
 ## Name Resolution
-Name Resolution operates on the AST to produce a side table mapping `Path`s in the AST to references to Nodes in the AST. Since paths cannot uniquely identify variables (such as in the case of variable shadowing), we identify using each node's `NodeId` and append a list of two tuples where the first element is a Path owned by the node and the second element is what that Path names.
+Name Resolution operates on the AST to produce a side table mapping `Path`s in the AST to references to Nodes in the AST. Since paths cannot uniquely identify variables (such as in the case of variable shadowing), we identify using each node's `NodeId` and append a list of two-tuples where the first element is a Path owned by the node and the second element is what that Path names.
+
+```rust
+pub struct NameResolutions {
+    paths: HashMap<NodeId, SmallVec<[(Path, Res); 2]>>,
+    lang_items: AstLangItems,
+}
+```
+
+Here, `Res` is an enum which represents the various categories of nodes which a `Path` can refer to:
+```rust
+pub enum Res {
+    Type(Type),
+    Local(Local),
+    Function(NodeId),
+    Module(NodeId),
+    Err,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type {
+    Prim(PrimTy),
+    Generic(NodeId),
+    Def(TyDef),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TyDef {
+    Struct(NodeId),
+    Enum(NodeId),
+    Trait(NodeId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Local {
+    Param(NodeId),
+    SelfParam(NodeId),
+    Variable(NodeId),
+}
+```
+As you can see above, a `Path` can refer to a type, which can be a primitive type, a generic like `T` or a definition, such as a struct, enum, or trait. It can also refer to functions and locals, which can be parameters, local variables, and so on. The separation of all of these inside `Res` allows future passes to assert that a Path which can only reference one specific category of language constructs does not erroneously reference another category. For example, we can assert that the `Res` for a function's return type indeed references a type, rather than somehow referring to a module or other function. 
+
+The `SymbolTable` holds all names which are currently in scope and allows for the lookup and insertion of names. To facilitate more ergonomic naming, it holds multiple parallel scopes of names depending upon the type of language construct. For example, different scopes exist for local variables, functions, and types, allowing the programming to use the same name for a local variable and a function.
+
+```rust
+pub struct SymbolTable<'ast> {
+    local_scopes: Vec<HashMap<Symbol, Local>>,
+    generic_scopes: Vec<HashMap<Symbol, Type>>,
+    self_scopes: Vec<Option<TyDef>>,
+
+    modules: HashMap<NodeId, ModuleScope>,
+    items: HashMap<NodeId, &'ast Item>,
+
+    prelude: Option<NodeId>,
+    ast: &'ast Ast,
+}
+
+struct ModuleScope {
+    functions: HashMap<Symbol, NodeId>,
+    types: HashMap<Symbol, TyDef>,
+    mods: HashMap<Symbol, NodeId>,
+}
+```
+
 
 ## High Intermediate Representation (HIR)
 The High Intermediate Representation (HIR) is an Intermediate Representation used for type inference. It is built using the AST from the `Parser` and results from `NameResolution`. The HIR has a few differences from the AST:
