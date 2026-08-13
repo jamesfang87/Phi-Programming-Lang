@@ -31,14 +31,20 @@
 //!
 //! ## On the `dead_code` allowance
 //!
-//! Every piece of this design is now written and reached from a body, with one exception:
-//! [`ImplSource`](solve::ImplSource), the *answer* [`Typeck::implements`](crate::typeck::Typeck::implements)
-//! hands back. It was meant for method resolution to instantiate the method it found, and
-//! [`method`] does not need it -- a call site collects its own candidates, because a bound and a
-//! `dyn` offer methods the query has no impl to point at. What is left of the allowance covers
-//! that, plus the handful of `len`/`is_empty`/`empty` accessors the tests beside each module use
-//! and nothing else does yet. One allowance on the module reads better than four scattered over
-//! the pieces, the way [`hir::items`](crate::hir) already does it.
+//! Every piece of this design is now written and reached from a body, save for a handful of
+//! `len`/`is_empty`/`empty` accessors and the [`TraitName::Def`](solve::TraitName::Def) variant
+//! that the tests beside each module use and nothing else does yet. One allowance on the module
+//! reads better than several scattered over the pieces, the way [`hir::items`](crate::hir)
+//! already does it.
+//!
+//! [`solve::Solution::Holds`] once carried an answer of its own -- an `ImplSource` recording
+//! *why* a goal held, meant for method resolution to instantiate the method it found with. It
+//! never ended up reading one: a call site collects its own candidates, because a bound and a
+//! `dyn` offer methods the query has no impl to point at, and it substitutes through the
+//! candidate it picked directly rather than through anything the solver hands back (see
+//! [`method`]). Nothing else read it either -- every real caller already collapsed `Holds(_)` to
+//! `()` -- so it carried real weight (an [`ImplId`](index::ImplId) and a substitution, copied out
+//! of the index on every successful query) for no reader, and is gone.
 
 #![allow(dead_code)]
 

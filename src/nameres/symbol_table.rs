@@ -1,10 +1,11 @@
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use crate::ast::interner::Interner;
-use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol};
+use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol, Visibility};
 use crate::nameres::diagnostics::{
     report_ambiguous_import, report_conflict, report_dyn_not_trait, report_not_found,
+    report_private_item,
 };
 use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
@@ -18,8 +19,6 @@ pub struct SymbolTable<'ast> {
 
     modules: HashMap<NodeId, ModuleScope>,
     items: HashMap<NodeId, &'ast Item>,
-
-    by_path: HashMap<Box<[Symbol]>, NodeId>,
 
     prelude: Option<NodeId>,
     ast: &'ast Ast,
@@ -124,7 +123,6 @@ impl<'ast> SymbolTable<'ast> {
             self_scopes: Vec::new(),
             modules: HashMap::new(),
             items: HashMap::new(),
-            by_path: HashMap::new(),
             prelude: None,
             ast,
         };
@@ -134,9 +132,6 @@ impl<'ast> SymbolTable<'ast> {
 
     fn collect_module(&mut self, module_id: NodeId) {
         let module = self.ast.module(module_id);
-
-        let path: Box<[Symbol]> = module.path.segments.iter().map(|seg| seg.text).collect();
-        self.by_path.insert(path, module_id);
 
         let mut scope = ModuleScope::new();
         for item in &module.items {
@@ -202,10 +197,6 @@ impl<'ast> SymbolTable<'ast> {
             return;
         }
 
-        let type_res = self.resolve_import_type_path(root, &import.path);
-        let val_res = self.resolve_import_value_path(root, &import.path);
-        let mod_res = self.resolve_import_mod_path(root, &import.path);
-
         let name = import.alias.unwrap_or(
             *import
                 .path
@@ -213,6 +204,38 @@ impl<'ast> SymbolTable<'ast> {
                 .last()
                 .expect("a path always has at least one segment"),
         );
+
+        // Visibility is checked against `importing_module`, not `root` -- imports always search
+        // from the root ([`Self::resolve_import`]'s own comment), but that is only where the
+        // path lookup starts, not who is allowed to see what it finds. A hit that isn't visible
+        // is reported here and dropped, same as if the path had never found it.
+        let mut private_hit = false;
+        let type_res =
+            self.resolve_import_type_path(root, &import.path)
+                .and_then(|(module, def)| {
+                    if self.is_visible(importing_module, module, self.visibility(def.node_id())) {
+                        Some(def)
+                    } else {
+                        private_hit = true;
+                        None
+                    }
+                });
+        let val_res =
+            self.resolve_import_value_path(root, &import.path)
+                .and_then(|(module, id)| {
+                    if self.is_visible(importing_module, module, self.visibility(id)) {
+                        Some(id)
+                    } else {
+                        private_hit = true;
+                        None
+                    }
+                });
+        let mod_res = self.resolve_import_mod_path(root, &import.path);
+
+        if type_res.is_none() && val_res.is_none() && mod_res.is_none() && private_hit {
+            report_private_item(name);
+            return;
+        }
 
         match (type_res, val_res, mod_res) {
             (Some(def), None, None) => self
@@ -279,16 +302,21 @@ impl<'ast> SymbolTable<'ast> {
         }
     }
 
-    fn resolve_import_value_path(&self, base: NodeId, path: &Path) -> Option<NodeId> {
+    /// Resolves an import's value-namespace target, alongside the module its scope was found
+    /// in -- `resolve_import` needs that module to decide whether the importing module is
+    /// allowed to see it at all.
+    fn resolve_import_value_path(&self, base: NodeId, path: &Path) -> Option<(NodeId, NodeId)> {
         let (name, modules) = path.segments.split_last()?;
         let module = self.walk_modules(base, modules)?;
         self.lookup_function(module, name.text)
+            .map(|id| (module, id))
     }
 
-    fn resolve_import_type_path(&self, base: NodeId, path: &Path) -> Option<TyDef> {
+    /// [`Self::resolve_import_value_path`], for the type namespace.
+    fn resolve_import_type_path(&self, base: NodeId, path: &Path) -> Option<(NodeId, TyDef)> {
         let (name, modules) = path.segments.split_last()?;
         let module = self.walk_modules(base, modules)?;
-        self.lookup_type(module, name.text)
+        self.lookup_type(module, name.text).map(|def| (module, def))
     }
 
     fn resolve_import_mod_path(&self, base: NodeId, path: &Path) -> Option<NodeId> {
@@ -332,7 +360,9 @@ impl<'ast> SymbolTable<'ast> {
 
         self.in_module_chain(from, |base| {
             let module = self.walk_modules(base, prefix)?;
-            self.lookup_function(module, last.text).map(Res::Function)
+            let id = self.lookup_function(module, last.text)?;
+            self.is_visible(from, module, self.visibility(id))
+                .then_some(Res::Function(id))
         })
     }
 
@@ -353,7 +383,9 @@ impl<'ast> SymbolTable<'ast> {
 
         self.in_module_chain(from, |base| {
             let module = self.walk_modules(base, prefix)?;
-            self.lookup_type(module, last.text).map(Type::Def)
+            let def = self.lookup_type(module, last.text)?;
+            self.is_visible(from, module, self.visibility(def.node_id()))
+                .then_some(Type::Def(def))
         })
     }
 
@@ -416,17 +448,37 @@ impl<'ast> SymbolTable<'ast> {
         self.items.get(&id).copied()
     }
 
+    /// The `public`/`private` declared on `id`'s own item -- the flag every item-carrying
+    /// `ItemKind` already stores, not something re-derived from where it lives in the tree.
+    fn visibility(&self, id: NodeId) -> Visibility {
+        match self.item(id).map(|item| &item.kind) {
+            Some(ItemKind::Function(f)) => f.visibility,
+            Some(ItemKind::Struct(s)) => s.visibility,
+            Some(ItemKind::Enum(e)) => e.visibility,
+            Some(ItemKind::Trait(t)) => t.visibility,
+            // `extend` blocks are unnamed and modules carry no visibility of their own; neither
+            // is ever looked up through this path.
+            _ => Visibility::Public,
+        }
+    }
+
+    /// Whether an item declared `visibility` in `owner` -- the module whose scope it was just
+    /// found in -- is reachable from `from`. `public` is visible everywhere a path can name it;
+    /// `private` (the default) only reaches the declaring module and its own descendants, so
+    /// `owner` must appear in `from`'s chain of ancestors (or be `from` itself).
+    fn is_visible(&self, from: NodeId, owner: NodeId, visibility: Visibility) -> bool {
+        match visibility {
+            Visibility::Public => true,
+            Visibility::Private => self.module_chain(from).contains(&owner),
+        }
+    }
+
     fn walk_modules(&self, base: NodeId, segments: &[Ident]) -> Option<NodeId> {
         let mut current = base;
         for segment in segments {
             current = self.lookup_mod(current, segment.text)?;
         }
         Some(current)
-    }
-
-    #[allow(dead_code)]
-    pub fn module_by_path(&self, segments: &[Symbol]) -> Option<NodeId> {
-        self.by_path.get(segments).copied()
     }
 
     //-------------------------------------------------------------------------

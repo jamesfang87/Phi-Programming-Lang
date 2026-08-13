@@ -14,7 +14,7 @@ use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::bounds::ObligationCx;
 use crate::typeck::traits::index::ImplIndex;
 use crate::typeck::traits::solve::{Obligation, ParamEnv, TraitName};
-use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::{Unifier, UnifyError};
 
@@ -467,16 +467,17 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Unary { op, operand } => {
                 let operand_ty = self.ty_of(*operand);
                 let resolved = self.unifier.root(operand_ty);
-                let is_primitive = matches!(self.tcx.kind(resolved), TyKind::Primitive(_));
 
                 let item = match op {
                     UnaryOp::Neg => LangItem::Neg,
                     UnaryOp::Not => LangItem::Not,
                 };
 
-                if is_primitive {
-                    // `-`/`!` on `i32`/`bool` and friends are built in -- no `extend` block
-                    // backs a primitive, so there is nothing for the solver to find.
+                if self.is_builtin_operand(resolved) {
+                    // `-`/`!` on `i32`/`bool` and friends -- or on a literal that is still only
+                    // known to be numeric, which can only ever resolve to one of them -- are
+                    // built in. No `extend` block backs a primitive, so there is nothing for
+                    // the solver to find.
                     resolved
                 } else if self.operator_holds(item, resolved, id.owner, expr.span) {
                     // Every `core::ops` trait an operator dispatches to returns `Self`, so the
@@ -498,6 +499,12 @@ impl<'hir> Typeck<'hir> {
                             ),
                         ),
                     );
+                    // The operands themselves are already reported as incompatible -- letting
+                    // `check_operator` re-derive a bound or a `bool` requirement from whichever
+                    // operand happened to be `lhs` would just restate the same mismatch a second
+                    // time (worst offender: `&&`/`||`, which unify unconditionally against
+                    // `bool`).
+                    return self.tcx.error();
                 }
                 let resolved = self.unifier.root(lhs);
                 self.check_operator(*op, resolved, id.owner, expr.span)
@@ -526,7 +533,9 @@ impl<'hir> Typeck<'hir> {
                 then_block,
                 else_block,
             } => self.check_if(*cond, *then_block, *else_block, expected, expr.span),
-            ExprKind::Match { scrutinee, arms } => self.check_match(*scrutinee, arms, expected),
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_match(*scrutinee, arms, expected, expr.span)
+            }
             ExprKind::Loop { block, .. } => {
                 self.check_block(*block);
                 // A `loop`/`while`/`for` expression produces no value of its own.
@@ -552,13 +561,13 @@ impl<'hir> Typeck<'hir> {
     ///
     /// Each operator maps onto the `core::ops` trait its lang item names, so unifying the two
     /// sides is required but not sufficient: `foo + bar` also needs an `extend Foo with Add`
-    /// block. A primitive short-circuits that -- no `extend` block backs `i32`, so there would be
-    /// nothing for the solver to find.
+    /// block. A built-in operand ([`Typeck::is_builtin_operand`]) short-circuits that -- no
+    /// `extend` block backs a primitive, so there would be nothing for the solver to find.
     ///
     /// Shared with [`Typeck::check_assign_op`], which asks the same question of `+=` as this does
     /// of `+`.
     fn check_operator(&mut self, op: BinaryOp, operand: Ty, owner: DefId, span: SrcSpan) -> Ty {
-        let is_primitive = matches!(self.tcx.kind(operand), TyKind::Primitive(_));
+        let is_builtin = self.is_builtin_operand(operand);
         let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
 
         match op {
@@ -571,7 +580,7 @@ impl<'hir> Typeck<'hir> {
                     BinaryOp::Rem => LangItem::Rem,
                     _ => unreachable!("the outer match admits only the five arithmetic operators"),
                 };
-                if is_primitive || self.operator_holds(item, operand, owner, span) {
+                if is_builtin || self.operator_holds(item, operand, owner, span) {
                     // Every `core::ops` trait an operator dispatches to returns `Self`, so the
                     // operand's type is the result.
                     operand
@@ -580,14 +589,14 @@ impl<'hir> Typeck<'hir> {
                 }
             }
             BinaryOp::Eq | BinaryOp::Ne => {
-                if is_primitive || self.operator_holds(LangItem::Eq, operand, owner, span) {
+                if is_builtin || self.operator_holds(LangItem::Eq, operand, owner, span) {
                     bool_ty
                 } else {
                     self.tcx.error()
                 }
             }
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                if is_primitive || self.operator_holds(LangItem::Comparable, operand, owner, span) {
+                if is_builtin || self.operator_holds(LangItem::Comparable, operand, owner, span) {
                     bool_ty
                 } else {
                     self.tcx.error()
@@ -614,13 +623,30 @@ impl<'hir> Typeck<'hir> {
     /// Whether `self_ty` implements the operator trait `item` names -- `Add`, `Neg`, `Eq`, and so
     /// on.
     ///
-    /// A one-line wrapper over [`Typeck::require_extends`] that supplies the two things every
-    /// operator has in common: an operator trait takes no generic arguments of its own, and the
-    /// label to put on the diagnostic is always "this operator". What it does *not* do is work
-    /// out the operator's result type, because that differs per operator -- every `core::ops`
-    /// trait returns `Self` except `Eq` and `Comparable`, which return `bool` -- so the caller
-    /// keeps that decision.
+    /// Refuses outright, with its own diagnostic, when `self_ty` is still a wholly unresolved
+    /// variable ([`TyVar::Any`]) -- never a numeric one, which
+    /// [`Typeck::is_builtin_operand`] has already let through before this is reached. An
+    /// operator's result feeds the expression around it immediately, with no later moment to
+    /// retry against once inference has settled further, which is the same reason a method
+    /// call's receiver is not deferred either (see [`method`](crate::typeck::traits::method)).
+    /// Left to [`Typeck::require_extends`] instead, an unresolved variable reads as
+    /// [`Solution::Ambiguous`](crate::typeck::traits::solve::Solution::Ambiguous), which is
+    /// deliberately not reported there -- so this would otherwise answer
+    /// [`TyKind::Error`] with no diagnostic to explain why, and the mistake would vanish the
+    /// moment `Error`'s own absorb-everything rule met the surrounding expression.
+    ///
+    /// Otherwise a one-line wrapper over [`Typeck::require_extends`] that supplies the two things
+    /// every operator has in common: an operator trait takes no generic arguments of its own, and
+    /// the label to put on the diagnostic is always "this operator". What it does *not* do is
+    /// work out the operator's result type, because that differs per operator -- every
+    /// `core::ops` trait returns `Self` except `Eq` and `Comparable`, which return `bool` -- so
+    /// the caller keeps that decision.
     fn operator_holds(&mut self, item: LangItem, self_ty: Ty, owner: DefId, span: SrcSpan) -> bool {
+        if matches!(self.tcx.kind(self_ty), TyKind::Var(TyVar::Any(_))) {
+            self.report_operand_unknown(span);
+            return false;
+        }
+
         self.require_extends(
             self_ty,
             TraitName::Lang(item),
@@ -628,6 +654,21 @@ impl<'hir> Typeck<'hir> {
             owner,
             span,
             "this operator",
+        )
+    }
+
+    /// Whether `ty` is guaranteed to be a primitive by the time it is fully resolved, so a
+    /// built-in operator applies to it without asking the solver anything.
+    ///
+    /// A numeric inference variable counts alongside an already-concrete primitive:
+    /// [`Unifier::decompose`](crate::typeck::unify::Unifier) only ever lets a `{integer}`/
+    /// `{float}` variable unify with another numeric variable or the matching family of
+    /// primitives, never with an `Adt` -- so there is no operator question here for the solver
+    /// to answer, ambiguously or otherwise, whatever the variable eventually resolves to.
+    fn is_builtin_operand(&self, ty: Ty) -> bool {
+        matches!(
+            self.tcx.kind(ty),
+            TyKind::Primitive(_) | TyKind::Var(TyVar::Int(_) | TyVar::Float(_))
         )
     }
 
@@ -790,6 +831,24 @@ impl<'hir> Typeck<'hir> {
         );
     }
 
+    /// Reported by [`Typeck::operator_holds`] when an operator's operand is still a wholly
+    /// unresolved variable -- not merely unconstrained-but-numeric, which
+    /// [`Typeck::is_builtin_operand`] already lets through without reaching here.
+    fn report_operand_unknown(&self, span: SrcSpan) {
+        DiagCtx::emit(
+            Diagnostic::error(
+                "type annotations needed: the type this operator is applied to is still unknown",
+                span,
+            )
+            .with_label("the type here is still unknown")
+            .with_help(
+                "which `extend .. with` block this operator would dispatch to depends on the \
+                 type it is applied to, and unlike a trait bound that cannot wait for a later \
+                 pass -- write the type out",
+            ),
+        );
+    }
+
     /// Checks every statement in the block, and its trailing expression if it has one, and returns
     /// the block's own type.
     pub fn check_block(&mut self, id: HirId) -> Ty {
@@ -810,10 +869,18 @@ impl<'hir> Typeck<'hir> {
         let mut diverges = false;
         for &stmt in &block.stmts {
             self.check_stmt(stmt);
-            diverges |= matches!(
-                self.hir.stmt(stmt).kind,
-                StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue
-            );
+            diverges |= match self.hir.stmt(stmt).kind {
+                StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue => true,
+                // Written as a statement rather than the block's tail (a trailing `;`, or more
+                // code after it), an `if`/`match` that diverges on every one of its own arms is
+                // otherwise invisible here: it is neither literally a `return`/`break`/`continue`
+                // itself, nor read back through `tail_ty` below since it isn't the tail. Its own
+                // checked type already folded that down to `Never` (`check_if`/`check_match`
+                // unify their arms together, and `Never` is what an arm that itself diverges
+                // contributes), so asking for it is enough to catch it here too.
+                StmtKind::Expr(expr) => self.ty_of(expr) == self.tcx.never(),
+                _ => false,
+            };
         }
 
         // A block's trailing expression is not a statement, so the loop above never reaches it.
@@ -825,31 +892,32 @@ impl<'hir> Typeck<'hir> {
             None => self.tcx.unit(),
         };
 
-        // A block that leaves through a `return`, `break`, or `continue` never reaches its own
+        // A block that leaves through a `return`, `break`, or `continue` -- directly, or by way
+        // of a statement whose own checked type already came out `Never` -- never reaches its own
         // end, so it produces no value of any type -- which is what `Never` says, and why it
         // unifies with whatever the context wanted. Without this, `|x| { return x; }` would be
         // read as producing `()`.
         //
         // Only a statement *of* this block is looked at. Divergence hidden inside an expression
-        // -- a call to a function that never returns -- is not tracked, so this errs towards
-        // treating a block as completing normally.
-        if diverges {
-            self.tcx.never()
-        } else {
-            tail_ty
-        }
+        // this language has no syntax to express -- a call to a function that never returns, say
+        // -- is not tracked, so this errs towards treating a block as completing normally.
+        if diverges { self.tcx.never() } else { tail_ty }
     }
 
     /// Checks `def_id`'s body against the signature stage one collected for it, and bakes the
     /// resulting types into the table.
     ///
-    /// The body's *trailing expression* is deliberately not checked against the declared return
-    /// type, though [`Typeck::check_block`] now hands one back. Doing so needs divergence to be
-    /// tracked further than it is: `fun f() -> i32 { if c { return 1; } else { return 2; } }` ends
-    /// in a block that produces no value and reaches no `return` statement of its own, so a check
-    /// here would reject it. A `return` inside the body is checked, which is what a body that ends
-    /// in one is relying on; a closure's body, which cannot use a bare `return` to stand in for
-    /// its value the same way, is checked -- see [`Typeck::check_closure`].
+    /// The body block is checked *expecting* the declared return type and its resulting type is
+    /// then unified against that same type, exactly as [`Typeck::check_closure`] already does for
+    /// a closure's body. That single unification is enough to cover a trailing expression of the
+    /// wrong type, an empty body, and a body that only returns on some paths: `check_block`
+    /// already folds an always-diverging body down to `Never` (every statement-position
+    /// expression whose own type came out `Never` counts, not just a literal `return`/`break`/
+    /// `continue`, so `if c { return 1; } else { return 2; }` written as the body's tail
+    /// expression is `Never` itself), and `Never` unifies with anything -- so only a body that
+    /// can actually fall through with the wrong type (or fall through at all) is rejected here. A
+    /// `return` inside the body is checked on its own terms regardless (see
+    /// [`Typeck::check_stmt`]'s `Return` arm).
     pub fn check_function(&mut self, def_id: DefId) {
         let OwnerNode::Function(function) = self.hir.def(def_id) else {
             unreachable!("root of a Function owner is always OwnerNode::Function");
@@ -861,7 +929,15 @@ impl<'hir> Typeck<'hir> {
             // pinned it down, and asking sooner would answer "ambiguous" to a question that has a
             // perfectly good answer a few statements later.
             self.in_body = true;
-            self.check_block(block);
+            let ret = self.return_ty(def_id);
+            let body = self.check_block_expecting(block, Some(ret));
+            if let Err(err) = self.unifier.unify(&self.tcx, ret, body) {
+                DiagCtx::emit(
+                    Diagnostic::error(self.cx().show(err).to_string(), function.span).with_label(
+                        "this function does not return its declared return type on every path",
+                    ),
+                );
+            }
             self.select_body_obligations();
             self.in_body = false;
         }
@@ -1006,6 +1082,7 @@ mod tests {
     use crate::nameres::PrimTy;
     use crate::testing::{
         find_return, first_extend_method, first_function, first_struct, first_trait, resolve_src,
+        typeck_accepts as accepts, typeck_rejects as rejects,
     };
 
     /// Builds a `Typeck` with every signature collected, ready for `check_stmt` to be called
@@ -1211,6 +1288,54 @@ mod tests {
         checker.check_stmt(stmt_id);
         let diagnostics = DiagCtx::diagnostics();
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    /// Defect: `is_builtin_operand`'s predecessor recognized only an already-concrete
+    /// primitive, so two unsuffixed literals -- neither one resolved yet -- fell through to
+    /// the solver, which answered `Ambiguous`, which `require_extends` (rightly) does not
+    /// report. The whole expression silently checked to `Error` instead of `i32`, with no
+    /// diagnostic anywhere: `Error` absorbs into the `return` type's unification and the
+    /// mistake vanishes. `binary_add_on_primitives_bypasses_the_solver` above only ever
+    /// asserted "no diagnostics", which this defect also satisfied -- so this test checks the
+    /// actual resolved type instead.
+    #[test]
+    fn binary_add_between_two_unresolved_int_literals_resolves_to_the_return_type() {
+        let hir = resolve_src("fun f() -> i32 { return 1 + 2; }");
+        let def_id = first_function(&hir);
+        let (_stmt_id, expr_id) = find_return(&hir, def_id);
+        let mut checker = checker_with_signatures_collected(&hir);
+
+        checker.check_function(def_id);
+
+        let ty = checker
+            .types
+            .ty(expr_id)
+            .expect("checking the body records the binary expression's type");
+        assert_eq!(
+            *checker.tcx.kind(ty),
+            TyKind::Primitive(PrimTy::I32),
+            "the operator bypassed the solver and the return unified it with i32"
+        );
+    }
+
+    /// The genuinely ambiguous case `is_builtin_operand` does not, and should not, swallow: two
+    /// operands that stay wholly unconstrained variables all the way to the operator, with
+    /// nothing anywhere pinning either one down. Reported immediately rather than silently
+    /// becoming `Error`, the same way an unknown method receiver is -- there is no later pass
+    /// this could be deferred to that would ever know more.
+    #[test]
+    fn an_operator_on_two_still_unresolved_operands_needs_an_annotation() {
+        use crate::testing::typeck_rejects;
+
+        typeck_rejects(
+            "fun make<T>() -> T { return make(); }
+             fun f() {
+                 let a = make();
+                 let b = make();
+                 let c = a - b;
+             }",
+            "type annotations needed",
+        );
     }
 
     /// `ty_of` records on first use and reads through the unifier afterwards, so a type read
@@ -1641,5 +1766,272 @@ mod tests {
                 .to_string(),
             "mismatched types: expected an integer type, found `bool`"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // A function's body is checked against its declared return type: see `check_function`'s doc
+    // comment for how one `unify` against the body's own `check_block_expecting` result covers
+    // all three shapes below at once.
+    // -----------------------------------------------------------------
+
+    /// A function's trailing expression is checked against its own declared return type, the
+    /// same as the equivalent closure already was (see
+    /// `a_closure_checks_to_a_function_type_of_its_parameters_and_body` in `expr.rs`).
+    #[test]
+    fn a_functions_trailing_expression_is_checked_against_its_return_type() {
+        rejects("fun f() -> i32 { true }", "mismatched types");
+    }
+
+    /// An empty body produces `()`, which is rejected for a function declaring any other return
+    /// type.
+    #[test]
+    fn an_empty_body_is_checked_against_a_declared_return_type() {
+        rejects("fun f() -> i32 {}", "mismatched types");
+    }
+
+    /// Only the `if` branch returns; falling through the missing `else` produces `()`, not the
+    /// declared `i32`.
+    #[test]
+    fn a_partial_return_does_not_guarantee_every_path_produces_the_declared_type() {
+        rejects(
+            "fun f(c: bool) -> i32 { if c { return 1; } }",
+            "mismatched types",
+        );
+    }
+
+    /// An `if`/`else` that returns on every branch is accepted as the body's tail expression --
+    /// `check_if` unifies the two branches together, and a branch whose own block diverged is
+    /// `Never`, which is what lets this differ from the previous test's missing `else`.
+    #[test]
+    fn a_function_body_ending_in_an_if_else_that_always_returns_checks() {
+        accepts("fun f(c: bool) -> i32 { if c { return 1; } else { return 2; } }");
+    }
+
+    /// The same `if`/`else`, but written as a statement (note the trailing `;`) with unreachable
+    /// code after it rather than as the block's tail expression -- the case `check_block_expecting`
+    /// has to recognize by the `if`'s own checked type coming out `Never`, since it is not
+    /// literally a `return`/`break`/`continue` at the statement level.
+    #[test]
+    fn a_statement_position_if_else_that_always_returns_still_lets_later_code_check() {
+        accepts(
+            "fun f(c: bool) -> i32 {
+                 if c { return 1; } else { return 2; };
+                 return 0;
+             }",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Primitives, broadly
+    // -----------------------------------------------------------------
+
+    /// Every integer primitive is usable as a parameter and return type, and round-trips through
+    /// a bare `return` unchanged.
+    #[test]
+    fn every_integer_primitive_round_trips_through_a_function_signature() {
+        for name in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"] {
+            accepts(&format!("fun f(x: {name}) -> {name} {{ return x; }}"));
+        }
+    }
+
+    #[test]
+    fn every_float_primitive_round_trips_through_a_function_signature() {
+        for name in ["f32", "f64"] {
+            accepts(&format!("fun f(x: {name}) -> {name} {{ return x; }}"));
+        }
+    }
+
+    #[test]
+    fn a_negative_int_literal_still_checks_as_an_integer() {
+        accepts("fun f() -> i32 { return -1; }");
+    }
+
+    #[test]
+    fn a_negative_float_literal_still_checks_as_a_float() {
+        accepts("fun f() -> f64 { return -1.5; }");
+    }
+
+    #[test]
+    fn an_int_literal_and_a_float_literal_do_not_unify() {
+        rejects("fun f() { let x = 1 + 1.0; }", "mismatched types");
+    }
+
+    #[test]
+    fn a_bool_and_a_char_do_not_unify() {
+        rejects(
+            "fun f() -> bool { return 'a' == true; }",
+            "mismatched types",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `&&` and `||`: not overloadable, and require `bool` on both sides
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn and_and_or_accept_two_bools() {
+        accepts("fun f(a: bool, b: bool) -> bool { return a && b; }");
+        accepts("fun f(a: bool, b: bool) -> bool { return a || b; }");
+    }
+
+    /// `1 && true` is one mistake, one diagnostic (the stated design principle behind
+    /// `TyKind::Error`/`Never` absorbing everywhere else in this pass): the `Binary` arm's own
+    /// `unify(lhs, rhs)` fails, reports it, and returns `Error` immediately rather than letting
+    /// `check_operator`'s `And`/`Or` branch unify the same still-unresolved operand against
+    /// `bool` and report the identical mismatch a second time.
+    #[test]
+    fn and_rejects_operands_of_different_types_exactly_once() {
+        rejects("fun f() { let x = 1 && true; }", "mismatched types");
+    }
+
+    /// Two operands that agree with each other but are not `bool` are still rejected: `&&`/`||`
+    /// are hardcoded to `bool` and never reach the solver at all. The specific "need bool
+    /// operands" wording lives in the diagnostic's label, not its top-level message, so it is
+    /// checked against `UnifyError`'s own rendering instead -- see
+    /// `an_int_var_mismatch_says_an_integer_type_was_expected` above for that wording's source.
+    #[test]
+    fn and_rejects_two_operands_of_the_same_non_bool_type() {
+        rejects("fun f() { let x = 1 && 2; }", "expected an integer type");
+    }
+
+    // -----------------------------------------------------------------
+    // Every operator lang item, on one struct
+    // -----------------------------------------------------------------
+
+    /// One `extend` block providing every operator trait `core::ops` declares, exercising each
+    /// operator once. `Comparable` alone backs all four of `<`/`<=`/`>`/`>=`, and `Eq` backs both
+    /// `==` and `!=` -- see `Typeck::check_operator`.
+    #[test]
+    fn a_struct_implementing_every_operator_trait_supports_every_operator() {
+        accepts(
+            "module core::ops;
+
+             public trait Add { fun add(&self, other: &Self) -> Self; }
+             public trait Sub { fun sub(&self, other: &Self) -> Self; }
+             public trait Mul { fun mul(&self, other: &Self) -> Self; }
+             public trait Div { fun div(&self, other: &Self) -> Self; }
+             public trait Rem { fun rem(&self, other: &Self) -> Self; }
+             public trait Neg { fun neg(&self) -> Self; }
+             public trait Not { fun not(&self) -> Self; }
+             public trait Eq { fun eq(&self, other: &Self) -> bool; }
+             public trait Comparable { fun compare(&self, other: &Self) -> i32; }
+
+             struct N { v: i32 }
+
+             extend N with Add { fun add(&self, other: &Self) -> Self { return .{ v: self.v }; } }
+             extend N with Sub { fun sub(&self, other: &Self) -> Self { return .{ v: self.v }; } }
+             extend N with Mul { fun mul(&self, other: &Self) -> Self { return .{ v: self.v }; } }
+             extend N with Div { fun div(&self, other: &Self) -> Self { return .{ v: self.v }; } }
+             extend N with Rem { fun rem(&self, other: &Self) -> Self { return .{ v: self.v }; } }
+             extend N with Neg { fun neg(&self) -> Self { return .{ v: self.v }; } }
+             extend N with Not { fun not(&self) -> Self { return .{ v: self.v }; } }
+             extend N with Eq { fun eq(&self, other: &Self) -> bool { return true; } }
+             extend N with Comparable { fun compare(&self, other: &Self) -> i32 { return 0; } }
+
+             fun f(a: N, b: N) -> N {
+                 let sum = a + b;
+                 let diff = a - b;
+                 let prod = a * b;
+                 let quot = a / b;
+                 let rem = a % b;
+                 let negated = -a;
+                 let inverted = !a;
+                 let is_eq = a == b;
+                 let is_ne = a != b;
+                 let lt = a < b;
+                 let le = a <= b;
+                 let gt = a > b;
+                 let ge = a >= b;
+                 return sum;
+             }",
+        );
+    }
+
+    /// Each operator names its own trait in the diagnostic when the impl is missing, not a
+    /// generic "operator" message -- `Sub`, `Neg`, and `Comparable` here, matching the
+    /// already-covered `Add` case.
+    #[test]
+    fn sub_neg_and_comparable_each_report_their_own_missing_trait() {
+        rejects(
+            "module core::ops;
+             public trait Sub { fun sub(&self, other: &Self) -> Self; }
+             struct N { v: i32 }
+             fun f(a: N, b: N) -> N { return a - b; }",
+            "does not implement `Sub`",
+        );
+        rejects(
+            "module core::ops;
+             public trait Neg { fun neg(&self) -> Self; }
+             struct N { v: i32 }
+             fun f(a: N) -> N { return -a; }",
+            "does not implement `Neg`",
+        );
+        rejects(
+            "module core::ops;
+             public trait Comparable { fun compare(&self, other: &Self) -> i32; }
+             struct N { v: i32 }
+             fun f(a: N, b: N) -> bool { return a < b; }",
+            "does not implement `Comparable`",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Shadowing and recursion, checked (not just resolved)
+    // -----------------------------------------------------------------
+
+    /// A `let` may rebind a name at a different type; the later binding is what a subsequent use
+    /// sees, and its type is unaffected by the type the same name had before.
+    #[test]
+    fn a_let_may_rebind_a_name_at_a_different_type() {
+        accepts(
+            "fun f() -> bool {
+                 let x = 1;
+                 let x = true;
+                 return x;
+             }",
+        );
+    }
+
+    /// A block-scoped shadow does not affect the outer binding once the inner block ends.
+    #[test]
+    fn a_block_scoped_shadow_does_not_leak_out() {
+        accepts(
+            "fun f() -> i32 {
+                 let x = 1;
+                 { let x = true; }
+                 return x;
+             }",
+        );
+        rejects(
+            "fun f() -> bool {
+                 let x = 1;
+                 { let x = true; }
+                 return x;
+             }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_directly_recursive_function_checks() {
+        accepts("fun fact(n: i32) -> i32 { return fact(n); }");
+    }
+
+    #[test]
+    fn two_mutually_recursive_functions_check_regardless_of_order() {
+        accepts(
+            "fun is_even(n: i32) -> bool { return is_odd(n); }
+             fun is_odd(n: i32) -> bool { return is_even(n); }",
+        );
+    }
+
+    #[test]
+    fn a_self_referencing_struct_field_behind_a_reference_checks() {
+        accepts("struct Node { next: &Node }");
+    }
+
+    #[test]
+    fn a_self_referencing_enum_variant_behind_a_reference_checks() {
+        accepts("enum List { cons: &List, nil }");
     }
 }

@@ -9,17 +9,25 @@
 //!
 //! ## Why deferral
 //!
-//! A direct implementation -- prove the bound where the instantiation is written -- fails,
-//! because at that moment the arguments are usually still inference variables. `let x = f(v)`
-//! fixes `f`'s parameters from `v`'s type, which may itself be settled several statements later.
-//! Asking early gets [`Solution::Ambiguous`], which is neither a pass nor a failure.
+//! A direct implementation -- prove the bound where the instantiation is written -- fails for a
+//! call to something generic, because at that moment its arguments are sometimes still inference
+//! variables. `let x = f(v)` fixes `f`'s own parameters from `v`'s type, which may itself be
+//! settled several statements later. Asking early gets [`Solution::Ambiguous`], which is neither
+//! a pass nor a failure.
 //!
 //! So an obligation is *registered* rather than proved, and an [`ObligationCx`] holds the ones not
 //! yet answered. Draining one -- [`Typeck::select_program_obligations`],
-//! [`Typeck::select_body_obligations`] -- loops to a fixpoint: each pass proves what it can,
-//! reports what it cannot, and keeps what is still ambiguous for the next one. A pass that
-//! discharges nothing is the fixpoint -- nothing between two identical passes changed, so nothing
-//! ever will -- and the goals still standing are reported as needing a type annotation.
+//! [`Typeck::select_body_obligations`] -- tries each exactly once, at the moment described under
+//! "Two contexts" below: whatever is still [`Solution::Ambiguous`] then is reported as needing a
+//! type annotation, and everything else is settled one way or the other.
+//!
+//! One pass, not a loop to a fixpoint, is correct here, because nothing a pass does can change
+//! what a later one would answer. Proving a goal ([`Typeck::implements`]) only ever reads the
+//! unifier and the impl index; it writes to neither. And every registration site --
+//! [`register_bound_obligations`](Typeck::register_bound_obligations)'s four callers -- runs
+//! *before* the drain it feeds, never during one, so a drain never sees a goal arrive mid-pass
+//! either. A goal answering [`Solution::Ambiguous`] on this pass would answer the same way again
+//! on a second: nothing between the two could have moved.
 //!
 //! ## Two contexts
 //!
@@ -102,103 +110,6 @@ impl ObligationCx {
 
     pub fn is_empty(&self) -> bool {
         self.pending.is_empty()
-    }
-}
-
-/// The interface the fixpoint loop requires.
-///
-/// The loop is separated from the checker behind this trait for the same reason
-/// [`overlaps`](crate::typeck::traits::overlap::overlaps) takes no diagnostic context: its bugs are
-/// the ones a source fixture cannot reach. "A goal that becomes provable on a later pass" and "a
-/// goal registered while a pass was running" are both states of *inference*, and inference does not
-/// move between two passes of a drain that the test itself drives. A fake prover can put the loop
-/// in those states directly; a fixture cannot put it in them at all until expression checking
-/// exists to move inference along.
-trait Prover {
-    /// Attempts one goal.
-    fn prove(&mut self, pending: &PendingObligation) -> Solution;
-
-    /// Goals registered while the pass that just finished was running, taken out of wherever they
-    /// accumulated. Proving one goal can raise others -- an impl selected recursively may itself
-    /// instantiate something bounded -- and they belong to this drain rather than to the next one.
-    fn newly_registered(&mut self) -> Vec<PendingObligation>;
-
-    /// The goal does not hold: report it.
-    fn unsatisfied(&mut self, pending: &PendingObligation);
-
-    /// The goal is still ambiguous and no pass will change that: report it.
-    fn stalled(&mut self, pending: &PendingObligation);
-}
-
-/// Proves `pending` to a fixpoint, reporting whatever is left over.
-///
-/// Each pass discharges what it can and keeps what is not yet knowable. Two things end the
-/// loop. The pending set going empty is the ordinary one. The other is a pass that discharges
-/// nothing and raises nothing: the set it started with and the set it ended with are the same, so
-/// every later pass would do the same again, and those goals are reported as needing an annotation
-/// rather than spun on.
-///
-/// Termination does not rest on the pending set shrinking, because a pass may add to it. It rests
-/// on that pass having discharged something -- and the goals that can ever be registered are finite,
-/// bounded by the program's own text, so a pass that only adds can only happen finitely often.
-fn select_all(mut pending: Vec<PendingObligation>, prover: &mut impl Prover) {
-    while !pending.is_empty() {
-        let mut retained = Vec::new();
-        let mut discharged = 0;
-
-        for goal in pending {
-            match prover.prove(&goal) {
-                // `Error` counts as settled rather than as a failure: the goal mentions a type
-                // that was already reported, and saying anything more about it would be a second
-                // diagnostic for one mistake.
-                Solution::Holds(_) | Solution::Error => discharged += 1,
-                Solution::DoesNotHold => {
-                    prover.unsatisfied(&goal);
-                    discharged += 1;
-                }
-                Solution::Ambiguous => retained.push(goal),
-            }
-        }
-
-        let fresh = prover.newly_registered();
-        if discharged == 0 && fresh.is_empty() {
-            for goal in &retained {
-                prover.stalled(goal);
-            }
-            return;
-        }
-
-        pending = retained;
-        pending.extend(fresh);
-    }
-}
-
-/// The concrete prover: the checker itself, plus which of its two contexts this drain owns.
-///
-/// The context is reached through a function pointer rather than held as a borrow because the
-/// drain hands the checker out mutably to prove each goal, and mid-pass registrations land back in
-/// the field while it does. Naming the field instead of borrowing it is what lets both happen.
-struct TypeckProver<'a, 'hir> {
-    checker: &'a mut Typeck<'hir>,
-    cx: for<'t> fn(&'t mut Typeck<'hir>) -> &'t mut ObligationCx,
-}
-
-impl Prover for TypeckProver<'_, '_> {
-    fn prove(&mut self, pending: &PendingObligation) -> Solution {
-        let env = self.checker.param_env(pending.owner);
-        self.checker.implements(&pending.goal, &env)
-    }
-
-    fn newly_registered(&mut self) -> Vec<PendingObligation> {
-        mem::take(&mut (self.cx)(self.checker).pending)
-    }
-
-    fn unsatisfied(&mut self, pending: &PendingObligation) {
-        self.checker.report_unsatisfied_bound(&pending.goal);
-    }
-
-    fn stalled(&mut self, pending: &PendingObligation) {
-        self.checker.report_annotations_needed(&pending.goal);
     }
 }
 
@@ -312,10 +223,24 @@ impl<'hir> Typeck<'hir> {
         self.select_all(|checker| &mut checker.body_obligations);
     }
 
+    /// Tries every goal `cx` is holding exactly once, reporting on each as it goes.
+    ///
+    /// One pass, not a loop: see "Why deferral" in the [module docs](self) for why nothing this
+    /// drain could discover would ever change the answer on a second attempt at the same goal.
+    /// `Holds`/`Error` are discharged silently -- `Error` because a diagnostic for it already
+    /// exists, `Holds` because there is nothing to say -- `DoesNotHold` is reported as an unmet
+    /// bound, and `Ambiguous` is reported as needing a type annotation, since this is the only
+    /// moment this goal will ever be asked about again.
     fn select_all(&mut self, cx: for<'t> fn(&'t mut Typeck<'hir>) -> &'t mut ObligationCx) {
         let pending = mem::take(&mut cx(self).pending);
-        let mut prover = TypeckProver { checker: self, cx };
-        select_all(pending, &mut prover);
+        for pending in pending {
+            let env = self.param_env(pending.owner);
+            match self.implements(&pending.goal, &env) {
+                Solution::Holds | Solution::Error => {}
+                Solution::DoesNotHold => self.report_unsatisfied_bound(&pending.goal),
+                Solution::Ambiguous => self.report_annotations_needed(&pending.goal),
+            }
+        }
     }
 
     // -----------------------------------------------------------------
@@ -554,168 +479,7 @@ mod tests {
     use super::*;
     use crate::diag::DiagCtx;
     use crate::hir::Hir;
-    use crate::nameres::PrimTy;
     use crate::testing::resolve_src;
-    use crate::typeck::tyctx::TyCtx;
-
-    // -----------------------------------------------------------------
-    // The fixpoint loop
-    //
-    // Driven against a fake prover, because the key property of the loop is how it behaves
-    // when inference moves between two passes -- and inference cannot move during a drain that the
-    // test itself is running. See `Prover`.
-    // -----------------------------------------------------------------
-
-    /// A prover scripted by pass number: `answers[n]` is what it says to the goals of pass `n`.
-    #[derive(Default)]
-    struct Fake {
-        answers: Vec<Solution>,
-        /// Goals to register after the pass whose index this is keyed by.
-        register_after: HashMap<usize, Vec<PendingObligation>>,
-        pass: usize,
-        proved: usize,
-        unsatisfied: Vec<Ty>,
-        stalled: Vec<Ty>,
-    }
-
-    impl Prover for Fake {
-        fn prove(&mut self, _pending: &PendingObligation) -> Solution {
-            self.proved += 1;
-            self.answers
-                .get(self.pass)
-                .cloned()
-                .unwrap_or(Solution::Ambiguous)
-        }
-
-        fn newly_registered(&mut self) -> Vec<PendingObligation> {
-            let fresh = self.register_after.remove(&self.pass).unwrap_or_default();
-            self.pass += 1;
-            fresh
-        }
-
-        fn unsatisfied(&mut self, pending: &PendingObligation) {
-            self.unsatisfied.push(pending.goal.self_ty);
-        }
-
-        fn stalled(&mut self, pending: &PendingObligation) {
-            self.stalled.push(pending.goal.self_ty);
-        }
-    }
-
-    fn fake_goal(tcx: &mut TyCtx, prim: PrimTy) -> PendingObligation {
-        let self_ty = tcx.mk_prim(prim);
-        PendingObligation {
-            goal: Obligation::new(
-                self_ty,
-                TraitRef {
-                    def: DefId::from_usize(1),
-                    args: Vec::new(),
-                },
-                SrcSpan::new(0, 0),
-            ),
-            owner: DefId::from_usize(0),
-        }
-    }
-
-    /// The point of looping at all: a goal that could not be decided on one pass gets another go.
-    #[test]
-    fn a_goal_left_ambiguous_is_retried_and_discharged_on_a_later_pass() {
-        let mut tcx = TyCtx::new();
-        let goal = fake_goal(&mut tcx, PrimTy::I32);
-        let mut prover = Fake {
-            answers: vec![
-                Solution::Ambiguous,
-                Solution::Ambiguous,
-                Solution::Holds(crate::typeck::traits::solve::ImplSource::FromDyn),
-            ],
-            ..Fake::default()
-        };
-
-        // Two ambiguous passes in a row would be the fixpoint, so the goal only survives to the
-        // third because something registers in between.
-        prover
-            .register_after
-            .insert(0, vec![fake_goal(&mut tcx, PrimTy::Bool)]);
-        prover
-            .register_after
-            .insert(1, vec![fake_goal(&mut tcx, PrimTy::Char)]);
-
-        select_all(vec![goal], &mut prover);
-
-        assert!(prover.unsatisfied.is_empty());
-        assert!(
-            prover.stalled.is_empty(),
-            "everything was decided in the end"
-        );
-        assert_eq!(prover.pass, 3);
-    }
-
-    /// The termination condition: a pass that changes nothing means no pass ever will.
-    #[test]
-    fn a_stalled_set_is_reported_once_and_stops_the_loop() {
-        let mut tcx = TyCtx::new();
-        let goals = vec![
-            fake_goal(&mut tcx, PrimTy::I32),
-            fake_goal(&mut tcx, PrimTy::Bool),
-        ];
-        let mut prover = Fake {
-            answers: vec![Solution::Ambiguous],
-            ..Fake::default()
-        };
-
-        select_all(goals, &mut prover);
-
-        assert_eq!(prover.stalled.len(), 2, "each stalled goal is named once");
-        assert_eq!(
-            prover.proved, 2,
-            "one pass, and no second attempt at either"
-        );
-    }
-
-    /// Proving one goal may raise others. They belong to this drain, not to the next one.
-    #[test]
-    fn goals_registered_during_a_pass_are_proved_by_the_same_drain() {
-        let mut tcx = TyCtx::new();
-        let goal = fake_goal(&mut tcx, PrimTy::I32);
-        let mut prover = Fake {
-            answers: vec![Solution::DoesNotHold, Solution::DoesNotHold],
-            ..Fake::default()
-        };
-        prover
-            .register_after
-            .insert(0, vec![fake_goal(&mut tcx, PrimTy::Bool)]);
-
-        select_all(vec![goal], &mut prover);
-
-        assert_eq!(
-            prover.proved, 2,
-            "the goal raised mid-pass was attempted too"
-        );
-        assert_eq!(prover.unsatisfied.len(), 2);
-    }
-
-    /// A goal about an already-reported type is settled rather than reported again.
-    #[test]
-    fn a_goal_answering_error_is_discharged_silently() {
-        let mut tcx = TyCtx::new();
-        let goal = fake_goal(&mut tcx, PrimTy::I32);
-        let mut prover = Fake {
-            answers: vec![Solution::Error],
-            ..Fake::default()
-        };
-
-        select_all(vec![goal], &mut prover);
-
-        assert!(prover.unsatisfied.is_empty());
-        assert!(prover.stalled.is_empty());
-    }
-
-    #[test]
-    fn an_empty_context_does_no_passes_at_all() {
-        let mut prover = Fake::default();
-        select_all(Vec::new(), &mut prover);
-        assert_eq!(prover.pass, 0);
-    }
 
     // -----------------------------------------------------------------
     // Source-level
@@ -730,8 +494,9 @@ mod tests {
     /// cleared is name resolution's own output: a fixture is resolved without the core library, so
     /// every one of them reports the whole set of missing lang items first.
     ///
-    /// Bodies are deliberately not checked -- most of `check_expr` is still `todo!()` -- so what is
-    /// exercised here is the program-level context.
+    /// Bodies are deliberately not checked, so that what is exercised here is the program-level
+    /// context on its own; a fixture that needs the per-body one instead goes through
+    /// [`crate::testing::typeck_rejects`], which runs the whole pipeline.
     fn bounds(hir: &Hir) -> Vec<String> {
         DiagCtx::clear();
 
@@ -1003,6 +768,99 @@ mod tests {
         assert_eq!(
             bounds(&hir),
             ["`Index` takes 2 generic arguments but 0 were supplied"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Draining: what the single pass over real inference still has to get right, now that it
+    // is not a loop. See "Why deferral" in the module docs.
+    // -----------------------------------------------------------------
+
+    /// A goal built from an already-broken type -- a reference that failed to resolve -- answers
+    /// [`Solution::Error`] and is discharged without comment: a diagnostic for the broken
+    /// reference already exists, and adding a second one about the bound it happens to sit in
+    /// would be noise about the same mistake.
+    #[test]
+    fn a_bound_about_an_already_broken_type_is_discharged_silently() {
+        let hir = resolve_src(
+            "trait Show { fun show(&self); }
+             struct Sorted<T: Show> { inner: T }
+             fun f(x: Sorted<Nope>) {}",
+        );
+
+        assert!(bounds(&hir).is_empty());
+    }
+
+    /// The one case a goal is still genuinely undecided once there is nowhere left to check it
+    /// from: a generic call whose own type parameter is never pinned down by anything in the
+    /// body that calls it. A single pass at the end of the body is enough to report this --
+    /// looping past it would not change the answer, since nothing between one attempt and the
+    /// next could have moved.
+    #[test]
+    fn a_bound_that_never_settles_is_reported_as_needing_an_annotation() {
+        crate::testing::typeck_rejects(
+            "trait Show { fun show(&self); }
+             fun sort<T: Show>() -> T { return sort(); }
+             fun f() { let x = sort(); }",
+            "type annotations needed",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Several bounds at once
+    // -----------------------------------------------------------------
+
+    /// `T: A + B` raises one obligation per trait named; both have to hold.
+    #[test]
+    fn a_type_parameter_with_two_bounds_needs_both_satisfied() {
+        crate::testing::typeck_accepts(
+            "trait A { fun a(&self); }
+             trait B { fun b(&self); }
+             struct Both {}
+             extend Both with A { fun a(&self) {} }
+             extend Both with B { fun b(&self) {} }
+             fun f<T: A + B>(x: T) {}
+             fun g(x: Both) { f(x); }",
+        );
+    }
+
+    /// Same shape, but the argument only implements one of the two -- exactly the missing one is
+    /// reported.
+    #[test]
+    fn a_type_parameter_with_two_bounds_reports_whichever_one_is_unmet() {
+        let messages = crate::testing::typeck_src(
+            "trait A { fun a(&self); }
+             trait B { fun b(&self); }
+             struct OnlyA {}
+             extend OnlyA with A { fun a(&self) {} }
+             fun f<T: A + B>(x: T) {}
+             fun g(x: OnlyA) { f(x); }",
+        );
+        assert_eq!(
+            messages,
+            ["the trait bound `OnlyA: B` is not satisfied"],
+            "{messages:?}"
+        );
+    }
+
+    /// Two independently declared type parameters, each with its own bound, are checked
+    /// independently -- a failure on one does not silence or duplicate onto the other.
+    #[test]
+    fn two_independently_bounded_parameters_are_each_checked_on_their_own() {
+        let messages = crate::testing::typeck_src(
+            "trait Show { fun show(&self); }
+             struct Bare1 {}
+             struct Bare2 {}
+             fun f<T: Show, U: Show>(x: T, y: U) {}
+             fun g(a: Bare1, b: Bare2) { f(a, b); }",
+        );
+        assert_eq!(
+            messages,
+            [
+                "the trait bound `Bare1: Show` is not satisfied",
+                "the trait bound `Bare2: Show` is not satisfied",
+            ],
+            "{messages:?}"
         );
     }
 }
