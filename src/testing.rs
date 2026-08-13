@@ -96,7 +96,10 @@ pub fn typeck_src(src: &str) -> Vec<String> {
 /// Asserts that `src` type checks with nothing reported.
 pub fn typeck_accepts(src: &str) {
     let reported = typeck_src(src);
-    assert!(reported.is_empty(), "expected {src:?} to check: {reported:?}");
+    assert!(
+        reported.is_empty(),
+        "expected {src:?} to check: {reported:?}"
+    );
 }
 
 /// Asserts that `src` is rejected by exactly one diagnostic, whose message contains `needle`.

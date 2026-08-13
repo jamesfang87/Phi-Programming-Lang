@@ -1,8 +1,8 @@
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, Node, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
-use crate::typeck::ty::Ty;
 use crate::typeck::Typeck;
+use crate::typeck::ty::Ty;
 
 impl<'hir> Typeck<'hir> {
     pub fn lower_ty(&mut self, id: HirId) -> Ty {
@@ -66,18 +66,21 @@ impl<'hir> Typeck<'hir> {
                 Self::expect_no_args(args, span, "a generic type parameter");
                 self.tcx.mk_generic(param)
             }
-            Res::Type(Type::Def(
-                tydef @ (TyDef::Struct(def_id) | TyDef::Enum(def_id) | TyDef::Trait(def_id)),
-            )) => {
+            Res::Type(Type::Def(TyDef::Struct(def_id) | TyDef::Enum(def_id))) => {
                 let declared = match self.hir.def(def_id) {
                     OwnerNode::Struct(struct_) => struct_.generics.len(),
                     OwnerNode::Enum(enum_) => enum_.generics.len(),
-                    OwnerNode::Trait(trait_) => trait_.generics.len(),
-                    _ => unreachable!(
-                        "a TyDef::Struct/Enum/Trait always names a Struct/Enum/Trait owner"
-                    ),
+                    _ => unreachable!("a TyDef::Struct/Enum always names a Struct/Enum owner"),
                 };
-                self.lower_def(tydef, def_id, declared, args, span, id.owner)
+                self.lower_def(def_id, declared, args, span, id.owner)
+            }
+            // A trait names every type that implements it, not one type of its own: it is a
+            // type only spelled `dyn Trait` ([`Typeck::lower_dyn`]), or usable as a bound on a
+            // generic parameter ([`Typeck::collect_bounds`]) -- neither of which is an ordinary
+            // type position, so a bare trait reaching one here is always a mistake.
+            Res::Type(Type::Def(TyDef::Trait(_))) => {
+                Self::report_trait_as_ty(span);
+                self.tcx.error()
             }
             Res::SelfTy(_) => {
                 Self::expect_no_args(args, span, "`Self`");
@@ -93,9 +96,14 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
+    /// Lowers a struct or an enum applied to `args`, checking the count against `declared` and
+    /// registering what its own bounds demand of them.
+    ///
+    /// Only ever called for a [`TyDef::Struct`]/[`TyDef::Enum`] -- a [`TyDef::Trait`] is rejected
+    /// in [`Typeck::lower_base`] before reaching here, so there is no third case to route on and
+    /// nothing left for this to do but build the [`TyKind::Adt`](crate::typeck::ty::TyKind::Adt).
     fn lower_def(
         &mut self,
-        tydef: TyDef,
         def_id: DefId,
         declared: usize,
         args: &[HirId],
@@ -109,9 +117,7 @@ impl<'hir> Typeck<'hir> {
 
         let args = self.lower_tys(args);
         self.register_bound_obligations(def_id, &args, span, owner);
-        match tydef {
-            TyDef::Struct(_) | TyDef::Enum(_) | TyDef::Trait(_) => self.tcx.mk_adt(def_id, args),
-        }
+        self.tcx.mk_adt(def_id, args)
     }
 
     fn lower_dyn(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
@@ -263,8 +269,8 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::interner::Interner;
     use crate::ast::Mutability;
+    use crate::ast::interner::Interner;
     use crate::diag::DiagCtx;
     use crate::hir::{DefId, Hir, HirId, OwnerNode};
     use crate::nameres::PrimTy;
@@ -379,7 +385,7 @@ mod tests {
 
     #[test]
     fn a_primitive_annotation_lowers_to_its_primitive_type() {
-        let checked = check("fun f(x: i32, y: bool) -> i64 {}");
+        let checked = check("fun f(x: i32, y: bool) -> i64 { return 0; }");
         let f = checked.def("f");
         let (params, ret) = checked.sig(f);
 
@@ -532,6 +538,47 @@ mod tests {
             panic!("any i32 lowers to an Any");
         };
         assert_eq!(checked.kind(*base), &TyKind::Primitive(PrimTy::I32));
+    }
+
+    /// A trait names every type that implements it, not one type of its own, so writing it bare
+    /// in a type position -- rather than `dyn Show`, or as a bound on a generic parameter -- is
+    /// a mistake, not a shorthand.
+    #[test]
+    fn a_bare_trait_used_as_a_type_is_rejected() {
+        let checked = check(
+            "trait Show { fun show(&self); }
+             fun f(x: Show) {}",
+        );
+        let (params, _) = checked.sig(checked.def("f"));
+
+        assert_eq!(checked.kind(params[0]), &TyKind::Error);
+        assert_eq!(
+            diagnostics(),
+            ["a trait cannot be used as a type on its own"]
+        );
+    }
+
+    /// The same rejection wherever a trait is named in an ordinary type position, not only a
+    /// parameter -- and it is the only diagnostic even though `Index` is applied to arguments
+    /// here too: naming the trait bare is already the whole mistake, so there is nothing to gain
+    /// from also complaining about its argument count.
+    #[test]
+    fn a_bare_trait_is_rejected_in_a_field_even_when_applied_to_arguments() {
+        let checked = check(
+            "trait Index<K, V> { fun index(&self, key: K) -> &V; }
+             struct Wrap { inner: Index<i32, bool> }",
+        );
+        let wrap = checked.def("Wrap");
+        let OwnerNode::Struct(struct_) = checked.hir.def(wrap) else {
+            unreachable!();
+        };
+        let field = checked.ty(struct_.fields[0]);
+
+        assert_eq!(checked.kind(field), &TyKind::Error);
+        assert_eq!(
+            diagnostics(),
+            ["a trait cannot be used as a type on its own"]
+        );
     }
 
     #[test]
@@ -691,5 +738,165 @@ mod tests {
         let checked = check("fun f(a: (i32, bool), b: (i32, bool)) {}");
         let (params, _) = checked.sig(checked.def("f"));
         assert_eq!(params[0], params[1]);
+    }
+
+    // -----------------------------------------------------------------
+    // Deeper composition
+    // -----------------------------------------------------------------
+
+    /// A reference to a reference. Written with a space (`& &i32`) rather than `&&i32`, since
+    /// the lexer tokenizes `&&` as one `DoubleAmp` token (the logical-and operator) rather than
+    /// two `&`s.
+    #[test]
+    fn a_reference_to_a_reference_lowers_to_nested_refs() {
+        let checked = check("fun f(x: & &i32) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Ref { base: outer, .. } = checked.kind(params[0]) else {
+            panic!("& &i32 lowers to a Ref");
+        };
+        let TyKind::Ref { base: inner, .. } = checked.kind(*outer) else {
+            panic!("the outer Ref's base is itself a Ref");
+        };
+        assert_eq!(checked.kind(*inner), &TyKind::Primitive(PrimTy::I32));
+    }
+
+    /// `&any T` composes; the other order does not exist to test -- the parser's `any_target`
+    /// only accepts a primitive, a path, a tuple, an array, or `Self`, so `any` can never wrap a
+    /// reference (`any &T` is a parse error, not a typeck question).
+    #[test]
+    fn a_reference_may_wrap_any() {
+        let checked = check("fun f(x: &any i32) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Ref { base, .. } = checked.kind(params[0]) else {
+            panic!("&any i32 lowers to a Ref wrapping Any");
+        };
+        assert!(matches!(checked.kind(*base), TyKind::Any(_)));
+    }
+
+    #[test]
+    fn a_function_type_is_usable_as_a_parameter_annotation() {
+        let checked = check("fun f(callback: fun(i32) -> bool) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Fun { params: inner, ret } = checked.kind(params[0]) else {
+            panic!("fun(i32) -> bool lowers to a Fun type");
+        };
+        assert_eq!(checked.kind(inner[0]), &TyKind::Primitive(PrimTy::I32));
+        assert_eq!(
+            ret.map(|r| checked.kind(r).clone()),
+            Some(TyKind::Primitive(PrimTy::Bool))
+        );
+    }
+
+    #[test]
+    fn a_tuple_of_function_types_lowers_elementwise() {
+        let checked = check("fun f(x: (fun() -> i32, fun() -> bool)) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Tuple(elems) = checked.kind(params[0]) else {
+            panic!("expected a tuple type");
+        };
+        assert!(matches!(checked.kind(elems[0]), TyKind::Fun { .. }));
+        assert!(matches!(checked.kind(elems[1]), TyKind::Fun { .. }));
+    }
+
+    #[test]
+    fn an_array_of_tuples_and_a_tuple_of_arrays_both_lower() {
+        let checked = check("fun f(a: [(i32, bool); 3], b: ([i32; 2], [bool; 2])) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Array { elem, .. } = checked.kind(params[0]) else {
+            panic!("expected an array type");
+        };
+        assert!(matches!(checked.kind(*elem), TyKind::Tuple(_)));
+
+        let TyKind::Tuple(elems) = checked.kind(params[1]) else {
+            panic!("expected a tuple type");
+        };
+        assert!(matches!(checked.kind(elems[0]), TyKind::Array { .. }));
+        assert!(matches!(checked.kind(elems[1]), TyKind::Array { .. }));
+    }
+
+    #[test]
+    fn generic_arguments_nest_three_levels_deep() {
+        let checked = check(
+            "struct Wrap<T> { inner: T }
+             fun f(x: Wrap<Wrap<Wrap<i32>>>) {}",
+        );
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Adt { args: l1, .. } = checked.kind(params[0]) else {
+            panic!("expected an Adt");
+        };
+        let TyKind::Adt { args: l2, .. } = checked.kind(l1[0]) else {
+            panic!("expected a nested Adt");
+        };
+        let TyKind::Adt { args: l3, .. } = checked.kind(l2[0]) else {
+            panic!("expected a doubly nested Adt");
+        };
+        assert_eq!(checked.kind(l3[0]), &TyKind::Primitive(PrimTy::I32));
+    }
+
+    /// A struct's own field may itself be a function type over the struct's generic parameter --
+    /// `T` inside `fun(T) -> T` reaches the same node `Wrap`'s own generic does.
+    #[test]
+    fn a_generic_field_may_be_a_function_type_over_the_structs_own_parameter() {
+        let checked = check("struct Container<T> { f: fun(T) -> T }");
+        let container = checked.def("Container");
+        let OwnerNode::Struct(struct_) = checked.hir.def(container) else {
+            unreachable!();
+        };
+        let field = checked.ty(struct_.fields[0]);
+
+        let TyKind::Fun { params, ret } = checked.kind(field) else {
+            panic!("fun(T) -> T lowers to a Fun type");
+        };
+        let t = checked.generic(container, 0);
+        assert_eq!(params[0], t);
+        assert_eq!(*ret, Some(t));
+    }
+
+    /// `Self` used inside a tuple field. Typeck does not size-check types (there is no codegen
+    /// yet to make an infinitely-sized type observable), so this lowers exactly like any other
+    /// composite containing an `Adt` -- nothing here rejects a struct that could never actually
+    /// be constructed.
+    #[test]
+    fn self_may_appear_nested_inside_a_tuple_field() {
+        let checked = check("struct Wrap<T> { pair: (Self, i32) }");
+        let wrap = checked.def("Wrap");
+        let OwnerNode::Struct(struct_) = checked.hir.def(wrap) else {
+            unreachable!();
+        };
+        let field = checked.ty(struct_.fields[0]);
+
+        let TyKind::Tuple(elems) = checked.kind(field) else {
+            panic!("(Self, i32) lowers to a Tuple");
+        };
+        assert_eq!(elems[0], checked.def_ty(wrap));
+    }
+
+    /// A trait declaring more than one method, each mentioning both the trait's own generic
+    /// parameter and `Self`.
+    #[test]
+    fn a_traits_own_generic_and_self_both_appear_across_its_methods() {
+        let checked = check(
+            "trait Container<T> {
+                 fun get(&self) -> T;
+                 fun replace(&mut self, v: T) -> Self;
+             }",
+        );
+        let container = checked.def("Container");
+        let OwnerNode::Trait(trait_) = checked.hir.def(container) else {
+            unreachable!();
+        };
+
+        let get_sig = checked.sig(trait_.functions[0]);
+        assert_eq!(get_sig.1, Some(checked.generic(container, 0)));
+
+        let (replace_params, replace_ret) = checked.sig(trait_.functions[1]);
+        assert_eq!(replace_params[1], checked.generic(container, 0));
+        assert_eq!(replace_ret, Some(checked.def_ty(container)));
     }
 }

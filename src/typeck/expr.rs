@@ -7,9 +7,9 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, Path, Payload, PayloadField, Res, TyDef, Type};
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
+use crate::typeck::Typeck;
 use crate::typeck::pat::VariantTys;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
@@ -444,6 +444,7 @@ impl<'hir> Typeck<'hir> {
         scrutinee: HirId,
         arms: &'hir [HirId],
         expected: Option<Ty>,
+        span: SrcSpan,
     ) -> Ty {
         let scrutinee_ty = self.ty_of(scrutinee);
 
@@ -458,11 +459,19 @@ impl<'hir> Typeck<'hir> {
             None => self.tcx.next_ty_var(),
         };
 
+        // Whether any arm's own pattern already failed to check -- an unknown variant, a
+        // mismatched literal, and so on. Exhaustiveness is skipped in that case: a pattern that
+        // does not resolve to a real variant cannot count toward covering one, so asking would
+        // report the same mistake a second time as a phantom "not covered".
+        let mut pat_failed = false;
+
         for &arm in arms {
             let arm_node = self.hir.arm(arm);
             let (pat, block, arm_span) = (arm_node.pat, arm_node.block, arm_node.span);
 
             self.check_pat(pat, scrutinee_ty);
+            let pat_ty = self.types.ty(pat);
+            pat_failed |= pat_ty.is_some_and(|ty| matches!(self.tcx.kind(ty), TyKind::Error));
             let body = self.check_block_expecting(block, Some(result));
             if let Err(err) = self.unifier.unify(&self.tcx, result, body) {
                 DiagCtx::emit(
@@ -470,6 +479,13 @@ impl<'hir> Typeck<'hir> {
                         .with_label("every arm of a `match` has to produce the same type"),
                 );
             }
+        }
+
+        // Every arm's pattern is checked above regardless of whether it turns out to be
+        // reachable; exhaustiveness is a separate question asked once, over the whole set, now
+        // that every arm has had its own chance to report its own mistake first.
+        if !pat_failed {
+            self.check_match_exhaustive(scrutinee_ty, arms, span);
         }
 
         self.unifier.root(result)
@@ -1350,5 +1366,198 @@ mod tests {
     fn a_string_literal_and_a_range_report_that_they_have_no_type() {
         rejects("fun f() { let s = \"hi\"; }", "string literal has no type");
         rejects("fun f() { let r = 1..2; }", "range expression has no type");
+    }
+
+    // -----------------------------------------------------------------
+    // Loops: `while`, `for`, `while let` (all desugar to `ExprKind::Loop`; see `hir::lower::desugar`)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_while_conditions_type_has_to_be_bool() {
+        accepts("fun f(c: bool) { while c {} }");
+        // `while` desugars to `loop { if !cond { break }; .. }`, so a non-bool condition is
+        // caught by the desugared `if`'s own check, not by anything `while`-specific -- `!x`
+        // itself is accepted (`!` is a built-in operator on any primitive, `i32` included), and
+        // it is the `if` around it that then rejects the non-`bool` result.
+        rejects("fun f(x: i32) { while x {} }", "mismatched types");
+    }
+
+    #[test]
+    fn a_loop_nested_inside_another_loop_checks() {
+        accepts("fun f(a: bool, b: bool) { while a { while b {} } }");
+    }
+
+    #[test]
+    fn a_while_let_matches_against_an_enum_and_binds_its_payload() {
+        accepts(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) {
+                 while let .circle(r) = s {
+                     let y: f64 = r;
+                 }
+             }",
+        );
+        rejects(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) {
+                 while let .circle(r) = s {
+                     let y: bool = r;
+                 }
+             }",
+            "mismatched types",
+        );
+    }
+
+    /// `for pat in iter { .. }` desugars through the iterator protocol: `iter.next()` returning
+    /// an `Option`, matched against `.some(pat)`/`.none` -- see `hir::lower::desugar::lower_for`.
+    /// No `Iterator` trait or lang item is required for this to work; method resolution finds
+    /// `next` the same way it finds any other method.
+    #[test]
+    fn a_for_loop_binds_its_pattern_to_the_iterators_item_type() {
+        accepts(
+            "module core::option;
+             public enum Option<T> { some: T, none }
+             struct Counter { n: i32 }
+             extend Counter { fun next(&mut self) -> Option<i32> { return .none; } }
+             fun f() {
+                 let c = Counter { n: 0 };
+                 for x in c { let y: i32 = x; }
+             }",
+        );
+        rejects(
+            "module core::option;
+             public enum Option<T> { some: T, none }
+             struct Counter { n: i32 }
+             extend Counter { fun next(&mut self) -> Option<i32> { return .none; } }
+             fun f() {
+                 let c = Counter { n: 0 };
+                 for x in c { let y: bool = x; }
+             }",
+            "mismatched types",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Method chains and generic nesting
+    // -----------------------------------------------------------------
+
+    /// Chaining `&self` methods off a call's result does not work -- the result is a temporary,
+    /// and `&self` needs a place to borrow (see `a_temporary_receiver_needing_a_place_is_rejected`
+    /// below) -- so this chains through `self`-by-value methods instead, which need no place at
+    /// all.
+    #[test]
+    fn method_calls_chain_left_to_right() {
+        accepts(
+            "struct A {}
+             struct B {}
+             struct C {}
+             extend A { fun to_b(self) -> B { return .{}; } }
+             extend B { fun to_c(self) -> C { return .{}; } }
+             fun f(a: A) -> C { return a.to_b().to_c(); }",
+        );
+    }
+
+    /// The chain's other half: a method taking `&self` cannot be called on a temporary, because
+    /// there is nothing for the implicit borrow to reach.
+    #[test]
+    fn a_temporary_receiver_needing_a_place_is_rejected() {
+        rejects(
+            "struct A {}
+             struct B {}
+             extend A { fun to_b(self) -> B { return .{}; } }
+             extend B { fun show(&self) {} }
+             fun f(a: A) { a.to_b().show(); }",
+            "receiver is a temporary",
+        );
+    }
+
+    #[test]
+    fn a_nested_generic_struct_literal_checks() {
+        accepts(
+            "struct Wrap<T> { inner: T }
+             fun f() -> Wrap<Wrap<i32>> {
+                 return Wrap { inner: Wrap { inner: 1 } };
+             }",
+        );
+        rejects(
+            "struct Wrap<T> { inner: T }
+             fun f() -> Wrap<Wrap<i32>> {
+                 return Wrap { inner: Wrap { inner: true } };
+             }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn deeply_nested_if_and_match_expressions_share_one_result_type() {
+        accepts(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape, c: bool) -> i32 {
+                 return if c {
+                     match s {
+                         .unit => 1,
+                         .circle(r) => if r > 0.0 { 2 } else { 3 },
+                     }
+                 } else {
+                     4
+                 };
+             }",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `?` on `Option`, closures returning closures
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn try_on_an_option_produces_what_it_carries() {
+        accepts(
+            "module core::option;
+             public enum Option<T> { some: T, none }
+             fun f(o: Option<i32>) -> Option<i32> {
+                 let v = o?;
+                 return .some(v);
+             }",
+        );
+    }
+
+    #[test]
+    fn a_closure_may_capture_an_enclosing_closures_parameter() {
+        accepts(
+            "fun f() {
+                 let make_adder = |x: i32| {
+                     let adder = |y: i32| { x + y };
+                     adder
+                 };
+             }",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Assignment through a place other than a bare local
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn assignment_through_a_field_checks_against_the_fields_type() {
+        accepts("struct P { x: i32 } fun f(p: P) { p.x = 1; }");
+        rejects(
+            "struct P { x: i32 } fun f(p: P) { p.x = true; }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn assignment_through_an_index_checks_against_the_elements_type() {
+        accepts("fun f(a: [i32; 4]) { a[0] = 1; }");
+        rejects("fun f(a: [i32; 4]) { a[0] = true; }", "mismatched types");
+    }
+
+    // -----------------------------------------------------------------
+    // Unit structs
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_unit_struct_constructs_and_checks() {
+        accepts("struct Unit {} fun f() -> Unit { return Unit {}; }");
     }
 }

@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
-use crate::ast::{Ident, Symbol};
+use crate::ast::{Ident, Literal, Symbol};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, Node, OwnerNode, PatKind, Payload, VariantPayload};
-use crate::typeck::ty::{Ty, TyKind};
+use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
+use crate::typeck::ty::{Ty, TyKind};
 
 pub(crate) struct VariantDef {
     pub id: HirId,
@@ -245,6 +246,90 @@ impl<'hir> Typeck<'hir> {
         Some(VariantDef { id, payload })
     }
 
+    /// Checks that `arms`' own patterns -- taken one level deep, ignoring what any payload
+    /// sub-pattern does or doesn't cover -- account for every value `scrutinee_ty` could hold.
+    ///
+    /// Two shapes are judged directly: `bool` (covered exactly by writing both `true` and
+    /// `false`) and an enum (covered by naming every one of its variants, in any arm, with any
+    /// payload). A wildcard or a bare binding covers anything and short-circuits both. Every
+    /// other type -- another primitive, a tuple, a struct, a generic parameter -- has no finite
+    /// enumeration this checks against, so it demands a catch-all instead.
+    ///
+    /// Deliberately shallow: a `.some(.circle(_))` / `.none` pair is accepted as covering
+    /// `Option<Shape>` without asking whether `.circle(_)` alone covers `Shape`. Nesting that
+    /// check would mean specializing column-by-column the way a real usefulness algorithm does;
+    /// this only ever answers the question one pattern position asks of the scrutinee it was
+    /// matched against, the same depth every other check in this module works at.
+    pub(crate) fn check_match_exhaustive(
+        &mut self,
+        scrutinee_ty: Ty,
+        arms: &[HirId],
+        span: SrcSpan,
+    ) {
+        let ty = self.resolve_deep(scrutinee_ty);
+        // A scrutinee that never settled, or already failed, has nothing to judge coverage
+        // against -- and one that can never produce a value at all needs no arm to handle it.
+        if matches!(
+            self.tcx.kind(ty),
+            TyKind::Var(_) | TyKind::Error | TyKind::Never
+        ) {
+            return;
+        }
+
+        let hir = self.hir;
+        let pat_kind = |arm: HirId| &hir.pat(hir.arm(arm).pat).kind;
+
+        if arms
+            .iter()
+            .any(|&arm| matches!(pat_kind(arm), PatKind::Wildcard | PatKind::Binding { .. }))
+        {
+            return;
+        }
+
+        match self.tcx.kind(ty) {
+            TyKind::Primitive(PrimTy::Bool) => {
+                let (mut has_true, mut has_false) = (false, false);
+                for &arm in arms {
+                    match pat_kind(arm) {
+                        PatKind::Literal(Literal::Bool(true)) => has_true = true,
+                        PatKind::Literal(Literal::Bool(false)) => has_false = true,
+                        _ => {}
+                    }
+                }
+                let missing: Vec<&str> = [(has_true, "true"), (has_false, "false")]
+                    .into_iter()
+                    .filter(|&(seen, _)| !seen)
+                    .map(|(_, name)| name)
+                    .collect();
+                if !missing.is_empty() {
+                    self.report_match_not_exhaustive(span, &missing);
+                }
+            }
+            TyKind::Adt { def, .. } => {
+                let OwnerNode::Enum(enum_) = hir.def(*def) else {
+                    self.report_match_needs_wildcard(span);
+                    return;
+                };
+                let missing: Vec<String> = enum_
+                    .variants
+                    .iter()
+                    .map(|&id| hir.variant(id).name)
+                    .filter(|&name| {
+                        !arms.iter().any(|&arm| {
+                            matches!(pat_kind(arm), PatKind::Variant { variant, .. } if variant.text == name.text)
+                        })
+                    })
+                    .map(|name| Interner::resolve(name.text).to_string())
+                    .collect();
+                if !missing.is_empty() {
+                    let missing: Vec<&str> = missing.iter().map(String::as_str).collect();
+                    self.report_match_not_exhaustive(span, &missing);
+                }
+            }
+            _ => self.report_match_needs_wildcard(span),
+        }
+    }
+
     pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<Vec<(Ident, Ty)>> {
         let hir = self.hir;
         let TyKind::Adt { def, args } = self.tcx.kind(ty).clone() else {
@@ -319,6 +404,32 @@ impl<'hir> Typeck<'hir> {
             )
             .with_label("not declared by this variant")
             .with_secondary(self.hir.variant(variant).span, "declared here"),
+        );
+    }
+
+    /// Reported by [`Typeck::check_match_exhaustive`] when `missing` names the specific values
+    /// (variant names, or `"true"`/`"false"`) no arm covers.
+    fn report_match_not_exhaustive(&self, span: SrcSpan, missing: &[&str]) {
+        let list = missing
+            .iter()
+            .map(|m| format!("`{m}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        DiagCtx::emit(
+            Diagnostic::error(format!("match is not exhaustive: {list} not covered"), span)
+                .with_label("this match does not cover every possible value")
+                .with_help("add the missing arm(s), or a wildcard `_` to match anything else"),
+        );
+    }
+
+    /// Reported by [`Typeck::check_match_exhaustive`] for a scrutinee type this check does not
+    /// enumerate on its own (anything but `bool` or an enum): the only way it can know every arm
+    /// is accounted for is a catch-all.
+    fn report_match_needs_wildcard(&self, span: SrcSpan) {
+        DiagCtx::emit(
+            Diagnostic::error("match is not exhaustive: some values are not covered", span)
+                .with_label("no arm covers every remaining value")
+                .with_help("add a wildcard `_` (or binding) arm to match anything else"),
         );
     }
 
@@ -437,6 +548,182 @@ mod tests {
             "enum Shape { unit }
              fun f(s: Shape) -> i32 { return match s { .square(r) => r, .unit => 1, }; }",
             "no variant `square`",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Exhaustiveness -- see `Typeck::check_match_exhaustive` for exactly how much this does and
+    // does not check.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_match_missing_a_variant_and_with_no_wildcard_is_rejected() {
+        rejects(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) -> i32 { return match s { .unit => 1, }; }",
+            "not covered",
+        );
+    }
+
+    #[test]
+    fn a_match_covering_every_variant_needs_no_wildcard() {
+        accepts(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) -> i32 { return match s { .unit => 1, .circle(_) => 2, }; }",
+        );
+    }
+
+    #[test]
+    fn a_missing_bool_arm_is_rejected_without_a_wildcard() {
+        rejects(
+            "fun f(b: bool) -> i32 { return match b { true => 1, }; }",
+            "not covered",
+        );
+    }
+
+    /// Neither a tuple nor a struct is enumerated by this check -- see
+    /// `Typeck::check_match_exhaustive`'s doc comment -- so both need an explicit catch-all no
+    /// matter how many combinations the arms already spell out.
+    #[test]
+    fn a_type_this_check_does_not_enumerate_still_needs_a_wildcard() {
+        rejects(
+            "fun f(t: (bool, bool)) -> i32 {
+                 return match t {
+                     (true, true) => 1,
+                     (true, false) => 2,
+                     (false, true) => 3,
+                     (false, false) => 4,
+                 };
+             }",
+            "not covered",
+        );
+    }
+
+    /// One mistake, one diagnostic: a `match` with an unresolvable arm is not also accused of
+    /// leaving a variant uncovered.
+    #[test]
+    fn an_unknown_variant_does_not_also_trigger_an_exhaustiveness_diagnostic() {
+        rejects(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) -> i32 { return match s { .square => 1, .unit => 2, }; }",
+            "no variant `square`",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Nested patterns, more deeply
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_three_element_tuple_pattern_binds_each_element() {
+        accepts(
+            "fun f() -> bool {
+                 let (a, b, c) = (1, true, 'x');
+                 return b;
+             }",
+        );
+        rejects(
+            "fun f() -> bool {
+                 let (a, b, c) = (1, true, 'x');
+                 return a;
+             }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_tuple_nested_inside_a_tuple_pattern_binds_correctly() {
+        accepts(
+            "fun f() -> bool {
+                 let (a, (b, c)) = (1, (true, 'x'));
+                 return b;
+             }",
+        );
+        rejects(
+            "fun f() -> bool {
+                 let (a, (b, c)) = (1, (true, 'x'));
+                 return c;
+             }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_bool_literal_pattern_matches_a_bool_scrutinee() {
+        accepts("fun f(b: bool) -> i32 { return match b { true => 1, false => 2, }; }");
+    }
+
+    #[test]
+    fn a_char_literal_pattern_matches_a_char_scrutinee() {
+        accepts("fun f(c: char) -> i32 { return match c { 'a' => 1, _ => 2, }; }");
+    }
+
+    /// A variant pattern nested two levels deep inside another variant pattern -- `Option<Shape>`
+    /// matched all the way down to `Shape`'s own payload.
+    #[test]
+    fn a_variant_pattern_nested_inside_another_variant_pattern() {
+        accepts(
+            "enum Option<T> { some: T, none }
+             enum Shape { unit, circle: f64 }
+             fun f(o: Option<Shape>) -> f64 {
+                 return match o {
+                     .some(.circle(r)) => r,
+                     .some(.unit) => 0.0,
+                     .none => 0.0,
+                 };
+             }",
+        );
+        // The first arm pins the match's result type to `f64` (from `r`, `.circle`'s payload);
+        // the second arm's `true` then disagrees with that -- exactly one mismatch, on the one
+        // arm that is actually wrong.
+        rejects(
+            "enum Option<T> { some: T, none }
+             enum Shape { unit, circle: f64 }
+             fun f(o: Option<Shape>) {
+                 let v = match o {
+                     .some(.circle(r)) => r,
+                     .some(.unit) => true,
+                     .none => 0.0,
+                 };
+             }",
+            "mismatched types",
+        );
+    }
+
+    /// A generic enum with two type parameters (`Result`-shaped) matches through both.
+    #[test]
+    fn a_two_parameter_generic_enums_variants_bind_each_parameter_separately() {
+        accepts(
+            "enum Result<T, E> { ok: T, err: E }
+             fun f(r: Result<i32, bool>) -> i32 {
+                 return match r {
+                     .ok(v) => v,
+                     .err(e) => if e { 1 } else { 0 },
+                 };
+             }",
+        );
+        rejects(
+            "enum Result<T, E> { ok: T, err: E }
+             fun f(r: Result<i32, bool>) -> bool {
+                 return match r {
+                     .ok(v) => v,
+                     .err(e) => e,
+                 };
+             }",
+            "mismatched types",
+        );
+    }
+
+    /// A record payload pattern nested inside a tuple pattern.
+    #[test]
+    fn a_record_payload_pattern_may_appear_inside_a_tuple_pattern() {
+        accepts(
+            "enum Shape { square: { l: f64 } }
+             fun f(s: Shape) -> f64 {
+                 let pair = (s, 1);
+                 let (.square { l }, n) = pair;
+                 return l;
+             }",
         );
     }
 }
