@@ -211,7 +211,7 @@ pub enum ItemKind {
     Error,
 }
 ```
-An important thing to note is that `ModuleDecl` only represents the module declaration at the top of a file, such as `module math::vector`. That is, it just stores information not what module this file is implementing, **not** the contents of that module. This is due to Phi semantics allowing modules to implement any separate module. When the AST is created, code is organized into `Module`s, which actually hold information about the `Items` and imports in a module. Each module is assigned an `ModId` (which is just a unique integer) to help with this process.
+An important thing to note is that `ModuleDecl` only represents the module declaration at the top of a file, such as `module math::vector`. That is, it just stores information not what module this file is implementing, **not** the contents of that module. This is due to Phi semantics allowing modules to implement any separate module. When the AST is created, code is organized into `Module`s, which actually hold information about the `Items` and imports in a module. Note that due the fact that modules must be assembled after parsing, `Module::items` does NOT contain child modules, since a `Module` is not a variant of `ItemKind`. You must use `Module::children` to iterate through child modules.
 
 `Parser::parse` (and `parse_all`) each produce one `ParsedSrcFile` per file, which describes a file's own `module` header, its imports, and its items. `Ast::new` then turns a `Vec<ParsedSrcFile>` into the module tree, via a private `AstBuilder`:
 
@@ -337,6 +337,52 @@ struct ModuleScope {
 }
 ```
 
+Primarily, the `SymbolTable` provides two functionalities, lookup and insertion. While insertion is done automatically when the `SymbolTable` is built from a reference to the AST (this is true except for locals, which need to be inserted manually), lookup must be done manually when encountering an unknown `Path`. The `SymbolTable` reveals these methods, which are commonly used:
+
+```rust
+pub fn lookup_value_path(&self, from: NodeId, path: &Path) -> Option<Res> // handles functions and locals
+pub fn lookup_type_path(&self, from: NodeId, path: &Path) -> Option<Type> // handles all types
+pub fn lookup_dyn_path(&self, from: NodeId, path: &Path) -> Res  // We special case this since the type for a `dyn T` must be a Trait
+pub fn lookup_mod_path(&self, from: NodeId, path: &Path) -> Option<NodeId> // handles modules
+```
+Here, `from` represents the `NodeId` of the module where we are searching from. There are also trivial variants which do not have the functionality of looking up a `Path` and instead work with `Symbol`s.
+
+For dealing with resolution of bodies, `SymbolTable` exposes these methods:
+```rust
+pub fn push_scope(&mut self)
+pub fn pop_scope(&mut self)
+pub fn insert_local(&mut self, name: Ident, local: Local)
+pub fn lookup_local(&self, name: Symbol) -> Option<Local>
+```
+Note that while `lookup_value_path` also handles the same case as `lookup_local`, `lookup_local` can be useful when you know that the value you are looking up must resolve to a local.
+
+For resolving generics and `self`, `SymbolTable` has the following:
+```rust
+pub fn push_generics(&mut self, params: HashMap<Symbol, Type>)
+pub fn pop_generics(&mut self)
+pub fn lookup_generic(&self, name: Symbol) -> Option<Type>
+
+//-------------------------------------------------------------------------
+pub fn push_self(&mut self, ty: TyDef) 
+
+/// This is used for cases where due to a program error, a Self does not exist.
+/// For example, an `extend`  block whose `adt_path` didn't find anything.
+pub fn push_self_unresolved(&mut self)
+
+pub fn pop_self(&mut self)
+
+/// Returns the type that `Self` currently refers to and None if it doesn't exist
+pub fn current_self(&self) -> Option<TyDef>
+
+/// This allows us to tell whether this is no Self because we are in a context where Self doesn't exist or because there is an error
+pub fn current_self_entry(&self) -> Option<Option<TyDef>>
+```
+
+The actual name resolution phase runs in several phases: 
+1. A collection phase adds all items such as functions, modules, and types into `ModuleScope`s
+2. An import phase resolves all imports, reporting errors for conflicting glob imports,,importing private items, etc.
+3. The prelude, which contains `LangItem`s (a collection of traits and types which are fundamental to Phi) is collected
+4. A resolution phase resolves references found in bodies (such as the bodies of functions).
 
 ## High Intermediate Representation (HIR)
 The High Intermediate Representation (HIR) is an Intermediate Representation used for type inference. It is built using the AST from the `Parser` and results from `NameResolution`. The HIR has a few differences from the AST:
@@ -436,5 +482,7 @@ flowchart LR
     Bounds["bounds<br>asks the query where a bound is<br>instantiated, via an ObligationCx that<br>defers until inference has settled"] --> Method
     Method["method<br>x.foo() picks the one method meant, across<br>inherent blocks, impls, bounds, and dyn receivers"]
 ```
+
+## Mid Intermediate Representation
 
 ## Borrow Checking
