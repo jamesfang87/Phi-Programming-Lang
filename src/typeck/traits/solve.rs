@@ -36,8 +36,10 @@
 
 use std::collections::HashMap;
 
-use crate::ast::interner::Interner;
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::traits::solve::{
+    report_ambiguous_impls, report_cyclic_bound, report_recursion_limit,
+    report_require_extends_fails,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::Typeck;
@@ -334,20 +336,9 @@ impl<'hir> Typeck<'hir> {
             Solution::DoesNotHold => {
                 let trait_name = self
                     .trait_def(name)
-                    .map(|def| crate::typeck::display::def_name(self.hir, def))
+                    .map(|def| crate::diagnostics::typeck::display::def_name(self.hir, def))
                     .unwrap_or("<unresolved trait>");
-                DiagCtx::emit(
-                    Diagnostic::error(
-                        format!(
-                            "`{}` does not implement `{trait_name}`",
-                            self.cx().show(self_ty)
-                        ),
-                        span,
-                    )
-                    .with_label(format!(
-                        "{because} needs an `extend .. with {trait_name}` block providing it"
-                    )),
-                );
+                report_require_extends_fails(self.cx(), self_ty, trait_name, because, span);
                 false
             }
             Solution::Ambiguous | Solution::Error => false,
@@ -393,11 +384,11 @@ impl<'hir> Typeck<'hir> {
         }
 
         if self.goal_stack.iter().any(|open| open.same_goal(&goal)) {
-            self.report_cyclic_bound(&goal);
+            report_cyclic_bound(self.hir, self.cx(), &goal);
             return Solution::Error;
         }
         if self.goal_stack.len() >= RECURSION_LIMIT {
-            self.report_recursion_limit(&goal);
+            report_recursion_limit(self.hir, self.cx(), &goal);
             return Solution::Error;
         }
 
@@ -513,7 +504,7 @@ impl<'hir> Typeck<'hir> {
             "two impls matched one goal, which coherence is supposed to have made impossible"
         );
         if matches.len() > 1 {
-            self.report_ambiguous_impls(goal);
+            report_ambiguous_impls(self.hir, self.cx(), goal);
             return None;
         }
         matches.pop()
@@ -701,80 +692,13 @@ impl<'hir> Typeck<'hir> {
             | TyKind::Never => false,
         }
     }
-
-    /// How a goal reads in a diagnostic: `` `Foo<i32>: Show` ``.
-    pub(crate) fn show_goal(&self, goal: &Obligation) -> String {
-        format!(
-            "`{}: {}`",
-            self.cx().show(goal.self_ty),
-            trait_name(self.hir, goal.trait_ref.def)
-        )
-    }
-
-    fn report_cyclic_bound(&self, goal: &Obligation) {
-        let mut diag = Diagnostic::error(
-            format!(
-                "cyclic trait bound: proving {} requires proving it again",
-                self.show_goal(goal)
-            ),
-            goal.cause,
-        )
-        .with_label("this bound cannot be proved")
-        .with_help(
-            "one of the bounds involved has to be discharged by something other than \
-             itself, or the chain has no base case",
-        );
-
-        if let Some(declared_at) = goal.declared_at {
-            diag = diag.with_secondary(declared_at, "the bound the cycle starts from is here");
-        }
-
-        DiagCtx::emit(diag);
-    }
-
-    fn report_recursion_limit(&self, goal: &Obligation) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "recursion limit reached while proving {}",
-                    self.show_goal(goal)
-                ),
-                goal.cause,
-            )
-            .with_label("this bound needed too many steps to prove")
-            .with_help(format!(
-                "each step of the proof produced a larger type than the last, and the solver \
-                 gave up after {RECURSION_LIMIT}"
-            )),
-        );
-    }
-
-    /// The release-mode half of the duplicate-match assertion in [`Typeck::select`]: reported
-    /// rather than resolved by arbitrary choice, so that a coherence bug surfaces as a
-    /// diagnostic instead of as an answer that depends on collection order.
-    fn report_ambiguous_impls(&self, goal: &Obligation) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!("more than one implementation applies to {}", self.show_goal(goal)),
-                goal.cause,
-            )
-            .with_label("cannot tell which implementation to use")
-            .with_help("this is a compiler bug: overlapping implementations should have been reported at their declarations"),
-        );
-    }
-}
-
-/// The name a trait was declared with.
-fn trait_name(hir: &crate::hir::Hir, def: DefId) -> &'static str {
-    let OwnerNode::Trait(trait_) = hir.def(def) else {
-        unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-    };
-    Interner::resolve(trait_.name.text)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::interner::Interner;
+    use crate::diag::DiagCtx;
     use crate::hir::Hir;
     use crate::nameres::PrimTy;
     use crate::testing::resolve_src;

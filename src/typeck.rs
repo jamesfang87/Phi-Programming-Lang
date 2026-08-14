@@ -1,7 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp};
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::typeck::{
+    report_binary_operand_mismatch, report_binding_type_mismatch, report_body_return_mismatch,
+    report_logic_op_needs_bool, report_operand_unknown, report_return_mismatch,
+    report_str_literal_untyped,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
@@ -9,16 +14,14 @@ use crate::hir::{
 };
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
-use crate::typeck::display::DisplayCx;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::bounds::ObligationCx;
 use crate::typeck::traits::index::ImplIndex;
 use crate::typeck::traits::solve::{Obligation, ParamEnv, TraitName};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::{Unifier, UnifyError};
+use crate::typeck::unify::Unifier;
 
-pub mod display;
 pub mod expr;
 pub mod lower_ty;
 pub mod pat;
@@ -490,15 +493,7 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Binary { op, lhs, rhs } => {
                 let (lhs, rhs) = (self.ty_of(*lhs), self.ty_of(*rhs));
                 if let Err(error) = self.unifier.unify(&self.tcx, lhs, rhs) {
-                    DiagCtx::emit(
-                        Diagnostic::error(self.cx().show(error).to_string(), expr.span).with_label(
-                            format!(
-                                "cannot use incompatible types {} and {} in binary operation",
-                                self.cx().show(lhs),
-                                self.cx().show(rhs)
-                            ),
-                        ),
-                    );
+                    report_binary_operand_mismatch(self.cx(), error, lhs, rhs, expr.span);
                     // The operands themselves are already reported as incompatible -- letting
                     // `check_operator` re-derive a bound or a `bool` requirement from whichever
                     // operand happened to be `lhs` would just restate the same mismatch a second
@@ -606,14 +601,7 @@ impl<'hir> Typeck<'hir> {
                 // Not overloadable -- the core lib has no logic trait, so `&&`/`||` only ever
                 // mean the primitive short-circuit operators.
                 if let Err(error) = self.unifier.unify(&self.tcx, operand, bool_ty) {
-                    DiagCtx::emit(
-                        Diagnostic::error(self.cx().show(error).to_string(), span).with_label(
-                            format!(
-                                "`&&`/`||` need bool operands, found {}",
-                                self.cx().show(operand)
-                            ),
-                        ),
-                    );
+                    report_logic_op_needs_bool(self.cx(), error, operand, span);
                 }
                 bool_ty
             }
@@ -643,7 +631,7 @@ impl<'hir> Typeck<'hir> {
     /// the caller keeps that decision.
     fn operator_holds(&mut self, item: LangItem, self_ty: Ty, owner: DefId, span: SrcSpan) -> bool {
         if matches!(self.tcx.kind(self_ty), TyKind::Var(TyVar::Any(_))) {
-            self.report_operand_unknown(span);
+            report_operand_unknown(span);
             return false;
         }
 
@@ -694,14 +682,7 @@ impl<'hir> Typeck<'hir> {
             // definition to resolve one to. Reported rather than given a stand-in type, which
             // would make every use of it check against something no later pass could lower.
             Literal::Str(_) => {
-                DiagCtx::emit(
-                    Diagnostic::error("a string literal has no type yet", span)
-                        .with_label("`str` is not a type the core library declares")
-                        .with_help(
-                            "the core library declares no string type and no lang item names one, \
-                             so there is nothing for this literal to be",
-                        ),
-                );
+                report_str_literal_untyped(span);
                 self.tcx.error()
             }
         }
@@ -749,7 +730,7 @@ impl<'hir> Typeck<'hir> {
                 // declared to return nothing).
                 let expr_ty = self.ty_of_expecting(expr, ret);
                 if let Err(err) = self.unifier.unify(&self.tcx, ret, expr_ty) {
-                    self.report_return_mismatch(err, stmt.span);
+                    report_return_mismatch(self.cx(), err, stmt.span);
                 }
             }
             // `return;` with no value produces nothing, which the enclosing definition has to
@@ -758,7 +739,7 @@ impl<'hir> Typeck<'hir> {
                 let ret = self.return_ty(id.owner);
                 let unit = self.tcx.unit();
                 if let Err(err) = self.unifier.unify(&self.tcx, ret, unit) {
-                    self.report_return_mismatch(err, stmt.span);
+                    report_return_mismatch(self.cx(), err, stmt.span);
                 }
             }
             StmtKind::Defer(expr) | StmtKind::Expr(expr) => {
@@ -782,11 +763,7 @@ impl<'hir> Typeck<'hir> {
         let bound = match declared {
             Some(declared) => {
                 if let Err(err) = self.unifier.unify(&self.tcx, declared, init_ty) {
-                    DiagCtx::emit(
-                        Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
-                            "the value this binding is given does not match its declared type",
-                        ),
-                    );
+                    report_binding_type_mismatch(self.cx(), err, span);
                 }
                 declared
             }
@@ -818,35 +795,6 @@ impl<'hir> Typeck<'hir> {
     /// where a diagnostic is emitted rather than holding on to it -- it borrows `self`.
     fn cx(&self) -> DisplayCx<'_> {
         DisplayCx::new(self.hir, &self.tcx)
-    }
-
-    /// Reports why a `return`'s expression didn't unify with the enclosing function's return
-    /// type, at the `return` statement's span.
-    fn report_return_mismatch(&self, err: UnifyError, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
-                "returned value does not match this \
-                function's return type",
-            ),
-        );
-    }
-
-    /// Reported by [`Typeck::operator_holds`] when an operator's operand is still a wholly
-    /// unresolved variable -- not merely unconstrained-but-numeric, which
-    /// [`Typeck::is_builtin_operand`] already lets through without reaching here.
-    fn report_operand_unknown(&self, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                "type annotations needed: the type this operator is applied to is still unknown",
-                span,
-            )
-            .with_label("the type here is still unknown")
-            .with_help(
-                "which `extend .. with` block this operator would dispatch to depends on the \
-                 type it is applied to, and unlike a trait bound that cannot wait for a later \
-                 pass -- write the type out",
-            ),
-        );
     }
 
     /// Checks every statement in the block, and its trailing expression if it has one, and returns
@@ -932,11 +880,7 @@ impl<'hir> Typeck<'hir> {
             let ret = self.return_ty(def_id);
             let body = self.check_block_expecting(block, Some(ret));
             if let Err(err) = self.unifier.unify(&self.tcx, ret, body) {
-                DiagCtx::emit(
-                    Diagnostic::error(self.cx().show(err).to_string(), function.span).with_label(
-                        "this function does not return its declared return type on every path",
-                    ),
-                );
+                report_body_return_mismatch(self.cx(), err, function.span);
             }
             self.select_body_obligations();
             self.in_body = false;
@@ -1078,12 +1022,13 @@ pub fn check(hir: &Hir) -> TypeckOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diag::Severity;
+    use crate::diag::{DiagCtx, Severity};
     use crate::nameres::PrimTy;
     use crate::testing::{
         find_return, first_extend_method, first_function, first_struct, first_trait, resolve_src,
         typeck_accepts as accepts, typeck_rejects as rejects,
     };
+    use crate::typeck::unify::UnifyError;
 
     /// Builds a `Typeck` with every signature collected, ready for `check_stmt` to be called
     /// directly on one of `def_id`'s statements.

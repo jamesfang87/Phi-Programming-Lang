@@ -59,8 +59,10 @@
 use std::collections::HashMap;
 use std::mem;
 
-use crate::ast::interner::Interner;
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::traits::bounds::{
+    report_annotations_needed, report_arg_count_mismatch, report_bound_is_not_a_trait,
+    report_unsatisfied_bound,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Path, Res, TyDef, Type};
 use crate::typeck::Typeck;
@@ -237,8 +239,12 @@ impl<'hir> Typeck<'hir> {
             let env = self.param_env(pending.owner);
             match self.implements(&pending.goal, &env) {
                 Solution::Holds | Solution::Error => {}
-                Solution::DoesNotHold => self.report_unsatisfied_bound(&pending.goal),
-                Solution::Ambiguous => self.report_annotations_needed(&pending.goal),
+                Solution::DoesNotHold => {
+                    report_unsatisfied_bound(self.hir, self.cx(), &pending.goal)
+                }
+                Solution::Ambiguous => {
+                    report_annotations_needed(self.hir, self.cx(), &pending.goal)
+                }
             }
         }
     }
@@ -274,7 +280,7 @@ impl<'hir> Typeck<'hir> {
             // Already reported by name resolution; staying quiet here keeps one mistake from
             // producing a second diagnostic.
             Res::Err => {}
-            _ => Self::report_bound_is_not_a_trait(path),
+            _ => report_bound_is_not_a_trait(path),
         }
     }
 
@@ -339,7 +345,7 @@ impl<'hir> Typeck<'hir> {
             return true;
         }
 
-        self.report_arg_count_mismatch(def, declared, found, span);
+        report_arg_count_mismatch(self.hir, def, declared, found, span);
         false
     }
 
@@ -356,121 +362,6 @@ impl<'hir> Typeck<'hir> {
             OwnerNode::Extend(e) => e.extend_generics.clone(),
             OwnerNode::Module(_) | OwnerNode::Closure(_) => Vec::new(),
         }
-    }
-
-    /// What a definition is called, for a diagnostic that has to name one.
-    fn def_name(&self, def: DefId) -> &'static str {
-        let name = match self.hir.def(def) {
-            OwnerNode::Function(f) => f.name.text,
-            OwnerNode::Struct(s) => s.name.text,
-            OwnerNode::Enum(e) => e.name.text,
-            OwnerNode::Trait(t) => t.name.text,
-            OwnerNode::Extend(_) | OwnerNode::Module(_) | OwnerNode::Closure(_) => {
-                unreachable!("only a named definition is ever applied to generic arguments")
-            }
-        };
-        Interner::resolve(name)
-    }
-
-    /// Where a definition's name was written, for a diagnostic pointing back at what it declares.
-    fn def_span(&self, def: DefId) -> SrcSpan {
-        match self.hir.def(def) {
-            OwnerNode::Function(f) => f.name.span,
-            OwnerNode::Struct(s) => s.name.span,
-            OwnerNode::Enum(e) => e.name.span,
-            OwnerNode::Trait(t) => t.name.span,
-            OwnerNode::Extend(_) | OwnerNode::Module(_) | OwnerNode::Closure(_) => {
-                unreachable!("only a named definition is ever applied to generic arguments")
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // Diagnostics
-    // -----------------------------------------------------------------
-
-    fn report_unsatisfied_bound(&self, goal: &Obligation) {
-        let mut diag = Diagnostic::error(
-            format!("the trait bound {} is not satisfied", self.show_goal(goal)),
-            goal.cause,
-        )
-        .with_label("this instantiation does not meet the bound its declaration writes")
-        .with_help(
-            "either write an `extend .. with` block implementing the trait for this type, or \
-             pass a type that already has one",
-        );
-
-        if let Some(declared_at) = goal.declared_at {
-            diag = diag.with_secondary(declared_at, "required by this bound");
-        }
-
-        DiagCtx::emit(diag);
-    }
-
-    /// A goal that no further pass could decide. Not a failed bound -- it is a bound nobody ever
-    /// finished asking about, because the type it is about never became known.
-    fn report_annotations_needed(&self, goal: &Obligation) {
-        let mut diag = Diagnostic::error(
-            format!(
-                "type annotations needed: cannot tell whether {} holds",
-                self.show_goal(goal)
-            ),
-            goal.cause,
-        )
-        .with_label("the type here is still unknown")
-        .with_help(
-            "nothing in this body pins the type down, so whether it satisfies the bound \
-             cannot be decided; write the type out",
-        );
-
-        if let Some(declared_at) = goal.declared_at {
-            diag = diag.with_secondary(declared_at, "the bound that has to be decided is here");
-        }
-
-        DiagCtx::emit(diag);
-    }
-
-    fn report_bound_is_not_a_trait(path: &Path) {
-        let name = path
-            .segments
-            .last()
-            .map_or("this path", |segment| Interner::resolve(segment.text));
-
-        DiagCtx::emit(
-            Diagnostic::error(format!("`{name}` is not a trait"), path.span)
-                .with_label("not a trait")
-                .with_help(
-                    "a bound says what a type parameter must implement, and only a trait can be \
-                     implemented; a bound naming anything else promises the body something \
-                     nothing could ever supply",
-                ),
-        );
-    }
-
-    fn report_arg_count_mismatch(&self, def: DefId, declared: usize, found: usize, span: SrcSpan) {
-        let plural = if declared == 1 { "" } else { "s" };
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "`{}` takes {declared} generic argument{plural} but {found} {} supplied",
-                    self.def_name(def),
-                    if found == 1 { "was" } else { "were" }
-                ),
-                span,
-            )
-            .with_label(format!("expected {declared} argument{plural}"))
-            .with_secondary(
-                self.def_span(def),
-                format!(
-                    "`{}` declares {declared} type parameter{plural} here",
-                    self.def_name(def)
-                ),
-            )
-            .with_help(
-                "every parameter has to be given an argument, since the declaration is written in \
-                 terms of all of them",
-            ),
-        );
     }
 }
 

@@ -1,4 +1,7 @@
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::lower_ty::{
+    report_arg_count, report_dyn_not_a_trait, report_self_cycle, report_self_outside_item,
+    report_trait_as_ty, report_unexpected_generic_args,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, Node, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
 use crate::typeck::Typeck;
@@ -79,7 +82,7 @@ impl<'hir> Typeck<'hir> {
             // generic parameter ([`Typeck::collect_bounds`]) -- neither of which is an ordinary
             // type position, so a bare trait reaching one here is always a mistake.
             Res::Type(Type::Def(TyDef::Trait(_))) => {
-                Self::report_trait_as_ty(span);
+                report_trait_as_ty(span);
                 self.tcx.error()
             }
             Res::SelfTy(_) => {
@@ -111,7 +114,7 @@ impl<'hir> Typeck<'hir> {
         owner: DefId,
     ) -> Ty {
         if args.len() != declared {
-            Self::report_arg_count(span, declared, args.len());
+            report_arg_count(span, declared, args.len());
             return self.tcx.error();
         }
 
@@ -132,7 +135,7 @@ impl<'hir> Typeck<'hir> {
             }
             Res::Err => self.tcx.error(),
             _ => {
-                Self::report_dyn_not_a_trait(span);
+                report_dyn_not_a_trait(span);
                 self.tcx.error()
             }
         }
@@ -153,7 +156,7 @@ impl<'hir> Typeck<'hir> {
             match self.hir.parent(introducer) {
                 Some(parent) => introducer = parent,
                 None => {
-                    Self::report_self_outside_item(span);
+                    report_self_outside_item(span);
                     return self.tcx.error();
                 }
             }
@@ -164,7 +167,7 @@ impl<'hir> Typeck<'hir> {
         }
 
         if !self.computing_self_tys.insert(introducer) {
-            Self::report_self_cycle(span);
+            report_self_cycle(span);
             return self.tcx.error();
         }
 
@@ -202,68 +205,8 @@ impl<'hir> Typeck<'hir> {
 
     fn expect_no_args(args: &[HirId], span: SrcSpan, kind: &str) {
         if !args.is_empty() {
-            DiagCtx::emit(
-                Diagnostic::error(format!("{kind} takes no generic arguments"), span)
-                    .with_label("unexpected generic arguments"),
-            );
+            report_unexpected_generic_args(kind, span);
         }
-    }
-
-    fn report_arg_count(span: SrcSpan, declared: usize, found: usize) {
-        let plural = if declared == 1 { "" } else { "s" };
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "this type takes {declared} generic argument{plural} but {found} \
-                     {} supplied",
-                    if found == 1 { "was" } else { "were" }
-                ),
-                span,
-            )
-            .with_label(format!("expected {declared} argument{plural}")),
-        );
-    }
-
-    fn report_trait_as_ty(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("a trait cannot be used as a type on its own", span)
-                .with_label("not a type")
-                .with_help(
-                    "a trait names every type that implements it, not one type; write \
-                     `dyn Trait` for a value whose type is only known at run time, or take a \
-                     generic parameter bounded by the trait",
-                ),
-        );
-    }
-
-    fn report_dyn_not_a_trait(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("`dyn` must be applied to a trait", span)
-                .with_label("not a trait")
-                .with_help("only a trait describes a set of types that a `dyn` value can hold"),
-        );
-    }
-
-    fn report_self_outside_item(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("`Self` is not available here", span)
-                .with_label("no enclosing type")
-                .with_help(
-                    "`Self` names the type being defined, so it only means something inside a \
-                     `struct`, `enum`, `trait`, or `extend` body",
-                ),
-        );
-    }
-
-    fn report_self_cycle(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("`Self` is defined in terms of itself", span)
-                .with_label("cycle here")
-                .with_help(
-                    "the type this `Self` stands for cannot be worked out without already \
-                     knowing it",
-                ),
-        );
     }
 }
 

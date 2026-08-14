@@ -9,7 +9,6 @@
 //!
 //! See `docs/superpowers/specs/2026-08-07-ast-symbol-table-design.md`.
 
-pub mod diagnostics;
 pub mod res;
 mod resolver;
 pub mod results;
