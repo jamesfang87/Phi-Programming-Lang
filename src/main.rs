@@ -5,6 +5,7 @@
 
 mod ast;
 mod diag;
+mod diagnostics;
 mod driver;
 mod hir;
 mod langitems;

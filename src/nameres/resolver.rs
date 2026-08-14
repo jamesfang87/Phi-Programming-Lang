@@ -8,11 +8,11 @@ use crate::ast::{
     Ident, Item, NodeId, Pat, PatKind, Path, Payload, PayloadField, Stmt, StmtKind, Struct, Trait,
     Ty, TyKind,
 };
-use crate::driver::source::SrcSpan;
-use crate::nameres::diagnostics::{
+use crate::diagnostics::nameres::{
     report_conflict, report_duplicate_bound, report_not_found, report_self_extend,
     report_self_unavailable,
 };
+use crate::driver::source::SrcSpan;
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::nameres::results::NameResolutions;
 use crate::nameres::symbol_table::SymbolTable;

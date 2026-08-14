@@ -19,7 +19,9 @@
 use std::collections::HashMap;
 
 use crate::ast::Symbol;
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::traits::index::{
+    report_extend_generic, report_extend_primitive, report_extend_trait, report_impl_of_non_trait,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::Typeck;
@@ -237,15 +239,15 @@ impl<'hir> Typeck<'hir> {
         match block.adt_path.res {
             Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => Some(def),
             Res::Type(Type::Def(TyDef::Trait(_))) => {
-                Self::report_extend_trait(span);
+                report_extend_trait(span);
                 None
             }
             Res::Type(Type::Prim(_)) => {
-                Self::report_extend_primitive(span);
+                report_extend_primitive(span);
                 None
             }
             Res::Type(Type::Generic(_)) => {
-                Self::report_extend_generic(span);
+                report_extend_generic(span);
                 None
             }
             // Already reported by name resolution; staying quiet here keeps one mistake from
@@ -288,7 +290,7 @@ impl<'hir> Typeck<'hir> {
             // `extend Foo with Bar` where `Bar` is a struct. Reported here rather than left to
             // fail confusingly later: a `TraitRef` naming a non-trait would break every consumer's
             // assumption that `def` has a method list.
-            Self::report_impl_of_non_trait(span);
+            report_impl_of_non_trait(span);
             return None;
         }
 
@@ -302,47 +304,6 @@ impl<'hir> Typeck<'hir> {
             .collect();
 
         Some(TraitRef { def, args })
-    }
-
-    fn report_extend_primitive(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("a primitive type cannot be extended", span)
-                .with_label("not a struct or enum")
-                .with_help(
-                    "only a `struct` or an `enum` can be extended, so that the type being \
-                     implemented has a definition to attach the implementation to",
-                ),
-        );
-    }
-
-    fn report_extend_trait(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("a trait cannot be extended", span)
-                .with_label("not a struct or enum")
-                .with_help(
-                    "a trait names every type that implements it, not one type; extend the \
-                     `struct` or `enum` that should implement it instead",
-                ),
-        );
-    }
-
-    fn report_extend_generic(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("a generic type parameter cannot be extended", span)
-                .with_label("not a struct or enum")
-                .with_help(
-                    "an implementation has to name the type it applies to; extending a parameter \
-                     would implement the trait for every type at once",
-                ),
-        );
-    }
-
-    fn report_impl_of_non_trait(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("`with` must name a trait", span)
-                .with_label("not a trait")
-                .with_help("only a trait declares methods for an `extend` block to implement"),
-        );
     }
 }
 

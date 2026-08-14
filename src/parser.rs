@@ -5,7 +5,7 @@ use chumsky::prelude::*;
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, Ident, Item, ItemKind, NodeId, ParsedSrcFile, Path};
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::parser::{report_duplicate_module, report_error};
 use crate::driver::source::{SrcMap, SrcSpan};
 use crate::lexer::token::{Token, TokenKind};
 
@@ -47,7 +47,7 @@ impl Parser {
         let (output, errors) = grammar.parse(tokens).into_output_errors();
 
         for err in &errors {
-            Self::report_error(err);
+            report_error(err);
         }
 
         match output {
@@ -78,7 +78,7 @@ impl Parser {
                 // Only the first `module` header counts. A file belongs to exactly one module.
                 ItemKind::ModuleDecl(decl) => match module {
                     None => module = Some(decl),
-                    Some(_) => Self::report_duplicate_module(item.span),
+                    Some(_) => report_duplicate_module(item.span),
                 },
                 ItemKind::Import(import) => imports.push(import),
                 _ => definitions.push(item),
@@ -91,22 +91,6 @@ impl Parser {
             items: definitions,
             span,
         }
-    }
-
-    fn report_duplicate_module(span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("a file can only declare one module", span)
-                .with_label("second `module` declaration")
-                .with_help("every item in a file belongs to the module its first header names"),
-        );
-    }
-
-    fn report_error(err: &Rich<Token>) {
-        let span = err
-            .found()
-            .map(|t| t.span)
-            .unwrap_or_else(|| SrcSpan::new(0, 0));
-        DiagCtx::error(err.to_string(), span);
     }
 
     /// Matches a single token of the given `kind`, yielding the token itself.

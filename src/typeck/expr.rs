@@ -2,7 +2,19 @@ use std::collections::HashSet;
 
 use crate::ast::interner::Interner;
 use crate::ast::{BinaryOp, Ident, Mutability};
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::expr::{
+    report_assign_mismatch, report_closure_body_mismatch, report_compound_assign_mismatch,
+    report_compound_assign_result_mismatch, report_ctor_not_a_struct, report_duplicate_field,
+    report_elided_ctor_unknown, report_field_type_mismatch, report_if_branches_mismatch,
+    report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
+    report_index_not_int, report_match_arm_mismatch, report_missing_fields, report_no_range_type,
+    report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
+    report_not_assignable, report_not_indexable, report_not_try, report_range_endpoints_mismatch,
+    report_record_field_unknown, report_try_error_mismatch, report_try_operand_unknown,
+    report_try_outside, report_try_return_mismatch, report_variant_enum_unknown,
+    report_variant_expr_payload_shape, report_variant_missing_fields,
+    report_variant_payload_mismatch,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, Path, Payload, PayloadField, Res, TyDef, Type};
 use crate::langitems::LangItem;
@@ -19,15 +31,12 @@ impl<'hir> Typeck<'hir> {
     pub(crate) fn check_assign(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) -> Ty {
         let lhs_ty = self.ty_of(lhs);
         if !self.is_place_expr(lhs) {
-            self.report_not_assignable(self.hir.expr(lhs).span);
+            report_not_assignable(self.hir.expr(lhs).span);
         }
 
         let rhs_ty = self.ty_of_expecting(rhs, lhs_ty);
         if let Err(err) = self.unifier.unify(&self.tcx, lhs_ty, rhs_ty) {
-            DiagCtx::emit(
-                Diagnostic::error(self.cx().show(err).to_string(), span)
-                    .with_label("this value cannot be assigned to the place on the left"),
-            );
+            report_assign_mismatch(self.cx(), err, span);
         }
         self.tcx.unit()
     }
@@ -41,15 +50,12 @@ impl<'hir> Typeck<'hir> {
     ) -> Ty {
         let lhs_ty = self.ty_of(lhs);
         if !self.is_place_expr(lhs) {
-            self.report_not_assignable(self.hir.expr(lhs).span);
+            report_not_assignable(self.hir.expr(lhs).span);
         }
 
         let rhs_ty = self.ty_of_expecting(rhs, lhs_ty);
         if let Err(err) = self.unifier.unify(&self.tcx, lhs_ty, rhs_ty) {
-            DiagCtx::emit(
-                Diagnostic::error(self.cx().show(err).to_string(), span)
-                    .with_label("both sides of a compound assignment must have the same type"),
-            );
+            report_compound_assign_mismatch(self.cx(), err, span);
             return self.tcx.unit();
         }
 
@@ -58,11 +64,7 @@ impl<'hir> Typeck<'hir> {
         // `foo += bar` stores the operator's result back into `foo`, so an operator that produces
         // something else cannot be compounded.
         if let Err(err) = self.unifier.unify(&self.tcx, operand, produced) {
-            DiagCtx::emit(
-                Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
-                    "this operator does not produce the type it would be assigned back to",
-                ),
-            );
+            report_compound_assign_result_mismatch(self.cx(), err, span);
         }
         self.tcx.unit()
     }
@@ -99,7 +101,7 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         }
         if matches!(self.tcx.kind(base_ty), TyKind::Var(_)) {
-            self.report_index_base_unknown(self.hir.expr(base).span);
+            report_index_base_unknown(self.hir.expr(base).span);
             self.ty_of(index);
             return self.tcx.error();
         }
@@ -109,10 +111,7 @@ impl<'hir> Typeck<'hir> {
             let int = self.tcx.next_int_var();
             let index_ty = self.ty_of(index);
             if let Err(err) = self.unifier.unify(&self.tcx, int, index_ty) {
-                DiagCtx::emit(
-                    Diagnostic::error(self.cx().show(err).to_string(), span)
-                        .with_label("an array is indexed by an integer"),
-                );
+                report_index_not_int(self.cx(), err, span);
             }
             return elem;
         }
@@ -125,7 +124,7 @@ impl<'hir> Typeck<'hir> {
             .method_candidates(peeled, member.text, base.owner)
             .is_empty()
         {
-            self.report_not_indexable(peeled, span);
+            report_not_indexable(self.cx(), peeled, span);
             self.ty_of(index);
             return self.tcx.error();
         }
@@ -152,7 +151,7 @@ impl<'hir> Typeck<'hir> {
         };
 
         let Some(declared) = self.struct_fields(self_ty) else {
-            self.report_not_a_struct_literal(self_ty, span);
+            report_not_a_struct_literal(self.cx(), self_ty, span);
             for field in payload {
                 self.ty_of(field.value);
             }
@@ -162,7 +161,7 @@ impl<'hir> Typeck<'hir> {
         let mut written = HashSet::new();
         for field in payload {
             if !written.insert(field.name.text) {
-                self.report_duplicate_field(field.name);
+                report_duplicate_field(field.name);
             }
             match declared
                 .iter()
@@ -171,17 +170,11 @@ impl<'hir> Typeck<'hir> {
                 Some(&(_, want)) => {
                     let got = self.ty_of_expecting(field.value, want);
                     if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                        DiagCtx::emit(
-                            Diagnostic::error(
-                                self.cx().show(err).to_string(),
-                                self.hir.expr(field.value).span,
-                            )
-                            .with_label("this value does not match the field's declared type"),
-                        );
+                        report_field_type_mismatch(self.cx(), err, self.hir.expr(field.value).span);
                     }
                 }
                 None => {
-                    self.report_no_such_field(field.name, self_ty);
+                    report_no_such_field(self.cx(), field.name, self_ty);
                     self.ty_of(field.value);
                 }
             }
@@ -193,7 +186,7 @@ impl<'hir> Typeck<'hir> {
             .map(|(name, _)| Interner::resolve(name.text))
             .collect();
         if !missing.is_empty() {
-            self.report_missing_fields(&missing, self_ty, span);
+            report_missing_fields(self.cx(), &missing, self_ty, span);
         }
 
         self_ty
@@ -212,7 +205,7 @@ impl<'hir> Typeck<'hir> {
                 Some(ty) if matches!(self.tcx.kind(ty), TyKind::Adt { .. }) => Some(ty),
                 Some(ty) if matches!(self.tcx.kind(ty), TyKind::Error) => None,
                 _ => {
-                    self.report_elided_ctor_unknown(span);
+                    report_elided_ctor_unknown(span);
                     None
                 }
             };
@@ -237,7 +230,7 @@ impl<'hir> Typeck<'hir> {
             Res::SelfTy(_) => Some(self.self_ty(owner, span)),
             Res::Err => None, // already reported by name resolution
             _ => {
-                self.report_ctor_not_a_struct(span);
+                report_ctor_not_a_struct(span);
                 None
             }
         }
@@ -259,14 +252,14 @@ impl<'hir> Typeck<'hir> {
             }
             Some(ty) if !matches!(self.tcx.kind(ty), TyKind::Var(_)) => ty,
             _ => {
-                self.report_variant_enum_unknown(variant, span);
+                report_variant_enum_unknown(variant, span);
                 self.check_payload_exprs_only(payload);
                 return self.tcx.error();
             }
         };
 
         let Some(found) = self.lookup_variant(self_ty, variant.text) else {
-            self.report_no_such_variant(variant, self_ty);
+            report_no_such_variant(self.cx(), variant, self_ty);
             self.check_payload_exprs_only(payload);
             return self.tcx.error();
         };
@@ -277,13 +270,7 @@ impl<'hir> Typeck<'hir> {
                 let want = *want;
                 let got = self.ty_of_expecting(*value, want);
                 if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                    DiagCtx::emit(
-                        Diagnostic::error(
-                            self.cx().show(err).to_string(),
-                            self.hir.expr(*value).span,
-                        )
-                        .with_label("this value does not match the variant's declared payload"),
-                    );
+                    report_variant_payload_mismatch(self.cx(), err, self.hir.expr(*value).span);
                 }
             }
             (VariantTys::Record(want), Payload::Record(fields)) => {
@@ -292,18 +279,7 @@ impl<'hir> Typeck<'hir> {
             }
             _ => {
                 let declared = found.payload.describe();
-                let variant_span = self.hir.variant(found.id).span;
-                DiagCtx::emit(
-                    Diagnostic::error(
-                        format!(
-                            "variant `{}` carries {declared}",
-                            Interner::resolve(variant.text)
-                        ),
-                        span,
-                    )
-                    .with_label(format!("built with a payload that is not {declared}"))
-                    .with_secondary(variant_span, "declared here"),
-                );
+                report_variant_expr_payload_shape(self.hir, variant, span, declared, found.id);
                 self.check_payload_exprs_only(payload);
             }
         }
@@ -321,7 +297,7 @@ impl<'hir> Typeck<'hir> {
         let mut seen = HashSet::new();
         for field in written {
             if !seen.insert(field.name.text) {
-                self.report_duplicate_field(field.name);
+                report_duplicate_field(field.name);
             }
             match declared
                 .iter()
@@ -330,28 +306,11 @@ impl<'hir> Typeck<'hir> {
                 Some(&(_, want)) => {
                     let got = self.ty_of_expecting(field.value, want);
                     if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                        DiagCtx::emit(
-                            Diagnostic::error(
-                                self.cx().show(err).to_string(),
-                                self.hir.expr(field.value).span,
-                            )
-                            .with_label("this value does not match the field's declared type"),
-                        );
+                        report_field_type_mismatch(self.cx(), err, self.hir.expr(field.value).span);
                     }
                 }
                 None => {
-                    let variant_span = self.hir.variant(variant).span;
-                    DiagCtx::emit(
-                        Diagnostic::error(
-                            format!(
-                                "no field `{}` on this variant",
-                                Interner::resolve(field.name.text)
-                            ),
-                            field.name.span,
-                        )
-                        .with_label("not declared by this variant")
-                        .with_secondary(variant_span, "declared here"),
-                    );
+                    report_record_field_unknown(self.hir, field.name, variant);
                     self.ty_of(field.value);
                 }
             }
@@ -363,14 +322,7 @@ impl<'hir> Typeck<'hir> {
             .map(|(name, _)| Interner::resolve(name.text))
             .collect();
         if !missing.is_empty() {
-            let variant_span = self.hir.variant(variant).span;
-            DiagCtx::emit(
-                Diagnostic::error(
-                    format!("this variant's payload is missing {}", list(&missing)),
-                    variant_span,
-                )
-                .with_label("every declared field has to be given a value"),
-            );
+            report_variant_missing_fields(self.hir, variant, &missing);
         }
     }
 
@@ -405,34 +357,21 @@ impl<'hir> Typeck<'hir> {
         let cond_ty = self.ty_of(cond);
         let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
         if let Err(err) = self.unifier.unify(&self.tcx, bool_ty, cond_ty) {
-            DiagCtx::emit(
-                Diagnostic::error(self.cx().show(err).to_string(), self.hir.expr(cond).span)
-                    .with_label("an `if` condition has to be a `bool`"),
-            );
+            report_if_cond_not_bool(self.cx(), err, self.hir.expr(cond).span);
         }
 
         let then_ty = self.check_block_expecting(then_block, expected);
         let Some(else_block) = else_block else {
             let unit = self.tcx.unit();
             if let Err(err) = self.unifier.unify(&self.tcx, unit, then_ty) {
-                DiagCtx::emit(
-                    Diagnostic::error(self.cx().show(err).to_string(), span)
-                        .with_label("an `if` with no `else` produces no value")
-                        .with_help(
-                            "the block's last expression would be the `if`'s value, and there is \
-                             no `else` branch to produce one on the other path",
-                        ),
-                );
+                report_if_no_else_mismatch(self.cx(), err, span);
             }
             return unit;
         };
 
         let else_ty = self.check_block_expecting(else_block, expected);
         if let Err(err) = self.unifier.unify(&self.tcx, then_ty, else_ty) {
-            DiagCtx::emit(
-                Diagnostic::error(self.cx().show(err).to_string(), span)
-                    .with_label("both branches of an `if` have to produce the same type"),
-            );
+            report_if_branches_mismatch(self.cx(), err, span);
             return self.tcx.error();
         }
         self.unifier.root(then_ty)
@@ -474,10 +413,7 @@ impl<'hir> Typeck<'hir> {
             pat_failed |= pat_ty.is_some_and(|ty| matches!(self.tcx.kind(ty), TyKind::Error));
             let body = self.check_block_expecting(block, Some(result));
             if let Err(err) = self.unifier.unify(&self.tcx, result, body) {
-                DiagCtx::emit(
-                    Diagnostic::error(self.cx().show(err).to_string(), arm_span)
-                        .with_label("every arm of a `match` has to produce the same type"),
-                );
+                report_match_arm_mismatch(self.cx(), err, arm_span);
             }
         }
 
@@ -504,12 +440,12 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         }
         if matches!(self.tcx.kind(operand_ty), TyKind::Var(_)) {
-            self.report_try_operand_unknown(span);
+            report_try_operand_unknown(span);
             return self.tcx.error();
         }
 
         let TyKind::Adt { def, args } = self.tcx.kind(operand_ty).clone() else {
-            self.report_not_try(operand_ty, span);
+            report_not_try(self.cx(), operand_ty, span);
             return self.tcx.error();
         };
 
@@ -525,7 +461,7 @@ impl<'hir> Typeck<'hir> {
             return args[0];
         }
 
-        self.report_not_try(operand_ty, span);
+        report_not_try(self.cx(), operand_ty, span);
         self.tcx.error()
     }
 
@@ -540,7 +476,7 @@ impl<'hir> Typeck<'hir> {
         owner: DefId,
     ) {
         let Some(ret) = self.owner_ret(owner) else {
-            self.report_try_outside(operand_ty, span);
+            report_try_outside(self.cx(), operand_ty, span);
             return;
         };
         let ret = self.resolve_deep(ret);
@@ -550,11 +486,11 @@ impl<'hir> Typeck<'hir> {
 
         let expected_def = self.hir.lang_items().get(item);
         let TyKind::Adt { def, args } = self.tcx.kind(ret).clone() else {
-            self.report_try_return_mismatch(operand_ty, ret, span);
+            report_try_return_mismatch(self.cx(), operand_ty, ret, span);
             return;
         };
         if Some(def) != expected_def {
-            self.report_try_return_mismatch(operand_ty, ret, span);
+            report_try_return_mismatch(self.cx(), operand_ty, ret, span);
             return;
         }
 
@@ -563,12 +499,7 @@ impl<'hir> Typeck<'hir> {
         if let (Some(error_ty), Some(ret_error)) = (error_ty, args.get(1).copied())
             && let Err(err) = self.unifier.unify(&self.tcx, ret_error, error_ty)
         {
-            DiagCtx::emit(
-                Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
-                    "`?` propagates this error out of the function, whose declared error type it \
-                     has to match",
-                ),
-            );
+            report_try_error_mismatch(self.cx(), err, span);
         }
     }
 
@@ -598,14 +529,11 @@ impl<'hir> Typeck<'hir> {
         if let (Some(lo_ty), Some(hi_ty)) = (lo_ty, hi_ty)
             && let Err(err) = self.unifier.unify(&self.tcx, lo_ty, hi_ty)
         {
-            DiagCtx::emit(
-                Diagnostic::error(self.cx().show(err).to_string(), span)
-                    .with_label("a range's two endpoints have to have the same type"),
-            );
+            report_range_endpoints_mismatch(self.cx(), err, span);
         }
 
         // TODO: unify with the std::Range
-        self.report_no_range_type(span);
+        report_no_range_type(span);
         self.tcx.error()
     }
 
@@ -655,11 +583,7 @@ impl<'hir> Typeck<'hir> {
 
         let body = self.check_block_expecting(closure.block, Some(ret_var));
         if let Err(err) = self.unifier.unify(&self.tcx, ret_var, body) {
-            DiagCtx::emit(
-                Diagnostic::error(self.cx().show(err).to_string(), closure.span).with_label(
-                    "this closure's body does not produce the return type it was checked against",
-                ),
-            );
+            report_closure_body_mismatch(self.cx(), err, closure.span);
         }
 
         // A closure whose body produces nothing has no return type at all, which is what a
@@ -673,227 +597,6 @@ impl<'hir> Typeck<'hir> {
         // never reach them.
         self.writeback(def);
         sig
-    }
-
-    // -----------------------------------------------------------------
-    // Diagnostics
-    // -----------------------------------------------------------------
-
-    fn report_not_assignable(&self, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("this expression cannot be assigned to", span)
-                .with_label("not a place")
-                .with_help(
-                    "the left side of an assignment has to name somewhere a value lives -- a \
-                     local, a field, or an element -- rather than produce one",
-                ),
-        );
-    }
-
-    fn report_index_base_unknown(&self, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                "type annotations needed: the type being indexed is still unknown",
-                span,
-            )
-            .with_label("the type here is still unknown")
-            .with_help(
-                "what `[..]` means depends on the type it is written on: an array indexes \
-                 built-in, and everything else through an `extend .. with Index` block",
-            ),
-        );
-    }
-
-    fn report_not_indexable(&self, base: Ty, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!("`{}` cannot be indexed", self.cx().show(base)),
-                span,
-            )
-            .with_label("no `index` method on this type")
-            .with_help(
-                "indexing an array is built in; every other type is indexed through an \
-                 `extend .. with Index<K, V>` block",
-            ),
-        );
-    }
-
-    fn report_elided_ctor_unknown(&self, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                "type annotations needed: `.{ .. }` names no struct, and the type it is expected \
-                 to produce is unknown here",
-                span,
-            )
-            .with_label("cannot tell which struct this builds")
-            .with_help(
-                "write the struct's name instead, or give the surrounding binding, parameter, or \
-                 return type an annotation",
-            ),
-        );
-    }
-
-    fn report_ctor_not_a_struct(&self, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("only a struct can be built with `{ .. }`", span)
-                .with_label("not a struct"),
-        );
-    }
-
-    fn report_not_a_struct_literal(&self, ty: Ty, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(format!("`{}` is not a struct", self.cx().show(ty)), span)
-                .with_label("only a struct is built with `{ .. }`")
-                .with_help("an enum variant is built with `.variant`, not with a struct literal"),
-        );
-    }
-
-    fn report_no_such_field(&self, field: Ident, ty: Ty) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "no field `{}` on `{}`",
-                    Interner::resolve(field.text),
-                    self.cx().show(ty)
-                ),
-                field.span,
-            )
-            .with_label("not a field of this struct"),
-        );
-    }
-
-    fn report_duplicate_field(&self, field: Ident) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "field `{}` is given a value twice",
-                    Interner::resolve(field.text)
-                ),
-                field.span,
-            )
-            .with_label("already given a value above"),
-        );
-    }
-
-    fn report_missing_fields(&self, missing: &[&str], ty: Ty, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!("`{}` is missing {}", self.cx().show(ty), list(missing)),
-                span,
-            )
-            .with_label("every field has to be given a value"),
-        );
-    }
-
-    fn report_variant_enum_unknown(&self, variant: Ident, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "type annotations needed: the enum `.{}` belongs to is unknown here",
-                    Interner::resolve(variant.text)
-                ),
-                span,
-            )
-            .with_label("cannot tell which enum this variant belongs to")
-            .with_help(
-                "a `.variant` takes its enum from the type it is expected to produce -- from a \
-                 binding's annotation, a parameter, or the enclosing function's return type",
-            ),
-        );
-    }
-
-    fn report_no_such_variant(&self, variant: Ident, ty: Ty) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "no variant `{}` on `{}`",
-                    Interner::resolve(variant.text),
-                    self.cx().show(ty)
-                ),
-                variant.span,
-            )
-            .with_label("not a variant of this type"),
-        );
-    }
-
-    fn report_try_operand_unknown(&self, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                "type annotations needed: the type `?` is applied to is still unknown",
-                span,
-            )
-            .with_label("the type here is still unknown")
-            .with_help("`?` produces what a `Result` or an `Option` carries, so it needs one"),
-        );
-    }
-
-    fn report_not_try(&self, ty: Ty, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!("`?` cannot be applied to `{}`", self.cx().show(ty)),
-                span,
-            )
-            .with_label("not a `Result` or an `Option`")
-            .with_help(
-                "`?` takes the value out of a `Result` or an `Option`, propagating the rest",
-            ),
-        );
-    }
-
-    fn report_try_outside(&self, operand_ty: Ty, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "`?` on `{}` has nowhere to propagate to",
-                    self.cx().show(operand_ty)
-                ),
-                span,
-            )
-            .with_label("the enclosing definition declares no return type")
-            .with_help(
-                "`?` returns early on the failing case, so the enclosing function has to return \
-                 the same kind of value",
-            ),
-        );
-    }
-
-    fn report_try_return_mismatch(&self, operand_ty: Ty, ret: Ty, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "`?` on `{}` cannot propagate out of a function returning `{}`",
-                    self.cx().show(operand_ty),
-                    self.cx().show(ret)
-                ),
-                span,
-            )
-            .with_label("the two are not the same kind of value")
-            .with_help(
-                "`?` returns early with what it did not unwrap, so the enclosing function's return \
-                 type has to be able to carry it",
-            ),
-        );
-    }
-
-    fn report_no_range_type(&self, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("a range expression has no type yet", span)
-                .with_label("`..` produces a value the core library declares no type for")
-                .with_help(
-                    "a range is a value of a `Range` type, and there is no such type in `core` \
-                     and no lang item naming one; iterate with `for x in ..` over a collection \
-                     instead",
-                ),
-        );
-    }
-}
-
-fn list(names: &[&str]) -> String {
-    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
-    match quoted.split_last() {
-        None => String::new(),
-        Some((last, [])) => format!("field {last}"),
-        Some((last, rest)) => format!("fields {} and {last}", rest.join(", ")),
     }
 }
 
