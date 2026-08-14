@@ -25,7 +25,7 @@ impl OwnerLowerer<'_, '_> {
         let match_arm = self.synth_arm(then_block.span, |low, _arm_id| {
             let pat = low.lower_pat(pat);
             let block = low.lower_block(then_block);
-            (pat, block)
+            (pat, None, block)
         });
 
         let else_arm = self.synth_arm(span, |low, _arm_id| {
@@ -34,7 +34,7 @@ impl OwnerLowerer<'_, '_> {
                 Some(else_expr) => low.lower_expr_as_block(else_expr),
                 None => low.synth_block(span, |_, _| (Vec::new(), None)),
             };
-            (pat, block)
+            (pat, None, block)
         });
 
         ExprKind::Match {
@@ -63,7 +63,7 @@ impl OwnerLowerer<'_, '_> {
                     let match_arm = low.synth_arm(body.span, |low, _arm_id| {
                         let pat = low.lower_pat(pat);
                         let block = low.lower_block(body);
-                        (pat, block)
+                        (pat, None, block)
                     });
 
                     let break_arm = low.synth_arm(span, |low, _arm_id| {
@@ -72,7 +72,7 @@ impl OwnerLowerer<'_, '_> {
                             let brk = low.synth_stmt(span, |_, _| StmtKind::Break);
                             (vec![brk], None)
                         });
-                        (pat, block)
+                        (pat, None, block)
                     });
 
                     ExprKind::Match {
@@ -200,7 +200,7 @@ impl OwnerLowerer<'_, '_> {
                                     }
                                 });
                                 let some_block = low.lower_block(body);
-                                (some_pat, some_block)
+                                (some_pat, None, some_block)
                             });
 
                             let none_arm = low.synth_arm(span, |low, _arm_id| {
@@ -215,7 +215,7 @@ impl OwnerLowerer<'_, '_> {
                                     let brk = low.synth_stmt(span, |_, _| StmtKind::Break);
                                     (vec![brk], None)
                                 });
-                                (none_pat, none_block)
+                                (none_pat, None, none_block)
                             });
 
                             ExprKind::Match {

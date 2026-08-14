@@ -180,15 +180,16 @@ impl<'a, 'res> OwnerLowerer<'a, 'res> {
     pub(super) fn synth_arm(
         &mut self,
         span: SrcSpan,
-        build: impl FnOnce(&mut Self, HirId) -> (HirId, HirId),
+        build: impl FnOnce(&mut Self, HirId) -> (HirId, Option<HirId>, HirId),
     ) -> HirId {
         let hir_id = self.reserve();
-        let (pat, block) = build(self, hir_id);
+        let (pat, guard, block) = build(self, hir_id);
         self.fill(
             hir_id,
             Node::Arm(Arm {
                 hir_id,
                 pat,
+                guard,
                 block,
                 span,
             }),

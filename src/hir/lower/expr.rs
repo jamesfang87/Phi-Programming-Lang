@@ -117,6 +117,10 @@ impl OwnerLowerer<'_, '_> {
             ast::ExprKind::Closure { params, ret, body } => {
                 ExprKind::Closure(self.lower_closure(span, params, ret, body))
             }
+            ast::ExprKind::Cast { expr, ty } => ExprKind::Cast {
+                expr: self.lower_expr(expr),
+                ty: self.lower_ty(ty),
+            },
             ast::ExprKind::Error => ExprKind::Error,
         }
     }
@@ -198,8 +202,9 @@ impl OwnerLowerer<'_, '_> {
     pub(super) fn lower_arm(&mut self, a: &ast::Arm) -> HirId {
         self.synth_arm(a.span, |low, _id| {
             let pat = low.lower_pat(&a.pat);
+            let guard = a.guard.as_ref().map(|g| low.lower_expr(g));
             let block = low.lower_expr_as_block(&a.body);
-            (pat, block)
+            (pat, guard, block)
         })
     }
 }

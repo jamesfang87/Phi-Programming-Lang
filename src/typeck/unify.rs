@@ -349,7 +349,7 @@ fn zip(a: &[Ty], b: &[Ty]) -> Vec<(Ty, Ty)> {
     a.iter().copied().zip(b.iter().copied()).collect()
 }
 
-fn is_integer(prim: PrimTy) -> bool {
+pub(crate) fn is_integer(prim: PrimTy) -> bool {
     matches!(
         prim,
         PrimTy::I8
@@ -363,7 +363,7 @@ fn is_integer(prim: PrimTy) -> bool {
     )
 }
 
-fn is_float(prim: PrimTy) -> bool {
+pub(crate) fn is_float(prim: PrimTy) -> bool {
     matches!(prim, PrimTy::F32 | PrimTy::F64)
 }
 

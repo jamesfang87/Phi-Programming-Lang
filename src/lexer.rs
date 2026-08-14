@@ -267,23 +267,43 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_number(&mut self) -> Token {
-        while self.peek().is_ascii_digit() || self.peek() == '_' {
-            self.eat();
-        }
+        self.eat_digit_run();
 
         // A `.` only starts a fractional part if a digit follows it. Thus `1.` lexes as an int
         // literal followed by a separate `.` token, rather than an incomplete float.
-        if self.peek() == '.' && self.next().is_ascii_digit() {
+        let is_float = if self.peek() == '.' && self.next().is_ascii_digit() {
             self.eat();
-            while self.peek().is_ascii_digit() {
+            self.eat_digit_run();
+            true
+        } else {
+            false
+        };
+
+        // A trailing `_name` is a type suffix, e.g. the `_i64` in `42_i64` or the `_f32` in
+        // `3.14_f32`. Only its shape is checked here -- whether `name` actually names a numeric
+        // type is for type checking to decide, once it has more than a span to work with.
+        if self.peek() == '_' && self.next().is_ascii_alphabetic() {
+            self.eat();
+            while self.peek().is_ascii_alphanumeric() {
                 self.eat();
             }
-        } else {
-            return self.make_token(TokenKind::IntLiteral);
         }
 
         // TODO: exponent notation
-        self.make_token(TokenKind::FloatLiteral)
+        self.make_token(if is_float {
+            TokenKind::FloatLiteral
+        } else {
+            TokenKind::IntLiteral
+        })
+    }
+
+    /// Consumes a run of ASCII digits, treating `_` as a separator when it sits between two
+    /// digits (`1_000_000`). A trailing `_` not followed by a digit is left alone, since it may
+    /// instead be starting a type suffix (`42_i64`) rather than separating digits.
+    fn eat_digit_run(&mut self) {
+        while self.peek().is_ascii_digit() || (self.peek() == '_' && self.next().is_ascii_digit()) {
+            self.eat();
+        }
     }
 
     fn lex_identifier_or_kw(&mut self) -> Token {
@@ -449,21 +469,33 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            // Block comment: `/* ... */`
+            // Block comment: `/* ... */`, which may nest.
             if self.peek() == '/' && self.next() == '*' {
                 self.lexeme_pos = self.cursor;
                 self.eat();
                 self.eat();
+                let mut depth = 1;
                 loop {
                     if self.at_eof() {
                         self.error("unterminated block comment");
                         break;
                     }
 
+                    if self.peek() == '/' && self.next() == '*' {
+                        self.eat();
+                        self.eat();
+                        depth += 1;
+                        continue;
+                    }
+
                     if self.peek() == '*' && self.next() == '/' {
                         self.eat();
                         self.eat();
-                        break;
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        continue;
                     }
                     self.eat();
                 }
@@ -635,6 +667,82 @@ mod tests {
     }
 
     #[test]
+    fn digit_separators_only_apply_between_digits() {
+        assert_eq!(kinds("1_000_000"), vec![TokenKind::IntLiteral]);
+        assert_eq!(kinds("3.14_15"), vec![TokenKind::FloatLiteral]);
+        // A trailing underscore not followed by a digit doesn't get folded into the number: it
+        // starts a separate token, here the wildcard `_`.
+        assert_eq!(
+            kinds("1_ _"),
+            vec![
+                TokenKind::IntLiteral,
+                TokenKind::Wildcard,
+                TokenKind::Wildcard
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_suffixed_int_literals_as_one_token() {
+        for src in [
+            "42_i8",
+            "42_i16",
+            "42_i32",
+            "42_i64",
+            "42_u8",
+            "42_u16",
+            "42_u32",
+            "42_u64",
+            "1_000_000_i64",
+        ] {
+            let (tokens, diagnostics) = lex(src);
+            assert!(diagnostics.is_empty(), "unexpected diagnostics for {src:?}");
+            assert_eq!(
+                tokens.iter().map(|t| t.kind).collect::<Vec<_>>(),
+                vec![TokenKind::IntLiteral],
+                "lexing {src:?}"
+            );
+            assert_eq!(
+                tokens[0].span.as_tuple(),
+                (0, src.chars().count()),
+                "the suffix should be part of the literal's span for {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tokenizes_suffixed_float_literals_as_one_token() {
+        for src in ["3.14_f32", "3.14_f64"] {
+            assert_eq!(kinds(src), vec![TokenKind::FloatLiteral], "lexing {src:?}");
+        }
+    }
+
+    #[test]
+    fn int_syntax_literal_with_a_float_suffix_is_still_an_int_literal_token() {
+        // The lexer only distinguishes `IntLiteral`/`FloatLiteral` by whether a `.` was written;
+        // a `_f64` suffix on a whole number (`5_f64`) doesn't retroactively add one. Type
+        // checking, not the lexer, is what decides `5_f64` is a float.
+        assert_eq!(kinds("5_f64"), vec![TokenKind::IntLiteral]);
+    }
+
+    #[test]
+    fn lexer_does_not_validate_suffix_names() {
+        // Any `_name` right after a number's digits is lexed as its suffix; whether `name` is a
+        // real numeric type is left for type checking to say.
+        assert_eq!(kinds("42_bogus"), vec![TokenKind::IntLiteral]);
+    }
+
+    #[test]
+    fn suffix_must_be_directly_adjacent_to_the_number() {
+        // A space between the number and what would be a suffix means there's no suffix -- just
+        // two separate tokens.
+        assert_eq!(
+            kinds("42 _i64"),
+            vec![TokenKind::IntLiteral, TokenKind::Identifier]
+        );
+    }
+
+    #[test]
     fn range_after_int_literal_is_not_lexed_as_float() {
         assert_eq!(
             kinds("5..10"),
@@ -793,13 +901,32 @@ mod tests {
     }
 
     #[test]
-    fn block_comments_do_not_nest() {
-        // The first `*/` closes the comment, so the trailing `*/` is re-lexed as real tokens.
+    fn block_comments_nest() {
+        // The inner `/* ... */` opens a nested comment, so only the outer `*/` closes it.
         let (tokens, diagnostics) = lex("/* outer /* inner */ 1 */");
+        assert!(diagnostics.is_empty());
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn nested_block_comment_missing_inner_close_is_unterminated() {
+        // The outer `*/` closes only the inner comment; the outer one is left open.
+        let (_, diagnostics) = lex("/* outer /* inner */");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unterminated block comment")
+        );
+    }
+
+    #[test]
+    fn deeply_nested_block_comments_are_skipped() {
+        let (tokens, diagnostics) = lex("/* a /* b /* c */ d */ e */ 1");
         assert!(diagnostics.is_empty());
         assert_eq!(
             tokens.iter().map(|t| &t.kind).collect::<Vec<_>>(),
-            vec![&TokenKind::IntLiteral, &TokenKind::Star, &TokenKind::Slash,]
+            vec![&TokenKind::IntLiteral]
         );
     }
 

@@ -38,6 +38,23 @@ fn unescape(chars: &[char]) -> String {
     out
 }
 
+/// Splits a lexed number's text into its value and, if present, its type suffix (the `i64` in
+/// `42_i64`, without the leading `_`).
+///
+/// The split point is the `_` immediately followed by a letter. Every other `_` in the text is a
+/// digit separator (`1_000_000`), and the lexer only ever lets those through when they're
+/// immediately followed by another digit, so at most one `_` in the text can match this -- there
+/// is nothing to disambiguate.
+fn split_suffix(text: &str) -> (&str, Option<&str>) {
+    let bytes = text.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] == b'_' && bytes.get(i + 1).is_some_and(u8::is_ascii_alphabetic) {
+            return (&text[..i], Some(&text[i + 1..]));
+        }
+    }
+    (text, None)
+}
+
 impl Expr {
     pub fn new(kind: ExprKind, span: SrcSpan) -> Self {
         Expr {
@@ -47,41 +64,37 @@ impl Expr {
         }
     }
 
-    /// Builds an integer literal expression from a value token and a suffix token.
-    ///
-    /// Every current call site passes the literal's own token as both arguments, since the
-    /// lexer does not yet split a type suffix, such as the `i32` in `42i32`, into its own
-    /// token.
-    pub fn int(value_tok: Token, suffix_tok: Token) -> Expr {
-        let value_text = SrcMap::text_of(value_tok.span)
+    /// Builds an integer literal expression from its token, e.g. `42` or the suffixed `42_i64`.
+    pub fn int(tok: Token) -> Expr {
+        let text = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");
-        let suffix_text = SrcMap::text_of(suffix_tok.span)
-            .expect("lexer token span should always resolve to a source file");
+        let (value, suffix) = split_suffix(&text);
 
         Expr {
             id: NodeId::next(),
             kind: ExprKind::Literal(Literal::Int {
-                value: Interner::intern(&value_text),
-                suffix: Interner::intern(&suffix_text),
+                value: Interner::intern(value),
+                suffix: suffix.map(Interner::intern),
             }),
-            span: value_tok.span.merge(suffix_tok.span),
+            span: tok.span,
         }
     }
 
-    /// Builds a float literal expression. See [`Expr::int`] for why it takes two tokens.
-    pub fn float(value_tok: Token, suffix_tok: Token) -> Expr {
-        let value_text = SrcMap::text_of(value_tok.span)
+    /// Builds a float literal expression from its token, e.g. `3.14` or the suffixed
+    /// `3.14_f32`. See [`Expr::int`] for the suffix handling; the two are shared through
+    /// [`split_suffix`] below.
+    pub fn float(tok: Token) -> Expr {
+        let text = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");
-        let suffix_text = SrcMap::text_of(suffix_tok.span)
-            .expect("lexer token span should always resolve to a source file");
+        let (value, suffix) = split_suffix(&text);
 
         Expr {
             id: NodeId::next(),
             kind: ExprKind::Literal(Literal::Float {
-                value: Interner::intern(&value_text),
-                suffix: Interner::intern(&suffix_text),
+                value: Interner::intern(value),
+                suffix: suffix.map(Interner::intern),
             }),
-            span: value_tok.span.merge(suffix_tok.span),
+            span: tok.span,
         }
     }
 

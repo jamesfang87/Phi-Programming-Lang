@@ -332,6 +332,9 @@ pub fn walk_stmt<'ast, V: Visitor<'ast>>(v: &mut V, stmt: &'ast Stmt) {
 
 pub fn walk_arm<'ast, V: Visitor<'ast>>(v: &mut V, arm: &'ast Arm) {
     v.visit_pat(&arm.pat);
+    if let Some(guard) = &arm.guard {
+        v.visit_expr(guard);
+    }
     v.visit_expr(&arm.body);
 }
 
@@ -440,6 +443,10 @@ pub fn walk_expr<'ast, V: Visitor<'ast>>(v: &mut V, expr: &'ast Expr) {
         }
         ExprKind::Closure { params, ret, body } => {
             v.visit_closure(params, ret.as_ref(), body);
+        }
+        ExprKind::Cast { expr, ty } => {
+            v.visit_expr(expr);
+            v.visit_ty(ty);
         }
         ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::Error => {}
     }
@@ -620,6 +627,16 @@ mod tests {
         let mut c = Counter::default();
         c.visit_module(ast.root(), &ast);
         assert!(c.pats >= 1, "the arm's pattern was not visited");
+    }
+
+    #[test]
+    fn the_walk_reaches_a_match_arms_guard() {
+        let ast = ast_from("fun f(e: i32) { match e { x if x > 0 => 2, _ => 0 } }");
+        let mut c = Counter::default();
+        c.visit_module(ast.root(), &ast);
+        // The `match` itself, its scrutinee, the guard (`x > 0` plus its `x` and `0` operands),
+        // and both arm bodies.
+        assert_eq!(c.exprs, 7, "the arm's guard was not visited");
     }
 
     /// The one place this module departs from the HIR visitor's literal shape: `ExprKind::Closure`

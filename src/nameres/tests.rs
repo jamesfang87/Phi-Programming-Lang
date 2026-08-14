@@ -906,6 +906,30 @@ fn a_match_arm_binding_is_scoped_to_that_arm() {
     assert!(diags.iter().any(|d| d.message.contains("cannot find `n`")));
 }
 
+/// A guard runs after its arm's pattern has matched, so the pattern's bindings have to be in
+/// scope for it -- same as they are for the arm's body.
+#[test]
+fn a_match_arm_binding_is_visible_in_that_arms_guard() {
+    let ast = ast_from_files(&[
+        "module app; enum E { a: i32 } fun f(e: E) { match e { .a(n) if n > 0 => n, _ => 0 } }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        non_lang_item_diags(&diags).is_empty(),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+/// A guard's bindings still drop at the arm's boundary, the same as the body's do.
+#[test]
+fn a_match_arm_guard_does_not_leak_its_own_scope() {
+    let ast = ast_from_files(&[
+        "module app; enum E { a: i32 } fun f(e: E) { match e { .a(n) if n > 0 => n, _ => 0, } let y = n; }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(diags.iter().any(|d| d.message.contains("cannot find `n`")));
+}
+
 #[test]
 fn a_generic_is_visible_in_a_method_of_the_extend_block_that_declares_it() {
     let ast = ast_from_files(&[
