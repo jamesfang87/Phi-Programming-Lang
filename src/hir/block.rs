@@ -55,7 +55,7 @@ pub enum StmtKind {
 
 /// One binding inside a `with` statement's lend list, such as `a = lend x` in
 /// `with a = lend x { ... }`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct WithLend {
     pub pat: HirId,        // -> Node::Pat
     pub ty: Option<HirId>, // -> Node::Ty

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp};
+use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp, Visibility};
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::typeck::{
     report_binary_operand_mismatch, report_binding_type_mismatch, report_body_return_mismatch,
@@ -10,7 +10,8 @@ use crate::diagnostics::typeck::{
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
-    DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, Res, StmtKind, VariantPayload,
+    DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, PatKind, Payload, Res, StmtKind,
+    VariantPayload,
 };
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
@@ -21,7 +22,7 @@ use crate::typeck::traits::index::ImplIndex;
 use crate::typeck::traits::solve::{Obligation, ParamEnv, TraitName};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::{Unifier, is_float, is_integer};
+use crate::typeck::unify::{Unifier, UnifyError, is_float, is_integer};
 
 pub mod cast;
 pub mod expr;
@@ -87,6 +88,16 @@ pub struct Typeck<'hir> {
     /// a second parameter would put one on every call site that has nothing to expect. See the
     /// [`expr` module docs](crate::typeck::expr) for what depends on this.
     expectation: Option<Ty>,
+
+    /// Every binding a `let` pattern introduces, keyed by the same `HirId` its `Res::Local(
+    /// Local::Variable(_))` addresses, mapped to the `mut`-ness the `let` itself declared.
+    ///
+    /// Populated only from `StmtKind::Let` (see [`Typeck::check_binding`]); a binding from a
+    /// `match` arm, `for`, `while let`, or a `with` lend resolves through the very same
+    /// `Local::Variable` arm but is never entered here, since none of those forms has `mut`
+    /// syntax of its own to declare intent either way. A lookup that misses this table is read as
+    /// "not a `let` binding" everywhere it is consulted, and left unrestricted.
+    let_mutability: HashMap<HirId, Mutability>,
 }
 
 impl<'hir> Typeck<'hir> {
@@ -105,6 +116,7 @@ impl<'hir> Typeck<'hir> {
             self_tys: HashMap::new(),
             computing_self_tys: HashSet::new(),
             expectation: None,
+            let_mutability: HashMap::new(),
         }
     }
 
@@ -351,7 +363,28 @@ impl<'hir> Typeck<'hir> {
 
         for (id, ty) in entries {
             let resolved = self.resolve_deep(ty);
-            self.types.record(id, resolved);
+            let defaulted = self.default_unconstrained(resolved);
+            self.types.record(id, defaulted);
+        }
+
+        // A resolved call's own `args` are recorded mid-checking (see
+        // `TypeResolutions::record_call`'s call sites), before either of the above ever run on
+        // them, so they need the same two-step treatment here.
+        let call_entries: Vec<(HirId, DefId, Vec<Ty>)> = self
+            .types
+            .calls_iter()
+            .filter(|(id, _)| id.owner == owner)
+            .map(|(id, call)| (id, call.def, call.args.clone()))
+            .collect();
+        for (id, def, args) in call_entries {
+            let defaulted = args
+                .iter()
+                .map(|&arg| {
+                    let resolved = self.resolve_deep(arg);
+                    self.default_unconstrained(resolved)
+                })
+                .collect();
+            self.types.record_call(id, def, defaulted);
         }
     }
 
@@ -395,8 +428,10 @@ impl<'hir> Typeck<'hir> {
                 self.tcx.mk_fun(params, ret)
             }
             // Nothing nested to resolve. A `Var` that reaches here is one nothing ever unified
-            // with, so it stays a variable -- fallback to `i32`/`f64` for an unconstrained
-            // literal is a separate step, not yet written.
+            // with, so it stays a variable -- a call site partway through checking a body (an
+            // ambiguous-receiver check, say) still needs to see a genuinely unconstrained
+            // variable as itself. Defaulting an unconstrained numeric variable to `i32`/`f64`
+            // happens once, at [`Typeck::writeback`], via [`Typeck::default_unconstrained`].
             TyKind::Var(_)
             | TyKind::Primitive(_)
             | TyKind::Generic(_)
@@ -405,6 +440,92 @@ impl<'hir> Typeck<'hir> {
             | TyKind::Never
             | TyKind::Error => ty,
         }
+    }
+
+    /// Defaults every unconstrained `TyVar::Int`/`TyVar::Float` still inside `ty` to `i32`/`f64`,
+    /// the way an unsuffixed integer or float literal defaults when nothing else pins its type
+    /// down. Called only from [`Typeck::writeback`], once a definition's body has finished
+    /// checking and `ty` has already been through [`Typeck::resolve_deep`] -- everywhere else,
+    /// a variable reaching here would still need to read as genuinely unconstrained.
+    ///
+    /// `TyVar::Any` is left untouched: reaching here as a bare variable means some expression's
+    /// type was never constrained by anything at all, which is a typeck bug, not a legitimate
+    /// unconstrained-literal case, so it is not guessed at. MIR lowering treats any `TyKind::Var`
+    /// it still finds as exactly that: an internal-consistency panic, not a diagnostic.
+    fn default_unconstrained(&mut self, ty: Ty) -> Ty {
+        match self.tcx.kind(ty).clone() {
+            TyKind::Var(TyVar::Int(_)) => self.tcx.mk_prim(PrimTy::I32),
+            TyKind::Var(TyVar::Float(_)) => self.tcx.mk_prim(PrimTy::F64),
+            TyKind::Adt { def, args } => {
+                let args = args
+                    .iter()
+                    .map(|&a| self.default_unconstrained(a))
+                    .collect();
+                self.tcx.mk_adt(def, args)
+            }
+            TyKind::Dyn { trait_, args } => {
+                let args = args
+                    .iter()
+                    .map(|&a| self.default_unconstrained(a))
+                    .collect();
+                self.tcx.mk_dyn(trait_, args)
+            }
+            TyKind::Tuple(elems) => {
+                let elems = elems
+                    .iter()
+                    .map(|&a| self.default_unconstrained(a))
+                    .collect();
+                self.tcx.mk_tuple(elems)
+            }
+            TyKind::Ref { base, mutability } => {
+                let base = self.default_unconstrained(base);
+                self.tcx.mk_ref(base, mutability)
+            }
+            TyKind::Any(base) => {
+                let base = self.default_unconstrained(base);
+                self.tcx.mk_any(base)
+            }
+            TyKind::Array { elem, len } => {
+                let elem = self.default_unconstrained(elem);
+                self.tcx.mk_array(elem, len)
+            }
+            TyKind::Fun { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|&a| self.default_unconstrained(a))
+                    .collect();
+                let ret = ret.map(|ret| self.default_unconstrained(ret));
+                self.tcx.mk_fun(params, ret)
+            }
+            TyKind::Var(TyVar::Any(_))
+            | TyKind::Primitive(_)
+            | TyKind::Generic(_)
+            | TyKind::SelfTy(_)
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Error => ty,
+        }
+    }
+
+    /// Unifies `found` against `expected`, the way [`Unifier::unify`] already does, except that
+    /// an `expected` of `any T` additionally accepts a `found` that is `T`, `&T`, or `&mut T` --
+    /// the coercion section 7 of the README describes: "any" lets a value be passed owned, by
+    /// `&`, or by `&mut`, with the callee body using it uniformly. `found` is peeled by
+    /// [`Typeck::peel_receiver`], the same peeling a method call's own receiver already gets, so
+    /// this accepts exactly the forms a receiver would.
+    ///
+    /// This is not a general unification rule: `unify` itself only ever pairs `Any` against
+    /// `Any`, so a plain call site still needs this wrapper wherever a declared type might be
+    /// `any T` and the value offered for it might not already be. `check_receiver`'s own
+    /// `SelfMode::Any` arm accepts every receiver form outright already, so `self` never needs
+    /// this; it is for the two positions the README restricts `any` to, a parameter and a
+    /// return.
+    fn unify_allowing_any(&mut self, expected: Ty, found: Ty) -> Result<(), UnifyError> {
+        if let TyKind::Any(inner) = *self.tcx.kind(expected) {
+            let (peeled, _layers) = self.peel_receiver(found);
+            return self.unifier.unify(&self.tcx, inner, peeled);
+        }
+        self.unifier.unify(&self.tcx, expected, found)
     }
 
     fn resolve_deep_all(&mut self, tys: &[Ty]) -> Vec<Ty> {
@@ -512,11 +633,11 @@ impl<'hir> Typeck<'hir> {
                 mutability,
                 operand,
             } => self.check_borrow(*mutability, *operand, expected),
-            ExprKind::Call { callee, args } => self.check_call(*callee, args, expr.span),
+            ExprKind::Call { callee, args } => self.check_call(id, *callee, args, expr.span),
             ExprKind::Access { base, member, args } => {
                 self.check_access(id, *base, *member, args, expr.span)
             }
-            ExprKind::Index { base, index } => self.check_index(*base, *index, expr.span),
+            ExprKind::Index { base, index } => self.check_index(id, *base, *index, expr.span),
             ExprKind::Ctor { path, payload } => {
                 self.check_ctor(path.as_ref(), payload, expected, expr.span, id.owner)
             }
@@ -565,6 +686,12 @@ impl<'hir> Typeck<'hir> {
     /// Shared with [`Typeck::check_assign_op`], which asks the same question of `+=` as this does
     /// of `+`.
     fn check_operator(&mut self, op: BinaryOp, operand: Ty, owner: DefId, span: SrcSpan) -> Ty {
+        // `any T` lets a value be passed owned, by `&`, or by `&mut`, used uniformly by the body
+        // that holds it (README section 7) -- an operator is exactly such a use, so it is
+        // checked, and (for the arithmetic operators, whose result is `Self`) resolved, against
+        // the type `any` wraps, the same way `Typeck::peel_receiver` already treats `any` as a
+        // layer to see through for a method call.
+        let operand = self.peel_any(operand);
         let is_builtin = self.is_builtin_operand(operand);
         let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
 
@@ -663,6 +790,17 @@ impl<'hir> Typeck<'hir> {
         )
     }
 
+    /// Strips every `any` layer off `ty`, the way [`Typeck::peel_receiver`] strips `any` (and
+    /// `&`/`&mut`) off a method receiver. Unlike that method, this stops at `any` alone: an
+    /// operator does not implicitly dereference an ordinary `&`/`&mut` the way `any` is defined
+    /// to let a use see through it.
+    fn peel_any(&self, mut ty: Ty) -> Ty {
+        while let TyKind::Any(base) = *self.tcx.kind(ty) {
+            ty = base;
+        }
+        ty
+    }
+
     /// The type of a literal. Every kind of literal is trivial except an unsuffixed number: `1`
     /// and `1.0` start out as the fallback-carrying [`TyVar::Int`](crate::typeck::ty::TyVar::Int)
     /// and [`TyVar::Float`](crate::typeck::ty::TyVar::Float) inference variables described on
@@ -721,14 +859,16 @@ impl<'hir> Typeck<'hir> {
 
         match &stmt.kind {
             StmtKind::Let {
+                mutability,
                 pat,
                 ty,
                 init,
                 else_block,
-                ..
             } => {
-                let (pat, ty, init, else_block) = (*pat, *ty, *init, *else_block);
+                let (mutability, pat, ty, init, else_block) =
+                    (*mutability, *pat, *ty, *init, *else_block);
                 self.check_binding(pat, ty, init, stmt.span);
+                self.record_let_mutability(pat, mutability);
 
                 if let Some(block) = else_block {
                     self.check_block(block);
@@ -742,6 +882,9 @@ impl<'hir> Typeck<'hir> {
                     .map(|lend| (lend.pat, lend.ty, lend.init, lend.span))
                     .collect();
                 for (pat, ty, init, span) in lends {
+                    // A `with` lend is deliberately not entered into `let_mutability`: it has no
+                    // `mut` syntax of its own, so it is left unrestricted, same as a `for` or
+                    // `match` binding -- see the field's own docs.
                     self.check_binding(pat, ty, init, span);
                 }
                 self.check_block(*block);
@@ -755,7 +898,7 @@ impl<'hir> Typeck<'hir> {
                 // backwards ("expected `bool`, found `()`" for a `bool` returned from a function
                 // declared to return nothing).
                 let expr_ty = self.ty_of_expecting(expr, ret);
-                if let Err(err) = self.unifier.unify(&self.tcx, ret, expr_ty) {
+                if let Err(err) = self.unify_allowing_any(ret, expr_ty) {
                     report_return_mismatch(self.cx(), err, stmt.span);
                 }
             }
@@ -798,6 +941,42 @@ impl<'hir> Typeck<'hir> {
         self.check_pat(pat, bound);
     }
 
+    /// Enters every `Binding` leaf under `pat` into [`Typeck::let_mutability`], recursing through
+    /// the shapes a pattern can nest in (a tuple destructure, a variant's payload) so that
+    /// `let mut (a, b) = ..` marks both `a` and `b` mutable rather than only the pattern's
+    /// outermost node.
+    ///
+    /// Only [`Typeck::check_stmt`]'s `Let` arm calls this -- a `with` lend is checked through
+    /// [`Typeck::check_binding`] the same way a `let` is, but is deliberately never passed
+    /// through here (see [`Typeck::let_mutability`]'s own docs).
+    fn record_let_mutability(&mut self, pat: HirId, mutability: Mutability) {
+        let Node::Pat(node) = self.hir.node(pat) else {
+            unreachable!("Node that is not a pattern passed to record_let_mutability");
+        };
+        match &node.kind {
+            PatKind::Binding { .. } => {
+                self.let_mutability.insert(pat, mutability);
+            }
+            PatKind::Tuple(elems) => {
+                let elems = elems.clone();
+                for elem in elems {
+                    self.record_let_mutability(elem, mutability);
+                }
+            }
+            PatKind::Variant { payload, .. } => {
+                let values: Vec<HirId> = match payload {
+                    Payload::None => Vec::new(),
+                    Payload::Single(value) => vec![*value],
+                    Payload::Record(fields) => fields.iter().map(|field| field.value).collect(),
+                };
+                for value in values {
+                    self.record_let_mutability(value, mutability);
+                }
+            }
+            PatKind::Wildcard | PatKind::Literal(_) | PatKind::Error => {}
+        }
+    }
+
     /// What a `return` inside `owner` has to produce.
     ///
     /// A definition with no declared return type produces nothing, which is exactly what `Unit`
@@ -821,6 +1000,29 @@ impl<'hir> Typeck<'hir> {
     /// where a diagnostic is emitted rather than holding on to it -- it borrows `self`.
     fn cx(&self) -> DisplayCx<'_> {
         DisplayCx::new(self.hir, &self.tcx)
+    }
+
+    /// Whether something declared `visibility` in `owner_module` is reachable from `from` -- the
+    /// definition (a function, method, or closure) an access to it sits inside.
+    ///
+    /// Mirrors `SymbolTable::is_visible` (`crate::nameres::symbol_table`), the same rule read
+    /// here off `Hir`'s own module tree instead of the AST's: `public` reaches everywhere,
+    /// `private` only the declaring module and that module's descendants, so `owner_module` must
+    /// appear in `from`'s chain of ancestor modules (or be `from`'s own enclosing module).
+    fn is_visible_from(&self, owner_module: DefId, from: DefId, visibility: Visibility) -> bool {
+        match visibility {
+            Visibility::Public => true,
+            Visibility::Private => {
+                let mut current = Some(self.hir.module_of(from));
+                while let Some(module) = current {
+                    if module == owner_module {
+                        return true;
+                    }
+                    current = self.hir.parent(module);
+                }
+                false
+            }
+        }
     }
 
     /// Checks every statement in the block, and its trailing expression if it has one, and returns
@@ -905,7 +1107,7 @@ impl<'hir> Typeck<'hir> {
             self.in_body = true;
             let ret = self.return_ty(def_id);
             let body = self.check_block_expecting(block, Some(ret));
-            if let Err(err) = self.unifier.unify(&self.tcx, ret, body) {
+            if let Err(err) = self.unify_allowing_any(ret, body) {
                 report_body_return_mismatch(self.cx(), err, function.span);
             }
             self.select_body_obligations();
@@ -1355,6 +1557,65 @@ mod tests {
             TyKind::Primitive(PrimTy::I32),
             "the return unified the literal with i32, and writeback stored that"
         );
+    }
+
+    /// A local whose initializer is never unified against anything else -- no annotation, no
+    /// later use pinning its type down -- still leaves `writeback` with a bare `TyVar` to
+    /// resolve. `default_unconstrained` is what turns that into `i32`, the same fallback an
+    /// unsuffixed integer literal gets in Rust.
+    #[test]
+    fn an_unconstrained_int_literal_defaults_to_i32() {
+        let hir = resolve_src("fun f() { let x = 5; }");
+        let def_id = first_function(&hir);
+        let mut checker = checker_with_signatures_collected(&hir);
+        checker.check_function(def_id);
+
+        let OwnerNode::Function(function) = hir.def(def_id) else {
+            unreachable!("root of a Function owner is always OwnerNode::Function");
+        };
+        let Node::Block(block) = hir.node(function.block.unwrap()) else {
+            unreachable!("a function's body is always a Node::Block");
+        };
+        let Node::Stmt(stmt) = hir.node(block.stmts[0]) else {
+            unreachable!("Node which is not a stmt found in a block's statement list");
+        };
+        let StmtKind::Let { init, .. } = stmt.kind else {
+            panic!("expected a let statement");
+        };
+
+        let ty = checker
+            .types
+            .ty(init)
+            .expect("writeback records the initializer's type");
+        assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::I32));
+    }
+
+    /// The float counterpart of the test above.
+    #[test]
+    fn an_unconstrained_float_literal_defaults_to_f64() {
+        let hir = resolve_src("fun f() { let x = 5.0; }");
+        let def_id = first_function(&hir);
+        let mut checker = checker_with_signatures_collected(&hir);
+        checker.check_function(def_id);
+
+        let OwnerNode::Function(function) = hir.def(def_id) else {
+            unreachable!("root of a Function owner is always OwnerNode::Function");
+        };
+        let Node::Block(block) = hir.node(function.block.unwrap()) else {
+            unreachable!("a function's body is always a Node::Block");
+        };
+        let Node::Stmt(stmt) = hir.node(block.stmts[0]) else {
+            unreachable!("Node which is not a stmt found in a block's statement list");
+        };
+        let StmtKind::Let { init, .. } = stmt.kind else {
+            panic!("expected a let statement");
+        };
+
+        let ty = checker
+            .types
+            .ty(init)
+            .expect("writeback records the initializer's type");
+        assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::F64));
     }
 
     #[test]

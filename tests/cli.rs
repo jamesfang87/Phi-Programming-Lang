@@ -236,3 +236,31 @@ fn run_on_a_clean_project_reports_the_missing_backend() {
         stderr(&output)
     );
 }
+
+/// `--mir` now dumps a real stage (Lowering #2 plus monomorphization), unlike `--llvm`, which
+/// still has no effect. This is the end-to-end counterpart to `mir::lower`'s and
+/// `mir::monomorphize`'s own unit tests: it exercises the whole `phi build --mir` path through
+/// the real binary, the way `tests/golden.rs` does for `--ast`.
+#[test]
+fn mir_dump_shows_the_lowered_and_monomorphized_function() {
+    let dir = scratch("mir_dump");
+    write_manifest(&dir, "mir_dump");
+    write_main(
+        &dir,
+        "fun add(x: i32, y: i32) -> i32 {\n    return x + y;\n}\n\nfun main() {\n    let z = add(1, 2);\n}\n",
+    );
+    let output = run(&dir, &["build", "--mir", "--emit-debug", "--no-emit-core"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(out.contains("=== MIR ==="), "no MIR dump header: {out}");
+    assert!(
+        out.contains("Call") && out.contains("Return"),
+        "the dump should show add's Call terminator (from main) and its own Return: {out}"
+    );
+}
