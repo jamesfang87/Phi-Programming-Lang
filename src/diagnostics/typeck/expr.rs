@@ -22,6 +22,25 @@ pub fn report_not_assignable(span: SrcSpan) {
     );
 }
 
+/// `name` is the `let`-bound local at the root of the place being mutated -- a bare assignment's
+/// own left side, or the variable at the bottom of a field/element chain rooted at one.
+pub fn report_not_mutable(name: Ident, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "cannot assign to `{}`, which is not declared `mut`",
+                Interner::resolve(name.text)
+            ),
+            span,
+        )
+        .with_label("not mutable")
+        .with_help(format!(
+            "declare it `let mut {}` to allow this",
+            Interner::resolve(name.text)
+        )),
+    );
+}
+
 pub fn report_assign_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span)
@@ -126,6 +145,20 @@ pub fn report_no_such_field(cx: DisplayCx<'_>, field: Ident, ty: Ty) {
             field.span,
         )
         .with_label("not a field of this struct"),
+    );
+}
+
+/// Mirrors `nameres::report_private_item`'s wording and
+/// [`traits::method::report_private_field`](crate::diagnostics::typeck::traits::method::report_private_field),
+/// which reports the same mistake reached by reading a field instead of writing one.
+pub fn report_private_field(field: Ident) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("field `{}` is private", Interner::resolve(field.text)),
+            field.span,
+        )
+        .with_label("not visible from here")
+        .with_help("mark the field `public` to use it outside its declaring module"),
     );
 }
 

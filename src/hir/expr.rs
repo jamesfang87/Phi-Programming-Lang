@@ -20,7 +20,7 @@ pub struct Expr {
     pub span: SrcSpan,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     Literal(Literal),
     Path(Path),
@@ -130,7 +130,7 @@ pub enum ExprKind {
 /// one exception is [`Payload::Record`], which is a payload declared inline as an anonymous
 /// struct and so carries the variant's own field names. Lowering desugars away the `{ l }` field
 /// shorthand, so a record payload's fields always have both a name and a node here.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Payload {
     None,
     Single(HirId),
@@ -139,7 +139,7 @@ pub enum Payload {
 
 /// What follows the member name in an [`ExprKind::Access`]. See
 /// [`ast::AccessArgs`](crate::ast::AccessArgs).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum AccessArgs {
     None,
     Call(Vec<HirId>), // -> Node::Expr
@@ -156,13 +156,13 @@ pub enum AccessArgs {
 /// Lowering desugars the `{ l }` field shorthand into `{ l: l }`, so `value` is always a real
 /// node here -- unlike the AST's [`ast::PayloadField`](crate::ast::PayloadField), whose value is
 /// optional.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PayloadField {
     pub name: Ident,
     pub value: HirId,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum LoopSource {
     While,
     For,

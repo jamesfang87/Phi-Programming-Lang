@@ -93,6 +93,69 @@ pub fn typeck_src(src: &str) -> Vec<String> {
         .collect()
 }
 
+/// [`typeck_src`] for a program spread across several files, each its own `module`.
+///
+/// A single fixture string is one file, and therefore one module, so nothing exercised through
+/// `typeck_src` can cross a module boundary -- privacy, most notably. Mirrors
+/// `nameres::tests::ast_from_files`: `DiagCtx` and the interner are cleared once up front, not
+/// per file, so every file parses against the same interner and source map.
+pub fn typeck_src_files(sources: &[&str]) -> Vec<String> {
+    DiagCtx::clear();
+    Interner::clear();
+    let files: Vec<ParsedSrcFile> = sources
+        .iter()
+        .map(|src| {
+            let chars: Vec<char> = src.chars().collect();
+            let offset = SrcMap::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
+            let tokens = Lexer::new(&chars, offset).tokenize();
+            Parser::new().parse(&tokens, offset)
+        })
+        .collect();
+    let ast = Ast::new(files);
+    let res = nameres::resolve(&ast);
+    let hir = lower_unit(&ast, &res);
+
+    DiagCtx::clear();
+    crate::typeck::check(&hir);
+
+    DiagCtx::diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+/// Runs the whole pipeline over `src` through Lowering #2 and monomorphization, in debug
+/// profile, and hands back everything a MIR-level test needs to dig further: the `Hir` (for
+/// `first_function` and friends), the `TyCtx` (to read a `Ty` a lowered `Body` carries), and the
+/// finished, fully concrete `Body` per [`crate::mir::Instance`] actually used.
+///
+/// Panics if type checking reported anything -- the same "diagnostics-free by design" contract
+/// `mir::lower`'s own module docs describe: this pass assumes its input already type-checks
+/// cleanly, so a fixture meant to exercise a rejected program belongs with `typeck_rejects`
+/// instead, not here.
+pub fn lower_mir_src(
+    src: &str,
+) -> (
+    Hir,
+    crate::typeck::tyctx::TyCtx,
+    crate::typeck::results::TypeResolutions,
+    std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
+) {
+    let hir = resolve_src(src);
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program =
+        crate::mir::lower::lower_program(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+    let instances = crate::mir::monomorphize::monomorphize(&hir, &mut tcx, &program);
+    (hir, tcx, types, instances)
+}
+
 /// Asserts that `src` type checks with nothing reported.
 pub fn typeck_accepts(src: &str) {
     let reported = typeck_src(src);

@@ -10,6 +10,7 @@ use crate::ast::{
 };
 use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
 use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
+use crate::mir::{Body, Instance};
 use crate::nameres::results::NameResolutions;
 use crate::nameres::{Local as NameResLocal, Res as NameResRes, TyDef, Type as NameResType};
 use crate::typeck::results::TypeResolutions;
@@ -262,6 +263,64 @@ pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_c
             pad(1),
             fmt_ty(hir, tcx, ty, 1)
         );
+    }
+}
+
+/// Dumps the monomorphized MIR: one `--- {mangled name} ---` section per [`Instance`], each
+/// giving its `def_id`/`arg_count`, its locals with their types rendered through [`fmt_ty`]
+/// (matching [`print_typeck`]'s own convention, since a bare `Ty` prints only its interned
+/// index), and its basic blocks via their derived `Debug`, which is already self-describing for
+/// everything but the `Ty`s a `LocalDecl`/`Constant`/`Cast` carries. Sections are sorted by
+/// mangled name, for deterministic output across runs.
+pub fn print_mir(
+    hir: &Hir,
+    tcx: &TyCtx,
+    instances: &HashMap<Instance, Body>,
+    exclude_core_in_emit: bool,
+) {
+    println!("=== MIR ===");
+
+    let mut sections: Vec<(String, &Instance, &Body)> = instances
+        .iter()
+        .filter(|(instance, _)| !exclude_core_in_emit || is_user_def(hir, instance.def))
+        .map(|(instance, body)| {
+            (
+                crate::mir::mangle::mangle(hir, tcx, instance),
+                instance,
+                body,
+            )
+        })
+        .collect();
+    sections.sort_by(|(a, ..), (b, ..)| a.cmp(b));
+
+    for (name, instance, body) in sections {
+        println!("--- {name} ---");
+        println!(
+            "def_id: {:?}, any_mode: {:?}, args: {}, arg_count: {}",
+            instance.def,
+            instance.any_mode,
+            instance
+                .args
+                .iter()
+                .map(|&arg| fmt_ty(hir, tcx, arg, 0))
+                .collect::<Vec<_>>()
+                .join(", "),
+            body.arg_count
+        );
+        for (index, decl) in body.local_decls.iter().enumerate() {
+            let name = decl
+                .name
+                .map(|ident| Interner::resolve(ident.text).to_string())
+                .unwrap_or_else(|| "_".to_string());
+            println!(
+                "{}_{index} ({name}): {}",
+                pad(1),
+                fmt_ty(hir, tcx, decl.ty, 1)
+            );
+        }
+        for (index, block) in body.basic_blocks.iter().enumerate() {
+            println!("{}bb{index}: {block:#?}", pad(1));
+        }
     }
 }
 

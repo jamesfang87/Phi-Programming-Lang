@@ -15,7 +15,7 @@ pub struct Pat {
     pub span: SrcSpan,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PatKind {
     /// `_`. Matches anything and binds nothing.
     Wildcard,

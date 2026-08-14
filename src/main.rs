@@ -10,6 +10,7 @@ mod driver;
 mod hir;
 mod langitems;
 mod lexer;
+mod mir;
 mod nameres;
 mod parser;
 #[cfg(test)]
