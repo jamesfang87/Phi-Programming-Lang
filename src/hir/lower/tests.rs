@@ -281,6 +281,32 @@ fn function_params_and_return_type_are_lowered() {
     ));
 }
 
+/// `expr as ty` lowers its operand as an ordinary expression and its target as an ordinary type
+/// annotation, exactly like a `let`'s or a parameter's.
+#[test]
+fn a_cast_expr_lowers_its_operand_and_target_type() {
+    let hir = lower_src("fun f(x: i32) -> i64 { x as i64 }");
+    let (_, f) = only_function(&hir);
+    let body = block(&hir, f.block.expect("expected a body"));
+    let tail = expr(&hir, body.expr.expect("expected a tail expression"));
+
+    let ExprKind::Cast {
+        expr: operand,
+        ty: cast_ty,
+    } = tail.kind
+    else {
+        panic!("expected a cast expr, got {:?}", tail.kind);
+    };
+    assert!(matches!(expr(&hir, operand).kind, ExprKind::Path(_)));
+    match &ty(&hir, cast_ty).kind {
+        TyKind::Path { path, args } => {
+            assert_eq!(text(path.segments[0]), "i64");
+            assert!(args.is_empty());
+        }
+        other => panic!("expected a base type, got {other:?}"),
+    }
+}
+
 #[test]
 fn struct_has_its_fields_lowered() {
     let hir = lower_src("struct Point { x: i32, y: i32 }");

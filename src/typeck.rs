@@ -4,8 +4,8 @@ use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp};
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::typeck::{
     report_binary_operand_mismatch, report_binding_type_mismatch, report_body_return_mismatch,
-    report_logic_op_needs_bool, report_operand_unknown, report_return_mismatch,
-    report_str_literal_untyped,
+    report_int_suffix_on_float_literal, report_logic_op_needs_bool, report_operand_unknown,
+    report_return_mismatch, report_str_literal_untyped, report_unknown_literal_suffix,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
@@ -14,14 +14,16 @@ use crate::hir::{
 };
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
+use crate::nameres::symbol_table::prim_ty;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::bounds::ObligationCx;
 use crate::typeck::traits::index::ImplIndex;
 use crate::typeck::traits::solve::{Obligation, ParamEnv, TraitName};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::Unifier;
+use crate::typeck::unify::{Unifier, is_float, is_integer};
 
+pub mod cast;
 pub mod expr;
 pub mod lower_ty;
 pub mod pat;
@@ -545,6 +547,7 @@ impl<'hir> Typeck<'hir> {
             }
             ExprKind::Block(block_id) => self.check_block_expecting(*block_id, expected),
             ExprKind::Closure(def) => self.check_closure(*def, expected),
+            ExprKind::Cast { expr: operand, ty } => self.check_cast(*operand, *ty, expr.span),
             ExprKind::Error => self.tcx.error(),
         };
 
@@ -664,7 +667,8 @@ impl<'hir> Typeck<'hir> {
     /// and `1.0` start out as the fallback-carrying [`TyVar::Int`](crate::typeck::ty::TyVar::Int)
     /// and [`TyVar::Float`](crate::typeck::ty::TyVar::Float) inference variables described on
     /// [`TyVar`](crate::typeck::ty::TyVar), narrowed once unification meets a concrete type or
-    /// falls back to `i32`/`f64` if it never does.
+    /// falls back to `i32`/`f64` if it never does. A suffixed number (`1_u8`, `1.0_f32`) instead
+    /// lowers straight to the `PrimTy` its suffix names -- there is nothing left to infer.
     ///
     /// Shared with [`Typeck::check_pat`], since a literal in a pattern is the same literal and
     /// takes the same type -- `span` is what lets the one case that reports do so against
@@ -673,10 +677,32 @@ impl<'hir> Typeck<'hir> {
         match lit {
             Literal::Bool(_) => self.tcx.mk_prim(PrimTy::Bool),
             Literal::Char(_) => self.tcx.mk_prim(PrimTy::Char),
-            // TODO: read `suffix` (`i32`, `u8`, ...) once literal suffixes are interpreted, and
-            // lower straight to that `PrimTy` instead of an inference variable.
-            Literal::Int { .. } => self.tcx.next_int_var(),
-            Literal::Float { .. } => self.tcx.next_float_var(),
+            Literal::Int { suffix, .. } => match suffix {
+                None => self.tcx.next_int_var(),
+                // A whole number written with a float suffix (`5_f64`) is that float, not an
+                // error -- only the fractional case below has nowhere for its value to go.
+                Some(suffix) => match prim_ty(*suffix) {
+                    Some(prim) if is_integer(prim) || is_float(prim) => self.tcx.mk_prim(prim),
+                    _ => {
+                        report_unknown_literal_suffix(*suffix, span);
+                        self.tcx.error()
+                    }
+                },
+            },
+            Literal::Float { suffix, .. } => match suffix {
+                None => self.tcx.next_float_var(),
+                Some(suffix) => match prim_ty(*suffix) {
+                    Some(prim) if is_float(prim) => self.tcx.mk_prim(prim),
+                    Some(prim) if is_integer(prim) => {
+                        report_int_suffix_on_float_literal(*suffix, span);
+                        self.tcx.error()
+                    }
+                    _ => {
+                        report_unknown_literal_suffix(*suffix, span);
+                        self.tcx.error()
+                    }
+                },
+            },
             // A string literal is a value of some string type, and there is nothing here for it to
             // be: the core library declares no `String`, and `LangItem` names none, so there is no
             // definition to resolve one to. Reported rather than given a stand-in type, which
@@ -1380,6 +1406,75 @@ mod tests {
             checker.tcx.kind(ty),
             TyKind::Var(crate::typeck::ty::TyVar::Float(_))
         ));
+    }
+
+    #[test]
+    fn suffixed_int_literal_checks_directly_to_its_primitive() {
+        let hir = resolve_src("fun f() -> u8 { return 5_u8; }");
+        let def_id = first_function(&hir);
+        let (_stmt_id, expr_id) = find_return(&hir, def_id);
+        let mut checker = checker_with_signatures_collected(&hir);
+
+        let ty = checker.ty_of(expr_id);
+        assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::U8));
+    }
+
+    #[test]
+    fn suffixed_float_literal_checks_directly_to_its_primitive() {
+        let hir = resolve_src("fun f() -> f32 { return 3.14_f32; }");
+        let def_id = first_function(&hir);
+        let (_stmt_id, expr_id) = find_return(&hir, def_id);
+        let mut checker = checker_with_signatures_collected(&hir);
+
+        let ty = checker.ty_of(expr_id);
+        assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::F32));
+    }
+
+    /// A whole number written with a float suffix is that float, not an error: `5_f64` is `5.0`.
+    #[test]
+    fn whole_number_with_a_float_suffix_checks_to_the_float_primitive() {
+        let hir = resolve_src("fun f() -> f64 { return 5_f64; }");
+        let def_id = first_function(&hir);
+        let (_stmt_id, expr_id) = find_return(&hir, def_id);
+        let mut checker = checker_with_signatures_collected(&hir);
+
+        let ty = checker.ty_of(expr_id);
+        assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::F64));
+    }
+
+    #[test]
+    fn digit_separators_do_not_interfere_with_a_suffix() {
+        let hir = resolve_src("fun f() -> i64 { return 1_000_000_i64; }");
+        let def_id = first_function(&hir);
+        let (_stmt_id, expr_id) = find_return(&hir, def_id);
+        let mut checker = checker_with_signatures_collected(&hir);
+
+        let ty = checker.ty_of(expr_id);
+        assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::I64));
+    }
+
+    #[test]
+    fn suffix_disagreeing_with_the_expected_type_is_a_mismatch() {
+        use crate::testing::typeck_rejects;
+
+        typeck_rejects("fun f() -> i32 { return 5_u8; }", "found");
+    }
+
+    #[test]
+    fn fractional_literal_with_an_integer_suffix_is_rejected() {
+        use crate::testing::typeck_rejects;
+
+        typeck_rejects("fun f() -> i32 { return 3.14_i32; }", "fractional part");
+    }
+
+    #[test]
+    fn unknown_literal_suffix_is_rejected() {
+        use crate::testing::typeck_rejects;
+
+        typeck_rejects(
+            "fun f() -> i32 { return 1_bogus; }",
+            "invalid literal suffix",
+        );
     }
 
     #[test]

@@ -51,11 +51,12 @@ pub enum BindingMode {
     RefMut,
 }
 
-/// One arm of a `match` expression, of the form `pat => body`.
+/// One arm of a `match` expression, of the form `pat => body` or `pat if guard => body`.
 #[derive(Debug)]
 pub struct Arm {
     pub hir_id: HirId,
-    pub pat: HirId,   // -> Node::Pat
-    pub block: HirId, // -> Node::Block
+    pub pat: HirId,           // -> Node::Pat
+    pub guard: Option<HirId>, // -> Node::Expr
+    pub block: HirId,         // -> Node::Block
     pub span: SrcSpan,
 }

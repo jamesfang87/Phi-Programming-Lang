@@ -82,9 +82,8 @@ impl Parser {
             let type_p = self.type_parser_with_expr(expr.clone().boxed());
 
             let literal = choice((
-                self.kind(TokenKind::IntLiteral).map(|t| Expr::int(t, t)),
-                self.kind(TokenKind::FloatLiteral)
-                    .map(|t| Expr::float(t, t)),
+                self.kind(TokenKind::IntLiteral).map(Expr::int),
+                self.kind(TokenKind::FloatLiteral).map(Expr::float),
                 self.kind(TokenKind::StrLiteral).map(|t| Expr::string(t)),
                 self.kind(TokenKind::CharLiteral).map(|t| Expr::char(t)),
                 self.kind(TokenKind::TrueKw).map(|t: Token| Expr {
@@ -150,17 +149,24 @@ impl Parser {
                 })
                 .boxed();
 
-            // This parses one field of a `Path { field: expr, ... }` struct literal.
+            // This parses one field of a `Path { field: expr, ... }` struct literal, or
+            // `Path { field }` as shorthand for `Path { field: field }`.
             let ctor_field = ident
                 .clone()
-                .then_ignore(self.kind(TokenKind::Colon))
-                .then(expr.clone())
+                .then(
+                    self.kind(TokenKind::Colon)
+                        .ignore_then(expr.clone())
+                        .or_not(),
+                )
                 .map(|(name, value)| {
-                    let span = name.span.merge(value.span);
+                    let span = match &value {
+                        Some(e) => name.span.merge(e.span),
+                        None => name.span,
+                    };
                     PayloadField {
                         id: NodeId::next(),
                         name,
-                        value: Some(value),
+                        value,
                         span,
                     }
                 })
@@ -376,13 +382,19 @@ impl Parser {
 
             let match_arm = pattern
                 .clone()
+                .then(
+                    self.kind(TokenKind::IfKw)
+                        .ignore_then(expr.clone())
+                        .or_not(),
+                )
                 .then_ignore(self.kind(TokenKind::FatArrow))
                 .then(expr.clone())
-                .map(|(pat, body)| {
+                .map(|((pat, guard), body)| {
                     let span = pat.span.merge(body.span);
                     Arm {
                         id: NodeId::next(),
                         pat,
+                        guard: guard.map(Box::new),
                         body: Box::new(body),
                         span,
                     }
@@ -652,6 +664,30 @@ impl Parser {
                 })
                 .boxed();
 
+            // `as` binds tighter than every binary operator but looser than unary prefix and
+            // postfix operators, exactly as in Rust: `-x as i64` is `(-x) as i64`, and
+            // `x as i64 + 1` is `(x as i64) + 1`. `.foldl` makes a chain like `x as i32 as i64`
+            // left-associative, casting `x` to `i32` and then that result to `i64`.
+            let cast = unary
+                .clone()
+                .foldl(
+                    self.kind(TokenKind::AsKw)
+                        .ignore_then(type_p.clone())
+                        .repeated(),
+                    |operand, ty| {
+                        let span = operand.span.merge(ty.span);
+                        Expr {
+                            id: NodeId::next(),
+                            kind: ExprKind::Cast {
+                                expr: Box::new(operand),
+                                ty,
+                            },
+                            span,
+                        }
+                    },
+                )
+                .boxed();
+
             let bin_op =
                 |k: TokenKind, op: BinaryOp| self.kind(k).map(move |t: Token| (op, t.span));
 
@@ -661,9 +697,9 @@ impl Parser {
                 bin_op(TokenKind::Percent, BinaryOp::Rem),
             ));
 
-            let product = unary
+            let product = cast
                 .clone()
-                .foldl(mul_op.then(unary.clone()).repeated(), Expr::binary)
+                .foldl(mul_op.then(cast.clone()).repeated(), Expr::binary)
                 .boxed();
 
             let add_op = choice((
@@ -1382,6 +1418,80 @@ mod tests {
     }
 
     #[test]
+    fn parses_cast_expr() {
+        let expr = parse_expr("x as i64");
+        match &expr.kind {
+            ExprKind::Cast { expr, ty } => {
+                assert!(matches!(expr.kind, ExprKind::Path(_)));
+                assert!(matches!(ty.kind, crate::ast::TyKind::Path { .. }));
+            }
+            other => panic!("expected a cast expr, got {other:?}"),
+        }
+    }
+
+    /// `as` binds looser than unary prefix operators: `-x as i64` is `(-x) as i64`.
+    #[test]
+    fn cast_binds_looser_than_unary_prefix() {
+        let expr = parse_expr("-x as i64");
+        match &expr.kind {
+            ExprKind::Cast { expr, .. } => {
+                assert!(matches!(
+                    expr.kind,
+                    ExprKind::Unary {
+                        op: UnaryOp::Neg,
+                        ..
+                    }
+                ));
+            }
+            other => panic!("expected a cast expr, got {other:?}"),
+        }
+    }
+
+    /// `as` binds tighter than every binary operator: `x as i64 + 1` is `(x as i64) + 1`, not
+    /// `x as (i64 + 1)` (which isn't even a legal type).
+    #[test]
+    fn cast_binds_tighter_than_binary_operators() {
+        let expr = parse_expr("x as i64 + 1");
+        match &expr.kind {
+            ExprKind::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                ..
+            } => {
+                assert!(matches!(lhs.kind, ExprKind::Cast { .. }));
+            }
+            other => panic!("expected a binary expr, got {other:?}"),
+        }
+    }
+
+    /// A chain of casts is left-associative: `x as i32 as i64` casts `x` to `i32`, then that
+    /// result to `i64`.
+    #[test]
+    fn chained_casts_are_left_associative() {
+        let expr = parse_expr("x as i32 as i64");
+        match &expr.kind {
+            ExprKind::Cast { expr, ty } => {
+                assert_eq!(base_ty_name(ty), "i64");
+                match &expr.kind {
+                    ExprKind::Cast { expr, ty } => {
+                        assert_eq!(base_ty_name(ty), "i32");
+                        assert!(matches!(expr.kind, ExprKind::Path(_)));
+                    }
+                    other => panic!("expected a nested cast expr, got {other:?}"),
+                }
+            }
+            other => panic!("expected a cast expr, got {other:?}"),
+        }
+    }
+
+    fn base_ty_name(ty: &crate::ast::Ty) -> &'static str {
+        match &ty.kind {
+            crate::ast::TyKind::Path { path, .. } => Interner::resolve(path.segments[0].text),
+            other => panic!("expected a base type, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_ctor_with_multiple_fields() {
         let expr = parse_expr("Vector2D { x: 1.0, y: 2.0 }");
         match &expr.kind {
@@ -1407,6 +1517,22 @@ mod tests {
                     payload[0].value.as_ref().unwrap().kind,
                     ExprKind::Ctor { .. }
                 ));
+            }
+            other => panic!("expected a ctor expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_ctor_field_shorthand() {
+        // `Vector2D { x, y }` is shorthand for `Vector2D { x: x, y: y }`.
+        let expr = parse_expr("Vector2D { x, y: 2.0 }");
+        match &expr.kind {
+            ExprKind::Ctor { payload, .. } => {
+                assert_eq!(payload.len(), 2);
+                assert_eq!(Interner::resolve(payload[0].name.text), "x");
+                assert!(payload[0].value.is_none());
+                assert_eq!(Interner::resolve(payload[1].name.text), "y");
+                assert!(payload[1].value.is_some());
             }
             other => panic!("expected a ctor expr, got {other:?}"),
         }
@@ -1642,6 +1768,22 @@ mod tests {
                 assert_eq!(arms.len(), 3);
                 assert!(matches!(arms[0].pat.kind, PatKind::Variant { .. }));
                 assert!(matches!(arms[2].pat.kind, PatKind::Wildcard));
+            }
+            other => panic!("expected a match expr, got {other:?}"),
+        }
+    }
+
+    /// A `pat if cond => body` arm records its guard separately from the pattern; an arm with no
+    /// `if` leaves it `None`.
+    #[test]
+    fn parses_match_arm_with_guard() {
+        let expr = parse_expr("match n { x if x > 0 => 1, _ => 0 }");
+        match &expr.kind {
+            ExprKind::Match { arms, .. } => {
+                assert_eq!(arms.len(), 2);
+                assert!(matches!(arms[0].pat.kind, PatKind::Binding(_)));
+                assert!(arms[0].guard.is_some());
+                assert!(arms[1].guard.is_none());
             }
             other => panic!("expected a match expr, got {other:?}"),
         }

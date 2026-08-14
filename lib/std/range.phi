@@ -1,4 +1,4 @@
 struct Range<T> {
-    left: Option<T>,
-    right: Option<T>,
+    public left: Option<T>,
+    public right: Option<T>,
 }

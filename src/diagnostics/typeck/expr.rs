@@ -283,6 +283,13 @@ pub fn report_match_arm_mismatch(cx: DisplayCx<'_>, err: UnifyError, arm_span: S
     );
 }
 
+pub fn report_match_guard_not_bool(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(cx.show(err).to_string(), span)
+            .with_label("a match guard has to be a `bool`"),
+    );
+}
+
 // -----------------------------------------------------------------
 // Error propagation
 // -----------------------------------------------------------------
@@ -385,6 +392,68 @@ pub fn report_closure_body_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: Sr
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span).with_label(
             "this closure's body does not produce the return type it was checked against",
+        ),
+    );
+}
+
+// -----------------------------------------------------------------
+// Casting
+// -----------------------------------------------------------------
+
+pub fn report_cast_target_not_primitive(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(format!("cannot cast to `{}`", cx.show(ty)), span)
+            .with_label("not a primitive type")
+            .with_help(
+                "`as` only ever converts between the primitive types -- the integers, the \
+                 floats, `bool`, and `char`",
+            ),
+    );
+}
+
+pub fn report_cast_source_not_primitive(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("cannot cast a value of type `{}`", cx.show(ty)),
+            span,
+        )
+        .with_label("not a primitive type")
+        .with_help(
+            "`as` only ever converts between the primitive types -- the integers, the \
+                 floats, `bool`, and `char`",
+        ),
+    );
+}
+
+pub fn report_cast_operand_unknown(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            "type annotations needed: the type being cast is still unknown",
+            span,
+        )
+        .with_label("the type here is still unknown")
+        .with_help(
+            "give this value a concrete type first -- a literal suffix like `1_i32`, or a \
+                 `let` annotation, both work -- since whether the cast loses anything depends \
+                 on which type it starts from",
+        ),
+    );
+}
+
+/// `from as to` would be lossy: some value of `from` has no exact representation in `to`.
+/// `reason` is one of the short phrases [`crate::typeck::cast::cast_allowed`] returns, explaining
+/// which values would be affected.
+pub fn report_cast_not_allowed(cx: DisplayCx<'_>, from: Ty, to: Ty, reason: &str, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("cannot cast `{}` to `{}`", cx.show(from), cx.show(to)),
+            span,
+        )
+        .with_label(reason.to_string())
+        .with_help(
+            "`as` only allows conversions that can never lose information; write out how the \
+             value should be narrowed instead, e.g. by comparing it against the target type's \
+             bounds first",
         ),
     );
 }
