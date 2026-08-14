@@ -174,6 +174,20 @@ pub fn report_no_field(cx: DisplayCx<'_>, member: Ident, base: Ty) {
     );
 }
 
+/// Mirrors `nameres::report_private_item`'s wording: the same rule (a `private` declaration is
+/// reachable only from its own declaring module and that module's descendants), read here off a
+/// field's own `Visibility` instead of off a path lookup.
+pub fn report_private_field(member: Ident) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("field `{}` is private", Interner::resolve(member.text)),
+            member.span,
+        )
+        .with_label("not visible from here")
+        .with_help("mark the field `public` to use it outside its declaring module"),
+    );
+}
+
 pub fn report_field_is_a_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
     let name = Interner::resolve(member.text);
     DiagCtx::emit(
@@ -188,6 +202,38 @@ pub fn report_field_is_a_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
         .with_help(format!(
             "did you mean to call it, as `{name}(..)`? a method cannot be named without \
                  calling it"
+        )),
+    );
+}
+
+/// `root` is the `let`-bound local at the bottom of the receiver's place chain -- the same
+/// variable [`expr::report_not_mutable`](crate::diagnostics::typeck::expr::report_not_mutable)
+/// would name for a plain assignment, reported here instead because what tried to mutate it was
+/// a `&mut self` call rather than a written-out `=`.
+pub fn report_receiver_not_mutable(
+    hir: &Hir,
+    member: Ident,
+    root: Ident,
+    span: SrcSpan,
+    method: DefId,
+) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "`{}` takes `&mut self`, and `{}` is not declared `mut`",
+                Interner::resolve(member.text),
+                Interner::resolve(root.text)
+            ),
+            span,
+        )
+        .with_label("not mutable")
+        .with_secondary(
+            method_receiver_span(hir, method),
+            "declared taking &mut self here".to_string(),
+        )
+        .with_help(format!(
+            "declare it `let mut {}` to allow this",
+            Interner::resolve(root.text)
         )),
     );
 }

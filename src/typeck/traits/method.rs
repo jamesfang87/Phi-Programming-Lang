@@ -60,12 +60,12 @@ use crate::ast::{Ident, Mutability, SelfMode, Symbol};
 use crate::diagnostics::typeck::traits::method::{
     function_name_span, report_ambiguous_method, report_call_arg_count, report_call_arg_mismatch,
     report_field_is_a_method, report_no_field, report_no_method, report_no_receiver,
-    report_not_callable, report_receiver_mode, report_receiver_not_a_place,
-    report_receiver_unknown,
+    report_not_callable, report_private_field, report_receiver_mode, report_receiver_not_a_place,
+    report_receiver_not_mutable, report_receiver_unknown,
 };
 use crate::diagnostics::typeck::traits::trait_name;
 use crate::driver::source::SrcSpan;
-use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Node, OwnerNode, Res};
+use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Local, Node, OwnerNode, PatKind, Res};
 use crate::typeck::Typeck;
 use crate::typeck::traits::index::ImplId;
 use crate::typeck::traits::solve::match_ty;
@@ -132,14 +132,14 @@ impl<'hir> Typeck<'hir> {
     /// `todo!()`.
     pub(crate) fn check_access(
         &mut self,
-        _id: HirId,
+        id: HirId,
         base: HirId,
         member: Ident,
         args: &AccessArgs,
         span: SrcSpan,
     ) -> Ty {
         match args {
-            AccessArgs::Call(args) => self.check_method_call(base, member, args, span),
+            AccessArgs::Call(args) => self.check_method_call(id, base, member, args, span),
             AccessArgs::None => self.check_field(base, member),
             // A record payload is only ever written on a variant, and every access name
             // resolution could read as one was taken above. What is left is a record payload on
@@ -155,7 +155,13 @@ impl<'hir> Typeck<'hir> {
     /// only that its type has to be a function type. A path naming a generic function is the
     /// exception, and the reason [`Typeck::callee_sig`] exists: its declared parameters have to be
     /// instantiated before the arguments can be checked against anything.
-    pub(crate) fn check_call(&mut self, callee: HirId, args: &[HirId], span: SrcSpan) -> Ty {
+    pub(crate) fn check_call(
+        &mut self,
+        id: HirId,
+        callee: HirId,
+        args: &[HirId],
+        span: SrcSpan,
+    ) -> Ty {
         let (sig, instantiation) = self.callee_sig(callee);
 
         let TyKind::Fun { params, ret } = self.tcx.kind(sig).clone() else {
@@ -173,6 +179,18 @@ impl<'hir> Typeck<'hir> {
         self.check_args(&params, args, "this call", span);
         if let Some((def, generic_args)) = instantiation {
             self.register_instantiation(def, &generic_args, span, callee.owner);
+            let resolved: Vec<Ty> = generic_args
+                .iter()
+                .map(|&arg| self.resolve_deep(arg))
+                .collect();
+            self.types.record_call(id, def, resolved);
+        } else if let Node::Expr(expr) = self.hir.node(callee)
+            && let ExprKind::Path(path) = &expr.kind
+            && let Res::Function(def) = path.res
+        {
+            // A named, non-generic function: nothing to instantiate, but MIR lowering still
+            // needs a resolved call target to address it by `DefId` directly.
+            self.types.record_call(id, def, Vec::new());
         }
         ret.unwrap_or_else(|| self.tcx.unit())
     }
@@ -249,6 +267,7 @@ impl<'hir> Typeck<'hir> {
     /// Checks `receiver.member(args)`.
     pub(crate) fn check_method_call(
         &mut self,
+        id: HirId,
         receiver: HirId,
         member: Ident,
         args: &[HirId],
@@ -283,12 +302,18 @@ impl<'hir> Typeck<'hir> {
         };
 
         // Step 5.
-        self.check_chosen_method(&chosen, receiver, &layers, member, args, span)
+        self.check_chosen_method(id, &chosen, receiver, &layers, member, args, span)
     }
 
     /// Instantiates the chosen method and checks the call against it.
+    ///
+    /// `id` names the call expression itself, needed only to key the resolved-call recording
+    /// this now also does (see `TypeResolutions::record_call`) -- the eighth argument that pushes
+    /// this past clippy's default limit.
+    #[allow(clippy::too_many_arguments)]
     fn check_chosen_method(
         &mut self,
+        id: HirId,
         chosen: &Candidate,
         receiver: HirId,
         layers: &[Layer],
@@ -315,6 +340,9 @@ impl<'hir> Typeck<'hir> {
         // A method may declare parameters of its own, and calling it instantiates them exactly as
         // calling a free function does -- after the arguments, for the same reason.
         self.register_instantiation(chosen.method, &fresh, span, receiver.owner);
+
+        let resolved: Vec<Ty> = fresh.iter().map(|&arg| self.resolve_deep(arg)).collect();
+        self.types.record_call(id, chosen.method, resolved);
 
         ret.unwrap_or_else(|| self.tcx.unit())
     }
@@ -698,6 +726,8 @@ impl<'hir> Typeck<'hir> {
                 None => {
                     if !self.is_place_expr(receiver) {
                         report_receiver_not_a_place(self.hir, member, mode, span, method);
+                    } else if let Err(name) = self.place_mutable_root(receiver) {
+                        report_receiver_not_mutable(self.hir, member, name, span, method);
                     }
                 }
                 Some(Layer::Ref(Mutability::Immutable)) => {
@@ -728,6 +758,56 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
+    /// Whether `id` -- already known to name a place, via [`Typeck::is_place_expr`] -- may be
+    /// mutated directly: assigned to, taken `&mut`, or handed to a `&mut self` receiver.
+    ///
+    /// Walks down through field and index projections, stopping the moment it crosses a
+    /// reference: what a reference points at is reachable regardless of the reference-holding
+    /// local's own `let`-mutability, since a reference carries its own `&`/`&mut`-ness -- not
+    /// enforced yet, since this compiler has no borrow checker, so leaving it unchecked here
+    /// matches every other place a reference's mutability already goes unchecked rather than
+    /// adding a restriction nothing else observes. Once the walk reaches a bare local with no
+    /// reference crossed, `Err` names it if it was declared with a plain `let`; `Ok` covers
+    /// everything else the walk can end on -- a `let mut` binding, and a parameter, `self`, or
+    /// any binding besides a `let`'s (a `match` arm, `for`, `with` lend -- see
+    /// [`Typeck::let_mutability`]'s docs), none of which restricts mutation today.
+    pub(crate) fn place_mutable_root(&mut self, id: HirId) -> Result<(), Ident> {
+        match &self.hir.expr(id).kind {
+            ExprKind::Access {
+                base,
+                args: AccessArgs::None,
+                ..
+            }
+            | ExprKind::Index { base, .. } => {
+                let base = *base;
+                let base_ty = self.ty_of(base);
+                let base_ty = self.resolve_deep(base_ty);
+                if matches!(self.tcx.kind(base_ty), TyKind::Ref { .. } | TyKind::Any(_)) {
+                    return Ok(());
+                }
+                self.place_mutable_root(base)
+            }
+            ExprKind::Path(path) => {
+                let Res::Local(Local::Variable(pat_id)) = path.res else {
+                    return Ok(());
+                };
+                if self.let_mutability.get(&pat_id) != Some(&Mutability::Immutable) {
+                    return Ok(());
+                }
+                let Node::Pat(pat) = self.hir.node(pat_id) else {
+                    unreachable!("Local::Variable always names a binding pattern");
+                };
+                let PatKind::Binding { name, .. } = pat.kind else {
+                    unreachable!("Local::Variable always names a Binding pattern");
+                };
+                Err(name)
+            }
+            // Not reached in practice: every caller has already established `id` is a place with
+            // `is_place_expr`, which allows nothing else here.
+            _ => Ok(()),
+        }
+    }
+
     // -----------------------------------------------------------------
     // Fields
     // -----------------------------------------------------------------
@@ -752,7 +832,7 @@ impl<'hir> Typeck<'hir> {
 
         // A field is reached through references exactly as a method is.
         let (base_ty, _adjustment) = self.peel_receiver(base_ty);
-        if let Some(ty) = self.field_ty(base_ty, member.text) {
+        if let Some(ty) = self.field_ty(base_ty, owner, member) {
             return ty;
         }
 
@@ -770,8 +850,11 @@ impl<'hir> Typeck<'hir> {
     /// The type of `base`'s field named `member`, if `base` is a struct that has one.
     ///
     /// A field's declared type is written in the struct's own terms, so it is read through the
-    /// arguments the receiver's type applied: `inner` of `Wrap<i32>` is `i32`, not `T`.
-    fn field_ty(&mut self, base: Ty, member: Symbol) -> Option<Ty> {
+    /// arguments the receiver's type applied: `inner` of `Wrap<i32>` is `i32`, not `T`. `owner` is
+    /// the definition the access sits inside, needed only to check the field's visibility from
+    /// there -- checking still returns the field's type either way, the same way every other
+    /// mistake this module finds is reported without also refusing to check the rest.
+    fn field_ty(&mut self, base: Ty, owner: DefId, member: Ident) -> Option<Ty> {
         let TyKind::Adt { def, args } = self.tcx.kind(base).clone() else {
             return None;
         };
@@ -784,7 +867,13 @@ impl<'hir> Typeck<'hir> {
 
         let field = fields
             .into_iter()
-            .find(|&id| self.hir.field(id).name.text == member)?;
+            .find(|&id| self.hir.field(id).name.text == member.text)?;
+
+        let visibility = self.hir.field(field).visibility;
+        if !self.is_visible_from(self.hir.module_of(def), owner, visibility) {
+            report_private_field(member);
+        }
+
         let declared = self
             .types
             .ty(field)
@@ -814,7 +903,7 @@ impl<'hir> Typeck<'hir> {
         }
 
         for (index, (&want, &got)) in expected.iter().zip(found.iter()).enumerate() {
-            if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
+            if let Err(err) = self.unify_allowing_any(want, got) {
                 let span = self.hir.expr(args[index]).span;
                 report_call_arg_mismatch(self.cx(), err, span);
             }
@@ -839,7 +928,7 @@ mod tests {
     use super::*;
     use crate::diag::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::{resolve_src, typeck_src as check};
+    use crate::testing::{find_return, first_extend_method, resolve_src, typeck_src as check};
 
     /// Everything up to body checking, which is what candidate collection reads.
     fn collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
@@ -1382,6 +1471,138 @@ mod tests {
         );
     }
 
+    /// A field with no `public` is private by default, reachable only from its declaring module
+    /// and that module's descendants -- the same rule `SymbolTable::is_visible` already enforces
+    /// for a path lookup, read here off `Field::visibility` instead. `a_field_access_checks_to_
+    /// the_fields_type` above already covers reading a private field from inside its own module,
+    /// where it is always reachable; this needs `typeck_src_files` to put the access in a
+    /// different module, since a single fixture string is one module.
+    #[test]
+    fn a_private_field_cannot_be_read_from_another_module() {
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32 }",
+                "module app;
+                 import math::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ]),
+            ["field `count` is private"]
+        );
+    }
+
+    #[test]
+    fn a_public_field_can_be_read_from_another_module() {
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { public count: i32 }",
+                "module app;
+                 import math::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ])
+            .is_empty()
+        );
+    }
+
+    /// `SymbolTable::is_visible`'s full rule, re-checked end to end for a field instead of a
+    /// path lookup: `private` reaches the declaring module and *every* one of its descendants,
+    /// however deep, and nothing else -- not a sibling module, and not even the declaring
+    /// module's own parent.
+    #[test]
+    fn field_privacy_follows_the_declaring_modules_full_descendant_chain() {
+        // A grandchild of the struct's own module -- not just a direct child -- can still see
+        // its private field.
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32 }",
+                "module math::inner::deeper;
+                 import math::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ])
+            .is_empty(),
+            "a descendant module, however deep, should see the private field"
+        );
+
+        // A sibling module -- neither an ancestor nor a descendant -- cannot.
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32 }",
+                "module other;
+                 import math::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ]),
+            ["field `count` is private"],
+            "an unrelated sibling module should not see the private field"
+        );
+
+        // Nor can the declaring module's own parent see into it: visibility only ever reaches
+        // downward.
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math::inner; public struct Foo { count: i32 }",
+                "module math;
+                 import math::inner::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ]),
+            ["field `count` is private"],
+            "a parent module should not see a descendant's private field"
+        );
+    }
+
+    /// Two things privacy alone doesn't otherwise combine in one fixture: the field is reached
+    /// through a reference (autoderef, the same `peel_receiver` step a method call goes
+    /// through), and the struct is generic, so the field's own *type* is substituted through the
+    /// receiver's type arguments on the way out. Neither changes whether the field's visibility
+    /// is checked.
+    #[test]
+    fn field_privacy_is_checked_through_autoderef_and_generic_substitution() {
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module lib; public struct Wrap<T> { inner: T, public tag: T }",
+                "module app;
+                 import lib::Wrap;
+                 fun f(x: &Wrap<i32>) -> i32 { return x.inner; }",
+            ]),
+            ["field `inner` is private"]
+        );
+        // The public field, reached the very same way, is not.
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module lib; public struct Wrap<T> { inner: T, public tag: T }",
+                "module app;
+                 import lib::Wrap;
+                 fun f(x: &Wrap<i32>) -> i32 { return x.tag; }",
+            ])
+            .is_empty()
+        );
+    }
+
+    /// `field_ty`'s `owner` is the definition an access sits inside -- here an `extend` block's
+    /// own method rather than a free function -- so this checks that a method's `DefId` resolves
+    /// back to its enclosing module correctly too: privacy is judged by where the `extend` block
+    /// itself was written, not by where the type it extends was declared.
+    #[test]
+    fn an_extend_blocks_method_reads_a_private_field_only_from_the_declaring_module() {
+        // An `extend` block in the struct's own module: allowed, same as any in-module access.
+        assert!(
+            crate::testing::typeck_src_files(&["module math;
+                 public struct Foo { count: i32 }
+                 extend Foo { fun get(&self) -> i32 { return self.count; } }",])
+            .is_empty()
+        );
+
+        // An `extend` block for the same type, written in a *different* module: refused exactly
+        // as a free function in that module would be.
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32 }",
+                "module app;
+                 import math::Foo;
+                 extend Foo { fun get(&self) -> i32 { return self.count; } }",
+            ]),
+            ["field `count` is private"]
+        );
+    }
+
     // -----------------------------------------------------------------
     // Receivers
     // -----------------------------------------------------------------
@@ -1432,6 +1653,52 @@ mod tests {
                  fun f(x: &Foo) { x.bump(); }"
             ),
             ["`bump` takes `&mut self`, which this receiver cannot provide"]
+        );
+    }
+
+    /// A `&mut self` call autorefs the receiver exactly as `&mut receiver` would, so a plain
+    /// `let` binding refuses it the same way an explicit `&mut` does.
+    #[test]
+    fn a_mut_self_method_cannot_be_called_on_an_immutable_let_binding() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun bump(&mut self) {} }
+                 fun f() { let x = Foo {}; x.bump(); }"
+            ),
+            ["`bump` takes `&mut self`, and `x` is not declared `mut`"]
+        );
+    }
+
+    #[test]
+    fn a_mut_self_method_may_be_called_on_a_mutable_let_binding() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun bump(&mut self) {} }
+                 fun f() { let mut x = Foo {}; x.bump(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    /// The receiver need not be a bare local for this to apply: `place_mutable_root` walks the
+    /// same field chain a `.` access would, so a `&mut self` call reached two levels down an
+    /// immutable `let` still names the chain's *root* binding in its diagnostic -- `o`, not the
+    /// `inner` field it was reached through.
+    #[test]
+    fn a_mut_self_method_reached_through_a_field_chain_rooted_in_an_immutable_let_is_reported() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun bump(&mut self) {} }
+                 struct Outer { inner: Foo }
+                 fun f() {
+                     let o = Outer { inner: Foo {} };
+                     o.inner.bump();
+                 }"
+            ),
+            ["`bump` takes `&mut self`, and `o` is not declared `mut`"]
         );
     }
 
@@ -1677,6 +1944,100 @@ mod tests {
                  fun f(m: Map<bool>) -> &i32 { return m[0]; }"
             ),
             ["mismatched types: expected `&i32`, found `&bool`"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Resolved-call recording
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_free_call_records_its_callee_and_instantiation() {
+        let hir = resolve_src(
+            "fun largest<T>(a: T, b: T) -> T { return a; }
+             fun main() -> i32 { return largest(1, 2); }",
+        );
+        DiagCtx::clear();
+        let checked = crate::typeck::check(&hir);
+
+        let largest = named(&collected(&hir), "largest");
+        let main = named(&collected(&hir), "main");
+        let (_, call_id) = find_return(&hir, main);
+
+        let resolved = checked
+            .types
+            .call(call_id)
+            .expect("a call to a resolved free function is recorded");
+        assert_eq!(resolved.def, largest);
+        assert_eq!(resolved.args.len(), 1);
+        assert!(matches!(
+            checked.tcx.kind(resolved.args[0]),
+            TyKind::Primitive(_)
+        ));
+    }
+
+    #[test]
+    fn a_method_call_records_its_callee() {
+        let hir = resolve_src(
+            "struct Foo {}
+             extend Foo { fun show(&self) -> i32 { return 0; } }
+             fun main() -> i32 { let f = Foo {}; return f.show(); }",
+        );
+        DiagCtx::clear();
+        let checked = crate::typeck::check(&hir);
+
+        let main = named(&collected(&hir), "main");
+        let show = first_extend_method(&hir);
+        let (_, call_id) = find_return(&hir, main);
+
+        let resolved = checked
+            .types
+            .call(call_id)
+            .expect("a method call is recorded");
+        assert_eq!(resolved.def, show);
+        assert!(resolved.args.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // `any`-coercion (README section 7)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn an_any_parameter_accepts_a_plain_owned_argument() {
+        use crate::testing::typeck_accepts;
+
+        typeck_accepts(
+            "fun min(x: any i32, y: any i32) -> any i32 {
+                 return if x < y { x } else { y };
+             }
+             fun f() {
+                 let a = 1;
+                 let b = 2;
+                 min(a, b);
+             }",
+        );
+    }
+
+    #[test]
+    fn an_any_return_accepts_a_plain_owned_return_expression() {
+        use crate::testing::typeck_accepts;
+
+        typeck_accepts("fun make(x: any i32) -> any i32 { return x; }");
+    }
+
+    #[test]
+    fn an_any_parameter_still_rejects_a_mismatched_base_type() {
+        use crate::testing::typeck_rejects;
+
+        typeck_rejects(
+            "fun min(x: any i32, y: any i32) -> any i32 {
+                 return if x < y { x } else { y };
+             }
+             fun f() {
+                 let b = 2;
+                 min(true, b);
+             }",
+            "mismatched types",
         );
     }
 }

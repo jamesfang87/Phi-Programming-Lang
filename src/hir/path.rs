@@ -20,7 +20,7 @@ use crate::nameres::PrimTy;
 /// `segments` and `span` are kept, not discarded once `res` is known, because diagnostics and
 /// the debug dump still need the written name and its source location -- `res` augments what a
 /// `Path` carries, it doesn't replace the rest of it.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Path {
     pub segments: Vec<Ident>,
     pub span: SrcSpan,

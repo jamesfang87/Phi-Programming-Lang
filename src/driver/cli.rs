@@ -57,7 +57,7 @@ impl BuildOptions {
             dumps: Dumps {
                 ast: debug || has("--ast"),
                 hir: debug || has("--hir"),
-                mir: has("--mir"),
+                mir: debug || has("--mir"),
                 llvm: has("--llvm"),
                 nameres: debug,
                 typeck: debug,
@@ -287,7 +287,7 @@ mod tests {
             Dumps {
                 ast: true,
                 hir: true,
-                mir: false,
+                mir: true,
                 llvm: false,
                 nameres: true,
                 typeck: true,
@@ -328,8 +328,11 @@ mod tests {
         );
     }
 
+    /// `--mir` now dumps a real stage; `--llvm` still does not (there is no backend yet). Both
+    /// still just need to parse and set their own flag here -- `pipeline::note_unimplemented_dumps`
+    /// is what actually decides which one prints a "not implemented" note.
     #[test]
-    fn the_unimplemented_stage_flags_parse() {
+    fn mir_and_llvm_flags_parse() {
         let dumps = opts(&["--mir", "--llvm"]).expect("both are accepted").dumps;
         assert!(dumps.mir);
         assert!(dumps.llvm);

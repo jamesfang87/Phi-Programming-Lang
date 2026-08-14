@@ -9,6 +9,7 @@ use crate::driver::source::{SrcCollector, SrcMap};
 use crate::hir::lower::lower_unit;
 use crate::lexer::Lexer;
 use crate::lexer::token::Token;
+use crate::mir;
 use crate::nameres;
 use crate::parser::Parser;
 use crate::typeck;
@@ -29,9 +30,6 @@ fn collect_sources(src_dir: &Path) -> io::Result<()> {
 }
 
 fn note_unimplemented_dumps(config: &Config, options: &BuildOptions) {
-    if options.dumps.mir {
-        eprintln!("note: MIR lowering is not implemented yet; --mir has no effect");
-    }
     if options.dumps.llvm {
         eprintln!("note: LLVM IR generation is not implemented yet; --llvm has no effect");
     }
@@ -84,7 +82,7 @@ pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
 
     // Every answer `typeck` needs is already on the `hir::Path`s `lower_unit` just built (or, for
     // lang items, on `hir.lang_items()`), so nothing further is threaded through here.
-    let checked = typeck::check(&hir);
+    let mut checked = typeck::check(&hir);
 
     if options.dumps.typeck {
         emit_debug::print_typeck(
@@ -93,6 +91,25 @@ pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
             &checked.types,
             options.exclude_core_in_emit,
         );
+    }
+
+    // Lowering #2 assumes a fully type-checked body with no `TyKind::Error` left in it anywhere
+    // (see `mir::lower`'s own module docs: it is diagnostics-free by design, the same way
+    // Lowering #1 is, because everything it needs is already validated by the stage before it).
+    // A program `typeck` already rejected has nothing valid to lower, so this only runs once
+    // there is nothing already reported to make that assumption false.
+    if !DiagCtx::has_errors() {
+        // Followed by monomorphization: `checked.types` alone is enough to build one generic
+        // `Body` per function/method/closure, and substituting those into the concrete instances
+        // actually used needs only `checked.tcx` in addition, mutably, to intern the substituted
+        // types it produces.
+        let program =
+            mir::lower::lower_program(&hir, &mut checked.tcx, &checked.types, config.mode);
+        let instances = mir::monomorphize::monomorphize(&hir, &mut checked.tcx, &program);
+
+        if options.dumps.mir {
+            emit_debug::print_mir(&hir, &checked.tcx, &instances, options.exclude_core_in_emit);
+        }
     }
 
     DiagCtx::report();

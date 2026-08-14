@@ -8,7 +8,7 @@ use crate::diagnostics::typeck::pat::{
     report_tuple_pattern_mismatch, report_variant_type_unknown,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{HirId, Node, OwnerNode, PatKind, Payload, VariantPayload};
+use crate::hir::{DefId, HirId, Node, OwnerNode, PatKind, Payload, VariantPayload};
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
 use crate::typeck::ty::{Ty, TyKind};
@@ -332,7 +332,13 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<Vec<(Ident, Ty)>> {
+    /// `ty`'s fields, each alongside its own `HirId` -- needed by
+    /// [`Typeck::check_ctor`](crate::typeck::Typeck::check_ctor) to check a written field's
+    /// visibility as it matches it, the same way [`Typeck::field_ty`
+    /// ](crate::typeck::traits::method::Typeck::field_ty) already does for a read. The struct's
+    /// own `DefId` comes back alongside the fields rather than being re-derived by a second
+    /// caller-side match on `ty`'s `TyKind`.
+    pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<(DefId, Vec<(Ident, HirId, Ty)>)> {
         let hir = self.hir;
         let TyKind::Adt { def, args } = self.tcx.kind(ty).clone() else {
             return None;
@@ -342,19 +348,22 @@ impl<'hir> Typeck<'hir> {
         };
         let subst: HashMap<HirId, Ty> = struct_.generics.iter().copied().zip(args).collect();
 
-        Some(
-            struct_
-                .fields
-                .iter()
-                .map(|&field| {
-                    let declared = self
-                        .types
-                        .ty(field)
-                        .expect("collect_fields records every field's declared type");
-                    (hir.field(field).name, self.subst_ty(declared, &subst))
-                })
-                .collect(),
-        )
+        let fields = struct_
+            .fields
+            .iter()
+            .map(|&field| {
+                let declared = self
+                    .types
+                    .ty(field)
+                    .expect("collect_fields records every field's declared type");
+                (
+                    hir.field(field).name,
+                    field,
+                    self.subst_ty(declared, &subst),
+                )
+            })
+            .collect();
+        Some((def, fields))
     }
 }
 

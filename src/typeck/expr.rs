@@ -11,10 +11,11 @@ use crate::diagnostics::typeck::expr::{
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
     report_missing_fields, report_no_range_type, report_no_such_field, report_no_such_variant,
-    report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_try,
-    report_range_endpoints_mismatch, report_record_field_unknown, report_try_error_mismatch,
-    report_try_operand_unknown, report_try_outside, report_try_return_mismatch,
-    report_variant_enum_unknown, report_variant_expr_payload_shape, report_variant_missing_fields,
+    report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_mutable,
+    report_not_try, report_private_field, report_range_endpoints_mismatch,
+    report_record_field_unknown, report_try_error_mismatch, report_try_operand_unknown,
+    report_try_outside, report_try_return_mismatch, report_variant_enum_unknown,
+    report_variant_expr_payload_shape, report_variant_missing_fields,
     report_variant_payload_mismatch,
 };
 use crate::driver::source::SrcSpan;
@@ -36,6 +37,8 @@ impl<'hir> Typeck<'hir> {
         let lhs_ty = self.ty_of(lhs);
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
+        } else if let Err(name) = self.place_mutable_root(lhs) {
+            report_not_mutable(name, span);
         }
 
         let rhs_ty = self.ty_of_expecting(rhs, lhs_ty);
@@ -55,6 +58,8 @@ impl<'hir> Typeck<'hir> {
         let lhs_ty = self.ty_of(lhs);
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
+        } else if let Err(name) = self.place_mutable_root(lhs) {
+            report_not_mutable(name, span);
         }
 
         let rhs_ty = self.ty_of_expecting(rhs, lhs_ty);
@@ -74,12 +79,26 @@ impl<'hir> Typeck<'hir> {
     }
 
     /// Checks `&operand` and `&mut operand`.
+    ///
+    /// Only `&mut` demands a place: `&` of a temporary borrows something that lives exactly as
+    /// long as the borrow does, which is not yet a mistake this compiler catches (there is no
+    /// borrow checker to enforce the reference doesn't outlive it), but `&mut` of one has nowhere
+    /// to write back to, so it is checked the same way a receiver or an assignment's left side
+    /// is.
     pub(crate) fn check_borrow(
         &mut self,
         mutability: Mutability,
         operand: HirId,
         expected: Option<Ty>,
     ) -> Ty {
+        if mutability == Mutability::Mutable {
+            if !self.is_place_expr(operand) {
+                report_not_assignable(self.hir.expr(operand).span);
+            } else if let Err(name) = self.place_mutable_root(operand) {
+                report_not_mutable(name, self.hir.expr(operand).span);
+            }
+        }
+
         let inner = expected.and_then(|expected| match *self.tcx.kind(expected) {
             TyKind::Ref {
                 base,
@@ -96,7 +115,13 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Checks `base[index]`.
-    pub(crate) fn check_index(&mut self, base: HirId, index: HirId, span: SrcSpan) -> Ty {
+    pub(crate) fn check_index(
+        &mut self,
+        id: HirId,
+        base: HirId,
+        index: HirId,
+        span: SrcSpan,
+    ) -> Ty {
         let base_ty = self.ty_of(base);
         let base_ty = self.resolve_deep(base_ty);
 
@@ -132,7 +157,7 @@ impl<'hir> Typeck<'hir> {
             self.ty_of(index);
             return self.tcx.error();
         }
-        self.check_method_call(base, member, &[index], span)
+        self.check_method_call(id, base, member, &[index], span)
     }
 
     // -----------------------------------------------------------------
@@ -154,13 +179,14 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         };
 
-        let Some(declared) = self.struct_fields(self_ty) else {
+        let Some((struct_def, declared)) = self.struct_fields(self_ty) else {
             report_not_a_struct_literal(self.cx(), self_ty, span);
             for field in payload {
                 self.ty_of(field.value);
             }
             return self.tcx.error();
         };
+        let struct_module = self.hir.module_of(struct_def);
 
         let mut written = HashSet::new();
         for field in payload {
@@ -169,9 +195,13 @@ impl<'hir> Typeck<'hir> {
             }
             match declared
                 .iter()
-                .find(|(name, _)| name.text == field.name.text)
+                .find(|(name, _, _)| name.text == field.name.text)
             {
-                Some(&(_, want)) => {
+                Some(&(_, field_id, want)) => {
+                    let visibility = self.hir.field(field_id).visibility;
+                    if !self.is_visible_from(struct_module, owner, visibility) {
+                        report_private_field(field.name);
+                    }
                     let got = self.ty_of_expecting(field.value, want);
                     if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
                         report_field_type_mismatch(self.cx(), err, self.hir.expr(field.value).span);
@@ -186,8 +216,8 @@ impl<'hir> Typeck<'hir> {
 
         let missing: Vec<&'static str> = declared
             .iter()
-            .filter(|(name, _)| !written.contains(&name.text))
-            .map(|(name, _)| Interner::resolve(name.text))
+            .filter(|(name, _, _)| !written.contains(&name.text))
+            .map(|(name, _, _)| Interner::resolve(name.text))
             .collect();
         if !missing.is_empty() {
             report_missing_fields(self.cx(), &missing, self_ty, span);
@@ -751,6 +781,49 @@ mod tests {
         rejects("fun f() { 1 = 2; }", "cannot be assigned to");
     }
 
+    /// A plain `let`, with no `mut`, does not allow reassignment -- unlike a `let mut`, which
+    /// `an_assignment_checks_the_value_against_the_place` above already shows accepted.
+    #[test]
+    fn a_plain_let_binding_cannot_be_assigned_to() {
+        rejects(
+            "fun f() { let x = 1; x = 2; }",
+            "cannot assign to `x`, which is not declared `mut`",
+        );
+    }
+
+    /// `let` without `mut` applies to every name a pattern introduces at once, not only its
+    /// outermost node.
+    #[test]
+    fn a_tuple_destructured_let_binding_cannot_be_assigned_to() {
+        rejects(
+            "fun f() { let (a, b) = (1, 2); a = 3; }",
+            "cannot assign to `a`, which is not declared `mut`",
+        );
+    }
+
+    /// Assigning through a field mutates the storage the root binding owns exactly as a bare
+    /// reassignment does, so it is checked the same way.
+    #[test]
+    fn a_field_of_an_immutable_let_binding_cannot_be_assigned_to() {
+        rejects(
+            "struct Pair { fst: i32, snd: i32 }
+             fun f() { let p = Pair { fst: 1, snd: 2 }; p.fst = 3; }",
+            "cannot assign to `p`, which is not declared `mut`",
+        );
+    }
+
+    /// Once the chain crosses a reference, the root binding's own `mut`-ness stops mattering: a
+    /// reference carries its own `&`/`&mut`-ness (not itself enforced yet -- see
+    /// `Typeck::place_mutable_root`'s docs), so writing through one is left alone regardless of
+    /// how the local holding it was declared.
+    #[test]
+    fn a_field_reached_through_a_reference_may_be_assigned_to_even_from_an_immutable_binding() {
+        accepts(
+            "struct Pair { fst: i32, snd: i32 }
+             fun f(p: &mut Pair) { let r = p; r.fst = 3; }",
+        );
+    }
+
     /// An assignment produces nothing, so it cannot be the value of the block it ends. Read
     /// through a closure, whose body *is* checked against its return type -- a function's is not;
     /// see the note on [`Typeck::check_function`](crate::typeck::Typeck).
@@ -795,6 +868,17 @@ mod tests {
         rejects(
             "fun f(x: i32) -> &mut i32 { return &x; }",
             "mismatched types",
+        );
+    }
+
+    /// `&mut x` writes back to `x` exactly as an assignment would, so a plain `let` refuses it
+    /// the same way -- unlike a parameter, which has no `mut` syntax of its own and so stays
+    /// unrestricted (`a_mutable_borrow_is_not_a_shared_one` above still takes `&mut` of one).
+    #[test]
+    fn a_mutable_borrow_of_an_immutable_let_binding_is_reported() {
+        rejects(
+            "fun f() -> &mut i32 { let x = 1; return &mut x; }",
+            "cannot assign to `x`, which is not declared `mut`",
         );
     }
 
@@ -885,6 +969,65 @@ mod tests {
             "struct Wrap<T> { inner: T }
              fun f() { let w: Wrap<bool> = Wrap { inner: 1 }; }",
             "mismatched types",
+        );
+    }
+
+    /// A field with no `public` is private by default, but only across a module boundary --
+    /// the same rule `SymbolTable::is_visible` already enforces for a path lookup. A single-file
+    /// fixture is one module, so this needs `typeck_src_files`; the plain-`accepts`/`rejects`
+    /// fixtures above all write and read a field from inside its own declaring module, where a
+    /// private field is always reachable.
+    #[test]
+    fn a_struct_literal_cannot_set_a_private_field_from_another_module() {
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32, public label: i32 }",
+                "module app;
+                 import math::Foo;
+                 fun f() -> Foo { return Foo { count: 1, label: 2 }; }",
+            ]),
+            ["field `count` is private"]
+        );
+    }
+
+    #[test]
+    fn a_struct_literal_may_set_a_public_field_from_another_module() {
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { public count: i32 }",
+                "module app;
+                 import math::Foo;
+                 fun f() -> Foo { return Foo { count: 1 }; }",
+            ])
+            .is_empty()
+        );
+    }
+
+    /// More than one private field written in the same literal is each reported on its own, the
+    /// same way a duplicate field and a missing field are already each reported independently.
+    /// Left unwritten instead, the very same two fields are reported *missing* rather than
+    /// private -- a private field can never be supplied from outside its module, whether or not
+    /// the caller tries to name it.
+    #[test]
+    fn multiple_private_fields_in_one_struct_literal_are_each_reported() {
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { a: i32, b: i32, public c: i32 }",
+                "module app;
+                 import math::Foo;
+                 fun f() -> Foo { return Foo { a: 1, b: 2, c: 3 }; }",
+            ]),
+            ["field `a` is private", "field `b` is private"]
+        );
+
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { a: i32, b: i32, public c: i32 }",
+                "module app;
+                 import math::Foo;
+                 fun f() -> Foo { return Foo { c: 3 }; }",
+            ]),
+            ["`Foo` is missing fields `a` and `b`"]
         );
     }
 
@@ -1382,6 +1525,106 @@ mod tests {
     fn assignment_through_an_index_checks_against_the_elements_type() {
         accepts("fun f(a: [i32; 4]) { a[0] = 1; }");
         rejects("fun f(a: [i32; 4]) { a[0] = true; }", "mismatched types");
+    }
+
+    /// `Typeck::place_mutable_root`'s walk exercised end to end: a two-level field chain and an
+    /// index, each rejected when rooted in a plain `let` and accepted once the `let` is `mut`;
+    /// and, separately, accepted regardless of the root's own `mut`-ness the moment the chain
+    /// crosses a reference, since a reference carries its own `&`/`&mut`-ness that this compiler
+    /// does not enforce yet (there is no borrow checker to weigh it).
+    ///
+    /// `assignment_through_a_field_checks_against_the_fields_type` and `..._an_index_..." above
+    /// both write through a bare *parameter*, which has no `mut` syntax of its own and so was
+    /// never in question; every case here is rooted in a `let` instead.
+    #[test]
+    fn constness_is_enforced_through_a_chain_of_fields_and_indices_but_stops_at_a_reference() {
+        let structs = "struct Inner { fst: i32 } struct Outer { inner: Inner }";
+
+        rejects(
+            &format!("{structs} fun f(o: Outer) {{ let p = o; p.inner.fst = 1; }}"),
+            "cannot assign to `p`, which is not declared `mut`",
+        );
+        accepts(&format!(
+            "{structs} fun f(o: Outer) {{ let mut p = o; p.inner.fst = 1; }}"
+        ));
+
+        rejects(
+            "fun f(a: [i32; 4]) { let arr = a; arr[0] = 1; }",
+            "cannot assign to `arr`, which is not declared `mut`",
+        );
+        accepts("fun f(a: [i32; 4]) { let mut arr = a; arr[0] = 1; }");
+
+        accepts(&format!(
+            "{structs} fun f(o: &mut Outer) {{ let r = o; r.inner.fst = 1; }}"
+        ));
+    }
+
+    /// `let mut` (or a plain `let`) applies to a whole pattern at once: every name it introduces
+    /// is affected the same way, not only the first one written -- `b` here is rejected exactly
+    /// as `a` would be, and both are accepted once the `let` that introduces them is `mut`.
+    #[test]
+    fn tuple_destructured_mutability_applies_to_every_binding_the_pattern_introduces() {
+        accepts("fun f() { let mut (a, b) = (1, 2); a = 3; b = 4; }");
+        rejects(
+            "fun f() { let (a, b) = (1, 2); a = 3; }",
+            "cannot assign to `a`, which is not declared `mut`",
+        );
+        rejects(
+            "fun f() { let (a, b) = (1, 2); b = 4; }",
+            "cannot assign to `b`, which is not declared `mut`",
+        );
+    }
+
+    /// A `for` binding, a `match` arm's, and a `with` lend all resolve through the very same
+    /// `Local::Variable` a `let` does, but none of them has `mut` syntax of its own to opt into
+    /// -- so all three stay exactly as unrestricted by this check as they were before it existed.
+    #[test]
+    fn constness_does_not_restrict_bindings_that_are_not_a_let() {
+        // A `for` binding, reassigned inside the loop body.
+        accepts(
+            "module core::option;
+             public enum Option<T> { some: T, none }
+             struct Counter { n: i32 }
+             extend Counter { fun next(&mut self) -> Option<i32> { return .none; } }
+             fun f() {
+                 let c = Counter { n: 0 };
+                 for x in c { x = 1; }
+             }",
+        );
+
+        // A `match` arm's binding.
+        accepts(
+            "enum Option<T> { some: T, none }
+             fun f(o: Option<i32>) {
+                 match o {
+                     .some(x) => { x = 1; },
+                     .none => {},
+                 }
+             }",
+        );
+
+        // A `with` lend, reassigned to a different reference of the same type.
+        accepts(
+            "fun f() {
+                 let a = 1;
+                 let b = 2;
+                 with x = &a { x = &b; }
+             }",
+        );
+    }
+
+    /// Neither a parameter nor `self` has `mut` syntax of its own, so this check leaves both
+    /// exactly as assignable as they were before it existed -- direct reassignment, a mutable
+    /// borrow, and writing through a field `self` owns, the way a `&mut self` method is meant to
+    /// be used.
+    #[test]
+    fn parameters_and_self_fields_remain_unrestricted_by_constness_checking() {
+        accepts("fun f(x: i32) { x = 5; }");
+        accepts("fun f(x: i32) -> &mut i32 { return &mut x; }");
+        accepts(
+            "struct Counter { n: i32 }
+             extend Counter { fun bump(&mut self) { self.n = self.n + 1; } }",
+        );
     }
 
     // -----------------------------------------------------------------
