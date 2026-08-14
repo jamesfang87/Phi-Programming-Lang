@@ -28,7 +28,9 @@
 
 use crate::ast::Symbol;
 use crate::ast::interner::Interner;
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::traits::coherence::{
+    report_conflicting_impls, report_duplicate_method,
+};
 use crate::hir::OwnerNode;
 use crate::typeck::Typeck;
 use crate::typeck::traits::index::{ImplHeader, ImplId};
@@ -69,7 +71,7 @@ impl<'hir> Typeck<'hir> {
                     continue;
                 }
 
-                self.report_conflicting_impls(a, b);
+                report_conflicting_impls(self.hir, self.cx(), a, b);
             }
         }
     }
@@ -90,7 +92,7 @@ impl<'hir> Typeck<'hir> {
                 }
 
                 for name in self.shared_method_names(a, b) {
-                    self.report_duplicate_method(name, a, b);
+                    report_duplicate_method(self.cx(), name, a, b);
                 }
             }
         }
@@ -130,80 +132,6 @@ impl<'hir> Typeck<'hir> {
                 function.name.text
             })
             .collect()
-    }
-
-    /// Reports a conflict, pointing at the *second* of the two blocks and underlining the first
-    /// beneath it.
-    ///
-    /// Which one is "the error" is a real choice, not an arbitrary one: neither block is wrong
-    /// on its own, and either could be the one to delete. The later block gets the primary span
-    /// because it is the one that introduced the conflict into a program that did not have it.
-    fn report_conflicting_impls(&self, first: &ImplHeader, second: &ImplHeader) {
-        let trait_ref = second
-            .trait_ref
-            .as_ref()
-            .expect("only two trait impls are compared for a duplicate implementation");
-
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "conflicting implementations of trait `{}` for type `{}`",
-                    self.trait_name(trait_ref.def),
-                    self.cx().show(second.self_ty)
-                ),
-                second.span,
-            )
-            .with_label("conflicting implementation")
-            .with_secondary(
-                first.span,
-                format!(
-                    "`{}` is already implemented here",
-                    self.cx().show(first.self_ty)
-                ),
-            )
-            .with_help(
-                "two implementations may not both apply to one type; note that bounds on an \
-                 implementation's own generics are not considered when deciding whether two of \
-                 them overlap",
-            ),
-        );
-    }
-
-    fn report_duplicate_method(&self, name: Symbol, first: &ImplHeader, second: &ImplHeader) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "the method `{}` is defined more than once for type `{}`",
-                    Interner::resolve(name),
-                    self.cx().show(second.self_ty)
-                ),
-                second.span,
-            )
-            .with_label(format!(
-                "duplicate definition of `{}`",
-                Interner::resolve(name)
-            ))
-            .with_secondary(
-                first.span,
-                format!(
-                    "`{}` already gets a method named `{}` here",
-                    self.cx().show(first.self_ty),
-                    Interner::resolve(name)
-                ),
-            )
-            .with_help(
-                "a call to it would have no single meaning, so one of the two has to be renamed \
-                 or removed",
-            ),
-        );
-    }
-
-    /// The name a trait was declared with.
-    fn trait_name(&self, def: crate::hir::DefId) -> &'static str {
-        let OwnerNode::Trait(trait_) = self.hir.def(def) else {
-            unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-        };
-        Interner::resolve(trait_.name.text)
     }
 }
 

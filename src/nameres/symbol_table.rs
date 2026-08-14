@@ -3,7 +3,7 @@ use std::collections::hash_map::Entry;
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol, Visibility};
-use crate::nameres::diagnostics::{
+use crate::diagnostics::nameres::{
     report_ambiguous_import, report_conflict, report_dyn_not_trait, report_not_found,
     report_private_item,
 };

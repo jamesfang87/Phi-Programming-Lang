@@ -57,7 +57,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, Mutability, SelfMode, Symbol};
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::traits::method::{
+    function_name_span, report_ambiguous_method, report_call_arg_count, report_call_arg_mismatch,
+    report_field_is_a_method, report_no_field, report_no_method, report_no_receiver,
+    report_not_callable, report_receiver_mode, report_receiver_not_a_place,
+    report_receiver_unknown,
+};
+use crate::diagnostics::typeck::traits::trait_name;
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Node, OwnerNode, Res};
 use crate::typeck::Typeck;
@@ -159,7 +165,7 @@ impl<'hir> Typeck<'hir> {
                 self.ty_of(arg);
             }
             if !matches!(self.tcx.kind(sig), TyKind::Error) {
-                self.report_not_callable(sig, span);
+                report_not_callable(self.cx(), sig, span);
             }
             return self.tcx.error();
         };
@@ -254,7 +260,7 @@ impl<'hir> Typeck<'hir> {
 
         // Step 1. Not deferred; see the [module docs](self).
         if matches!(self.tcx.kind(receiver_ty), TyKind::Var(_)) {
-            self.report_receiver_unknown(member, self.hir.expr(receiver).span);
+            report_receiver_unknown(member, self.hir.expr(receiver).span);
             return self.check_args_only(args);
         }
         if matches!(self.tcx.kind(receiver_ty), TyKind::Error) {
@@ -267,7 +273,7 @@ impl<'hir> Typeck<'hir> {
         // Step 3.
         let candidates = self.method_candidates(base, member.text, owner);
         if candidates.is_empty() {
-            self.report_no_method(member, base);
+            report_no_method(self.cx(), member, base);
             return self.check_args_only(args);
         }
 
@@ -296,7 +302,7 @@ impl<'hir> Typeck<'hir> {
 
         match mode {
             Some(mode) => self.check_receiver(mode, receiver, layers, member, chosen.method),
-            None => self.report_no_receiver(member, chosen.method),
+            None => report_no_receiver(self.hir, member, chosen.method),
         }
 
         // A method's `self` counts as its first parameter -- see
@@ -456,7 +462,21 @@ impl<'hir> Typeck<'hir> {
             [only] => Some(only.clone()),
             [] => unreachable!("pick is only asked about a non-empty candidate list"),
             many => {
-                self.report_ambiguous_method(member, many);
+                let candidates: Vec<(&str, SrcSpan)> = many
+                    .iter()
+                    .map(|candidate| {
+                        let CandidateSource::Trait(def) = candidate.source else {
+                            unreachable!(
+                                "an inherent candidate wins outright, so it is never ambiguous"
+                            );
+                        };
+                        (
+                            trait_name(self.hir, def),
+                            function_name_span(self.hir, candidate.method),
+                        )
+                    })
+                    .collect();
+                report_ambiguous_method(member, &candidates);
                 None
             }
         }
@@ -606,27 +626,6 @@ impl<'hir> Typeck<'hir> {
         Some(self_param.mode)
     }
 
-    /// Where a function's name is written, for a diagnostic pointing at the declaration it found.
-    fn function_name_span(&self, method: DefId) -> SrcSpan {
-        let OwnerNode::Function(function) = self.hir.def(method) else {
-            unreachable!("a candidate's method is always a function");
-        };
-        function.name.span
-    }
-
-    /// Where a method's receiver is written, so a diagnostic about a receiver can point at what
-    /// it was checked against. Falls back to the method's name for one that declares none.
-    fn method_receiver_span(&self, method: DefId) -> SrcSpan {
-        let OwnerNode::Function(function) = self.hir.def(method) else {
-            unreachable!("a candidate's method is always a function");
-        };
-        match function.self_param.map(|id| self.hir.node(id)) {
-            Some(Node::SelfParam(self_param)) => self_param.span,
-            Some(_) => unreachable!("a function's self param slot always holds a Node::SelfParam"),
-            None => function.name.span,
-        }
-    }
-
     // -----------------------------------------------------------------
     // Receivers
     // -----------------------------------------------------------------
@@ -680,7 +679,7 @@ impl<'hir> Typeck<'hir> {
             // all.
             SelfMode::Move => {
                 if !layers.is_empty() {
-                    self.report_receiver_mode(member, mode, span, method);
+                    report_receiver_mode(self.hir, member, mode, span, method);
                 }
             }
 
@@ -689,7 +688,7 @@ impl<'hir> Typeck<'hir> {
             // place to borrow.
             SelfMode::Immutable => {
                 if layers.is_empty() && !self.is_place_expr(receiver) {
-                    self.report_receiver_not_a_place(member, mode, span, method);
+                    report_receiver_not_a_place(self.hir, member, mode, span, method);
                 }
             }
 
@@ -698,11 +697,11 @@ impl<'hir> Typeck<'hir> {
             SelfMode::Mutable => match layers.first() {
                 None => {
                     if !self.is_place_expr(receiver) {
-                        self.report_receiver_not_a_place(member, mode, span, method);
+                        report_receiver_not_a_place(self.hir, member, mode, span, method);
                     }
                 }
                 Some(Layer::Ref(Mutability::Immutable)) => {
-                    self.report_receiver_mode(member, mode, span, method);
+                    report_receiver_mode(self.hir, member, mode, span, method);
                 }
                 Some(Layer::Ref(Mutability::Mutable) | Layer::Any) => {}
             },
@@ -744,7 +743,7 @@ impl<'hir> Typeck<'hir> {
         let base_ty = self.resolve_deep(base_ty);
 
         if matches!(self.tcx.kind(base_ty), TyKind::Var(_)) {
-            self.report_receiver_unknown(member, self.hir.expr(base).span);
+            report_receiver_unknown(member, self.hir.expr(base).span);
             return self.tcx.error();
         }
         if matches!(self.tcx.kind(base_ty), TyKind::Error) {
@@ -761,9 +760,9 @@ impl<'hir> Typeck<'hir> {
             .method_candidates(base_ty, member.text, owner)
             .is_empty()
         {
-            self.report_no_field(member, base_ty);
+            report_no_field(self.cx(), member, base_ty);
         } else {
-            self.report_field_is_a_method(member, base_ty);
+            report_field_is_a_method(self.cx(), member, base_ty);
         }
         self.tcx.error()
     }
@@ -811,16 +810,13 @@ impl<'hir> Typeck<'hir> {
         let found: Vec<Ty> = args.iter().map(|&arg| self.ty_of(arg)).collect();
 
         if found.len() != expected.len() {
-            Self::report_call_arg_count(name, found.len(), expected.len(), span);
+            report_call_arg_count(name, found.len(), expected.len(), span);
         }
 
         for (index, (&want, &got)) in expected.iter().zip(found.iter()).enumerate() {
             if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
                 let span = self.hir.expr(args[index]).span;
-                DiagCtx::emit(
-                    Diagnostic::error(self.cx().show(err).to_string(), span)
-                        .with_label("this argument does not match the parameter it is passed to"),
-                );
+                report_call_arg_mismatch(self.cx(), err, span);
             }
         }
     }
@@ -836,247 +832,12 @@ impl<'hir> Typeck<'hir> {
         }
         self.tcx.error()
     }
-
-    // -----------------------------------------------------------------
-    // Diagnostics
-    //
-    // A `Diagnostic` carries one span and no second label, so an ambiguity cannot point at each
-    // candidate's declaration. It points at the call -- the thing that has to change -- and names
-    // the candidates in prose, the way `coherence`, `members` and `bounds` already do.
-    // -----------------------------------------------------------------
-
-    fn report_receiver_unknown(&self, member: Ident, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "type annotations needed: the type of the value `{}` is reached on is still \
-                     unknown",
-                    Interner::resolve(member.text)
-                ),
-                span,
-            )
-            .with_label("the type here is still unknown")
-            .with_help(
-                "which `.` this is depends on the type it is written on, and unlike a trait \
-                 bound it cannot wait for a later pass -- what it produces is what everything \
-                 around it is checked against; write the type out",
-            ),
-        );
-    }
-
-    fn report_no_method(&self, member: Ident, base: Ty) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "no method `{}` on `{}`",
-                    Interner::resolve(member.text),
-                    self.cx().show(base)
-                ),
-                member.span,
-            )
-            .with_label("not found")
-            .with_help(
-                "a method comes from an `extend` block for this type, or from a trait it \
-                 implements; a method on a type parameter comes from a bound written on it",
-            ),
-        );
-    }
-
-    fn report_ambiguous_method(&self, member: Ident, candidates: &[Candidate]) {
-        let traits: Vec<String> = candidates
-            .iter()
-            .map(|candidate| match candidate.source {
-                CandidateSource::Trait(def) => format!("`{}`", self.candidate_trait_name(def)),
-                CandidateSource::Inherent => {
-                    unreachable!("an inherent candidate wins outright, so it is never ambiguous")
-                }
-            })
-            .collect();
-
-        let mut diag = Diagnostic::error(
-            format!(
-                "ambiguous method call: `{}` is declared by more than one trait in scope: {}",
-                Interner::resolve(member.text),
-                traits.join(", ")
-            ),
-            member.span,
-        )
-        .with_label("cannot tell which one is meant")
-        .with_help(
-            "each of these traits declares a method of this name and the receiver reaches \
-             all of them, so nothing here says which was meant",
-        );
-
-        // Every candidate gets underlined, not just the first two. Which ones collided is the
-        // whole question here, and the answer is the set.
-        for candidate in candidates {
-            let CandidateSource::Trait(def) = candidate.source else {
-                unreachable!("an inherent candidate wins outright, so it is never ambiguous");
-            };
-            diag = diag.with_secondary(
-                self.function_name_span(candidate.method),
-                format!("`{}` declares it here", self.candidate_trait_name(def)),
-            );
-        }
-
-        DiagCtx::emit(diag);
-    }
-
-    fn report_no_receiver(&self, member: Ident, method: DefId) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "`{}` takes no receiver, so it cannot be called on a value",
-                    Interner::resolve(member.text)
-                ),
-                member.span,
-            )
-            .with_label("declared without a `self` parameter")
-            .with_secondary(
-                self.function_name_span(method),
-                "declared here, taking no receiver",
-            )
-            .with_help(
-                "a function declared in an `extend` block without a `self` parameter belongs to \
-                 the type rather than to a value of it",
-            ),
-        );
-    }
-
-    fn report_receiver_mode(&self, member: Ident, mode: SelfMode, span: SrcSpan, method: DefId) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "`{}` takes {}, which this receiver cannot provide",
-                    Interner::resolve(member.text),
-                    show_self_mode(mode)
-                ),
-                span,
-            )
-            .with_label(format!("expected {}", show_self_mode(mode)))
-            .with_secondary(
-                self.method_receiver_span(method),
-                format!("declared taking {} here", show_self_mode(mode)),
-            )
-            .with_help(match mode {
-                SelfMode::Move => {
-                    "this method takes its receiver by value, and the value here is behind a \
-                     reference"
-                }
-                _ => "a shared reference cannot be used where a mutable one is required",
-            }),
-        );
-    }
-
-    fn report_receiver_not_a_place(
-        &self,
-        member: Ident,
-        mode: SelfMode,
-        span: SrcSpan,
-        method: DefId,
-    ) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "`{}` takes {}, and this receiver is a temporary",
-                    Interner::resolve(member.text),
-                    show_self_mode(mode)
-                ),
-                span,
-            )
-            .with_label("nowhere to take a reference to")
-            .with_secondary(
-                self.method_receiver_span(method),
-                format!("declared taking {} here", show_self_mode(mode)),
-            )
-            .with_help(
-                "the reference the call would take is to a value that exists only for the \
-                 length of this expression; bind it to a name first",
-            ),
-        );
-    }
-
-    fn report_no_field(&self, member: Ident, base: Ty) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "no field `{}` on `{}`",
-                    Interner::resolve(member.text),
-                    self.cx().show(base)
-                ),
-                member.span,
-            )
-            .with_label("not a field of this type"),
-        );
-    }
-
-    fn report_field_is_a_method(&self, member: Ident, base: Ty) {
-        let name = Interner::resolve(member.text);
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "no field `{name}` on `{}`; there is a method `{name}`",
-                    self.cx().show(base)
-                ),
-                member.span,
-            )
-            .with_label("this is a method, not a field")
-            .with_help(format!(
-                "did you mean to call it, as `{name}(..)`? a method cannot be named without \
-                 calling it"
-            )),
-        );
-    }
-
-    fn report_not_callable(&self, sig: Ty, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "`{}` is not something that can be called",
-                    self.cx().show(sig)
-                ),
-                span,
-            )
-            .with_label("not a function"),
-        );
-    }
-
-    fn report_call_arg_count(name: &str, found: usize, expected: usize, span: SrcSpan) {
-        let plural = if expected == 1 { "" } else { "s" };
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "{name} takes {expected} argument{plural} but {found} {} supplied",
-                    if found == 1 { "was" } else { "were" }
-                ),
-                span,
-            )
-            .with_label(format!("expected {expected} argument{plural}")),
-        );
-    }
-
-    /// The name a trait was declared with.
-    fn candidate_trait_name(&self, def: DefId) -> &'static str {
-        let OwnerNode::Trait(trait_) = self.hir.def(def) else {
-            unreachable!("a candidate's trait always names a trait");
-        };
-        Interner::resolve(trait_.name.text)
-    }
-}
-
-/// How a receiver reads in a diagnostic.
-fn show_self_mode(mode: SelfMode) -> &'static str {
-    match mode {
-        SelfMode::Immutable => "`&self`",
-        SelfMode::Mutable => "`&mut self`",
-        SelfMode::Move => "`self`",
-        SelfMode::Any => "`any self`",
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diag::DiagCtx;
     use crate::hir::Hir;
     use crate::testing::{resolve_src, typeck_src as check};
 

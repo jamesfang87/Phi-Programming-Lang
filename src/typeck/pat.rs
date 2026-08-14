@@ -2,7 +2,11 @@ use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, Literal, Symbol};
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::pat::{
+    report_literal_pattern_mismatch, report_match_needs_wildcard, report_match_not_exhaustive,
+    report_no_payload_field, report_no_variant, report_payload_shape,
+    report_tuple_pattern_mismatch, report_variant_type_unknown,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, Node, OwnerNode, PatKind, Payload, VariantPayload};
 use crate::nameres::PrimTy;
@@ -51,11 +55,7 @@ impl<'hir> Typeck<'hir> {
             PatKind::Literal(lit) => {
                 let found = self.check_literal(lit, span);
                 if let Err(err) = self.unifier.unify(&self.tcx, expected, found) {
-                    DiagCtx::emit(
-                        Diagnostic::error(self.cx().show(err).to_string(), span).with_label(
-                            "this literal cannot match a value of the type being matched",
-                        ),
-                    );
+                    report_literal_pattern_mismatch(self.cx(), err, span);
                 }
                 expected
             }
@@ -64,10 +64,7 @@ impl<'hir> Typeck<'hir> {
                 let vars: Vec<Ty> = elems.iter().map(|_| self.tcx.next_ty_var()).collect();
                 let tuple = self.tcx.mk_tuple(vars.clone());
                 if let Err(err) = self.unifier.unify(&self.tcx, expected, tuple) {
-                    DiagCtx::emit(
-                        Diagnostic::error(self.cx().show(err).to_string(), span)
-                            .with_label("this tuple pattern does not match the value's type"),
-                    );
+                    report_tuple_pattern_mismatch(self.cx(), err, span);
                     for &elem in &elems {
                         let error = self.tcx.error();
                         self.check_pat(elem, error);
@@ -100,13 +97,13 @@ impl<'hir> Typeck<'hir> {
     ) -> Ty {
         let expected = self.resolve_deep(expected);
         if matches!(self.tcx.kind(expected), TyKind::Var(_)) {
-            self.report_variant_type_unknown(variant, span);
+            report_variant_type_unknown(variant, span);
             self.fail_payload(payload);
             return self.tcx.error();
         }
 
         let Some(found) = self.lookup_variant(expected, variant.text) else {
-            self.report_no_variant(variant, expected);
+            report_no_variant(self.cx(), variant, expected);
             self.fail_payload(payload);
             return self.tcx.error();
         };
@@ -132,7 +129,7 @@ impl<'hir> Typeck<'hir> {
                 self.check_record_pats(declared, written, found.id);
             }
             _ => {
-                self.report_payload_shape(variant, span, found);
+                report_payload_shape(self.hir, variant, span, found);
                 self.fail_payload(payload);
             }
         }
@@ -149,7 +146,7 @@ impl<'hir> Typeck<'hir> {
             match declared.iter().find(|(field, _)| field.text == name.text) {
                 Some(&(_, ty)) => self.check_pat(pat, ty),
                 None => {
-                    self.report_no_payload_field(name, variant);
+                    report_no_payload_field(self.hir, name, variant);
                     let error = self.tcx.error();
                     self.check_pat(pat, error);
                 }
@@ -302,12 +299,12 @@ impl<'hir> Typeck<'hir> {
                     .map(|(_, name)| name)
                     .collect();
                 if !missing.is_empty() {
-                    self.report_match_not_exhaustive(span, &missing);
+                    report_match_not_exhaustive(span, &missing);
                 }
             }
             TyKind::Adt { def, .. } => {
                 let OwnerNode::Enum(enum_) = hir.def(*def) else {
-                    self.report_match_needs_wildcard(span);
+                    report_match_needs_wildcard(span);
                     return;
                 };
                 let missing: Vec<String> = enum_
@@ -323,10 +320,10 @@ impl<'hir> Typeck<'hir> {
                     .collect();
                 if !missing.is_empty() {
                     let missing: Vec<&str> = missing.iter().map(String::as_str).collect();
-                    self.report_match_not_exhaustive(span, &missing);
+                    report_match_not_exhaustive(span, &missing);
                 }
             }
-            _ => self.report_match_needs_wildcard(span),
+            _ => report_match_needs_wildcard(span),
         }
     }
 
@@ -353,99 +350,6 @@ impl<'hir> Typeck<'hir> {
                 })
                 .collect(),
         )
-    }
-
-    // -----------------------------------------------------------------
-    // Diagnostics
-    // -----------------------------------------------------------------
-
-    /// Reported when a `.variant` pattern is matched against a type that is still an inference
-    /// variable.
-    fn report_variant_type_unknown(&self, variant: Ident, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "type annotations needed: the type `.{}` is matched against is still unknown",
-                    Interner::resolve(variant.text)
-                ),
-                span,
-            )
-            .with_label("cannot tell which enum this variant belongs to")
-            .with_help(
-                "a `.variant` names no enum of its own; write the type of the value being \
-                 matched",
-            ),
-        );
-    }
-
-    fn report_no_variant(&self, variant: Ident, ty: Ty) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "no variant `{}` on `{}`",
-                    Interner::resolve(variant.text),
-                    self.cx().show(ty)
-                ),
-                variant.span,
-            )
-            .with_label("not a variant of this type"),
-        );
-    }
-
-    fn report_no_payload_field(&self, field: Ident, variant: HirId) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "no field `{}` on variant `{}`",
-                    Interner::resolve(field.text),
-                    Interner::resolve(self.hir.variant(variant).name.text)
-                ),
-                field.span,
-            )
-            .with_label("not declared by this variant")
-            .with_secondary(self.hir.variant(variant).span, "declared here"),
-        );
-    }
-
-    /// Reported by [`Typeck::check_match_exhaustive`] when `missing` names the specific values
-    /// (variant names, or `"true"`/`"false"`) no arm covers.
-    fn report_match_not_exhaustive(&self, span: SrcSpan, missing: &[&str]) {
-        let list = missing
-            .iter()
-            .map(|m| format!("`{m}`"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        DiagCtx::emit(
-            Diagnostic::error(format!("match is not exhaustive: {list} not covered"), span)
-                .with_label("this match does not cover every possible value")
-                .with_help("add the missing arm(s), or a wildcard `_` to match anything else"),
-        );
-    }
-
-    /// Reported by [`Typeck::check_match_exhaustive`] for a scrutinee type this check does not
-    /// enumerate on its own (anything but `bool` or an enum): the only way it can know every arm
-    /// is accounted for is a catch-all.
-    fn report_match_needs_wildcard(&self, span: SrcSpan) {
-        DiagCtx::emit(
-            Diagnostic::error("match is not exhaustive: some values are not covered", span)
-                .with_label("no arm covers every remaining value")
-                .with_help("add a wildcard `_` (or binding) arm to match anything else"),
-        );
-    }
-
-    fn report_payload_shape(&self, variant: Ident, span: SrcSpan, found: &VariantDef) {
-        let declared = found.payload.describe();
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "variant `{}` carries {declared}",
-                    Interner::resolve(variant.text)
-                ),
-                span,
-            )
-            .with_label(format!("written with a payload that is not {declared}"))
-            .with_secondary(self.hir.variant(found.id).span, "declared here"),
-        );
     }
 }
 

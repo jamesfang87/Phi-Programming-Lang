@@ -34,9 +34,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::interner::Interner;
 use crate::ast::{SelfMode, Symbol};
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::typeck::traits::members::{
+    report_generic_count, report_missing_methods, report_not_a_member, report_param_count,
+    report_param_ty, report_ret_ty, report_self_mode,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Function, HirId, Node, OwnerNode};
 use crate::typeck::Typeck;
@@ -108,7 +110,7 @@ impl<'hir> Typeck<'hir> {
         for &method in provided {
             let name = self.function(method).name.text;
             match by_name.get(&name) {
-                None => self.report_not_a_member(method, &trait_ref, self_ty),
+                None => report_not_a_member(self.hir, self.cx(), method, &trait_ref, self_ty),
                 Some(&declaration) if arguments_line_up => {
                     self.check_method_signature(method, declaration, &trait_subst, self_ty);
                 }
@@ -146,7 +148,7 @@ impl<'hir> Typeck<'hir> {
             .collect();
 
         if !missing.is_empty() {
-            self.report_missing_methods(&missing, trait_ref, self_ty, impl_span);
+            report_missing_methods(self.hir, self.cx(), &missing, trait_ref, self_ty, impl_span);
         }
     }
 
@@ -169,7 +171,7 @@ impl<'hir> Typeck<'hir> {
         // the declaration's parameters have to be rewritten into the implementation's before
         // anything mentioning them can be compared.
         if found.generics.len() != expected.generics.len() {
-            self.report_generic_count(found, expected);
+            report_generic_count(found, expected);
             return;
         }
         let mut subst = trait_subst.clone();
@@ -183,7 +185,7 @@ impl<'hir> Typeck<'hir> {
         // and `&Foo` versus `&mut Foo` is only how it shows up.
         let (found_mode, expected_mode) = (self.self_mode(found), self.self_mode(expected));
         if found_mode != expected_mode {
-            self.report_self_mode(found, expected, found_mode, expected_mode);
+            report_self_mode(self.hir, found, expected, found_mode, expected_mode);
             return;
         }
 
@@ -196,7 +198,7 @@ impl<'hir> Typeck<'hir> {
         let expected_ret = expected_ret.map(|ty| self.subst_member_ty(ty, &subst, self_ty));
 
         if found_params.len() != expected_params.len() {
-            self.report_param_count(found, expected, found_params.len(), expected_params.len());
+            report_param_count(found, expected, found_params.len(), expected_params.len());
             return;
         }
 
@@ -214,7 +216,9 @@ impl<'hir> Typeck<'hir> {
             if got != want {
                 // Both lists are the same length and `self` was skipped on both sides, so the
                 // declaration has a parameter at this index too.
-                self.report_param_ty(
+                report_param_ty(
+                    self.hir,
+                    self.cx(),
                     found,
                     found.params[index - offset],
                     expected.params[index - offset],
@@ -225,7 +229,14 @@ impl<'hir> Typeck<'hir> {
         }
 
         if found_ret != expected_ret {
-            self.report_ret_ty(found, expected, found_ret, expected_ret);
+            report_ret_ty(
+                self.hir,
+                self.cx(),
+                found,
+                expected,
+                found_ret,
+                expected_ret,
+            );
         }
     }
 
@@ -326,295 +337,6 @@ impl<'hir> Typeck<'hir> {
             );
         };
         function
-    }
-
-    // -----------------------------------------------------------------
-    // Diagnostics
-    //
-    // Every mismatch here is between two places: what the implementation wrote and what the trait
-    // declared. The primary span is always the implementation's, because that is the side that has
-    // to change -- the trait is what it is, and a method that disagrees with it is the one in the
-    // wrong. The declaration gets a secondary label, at the narrowest part of it that differs: the
-    // receiver for a receiver mismatch, the return type for a return mismatch, and so on, rather
-    // than the whole signature every time.
-    // -----------------------------------------------------------------
-
-    fn report_missing_methods(
-        &self,
-        missing: &[DefId],
-        trait_ref: &TraitRef,
-        self_ty: Ty,
-        impl_span: SrcSpan,
-    ) {
-        let names: Vec<String> = missing
-            .iter()
-            .map(|&declaration| {
-                format!(
-                    "`{}`",
-                    Interner::resolve(self.function(declaration).name.text)
-                )
-            })
-            .collect();
-        let (plural, these) = if missing.len() == 1 {
-            ("", "this")
-        } else {
-            ("s", "these")
-        };
-
-        let mut diag = Diagnostic::error(
-            format!(
-                "missing method{plural} in the implementation of trait `{}` for `{}`: {}",
-                self.declared_trait_name(trait_ref.def),
-                self.cx().show(self_ty),
-                names.join(", ")
-            ),
-            impl_span,
-        )
-        .with_label(format!("{these} method{plural} not implemented"))
-        .with_help(
-            "every method a trait declares without a default body has to be written out by \
-             each implementation; giving the declaration a body makes it optional instead",
-        );
-
-        // One label per missing method rather than one for the trait as a whole: a trait with
-        // twenty methods and two missing should point at the two.
-        for &declaration in missing {
-            let declaration = self.function(declaration);
-            diag = diag.with_secondary(
-                declaration.name.span,
-                format!(
-                    "`{}` is declared here, with no default body",
-                    Interner::resolve(declaration.name.text)
-                ),
-            );
-        }
-
-        DiagCtx::emit(diag);
-    }
-
-    fn report_not_a_member(&self, method: DefId, trait_ref: &TraitRef, self_ty: Ty) {
-        let function = self.function(method);
-        let name = Interner::resolve(function.name.text);
-        let trait_name = self.declared_trait_name(trait_ref.def);
-
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!("method `{name}` is not a member of trait `{trait_name}`"),
-                function.span,
-            )
-            .with_label(format!("not declared by `{trait_name}`"))
-            .with_secondary(
-                self.declared_trait_span(trait_ref.def),
-                format!("`{trait_name}` is declared here"),
-            )
-            .with_help(format!(
-                "an `extend .. with {trait_name}` block may only implement what `{trait_name}` \
-                 declares, since that is all a caller reaching `{}` through the trait can see; \
-                 put `{name}` in an inherent `extend` block instead",
-                self.cx().show(self_ty)
-            )),
-        );
-    }
-
-    fn report_generic_count(&self, found: &Function, expected: &Function) {
-        let (got, want) = (found.generics.len(), expected.generics.len());
-        let plural = if want == 1 { "" } else { "s" };
-
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "method `{}` declares {got} type parameters where its declaration declares \
-                     {want}",
-                    Interner::resolve(found.name.text)
-                ),
-                found.name.span,
-            )
-            .with_label(format!("expected {want} type parameter{plural}"))
-            .with_secondary(
-                expected.name.span,
-                format!("declared with {want} type parameter{plural} here"),
-            )
-            .with_help(
-                "an implementation has to be as general as the declaration it fulfills, so the \
-                 two parameter lists have to line up one for one",
-            ),
-        );
-    }
-
-    fn report_self_mode(
-        &self,
-        found: &Function,
-        expected: &Function,
-        found_mode: Option<SelfMode>,
-        expected_mode: Option<SelfMode>,
-    ) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "method `{}` takes {} where its declaration takes {}",
-                    Interner::resolve(found.name.text),
-                    show_self_mode(found_mode),
-                    show_self_mode(expected_mode)
-                ),
-                self.self_param_span(found),
-            )
-            .with_label(format!("expected {}", show_self_mode(expected_mode)))
-            .with_secondary(
-                self.self_param_span(expected),
-                format!("declared taking {} here", show_self_mode(expected_mode)),
-            )
-            .with_help(
-                "how a method takes its receiver is part of its signature: a caller reaching it \
-                 through the trait is checked against what the trait declared",
-            ),
-        );
-    }
-
-    fn report_param_count(&self, found: &Function, expected: &Function, got: usize, want: usize) {
-        // Reported the way the user wrote it, so `self` -- which the checker counts as the first
-        // parameter -- is not counted here.
-        let offset = usize::from(found.self_param.is_some());
-        let (got, want) = (got - offset, want - offset);
-        let plural = if want == 1 { "" } else { "s" };
-
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "method `{}` takes {got} parameters where its declaration takes {want}",
-                    Interner::resolve(found.name.text)
-                ),
-                found.name.span,
-            )
-            .with_label(format!("expected {want} parameter{plural}"))
-            .with_secondary(
-                expected.name.span,
-                format!("declared taking {want} parameter{plural} here"),
-            ),
-        );
-    }
-
-    fn report_param_ty(
-        &self,
-        found: &Function,
-        param: HirId,
-        declared_param: HirId,
-        got: Ty,
-        want: Ty,
-    ) {
-        let Node::Param(param) = self.hir.node(param) else {
-            unreachable!("a function's parameter list holds only Node::Params");
-        };
-        let Node::Param(declared_param) = self.hir.node(declared_param) else {
-            unreachable!("a function's parameter list holds only Node::Params");
-        };
-
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "parameter `{}` of method `{}` has type `{}` where its declaration has `{}`",
-                    Interner::resolve(param.name.text),
-                    Interner::resolve(found.name.text),
-                    self.cx().show(got),
-                    self.cx().show(want)
-                ),
-                param.span,
-            )
-            .with_label(format!("expected `{}`", self.cx().show(want)))
-            .with_secondary(
-                declared_param.span,
-                format!("declared as `{}` here", self.cx().show(want)),
-            )
-            .with_help(
-                "a signature has to match its declaration exactly, not merely be compatible with \
-                 it: a parameter that is more general still accepts arguments the trait never \
-                 promised the implementation would take",
-            ),
-        );
-    }
-
-    fn report_ret_ty(
-        &self,
-        found: &Function,
-        expected: &Function,
-        got: Option<Ty>,
-        want: Option<Ty>,
-    ) {
-        DiagCtx::emit(
-            Diagnostic::error(
-                format!(
-                    "method `{}` returns {} where its declaration returns {}",
-                    Interner::resolve(found.name.text),
-                    self.show_ret(got),
-                    self.show_ret(want)
-                ),
-                self.ret_span(found),
-            )
-            .with_label(format!("expected {}", self.show_ret(want)))
-            .with_secondary(
-                self.ret_span(expected),
-                format!("declared returning {} here", self.show_ret(want)),
-            ),
-        );
-    }
-
-    /// Where a function's receiver is written, or its name when it takes none -- an associated
-    /// function has no receiver to underline, but "this one takes no `self`" still has to point
-    /// somewhere.
-    fn self_param_span(&self, function: &Function) -> SrcSpan {
-        function
-            .self_param
-            .map_or(function.name.span, |id| match self.hir.node(id) {
-                Node::SelfParam(self_param) => self_param.span,
-                _ => unreachable!("a function's self param slot always holds a Node::SelfParam"),
-            })
-    }
-
-    /// Where a function's return type is written, or its name when it declares none. Same reason
-    /// as [`Typeck::self_param_span`]: a missing `->` is exactly what some of these diagnostics
-    /// are about.
-    fn ret_span(&self, function: &Function) -> SrcSpan {
-        function
-            .ret
-            .map_or(function.name.span, |id| match self.hir.node(id) {
-                Node::Ty(ty) => ty.span,
-                _ => unreachable!("a function's return slot always holds a Node::Ty"),
-            })
-    }
-
-    /// How a return type reads in a diagnostic. A function with no `->` produces nothing, which
-    /// is a different thing to say than naming a type.
-    fn show_ret(&self, ret: Option<Ty>) -> String {
-        match ret {
-            Some(ty) => format!("`{}`", self.cx().show(ty)),
-            None => "nothing".to_string(),
-        }
-    }
-
-    /// The name a trait was declared with.
-    fn declared_trait_name(&self, def: DefId) -> &'static str {
-        let OwnerNode::Trait(trait_) = self.hir.def(def) else {
-            unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-        };
-        Interner::resolve(trait_.name.text)
-    }
-
-    /// Where a trait was declared, for a diagnostic to point back at.
-    fn declared_trait_span(&self, def: DefId) -> SrcSpan {
-        let OwnerNode::Trait(trait_) = self.hir.def(def) else {
-            unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-        };
-        trait_.name.span
-    }
-}
-
-/// How a receiver reads in a diagnostic, including the absence of one.
-fn show_self_mode(mode: Option<SelfMode>) -> &'static str {
-    match mode {
-        Some(SelfMode::Immutable) => "`&self`",
-        Some(SelfMode::Mutable) => "`&mut self`",
-        Some(SelfMode::Move) => "`self`",
-        Some(SelfMode::Any) => "`any self`",
-        None => "no receiver",
     }
 }
 
