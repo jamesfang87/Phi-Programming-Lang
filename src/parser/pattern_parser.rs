@@ -34,9 +34,8 @@ impl Parser {
                     .boxed();
 
                 let literal = choice((
-                    self.kind(TokenKind::IntLiteral).map(|t| Expr::int(t, t)),
-                    self.kind(TokenKind::FloatLiteral)
-                        .map(|t| Expr::float(t, t)),
+                    self.kind(TokenKind::IntLiteral).map(Expr::int),
+                    self.kind(TokenKind::FloatLiteral).map(Expr::float),
                     self.kind(TokenKind::StrLiteral).map(|t| Expr::string(t)),
                     self.kind(TokenKind::CharLiteral).map(|t| Expr::char(t)),
                     self.kind(TokenKind::TrueKw).map(|t: Token| Expr {

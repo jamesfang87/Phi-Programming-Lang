@@ -350,6 +350,9 @@ pub fn walk_arm<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     let arm = v.hir().arm(id);
 
     v.visit_pat(arm.pat);
+    if let Some(guard) = arm.guard {
+        v.visit_expr(guard);
+    }
     v.visit_block(arm.block);
 }
 
@@ -443,6 +446,10 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         | ExprKind::Concurrent(block)
         | ExprKind::Block(block) => v.visit_block(*block),
         ExprKind::Closure(def_id) => v.visit_nested_owner(*def_id),
+        ExprKind::Cast { expr, ty } => {
+            v.visit_expr(*expr);
+            v.visit_ty(*ty);
+        }
         ExprKind::Literal(_) | ExprKind::Error => {}
     }
 }

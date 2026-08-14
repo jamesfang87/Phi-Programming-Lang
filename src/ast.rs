@@ -483,13 +483,29 @@ pub enum ExprKind {
         ret: Option<Ty>,
         body: Box<Expr>,
     },
+    /// `expr as Ty`, e.g. `x as i64`. Only ever a conversion between two primitive types; see
+    /// [`crate::typeck::cast`] for exactly which pairs are allowed and why.
+    Cast {
+        expr: Box<Expr>,
+        ty: Ty,
+    },
     Error,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum Literal {
-    Int { value: Symbol, suffix: Symbol },
-    Float { value: Symbol, suffix: Symbol },
+    /// `suffix` is the type named after the `_` in `42_i64`, if the literal was written with
+    /// one.
+    Int {
+        value: Symbol,
+        suffix: Option<Symbol>,
+    },
+    /// `suffix` is the type named after the `_` in `3.14_f32`, if the literal was written with
+    /// one.
+    Float {
+        value: Symbol,
+        suffix: Option<Symbol>,
+    },
     Str(Symbol),
     Bool(bool),
     Char(char),
@@ -591,6 +607,9 @@ pub struct PayloadField<T> {
 pub struct Arm {
     pub id: NodeId,
     pub pat: Pat,
+    /// The `if cond` in `pat if cond => body`, if the arm has one. When present, the arm only
+    /// matches if `cond` also holds, exactly as in Rust.
+    pub guard: Option<Box<Expr>>,
     pub body: Box<Expr>,
     pub span: SrcSpan,
 }

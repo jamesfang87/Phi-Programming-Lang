@@ -8,6 +8,7 @@ pub mod lower_ty;
 pub mod pat;
 pub mod traits;
 
+use crate::ast::interner::{Interner, Symbol};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::driver::source::SrcSpan;
@@ -86,6 +87,40 @@ pub fn report_str_literal_untyped(span: SrcSpan) {
                 "the core library declares no string type and no lang item names one, \
                              so there is nothing for this literal to be",
             ),
+    );
+}
+
+/// A literal's suffix doesn't name any type: `1_bogus` isn't `1` of some real numeric type.
+pub fn report_unknown_literal_suffix(suffix: Symbol, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("invalid literal suffix `{}`", Interner::resolve(suffix)),
+            span,
+        )
+        .with_label("not the name of a numeric type")
+        .with_help(
+            "a literal suffix must name a numeric type: `i8`, `i16`, `i32`, `i64`, `u8`, \
+                 `u16`, `u32`, `u64`, `f32`, or `f64`",
+        ),
+    );
+}
+
+/// A fractional literal was given an integer suffix (`3.14_i32`): there's nowhere for the `.14`
+/// to go once the literal is that integer type.
+pub fn report_int_suffix_on_float_literal(suffix: Symbol, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "literal has a fractional part but is suffixed `{}`",
+                Interner::resolve(suffix)
+            ),
+            span,
+        )
+        .with_label(format!(
+            "`{}` cannot hold a fractional value",
+            Interner::resolve(suffix)
+        ))
+        .with_help("use a float suffix instead (`f32` or `f64`), or drop the fractional part"),
     );
 }
 

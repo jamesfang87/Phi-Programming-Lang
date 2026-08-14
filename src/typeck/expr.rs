@@ -3,16 +3,18 @@ use std::collections::HashSet;
 use crate::ast::interner::Interner;
 use crate::ast::{BinaryOp, Ident, Mutability};
 use crate::diagnostics::typeck::expr::{
-    report_assign_mismatch, report_closure_body_mismatch, report_compound_assign_mismatch,
+    report_assign_mismatch, report_cast_not_allowed, report_cast_operand_unknown,
+    report_cast_source_not_primitive, report_cast_target_not_primitive,
+    report_closure_body_mismatch, report_compound_assign_mismatch,
     report_compound_assign_result_mismatch, report_ctor_not_a_struct, report_duplicate_field,
     report_elided_ctor_unknown, report_field_type_mismatch, report_if_branches_mismatch,
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
-    report_index_not_int, report_match_arm_mismatch, report_missing_fields, report_no_range_type,
-    report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
-    report_not_assignable, report_not_indexable, report_not_try, report_range_endpoints_mismatch,
-    report_record_field_unknown, report_try_error_mismatch, report_try_operand_unknown,
-    report_try_outside, report_try_return_mismatch, report_variant_enum_unknown,
-    report_variant_expr_payload_shape, report_variant_missing_fields,
+    report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
+    report_missing_fields, report_no_range_type, report_no_such_field, report_no_such_variant,
+    report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_try,
+    report_range_endpoints_mismatch, report_record_field_unknown, report_try_error_mismatch,
+    report_try_operand_unknown, report_try_outside, report_try_return_mismatch,
+    report_variant_enum_unknown, report_variant_expr_payload_shape, report_variant_missing_fields,
     report_variant_payload_mismatch,
 };
 use crate::driver::source::SrcSpan;
@@ -20,8 +22,10 @@ use crate::hir::{DefId, Hir, HirId, OwnerNode, Path, Payload, PayloadField, Res,
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
+use crate::typeck::cast;
 use crate::typeck::pat::VariantTys;
-use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::ty::{Ty, TyKind, TyVar};
+use crate::typeck::unify::{is_float, is_integer};
 
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
@@ -406,11 +410,24 @@ impl<'hir> Typeck<'hir> {
 
         for &arm in arms {
             let arm_node = self.hir.arm(arm);
-            let (pat, block, arm_span) = (arm_node.pat, arm_node.block, arm_node.span);
+            let (pat, guard, block, arm_span) =
+                (arm_node.pat, arm_node.guard, arm_node.block, arm_node.span);
 
             self.check_pat(pat, scrutinee_ty);
             let pat_ty = self.types.ty(pat);
             pat_failed |= pat_ty.is_some_and(|ty| matches!(self.tcx.kind(ty), TyKind::Error));
+
+            // Bindings from `pat` are in scope for the guard, same as they are for the body: both
+            // reach the pattern's `Node::Pat` through the same `Res::Local`, so checking the
+            // pattern above is all a guard needs to see them.
+            if let Some(guard) = guard {
+                let guard_ty = self.ty_of(guard);
+                let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+                if let Err(err) = self.unifier.unify(&self.tcx, bool_ty, guard_ty) {
+                    report_match_guard_not_bool(self.cx(), err, self.hir.expr(guard).span);
+                }
+            }
+
             let body = self.check_block_expecting(block, Some(result));
             if let Err(err) = self.unifier.unify(&self.tcx, result, body) {
                 report_match_arm_mismatch(self.cx(), err, arm_span);
@@ -510,6 +527,68 @@ impl<'hir> Typeck<'hir> {
             return None;
         };
         *ret
+    }
+
+    // -----------------------------------------------------------------
+    // Casting
+    // -----------------------------------------------------------------
+
+    /// Checks `expr as ty`. See [`crate::typeck::cast`] for exactly which conversions this
+    /// allows and why.
+    ///
+    /// The written type is always this expression's type, even when the cast turns out not to be
+    /// allowed -- the same recovery a bad `let` annotation gets in [`Typeck::check_let`] -- so
+    /// that one rejected cast doesn't cascade into a second, unrelated mismatch whatever this
+    /// expression is used in afterwards.
+    pub(crate) fn check_cast(&mut self, expr: HirId, ty: HirId, span: SrcSpan) -> Ty {
+        let target_ty = self.lower_ty(ty);
+        let operand_ty = self.ty_of(expr);
+
+        let target_resolved = self.unifier.root(target_ty);
+        let target_kind = self.tcx.kind(target_resolved).clone();
+        let TyKind::Primitive(to) = target_kind else {
+            if !matches!(target_kind, TyKind::Error) {
+                report_cast_target_not_primitive(self.cx(), target_resolved, self.hir.ty(ty).span);
+            }
+            return target_ty;
+        };
+
+        let operand_resolved = self.unifier.root(operand_ty);
+        let operand_span = self.hir.expr(expr).span;
+        let operand_kind = self.tcx.kind(operand_resolved).clone();
+
+        let from = match operand_kind {
+            TyKind::Primitive(prim) => prim,
+            TyKind::Error => return target_ty,
+            // An as-yet-unconstrained numeric literal (`1 as i64`) behaves exactly like giving
+            // it that suffix directly (`1_i64`): there is no existing, wider type being
+            // narrowed, so fixing its type this way can never lose anything. This only applies
+            // within the literal's own family -- an integer literal can't become a float this
+            // way, since it can never unify with one (see `Unifier::decompose`); it has to be
+            // given a concrete type of its own family first, e.g. `1_i32 as f64`.
+            TyKind::Var(TyVar::Int(_)) if is_integer(to) => {
+                let _ = self.unifier.unify(&self.tcx, operand_ty, target_ty);
+                return target_ty;
+            }
+            TyKind::Var(TyVar::Float(_)) if is_float(to) => {
+                let _ = self.unifier.unify(&self.tcx, operand_ty, target_ty);
+                return target_ty;
+            }
+            TyKind::Var(_) => {
+                report_cast_operand_unknown(operand_span);
+                return target_ty;
+            }
+            _ => {
+                report_cast_source_not_primitive(self.cx(), operand_resolved, operand_span);
+                return target_ty;
+            }
+        };
+
+        if let Err(reason) = cast::cast_allowed(from, to) {
+            report_cast_not_allowed(self.cx(), operand_resolved, target_resolved, reason, span);
+        }
+
+        target_ty
     }
 
     // -----------------------------------------------------------------
@@ -754,6 +833,27 @@ mod tests {
         );
     }
 
+    /// `Pair { fst, snd }` is shorthand for `Pair { fst: fst, snd: snd }`: it resolves each bare
+    /// field name against a variable of the same name in scope.
+    #[test]
+    fn a_struct_literal_field_can_elide_its_value() {
+        accepts(
+            "struct Pair { fst: i32, snd: bool }
+             fun f(fst: i32, snd: bool) -> Pair { return Pair { fst, snd }; }",
+        );
+    }
+
+    /// The elided field name is still checked against the struct's declared fields, exactly
+    /// like a written-out `name: value` field.
+    #[test]
+    fn an_elided_struct_literal_field_that_is_not_declared_is_reported() {
+        rejects(
+            "struct Pair { fst: i32 }
+             fun f(fst: i32, third: i32) -> Pair { return Pair { fst, third }; }",
+            "no field `third`",
+        );
+    }
+
     /// The elided form names no struct at all, so the expectation is the only thing that says
     /// which one it builds.
     #[test]
@@ -896,6 +996,35 @@ mod tests {
             "enum Shape { unit, circle: f64 }
              fun f(s: Shape) { let m = match s { .circle(r) => 1, .unit => true, }; }",
             "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_match_guard_has_to_be_a_bool() {
+        accepts(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) -> i32 {
+                 return match s { .circle(r) if r > 0.0 => 1, _ => 2, };
+             }",
+        );
+        rejects(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) -> i32 {
+                 return match s { .circle(r) if r => 1, _ => 2, };
+             }",
+            "mismatched types",
+        );
+    }
+
+    /// A guard runs after the pattern already matched, so it sees that pattern's bindings, the
+    /// same as the arm's body does.
+    #[test]
+    fn a_match_guard_sees_its_arms_pattern_bindings() {
+        accepts(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) -> i32 {
+                 return match s { .circle(r) if r > 0.0 => 1, _ => 2, };
+             }",
         );
     }
 
@@ -1262,5 +1391,158 @@ mod tests {
     #[test]
     fn a_unit_struct_constructs_and_checks() {
         accepts("struct Unit {} fun f() -> Unit { return Unit {}; }");
+    }
+
+    // -----------------------------------------------------------------
+    // Casting
+    // -----------------------------------------------------------------
+    //
+    // `crate::typeck::cast`'s own tests cover the full matrix of which primitive pairs are
+    // allowed; these exercise `check_cast` wiring that module into the rest of type checking --
+    // the target and source coming from real, possibly still-unresolved expressions, rather than
+    // two `PrimTy`s handed to it directly.
+
+    #[test]
+    fn a_widening_int_cast_is_accepted() {
+        accepts("fun f() { let x: i8 = 1; let y = x as i64; }");
+    }
+
+    #[test]
+    fn a_narrowing_int_cast_is_rejected() {
+        rejects(
+            "fun f() { let x: i64 = 1; let y = x as i8; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn unsigned_to_a_strictly_wider_signed_type_is_accepted() {
+        accepts("fun f() { let x = 1_u8; let y = x as i16; }");
+    }
+
+    #[test]
+    fn unsigned_to_an_equal_width_signed_type_is_rejected() {
+        rejects("fun f() { let x = 1_u8; let y = x as i8; }", "cannot cast");
+    }
+
+    #[test]
+    fn signed_to_unsigned_is_always_rejected() {
+        rejects(
+            "fun f() { let x: i8 = 1; let y = x as u64; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn a_narrow_int_casts_to_either_float() {
+        accepts("fun f() { let x: i16 = 1; let y = x as f32; }");
+    }
+
+    #[test]
+    fn a_32_bit_int_only_widens_to_f64() {
+        accepts("fun f() { let x: i32 = 1; let y = x as f64; }");
+        rejects(
+            "fun f() { let x: i32 = 1; let y = x as f32; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn a_64_bit_int_casts_to_no_float() {
+        rejects(
+            "fun f() { let x: i64 = 1; let y = x as f64; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn f32_widens_to_f64_but_not_back() {
+        accepts("fun f() { let x: f32 = 1.0; let y = x as f64; }");
+        rejects(
+            "fun f() { let x: f64 = 1.0; let y = x as f32; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn float_to_int_is_always_rejected() {
+        rejects(
+            "fun f() { let x: f32 = 1.0; let y = x as i32; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn bool_casts_to_a_numeric_type_but_not_back() {
+        accepts("fun f() { let x = true; let y = x as i32; }");
+        rejects(
+            "fun f() { let x: i32 = 1; let y = x as bool; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn char_casts_to_32_or_64_bit_integers_but_not_narrower() {
+        accepts("fun f() { let x = 'a'; let y = x as i32; }");
+        rejects("fun f() { let x = 'a'; let y = x as i8; }", "cannot cast");
+    }
+
+    #[test]
+    fn only_u8_casts_to_char() {
+        accepts("fun f() { let x = 1_u8; let y = x as char; }");
+        rejects(
+            "fun f() { let x: i32 = 1; let y = x as char; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn an_identity_cast_is_accepted() {
+        accepts("fun f() { let x: i32 = 1; let y = x as i32; }");
+    }
+
+    #[test]
+    fn casting_to_a_non_primitive_type_is_rejected() {
+        rejects(
+            "struct Point { x: i32 } fun f() { let p: i32 = 1; let q = p as Point; }",
+            "cannot cast",
+        );
+    }
+
+    #[test]
+    fn casting_a_non_primitive_value_is_rejected() {
+        rejects(
+            "struct Point { x: i32 } fun f(p: Point) { let q = p as i32; }",
+            "cannot cast",
+        );
+    }
+
+    /// An unconstrained numeric literal cast to a type in its own family behaves exactly like
+    /// giving it that type directly -- there's no existing, wider type being narrowed to lose
+    /// anything from.
+    #[test]
+    fn an_unconstrained_int_literal_casts_directly_to_any_integer_type() {
+        accepts("fun f() -> i64 { let x = 1; return x as i64; }");
+    }
+
+    /// An integer literal can never unify with a float type (see `Unifier::decompose`), so a
+    /// cast that would cross families has to start from a literal that already has a concrete
+    /// type of its own -- this can't default its way there.
+    #[test]
+    fn an_unconstrained_int_literal_cannot_cast_across_families() {
+        rejects(
+            "fun f() { let x = 1; let y = x as f64; }",
+            "type annotations needed",
+        );
+    }
+
+    #[test]
+    fn a_literal_suffix_lets_a_literal_cast_across_families() {
+        accepts("fun f() { let y = 1_i32 as f64; }");
+    }
+
+    #[test]
+    fn chained_casts_check_left_to_right() {
+        accepts("fun f() { let x: i8 = 1; let y = x as i32 as i64; }");
     }
 }

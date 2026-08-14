@@ -112,6 +112,12 @@ pub enum ExprKind {
     /// A closure literal. `DefId` names the closure's own owner, which holds its params, block,
     /// and return type; see [`crate::hir::Closure`].
     Closure(DefId),
+    /// `expr as ty`. See [`crate::typeck::cast`] for which primitive-to-primitive conversions
+    /// this is allowed to mean.
+    Cast {
+        expr: HirId, // -> Node::Expr
+        ty: HirId,   // -> Node::Ty
+    },
     Error,
 }
 

@@ -275,9 +275,14 @@ impl<'hir> Typeck<'hir> {
 
         let hir = self.hir;
         let pat_kind = |arm: HirId| &hir.pat(hir.arm(arm).pat).kind;
+        // A guarded arm might not fire even when its pattern matches -- the guard could come
+        // back `false` -- so, exactly as in Rust, it never counts toward covering anything on
+        // its own. Only an arm with no guard can make a pattern's coverage certain.
+        let unguarded = |arm: HirId| hir.arm(arm).guard.is_none();
 
         if arms
             .iter()
+            .filter(|&&arm| unguarded(arm))
             .any(|&arm| matches!(pat_kind(arm), PatKind::Wildcard | PatKind::Binding { .. }))
         {
             return;
@@ -286,7 +291,7 @@ impl<'hir> Typeck<'hir> {
         match self.tcx.kind(ty) {
             TyKind::Primitive(PrimTy::Bool) => {
                 let (mut has_true, mut has_false) = (false, false);
-                for &arm in arms {
+                for &arm in arms.iter().filter(|&&arm| unguarded(arm)) {
                     match pat_kind(arm) {
                         PatKind::Literal(Literal::Bool(true)) => has_true = true,
                         PatKind::Literal(Literal::Bool(false)) => has_false = true,
@@ -312,7 +317,7 @@ impl<'hir> Typeck<'hir> {
                     .iter()
                     .map(|&id| hir.variant(id).name)
                     .filter(|&name| {
-                        !arms.iter().any(|&arm| {
+                        !arms.iter().filter(|&&arm| unguarded(arm)).any(|&arm| {
                             matches!(pat_kind(arm), PatKind::Variant { variant, .. } if variant.text == name.text)
                         })
                     })
@@ -511,6 +516,35 @@ mod tests {
             "enum Shape { unit, circle: f64 }
              fun f(s: Shape) -> i32 { return match s { .square => 1, .unit => 2, }; }",
             "no variant `square`",
+        );
+    }
+
+    /// A guarded wildcard might not fire -- the guard could come back `false` -- so, exactly as
+    /// in Rust, it does not make the match exhaustive on its own.
+    #[test]
+    fn a_guarded_wildcard_does_not_count_toward_exhaustiveness() {
+        rejects(
+            "fun f(b: bool) -> i32 { return match b { true => 1, _ if b => 2, }; }",
+            "not covered",
+        );
+    }
+
+    /// Once an unguarded wildcard is also present, the match is exhaustive regardless of what
+    /// any guarded arm above it covers.
+    #[test]
+    fn an_unguarded_wildcard_after_a_guarded_arm_still_covers_everything() {
+        accepts("fun f(b: bool) -> i32 { return match b { true if b => 1, _ => 2, }; }");
+    }
+
+    /// A guarded variant arm does not, on its own, count as covering that variant.
+    #[test]
+    fn a_guarded_variant_arm_does_not_count_toward_exhaustiveness() {
+        rejects(
+            "enum Shape { unit, circle: f64 }
+             fun f(s: Shape) -> i32 {
+                 return match s { .unit => 1, .circle(r) if r > 0.0 => 2, };
+             }",
+            "not covered",
         );
     }
 
