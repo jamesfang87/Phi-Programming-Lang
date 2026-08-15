@@ -37,16 +37,16 @@
 use std::collections::HashMap;
 
 use crate::diagnostics::typeck::traits::solve::{
-    report_ambiguous_impls, report_cyclic_bound, report_recursion_limit,
+    report_ambiguous_extends, report_cyclic_bound, report_recursion_limit,
     report_require_extends_fails,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
-use crate::typeck::Typeck;
-use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::index::ImplId;
+use crate::typeck::traits::TraitRef;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
+use crate::typeck::Typeck;
 
 /// How deep the solver will chase an impl's obligations before giving up.
 ///
@@ -504,7 +504,7 @@ impl<'hir> Typeck<'hir> {
             "two impls matched one goal, which coherence is supposed to have made impossible"
         );
         if matches.len() > 1 {
-            report_ambiguous_impls(self.hir, self.cx(), goal);
+            report_ambiguous_extends(self.hir, self.cx(), goal);
             return None;
         }
         matches.pop()
@@ -697,7 +697,6 @@ impl<'hir> Typeck<'hir> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::interner::Interner;
     use crate::diag::DiagCtx;
     use crate::hir::Hir;
     use crate::nameres::PrimTy;
@@ -879,23 +878,7 @@ mod tests {
 
     /// The `DefId` of the top-level definition named `name`.
     fn named(checker: &Typeck<'_>, name: &str) -> DefId {
-        checker
-            .hir
-            .root()
-            .items
-            .iter()
-            .copied()
-            .find(|&id| {
-                let text = match checker.hir.def(id) {
-                    OwnerNode::Struct(s) => s.name.text,
-                    OwnerNode::Enum(e) => e.name.text,
-                    OwnerNode::Trait(t) => t.name.text,
-                    OwnerNode::Function(f) => f.name.text,
-                    _ => return false,
-                };
-                Interner::resolve(text) == name
-            })
-            .unwrap_or_else(|| panic!("no definition named {name:?}"))
+        crate::testing::named_def(checker.hir, name)
     }
 
     fn goal(checker: &mut Typeck<'_>, self_ty: Ty, trait_def: DefId) -> Obligation {
@@ -1028,9 +1011,7 @@ mod tests {
         );
         let mut checker = solver(&hir);
         let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
-        let OwnerNode::Function(function) = hir.def(f) else {
-            unreachable!("`f` is a function");
-        };
+        let function = hir.function(f);
         let param = function.generics[0];
         let t = checker.tcx.mk_generic(param);
 
@@ -1049,9 +1030,7 @@ mod tests {
         );
         let mut checker = solver(&hir);
         let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
-        let OwnerNode::Function(function) = hir.def(f) else {
-            unreachable!("`f` is a function");
-        };
+        let function = hir.function(f);
         let t = checker.tcx.mk_generic(function.generics[0]);
 
         let env = checker.param_env(f);
@@ -1081,13 +1060,8 @@ mod tests {
              extend<T: Show> Wrap<T> { fun get(&self) {} }",
         );
         let mut checker = solver(&hir);
-        let extend = hir
-            .def_ids()
-            .find(|&id| matches!(hir.def(id), OwnerNode::Extend(_)))
-            .expect("the fixture declares an extend block");
-        let OwnerNode::Extend(block) = hir.def(extend) else {
-            unreachable!("filtered to extend blocks above");
-        };
+        let extend = crate::testing::first_extend(&hir);
+        let block = hir.extend(extend);
 
         let env = checker.param_env(block.methods[0]);
         assert_eq!(

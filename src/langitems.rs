@@ -1,20 +1,9 @@
-//! Lang items are the definitions in the core library that the compiler itself has to know by
-//! name: the enums `?` and `for` desugar through, and the traits the operators dispatch to.
+//! Lang items are the definitions in the core library which are crucial to
+//! the compiler. These consist of `Option` and `Result`, which are
+//! commonly used by the std library and are required by the `?` operator.
+//! They also include traits such as those which are dispatched by operators
+//! and Iter, which is used in loops.
 //!
-//! Phi identifies them by path rather than by an attribute on the declaration. There is exactly
-//! one core library, it is embedded in the compiler binary (see [`crate::driver::source::SrcCollector`]),
-//! and nothing outside it may declare a lang item. The path a lang item lives at is a fact both
-//! sides agree on, so spelling it out here requires no syntax. [`LangItem::path`] is
-//! the whole of that agreement: moving `Add` from `core::ops` to somewhere else means changing
-//! its entry there and nowhere else.
-//!
-//! [`collect_ast`] resolves every path in the table to a [`NodeId`] once AST-level name
-//! resolution has built the module namespaces, and reports the ones that are missing.
-//! [`translate`] then carries that answer across lowering, into the [`DefId`]-keyed [`LangItems`]
-//! every later pass reads. Lookups go through [`LangItems::get`], which returns `None`
-//! for a lang item that failed to resolve rather than panicking. By then the error has been
-//! reported, and a later pass carrying on with one missing lang item produces better
-//! diagnostics than one that aborts.
 
 use std::collections::HashMap;
 
@@ -45,12 +34,11 @@ pub enum LangItem {
     Index,
     IndexSet,
     Drop,
-    /// `core::iter::Iterator`, the protocol a `for` loop desugars through.
+    /// `core::iter::Iterator`, which is used to desugar `for` loops
     Iterator,
 }
 
 impl LangItem {
-    /// Every lang item, in the order [`collect_ast`] resolves and reports them.
     pub const ALL: &'static [LangItem] = &[
         LangItem::Option,
         LangItem::Result,
@@ -69,7 +57,6 @@ impl LangItem {
         LangItem::Iterator,
     ];
 
-    /// The path this lang item is declared at, from the root module down.
     pub fn path(self) -> &'static [&'static str] {
         match self {
             LangItem::Option => &["core", "option", "Option"],
@@ -90,18 +77,11 @@ impl LangItem {
         }
     }
 
-    /// This lang item's path, written the way it would be in source.
     pub fn display_path(self) -> String {
         self.path().join("::")
     }
 }
 
-/// Every lang item the core library declares, resolved to the definition it names.
-///
-/// A lang item that failed to resolve is absent rather than recorded as an error: [`collect_ast`]
-/// has already reported it, and the passes that consume this table treat a missing entry as "no
-/// candidate", which is the same answer they'd reach for a type that doesn't implement the
-/// trait.
 #[derive(Default, Debug)]
 pub struct LangItems {
     items: HashMap<LangItem, DefId>,
@@ -144,13 +124,7 @@ impl AstLangItems {
     }
 }
 
-/// Resolves every lang item against `symbol_tab`, reporting each one that the core library
-/// doesn't declare.
-///
-/// This runs against the type namespace only: every lang item is an enum or a trait, and both
-/// live there. It must run after [`AstSymbolTable::new`] has collected every module's namespace
-/// and resolved its imports, enabling paths like `core::ops::Add` to resolve.
-pub fn collect_ast(symbol_tab: &AstSymbolTable<'_>, root: NodeId) -> AstLangItems {
+pub fn collect_ast_lang_items(symbol_tab: &AstSymbolTable<'_>, root: NodeId) -> AstLangItems {
     let mut items = HashMap::new();
 
     for &item in LangItem::ALL {
@@ -169,10 +143,6 @@ pub fn collect_ast(symbol_tab: &AstSymbolTable<'_>, root: NodeId) -> AstLangItem
 }
 
 /// Builds the [`Path`] for a lang item so it can go through the ordinary path lookup.
-///
-/// The segments carry an empty span: they name no source text, since the path is the
-/// compiler's own rather than one the user wrote. Nothing reports against these spans -- a
-/// failure here is [`report_missing`]'s to describe, and it names the path in full.
 fn synth_path(item: LangItem) -> Path {
     let span = SrcSpan::new(0, 0);
     let segments = item
@@ -187,17 +157,7 @@ fn synth_path(item: LangItem) -> Path {
     Path { segments, span }
 }
 
-/// Carries [`collect_ast`]'s answer across lowering: every lang item AST-level resolution found,
-/// translated from the `NodeId` it resolved to into the `DefId` that node lowered to.
-///
-/// `to_def_id` is a closure rather than a `HashMap` because lowering doesn't maintain a
-/// global HashMap. `LoweringCtx::def_ids`, built for translating every ordinary `hir::Path`,
-/// provides the same lookup. A lang item that resolved at all is always
-/// a struct, enum, or trait item, which is preallocated a `DefId` before any lowering proper
-/// starts (see `hir::lower::lower_unit`), so `to_def_id` is expected to answer `Some` for every
-/// `NodeId` `ast_items` holds. `None` here would mean that invariant broke, not that the lang
-/// item failed to resolve (failed resolution leaves no entry in `ast_items` to translate; see
-/// [`collect_ast`]).
+/// Translates AstLangItems to its HIR equivalent.
 pub fn translate(
     ast_items: &AstLangItems,
     to_def_id: impl Fn(NodeId) -> Option<DefId>,

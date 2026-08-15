@@ -1,4 +1,4 @@
-//! [`AstBuilder`], which turns a build's parsed files into the [`Ast`] module tree.
+//! [`AstBuilder`] which turns a build's parsed files into the [`Ast`] module tree.
 
 use std::collections::HashMap;
 
@@ -26,8 +26,8 @@ impl AstBuilder {
                 items: Vec::new(),
                 children: Vec::new(),
             }],
-            positions: HashMap::from([(root, 0)]),
-            parents: vec![root],
+            module_positions: HashMap::from([(root, 0)]),
+            parent_module: vec![root],
             root,
         };
 
@@ -63,9 +63,9 @@ impl AstBuilder {
                 items: Vec::new(),
                 children: Vec::new(),
             });
-            self.ast.parents.push(current);
-            self.ast.positions.insert(id, position);
-            let current_position = self.ast.positions[&current];
+            self.ast.parent_module.push(current);
+            self.ast.module_positions.insert(id, position);
+            let current_position = self.ast.module_positions[&current];
             self.ast.modules[current_position].children.push(id);
             self.by_path.insert(prefix.clone(), id);
             current = id;

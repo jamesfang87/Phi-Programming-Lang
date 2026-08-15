@@ -185,7 +185,7 @@ mod tests {
     fn parses_return_stmt() {
         let block = parse_block("{ return 1 + 2; }");
         match &only_stmt(&block).kind {
-            StmtKind::Return(ret) => {
+            StmtKind::Return(Some(ret)) => {
                 assert!(matches!(
                     ret.kind,
                     ExprKind::Binary {
@@ -196,6 +196,14 @@ mod tests {
             }
             other => panic!("expected a return statement, got {other:?}"),
         }
+    }
+
+    /// A bare `return;`, with no value, produces `StmtKind::Return(None)` rather than requiring
+    /// every `return` to name an expression.
+    #[test]
+    fn parses_bare_return_stmt() {
+        let block = parse_block("{ return; }");
+        assert!(matches!(only_stmt(&block).kind, StmtKind::Return(None)));
     }
 
     #[test]

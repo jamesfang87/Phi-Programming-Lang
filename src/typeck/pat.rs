@@ -8,10 +8,10 @@ use crate::diagnostics::typeck::pat::{
     report_tuple_pattern_mismatch, report_variant_type_unknown,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, Node, OwnerNode, PatKind, Payload, VariantPayload};
+use crate::hir::{DefId, HirId, OwnerNode, PatKind, Payload, VariantPayload};
 use crate::nameres::PrimTy;
-use crate::typeck::Typeck;
 use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::Typeck;
 
 pub(crate) struct VariantDef {
     pub id: HirId,
@@ -36,9 +36,7 @@ impl VariantTys {
 
 impl<'hir> Typeck<'hir> {
     pub(crate) fn check_pat(&mut self, id: HirId, expected: Ty) {
-        let Node::Pat(pat) = self.hir.node(id) else {
-            unreachable!("Node that is not a pattern passed to check_pat");
-        };
+        let pat = self.hir.pat(id);
         let span = pat.span;
 
         // Keep checking a pattern below a failed one
@@ -98,13 +96,13 @@ impl<'hir> Typeck<'hir> {
         let expected = self.resolve_deep(expected);
         if matches!(self.tcx.kind(expected), TyKind::Var(_)) {
             report_variant_type_unknown(variant, span);
-            self.fail_payload(payload);
+            self.check_failed_payload(payload);
             return self.tcx.error();
         }
 
         let Some(found) = self.lookup_variant(expected, variant.text) else {
             report_no_variant(self.cx(), variant, expected);
-            self.fail_payload(payload);
+            self.check_failed_payload(payload);
             return self.tcx.error();
         };
 
@@ -130,7 +128,7 @@ impl<'hir> Typeck<'hir> {
             }
             _ => {
                 report_payload_shape(self.hir, variant, span, found);
-                self.fail_payload(payload);
+                self.check_failed_payload(payload);
             }
         }
     }
@@ -156,7 +154,7 @@ impl<'hir> Typeck<'hir> {
 
     /// Walks the sub-patterns of a failed payload (one that has an error) so
     /// that the names they bind still have types.
-    fn fail_payload(&mut self, payload: &PayloadIds) {
+    fn check_failed_payload(&mut self, payload: &PayloadIds) {
         let error = self.tcx.error();
         match payload {
             PayloadIds::None => {}
@@ -243,20 +241,6 @@ impl<'hir> Typeck<'hir> {
         Some(VariantDef { id, payload })
     }
 
-    /// Checks that `arms`' own patterns -- taken one level deep, ignoring what any payload
-    /// sub-pattern does or doesn't cover -- account for every value `scrutinee_ty` could hold.
-    ///
-    /// Two shapes are judged directly: `bool` (covered exactly by writing both `true` and
-    /// `false`) and an enum (covered by naming every one of its variants, in any arm, with any
-    /// payload). A wildcard or a bare binding covers anything and short-circuits both. Every
-    /// other type -- another primitive, a tuple, a struct, a generic parameter -- has no finite
-    /// enumeration this checks against, so it demands a catch-all instead.
-    ///
-    /// Deliberately shallow: a `.some(.circle(_))` / `.none` pair is accepted as covering
-    /// `Option<Shape>` without asking whether `.circle(_)` alone covers `Shape`. Nesting that
-    /// check would mean specializing column-by-column the way a real usefulness algorithm does;
-    /// this only ever answers the question one pattern position asks of the scrutinee it was
-    /// matched against, the same depth every other check in this module works at.
     pub(crate) fn check_match_exhaustive(
         &mut self,
         scrutinee_ty: Ty,
@@ -332,12 +316,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// `ty`'s fields, each alongside its own `HirId` -- needed by
-    /// [`Typeck::check_ctor`](crate::typeck::Typeck::check_ctor) to check a written field's
-    /// visibility as it matches it, the same way [`Typeck::field_ty`
-    /// ](crate::typeck::traits::method::Typeck::field_ty) already does for a read. The struct's
-    /// own `DefId` comes back alongside the fields rather than being re-derived by a second
-    /// caller-side match on `ty`'s `TyKind`.
     pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<(DefId, Vec<(Ident, HirId, Ty)>)> {
         let hir = self.hir;
         let TyKind::Adt { def, args } = self.tcx.kind(ty).clone() else {

@@ -1,10 +1,3 @@
-//! AST -> HIR lowering.
-//!
-//! Split across submodules by what's being lowered: [`ctx`] orchestrates lowering and assembles
-//! modules, [`owner`] holds the per-owner arena builder and its generic node-building helpers,
-//! and [`items`], [`ty`], [`block`], [`expr`], [`pat`], and [`desugar`] each lower one corner of
-//! the AST against it.
-
 mod block;
 mod ctx;
 mod desugar;
@@ -51,7 +44,7 @@ use ctx::LoweringCtx;
 /// `res` is the AST-level name resolution ([`crate::nameres::resolve`]), already run over `ast`
 /// by the caller. Lowering writes each of its answers into the [`crate::hir::Path`] of the
 /// node it belongs to as that node is built, rather than into a side table keyed by `HirId`.
-pub fn lower_unit(ast: &Ast, res: &NameResolutions) -> Hir {
+pub fn lower_program(ast: &Ast, res: &NameResolutions) -> Hir {
     let mut cx = LoweringCtx::new(res);
 
     for mod_id in ast.mod_ids() {

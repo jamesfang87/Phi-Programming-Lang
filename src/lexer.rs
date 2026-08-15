@@ -279,9 +279,6 @@ impl<'a> Lexer<'a> {
             false
         };
 
-        // A trailing `_name` is a type suffix, e.g. the `_i64` in `42_i64` or the `_f32` in
-        // `3.14_f32`. Only its shape is checked here -- whether `name` actually names a numeric
-        // type is for type checking to decide, once it has more than a span to work with.
         if self.peek() == '_' && self.next().is_ascii_alphabetic() {
             self.eat();
             while self.peek().is_ascii_alphanumeric() {
@@ -548,11 +545,9 @@ mod tests {
     fn reports_unterminated_block_comment() {
         let (_, diagnostics) = lex("/* never closed");
         assert_eq!(diagnostics.len(), 1);
-        assert!(
-            diagnostics[0]
-                .message
-                .contains("unterminated block comment")
-        );
+        assert!(diagnostics[0]
+            .message
+            .contains("unterminated block comment"));
     }
 
     #[test]
@@ -913,11 +908,9 @@ mod tests {
         // The outer `*/` closes only the inner comment; the outer one is left open.
         let (_, diagnostics) = lex("/* outer /* inner */");
         assert_eq!(diagnostics.len(), 1);
-        assert!(
-            diagnostics[0]
-                .message
-                .contains("unterminated block comment")
-        );
+        assert!(diagnostics[0]
+            .message
+            .contains("unterminated block comment"));
     }
 
     #[test]

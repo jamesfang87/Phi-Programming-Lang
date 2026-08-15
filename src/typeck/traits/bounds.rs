@@ -314,10 +314,8 @@ impl<'hir> Typeck<'hir> {
             let TyKind::Adt { def: adt, args } = self.tcx.kind(self_ty).clone() else {
                 unreachable!("an indexed impl's self type is always an ADT; see build_impl_index");
             };
-            let (adt_path, trait_path) = match self.hir.def(def) {
-                OwnerNode::Extend(block) => (&block.adt_path, block.trait_path.as_ref()),
-                _ => unreachable!("an ImplHeader's def is always the extend block it came from"),
-            };
+            let block = self.hir.extend(def);
+            let (adt_path, trait_path) = (&block.adt_path, block.trait_path.as_ref());
 
             if self.check_arg_count(adt, args.len(), adt_path.span) {
                 // The bounds the extended type declares are the block's to discharge: writing

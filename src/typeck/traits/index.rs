@@ -24,9 +24,9 @@ use crate::diagnostics::typeck::traits::index::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
-use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
 use crate::typeck::ty::Ty;
+use crate::typeck::Typeck;
 
 /// An index into [`ImplIndex::impls`], following the [`DefId`]/[`LocalId`] newtype pattern the
 /// rest of the compiler addresses things by.
@@ -60,7 +60,7 @@ impl ImplId {
 /// [`ParamEnv::of(self.def)`](crate::typeck::traits::solve::ParamEnv). Storing them a second time
 /// here would be a copy to keep in sync with nothing gained.
 #[derive(Debug)]
-pub struct ImplHeader {
+pub struct ExtendHeader {
     /// The `extend` block itself.
     pub def: DefId,
 
@@ -92,7 +92,7 @@ pub struct ImplHeader {
 /// extends.
 #[derive(Default)]
 pub struct ImplIndex {
-    impls: Vec<ImplHeader>,
+    impls: Vec<ExtendHeader>,
 
     /// Which impls extend which type, keyed on the head of the self type. See the
     /// [module docs](self) on why the head alone is the right key.
@@ -105,14 +105,14 @@ impl ImplIndex {
     }
 
     /// Adds `header` to the index, returning the handle it was given.
-    fn push(&mut self, head: DefId, header: ImplHeader) -> ImplId {
+    fn push(&mut self, head: DefId, header: ExtendHeader) -> ImplId {
         let id = ImplId::from_usize(self.impls.len());
         self.impls.push(header);
         self.by_self.entry(head).or_default().push(id);
         id
     }
 
-    pub fn header(&self, id: ImplId) -> &ImplHeader {
+    pub fn header(&self, id: ImplId) -> &ExtendHeader {
         &self.impls[id.index()]
     }
 
@@ -171,11 +171,9 @@ impl<'hir> Typeck<'hir> {
     /// Builds one `extend` block's header, or reports why it cannot be implemented and returns
     /// `None` -- which drops the block from the index, so every later pass sees a world where
     /// every impl has a nominal self type.
-    fn impl_header(&mut self, extend: DefId) -> Option<(DefId, ImplHeader)> {
+    fn impl_header(&mut self, extend: DefId) -> Option<(DefId, ExtendHeader)> {
         let hir = self.hir;
-        let OwnerNode::Extend(block) = hir.def(extend) else {
-            unreachable!("root of an Extend owner is always OwnerNode::Extend");
-        };
+        let block = hir.extend(extend);
         let (generics, trait_generics, methods, span) = (
             block.extend_generics.clone(),
             block.trait_generics.clone(),
@@ -193,17 +191,12 @@ impl<'hir> Typeck<'hir> {
 
         let methods = methods
             .into_iter()
-            .map(|method| {
-                let OwnerNode::Function(function) = hir.def(method) else {
-                    unreachable!("an extend block's methods are always functions");
-                };
-                (function.name.text, method)
-            })
+            .map(|method| (hir.function(method).name.text, method))
             .collect();
 
         Some((
             head,
-            ImplHeader {
+            ExtendHeader {
                 def: extend,
                 generics,
                 self_ty,
@@ -230,9 +223,7 @@ impl<'hir> Typeck<'hir> {
     /// may resolve to is [`Res`]'s business rather than this function's, and a widened path
     /// grammar should meet a diagnostic here rather than an `unreachable!`.
     fn impl_self_head(&mut self, extend: DefId, span: SrcSpan) -> Option<DefId> {
-        let OwnerNode::Extend(block) = self.hir.def(extend) else {
-            unreachable!("root of an Extend owner is always OwnerNode::Extend");
-        };
+        let block = self.hir.extend(extend);
 
         // What the block's own `adt_path` named, kept undiscarded by name resolution precisely
         // so that the wording below can tell these cases apart; see `resolver::visit_extend`.
@@ -270,9 +261,7 @@ impl<'hir> Typeck<'hir> {
         trait_generics: &[HirId],
         span: SrcSpan,
     ) -> Option<TraitRef> {
-        let OwnerNode::Extend(block) = self.hir.def(extend) else {
-            unreachable!("root of an Extend owner is always OwnerNode::Extend");
-        };
+        let block = self.hir.extend(extend);
 
         let Some(Res::Type(Type::Def(tydef))) = block.trait_path.as_ref().map(|path| path.res)
         else {
@@ -479,28 +468,10 @@ mod tests {
     }
 
     fn foo(checker: &Typeck<'_>) -> crate::hir::DefId {
-        named(checker, "Foo")
+        crate::testing::named_def(checker.hir, "Foo")
     }
 
     fn wrap(checker: &Typeck<'_>) -> crate::hir::DefId {
-        named(checker, "Wrap")
-    }
-
-    /// The `DefId` of the top-level struct named `name`.
-    fn named(checker: &Typeck<'_>, name: &str) -> crate::hir::DefId {
-        use crate::ast::interner::Interner;
-        use crate::hir::OwnerNode;
-
-        checker
-            .hir
-            .root()
-            .items
-            .iter()
-            .copied()
-            .find(|&id| match checker.hir.def(id) {
-                OwnerNode::Struct(s) => Interner::resolve(s.name.text) == name,
-                _ => false,
-            })
-            .unwrap_or_else(|| panic!("no struct named {name:?}"))
+        crate::testing::named_def(checker.hir, "Wrap")
     }
 }

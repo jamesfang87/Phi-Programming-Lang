@@ -1,7 +1,7 @@
 use std::fmt;
 
-use crate::ast::Mutability;
 use crate::ast::interner::Interner;
+use crate::ast::Mutability;
 use crate::hir::{DefId, Hir, HirId, OwnerNode};
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
@@ -44,9 +44,6 @@ impl Pretty for Ty {
     fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>) -> fmt::Result {
         let (hir, tcx) = (cx.hir, cx.tcx);
         match tcx.kind(*self) {
-            // An inference variable that remained unbound after type checking cannot be
-            // displayed as an internal handle. These placeholders match rustc's conventions
-            // for rendering unsolved variables to users.
             TyKind::Var(TyVar::Any(_)) => write!(f, "_"),
             TyKind::Var(TyVar::Int(_)) => write!(f, "{{integer}}"),
             TyKind::Var(TyVar::Float(_)) => write!(f, "{{float}}"),

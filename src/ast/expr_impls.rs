@@ -1,5 +1,3 @@
-//! Constructors that build [`Expr`] literal and binary nodes directly from lexer tokens.
-
 use super::*;
 use crate::ast::interner::Interner;
 use crate::driver::source::{SrcMap, SrcSpan};
@@ -40,11 +38,6 @@ fn unescape(chars: &[char]) -> String {
 
 /// Splits a lexed number's text into its value and, if present, its type suffix (the `i64` in
 /// `42_i64`, without the leading `_`).
-///
-/// The split point is the `_` immediately followed by a letter. Every other `_` in the text is a
-/// digit separator (`1_000_000`), and the lexer only ever lets those through when they're
-/// immediately followed by another digit, so at most one `_` in the text can match this -- there
-/// is nothing to disambiguate.
 fn split_suffix(text: &str) -> (&str, Option<&str>) {
     let bytes = text.as_bytes();
     for i in 0..bytes.len() {
@@ -112,10 +105,6 @@ impl Expr {
     }
 
     /// Builds a char literal expression from a `'...'` token, unescaping its contents.
-    ///
-    /// Falls back to `'\0'` when the contents unescape to nothing. That happens for an empty
-    /// `''` literal, which the lexer still emits as a token, with an error already recorded,
-    /// so the parser can recover and keep going.
     pub fn char(tok: Token) -> Expr {
         let chars = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");

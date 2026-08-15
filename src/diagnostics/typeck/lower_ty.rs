@@ -1,8 +1,6 @@
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 
-/// `kind` (a primitive, a generic parameter, or `Self`) was applied to generic arguments, which
-/// none of them take.
 pub fn report_unexpected_generic_args(kind: &str, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(format!("{kind} takes no generic arguments"), span)
@@ -25,9 +23,6 @@ pub fn report_arg_count(span: SrcSpan, declared: usize, found: usize) {
     );
 }
 
-/// A trait names every type that implements it, not one type of its own: it is a type only
-/// spelled `dyn Trait`, or usable as a bound on a generic parameter -- neither of which is an
-/// ordinary type position, so a bare trait reaching here is always a mistake.
 pub fn report_trait_as_ty(span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error("a trait cannot be used as a type on its own", span)

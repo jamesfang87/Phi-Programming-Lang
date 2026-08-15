@@ -33,7 +33,7 @@ mod tests;
 
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Hir, OwnerNode};
+use crate::hir::{DefId, Hir};
 use crate::mir::lower::LoweredProgram;
 use crate::mir::{
     AggregateKind, AnyMode, Body, ConstKind, Instance, Operand, Rvalue, StatementKind,
@@ -105,10 +105,7 @@ pub fn monomorphize(
 }
 
 fn build_subst(hir: &Hir, def: DefId, args: &[Ty]) -> HashMap<crate::hir::HirId, Ty> {
-    let OwnerNode::Function(function) = hir.def(def) else {
-        panic!("mir::monomorphize: build_subst called on a non-function def")
-    };
-    function
+    hir.function(def)
         .generics
         .iter()
         .copied()

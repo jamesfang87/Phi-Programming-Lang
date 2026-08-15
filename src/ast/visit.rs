@@ -1,42 +1,3 @@
-//! A shared walk over the AST.
-//!
-//! Every AST pass requires consistent traversal of a node's children, and code duplication across
-//! passes created bugs that manifested in multiple ways. The HIR's own visitor ([`crate::hir::visit`])
-//! uses the same pattern and documents the rationale: duplicated traversal logic led to mismatches
-//! where name resolution visited an `if`'s else branch using the expression walk (which only covers
-//! direct operands) instead of the block walk (which covers statements). This caused diagnostic
-//! cascades on every `if`/`else` expression. Separately, unvisited subtrees such as a `let`'s type
-//! annotation, its `else` block, or a `with` binding's type annotation went silently untraversed,
-//! leaving portions of the tree unresolved. A shared visitor enforces correctness: any new node
-//! added to the AST produces a compile error (unmatched enum variant in the visitor) rather than
-//! silent skips in some passes. This module uses the same approach for the AST,
-//! the target of the name resolution pass.
-//!
-//! A pass implements [`Visitor`] and overrides only the nodes it cares about. Each `visit_*`
-//! defaults to the matching free `walk_*` function (which visits children only). An override that
-//! still wants the subtree calls `walk_*` itself; one that does not omits it. Overriding also
-//! lets a pass get *between* the children: opening a scope around a block, for example, calls
-//! `walk_block` bracketed by the scope push and pop.
-//!
-//! Two things differ from the HIR version, both forced by the AST being a `Box`-linked tree
-//! rather than an arena addressed by id:
-//!
-//! - Every `visit_*`/`walk_*` pair takes a `&'ast` reference to the node itself, not an id
-//!   (there is no arena to resolve an id against).
-//! - A [`Module`]'s children are `NodeId`s (see `src/ast.rs`), resolved through [`Ast::module`],
-//!   so [`Visitor::visit_module`] and [`walk_module`] are the only pair that also take the
-//!   [`Ast`].
-//!
-//! One more difference is specific to closures. The HIR gives a closure its own arena and its own
-//! `DefId`, so the HIR's own visitor takes that id like every other owner. The AST
-//! has no such wrapper: `ExprKind::Closure` is an inline variant holding its params, return type,
-//! and body directly, with no `Closure` struct to point at. So [`Visitor::visit_closure`] and
-//! [`walk_closure`] here take those three fields separately rather than a single node reference.
-//! `visit_closure` still exists as its own hook, not as an arm matched inside an overridden
-//! `visit_expr`: a pass that opens a scope per closure needs a hook that fires exactly once per
-//! closure, and matching `ExprKind::Closure` inside `visit_expr` would put that check on the hot
-//! path of every expression, closures or not.
-
 use crate::ast::{
     AccessArgs, Arm, Ast, Block, ClosureParam, Enum, Expr, ExprKind, Extend, Field, Function,
     Generic, Import, Item, ItemKind, Module, Param, Pat, PatKind, Payload, SelfParam, Stmt,
@@ -101,12 +62,6 @@ pub trait Visitor<'ast>: Sized {
     fn visit_ty(&mut self, t: &'ast Ty) {
         walk_ty(self, t);
     }
-    /// A closure's params, return type annotation, and body. Kept as its own hook rather than an
-    /// arm inside an overridden `visit_expr` because a pass that opens a scope per closure needs
-    /// a hook that fires exactly once per closure, and matching `ExprKind::Closure` inside
-    /// `visit_expr` would put that check on the hot path of every expression. See the
-    /// [module docs](self) for why the signature takes the three fields separately rather than a
-    /// single node: the AST, unlike the HIR, has no `Closure` struct to point at.
     fn visit_closure(
         &mut self,
         params: &'ast [ClosureParam],
@@ -137,8 +92,7 @@ pub fn walk_module<'ast, V: Visitor<'ast>>(v: &mut V, module: &'ast Module, ast:
 pub fn walk_item<'ast, V: Visitor<'ast>>(v: &mut V, item: &'ast Item) {
     match &item.kind {
         // A file's own `module foo::bar;` header is sorted out of `items` before the AST is
-        // built (see `Ast::new`), so this arm is here for exhaustiveness rather than because it
-        // fires in practice.
+        // built (see `Ast::new`), so this arm is here for exhaustiveness
         ItemKind::ModuleDecl(_) => {}
         ItemKind::Import(import) => v.visit_import(import),
         ItemKind::Function(f) => v.visit_function(f),
@@ -201,9 +155,6 @@ pub fn walk_trait<'ast, V: Visitor<'ast>>(v: &mut V, t: &'ast Trait) {
     }
 }
 
-/// Visits `extend_generics`, `adt_generics`, `trait_generics`, and `methods`. Does not visit
-/// `adt_path` or `trait_path`: a `Path` is not a visitable node. A pass that needs what an
-/// `extend` block extends or implements reads those fields directly off the `Extend`.
 pub fn walk_extend<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Extend) {
     if let Some(generics) = &e.extend_generics {
         for g in generics {
@@ -229,17 +180,12 @@ pub fn walk_extend<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Extend) {
 // Declarations nested in an item
 // -----------------------------------------------------------------
 
-/// A generic parameter carries no visitable nodes: its bounds are `Path`s, which are not visitable.
-/// This function exists so callers can spell out "no children" explicitly and so the free-function
-/// convention holds uniformly across all declaration kinds.
 pub fn walk_generic<'ast, V: Visitor<'ast>>(_v: &mut V, _g: &'ast Generic) {}
 
 pub fn walk_param<'ast, V: Visitor<'ast>>(v: &mut V, p: &'ast Param) {
     v.visit_ty(&p.ty);
 }
 
-/// A `self` parameter carries no visitable nodes. Its binding mode (`&self`, `&mut self`, ...)
-/// is not a node.
 pub fn walk_self_param<'ast, V: Visitor<'ast>>(_v: &mut V, _p: &'ast SelfParam) {}
 
 pub fn walk_closure_param<'ast, V: Visitor<'ast>>(v: &mut V, p: &'ast ClosureParam) {
@@ -294,7 +240,12 @@ pub fn walk_stmt<'ast, V: Visitor<'ast>>(v: &mut V, stmt: &'ast Stmt) {
             v.visit_pat(pat);
             v.visit_block(block);
         }
-        StmtKind::Return(expr) | StmtKind::Defer(expr) => {
+        StmtKind::Return(expr) => {
+            if let Some(expr) = expr {
+                v.visit_expr(expr);
+            }
+        }
+        StmtKind::Defer(expr) => {
             v.visit_expr(expr);
         }
         StmtKind::Let {
@@ -517,9 +468,6 @@ pub fn walk_closure<'ast, V: Visitor<'ast>>(
     v.visit_expr(body);
 }
 
-/// The nodes a variant's payload holds: expressions when it is being built
-/// ([`ExprKind::Variant`]) or patterns when it is being matched ([`PatKind::Variant`]).
-/// [`Payload`] is shared between the two, as is this helper.
 fn payload_values<T>(payload: &Payload<T>) -> Vec<&T> {
     match payload {
         Payload::None => Vec::new(),

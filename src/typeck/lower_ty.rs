@@ -3,15 +3,13 @@ use crate::diagnostics::typeck::lower_ty::{
     report_trait_as_ty, report_unexpected_generic_args,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, Node, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
-use crate::typeck::Typeck;
+use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
 use crate::typeck::ty::Ty;
+use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     pub fn lower_ty(&mut self, id: HirId) -> Ty {
-        let Node::Ty(ty) = self.hir.node(id) else {
-            unreachable!("expected a ty id to name a ty");
-        };
+        let ty = self.hir.ty(id);
         let span = ty.span;
 
         let lowered = match &ty.kind {
@@ -99,12 +97,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Lowers a struct or an enum applied to `args`, checking the count against `declared` and
-    /// registering what its own bounds demand of them.
-    ///
-    /// Only ever called for a [`TyDef::Struct`]/[`TyDef::Enum`] -- a [`TyDef::Trait`] is rejected
-    /// in [`Typeck::lower_base`] before reaching here, so there is no third case to route on and
-    /// nothing left for this to do but build the [`TyKind::Adt`](crate::typeck::ty::TyKind::Adt).
     fn lower_def(
         &mut self,
         def_id: DefId,
@@ -212,8 +204,8 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::Mutability;
     use crate::ast::interner::Interner;
+    use crate::ast::Mutability;
     use crate::diag::DiagCtx;
     use crate::hir::{DefId, Hir, HirId, OwnerNode};
     use crate::nameres::PrimTy;
@@ -279,12 +271,7 @@ mod tests {
 
         /// The `DefId` of the program's sole `extend` block.
         fn extend(&self) -> DefId {
-            let root = self.hir.root();
-            root.items
-                .iter()
-                .copied()
-                .find(|&id| matches!(self.hir.def(id), OwnerNode::Extend(_)))
-                .expect("no extend block")
+            crate::testing::first_extend(&self.hir)
         }
 
         /// The type recorded for a definition as a whole.
@@ -380,9 +367,7 @@ mod tests {
     fn a_field_annotation_naming_a_parameter_lowers_to_that_parameter() {
         let checked = check("struct Wrap<T> { inner: T }");
         let wrap = checked.def("Wrap");
-        let OwnerNode::Struct(struct_) = checked.hir.def(wrap) else {
-            unreachable!();
-        };
+        let struct_ = checked.hir.struct_(wrap);
         let field = checked.ty(struct_.fields[0]);
 
         assert_eq!(field, checked.generic(wrap, 0));
@@ -512,9 +497,7 @@ mod tests {
              struct Wrap { inner: Index<i32, bool> }",
         );
         let wrap = checked.def("Wrap");
-        let OwnerNode::Struct(struct_) = checked.hir.def(wrap) else {
-            unreachable!();
-        };
+        let struct_ = checked.hir.struct_(wrap);
         let field = checked.ty(struct_.fields[0]);
 
         assert_eq!(checked.kind(field), &TyKind::Error);
@@ -601,9 +584,7 @@ mod tests {
     fn self_inside_a_struct_is_the_struct_applied_to_its_parameters() {
         let checked = check("struct Wrap<T> { inner: Self }");
         let wrap = checked.def("Wrap");
-        let OwnerNode::Struct(struct_) = checked.hir.def(wrap) else {
-            unreachable!();
-        };
+        let struct_ = checked.hir.struct_(wrap);
         let field = checked.ty(struct_.fields[0]);
 
         assert_eq!(field, checked.def_ty(wrap));
@@ -661,9 +642,7 @@ mod tests {
              extend<T> Wrap<T> { fun get(&self, other: i32) -> Self {} }",
         );
         let extend = checked.extend();
-        let OwnerNode::Extend(block) = checked.hir.def(extend) else {
-            unreachable!();
-        };
+        let block = checked.hir.extend(extend);
         let (params, ret) = checked.sig(block.methods[0]);
 
         assert_eq!(params.len(), 2, "`self` counts as a parameter");
@@ -788,9 +767,7 @@ mod tests {
     fn a_generic_field_may_be_a_function_type_over_the_structs_own_parameter() {
         let checked = check("struct Container<T> { f: fun(T) -> T }");
         let container = checked.def("Container");
-        let OwnerNode::Struct(struct_) = checked.hir.def(container) else {
-            unreachable!();
-        };
+        let struct_ = checked.hir.struct_(container);
         let field = checked.ty(struct_.fields[0]);
 
         let TyKind::Fun { params, ret } = checked.kind(field) else {
@@ -809,9 +786,7 @@ mod tests {
     fn self_may_appear_nested_inside_a_tuple_field() {
         let checked = check("struct Wrap<T> { pair: (Self, i32) }");
         let wrap = checked.def("Wrap");
-        let OwnerNode::Struct(struct_) = checked.hir.def(wrap) else {
-            unreachable!();
-        };
+        let struct_ = checked.hir.struct_(wrap);
         let field = checked.ty(struct_.fields[0]);
 
         let TyKind::Tuple(elems) = checked.kind(field) else {
@@ -831,9 +806,7 @@ mod tests {
              }",
         );
         let container = checked.def("Container");
-        let OwnerNode::Trait(trait_) = checked.hir.def(container) else {
-            unreachable!();
-        };
+        let trait_ = checked.hir.trait_(container);
 
         let get_sig = checked.sig(trait_.functions[0]);
         assert_eq!(get_sig.1, Some(checked.generic(container, 0)));
