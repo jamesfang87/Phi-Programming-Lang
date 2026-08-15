@@ -3,13 +3,7 @@ use std::collections::HashMap;
 use crate::hir::{DefId, HirId};
 use crate::typeck::ty::Ty;
 
-/// What a `Call` or a method-call `Access` expression resolved to: the concrete definition being
-/// called, and the type arguments its generics were instantiated with at this call site.
-///
-/// `def` alone does not pick out one `Body` for a generic definition, the same reason
-/// [`crate::mir::ConstKind::FnDef`] carries a `Vec<Ty>` alongside its `DefId`; `args` is that
-/// same instantiation, computed once here rather than re-derived by every later pass that needs
-/// it.
+// Stores what a call resolves to
 #[derive(Clone, Debug)]
 pub struct ResolvedCall {
     pub def: DefId,

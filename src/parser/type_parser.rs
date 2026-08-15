@@ -9,11 +9,11 @@
 //! own, since `expr_parser` needs a type parser back for closures, and the two would otherwise
 //! have no way to be built together.
 
-use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
+use chumsky::Parser as ChumskyParser;
 
-use crate::ast::Mutability;
 use crate::ast::interner::Interner;
+use crate::ast::Mutability;
 use crate::ast::{Expr, Ident, NodeId, Path, Ty, TyKind};
 
 use crate::lexer::token::{Token, TokenKind};
@@ -26,12 +26,6 @@ impl Parser {
         self.type_parser_with_expr(self.expr_parser())
     }
 
-    /// Parses a single type, using `expr` for array-length expressions (`[i32; N]`) instead of
-    /// building a fresh expression parser.
-    ///
-    /// Callers that already have an expression parser in hand (like `expr_parser`, which needs
-    /// a type parser for closure parameter types) pass it in here so the two grammars share one
-    /// underlying parser instead of each building their own.
     pub(crate) fn type_parser_with_expr<'a>(&'a self, expr: BoxedP<'a, Expr>) -> BoxedP<'a, Ty> {
         recursive(
             |ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Ty, Extra<'a>>>| {

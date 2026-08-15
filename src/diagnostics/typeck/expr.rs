@@ -1,5 +1,5 @@
-use crate::ast::Ident;
 use crate::ast::interner::Interner;
+use crate::ast::Ident;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::driver::source::SrcSpan;
@@ -22,8 +22,6 @@ pub fn report_not_assignable(span: SrcSpan) {
     );
 }
 
-/// `name` is the `let`-bound local at the root of the place being mutated -- a bare assignment's
-/// own left side, or the variable at the bottom of a field/element chain rooted at one.
 pub fn report_not_mutable(name: Ident, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -55,8 +53,6 @@ pub fn report_compound_assign_mismatch(cx: DisplayCx<'_>, err: UnifyError, span:
     );
 }
 
-/// `foo += bar` stores the operator's result back into `foo`, so an operator that produces
-/// something else cannot be compounded.
 pub fn report_compound_assign_result_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span)
@@ -148,9 +144,6 @@ pub fn report_no_such_field(cx: DisplayCx<'_>, field: Ident, ty: Ty) {
     );
 }
 
-/// Mirrors `nameres::report_private_item`'s wording and
-/// [`traits::method::report_private_field`](crate::diagnostics::typeck::traits::method::report_private_field),
-/// which reports the same mistake reached by reading a field instead of writing one.
 pub fn report_private_field(field: Ident) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -175,10 +168,6 @@ pub fn report_duplicate_field(field: Ident) {
     );
 }
 
-/// Shared by a struct literal's fields ([`Typeck::check_ctor`](crate::typeck::Typeck::check_ctor))
-/// and a variant's record payload
-/// ([`Typeck::check_variant_expr`](crate::typeck::Typeck::check_variant_expr)) -- both ask the
-/// same question of a field's value.
 pub fn report_field_type_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span)
@@ -234,8 +223,6 @@ pub fn report_variant_payload_mismatch(cx: DisplayCx<'_>, err: UnifyError, span:
     );
 }
 
-/// A variant built with a payload that isn't the shape it declares (a `.circle(1.0)` for a
-/// variant that carries named fields, and so on).
 pub fn report_variant_expr_payload_shape(
     hir: &Hir,
     variant: Ident,
@@ -383,8 +370,6 @@ pub fn report_try_return_mismatch(cx: DisplayCx<'_>, operand_ty: Ty, ret: Ty, sp
     );
 }
 
-/// A `Result`'s error type leaves the function, so it is the one thing about the return type
-/// that has to match exactly rather than merely be the same enum.
 pub fn report_try_error_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span).with_label(
@@ -473,9 +458,6 @@ pub fn report_cast_operand_unknown(span: SrcSpan) {
     );
 }
 
-/// `from as to` would be lossy: some value of `from` has no exact representation in `to`.
-/// `reason` is one of the short phrases [`crate::typeck::cast::cast_allowed`] returns, explaining
-/// which values would be affected.
 pub fn report_cast_not_allowed(cx: DisplayCx<'_>, from: Ty, to: Ty, reason: &str, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(

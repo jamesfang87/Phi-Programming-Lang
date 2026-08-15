@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
 use crate::ast::visit::{self, Visitor};
@@ -35,7 +35,7 @@ pub fn resolve(ast: &Ast) -> NameResolutions {
         r.resolve_module(ast, mod_id);
     }
 
-    let lang_items = crate::langitems::collect_ast(&r.table, ast.root_id());
+    let lang_items = crate::langitems::collect_ast_lang_items(&r.table, ast.root_id());
     r.results.record_lang_items(lang_items);
     r.results
 }

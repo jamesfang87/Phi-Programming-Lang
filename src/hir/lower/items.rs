@@ -1,6 +1,3 @@
-//! Lowers the small item-level building blocks every owner is made of: generics, parameters,
-//! fields, variants, and imports.
-
 use crate::ast;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{

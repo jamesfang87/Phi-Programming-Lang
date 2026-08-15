@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol, Visibility};
@@ -205,10 +205,6 @@ impl<'ast> SymbolTable<'ast> {
                 .expect("a path always has at least one segment"),
         );
 
-        // Visibility is checked against `importing_module`, not `root` -- imports always search
-        // from the root ([`Self::resolve_import`]'s own comment), but that is only where the
-        // path lookup starts, not who is allowed to see what it finds. A hit that isn't visible
-        // is reported here and dropped, same as if the path had never found it.
         let mut private_hit = false;
         let type_res =
             self.resolve_import_type_path(root, &import.path)

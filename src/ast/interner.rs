@@ -1,8 +1,4 @@
 //! A trivial string interner for [`Symbol`].
-//!
-//! The interner is thread-local, mirroring [`crate::diag::DiagCtx`]. Pipeline
-//! stages call its associated functions directly, rather than threading an interner
-//! instance through every parser and lexer constructor.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

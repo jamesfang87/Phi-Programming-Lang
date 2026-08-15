@@ -345,9 +345,7 @@ impl<'a> BodyLowerCtx<'a> {
         let TyKind::Adt { def, .. } = *self.tcx.kind(ty) else {
             panic!("mir::lower: field access on a non-struct type")
         };
-        let crate::hir::OwnerNode::Struct(s) = self.hir.def(def) else {
-            panic!("mir::lower: field access on a def that is not a struct")
-        };
+        let s = self.hir.struct_(def);
         s.fields
             .iter()
             .position(|&f| self.hir.field(f).name.text == member)
@@ -586,9 +584,7 @@ impl<'a> BodyLowerCtx<'a> {
         let TyKind::Adt { def, .. } = *self.tcx.kind(ty) else {
             panic!("mir::lower: a struct literal's type is not an Adt")
         };
-        let crate::hir::OwnerNode::Struct(s) = self.hir.def(def) else {
-            panic!("mir::lower: a struct literal's def is not a struct")
-        };
+        let s = self.hir.struct_(def);
         let fields = s.fields.clone();
         let operands = fields
             .iter()
@@ -652,9 +648,7 @@ impl<'a> BodyLowerCtx<'a> {
             crate::hir::Payload::None => Vec::new(),
             crate::hir::Payload::Single(id) => vec![self.lower_operand(*id)],
             crate::hir::Payload::Record(fields) => {
-                let crate::hir::OwnerNode::Enum(e) = self.hir.def(def) else {
-                    unreachable!("a variant's enclosing def is always an enum")
-                };
+                let e = self.hir.enum_(def);
                 let variant_hir_id = e.variants[variant_idx.index()];
                 let crate::hir::VariantPayload::Record(declared) =
                     &self.hir.variant(variant_hir_id).payload
@@ -759,9 +753,7 @@ impl<'a> BodyLowerCtx<'a> {
     }
 
     fn variant_idx_by_name(&self, def: crate::hir::DefId, name: &str) -> crate::mir::VariantIdx {
-        let crate::hir::OwnerNode::Enum(e) = self.hir.def(def) else {
-            panic!("mir::lower: {def:?} is not an enum")
-        };
+        let e = self.hir.enum_(def);
         let sym = crate::ast::interner::Interner::intern(name);
         let index = e
             .variants

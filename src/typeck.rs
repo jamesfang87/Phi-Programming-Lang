@@ -2,27 +2,31 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp, Visibility};
 use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::typeck::pat::{
+    report_irrefutable_let_with_else, report_refutable_let_without_else,
+};
 use crate::diagnostics::typeck::{
     report_binary_operand_mismatch, report_binding_type_mismatch, report_body_return_mismatch,
-    report_int_suffix_on_float_literal, report_logic_op_needs_bool, report_operand_unknown,
-    report_return_mismatch, report_str_literal_untyped, report_unknown_literal_suffix,
+    report_int_suffix_on_float_literal, report_logic_op_needs_bool_operands,
+    report_operand_has_unknown_type, report_return_mismatch, report_str_literal_untyped,
+    report_unknown_literal_suffix,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
-    DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, PatKind, Payload, Res, StmtKind,
+    DefId, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind,
     VariantPayload,
 };
 use crate::langitems::LangItem;
-use crate::nameres::PrimTy;
 use crate::nameres::symbol_table::prim_ty;
+use crate::nameres::PrimTy;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::bounds::ObligationCx;
 use crate::typeck::traits::index::ImplIndex;
 use crate::typeck::traits::solve::{Obligation, ParamEnv, TraitName};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::{Unifier, UnifyError, is_float, is_integer};
+use crate::typeck::unify::{is_float, is_integer, Unifier, UnifyError};
 
 pub mod cast;
 pub mod expr;
@@ -127,9 +131,7 @@ impl<'hir> Typeck<'hir> {
     pub fn collect_function(&mut self, function: DefId) {
         // this allows us to avoid clones
         let hir: &'hir Hir = self.hir;
-        let OwnerNode::Function(function_node) = hir.def(function) else {
-            unreachable!("root of a Function owner is always OwnerNode::Function");
-        };
+        let function_node = hir.function(function);
         let (generics, self_param, params, ret) = (
             &function_node.generics,
             function_node.self_param,
@@ -145,9 +147,7 @@ impl<'hir> Typeck<'hir> {
             param_tys.push(self.collect_self_param(id));
         }
         for &id in params {
-            let Node::Param(param) = hir.node(id) else {
-                unreachable!("Node that is not a parameter found in a function's parameter list");
-            };
+            let param = hir.param(id);
 
             let ty = self.lower_ty(param.ty);
             self.types.record(id, ty);
@@ -160,9 +160,7 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn collect_self_param(&mut self, id: HirId) -> Ty {
-        let Node::SelfParam(self_param) = self.hir.node(id) else {
-            unreachable!("Node that is not a self param found in a function's self param slot");
-        };
+        let self_param = self.hir.self_param(id);
         let (mode, span) = (self_param.mode, self_param.span);
 
         let self_ty = self.self_ty(id.owner, span);
@@ -178,9 +176,7 @@ impl<'hir> Typeck<'hir> {
 
     pub fn collect_struct(&mut self, r#struct: DefId) {
         let hir: &'hir Hir = self.hir;
-        let OwnerNode::Struct(struct_node) = hir.def(r#struct) else {
-            unreachable!("root of a Struct owner is always OwnerNode::Struct");
-        };
+        let struct_node = hir.struct_(r#struct);
         let (generics, fields, span) =
             (&struct_node.generics, &struct_node.fields, struct_node.span);
 
@@ -195,9 +191,7 @@ impl<'hir> Typeck<'hir> {
 
     pub fn collect_enum(&mut self, r#enum: DefId) {
         let hir: &'hir Hir = self.hir;
-        let OwnerNode::Enum(enum_node) = hir.def(r#enum) else {
-            unreachable!("root of an Enum owner is always OwnerNode::Enum");
-        };
+        let enum_node = hir.enum_(r#enum);
         let (generics, variants, span) = (&enum_node.generics, &enum_node.variants, enum_node.span);
 
         self.collect_generics(generics);
@@ -205,9 +199,7 @@ impl<'hir> Typeck<'hir> {
         self.types.record_def(r#enum, self_ty);
 
         for &id in variants {
-            let Node::Variant(variant) = hir.node(id) else {
-                unreachable!("Node that is not a variant found in an enum's variant list");
-            };
+            let variant = hir.variant(id);
 
             match &variant.payload {
                 VariantPayload::Unit => {}
@@ -222,9 +214,7 @@ impl<'hir> Typeck<'hir> {
 
     pub fn collect_trait(&mut self, r#trait: DefId) {
         let hir: &'hir Hir = self.hir;
-        let OwnerNode::Trait(trait_node) = hir.def(r#trait) else {
-            unreachable!("root of a Trait owner is always OwnerNode::Trait");
-        };
+        let trait_node = hir.trait_(r#trait);
         let (generics, span) = (&trait_node.generics, trait_node.span);
 
         self.collect_generics(generics);
@@ -236,9 +226,7 @@ impl<'hir> Typeck<'hir> {
 
     pub fn collect_extend(&mut self, extend: DefId) {
         let hir: &'hir Hir = self.hir;
-        let OwnerNode::Extend(extend_node) = hir.def(extend) else {
-            unreachable!("root of an Extend owner is always OwnerNode::Extend");
-        };
+        let extend_node = hir.extend(extend);
         let (extend_generics, adt_generics, trait_generics, span) = (
             &extend_node.extend_generics,
             &extend_node.adt_generics,
@@ -259,10 +247,7 @@ impl<'hir> Typeck<'hir> {
 
     fn collect_generics(&mut self, generics: &[HirId]) {
         for &id in generics {
-            debug_assert!(
-                matches!(self.hir.node(id), Node::Generic(_)),
-                "Node that is not a generic found in a generics list"
-            );
+            self.hir.generic(id);
 
             let ty = self.tcx.mk_generic(id);
             self.types.record(id, ty);
@@ -271,9 +256,7 @@ impl<'hir> Typeck<'hir> {
 
     fn collect_fields(&mut self, fields: &[HirId]) {
         for &id in fields {
-            let Node::Field(field) = self.hir.node(id) else {
-                unreachable!("Node that is not a field found in a field list");
-            };
+            let field = self.hir.field(id);
 
             let ty = self.lower_ty(field.ty);
             self.types.record(id, ty);
@@ -537,9 +520,7 @@ impl<'hir> Typeck<'hir> {
     /// this directly is how a computed type gets dropped on the floor.
     #[must_use]
     fn check_expr(&mut self, id: HirId) -> Ty {
-        let Node::Expr(expr) = self.hir.node(id) else {
-            unreachable!("Node that is not an expr passed to check_expr");
-        };
+        let expr = self.hir.expr(id);
 
         // Taken rather than read, so that the expectation reaches this expression and no other:
         // every `ty_of` below re-enters here with nothing set, and an arm that wants to pass it
@@ -731,7 +712,7 @@ impl<'hir> Typeck<'hir> {
                 // Not overloadable -- the core lib has no logic trait, so `&&`/`||` only ever
                 // mean the primitive short-circuit operators.
                 if let Err(error) = self.unifier.unify(&self.tcx, operand, bool_ty) {
-                    report_logic_op_needs_bool(self.cx(), error, operand, span);
+                    report_logic_op_needs_bool_operands(self.cx(), error, operand, span);
                 }
                 bool_ty
             }
@@ -761,7 +742,7 @@ impl<'hir> Typeck<'hir> {
     /// the caller keeps that decision.
     fn operator_holds(&mut self, item: LangItem, self_ty: Ty, owner: DefId, span: SrcSpan) -> bool {
         if matches!(self.tcx.kind(self_ty), TyKind::Var(TyVar::Any(_))) {
-            report_operand_unknown(span);
+            report_operand_has_unknown_type(span);
             return false;
         }
 
@@ -853,9 +834,7 @@ impl<'hir> Typeck<'hir> {
     }
 
     pub fn check_stmt(&mut self, id: HirId) {
-        let Node::Stmt(stmt) = self.hir.node(id) else {
-            unreachable!("Node which is not a stmt passed to check_stmt");
-        };
+        let stmt = self.hir.stmt(id);
 
         match &stmt.kind {
             StmtKind::Let {
@@ -869,6 +848,16 @@ impl<'hir> Typeck<'hir> {
                     (*mutability, *pat, *ty, *init, *else_block);
                 self.check_binding(pat, ty, init, stmt.span);
                 self.record_let_mutability(pat, mutability);
+
+                match (self.pat_is_irrefutable(pat), else_block) {
+                    (false, None) => {
+                        report_refutable_let_without_else(self.hir.pat(pat).span);
+                    }
+                    (true, Some(block)) => {
+                        report_irrefutable_let_with_else(self.hir.block(block).span);
+                    }
+                    _ => {}
+                }
 
                 if let Some(block) = else_block {
                     self.check_block(block);
@@ -950,9 +939,7 @@ impl<'hir> Typeck<'hir> {
     /// [`Typeck::check_binding`] the same way a `let` is, but is deliberately never passed
     /// through here (see [`Typeck::let_mutability`]'s own docs).
     fn record_let_mutability(&mut self, pat: HirId, mutability: Mutability) {
-        let Node::Pat(node) = self.hir.node(pat) else {
-            unreachable!("Node that is not a pattern passed to record_let_mutability");
-        };
+        let node = self.hir.pat(pat);
         match &node.kind {
             PatKind::Binding { .. } => {
                 self.let_mutability.insert(pat, mutability);
@@ -974,6 +961,46 @@ impl<'hir> Typeck<'hir> {
                 }
             }
             PatKind::Wildcard | PatKind::Literal(_) | PatKind::Error => {}
+        }
+    }
+
+    /// Whether `pat_id`'s pattern is guaranteed to match every value of the type
+    /// [`Typeck::check_pat`] already checked it against -- the same question
+    /// [`Typeck::check_match_exhaustive`] asks of a whole arm list, asked here of one pattern
+    /// alone, since a `let` (unlike a `match`) has only the one. A wildcard or a plain binding
+    /// always is; a literal never is, even `true` alone doesn't cover `false`; a variant pattern
+    /// is exactly when the enum it names declares only that one variant; a tuple is exactly when
+    /// every element is.
+    ///
+    /// Called only after [`Typeck::check_binding`] has already run [`Typeck::check_pat`] over
+    /// `pat_id` (and, for a `Variant`, recorded the enum type it was matched against), so this
+    /// never has to re-derive a type on its own -- it only reads back what that pass already
+    /// settled.
+    fn pat_is_irrefutable(&mut self, pat_id: HirId) -> bool {
+        let pat = self.hir.pat(pat_id);
+        match &pat.kind {
+            PatKind::Wildcard | PatKind::Binding { .. } => true,
+            PatKind::Literal(_) => false,
+            PatKind::Variant { .. } => {
+                let ty = self
+                    .types
+                    .ty(pat_id)
+                    .map(|ty| self.resolve_deep(ty))
+                    .unwrap_or_else(|| self.tcx.error());
+                match self.tcx.kind(ty) {
+                    // Already reported (an unresolved variant, or a scrutinee whose type never
+                    // settled) -- treat it charitably rather than cascading a second diagnostic.
+                    TyKind::Error | TyKind::Var(_) => true,
+                    TyKind::Adt { def, .. } => match self.hir.def(*def) {
+                        OwnerNode::Enum(enum_) => enum_.variants.len() == 1,
+                        _ => false,
+                    },
+                    _ => false,
+                }
+            }
+            PatKind::Tuple(elems) => elems.iter().all(|&elem| self.pat_is_irrefutable(elem)),
+            // Already reported by the parser; don't cascade a second diagnostic onto it.
+            PatKind::Error => true,
         }
     }
 
@@ -1037,9 +1064,7 @@ impl<'hir> Typeck<'hir> {
     /// expectation on that expression and on nothing else in it. This is what carries a `match`
     /// arm's expected type down to the `.variant` the arm ends with.
     fn check_block_expecting(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
-        let Node::Block(block) = self.hir.node(id) else {
-            unreachable!("Node which is not a block passed to check_block");
-        };
+        let block = self.hir.block(id);
         let tail = block.expr;
 
         let mut diverges = false;
@@ -1077,7 +1102,11 @@ impl<'hir> Typeck<'hir> {
         // Only a statement *of* this block is looked at. Divergence hidden inside an expression
         // this language has no syntax to express -- a call to a function that never returns, say
         // -- is not tracked, so this errs towards treating a block as completing normally.
-        if diverges { self.tcx.never() } else { tail_ty }
+        if diverges {
+            self.tcx.never()
+        } else {
+            tail_ty
+        }
     }
 
     /// Checks `def_id`'s body against the signature stage one collected for it, and bakes the
@@ -1095,9 +1124,7 @@ impl<'hir> Typeck<'hir> {
     /// `return` inside the body is checked on its own terms regardless (see
     /// [`Typeck::check_stmt`]'s `Return` arm).
     pub fn check_function(&mut self, def_id: DefId) {
-        let OwnerNode::Function(function) = self.hir.def(def_id) else {
-            unreachable!("root of a Function owner is always OwnerNode::Function");
-        };
+        let function = self.hir.function(def_id);
 
         if let Some(block) = function.block {
             // Bounds raised while checking the body are proved at the end of it and not before:
@@ -1220,11 +1247,6 @@ impl<'hir> Visitor<'hir> for Check<'_, 'hir> {
     }
 }
 
-/// What type checking produces: the type of every node it worked out, and the arena those types
-/// live in.
-///
-/// The two travel together because a [`Ty`] is an index into a [`TyCtx`] and means nothing
-/// without it.
 pub struct TypeckOutput {
     pub tcx: TyCtx,
     pub types: TypeResolutions,
@@ -1314,6 +1336,20 @@ mod tests {
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
+    /// A bare `return;`, with no expression, produces `Unit` -- exactly what a function with no
+    /// declared return type itself produces -- so the two agree.
+    #[test]
+    fn a_bare_return_with_no_declared_return_type_checks() {
+        accepts("fun f() { return; }");
+    }
+
+    /// A bare `return;` still has to agree with a *declared* return type, the same as `return`
+    /// with a value does.
+    #[test]
+    fn a_bare_return_in_a_function_declaring_a_return_type_is_rejected() {
+        rejects("fun f() -> i32 { return; }", "mismatched types");
+    }
+
     /// Defect 2's end-to-end shape: `Never`/`Error`/`Unit` are interned once per pass, so a
     /// merge involving one used to leak across every function checked afterwards. Both of these
     /// functions are individually valid, and checking them together must stay that way.
@@ -1358,9 +1394,7 @@ mod tests {
     }
 
     fn find_owner_opt(hir: &Hir, from: DefId, pred: &impl Fn(&OwnerNode) -> bool) -> Option<DefId> {
-        let OwnerNode::Module(module) = hir.def(from) else {
-            unreachable!("find_owner only recurses into Module owners");
-        };
+        let module = hir.module(from);
 
         for &item in &module.items {
             if pred(hir.def(item)) {
@@ -1570,15 +1604,9 @@ mod tests {
         let mut checker = checker_with_signatures_collected(&hir);
         checker.check_function(def_id);
 
-        let OwnerNode::Function(function) = hir.def(def_id) else {
-            unreachable!("root of a Function owner is always OwnerNode::Function");
-        };
-        let Node::Block(block) = hir.node(function.block.unwrap()) else {
-            unreachable!("a function's body is always a Node::Block");
-        };
-        let Node::Stmt(stmt) = hir.node(block.stmts[0]) else {
-            unreachable!("Node which is not a stmt found in a block's statement list");
-        };
+        let function = hir.function(def_id);
+        let block = hir.block(function.block.unwrap());
+        let stmt = hir.stmt(block.stmts[0]);
         let StmtKind::Let { init, .. } = stmt.kind else {
             panic!("expected a let statement");
         };
@@ -1598,15 +1626,9 @@ mod tests {
         let mut checker = checker_with_signatures_collected(&hir);
         checker.check_function(def_id);
 
-        let OwnerNode::Function(function) = hir.def(def_id) else {
-            unreachable!("root of a Function owner is always OwnerNode::Function");
-        };
-        let Node::Block(block) = hir.node(function.block.unwrap()) else {
-            unreachable!("a function's body is always a Node::Block");
-        };
-        let Node::Stmt(stmt) = hir.node(block.stmts[0]) else {
-            unreachable!("Node which is not a stmt found in a block's statement list");
-        };
+        let function = hir.function(def_id);
+        let block = hir.block(function.block.unwrap());
+        let stmt = hir.stmt(block.stmts[0]);
         let StmtKind::Let { init, .. } = stmt.kind else {
             panic!("expected a let statement");
         };
@@ -1784,9 +1806,7 @@ mod tests {
              fun f() -> bool { return g; }",
         );
         // `first_function` finds `g`; `f` is the second top-level function.
-        let OwnerNode::Module(module) = hir.def(hir.root_id()) else {
-            unreachable!("root of a Module owner is always OwnerNode::Module");
-        };
+        let module = hir.root();
         let g_def = first_function(&hir);
         let f_def = module
             .items
@@ -1981,9 +2001,7 @@ mod tests {
     fn generic_displays_with_its_declared_name() {
         let hir = resolve_src("struct Wrap<T> { inner: T }");
         let def_id = first_struct(&hir);
-        let OwnerNode::Struct(s) = hir.def(def_id) else {
-            unreachable!("first_struct only returns a struct's DefId");
-        };
+        let s = hir.struct_(def_id);
         let generic_id = s.generics[0];
         let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_generic(generic_id);
@@ -2196,7 +2214,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Every operator lang item, on one struct
+    // Every operator lang item on one struct
     // -----------------------------------------------------------------
 
     /// One `extend` block providing every operator trait `core::ops` declares, exercising each
@@ -2334,5 +2352,93 @@ mod tests {
     #[test]
     fn a_self_referencing_enum_variant_behind_a_reference_checks() {
         accepts("enum List { cons: &List, nil }");
+    }
+
+    // -----------------------------------------------------------------
+    // `let`: refutability against `else`
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_plain_binding_pattern_needs_no_else() {
+        accepts("fun f() { let x = 1; }");
+    }
+
+    #[test]
+    fn a_wildcard_pattern_needs_no_else() {
+        accepts("fun f() { let _ = 1; }");
+    }
+
+    #[test]
+    fn a_tuple_of_irrefutable_patterns_needs_no_else() {
+        accepts("fun f(p: (i32, bool)) { let (x, y) = p; }");
+    }
+
+    #[test]
+    fn a_refutable_variant_pattern_without_an_else_is_rejected() {
+        rejects(
+            "enum Option<T> { some: T, none }
+             fun f(o: Option<i32>) { let .some(x) = o; }",
+            "with no `else`",
+        );
+    }
+
+    #[test]
+    fn a_refutable_variant_pattern_with_an_else_is_accepted() {
+        accepts(
+            "enum Option<T> { some: T, none }
+             fun f(o: Option<i32>) -> i32 {
+                 let .some(x) = o else { return 0; };
+                 return x;
+             }",
+        );
+    }
+
+    #[test]
+    fn a_tuple_containing_a_refutable_element_needs_an_else() {
+        rejects(
+            "enum Option<T> { some: T, none }
+             fun f(p: (i32, Option<i32>)) { let (x, .some(y)) = p; }",
+            "with no `else`",
+        );
+    }
+
+    /// A single-variant enum's own pattern is irrefutable -- the same rule
+    /// `check_match_exhaustive` already applies to a `match` with one unguarded arm naming that
+    /// variant and nothing else.
+    #[test]
+    fn a_single_variant_enums_pattern_is_irrefutable() {
+        accepts(
+            "enum Only { one: i32 }
+             fun f(o: Only) -> i32 { let .one(x) = o; return x; }",
+        );
+        rejects(
+            "enum Only { one: i32 }
+             fun f(o: Only) -> i32 { let .one(x) = o else { return 0; }; return x; }",
+            "irrefutable pattern",
+        );
+    }
+
+    #[test]
+    fn an_irrefutable_binding_pattern_with_an_else_is_rejected() {
+        rejects(
+            "fun f() -> i32 { let x = 1 else { return 0; }; return x; }",
+            "irrefutable pattern",
+        );
+    }
+
+    #[test]
+    fn an_irrefutable_tuple_pattern_with_an_else_is_rejected() {
+        rejects(
+            "fun f(p: (i32, bool)) -> i32 { let (x, y) = p else { return 0; }; return x; }",
+            "irrefutable pattern",
+        );
+    }
+
+    /// A `with` lend is never checked for refutability at all -- its own pattern is always a
+    /// plain binding (`mir::lower::block::lower_with_lend` panics on anything else), and it has
+    /// no `else` to reject one against in the first place.
+    #[test]
+    fn a_with_lends_pattern_is_never_checked_for_refutability() {
+        accepts("fun f(x: i32) { with y = &x { let _ = y; } }");
     }
 }

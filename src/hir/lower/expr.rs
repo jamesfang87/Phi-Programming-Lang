@@ -68,6 +68,8 @@ impl OwnerLowerer<'_, '_> {
                 base: self.lower_expr(base),
                 index: self.lower_expr(index),
             },
+            // TODO: Consider this
+            // why is it even separate???
             // `path` is looked up through `lower_ctor_path`, not `lower_path`: unlike every
             // other path kind, `Resolver::visit_expr` (`src/nameres/resolver.rs`) does
             // not yet record an entry for a struct literal's own name, so a missing entry here
@@ -133,6 +135,10 @@ impl OwnerLowerer<'_, '_> {
         }
     }
 
+    // TODO: Why did you write code this way?
+    // Are you stupid? just desugar it inside the AST; you know that its a reference to a
+    // variable so just make it a path...
+    // you're actually dumb as hell.
     /// Lowers a record payload's fields, desugaring the `{ l }` shorthand into `{ l: l }` so
     /// that every field has a real expression behind it in the HIR.
     ///
@@ -170,9 +176,6 @@ impl OwnerLowerer<'_, '_> {
             .collect()
     }
 
-    /// Lowers a closure into its own owner, nested under the owner that creates it. Like a free
-    /// function, it gets its own arena and `DefId`. Later passes can then look up and process
-    /// its body on its own, without going through the expression that creates it.
     fn lower_closure(
         &mut self,
         span: SrcSpan,

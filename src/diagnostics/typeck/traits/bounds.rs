@@ -27,8 +27,6 @@ pub fn report_unsatisfied_bound(hir: &Hir, cx: DisplayCx<'_>, goal: &Obligation)
     DiagCtx::emit(diag);
 }
 
-/// A goal that no further pass could decide. Not a failed bound -- it is a bound nobody ever
-/// finished asking about, because the type it is about never became known.
 pub fn report_annotations_needed(hir: &Hir, cx: DisplayCx<'_>, goal: &Obligation) {
     let mut diag = Diagnostic::error(
         format!(
@@ -99,9 +97,6 @@ pub fn report_arg_count_mismatch(
     );
 }
 
-/// What a definition is called, for a diagnostic that has to name one. Broader than
-/// [`display::def_name`](crate::diagnostics::typeck::display::def_name): a bound's arity mismatch
-/// can be about a function, not just a struct/enum/trait `Ty`.
 fn defined_name(hir: &Hir, def: DefId) -> &'static str {
     let name = match hir.def(def) {
         OwnerNode::Function(f) => f.name.text,
@@ -115,7 +110,6 @@ fn defined_name(hir: &Hir, def: DefId) -> &'static str {
     Interner::resolve(name)
 }
 
-/// Where a definition's name was written, for a diagnostic pointing back at what it declares.
 fn defined_span(hir: &Hir, def: DefId) -> SrcSpan {
     match hir.def(def) {
         OwnerNode::Function(f) => f.name.span,

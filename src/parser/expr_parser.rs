@@ -920,7 +920,7 @@ impl Parser {
 
             let return_stmt = self
                 .kind(TokenKind::ReturnKw)
-                .then(expr.clone())
+                .then(expr.clone().or_not())
                 .then(self.kind(TokenKind::Semicolon))
                 .map(|((ret_tok, value), semi_tok)| {
                     let span = ret_tok.span.merge(semi_tok.span);

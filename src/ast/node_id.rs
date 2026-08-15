@@ -1,10 +1,7 @@
-//! [`NodeId`], a globally unique identity for AST nodes.
+//! [`NodeId`] represents a globally unique identity for AST nodes.
 //!
-//! Unlike [`crate::ast::interner::Symbol`], which is thread-local, `NodeId` must be unique
-//! across the whole process: the parser may eventually parse files in parallel, one thread per
-//! file, and later passes need to address any node in the program by a single id regardless of
-//! which thread's parse produced it. A global atomic counter gives that for free, since
-//! allocation order across threads is unspecified and unimportant -- only uniqueness matters.
+//! Unlike [`crate::ast::interner::Symbol`], which is thread-local, `NodeId` is unique
+//! across the whole process
 
 use std::sync::atomic::{AtomicU32, Ordering};
 

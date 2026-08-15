@@ -1,14 +1,3 @@
-//! Identifiers used to address HIR nodes. [`DefId`] addresses a definition. [`LocalId`]
-//! addresses a node within one owner's arena. [`HirId`] combines the two and can address any
-//! node in the program.
-
-/// A [`DefId`] identifies one definition in the program. A definition is a function, a struct,
-/// an enum, a trait, an `extend` block, a closure, or a module.
-///
-/// A field, an enum variant, or a generic type parameter is not a definition in this sense.
-/// Lowering places each as a plain child node, addressed only by a [`LocalId`] within its
-/// owner's arena, and it never gets a [`DefId`] of its own. Every [`DefId`] that does exist has
-/// an arena of its own.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct DefId(u32);
 

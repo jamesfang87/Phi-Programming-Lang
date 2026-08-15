@@ -1,11 +1,3 @@
-//! HIR representation of expressions.
-//!
-//! [`ExprKind`] stays close to the AST's `ExprKind`. See `src/hir.rs` for how the two differ:
-//!
-//! - Children are addressed by [`LocalId`] instead of being boxed inline.
-//! - Lowering converts `while`, `for`, and `while let` loops into [`ExprKind::Loop`], and
-//!   converts `if let` into [`ExprKind::Match`].
-
 #![allow(dead_code)]
 
 use crate::ast::{BinaryOp, Ident, Literal, Mutability, UnaryOp};
@@ -53,10 +45,7 @@ pub enum ExprKind {
         args: Vec<HirId>, // -> Node::Expr
     },
     /// The `.` operator reaches a field, a method call, or an enum variant named through its
-    /// type. See [`ast::ExprKind::Access`](crate::ast::ExprKind::Access). The three can't be
-    /// distinguished without types, so they share this one node until typeck resolves which one
-    /// it is. [`AccessArgs::Record`] is the exception. Name resolution settles that case on its
-    /// own.
+    /// type.
     Access {
         base: HirId, // -> Node::Expr
         member: Ident,
@@ -121,15 +110,6 @@ pub enum ExprKind {
     Error,
 }
 
-/// An enum variant's payload, shared by [`ExprKind::Variant`] and
-/// [`PatKind::Variant`](crate::hir::PatKind::Variant). The `LocalId`s name `Node::Expr`s in the
-/// first and `Node::Pat`s in the second, exactly as [`ExprKind::Tuple`] and
-/// [`PatKind::Tuple`](crate::hir::PatKind::Tuple) already do.
-///
-/// A payload is always one value. A tuple payload is a single tuple, not several arguments. The
-/// one exception is [`Payload::Record`], which is a payload declared inline as an anonymous
-/// struct and so carries the variant's own field names. Lowering desugars away the `{ l }` field
-/// shorthand, so a record payload's fields always have both a name and a node here.
 #[derive(Clone, Debug)]
 pub enum Payload {
     None,
@@ -137,8 +117,6 @@ pub enum Payload {
     Record(Vec<PayloadField>),
 }
 
-/// What follows the member name in an [`ExprKind::Access`]. See
-/// [`ast::AccessArgs`](crate::ast::AccessArgs).
 #[derive(Clone, Debug)]
 pub enum AccessArgs {
     None,
@@ -146,15 +124,9 @@ pub enum AccessArgs {
     Record(Vec<PayloadField>),
 }
 
-/// One named field and the node bound to it: a field initializer in an [`ExprKind::Ctor`]
-/// struct literal, or one field of a record payload in [`Payload::Record`] or
-/// [`AccessArgs::Record`].
-///
-/// Like [`Payload`] itself, this is shared between building and matching, so `value` names a
-/// `Node::Expr` in an expression and a `Node::Pat` in a pattern.
-///
+/// This is used for field initializers and definitions record payloads
 /// Lowering desugars the `{ l }` field shorthand into `{ l: l }`, so `value` is always a real
-/// node here -- unlike the AST's [`ast::PayloadField`](crate::ast::PayloadField), whose value is
+/// node here. This is unlike the AST's [`ast::PayloadField`](crate::ast::PayloadField), whose value is
 /// optional.
 #[derive(Clone, Debug)]
 pub struct PayloadField {

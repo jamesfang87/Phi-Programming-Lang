@@ -1,45 +1,3 @@
-//! A shared walk over the HIR.
-//!
-//! Every pass that traverses the tree would previously duplicate "what are this node's children"
-//! logic, each re-implementing the same traversal and creating independent bugs. This manifested
-//! when name resolution (before moving to the AST) used an expression walk instead of a block walk
-//! for `if`/`else`, causing compilation failures on every conditional. Separately, some subtrees
-//! (a `let`'s type annotation, its `else` block, a `with` binding's type annotation) were never
-//! traversed at all, leaving portions unresolved. A shared visitor enforces correctness: any new
-//! node added to the HIR produces a compile error here (unmatched enum variant) rather than
-//! silently allowing some passes to visit it and others to skip it.
-//!
-//! [`crate::ast::visit`] applies the same pattern to the AST, which the name resolution pass now
-//! targets. This visitor serves passes downstream of lowering: type checking and the MIR lowering
-//! that follows it.
-//!
-//! A pass implements [`Visitor`] and overrides only the nodes it cares about. Each `visit_*`
-//! defaults to the matching free `walk_*` function, which visits the node's children and nothing
-//! else -- so an override that still wants the subtree calls `walk_*` itself, and one that does
-//! not simply omits it. Overriding is also how a pass interleaves code with the children: opening
-//! a scope around a block, say, calls `walk_block` bracketed by the scope push and pop.
-//!
-//! Two properties of the walk constrain how a pass overrides it.
-//!
-//! **The walk stops at an arena boundary.** A closure body, a trait's methods and an `extend`
-//! block's methods are each their own [`DefId`] with their own [`Arena`](crate::hir::Arena), so
-//! reaching one means switching arenas rather than following a [`HirId`] within the current one.
-//! No `walk_*` does that. Each such id is passed to [`Visitor::visit_nested_owner`], whose default
-//! body is empty, and a pass that wants the subtree calls `walk_item` on the id from its override.
-//! The two passes downstream need opposite behavior -- MIR lowering descends into a closure while
-//! lowering the body containing it, and `Typeck::collect_module` must record every signature in
-//! the program before `Typeck::check_module` reads any of them -- so the walk cannot pick one.
-//!
-//! **A [`Path`] is passed by reference, not by id.** Every other child is a `HirId` resolved
-//! against the arena, but a `Path` is stored inline in the node that writes it and has no
-//! `HirId` of its own; `Extend` stores two of them on a single node (`adt_path` and
-//! `trait_path`), which is why lowering attaches the resolution to the `Path` itself rather than
-//! to a table keyed by node -- see [`Path::res`] and [`crate::hir::path`]. Paths appear in six
-//! positions: [`ExprKind::Path`], [`ExprKind::Ctor`], [`TyKind::Path`], [`TyKind::Dyn`],
-//! [`Generic::bounds`](crate::hir::Generic::bounds), and `Extend`'s `adt_path`/`trait_path`. Each
-//! `walk_*` reaching one calls [`Visitor::visit_path`], so a pass reading resolutions overrides
-//! one method instead of six match arms.
-
 use crate::hir::{
     AccessArgs, DefId, ExprKind, Hir, HirId, OwnerNode, PatKind, Path, Payload, StmtKind, TyKind,
     VariantPayload,
@@ -47,17 +5,10 @@ use crate::hir::{
 
 /// A traversal over the HIR. See the [module docs](self) for how overriding works.
 pub trait Visitor<'hir>: Sized {
-    /// The tree being walked. Every `walk_*` reads the node it was handed through this.
     fn hir(&self) -> &'hir Hir;
 
-    /// Called with the [`DefId`] of a definition owning its own arena: a closure, or a method of
-    /// a trait or `extend` block. The default body is empty. To descend, call
-    /// [`walk_item`] on `def_id` from an override; see the [module docs](self).
     fn visit_nested_owner(&mut self, _def_id: DefId) {}
 
-    /// Called for each [`Path`] the walk reaches, in the six positions listed in the
-    /// [module docs](self). The default body is empty. `path.res` holds the resolution lowering
-    /// attached; there is no id to look the path up by.
     fn visit_path(&mut self, _path: &'hir Path) {}
 
     fn visit_module(&mut self, def_id: DefId) {
@@ -257,8 +208,6 @@ pub fn walk_closure<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
 // Declarations nested in an owner
 // -----------------------------------------------------------------
 
-/// A `Generic` node holds no child `HirId`s. Its `bounds` are [`Path`]s stored inline, so this
-/// reaches them through [`Visitor::visit_path`].
 pub fn walk_generic<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     for bound in &v.hir().generic(id).bounds {
         v.visit_path(bound);
@@ -429,8 +378,6 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         } => {
             v.visit_expr(*cond);
             v.visit_block(*then_block);
-            // Both branches are blocks; an `else if` lowers to `else { if .. }`. Visiting this
-            // with `visit_expr` used to crash the compiler.
             if let Some(else_block) = *else_block {
                 v.visit_block(else_block);
             }
@@ -504,8 +451,6 @@ pub fn walk_ty<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     }
 }
 
-/// The nodes a variant's payload holds -- expressions when it is being built, patterns when it is
-/// being matched. [`Payload`] is shared between the two, so this is too.
 fn payload_values(payload: &Payload) -> Vec<HirId> {
     match payload {
         Payload::None => Vec::new(),

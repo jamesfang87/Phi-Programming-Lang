@@ -1,16 +1,3 @@
-//! Decides which `expr as Ty` casts between primitive types are legal.
-//!
-//! Unlike C's or Rust's `as`, a cast here is never allowed to lose information. `as` in this
-//! language means "give me this same value, viewed as a different primitive type" -- not "give
-//! me whatever value results from truncating, rounding, or reinterpreting the bits of this one".
-//! [`cast_allowed`] is legal exactly when *every* value of `from` has one exact, unambiguous
-//! representation in `to`; there is no such thing as an intentionally truncating cast to opt
-//! into. A program that wants a narrowing conversion has to spell out how the value is supposed
-//! to be clamped or checked -- this module will never do it silently.
-//!
-//! The one exception to "no truncation" is the identity cast, `x as T` where `x` is already a
-//! `T`: [`cast_allowed`] always allows it, since there's nothing to lose.
-
 use crate::nameres::PrimTy;
 
 /// The bit width of an integer primitive, or `None` for a non-integer.
@@ -24,8 +11,6 @@ fn int_width(prim: PrimTy) -> Option<u32> {
     }
 }
 
-/// Whether an integer primitive is signed. Only meaningful when `prim` is actually an integer;
-/// callers guard on [`int_width`] returning `Some` before calling this.
 fn is_signed(prim: PrimTy) -> bool {
     matches!(prim, PrimTy::I8 | PrimTy::I16 | PrimTy::I32 | PrimTy::I64)
 }
@@ -38,11 +23,6 @@ fn is_float(prim: PrimTy) -> bool {
     matches!(prim, PrimTy::F32 | PrimTy::F64)
 }
 
-/// Whether casting a value of `from` to `to` can never lose information, and if not, why.
-///
-/// See the [module docs](self) for the guiding rule. The reasoning splits into a handful of
-/// families:
-///
 /// - **Integer to integer** ([`int_to_int`]): only ever widening within the same signedness, or
 ///   unsigned to a *strictly wider* signed type (an equal-width signed type can't hold the
 ///   unsigned type's top half).
@@ -116,7 +96,6 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
     }
 }
 
-/// [`cast_allowed`]'s integer-to-integer case. Only ever called with two integer primitives.
 fn int_to_int(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     let (from_width, to_width) = (
         int_width(from).expect("caller checked `from` is an integer"),
