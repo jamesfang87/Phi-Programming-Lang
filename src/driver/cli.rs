@@ -15,13 +15,6 @@ pub struct Dumps {
     pub llvm: bool,
     pub nameres: bool,
     pub typeck: bool,
-    /// A second flag for the same dump `nameres` controls, kept as its own flag rather than
-    /// folded away: the compiler used to run two resolvers, an AST-level one and an HIR-based
-    /// one, and this flag named the AST-level one's dump specifically. Only one resolver exists
-    /// now (see `crate::nameres`), so both flags print the same thing today, but keeping this
-    /// one around costs nothing and avoids breaking whatever a caller's build scripts already
-    /// pass.
-    pub surface_nameres: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +54,6 @@ impl BuildOptions {
                 llvm: has("--llvm"),
                 nameres: debug,
                 typeck: debug,
-                surface_nameres: debug || has("--surface-nameres"),
             },
             exclude_core_in_emit: has("--no-emit-core"),
         })
@@ -291,21 +283,6 @@ mod tests {
                 llvm: false,
                 nameres: true,
                 typeck: true,
-                surface_nameres: true,
-            }
-        );
-    }
-
-    #[test]
-    fn surface_nameres_dumps_only_the_surface_resolver() {
-        let dumps = opts(&["--surface-nameres"])
-            .expect("--surface-nameres is valid")
-            .dumps;
-        assert_eq!(
-            dumps,
-            Dumps {
-                surface_nameres: true,
-                ..Dumps::default()
             }
         );
     }

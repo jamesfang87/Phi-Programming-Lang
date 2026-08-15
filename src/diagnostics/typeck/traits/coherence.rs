@@ -1,22 +1,16 @@
-use crate::ast::Symbol;
 use crate::ast::interner::Interner;
+use crate::ast::Symbol;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
-use crate::diagnostics::typeck::traits::trait_name;
+use crate::diagnostics::typeck::traits::get_name_of_trait;
 use crate::hir::Hir;
-use crate::typeck::traits::index::ImplHeader;
+use crate::typeck::traits::index::ExtendHeader;
 
-/// Reports a conflict, pointing at the *second* of the two blocks and underlining the first
-/// beneath it.
-///
-/// Which one is "the error" is a real choice, not an arbitrary one: neither block is wrong
-/// on its own, and either could be the one to delete. The later block gets the primary span
-/// because it is the one that introduced the conflict into a program that did not have it.
-pub fn report_conflicting_impls(
+pub fn report_conflicting_extends(
     hir: &Hir,
     cx: DisplayCx<'_>,
-    first: &ImplHeader,
-    second: &ImplHeader,
+    first: &ExtendHeader,
+    second: &ExtendHeader,
 ) {
     let trait_ref = second
         .trait_ref
@@ -27,7 +21,7 @@ pub fn report_conflicting_impls(
         Diagnostic::error(
             format!(
                 "conflicting implementations of trait `{}` for type `{}`",
-                trait_name(hir, trait_ref.def),
+                get_name_of_trait(hir, trait_ref.def),
                 cx.show(second.self_ty)
             ),
             second.span,
@@ -48,8 +42,8 @@ pub fn report_conflicting_impls(
 pub fn report_duplicate_method(
     cx: DisplayCx<'_>,
     name: Symbol,
-    first: &ImplHeader,
-    second: &ImplHeader,
+    first: &ExtendHeader,
+    second: &ExtendHeader,
 ) {
     DiagCtx::emit(
         Diagnostic::error(

@@ -19,14 +19,14 @@ use crate::diagnostics::typeck::expr::{
     report_variant_payload_mismatch,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, Hir, HirId, OwnerNode, Path, Payload, PayloadField, Res, TyDef, Type};
+use crate::hir::{DefId, Hir, HirId, Path, Payload, PayloadField, Res, TyDef, Type};
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
-use crate::typeck::Typeck;
 use crate::typeck::cast;
 use crate::typeck::pat::VariantTys;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::unify::{is_float, is_integer};
+use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
@@ -78,13 +78,6 @@ impl<'hir> Typeck<'hir> {
         self.tcx.unit()
     }
 
-    /// Checks `&operand` and `&mut operand`.
-    ///
-    /// Only `&mut` demands a place: `&` of a temporary borrows something that lives exactly as
-    /// long as the borrow does, which is not yet a mistake this compiler catches (there is no
-    /// borrow checker to enforce the reference doesn't outlive it), but `&mut` of one has nowhere
-    /// to write back to, so it is checked the same way a receiver or an assignment's left side
-    /// is.
     pub(crate) fn check_borrow(
         &mut self,
         mutability: Mutability,
@@ -247,9 +240,7 @@ impl<'hir> Typeck<'hir> {
 
         match path.res {
             Res::Type(Type::Def(TyDef::Struct(def))) => {
-                let OwnerNode::Struct(struct_) = self.hir.def(def) else {
-                    unreachable!("a TyDef::Struct always names a Struct owner");
-                };
+                let struct_ = self.hir.struct_(def);
                 let args: Vec<Ty> = struct_
                     .generics
                     .iter()
@@ -270,7 +261,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Checks an enum variant being built: `.none`, `.circle(1.0)`, `.square { l: 2.0 }`.
     pub(crate) fn check_variant_expr(
         &mut self,
         variant: Ident,
@@ -321,7 +311,6 @@ impl<'hir> Typeck<'hir> {
         self_ty
     }
 
-    /// Checks the field initializers of a record payload against what the variant declares.
     fn check_variant_record(
         &mut self,
         declared: &[(Ident, Ty)],
@@ -360,8 +349,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Checks a payload's expressions and nothing else, for a variant that has already been
-    /// reported on.
     fn check_payload_exprs_only(&mut self, payload: &'hir Payload) {
         match payload {
             Payload::None => {}
@@ -432,10 +419,7 @@ impl<'hir> Typeck<'hir> {
             None => self.tcx.next_ty_var(),
         };
 
-        // Whether any arm's own pattern already failed to check -- an unknown variant, a
-        // mismatched literal, and so on. Exhaustiveness is skipped in that case: a pattern that
-        // does not resolve to a real variant cannot count toward covering one, so asking would
-        // report the same mistake a second time as a phantom "not covered".
+        // Whether any arm's own pattern already failed to check
         let mut pat_failed = false;
 
         for &arm in arms {
@@ -447,9 +431,6 @@ impl<'hir> Typeck<'hir> {
             let pat_ty = self.types.ty(pat);
             pat_failed |= pat_ty.is_some_and(|ty| matches!(self.tcx.kind(ty), TyKind::Error));
 
-            // Bindings from `pat` are in scope for the guard, same as they are for the body: both
-            // reach the pattern's `Node::Pat` through the same `Res::Local`, so checking the
-            // pattern above is all a guard needs to see them.
             if let Some(guard) = guard {
                 let guard_ty = self.ty_of(guard);
                 let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
@@ -464,9 +445,6 @@ impl<'hir> Typeck<'hir> {
             }
         }
 
-        // Every arm's pattern is checked above regardless of whether it turns out to be
-        // reachable; exhaustiveness is a separate question asked once, over the whole set, now
-        // that every arm has had its own chance to report its own mistake first.
         if !pat_failed {
             self.check_match_exhaustive(scrutinee_ty, arms, span);
         }
@@ -512,8 +490,6 @@ impl<'hir> Typeck<'hir> {
         self.tcx.error()
     }
 
-    /// Checks that the enclosing definition returns the same lang item `?` is propagating out of,
-    /// and -- for a `Result` -- that the two agree on the error type.
     fn check_try_return(
         &mut self,
         operand_ty: Ty,
@@ -564,12 +540,7 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Checks `expr as ty`. See [`crate::typeck::cast`] for exactly which conversions this
-    /// allows and why.
-    ///
-    /// The written type is always this expression's type, even when the cast turns out not to be
-    /// allowed -- the same recovery a bad `let` annotation gets in [`Typeck::check_let`] -- so
-    /// that one rejected cast doesn't cascade into a second, unrelated mismatch whatever this
-    /// expression is used in afterwards.
+    /// allows
     pub(crate) fn check_cast(&mut self, expr: HirId, ty: HirId, span: SrcSpan) -> Ty {
         let target_ty = self.lower_ty(ty);
         let operand_ty = self.ty_of(expr);
@@ -590,12 +561,6 @@ impl<'hir> Typeck<'hir> {
         let from = match operand_kind {
             TyKind::Primitive(prim) => prim,
             TyKind::Error => return target_ty,
-            // An as-yet-unconstrained numeric literal (`1 as i64`) behaves exactly like giving
-            // it that suffix directly (`1_i64`): there is no existing, wider type being
-            // narrowed, so fixing its type this way can never lose anything. This only applies
-            // within the literal's own family -- an integer literal can't become a float this
-            // way, since it can never unify with one (see `Unifier::decompose`); it has to be
-            // given a concrete type of its own family first, e.g. `1_i32 as f64`.
             TyKind::Var(TyVar::Int(_)) if is_integer(to) => {
                 let _ = self.unifier.unify(&self.tcx, operand_ty, target_ty);
                 return target_ty;
@@ -652,9 +617,7 @@ impl<'hir> Typeck<'hir> {
 
     pub(crate) fn check_closure(&mut self, def: DefId, expected: Option<Ty>) -> Ty {
         let hir: &'hir Hir = self.hir;
-        let OwnerNode::Closure(closure) = hir.def(def) else {
-            unreachable!("root of a Closure owner is always OwnerNode::Closure");
-        };
+        let closure = hir.closure(def);
 
         // Only a function type of matching arity is a usable hint:
         let hint = expected.and_then(|expected| match self.tcx.kind(expected).clone() {
@@ -685,8 +648,6 @@ impl<'hir> Typeck<'hir> {
             let _ = self.unifier.unify(&self.tcx, ret, ret_var);
         }
 
-        // Recorded before the body is checked, so a `return` or a `?` inside it resolves the
-        // enclosing signature through `owner_ret` the same way it would in a function.
         let temp = self.tcx.mk_fun(param_tys.clone(), Some(ret_var));
         self.types.record_def(def, temp);
 
@@ -695,15 +656,11 @@ impl<'hir> Typeck<'hir> {
             report_closure_body_mismatch(self.cx(), err, closure.span);
         }
 
-        // A closure whose body produces nothing has no return type at all, which is what a
-        // function with no `-> T` lowers to -- so the two are the same `TyKind::Fun`.
         let ret = self.unifier.root(ret_var);
         let ret = (ret != self.tcx.unit()).then_some(ret);
         let sig = self.tcx.mk_fun(param_tys, ret);
         self.types.record_def(def, sig);
 
-        // The closure's nodes live in its arena, so the enclosing function's writeback would
-        // never reach them.
         self.writeback(def);
         sig
     }
@@ -992,15 +949,13 @@ mod tests {
 
     #[test]
     fn a_struct_literal_may_set_a_public_field_from_another_module() {
-        assert!(
-            crate::testing::typeck_src_files(&[
-                "module math; public struct Foo { public count: i32 }",
-                "module app;
+        assert!(crate::testing::typeck_src_files(&[
+            "module math; public struct Foo { public count: i32 }",
+            "module app;
                  import math::Foo;
                  fun f() -> Foo { return Foo { count: 1 }; }",
-            ])
-            .is_empty()
-        );
+        ])
+        .is_empty());
     }
 
     /// More than one private field written in the same literal is each reported on its own, the

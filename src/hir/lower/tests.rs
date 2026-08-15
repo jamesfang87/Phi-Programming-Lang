@@ -4,9 +4,8 @@ use crate::ast::interner::Interner;
 use crate::ast::{Ast, BinaryOp, Ident, ModuleDecl, Mutability, NodeId, Path, UnaryOp, Visibility};
 use crate::hir::ids::{DefId, HirId};
 use crate::hir::{
-    AccessArgs, Arm, Block, Closure, Enum, Expr, ExprKind, Extend, Field, Function, Local,
-    LoopSource, Module, Node, OwnerNode, Param, Pat, PatKind, Payload, Res, Stmt, StmtKind, Struct,
-    Trait, Ty, TyKind, VariantPayload,
+    AccessArgs, ExprKind, Function, Local, LoopSource, Module, OwnerNode, PatKind, Payload, Res,
+    StmtKind, TyKind, VariantPayload,
 };
 use crate::testing::{lower_src, parse_src};
 
@@ -21,10 +20,6 @@ fn text(ident: Ident) -> &'static str {
 // -----------------------------------------------------------------
 // Typed node lookup helpers
 // -----------------------------------------------------------------
-
-fn node_in(hir: &Hir, id: HirId) -> &Node {
-    hir.node(id)
-}
 
 fn find_value(hir: &Hir, m: &Module, name: &str) -> DefId {
     m.items
@@ -50,110 +45,12 @@ fn find_type(hir: &Hir, m: &Module, name: &str) -> DefId {
         .unwrap_or_else(|| panic!("no {name:?} in module's items"))
 }
 
-fn as_function(hir: &Hir, id: DefId) -> &Function {
-    match hir.def(id) {
-        OwnerNode::Function(f) => f,
-        other => panic!("expected a function owner, got {other:?}"),
-    }
-}
-
-fn as_struct(hir: &Hir, id: DefId) -> &Struct {
-    match hir.def(id) {
-        OwnerNode::Struct(s) => s,
-        other => panic!("expected a struct owner, got {other:?}"),
-    }
-}
-
-fn as_enum(hir: &Hir, id: DefId) -> &Enum {
-    match hir.def(id) {
-        OwnerNode::Enum(e) => e,
-        other => panic!("expected an enum owner, got {other:?}"),
-    }
-}
-
-fn as_trait(hir: &Hir, id: DefId) -> &Trait {
-    match hir.def(id) {
-        OwnerNode::Trait(t) => t,
-        other => panic!("expected a trait owner, got {other:?}"),
-    }
-}
-
-fn as_extend(hir: &Hir, id: DefId) -> &Extend {
-    match hir.def(id) {
-        OwnerNode::Extend(e) => e,
-        other => panic!("expected an extend owner, got {other:?}"),
-    }
-}
-
-fn as_closure(hir: &Hir, id: DefId) -> &Closure {
-    match hir.def(id) {
-        OwnerNode::Closure(c) => c,
-        other => panic!("expected a closure owner, got {other:?}"),
-    }
-}
-
-fn block<'h>(hir: &'h Hir, id: HirId) -> &'h Block {
-    match node_in(hir, id) {
-        Node::Block(b) => b,
-        other => panic!("expected a block node, got {other:?}"),
-    }
-}
-
-fn stmt<'h>(hir: &'h Hir, id: HirId) -> &'h Stmt {
-    match node_in(hir, id) {
-        Node::Stmt(s) => s,
-        other => panic!("expected a stmt node, got {other:?}"),
-    }
-}
-
-fn expr<'h>(hir: &'h Hir, id: HirId) -> &'h Expr {
-    match node_in(hir, id) {
-        Node::Expr(e) => e,
-        other => panic!("expected an expr node, got {other:?}"),
-    }
-}
-
-fn pat<'h>(hir: &'h Hir, id: HirId) -> &'h Pat {
-    match node_in(hir, id) {
-        Node::Pat(p) => p,
-        other => panic!("expected a pat node, got {other:?}"),
-    }
-}
-
-fn ty<'h>(hir: &'h Hir, id: HirId) -> &'h Ty {
-    match node_in(hir, id) {
-        Node::Ty(t) => t,
-        other => panic!("expected a ty node, got {other:?}"),
-    }
-}
-
-fn arm<'h>(hir: &'h Hir, id: HirId) -> &'h Arm {
-    match node_in(hir, id) {
-        Node::Arm(a) => a,
-        other => panic!("expected an arm node, got {other:?}"),
-    }
-}
-
-fn field<'h>(hir: &'h Hir, id: HirId) -> &'h Field {
-    match node_in(hir, id) {
-        Node::Field(f) => f,
-        other => panic!("expected a field node, got {other:?}"),
-    }
-}
-
-fn param<'h>(hir: &'h Hir, id: HirId) -> &'h Param {
-    match node_in(hir, id) {
-        Node::Param(p) => p,
-        other => panic!("expected a param node, got {other:?}"),
-    }
-}
-
 /// The sole top-level function in a single-item source, together with its `DefId`.
 fn only_function(hir: &Hir) -> (DefId, &Function) {
     let m = hir.root();
     assert_eq!(m.items.len(), 1);
     let id = m.items[0];
-    (id, as_function(hir, id))
+    (id, hir.function(id))
 }
 
 // -----------------------------------------------------------------
@@ -241,13 +138,13 @@ fn function_is_declared_in_the_module() {
     let hir = lower_src("fun main() {}");
     let m = hir.root();
     let id = find_value(&hir, m, "main");
-    let f = as_function(&hir, id);
+    let f = hir.function(id);
     assert_eq!(text(f.name), "main");
     assert!(matches!(f.visibility, Visibility::Private));
     assert!(f.self_param.is_none());
     assert!(f.params.is_empty());
     assert!(f.ret.is_none());
-    let body = block(&hir, f.block.expect("expected a body"));
+    let body = hir.block(f.block.expect("expected a body"));
     assert!(body.stmts.is_empty());
     assert!(body.expr.is_none());
 }
@@ -257,21 +154,21 @@ fn function_params_and_return_type_are_lowered() {
     let hir = lower_src("fun add(x: i32, y: i32) -> i32 { x + y }");
     let (_, f) = only_function(&hir);
     assert_eq!(f.params.len(), 2);
-    let x = param(&hir, f.params[0]);
+    let x = hir.param(f.params[0]);
     assert_eq!(text(x.name), "x");
-    match &ty(&hir, x.ty).kind {
+    match &hir.ty(x.ty).kind {
         TyKind::Path { path, args } => {
             assert_eq!(text(path.segments[0]), "i32");
             assert!(args.is_empty());
         }
         other => panic!("expected a base type, got {other:?}"),
     }
-    let ret_ty = ty(&hir, f.ret.expect("expected a return type"));
+    let ret_ty = hir.ty(f.ret.expect("expected a return type"));
     assert!(matches!(&ret_ty.kind, TyKind::Path { .. }));
 
-    let body = block(&hir, f.block.expect("expected a body"));
+    let body = hir.block(f.block.expect("expected a body"));
     assert!(body.stmts.is_empty());
-    let tail = expr(&hir, body.expr.expect("expected a tail expression"));
+    let tail = hir.expr(body.expr.expect("expected a tail expression"));
     assert!(matches!(
         tail.kind,
         ExprKind::Binary {
@@ -287,8 +184,8 @@ fn function_params_and_return_type_are_lowered() {
 fn a_cast_expr_lowers_its_operand_and_target_type() {
     let hir = lower_src("fun f(x: i32) -> i64 { x as i64 }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.expect("expected a body"));
-    let tail = expr(&hir, body.expr.expect("expected a tail expression"));
+    let body = hir.block(f.block.expect("expected a body"));
+    let tail = hir.expr(body.expr.expect("expected a tail expression"));
 
     let ExprKind::Cast {
         expr: operand,
@@ -297,8 +194,8 @@ fn a_cast_expr_lowers_its_operand_and_target_type() {
     else {
         panic!("expected a cast expr, got {:?}", tail.kind);
     };
-    assert!(matches!(expr(&hir, operand).kind, ExprKind::Path(_)));
-    match &ty(&hir, cast_ty).kind {
+    assert!(matches!(hir.expr(operand).kind, ExprKind::Path(_)));
+    match &hir.ty(cast_ty).kind {
         TyKind::Path { path, args } => {
             assert_eq!(text(path.segments[0]), "i64");
             assert!(args.is_empty());
@@ -312,10 +209,10 @@ fn struct_has_its_fields_lowered() {
     let hir = lower_src("struct Point { x: i32, y: i32 }");
     let m = hir.root();
     let id = find_type(&hir, m, "Point");
-    let s = as_struct(&hir, id);
+    let s = hir.struct_(id);
     assert_eq!(text(s.name), "Point");
     assert_eq!(s.fields.len(), 2);
-    let x = field(&hir, s.fields[0]);
+    let x = hir.field(s.fields[0]);
     assert_eq!(text(x.name), "x");
 }
 
@@ -324,29 +221,20 @@ fn enum_variants_are_lowered() {
     let hir = lower_src("enum Shape { Circle: f64, Rectangle: { w: f64, h: f64 }, Point }");
     let m = hir.root();
     let id = find_type(&hir, m, "Shape");
-    let e = as_enum(&hir, id);
+    let e = hir.enum_(id);
     assert_eq!(e.variants.len(), 3);
 
-    let circle = match node_in(&hir, e.variants[0]) {
-        Node::Variant(v) => v,
-        other => panic!("expected a variant node, got {other:?}"),
-    };
+    let circle = hir.variant(e.variants[0]);
     assert_eq!(text(circle.name), "Circle");
     assert!(matches!(circle.payload, VariantPayload::Type(_)));
 
-    let rect = match node_in(&hir, e.variants[1]) {
-        Node::Variant(v) => v,
-        other => panic!("expected a variant node, got {other:?}"),
-    };
+    let rect = hir.variant(e.variants[1]);
     match &rect.payload {
         VariantPayload::Record(fields) => assert_eq!(fields.len(), 2),
         other => panic!("expected a record payload, got {other:?}"),
     }
 
-    let point = match node_in(&hir, e.variants[2]) {
-        Node::Variant(v) => v,
-        other => panic!("expected a variant node, got {other:?}"),
-    };
+    let point = hir.variant(e.variants[2]);
     assert!(matches!(point.payload, VariantPayload::Unit));
 }
 
@@ -355,11 +243,11 @@ fn trait_functions_are_lowered_as_independent_owners() {
     let hir = lower_src("trait Shape { fun area(&self) -> f64; }");
     let m = hir.root();
     let id = find_type(&hir, m, "Shape");
-    let t = as_trait(&hir, id);
+    let t = hir.trait_(id);
     assert_eq!(t.functions.len(), 1);
     let method_id = t.functions[0];
     assert_ne!(method_id, id);
-    let f = as_function(&hir, method_id);
+    let f = hir.function(method_id);
     assert_eq!(text(f.name), "area");
     assert!(f.self_param.is_some());
     // The trait's own function declares no body.
@@ -375,7 +263,7 @@ fn extend_methods_and_generics_are_lowered() {
     // `extend` blocks aren't named, so they're only reachable through the module's item list.
     assert_eq!(m.items.len(), 1);
     let id = m.items[0];
-    let e = as_extend(&hir, id);
+    let e = hir.extend(id);
     assert_eq!(e.extend_generics.len(), 1);
     assert_eq!(e.adt_generics.len(), 1);
     assert_eq!(e.trait_generics.len(), 1);
@@ -390,7 +278,7 @@ fn extend_methods_and_generics_are_lowered() {
         "Container"
     );
     assert_eq!(e.methods.len(), 1);
-    let method = as_function(&hir, e.methods[0]);
+    let method = hir.function(e.methods[0]);
     assert_eq!(text(method.name), "get");
 }
 
@@ -417,11 +305,11 @@ fn a_traits_generics_are_lowered_before_its_functions() {
     let hir = lower_src("trait C<T> { fun get(self) -> T; }");
     let m = hir.root();
     let id = find_type(&hir, m, "C");
-    let t = as_trait(&hir, id);
+    let t = hir.trait_(id);
     assert_eq!(t.generics.len(), 1);
-    assert!(matches!(node_in(&hir, t.generics[0]), Node::Generic(_)));
+    hir.generic(t.generics[0]);
     assert_eq!(t.functions.len(), 1);
-    let f = as_function(&hir, t.functions[0]);
+    let f = hir.function(t.functions[0]);
     assert_eq!(text(f.name), "get");
 }
 
@@ -429,21 +317,12 @@ fn a_traits_generics_are_lowered_before_its_functions() {
 #[test]
 fn an_extend_blocks_generics_are_lowered_before_its_methods() {
     let hir = lower_src("struct S {} extend<T> S { fun get(self) -> T {} }");
-    let m = hir.root();
-    let extend_id = m
-        .items
-        .iter()
-        .copied()
-        .find(|&id| matches!(hir.def(id), OwnerNode::Extend(_)))
-        .expect("no extend block in the module's items");
-    let e = as_extend(&hir, extend_id);
+    let extend_id = crate::testing::first_extend(&hir);
+    let e = hir.extend(extend_id);
     assert_eq!(e.extend_generics.len(), 1);
-    assert!(matches!(
-        node_in(&hir, e.extend_generics[0]),
-        Node::Generic(_)
-    ));
+    hir.generic(e.extend_generics[0]);
     assert_eq!(e.methods.len(), 1);
-    let method = as_function(&hir, e.methods[0]);
+    let method = hir.function(e.methods[0]);
     assert_eq!(text(method.name), "get");
 }
 
@@ -452,12 +331,9 @@ fn generic_params_carry_their_bounds() {
     let hir = lower_src("struct Wrapper<T: Clone> { value: T }");
     let m = hir.root();
     let id = find_type(&hir, m, "Wrapper");
-    let s = as_struct(&hir, id);
+    let s = hir.struct_(id);
     assert_eq!(s.generics.len(), 1);
-    let g = match node_in(&hir, s.generics[0]) {
-        Node::Generic(g) => g,
-        other => panic!("expected a generic node, got {other:?}"),
-    };
+    let g = hir.generic(s.generics[0]);
     assert_eq!(text(g.name), "T");
     assert_eq!(g.bounds.len(), 1);
     assert_eq!(text(g.bounds[0].segments[0]), "Clone");
@@ -468,17 +344,11 @@ fn import_glob_and_alias_are_lowered_into_the_module() {
     let hir = lower_src("import math::vector as mv; import math::*;");
     let m = hir.root();
     assert_eq!(m.imports.len(), 2);
-    let aliased = match node_in(&hir, m.imports[0]) {
-        Node::Import(i) => i,
-        other => panic!("expected an import node, got {other:?}"),
-    };
+    let aliased = hir.import(m.imports[0]);
     assert!(!aliased.glob);
     assert_eq!(text(aliased.alias.expect("expected an alias")), "mv");
 
-    let glob = match node_in(&hir, m.imports[1]) {
-        Node::Import(i) => i,
-        other => panic!("expected an import node, got {other:?}"),
-    };
+    let glob = hir.import(m.imports[1]);
     assert!(glob.glob);
     assert!(glob.alias.is_none());
 }
@@ -509,7 +379,7 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
 
     let ast = Ast::new(vec![unit]);
     let surface_results = crate::nameres::resolve(&ast);
-    let hir = lower_unit(&ast, &surface_results);
+    let hir = lower_program(&ast, &surface_results);
     let root = hir.root();
     // The root's only item is the synthesized `math`, which in turn holds `math::vector`.
     assert_eq!(root.items.len(), 1);
@@ -543,7 +413,7 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
     };
     assert_eq!(vector_module.items.len(), 1);
     let helper_id = vector_module.items[0];
-    assert_eq!(text(as_function(&hir, helper_id).name), "helper");
+    assert_eq!(text(hir.function(helper_id).name), "helper");
 
     // Synthesized ancestors are parented like declared ones, so a def in the innermost
     // module is walkable all the way back to the root.
@@ -580,15 +450,10 @@ fn a_methods_parent_is_its_trait_or_extend_block() {
     );
     let root = hir.root();
     let trait_id = find_type(&hir, root, "T");
-    let extend_id = root
-        .items
-        .iter()
-        .copied()
-        .find(|&id| matches!(hir.def(id), OwnerNode::Extend(_)))
-        .expect("no extend block in the module's items");
+    let extend_id = crate::testing::first_extend(&hir);
 
-    let t_id = as_trait(&hir, trait_id).functions[0];
-    let m_id = as_extend(&hir, extend_id).methods[0];
+    let t_id = hir.trait_(trait_id).functions[0];
+    let m_id = hir.extend(extend_id).methods[0];
 
     // A method is parented to the item that declares it, not to the module -- this allows
     // `Self` to be inferred from the method's id alone.
@@ -603,11 +468,11 @@ fn a_methods_parent_is_its_trait_or_extend_block() {
 fn a_closures_parent_is_the_owner_it_appears_in() {
     let hir = lower_src("fun f() { let g = || 1; }");
     let (f_id, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let StmtKind::Let { init, .. } = &stmt(&hir, body.stmts[0]).kind else {
+    let body = hir.block(f.block.unwrap());
+    let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
         panic!("expected a let statement")
     };
-    let ExprKind::Closure(closure_id) = &expr(&hir, *init).kind else {
+    let ExprKind::Closure(closure_id) = &hir.expr(*init).kind else {
         panic!("expected a closure expr")
     };
 
@@ -627,28 +492,28 @@ fn lowers_compound_types() {
     let (_, f) = only_function(&hir);
     assert_eq!(f.params.len(), 5);
 
-    let a = ty(&hir, param(&hir, f.params[0]).ty);
+    let a = hir.ty(hir.param(f.params[0]).ty);
     match &a.kind {
         TyKind::Ref { mutability, .. } => assert_eq!(*mutability, Mutability::Mutable),
         other => panic!("expected a ref type, got {other:?}"),
     }
 
-    let b = ty(&hir, param(&hir, f.params[1]).ty);
+    let b = hir.ty(hir.param(f.params[1]).ty);
     assert!(matches!(&b.kind, TyKind::Any(_)));
 
-    let c = ty(&hir, param(&hir, f.params[2]).ty);
+    let c = hir.ty(hir.param(f.params[2]).ty);
     match &c.kind {
         TyKind::Tuple(elems) => assert_eq!(elems.len(), 2),
         other => panic!("expected a tuple type, got {other:?}"),
     }
 
-    let d = ty(&hir, param(&hir, f.params[3]).ty);
+    let d = hir.ty(hir.param(f.params[3]).ty);
     match &d.kind {
         TyKind::Array { len, .. } => assert!(len.is_some()),
         other => panic!("expected an array type, got {other:?}"),
     }
 
-    let e = ty(&hir, param(&hir, f.params[4]).ty);
+    let e = hir.ty(hir.param(f.params[4]).ty);
     match &e.kind {
         TyKind::Function { params, ret } => {
             assert_eq!(params.len(), 1);
@@ -667,13 +532,13 @@ fn lowers_ctor_tuple_and_range_exprs() {
     let hir =
         lower_src("fun f() { let p = Point { x: 1, y: 2 }; let t = (1, 2, 3); let r = 0..5; }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 3);
 
-    let StmtKind::Let { init: p_init, .. } = &stmt(&hir, body.stmts[0]).kind else {
+    let StmtKind::Let { init: p_init, .. } = &hir.stmt(body.stmts[0]).kind else {
         panic!("expected a let statement")
     };
-    match &expr(&hir, *p_init).kind {
+    match &hir.expr(*p_init).kind {
         ExprKind::Ctor { path, payload } => {
             let path = path.as_ref().expect("`Point { .. }` specifies its type");
             assert_eq!(text(path.segments[0]), "Point");
@@ -683,18 +548,18 @@ fn lowers_ctor_tuple_and_range_exprs() {
         other => panic!("expected a ctor expr, got {other:?}"),
     }
 
-    let StmtKind::Let { init: t_init, .. } = &stmt(&hir, body.stmts[1]).kind else {
+    let StmtKind::Let { init: t_init, .. } = &hir.stmt(body.stmts[1]).kind else {
         panic!("expected a let statement")
     };
-    match &expr(&hir, *t_init).kind {
+    match &hir.expr(*t_init).kind {
         ExprKind::Tuple(elems) => assert_eq!(elems.len(), 3),
         other => panic!("expected a tuple expr, got {other:?}"),
     }
 
-    let StmtKind::Let { init: r_init, .. } = &stmt(&hir, body.stmts[2]).kind else {
+    let StmtKind::Let { init: r_init, .. } = &hir.stmt(body.stmts[2]).kind else {
         panic!("expected a let statement")
     };
-    match &expr(&hir, *r_init).kind {
+    match &hir.expr(*r_init).kind {
         ExprKind::Range {
             lo, hi, inclusive, ..
         } => {
@@ -712,15 +577,15 @@ fn lowers_access_and_index_exprs() {
     // isn't known until typeck -- so they differ only in their `AccessArgs`.
     let hir = lower_src("fun f() { a.b.c(1)[0] }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let tail = expr(&hir, body.expr.unwrap());
+    let body = hir.block(f.block.unwrap());
+    let tail = hir.expr(body.expr.unwrap());
     match &tail.kind {
-        ExprKind::Index { base, .. } => match &expr(&hir, *base).kind {
+        ExprKind::Index { base, .. } => match &hir.expr(*base).kind {
             ExprKind::Access { base, member, args } => {
                 assert_eq!(text(*member), "c");
                 assert!(matches!(args, AccessArgs::Call(args) if args.len() == 1));
                 assert!(matches!(
-                    &expr(&hir, *base).kind,
+                    &hir.expr(*base).kind,
                     ExprKind::Access {
                         args: AccessArgs::None,
                         ..
@@ -737,34 +602,34 @@ fn lowers_access_and_index_exprs() {
 fn lowers_if_and_match_exprs() {
     let hir = lower_src("fun f() { if x { 1 } else { 2 }; match x { .circle(r) => 1, _ => 0 } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
 
-    let StmtKind::Expr(if_id) = stmt(&hir, body.stmts[0]).kind else {
+    let StmtKind::Expr(if_id) = hir.stmt(body.stmts[0]).kind else {
         panic!("expected an expr statement")
     };
-    match &expr(&hir, if_id).kind {
+    match &hir.expr(if_id).kind {
         ExprKind::If { else_block, .. } => assert!(else_block.is_some()),
         other => panic!("expected an if expr, got {other:?}"),
     }
 
-    let tail = expr(&hir, body.expr.unwrap());
+    let tail = hir.expr(body.expr.unwrap());
     match &tail.kind {
         ExprKind::Match { arms, .. } => {
             assert_eq!(arms.len(), 2);
-            let first = arm(&hir, arms[0]);
-            match &pat(&hir, first.pat).kind {
+            let first = hir.arm(arms[0]);
+            match &hir.pat(first.pat).kind {
                 PatKind::Variant { variant, payload } => {
                     assert_eq!(text(*variant), "circle");
                     let Payload::Single(inner) = payload else {
                         panic!("expected a single payload, got {payload:?}")
                     };
-                    assert!(matches!(pat(&hir, *inner).kind, PatKind::Binding { .. }));
+                    assert!(matches!(hir.pat(*inner).kind, PatKind::Binding { .. }));
                 }
                 other => panic!("expected a variant pattern, got {other:?}"),
             }
-            let second = arm(&hir, arms[1]);
-            assert!(matches!(pat(&hir, second.pat).kind, PatKind::Wildcard));
+            let second = hir.arm(arms[1]);
+            assert!(matches!(hir.pat(second.pat).kind, PatKind::Wildcard));
         }
         other => panic!("expected a match expr, got {other:?}"),
     }
@@ -777,8 +642,8 @@ fn lowers_if_and_match_exprs() {
 /// The `let` initializer of the sole statement in `src`'s only function.
 fn only_init(hir: &Hir) -> HirId {
     let (_, f) = only_function(hir);
-    let body = block(hir, f.block.unwrap());
-    let StmtKind::Let { init, .. } = &stmt(hir, body.stmts[0]).kind else {
+    let body = hir.block(f.block.unwrap());
+    let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
         panic!("expected a let statement")
     };
     *init
@@ -788,7 +653,7 @@ fn only_init(hir: &Hir) -> HirId {
 fn payload_less_variant_lowers_with_no_payload() {
     let hir = lower_src("fun f() { let x = .none; }");
     let init = only_init(&hir);
-    match &expr(&hir, init).kind {
+    match &hir.expr(init).kind {
         ExprKind::Variant { variant, payload } => {
             assert_eq!(text(*variant), "none");
             assert!(matches!(payload, Payload::None));
@@ -803,13 +668,13 @@ fn payload_less_variant_lowers_with_no_payload() {
 fn tuple_payload_lowers_as_one_value() {
     let hir = lower_src("fun f() { let x = .parallelogram((1.0, 2.0)); }");
     let init = only_init(&hir);
-    match &expr(&hir, init).kind {
+    match &hir.expr(init).kind {
         ExprKind::Variant { variant, payload } => {
             assert_eq!(text(*variant), "parallelogram");
             let Payload::Single(inner) = payload else {
                 panic!("expected a single payload, got {payload:?}")
             };
-            match &expr(&hir, *inner).kind {
+            match &hir.expr(*inner).kind {
                 ExprKind::Tuple(elems) => assert_eq!(elems.len(), 2),
                 other => panic!("expected a tuple expr, got {other:?}"),
             }
@@ -822,7 +687,7 @@ fn tuple_payload_lowers_as_one_value() {
 fn record_payload_keeps_its_field_names() {
     let hir = lower_src("fun f() { let x = .square { l: 4.0 }; }");
     let init = only_init(&hir);
-    match &expr(&hir, init).kind {
+    match &hir.expr(init).kind {
         ExprKind::Variant { variant, payload } => {
             assert_eq!(text(*variant), "square");
             let Payload::Record(fields) = payload else {
@@ -831,7 +696,7 @@ fn record_payload_keeps_its_field_names() {
             assert_eq!(fields.len(), 1);
             assert_eq!(text(fields[0].name), "l");
             assert!(matches!(
-                expr(&hir, fields[0].value).kind,
+                hir.expr(fields[0].value).kind,
                 ExprKind::Literal(_)
             ));
         }
@@ -844,13 +709,13 @@ fn record_payload_keeps_its_field_names() {
 fn record_payload_field_shorthand_is_desugared() {
     let hir = lower_src("fun f() { let x = .square { l }; }");
     let init = only_init(&hir);
-    match &expr(&hir, init).kind {
+    match &hir.expr(init).kind {
         ExprKind::Variant { payload, .. } => {
             let Payload::Record(fields) = payload else {
                 panic!("expected a record payload, got {payload:?}")
             };
             assert_eq!(text(fields[0].name), "l");
-            match &expr(&hir, fields[0].value).kind {
+            match &hir.expr(fields[0].value).kind {
                 ExprKind::Path(path) => assert_eq!(text(path.segments[0]), "l"),
                 other => panic!("expected the shorthand to become a path, got {other:?}"),
             }
@@ -864,18 +729,18 @@ fn record_payload_field_shorthand_is_desugared() {
 fn record_pattern_field_shorthand_is_desugared() {
     let hir = lower_src("fun f() { match x { .square { l } => l, _ => 0 } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let ExprKind::Match { arms, .. } = &expr(&hir, body.expr.unwrap()).kind else {
+    let body = hir.block(f.block.unwrap());
+    let ExprKind::Match { arms, .. } = &hir.expr(body.expr.unwrap()).kind else {
         panic!("expected a match expr")
     };
-    match &pat(&hir, arm(&hir, arms[0]).pat).kind {
+    match &hir.pat(hir.arm(arms[0]).pat).kind {
         PatKind::Variant { variant, payload } => {
             assert_eq!(text(*variant), "square");
             let Payload::Record(fields) = payload else {
                 panic!("expected a record payload, got {payload:?}")
             };
             assert_eq!(text(fields[0].name), "l");
-            match &pat(&hir, fields[0].value).kind {
+            match &hir.pat(fields[0].value).kind {
                 PatKind::Binding { name, .. } => assert_eq!(text(*name), "l"),
                 other => panic!("expected the shorthand to become a binding, got {other:?}"),
             }
@@ -894,13 +759,13 @@ fn record_pattern_field_shorthand_is_desugared() {
 fn record_pattern_shorthand_binds_reachable_in_the_arm_body() {
     let hir = lower_src("fun f() { match x { .rect { w, h } => w, _ => 0 } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let ExprKind::Match { arms, .. } = &expr(&hir, body.expr.unwrap()).kind else {
+    let body = hir.block(f.block.unwrap());
+    let ExprKind::Match { arms, .. } = &hir.expr(body.expr.unwrap()).kind else {
         panic!("expected a match expr")
     };
-    let matched_arm = arm(&hir, arms[0]);
+    let matched_arm = hir.arm(arms[0]);
 
-    let PatKind::Variant { payload, .. } = &pat(&hir, matched_arm.pat).kind else {
+    let PatKind::Variant { payload, .. } = &hir.pat(matched_arm.pat).kind else {
         panic!("expected a variant pattern")
     };
     let Payload::Record(fields) = payload else {
@@ -912,9 +777,9 @@ fn record_pattern_shorthand_binds_reachable_in_the_arm_body() {
         .expect("fixture shorthand-binds `w`")
         .value;
 
-    let arm_body = block(&hir, matched_arm.block);
+    let arm_body = hir.block(matched_arm.block);
     let tail = arm_body.expr.expect("arm body has a tail expression");
-    match &expr(&hir, tail).kind {
+    match &hir.expr(tail).kind {
         ExprKind::Path(path) => {
             assert_eq!(text(path.segments[0]), "w");
             assert_eq!(
@@ -936,16 +801,16 @@ fn record_expr_shorthand_resolves_the_name_it_names() {
     let (_, f) = only_function(&hir);
     let w_param = f.params[0];
 
-    let body = block(&hir, f.block.unwrap());
-    let StmtKind::Let { init, .. } = &stmt(&hir, body.stmts[0]).kind else {
+    let body = hir.block(f.block.unwrap());
+    let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
         panic!("expected a let statement")
     };
-    match &expr(&hir, *init).kind {
+    match &hir.expr(*init).kind {
         ExprKind::Variant { payload, .. } => {
             let Payload::Record(fields) = payload else {
                 panic!("expected a record payload, got {payload:?}")
             };
-            match &expr(&hir, fields[0].value).kind {
+            match &hir.expr(fields[0].value).kind {
                 ExprKind::Path(path) => {
                     assert_eq!(text(path.segments[0]), "w");
                     assert_eq!(
@@ -966,7 +831,7 @@ fn record_expr_shorthand_resolves_the_name_it_names() {
 fn elided_struct_literal_names_no_type() {
     let hir = lower_src("fun f() { let x = .{ l: 4.0, w: 6.0 }; }");
     let init = only_init(&hir);
-    match &expr(&hir, init).kind {
+    match &hir.expr(init).kind {
         ExprKind::Ctor { path, payload } => {
             assert!(path.is_none(), "`.{{ .. }}` names no type");
             assert_eq!(payload.len(), 2);
@@ -980,23 +845,23 @@ fn elided_struct_literal_names_no_type() {
 fn closure_is_lowered_as_its_own_owner() {
     let hir = lower_src("fun f() { let add = |x: i32, y: i32| -> i32 { x + y }; }");
     let (id, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let StmtKind::Let { init, .. } = &stmt(&hir, body.stmts[0]).kind else {
+    let body = hir.block(f.block.unwrap());
+    let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
         panic!("expected a let statement")
     };
-    let closure_id = match &expr(&hir, *init).kind {
+    let closure_id = match &hir.expr(*init).kind {
         ExprKind::Closure(closure_id) => *closure_id,
         other => panic!("expected a closure expr, got {other:?}"),
     };
     assert_ne!(closure_id, id);
-    let c = as_closure(&hir, closure_id);
+    let c = hir.closure(closure_id);
     assert_eq!(c.params.len(), 2);
     assert!(c.ret.is_some());
     // A closure owns a block directly. The body here was already written as `{ x + y }`, so it
     // lowers to that block without acquiring a redundant wrapper, and the addition is its tail.
-    let closure_block = block(&hir, c.block);
+    let closure_block = hir.block(c.block);
     assert!(matches!(
-        expr(&hir, closure_block.expr.unwrap()).kind,
+        hir.expr(closure_block.expr.unwrap()).kind,
         ExprKind::Binary { .. }
     ));
 }
@@ -1005,14 +870,14 @@ fn closure_is_lowered_as_its_own_owner() {
 fn block_tail_expression_is_not_a_statement() {
     let hir = lower_src("fun f() { let x = 1; x }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
     assert!(matches!(
-        stmt(&hir, body.stmts[0]).kind,
+        hir.stmt(body.stmts[0]).kind,
         StmtKind::Let { .. }
     ));
     assert!(matches!(
-        expr(&hir, body.expr.unwrap()).kind,
+        hir.expr(body.expr.unwrap()).kind,
         ExprKind::Path(_)
     ));
 }
@@ -1023,13 +888,13 @@ fn block_tail_expression_is_not_a_statement() {
 fn a_trailing_semicolon_discards_the_block_value() {
     let hir = lower_src("fun f() { g() }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert!(body.stmts.is_empty());
     assert!(body.expr.is_some());
 
     let hir = lower_src("fun f() { g(); }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
     assert!(body.expr.is_none());
 }
@@ -1040,16 +905,16 @@ fn a_trailing_semicolon_discards_the_block_value() {
 fn a_block_bodied_expression_is_a_tail_only_without_a_semicolon() {
     let hir = lower_src("fun f() { if c { 1 } else { 2 } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert!(body.stmts.is_empty());
     assert!(matches!(
-        expr(&hir, body.expr.unwrap()).kind,
+        hir.expr(body.expr.unwrap()).kind,
         ExprKind::If { .. }
     ));
 
     let hir = lower_src("fun f() { if c { 1 } else { 2 }; }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
     assert!(body.expr.is_none());
 }
@@ -1062,35 +927,35 @@ fn a_block_bodied_expression_is_a_tail_only_without_a_semicolon() {
 fn lowers_break_continue_return_defer_stmts() {
     let hir = lower_src("fun f() { while true { break; continue; } return 1; defer cleanup(); }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 3);
     assert!(matches!(
-        stmt(&hir, body.stmts[1]).kind,
+        hir.stmt(body.stmts[1]).kind,
         StmtKind::Return(Some(_))
     ));
-    assert!(matches!(stmt(&hir, body.stmts[2]).kind, StmtKind::Defer(_)));
+    assert!(matches!(hir.stmt(body.stmts[2]).kind, StmtKind::Defer(_)));
 }
 
 #[test]
 fn lowers_with_stmt_lends() {
     let hir = lower_src("fun f() { with x = &a, y = &mut b { foo(); } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    match &stmt(&hir, body.stmts[0]).kind {
+    let body = hir.block(f.block.unwrap());
+    match &hir.stmt(body.stmts[0]).kind {
         StmtKind::With {
             lends,
             block: with_block,
         } => {
             assert_eq!(lends.len(), 2);
             assert!(matches!(
-                expr(&hir, lends[0].init).kind,
+                hir.expr(lends[0].init).kind,
                 ExprKind::Borrow {
                     mutability: Mutability::Immutable,
                     ..
                 }
             ));
             assert!(matches!(
-                expr(&hir, lends[1].init).kind,
+                hir.expr(lends[1].init).kind,
                 ExprKind::Borrow {
                     mutability: Mutability::Mutable,
                     ..
@@ -1098,7 +963,7 @@ fn lowers_with_stmt_lends() {
             ));
             // `foo();` was written with a `;`, so it stays a statement and the block has no
             // value (see `lower_block`).
-            let with_body = block(&hir, *with_block);
+            let with_body = hir.block(*with_block);
             assert_eq!(with_body.stmts.len(), 1);
             assert!(with_body.expr.is_none());
         }
@@ -1115,38 +980,38 @@ fn while_loop_desugars_to_loop_with_negated_guard() {
     // `while cond { body }` -> `loop { if !cond { break; } body... }` (see `lower_while`).
     let hir = lower_src("fun f() { while x < 5 { foo(); } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let StmtKind::Expr(loop_expr_id) = stmt(&hir, body.stmts[0]).kind else {
+    let body = hir.block(f.block.unwrap());
+    let StmtKind::Expr(loop_expr_id) = hir.stmt(body.stmts[0]).kind else {
         panic!("expected an expr statement wrapping the loop")
     };
-    let (source, loop_body_id) = match &expr(&hir, loop_expr_id).kind {
+    let (source, loop_body_id) = match &hir.expr(loop_expr_id).kind {
         ExprKind::Loop { source, block } => (source, *block),
         other => panic!("expected a loop expr, got {other:?}"),
     };
     assert!(matches!(source, LoopSource::While));
 
-    let loop_body = block(&hir, loop_body_id);
+    let loop_body = hir.block(loop_body_id);
     // Guard statement, plus the original body's one statement.
     assert_eq!(loop_body.stmts.len(), 2);
 
-    let StmtKind::Expr(guard_id) = stmt(&hir, loop_body.stmts[0]).kind else {
+    let StmtKind::Expr(guard_id) = hir.stmt(loop_body.stmts[0]).kind else {
         panic!("expected the guard to be an expr statement")
     };
-    match &expr(&hir, guard_id).kind {
+    match &hir.expr(guard_id).kind {
         ExprKind::If {
             cond, then_block, ..
         } => {
             assert!(matches!(
-                expr(&hir, *cond).kind,
+                hir.expr(*cond).kind,
                 ExprKind::Unary {
                     op: UnaryOp::Not,
                     ..
                 }
             ));
-            let then_block = block(&hir, *then_block);
+            let then_block = hir.block(*then_block);
             assert_eq!(then_block.stmts.len(), 1);
             assert!(matches!(
-                stmt(&hir, then_block.stmts[0]).kind,
+                hir.stmt(then_block.stmts[0]).kind,
                 StmtKind::Break
             ));
         }
@@ -1154,7 +1019,7 @@ fn while_loop_desugars_to_loop_with_negated_guard() {
     }
 
     assert!(matches!(
-        stmt(&hir, loop_body.stmts[1]).kind,
+        hir.stmt(loop_body.stmts[1]).kind,
         StmtKind::Expr(_)
     ));
 }
@@ -1164,14 +1029,14 @@ fn if_let_desugars_to_a_match() {
     // `if let pat = e { a } else { b }` -> `match e { pat => { a }, _ => { b } }`.
     let hir = lower_src("fun f() -> i32 { if let .some(x) = o { x } else { 0 } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    match &expr(&hir, body.expr.unwrap()).kind {
+    let body = hir.block(f.block.unwrap());
+    match &hir.expr(body.expr.unwrap()).kind {
         ExprKind::Match { arms, .. } => {
             assert_eq!(arms.len(), 2);
-            let first = arm(&hir, arms[0]);
-            assert!(matches!(pat(&hir, first.pat).kind, PatKind::Variant { .. }));
-            let second = arm(&hir, arms[1]);
-            assert!(matches!(pat(&hir, second.pat).kind, PatKind::Wildcard));
+            let first = hir.arm(arms[0]);
+            assert!(matches!(hir.pat(first.pat).kind, PatKind::Variant { .. }));
+            let second = hir.arm(arms[1]);
+            assert!(matches!(hir.pat(second.pat).kind, PatKind::Wildcard));
         }
         other => panic!("expected a match expr, got {other:?}"),
     }
@@ -1184,19 +1049,19 @@ fn if_let_desugars_to_a_match() {
 fn an_expression_bodied_arm_is_wrapped_in_a_block() {
     let hir = lower_src("fun f() { match o { .some(x) => 1, _ => 2 } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let ExprKind::Match { arms, .. } = &expr(&hir, body.expr.unwrap()).kind else {
+    let body = hir.block(f.block.unwrap());
+    let ExprKind::Match { arms, .. } = &hir.expr(body.expr.unwrap()).kind else {
         panic!("expected a match expr")
     };
 
-    let first = arm(&hir, arms[0]);
-    let arm_block = block(&hir, first.block);
+    let first = hir.arm(arms[0]);
+    let arm_block = hir.block(first.block);
     assert!(
         arm_block.stmts.is_empty(),
         "a wrapped expression body has no statements"
     );
     assert!(matches!(
-        expr(&hir, arm_block.expr.expect("the expression is the tail")).kind,
+        hir.expr(arm_block.expr.expect("the expression is the tail")).kind,
         ExprKind::Literal(_)
     ));
 }
@@ -1206,23 +1071,20 @@ fn an_expression_bodied_arm_is_wrapped_in_a_block() {
 fn an_expression_bodied_closure_is_wrapped_in_a_block() {
     let hir = lower_src("fun f() { let g = |x: i32| -> i32 x; }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let StmtKind::Let { init, .. } = &stmt(&hir, body.stmts[0]).kind else {
+    let body = hir.block(f.block.unwrap());
+    let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
         panic!("expected a let statement")
     };
-    let ExprKind::Closure(closure_id) = &expr(&hir, *init).kind else {
+    let ExprKind::Closure(closure_id) = &hir.expr(*init).kind else {
         panic!("expected a closure expr")
     };
 
-    let c = as_closure(&hir, *closure_id);
-    let closure_block = block(&hir, c.block);
+    let c = hir.closure(*closure_id);
+    let closure_block = hir.block(c.block);
     assert!(closure_block.stmts.is_empty());
     assert!(matches!(
-        expr(
-            &hir,
-            closure_block.expr.expect("the expression is the tail")
-        )
-        .kind,
+        hir.expr(closure_block.expr.expect("the expression is the tail"))
+            .kind,
         ExprKind::Path(_)
     ));
 }
@@ -1233,25 +1095,25 @@ fn an_expression_bodied_closure_is_wrapped_in_a_block() {
 fn else_if_lowers_to_a_block_holding_the_nested_if() {
     let hir = lower_src("fun f() { if a { 1 } else if b { 2 } else { 3 } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
 
-    let ExprKind::If { else_block, .. } = &expr(&hir, body.expr.unwrap()).kind else {
+    let ExprKind::If { else_block, .. } = &hir.expr(body.expr.unwrap()).kind else {
         panic!("expected an if expr")
     };
-    let outer_else = block(&hir, else_block.expect("the chain has an else"));
+    let outer_else = hir.block(else_block.expect("the chain has an else"));
 
     // The `else if` is the wrapping block's tail value, not a statement.
     assert!(outer_else.stmts.is_empty());
     let ExprKind::If { else_block, .. } =
-        &expr(&hir, outer_else.expr.expect("the nested if is the tail")).kind
+        &hir.expr(outer_else.expr.expect("the nested if is the tail")).kind
     else {
         panic!("expected the else to hold a nested if expr")
     };
 
     // The final `else { 3 }` was already a block, so it is not wrapped a second time.
-    let inner_else = block(&hir, else_block.expect("the nested if has an else"));
+    let inner_else = hir.block(else_block.expect("the nested if has an else"));
     assert!(matches!(
-        expr(&hir, inner_else.expr.expect("`3` is the tail")).kind,
+        hir.expr(inner_else.expr.expect("`3` is the tail")).kind,
         ExprKind::Literal(_)
     ));
 }
@@ -1261,13 +1123,13 @@ fn else_if_lowers_to_a_block_holding_the_nested_if() {
 fn if_let_without_else_still_gets_a_wildcard_arm() {
     let hir = lower_src("fun f() { if let .some(x) = o { foo(x); } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    match &expr(&hir, body.expr.unwrap()).kind {
+    let body = hir.block(f.block.unwrap());
+    match &hir.expr(body.expr.unwrap()).kind {
         ExprKind::Match { arms, .. } => {
             assert_eq!(arms.len(), 2);
-            let second = arm(&hir, arms[1]);
-            assert!(matches!(pat(&hir, second.pat).kind, PatKind::Wildcard));
-            let b = block(&hir, second.block);
+            let second = hir.arm(arms[1]);
+            assert!(matches!(hir.pat(second.pat).kind, PatKind::Wildcard));
+            let b = hir.block(second.block);
             assert!(b.stmts.is_empty() && b.expr.is_none());
         }
         other => panic!("expected a match expr, got {other:?}"),
@@ -1279,11 +1141,11 @@ fn while_let_desugars_to_a_loop_around_a_match() {
     // `while let pat = e { body }` -> `loop { match e { pat => { body }, _ => break } }`.
     let hir = lower_src("fun f() { while let .some(x) = next() { foo(x); } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
-    let StmtKind::Expr(loop_expr_id) = stmt(&hir, body.stmts[0]).kind else {
+    let body = hir.block(f.block.unwrap());
+    let StmtKind::Expr(loop_expr_id) = hir.stmt(body.stmts[0]).kind else {
         panic!("expected an expr statement wrapping the loop")
     };
-    let (source, loop_body_id) = match &expr(&hir, loop_expr_id).kind {
+    let (source, loop_body_id) = match &hir.expr(loop_expr_id).kind {
         ExprKind::Loop { source, block } => (source, *block),
         other => panic!("expected a loop expr, got {other:?}"),
     };
@@ -1291,22 +1153,22 @@ fn while_let_desugars_to_a_loop_around_a_match() {
 
     // Unlike `while`, the body can't be spliced into the loop -- it only runs on a match -- so
     // the loop holds exactly the one match statement.
-    let loop_body = block(&hir, loop_body_id);
+    let loop_body = hir.block(loop_body_id);
     assert_eq!(loop_body.stmts.len(), 1);
-    let StmtKind::Expr(match_id) = stmt(&hir, loop_body.stmts[0]).kind else {
+    let StmtKind::Expr(match_id) = hir.stmt(loop_body.stmts[0]).kind else {
         panic!("expected the match to be an expr statement")
     };
-    match &expr(&hir, match_id).kind {
+    match &hir.expr(match_id).kind {
         ExprKind::Match { arms, .. } => {
             assert_eq!(arms.len(), 2);
             assert!(matches!(
-                pat(&hir, arm(&hir, arms[0]).pat).kind,
+                hir.pat(hir.arm(arms[0]).pat).kind,
                 PatKind::Variant { .. }
             ));
-            let break_arm = arm(&hir, arms[1]);
-            assert!(matches!(pat(&hir, break_arm.pat).kind, PatKind::Wildcard));
-            let b = block(&hir, break_arm.block);
-            assert!(matches!(stmt(&hir, b.stmts[0]).kind, StmtKind::Break));
+            let break_arm = hir.arm(arms[1]);
+            assert!(matches!(hir.pat(break_arm.pat).kind, PatKind::Wildcard));
+            let b = hir.block(break_arm.block);
+            assert!(matches!(hir.stmt(b.stmts[0]).kind, StmtKind::Break));
         }
         other => panic!("expected a match expr, got {other:?}"),
     }
@@ -1319,15 +1181,15 @@ fn for_loop_desugars_to_iterator_protocol() {
     // (see `lower_for`).
     let hir = lower_src("fun f() { for x in xs { foo(x); } }");
     let (_, f) = only_function(&hir);
-    let body = block(&hir, f.block.unwrap());
+    let body = hir.block(f.block.unwrap());
     assert!(body.expr.is_none());
     assert_eq!(body.stmts.len(), 1);
-    let StmtKind::Expr(outer_id) = stmt(&hir, body.stmts[0]).kind else {
+    let StmtKind::Expr(outer_id) = hir.stmt(body.stmts[0]).kind else {
         panic!("expected the desugared for-loop to be an expr statement")
     };
-    let outer = expr(&hir, outer_id);
+    let outer = hir.expr(outer_id);
     let inner_block = match &outer.kind {
-        ExprKind::Block(b) => block(&hir, *b),
+        ExprKind::Block(b) => hir.block(*b),
         other => panic!("expected the desugared for-loop to be a block, got {other:?}"),
     };
     assert_eq!(inner_block.stmts.len(), 2);
@@ -1336,33 +1198,33 @@ fn for_loop_desugars_to_iterator_protocol() {
         mutability,
         pat: iter_pat,
         ..
-    } = &stmt(&hir, inner_block.stmts[0]).kind
+    } = &hir.stmt(inner_block.stmts[0]).kind
     else {
         panic!("expected the first statement to bind __iter")
     };
     assert_eq!(*mutability, Mutability::Mutable);
-    match &pat(&hir, *iter_pat).kind {
+    match &hir.pat(*iter_pat).kind {
         PatKind::Binding { name, .. } => assert_eq!(text(*name), "__iter"),
         other => panic!("expected a binding pattern, got {other:?}"),
     }
 
-    let StmtKind::Expr(loop_expr_id) = stmt(&hir, inner_block.stmts[1]).kind else {
+    let StmtKind::Expr(loop_expr_id) = hir.stmt(inner_block.stmts[1]).kind else {
         panic!("expected the second statement to be the loop")
     };
-    let (source, loop_body_id) = match &expr(&hir, loop_expr_id).kind {
+    let (source, loop_body_id) = match &hir.expr(loop_expr_id).kind {
         ExprKind::Loop { source, block } => (source, *block),
         other => panic!("expected a loop expr, got {other:?}"),
     };
     assert!(matches!(source, LoopSource::For));
 
-    let loop_body = block(&hir, loop_body_id);
+    let loop_body = hir.block(loop_body_id);
     assert_eq!(loop_body.stmts.len(), 1);
-    let StmtKind::Expr(match_id) = stmt(&hir, loop_body.stmts[0]).kind else {
+    let StmtKind::Expr(match_id) = hir.stmt(loop_body.stmts[0]).kind else {
         panic!("expected the loop body to hold a match statement")
     };
-    match &expr(&hir, match_id).kind {
+    match &hir.expr(match_id).kind {
         ExprKind::Match { scrutinee, arms } => {
-            match &expr(&hir, *scrutinee).kind {
+            match &hir.expr(*scrutinee).kind {
                 ExprKind::Access { member, args, .. } => {
                     assert_eq!(text(*member), "next");
                     assert!(matches!(args, AccessArgs::Call(args) if args.is_empty()));
@@ -1370,17 +1232,17 @@ fn for_loop_desugars_to_iterator_protocol() {
                 other => panic!("expected a `.next()` call, got {other:?}"),
             }
             assert_eq!(arms.len(), 2);
-            let some_arm = arm(&hir, arms[0]);
-            match &pat(&hir, some_arm.pat).kind {
+            let some_arm = hir.arm(arms[0]);
+            match &hir.pat(some_arm.pat).kind {
                 PatKind::Variant { variant, payload } => {
                     assert_eq!(text(*variant), "some");
                     assert!(matches!(payload, Payload::Single(_)));
                 }
                 other => panic!("expected a `.some(..)` pattern, got {other:?}"),
             }
-            let none_arm = arm(&hir, arms[1]);
+            let none_arm = hir.arm(arms[1]);
             assert!(matches!(
-                pat(&hir, none_arm.pat).kind,
+                hir.pat(none_arm.pat).kind,
                 PatKind::Variant {
                     payload: Payload::None,
                     ..

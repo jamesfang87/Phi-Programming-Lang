@@ -29,7 +29,7 @@
 use std::collections::HashMap;
 
 use crate::hir::HirId;
-use crate::typeck::traits::index::ImplHeader;
+use crate::typeck::traits::index::ExtendHeader;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
@@ -44,7 +44,7 @@ use crate::typeck::tyctx::TyCtx;
 /// different traits -- or an inherent block against a trait impl -- can still both apply to one
 /// type, which is exactly the question coherence's duplicate-method-name check asks; see
 /// [`coherence`](crate::typeck::traits::coherence).
-pub fn overlaps(tcx: &TyCtx, a: &ImplHeader, b: &ImplHeader) -> bool {
+pub fn overlaps(tcx: &TyCtx, a: &ExtendHeader, b: &ExtendHeader) -> bool {
     let mut overlap = Overlap {
         tcx,
         generics: [&a.generics, &b.generics],
@@ -332,8 +332,8 @@ mod tests {
 
     /// A header with no trait and no methods: enough for every question `overlaps` asks about
     /// self types alone.
-    fn header(generics: Vec<HirId>, self_ty: Ty) -> ImplHeader {
-        ImplHeader {
+    fn header(generics: Vec<HirId>, self_ty: Ty) -> ExtendHeader {
+        ExtendHeader {
             def: def(900),
             generics,
             self_ty,
@@ -343,7 +343,7 @@ mod tests {
         }
     }
 
-    fn with_trait(mut header: ImplHeader, trait_def: DefId, args: Vec<Ty>) -> ImplHeader {
+    fn with_trait(mut header: ExtendHeader, trait_def: DefId, args: Vec<Ty>) -> ExtendHeader {
         header.trait_ref = Some(TraitRef {
             def: trait_def,
             args,

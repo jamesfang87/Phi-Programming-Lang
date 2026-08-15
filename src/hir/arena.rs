@@ -1,12 +1,4 @@
-//! This file defines [`Node`] and [`Arena`]. A [`Node`] is one node of the HIR tree. An [`Arena`]
-//! is the storage for all the nodes owned by a single definition (a function, struct, closure,
-//! and so on).
-//!
-//! Every owning definition gets its own [`Arena`]. Lowering places each of that definition's
-//! child nodes into the arena and addresses it by [`LocalId`].
-
 use crate::driver::source::SrcSpan;
-use crate::hir::HirId;
 use crate::hir::block::{Block, Stmt};
 use crate::hir::expr::Expr;
 use crate::hir::items::{
@@ -15,8 +7,8 @@ use crate::hir::items::{
 };
 use crate::hir::pat::{Arm, Pat};
 use crate::hir::types::Ty;
+use crate::hir::HirId;
 
-/// One node of the HIR.
 #[derive(Debug)]
 pub enum Node {
     Owner(OwnerNode),
@@ -35,9 +27,6 @@ pub enum Node {
     Ty(Ty),
 }
 
-/// The subset of [`Node`] that owns an [`Arena`] of its own. A module, function, struct, enum,
-/// trait, `extend` block, or closure can be an [`OwnerNode`]. Every arena's slot zero holds one
-/// of these.
 #[derive(Debug)]
 pub enum OwnerNode {
     Module(Module),
@@ -140,7 +129,7 @@ impl From<OwnerNode> for Node {
 
 /// Stores every node belonging to one owner as a single, densely packed `Vec<Node>`.
 ///
-/// Looking up a node by its [`LocalId`] is a direct index into [`Arena::nodes`]. Index zero
+/// Looking up a node by its [`LocalId`] is an index into [`Arena::nodes`]. Index zero
 /// always holds the owner itself.
 #[derive(Debug)]
 pub struct Arena {

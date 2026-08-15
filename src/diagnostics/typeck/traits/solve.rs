@@ -1,19 +1,16 @@
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
-use crate::diagnostics::typeck::traits::trait_name;
+use crate::diagnostics::typeck::traits::get_name_of_trait;
 use crate::driver::source::SrcSpan;
 use crate::hir::Hir;
 use crate::typeck::traits::solve::{Obligation, RECURSION_LIMIT};
 use crate::typeck::ty::Ty;
 
-/// How a goal reads in a diagnostic: `` `Foo<i32>: Show` ``. Shared with
-/// [`bounds`](crate::typeck::traits::bounds), which raises the same kind of goal from a
-/// declaration's bound rather than from the solver itself.
 pub fn show_goal(hir: &Hir, cx: DisplayCx<'_>, goal: &Obligation) -> String {
     format!(
         "`{}: {}`",
         cx.show(goal.self_ty),
-        trait_name(hir, goal.trait_ref.def)
+        get_name_of_trait(hir, goal.trait_ref.def)
     )
 }
 
@@ -73,11 +70,7 @@ pub fn report_recursion_limit(hir: &Hir, cx: DisplayCx<'_>, goal: &Obligation) {
     );
 }
 
-/// The release-mode half of the duplicate-match assertion in
-/// [`Typeck::select`](crate::typeck::Typeck::select): reported rather than resolved by arbitrary
-/// choice, so that a coherence bug surfaces as a diagnostic instead of as an answer that depends
-/// on collection order.
-pub fn report_ambiguous_impls(hir: &Hir, cx: DisplayCx<'_>, goal: &Obligation) {
+pub fn report_ambiguous_extends(hir: &Hir, cx: DisplayCx<'_>, goal: &Obligation) {
     DiagCtx::emit(
         Diagnostic::error(
             format!(

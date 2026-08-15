@@ -1,15 +1,8 @@
-//! This file defines the compiler's diagnostic system: `Diagnostic`, `Severity`, and the
-//! `DiagCtx` singleton that collects and renders them.
-//!
-//! Diagnostics are addressed by global char offset into the `SrcMap`, so a pipeline stage can
-//! raise one without knowing which file it came from, or worrying about the byte-versus-char
-//! offset scheme it will eventually be rendered against.
-
 use std::cell::RefCell;
 use std::io::IsTerminal;
 use std::ops::Range;
 
-use ariadne::{Color, Config, Fmt, Label, Report, ReportKind, sources};
+use ariadne::{sources, Color, Config, Fmt, Label, Report, ReportKind};
 
 use crate::driver::source::{SrcMap, SrcSpan};
 
@@ -38,38 +31,12 @@ impl Severity {
     }
 }
 
-/// A second place a diagnostic points at, besides the one its `span` names.
-///
-/// Plenty of errors are about a *relationship* between two pieces of source rather than about
-/// one piece on its own: an implementation that doesn't match the declaration it implements, an
-/// `extend` block that conflicts with an earlier one, a call whose argument disagrees with the
-/// parameter it was passed to. Describing the second place in prose -- "`Show` is already
-/// implemented elsewhere" -- leaves the reader to go find it. A secondary label puts the
-/// compiler's finger on it instead.
-///
-/// The span may lie in a different file from the primary one; see [`Diagnostic::eprint`] for
-/// how that is rendered.
 #[derive(Debug, Clone)]
 pub struct SecondaryLabel {
     pub span: SrcSpan,
     pub message: String,
 }
 
-/// A single diagnostic produced by any pipeline stage, such as the lexer or parser, ready to
-/// be rendered with `ariadne`.
-///
-/// `span` holds *global* char offsets into the `SrcMap`'s combined address space, so a
-/// diagnostic doesn't need to know which file it came from until it's actually rendered.
-///
-/// It is `None` for a diagnostic that names no source location at all -- see
-/// [`Diagnostic::error_global`]. This differs from a zero-length span at offset 0, which points
-/// at the first character of whichever file was registered first.
-///
-/// `span` is where the mistake *is* -- the place whose text has to change to fix it.
-/// [`secondary`](SecondaryLabel) labels are the places that explain why it's a mistake, and a
-/// diagnostic should stay comprehensible with all of them stripped off: they run in a fixed
-/// order after the primary, but a reader skimming only the first underline should still get the
-/// point.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -101,16 +68,7 @@ impl Diagnostic {
     }
 
     /// An error about the compilation as a whole rather than about a place in the source.
-    ///
-    /// Some failures have no honest span to point at. A missing lang item (see
-    /// [`crate::langitems`]) is the motivating case: the core library is embedded in the
-    /// compiler binary, so the fault is the compiler's own and there is no user source text
-    /// that caused it. Pointing such an error at offset 0 -- which is what a
-    /// `SrcSpan::new(0, 0)` null span does -- renders it as an underline under the first
-    /// character of the user's first file, blaming code that is entirely innocent, and panics
-    /// outright when no file has been registered at all.
-    ///
-    /// A diagnostic built this way renders as a plain message with no source snippet.
+    /// Typically used for missing lang items
     pub fn error_global(message: impl Into<String>) -> Self {
         Self::new(Severity::Error, message, None)
     }
@@ -128,13 +86,6 @@ impl Diagnostic {
         self
     }
 
-    /// Adds a second place the diagnostic points at, underlined and labelled beneath the primary
-    /// one. See [`SecondaryLabel`] for what belongs in one.
-    ///
-    /// Can be called more than once; the labels are shown in the order they were added, within
-    /// each file. A label whose span belongs to no registered file is dropped when the
-    /// diagnostic is rendered rather than reported as a second failure -- see
-    /// [`Diagnostic::eprint`].
     pub fn with_secondary(mut self, span: SrcSpan, message: impl Into<String>) -> Self {
         self.secondary.push(SecondaryLabel {
             span,
@@ -143,23 +94,6 @@ impl Diagnostic {
         self
     }
 
-    /// Renders this diagnostic to stderr.
-    ///
-    /// A diagnostic with a span is rendered by `ariadne` against the source it points at; one
-    /// without a span, or whose span belongs to no registered file, is rendered as a bare
-    /// message by [`Diagnostic::eprint_bare`].
-    ///
-    /// The no-covering-file case degrades gracefully instead of panicking. It should not happen
-    /// for a span that a stage built from source text, but a diagnostic that cannot find its
-    /// file still needs to be shown. Losing it — along with every diagnostic queued behind it —
-    /// to a panic is worse than rendering it without its source snippet.
-    /// A secondary label that can't be located is dropped on the same reasoning taken one step
-    /// further: it is the elaboration, so showing the error without it beats showing neither.
-    ///
-    /// Secondary labels may point into other files -- a conflicting `extend` block or a trait
-    /// declaration is routinely a file away from the code that violates it -- so every file any
-    /// label lands in is handed to `ariadne` together, and it quotes each one in its own
-    /// snippet.
     fn eprint(&self) {
         let Some(span) = self.span else {
             return self.eprint_bare();
@@ -178,9 +112,6 @@ impl Diagnostic {
                 .with_color(self.severity.color()),
         );
 
-        // Every file a label lands in, deduplicated, since `ariadne` wants one entry per source
-        // rather than one per label. The primary's file goes in whether or not a secondary
-        // shares it.
         let mut located = vec![primary];
         for secondary in &self.secondary {
             let Some(at) = Located::of(secondary.span) else {
@@ -209,19 +140,7 @@ impl Diagnostic {
     }
 
     /// Renders this diagnostic to stderr with no source snippet.
-    ///
-    /// `ariadne` renders a label-less report with an empty snippet frame, which reads as a
-    /// rendering failure rather than a deliberate choice. This method writes header and help lines
-    /// directly, matching `ariadne`'s format (`Error: <message>`, then indented `Help: <help>`),
-    /// so both diagnostic kinds appear together without visual mismatch.
-    ///
-    /// `self.label` and `self.secondary` are ignored: a label is text placed under an underline,
-    /// and there is no underline here. A secondary label cannot be added — a diagnostic reaches
-    /// this method because it has no locatable span, which means the raising stage had no target
-    /// for a secondary label.
     fn eprint_bare(&self) {
-        // `Fmt::fg` takes an `Option<Color>` and leaves text unpainted for `None`, preserving
-        // plain text when colors are disabled instead of rendering escape codes.
         let color = Self::config_colors().then(|| self.severity.color());
 
         let kind = match self.severity {
@@ -248,18 +167,8 @@ impl Diagnostic {
 }
 
 /// The color secondary labels are drawn in.
-///
-/// Using a different color from the severity (not error red) prevents confusion: an underline in
-/// error red reads as a second error, while a secondary label provides context for the primary.
 const SECONDARY_COLOR: Color = Color::Blue;
 
-/// A [`SrcSpan`] resolved against the [`SrcMap`]: the file it lies in, that file's UTF-8 text,
-/// and the byte range the span covers there.
-///
-/// This is the translation `ariadne` needs. Spans are global and char-indexed, because that is
-/// what lets a stage raise a diagnostic without knowing which file it is in; `ariadne` addresses
-/// source per file and byte-indexed. Nothing else in the compiler needs the second form, so the
-/// conversion lives here, at the point of rendering.
 struct Located {
     name: &'static str,
     text: String,
@@ -267,16 +176,10 @@ struct Located {
 }
 
 impl Located {
-    /// Resolves `span`, or `None` if no registered file covers it.
     fn of(span: SrcSpan) -> Option<Self> {
         let file = SrcMap::file_containing(span.get_begin())?;
         let (text, byte_offsets) = byte_source(&file.content);
 
-        // A span is half-open and `byte_offsets` has one entry per char plus a final one for
-        // the end, so both ends fall within range for any span inside this file. Clamp to handle
-        // spans that exceed the file end (a bug in the stage that built it): render a slightly
-        // wide underline instead of panicking on out-of-bounds access, which would suppress all
-        // queued diagnostics.
         let last = byte_offsets.len() - 1;
         let local_begin = (span.get_begin() - file.global_offset).min(last);
         let local_end = (span.get_end() - file.global_offset).clamp(local_begin, last);
@@ -294,12 +197,6 @@ impl Located {
     }
 }
 
-/// Builds the UTF-8 text of a `char` source together with a lookup table from `char` index to
-/// byte offset.
-///
-/// This lets a `char`-indexed [`SrcSpan`] be translated into the byte-indexed spans `ariadne`
-/// expects. `byte_offsets` has `src.len() + 1` entries, so that both a span's start and its
-/// (exclusive) end can always be looked up.
 fn byte_source(src: &[char]) -> (String, Vec<usize>) {
     let mut text = String::with_capacity(src.len());
     let mut byte_offsets = Vec::with_capacity(src.len() + 1);
@@ -312,19 +209,10 @@ fn byte_source(src: &[char]) -> (String, Vec<usize>) {
 }
 
 thread_local! {
-    /// The actual diagnostic storage for the [`DiagCtx`] singleton.
-    ///
-    /// It's thread-local rather than a single process-wide global, so that compiling on
-    /// different threads, and running tests, which execute on a pool of worker threads, never
-    /// lets diagnostics from one compilation bleed into another.
+    /// Diagnostic storage for the [`DiagCtx`] singleton.
     static DIAGNOSTICS: RefCell<Vec<Diagnostic>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Collects and renders every diagnostic raised while compiling, regardless of which pipeline
-/// stage, such as the lexer or parser, raised it.
-///
-/// There is exactly one of these per thread. Pipeline stages call its associated functions
-/// directly instead of threading a `&mut DiagCtx` through every constructor.
 pub struct DiagCtx;
 
 impl DiagCtx {
@@ -364,22 +252,7 @@ impl DiagCtx {
         DIAGNOSTICS.with(|d| d.borrow_mut().clear());
     }
 
-    /// Renders every diagnostic collected so far to stderr, in source order.
-    ///
-    /// Diagnostics are collected in emission order (stage-major: lexer across all files, then
-    /// parser, and so on). Emission order reflects compiler architecture, not source position.
-    /// Readers working top-to-bottom through their file need source order, so diagnostics are
-    /// sorted by span before printing.
-    ///
-    /// Location-less diagnostics (see [`Diagnostic::error_global`]) sort first. They describe
-    /// build-level failures (e.g., missing lang items indicate compiler bugs) and need to frame
-    /// all ordinary errors, not be buried under them.
-    ///
-    /// The sort is stable, so two diagnostics about the same span stay in the order the stage
-    /// that raised them meant: a note elaborating on an error keeps sitting next to it.
-    ///
-    /// Only the printing is ordered. [`DiagCtx::diagnostics`] returns emission order, which is
-    /// what callers need (tests asserting on what a single pass raised).
+    /// Renders every diagnostic collected so far to stderr in source order.
     pub fn report() {
         for diag in Self::report_order(Self::diagnostics()) {
             diag.eprint();
@@ -387,11 +260,7 @@ impl DiagCtx {
     }
 
     /// Sorts diagnostics into the order [`DiagCtx::report`] prints them.
-    ///
-    /// Separated from `report` to allow testing sort order without capturing stderr.
     fn report_order(mut diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
-        // Stable sort preserves emission order for equal spans. `Option` ordering places `None`
-        // first, so location-less diagnostics appear at the top as documented.
         diagnostics.sort_by_key(|diag| diag.span.map(|span| (span.get_begin(), span.get_end())));
         diagnostics
     }

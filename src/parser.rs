@@ -294,7 +294,7 @@ mod tests {
         let body = f.block.as_ref().unwrap();
         assert_eq!(body.stmts.len(), 1);
         match &body.stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return(Some(expr)) => match &expr.kind {
                 ExprKind::Binary { op, lhs, rhs } => {
                     assert_eq!(*op, BinaryOp::Add);
                     assert!(matches!(lhs.kind, ExprKind::Path(_)));
@@ -404,7 +404,7 @@ mod tests {
         let unit = parse_src("fun main() { return 1 + 2 * 3; }");
         let f = only_function(&unit);
         match &f.block.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return(Some(expr)) => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Add,
                     rhs,
@@ -430,7 +430,7 @@ mod tests {
         let unit = parse_src("fun main() { return (1 + 2) * 3; }");
         let f = only_function(&unit);
         match &f.block.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return(Some(expr)) => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Mul,
                     lhs,
@@ -455,7 +455,7 @@ mod tests {
         let unit = parse_src("fun main() { return -1 + 2; }");
         let f = only_function(&unit);
         match &f.block.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return(Some(expr)) => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Add,
                     lhs,
@@ -480,7 +480,7 @@ mod tests {
         let unit = parse_src("fun main() { return true || false && true; }");
         let f = only_function(&unit);
         match &f.block.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return(Some(expr)) => match &expr.kind {
                 ExprKind::Binary {
                     op: BinaryOp::Or,
                     rhs,
@@ -514,7 +514,7 @@ mod tests {
         let unit = parse_src("fun main() { return 'a'; }");
         let f = only_function(&unit);
         match &f.block.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => {
+            StmtKind::Return(Some(expr)) => {
                 assert!(matches!(expr.kind, ExprKind::Literal(Literal::Char('a'))));
             }
             other => panic!("expected a return statement, got {other:?}"),
@@ -526,7 +526,7 @@ mod tests {
         let unit = parse_src(r#"fun main() { return "a\nb"; }"#);
         let f = only_function(&unit);
         match &f.block.as_ref().unwrap().stmts[0].kind {
-            StmtKind::Return(expr) => match &expr.kind {
+            StmtKind::Return(Some(expr)) => match &expr.kind {
                 ExprKind::Literal(Literal::Str(sym)) => {
                     assert_eq!(Interner::resolve(*sym), "a\nb")
                 }

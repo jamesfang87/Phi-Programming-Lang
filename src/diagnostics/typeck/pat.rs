@@ -1,5 +1,5 @@
-use crate::ast::Ident;
 use crate::ast::interner::Interner;
+use crate::ast::Ident;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::driver::source::SrcSpan;
@@ -8,7 +8,6 @@ use crate::typeck::pat::VariantDef;
 use crate::typeck::ty::Ty;
 use crate::typeck::unify::UnifyError;
 
-/// A pattern's literal didn't unify with the type it is matched against.
 pub fn report_literal_pattern_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span)
@@ -16,7 +15,6 @@ pub fn report_literal_pattern_mismatch(cx: DisplayCx<'_>, err: UnifyError, span:
     );
 }
 
-/// A tuple pattern's shape didn't unify with the type it is matched against.
 pub fn report_tuple_pattern_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span)
@@ -24,8 +22,6 @@ pub fn report_tuple_pattern_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: S
     );
 }
 
-/// Reported when a `.variant` pattern is matched against a type that is still an inference
-/// variable.
 pub fn report_variant_type_unknown(variant: Ident, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -71,8 +67,6 @@ pub fn report_no_payload_field(hir: &Hir, field: Ident, variant: HirId) {
     );
 }
 
-/// Reported by [`Typeck::check_match_exhaustive`](crate::typeck::Typeck::check_match_exhaustive)
-/// when `missing` names the specific values (variant names, or `"true"`/`"false"`) no arm covers.
 pub fn report_match_not_exhaustive(span: SrcSpan, missing: &[&str]) {
     let list = missing
         .iter()
@@ -86,14 +80,27 @@ pub fn report_match_not_exhaustive(span: SrcSpan, missing: &[&str]) {
     );
 }
 
-/// Reported by [`Typeck::check_match_exhaustive`](crate::typeck::Typeck::check_match_exhaustive)
-/// for a scrutinee type this check does not enumerate on its own (anything but `bool` or an
-/// enum): the only way it can know every arm is accounted for is a catch-all.
 pub fn report_match_needs_wildcard(span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error("match is not exhaustive: some values are not covered", span)
             .with_label("no arm covers every remaining value")
             .with_help("add a wildcard `_` (or binding) arm to match anything else"),
+    );
+}
+
+pub fn report_refutable_let_without_else(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("refutable pattern in a `let` with no `else`", span)
+            .with_label("this pattern does not match every value of its type")
+            .with_help("add an `else { .. }` block to handle the case it doesn't match"),
+    );
+}
+
+pub fn report_irrefutable_let_with_else(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("irrefutable pattern in a `let` with an `else`", span)
+            .with_label("this pattern always matches, so this `else` block is unreachable")
+            .with_help("remove the `else` block"),
     );
 }
 

@@ -5,7 +5,7 @@
 
 use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
-use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Res};
+use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::lower::{Task, is_any_specialized};
 use crate::mir::{AnyMode, ConstKind, Constant, Operand, Place, Rvalue, TerminatorKind};
@@ -219,9 +219,7 @@ impl<'a> BodyLowerCtx<'a> {
         arg_exprs: &[HirId],
         span: SrcSpan,
     ) -> Vec<Operand> {
-        let OwnerNode::Function(function) = self.hir.def(def) else {
-            panic!("mir::lower: a resolved call's def is not a function")
-        };
+        let function = self.hir.function(def);
         let self_param = function.self_param;
         let params = function.params.clone();
 

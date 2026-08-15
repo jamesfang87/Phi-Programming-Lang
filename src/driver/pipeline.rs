@@ -6,9 +6,9 @@ use crate::diag::DiagCtx;
 use crate::driver::cli::{BuildOptions, Config, Mode};
 use crate::driver::emit_debug;
 use crate::driver::source::{SrcCollector, SrcMap};
-use crate::hir::lower::lower_unit;
-use crate::lexer::Lexer;
+use crate::hir::lower::lower_program;
 use crate::lexer::token::Token;
+use crate::lexer::Lexer;
 use crate::mir;
 use crate::nameres;
 use crate::parser::Parser;
@@ -63,27 +63,17 @@ pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
         emit_debug::print_ast(&ast);
     }
 
-    // Name resolution runs on the AST, ahead of lowering: `lower_unit` below consumes its
-    // answers directly, writing each into the `hir::Path` of the node it belongs to as that node
-    // is built (see `crate::hir::path`).
     let res = nameres::resolve(&ast);
-
-    if options.dumps.nameres || options.dumps.surface_nameres {
+    if options.dumps.nameres {
         emit_debug::print_nameres(&ast, &res);
     }
 
-    // Desugars the whole program's AST into one HIR, carrying `res` forward as it goes -- every
-    // `hir::Path` built along the way gets its answer from here, inline.
-    let hir = lower_unit(&ast, &res);
-
+    let hir = lower_program(&ast, &res);
     if options.dumps.hir {
         emit_debug::print_hir(&hir, options.exclude_core_in_emit);
     }
 
-    // Every answer `typeck` needs is already on the `hir::Path`s `lower_unit` just built (or, for
-    // lang items, on `hir.lang_items()`), so nothing further is threaded through here.
     let mut checked = typeck::check(&hir);
-
     if options.dumps.typeck {
         emit_debug::print_typeck(
             &hir,
@@ -93,6 +83,7 @@ pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
         );
     }
 
+    // TODO: Remove this assumption
     // Lowering #2 assumes a fully type-checked body with no `TyKind::Error` left in it anywhere
     // (see `mir::lower`'s own module docs: it is diagnostics-free by design, the same way
     // Lowering #1 is, because everything it needs is already validated by the stage before it).

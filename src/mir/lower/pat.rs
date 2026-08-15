@@ -275,9 +275,10 @@ impl<'a> BodyLowerCtx<'a> {
         let span = pat.span;
         match &pat.kind {
             PatKind::Wildcard => {}
-            PatKind::Binding { .. } => {
+            PatKind::Binding { name, .. } => {
+                let name = *name;
                 let ty = self.pat_ty(pat_id);
-                let local = self.new_local(ty, crate::ast::Mutability::Immutable, None, span);
+                let local = self.new_local(ty, crate::ast::Mutability::Immutable, Some(name), span);
                 self.push_stmt(StatementKind::StorageLive(local), span);
                 let operand = self.operand_for_place(place, ty);
                 self.assign(Place::from_local(local), Rvalue::Use(operand), span);
@@ -379,9 +380,7 @@ impl<'a> BodyLowerCtx<'a> {
         let TyKind::Adt { def, .. } = *self.tcx.kind(ty) else {
             panic!("mir::lower: a variant pattern/expression's type is not an enum")
         };
-        let crate::hir::OwnerNode::Enum(e) = self.hir.def(def) else {
-            panic!("mir::lower: a variant pattern/expression's def is not an enum")
-        };
+        let e = self.hir.enum_(def);
         let index = e
             .variants
             .iter()
@@ -399,9 +398,7 @@ impl<'a> BodyLowerCtx<'a> {
         let TyKind::Adt { def, .. } = *self.tcx.kind(enum_ty) else {
             panic!("mir::lower: a record payload's enum type is not an Adt")
         };
-        let crate::hir::OwnerNode::Enum(e) = self.hir.def(def) else {
-            panic!("mir::lower: a record payload's def is not an enum")
-        };
+        let e = self.hir.enum_(def);
         let variant_hir_id = e.variants[variant_idx.index()];
         let crate::hir::VariantPayload::Record(fields) = &self.hir.variant(variant_hir_id).payload
         else {

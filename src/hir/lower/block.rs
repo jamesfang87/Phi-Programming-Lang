@@ -25,12 +25,6 @@ impl OwnerLowerer<'_, '_> {
         })
     }
 
-    /// Lowers `e` into a block whose tail value is `e`.
-    ///
-    /// Every HIR construct that owns executable code owns a `Block`, so the surface forms that
-    /// take a bare expression -- a match arm, a closure body, an `else if` -- are wrapped here.
-    /// An expression already written as a block lowers to that block directly rather than
-    /// picking up a second, redundant one.
     pub(super) fn lower_expr_as_block(&mut self, e: &ast::Expr) -> HirId {
         if let ast::ExprKind::Block(b) = &e.kind {
             return self.lower_block(b);
@@ -62,7 +56,9 @@ impl OwnerLowerer<'_, '_> {
             }
             ast::StmtKind::Break => StmtKind::Break,
             ast::StmtKind::Continue => StmtKind::Continue,
-            ast::StmtKind::Return(ret) => StmtKind::Return(Some(low.lower_expr(ret))),
+            ast::StmtKind::Return(ret) => {
+                StmtKind::Return(ret.as_ref().map(|ret| low.lower_expr(ret)))
+            }
             ast::StmtKind::Defer(defer) => StmtKind::Defer(low.lower_expr(defer)),
             ast::StmtKind::Let {
                 mutability,

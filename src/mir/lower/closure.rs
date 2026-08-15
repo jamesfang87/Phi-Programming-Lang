@@ -14,7 +14,7 @@
 use std::collections::HashSet;
 
 use crate::hir::visit::Visitor;
-use crate::hir::{DefId, HirId, OwnerNode, Path, Res};
+use crate::hir::{DefId, HirId, Path, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::{AggregateKind, Local, Place, PlaceElem, Rvalue};
 use crate::typeck::ty::Ty;
@@ -46,9 +46,7 @@ impl<'a> BodyLowerCtx<'a> {
     /// closure's captures, in the order `AggregateKind::Closure`'s operand list and the
     /// closure's own environment tuple both use.
     pub(crate) fn captures_of(&self, closure_def: DefId) -> Vec<HirId> {
-        let OwnerNode::Closure(closure) = self.hir.def(closure_def) else {
-            panic!("mir::lower: captures_of called on a non-closure def")
-        };
+        let closure = self.hir.closure(closure_def);
         let mut visitor = CaptureVisitor {
             hir: self.hir,
             owner: closure_def,

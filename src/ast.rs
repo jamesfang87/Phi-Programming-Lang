@@ -18,14 +18,8 @@ use crate::driver::source::SrcSpan;
 #[derive(Debug)]
 pub struct Ast {
     modules: Vec<Module>,
-    /// Where each module in `modules` sits, keyed by its `NodeId`.
-    ///
-    /// A module's `NodeId` is allocated from the same global counter as every other AST node,
-    /// so it isn't a dense index into `modules` the way the old `ModId` was. This is what makes
-    /// looking a module back up by id an `O(1)` map lookup instead of direct indexing.
-    positions: HashMap<NodeId, usize>,
-    /// `parents[i]` is the parent of `modules[i]`, positionally aligned the same way.
-    parents: Vec<NodeId>,
+    module_positions: HashMap<NodeId, usize>,
+    parent_module: Vec<NodeId>,
     root: NodeId,
 }
 
@@ -68,10 +62,6 @@ pub struct Path {
     pub span: SrcSpan,
 }
 
-/// `Path` compares and hashes over its segment symbols alone, ignoring every span: a `Path`
-/// identifies a name, not a source location, and two writings of `math::vector` are the same
-/// path. `NameResolutions::get` matches a node's recorded paths this way, which is what lets
-/// an `extend` block's two entries be told apart by what they name rather than by position.
 impl PartialEq for Path {
     fn eq(&self, other: &Self) -> bool {
         self.segments.len() == other.segments.len()
@@ -87,8 +77,6 @@ impl Eq for Path {}
 
 impl std::hash::Hash for Path {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Must agree with `PartialEq` above: hash exactly what `eq` compares, and nothing
-        // else. Hashing the length too keeps `[a, b]` and `[ab]` apart.
         self.segments.len().hash(state);
         for segment in &self.segments {
             segment.text.hash(state);
@@ -343,7 +331,8 @@ pub enum StmtKind {
     },
     Break,
     Continue,
-    Return(Expr),
+    /// `return expr;`, or a bare `return;` producing nothing (`None`).
+    Return(Option<Expr>),
     /// `defer expr;`. The expression runs just before the enclosing scope exits.
     Defer(Expr),
     /// A `let` binding, of the form `let [mut] pat[: ty] = init;`.
@@ -409,8 +398,6 @@ pub enum ExprKind {
         rhs: Box<Expr>,
     },
     /// A compound assignment, such as `lhs += rhs` or `lhs -= rhs`.
-    ///
-    /// `op` names the underlying binary operator, `+` or `-` in those examples.
     AssignOp {
         op: BinaryOp,
         lhs: Box<Expr>,
@@ -425,7 +412,6 @@ pub enum ExprKind {
         args: Vec<Expr>,
     },
     /// A `.` access, such as `base.member` or `base.member(args)`.
-    ///
     /// `args` records how it was written; see [`AccessArgs`] for why that's needed.
     Access {
         base: Box<Expr>,
@@ -494,14 +480,12 @@ pub enum ExprKind {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Literal {
-    /// `suffix` is the type named after the `_` in `42_i64`, if the literal was written with
-    /// one.
+    /// `suffix` is the type named after the `_` in `42_i64`
     Int {
         value: Symbol,
         suffix: Option<Symbol>,
     },
-    /// `suffix` is the type named after the `_` in `3.14_f32`, if the literal was written with
-    /// one.
+    /// `suffix` is the type named after the `_` in `3.14_f32`
     Float {
         value: Symbol,
         suffix: Option<Symbol>,
@@ -562,8 +546,7 @@ impl ExprKind {
     }
 }
 
-/// The payload an enum variant carries, shared between constructing a variant
-/// ([`ExprKind::Variant`]) and matching one ([`PatternKind::Variant`]).
+/// The payload an enum variant carries
 #[derive(Clone, Debug)]
 pub enum Payload<T> {
     /// The variant has no payload at all, such as bare `.none`.
@@ -579,7 +562,6 @@ pub enum Payload<T> {
 ///
 /// As the grammar is ambiguous in this case, the parser can't yet tell a field access, a
 /// method call, and a payload-carrying variant construction apart.
-///
 /// Later analysis resolves this distinction, once `base`'s type is known.
 #[derive(Clone, Debug)]
 pub enum AccessArgs {
@@ -607,8 +589,7 @@ pub struct PayloadField<T> {
 pub struct Arm {
     pub id: NodeId,
     pub pat: Pat,
-    /// The `if cond` in `pat if cond => body`, if the arm has one. When present, the arm only
-    /// matches if `cond` also holds, exactly as in Rust.
+    /// The `if cond` in `pat if cond => body`
     pub guard: Option<Box<Expr>>,
     pub body: Box<Expr>,
     pub span: SrcSpan,
@@ -649,11 +630,9 @@ impl Ast {
                 Some(decl) => builder.module_for_path(&decl.path.segments),
                 None => builder.ast.root,
             };
-            let position = builder.ast.positions[&module];
+            let position = builder.ast.module_positions[&module];
             let target = &mut builder.ast.modules[position];
             target.imports.extend(file.imports);
-            // `Parser::assemble_file` has already sorted this file's `module` header and its
-            // imports out of `items`, so what is left is definitions.
             target.items.extend(file.items);
         }
         builder.ast
@@ -667,15 +646,11 @@ impl Ast {
     }
 
     pub fn module(&self, id: NodeId) -> &Module {
-        &self.modules[self.positions[&id]]
+        &self.modules[self.module_positions[&id]]
     }
 
-    /// Returns the module `id` is declared inside, or `None` if `id` names the root.
-    ///
-    /// The root is stored as its own parent, which is how callers get a termination condition
-    /// walking upwards, without needing a sentinel id.
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
-        let parent = self.parents[self.positions[&id]];
+        let parent = self.parent_module[self.module_positions[&id]];
         (parent != id).then_some(parent)
     }
 

@@ -1,17 +1,13 @@
-//! A `Diagnostic` carries one span and no second label, so an ambiguity cannot point at each
-//! candidate's declaration. It points at the call -- the thing that has to change -- and names
-//! the candidates in prose, the way `coherence`, `members` and `bounds` already do.
-
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, SelfMode};
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, Hir, Node, OwnerNode};
+use crate::hir::{DefId, Hir};
 use crate::typeck::ty::Ty;
 use crate::typeck::unify::UnifyError;
 
-pub fn report_receiver_unknown(member: Ident, span: SrcSpan) {
+pub fn report_receiver_type_unknown(member: Ident, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(
             format!(
@@ -48,9 +44,6 @@ pub fn report_no_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
     );
 }
 
-/// `candidates` is each ambiguous trait's name alongside where it declares the method -- computed
-/// by the caller, since only it can read the private fields of the `Candidate`s that produced
-/// them.
 pub fn report_ambiguous_method(member: Ident, candidates: &[(&str, SrcSpan)]) {
     let traits: Vec<String> = candidates
         .iter()
@@ -174,9 +167,6 @@ pub fn report_no_field(cx: DisplayCx<'_>, member: Ident, base: Ty) {
     );
 }
 
-/// Mirrors `nameres::report_private_item`'s wording: the same rule (a `private` declaration is
-/// reachable only from its own declaring module and that module's descendants), read here off a
-/// field's own `Visibility` instead of off a path lookup.
 pub fn report_private_field(member: Ident) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -206,10 +196,6 @@ pub fn report_field_is_a_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
     );
 }
 
-/// `root` is the `let`-bound local at the bottom of the receiver's place chain -- the same
-/// variable [`expr::report_not_mutable`](crate::diagnostics::typeck::expr::report_not_mutable)
-/// would name for a plain assignment, reported here instead because what tried to mutate it was
-/// a `&mut self` call rather than a written-out `=`.
 pub fn report_receiver_not_mutable(
     hir: &Hir,
     member: Ident,
@@ -269,28 +255,18 @@ pub fn report_call_arg_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpa
     );
 }
 
-/// Where a function's name is written, for a diagnostic pointing at the declaration it found.
 pub fn function_name_span(hir: &Hir, method: DefId) -> SrcSpan {
-    let OwnerNode::Function(function) = hir.def(method) else {
-        unreachable!("a candidate's method is always a function");
-    };
-    function.name.span
+    hir.function(method).name.span
 }
 
-/// Where a method's receiver is written, so a diagnostic about a receiver can point at what it
-/// was checked against. Falls back to the method's name for one that declares none.
 pub fn method_receiver_span(hir: &Hir, method: DefId) -> SrcSpan {
-    let OwnerNode::Function(function) = hir.def(method) else {
-        unreachable!("a candidate's method is always a function");
-    };
-    match function.self_param.map(|id| hir.node(id)) {
-        Some(Node::SelfParam(self_param)) => self_param.span,
-        Some(_) => unreachable!("a function's self param slot always holds a Node::SelfParam"),
+    let function = hir.function(method);
+    match function.self_param {
+        Some(id) => hir.self_param(id).span,
         None => function.name.span,
     }
 }
 
-/// How a receiver reads in a diagnostic.
 fn show_self_mode(mode: SelfMode) -> &'static str {
     match mode {
         SelfMode::Immutable => "`&self`",

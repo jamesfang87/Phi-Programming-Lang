@@ -1,7 +1,3 @@
-//! HIR representation of type annotations, as written in source: a param's type, a field's type,
-//! a return type, and so on. This is distinct from the types the type checker infers and works
-//! with internally.
-
 use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
 use crate::hir::ids::HirId;

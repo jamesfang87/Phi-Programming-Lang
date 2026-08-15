@@ -1,22 +1,13 @@
 //! Test-only scaffolding for driving the pipeline over a source string.
-//!
-//! Every test module needs the same few lines to get from a `&str` to whatever stage it is
-//! testing: clear the global diagnostic and interner state, register the source so spans can be
-//! resolved, then run the passes. Those lines live here once.
-//!
-//! [`lex_src`] does the setup and stops, asserting nothing. Each helper after it builds on the
-//! one before, so a test that means to exercise error recovery starts from [`lex_src`] and
-//! drives the rest itself. [`parse_src`] and [`lower_src`] assert that no diagnostics were
-//! raised; [`resolve_src`] is the exception, for the reason given on it.
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, ParsedSrcFile};
 use crate::diag::DiagCtx;
 use crate::driver::source::{FileOrigin, SrcMap};
-use crate::hir::lower::lower_unit;
-use crate::hir::{DefId, Hir, HirId, Node, OwnerNode, StmtKind};
-use crate::lexer::Lexer;
+use crate::hir::lower::lower_program;
+use crate::hir::{DefId, Hir, HirId, OwnerNode, StmtKind};
 use crate::lexer::token::Token;
+use crate::lexer::Lexer;
 use crate::nameres;
 use crate::parser::Parser;
 
@@ -55,7 +46,7 @@ pub fn parse_src(src: &str) -> ParsedSrcFile {
 pub fn lower_src(src: &str) -> Hir {
     let ast = Ast::new(vec![parse_src(src)]);
     let res = nameres::resolve(&ast);
-    lower_unit(&ast, &res)
+    lower_program(&ast, &res)
 }
 
 /// Lexes, parses, and lowers `src`, asserting no diagnostics were raised up to and including
@@ -113,7 +104,7 @@ pub fn typeck_src_files(sources: &[&str]) -> Vec<String> {
         .collect();
     let ast = Ast::new(files);
     let res = nameres::resolve(&ast);
-    let hir = lower_unit(&ast, &res);
+    let hir = lower_program(&ast, &res);
 
     DiagCtx::clear();
     crate::typeck::check(&hir);
@@ -193,15 +184,31 @@ fn assert_clean(src: &str) {
 /// The `DefId` of the first top-level item `pred` accepts. `what` names what was being looked
 /// for, for the panic message.
 fn first_item(hir: &Hir, what: &str, pred: impl Fn(&OwnerNode) -> bool) -> DefId {
-    let OwnerNode::Module(module) = hir.def(hir.root_id()) else {
-        unreachable!("root of a Module owner is always OwnerNode::Module");
-    };
-    module
+    hir.root()
         .items
         .iter()
         .copied()
         .find(|&item| pred(hir.def(item)))
         .unwrap_or_else(|| panic!("fixture declares no top-level {what}"))
+}
+
+/// The `DefId` of the top-level struct, enum, trait, or function declared in `hir` under `name`.
+pub fn named_def(hir: &Hir, name: &str) -> DefId {
+    hir.root()
+        .items
+        .iter()
+        .copied()
+        .find(|&id| {
+            let text = match hir.def(id) {
+                OwnerNode::Struct(s) => s.name.text,
+                OwnerNode::Enum(e) => e.name.text,
+                OwnerNode::Trait(t) => t.name.text,
+                OwnerNode::Function(f) => f.name.text,
+                _ => return false,
+            };
+            Interner::resolve(text) == name
+        })
+        .unwrap_or_else(|| panic!("no definition named {name:?}"))
 }
 
 /// The `DefId` of the first top-level `fun` declared in `hir`.
@@ -219,31 +226,24 @@ pub fn first_trait(hir: &Hir) -> DefId {
     first_item(hir, "trait", |def| matches!(def, OwnerNode::Trait(_)))
 }
 
+/// The `DefId` of the first top-level `extend` block declared in `hir`.
+pub fn first_extend(hir: &Hir) -> DefId {
+    first_item(hir, "extend block", |def| matches!(def, OwnerNode::Extend(_)))
+}
+
 /// The `DefId` of the first method in the first top-level `extend` block declared in `hir`.
 pub fn first_extend_method(hir: &Hir) -> DefId {
-    let extend = first_item(hir, "extend block", |def| {
-        matches!(def, OwnerNode::Extend(_))
-    });
-    let OwnerNode::Extend(extend) = hir.def(extend) else {
-        unreachable!("first_item only returns an extend block's DefId");
-    };
-    extend.methods[0]
+    hir.extend(first_extend(hir)).methods[0]
 }
 
 /// The `return` statement in `def`'s body, and the id of the expression it returns.
 pub fn find_return(hir: &Hir, def: DefId) -> (HirId, HirId) {
-    let OwnerNode::Function(function) = hir.def(def) else {
-        unreachable!("root of a Function owner is always OwnerNode::Function");
-    };
+    let function = hir.function(def);
     let block_id = function.block.expect("fixture function has a body");
-    let Node::Block(block) = hir.node(block_id) else {
-        unreachable!("a function's body is always a Node::Block");
-    };
+    let block = hir.block(block_id);
 
     for &stmt_id in &block.stmts {
-        let Node::Stmt(stmt) = hir.node(stmt_id) else {
-            unreachable!("Node which is not a stmt found in a block's statement list");
-        };
+        let stmt = hir.stmt(stmt_id);
         if let StmtKind::Return(Some(expr_id)) = stmt.kind {
             return (stmt_id, expr_id);
         }

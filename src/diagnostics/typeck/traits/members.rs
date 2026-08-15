@@ -1,17 +1,10 @@
-//! Every mismatch here is between two places: what the implementation wrote and what the trait
-//! declared. The primary span is always the implementation's, because that is the side that has
-//! to change -- the trait is what it is, and a method that disagrees with it is the one in the
-//! wrong. The declaration gets a secondary label, at the narrowest part of it that differs: the
-//! receiver for a receiver mismatch, the return type for a return mismatch, and so on, rather
-//! than the whole signature every time.
-
-use crate::ast::SelfMode;
 use crate::ast::interner::Interner;
+use crate::ast::SelfMode;
 use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
-use crate::diagnostics::typeck::traits::trait_name;
+use crate::diagnostics::typeck::traits::get_name_of_trait;
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, Function, Hir, HirId, Node};
+use crate::hir::{DefId, Function, Hir, HirId};
 use crate::typeck::traits::TraitRef;
 use crate::typeck::ty::Ty;
 
@@ -28,7 +21,7 @@ pub fn report_missing_methods(
         .map(|&declaration| {
             format!(
                 "`{}`",
-                Interner::resolve(function(hir, declaration).name.text)
+                Interner::resolve(hir.function(declaration).name.text)
             )
         })
         .collect();
@@ -41,7 +34,7 @@ pub fn report_missing_methods(
     let mut diag = Diagnostic::error(
         format!(
             "missing method{plural} in the implementation of trait `{}` for `{}`: {}",
-            trait_name(hir, trait_ref.def),
+            get_name_of_trait(hir, trait_ref.def),
             cx.show(self_ty),
             names.join(", ")
         ),
@@ -56,7 +49,7 @@ pub fn report_missing_methods(
     // One label per missing method rather than one for the trait as a whole: a trait with
     // twenty methods and two missing should point at the two.
     for &declaration in missing {
-        let declaration = function(hir, declaration);
+        let declaration = hir.function(declaration);
         diag = diag.with_secondary(
             declaration.name.span,
             format!(
@@ -76,9 +69,9 @@ pub fn report_not_a_member(
     trait_ref: &TraitRef,
     self_ty: Ty,
 ) {
-    let method = function(hir, method);
+    let method = hir.function(method);
     let name = Interner::resolve(method.name.text);
-    let declared_trait_name = trait_name(hir, trait_ref.def);
+    let declared_trait_name = get_name_of_trait(hir, trait_ref.def);
 
     DiagCtx::emit(
         Diagnostic::error(
@@ -153,8 +146,6 @@ pub fn report_self_mode(
 }
 
 pub fn report_param_count(found: &Function, expected: &Function, got: usize, want: usize) {
-    // Reported the way the user wrote it, so `self` -- which the checker counts as the first
-    // parameter -- is not counted here.
     let offset = usize::from(found.self_param.is_some());
     let (got, want) = (got - offset, want - offset);
     let plural = if want == 1 { "" } else { "s" };
@@ -184,12 +175,8 @@ pub fn report_param_ty(
     got: Ty,
     want: Ty,
 ) {
-    let Node::Param(param) = hir.node(param) else {
-        unreachable!("a function's parameter list holds only Node::Params");
-    };
-    let Node::Param(declared_param) = hir.node(declared_param) else {
-        unreachable!("a function's parameter list holds only Node::Params");
-    };
+    let param = hir.param(param);
+    let declared_param = hir.param(declared_param);
 
     DiagCtx::emit(
         Diagnostic::error(
@@ -241,40 +228,16 @@ pub fn report_ret_ty(
     );
 }
 
-/// The function `def` names. Same assumption every caller here already relies on: a trait's
-/// `functions` and an extend block's `methods` hold only functions.
-fn function(hir: &Hir, def: DefId) -> &Function {
-    let crate::hir::OwnerNode::Function(function) = hir.def(def) else {
-        unreachable!("a trait's `functions` and an extend block's `methods` hold only functions");
-    };
-    function
-}
-
-/// Where a function's receiver is written, or its name when it takes none -- an associated
-/// function has no receiver to underline, but "this one takes no `self`" still has to point
-/// somewhere.
 fn self_param_span(hir: &Hir, function: &Function) -> SrcSpan {
     function
         .self_param
-        .map_or(function.name.span, |id| match hir.node(id) {
-            Node::SelfParam(self_param) => self_param.span,
-            _ => unreachable!("a function's self param slot always holds a Node::SelfParam"),
-        })
+        .map_or(function.name.span, |id| hir.self_param(id).span)
 }
 
-/// Where a function's return type is written, or its name when it declares none. Same reason as
-/// [`self_param_span`]: a missing `->` is exactly what some of these diagnostics are about.
 fn ret_span(hir: &Hir, function: &Function) -> SrcSpan {
-    function
-        .ret
-        .map_or(function.name.span, |id| match hir.node(id) {
-            Node::Ty(ty) => ty.span,
-            _ => unreachable!("a function's return slot always holds a Node::Ty"),
-        })
+    function.ret.map_or(function.name.span, |id| hir.ty(id).span)
 }
 
-/// How a return type reads in a diagnostic. A function with no `->` produces nothing, which is a
-/// different thing to say than naming a type.
 fn show_ret(cx: DisplayCx<'_>, ret: Option<Ty>) -> String {
     match ret {
         Some(ty) => format!("`{}`", cx.show(ty)),
@@ -282,15 +245,10 @@ fn show_ret(cx: DisplayCx<'_>, ret: Option<Ty>) -> String {
     }
 }
 
-/// Where a trait was declared, for a diagnostic to point back at.
 fn declared_trait_span(hir: &Hir, def: DefId) -> SrcSpan {
-    let crate::hir::OwnerNode::Trait(trait_) = hir.def(def) else {
-        unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-    };
-    trait_.name.span
+    hir.trait_(def).name.span
 }
 
-/// How a receiver reads in a diagnostic, including the absence of one.
 fn show_self_mode(mode: Option<SelfMode>) -> &'static str {
     match mode {
         Some(SelfMode::Immutable) => "`&self`",

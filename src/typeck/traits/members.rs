@@ -40,7 +40,7 @@ use crate::diagnostics::typeck::traits::members::{
     report_param_ty, report_ret_ty, report_self_mode,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, Function, HirId, Node, OwnerNode};
+use crate::hir::{DefId, Function, HirId};
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::index::ImplId;
@@ -77,12 +77,8 @@ impl<'hir> Typeck<'hir> {
         let (self_ty, impl_def, impl_span) = (header.self_ty, header.def, header.span);
 
         let hir = self.hir;
-        let OwnerNode::Extend(block) = hir.def(impl_def) else {
-            unreachable!("an ImplHeader's def is always the extend block it was built from");
-        };
-        let OwnerNode::Trait(trait_) = hir.def(trait_ref.def) else {
-            unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-        };
+        let block = hir.extend(impl_def);
+        let trait_ = hir.trait_(trait_ref.def);
         // Declaration order on both sides, so a block missing two methods names them in the order
         // the trait declares them and a block with two stray ones reports them top to bottom.
         let (provided, declared) = (&block.methods, &trait_.functions);
@@ -92,7 +88,7 @@ impl<'hir> Typeck<'hir> {
 
         let by_name: HashMap<Symbol, DefId> = declared
             .iter()
-            .map(|&declaration| (self.function(declaration).name.text, declaration))
+            .map(|&declaration| (self.hir.function(declaration).name.text, declaration))
             .collect();
 
         // The block's arguments to the trait stand in for the trait's own parameters. A block
@@ -108,7 +104,7 @@ impl<'hir> Typeck<'hir> {
             .collect();
 
         for &method in provided {
-            let name = self.function(method).name.text;
+            let name = self.hir.function(method).name.text;
             match by_name.get(&name) {
                 None => report_not_a_member(self.hir, self.cx(), method, &trait_ref, self_ty),
                 Some(&declaration) if arguments_line_up => {
@@ -133,7 +129,7 @@ impl<'hir> Typeck<'hir> {
     ) {
         let present: HashSet<Symbol> = provided
             .iter()
-            .map(|&method| self.function(method).name.text)
+            .map(|&method| self.hir.function(method).name.text)
             .collect();
 
         // Kept as definitions rather than reduced to names, so the diagnostic can underline each
@@ -142,7 +138,7 @@ impl<'hir> Typeck<'hir> {
             .iter()
             .copied()
             .filter(|&declaration| {
-                let declaration = self.function(declaration);
+                let declaration = self.hir.function(declaration);
                 declaration.block.is_none() && !present.contains(&declaration.name.text)
             })
             .collect();
@@ -165,7 +161,7 @@ impl<'hir> Typeck<'hir> {
         trait_subst: &HashMap<HirId, Ty>,
         self_ty: Ty,
     ) {
-        let (found, expected) = (self.function(method), self.function(declaration));
+        let (found, expected) = (self.hir.function(method), self.hir.function(declaration));
 
         // The two lists declare different `HirId`s for what the user wrote as the same letter, so
         // the declaration's parameters have to be rewritten into the implementation's before
@@ -321,22 +317,7 @@ impl<'hir> Typeck<'hir> {
     /// How a method takes its receiver, or `None` for an associated function that takes none.
     fn self_mode(&self, function: &Function) -> Option<SelfMode> {
         let id = function.self_param?;
-        let Node::SelfParam(self_param) = self.hir.node(id) else {
-            unreachable!("a function's self param slot always holds a Node::SelfParam");
-        };
-        Some(self_param.mode)
-    }
-
-    /// The function `def` names. Borrowed at the HIR's own lifetime rather than at this borrow of
-    /// `self`, so that a signature read out of it survives the `&mut self` calls that follow.
-    fn function(&self, def: DefId) -> &'hir Function {
-        let hir = self.hir;
-        let OwnerNode::Function(function) = hir.def(def) else {
-            unreachable!(
-                "a trait's `functions` and an extend block's `methods` hold only functions"
-            );
-        };
-        function
+        Some(self.hir.self_param(id).mode)
     }
 }
 

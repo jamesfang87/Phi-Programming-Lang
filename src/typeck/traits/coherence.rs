@@ -26,15 +26,14 @@
 //! [`overlaps`](crate::typeck::traits::overlap::overlaps); the diagnostic says so rather than
 //! leaving it a mystery.
 
-use crate::ast::Symbol;
 use crate::ast::interner::Interner;
+use crate::ast::Symbol;
 use crate::diagnostics::typeck::traits::coherence::{
-    report_conflicting_impls, report_duplicate_method,
+    report_conflicting_extends, report_duplicate_method,
 };
-use crate::hir::OwnerNode;
-use crate::typeck::Typeck;
-use crate::typeck::traits::index::{ImplHeader, ImplId};
+use crate::typeck::traits::index::{ExtendHeader, ImplId};
 use crate::typeck::traits::overlap::overlaps;
+use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     /// Runs both coherence checks over the whole index.
@@ -71,7 +70,7 @@ impl<'hir> Typeck<'hir> {
                     continue;
                 }
 
-                report_conflicting_impls(self.hir, self.cx(), a, b);
+                report_conflicting_extends(self.hir, self.cx(), a, b);
             }
         }
     }
@@ -102,7 +101,7 @@ impl<'hir> Typeck<'hir> {
     ///
     /// Sorted by name rather than left in hash order, because two impls colliding on several
     /// methods must report them the same way on every run.
-    fn shared_method_names(&self, a: &ImplHeader, b: &ImplHeader) -> Vec<Symbol> {
+    fn shared_method_names(&self, a: &ExtendHeader, b: &ExtendHeader) -> Vec<Symbol> {
         let (mut names, other) = (self.effective_methods(a), self.effective_methods(b));
         names.retain(|name| other.contains(name));
         names.sort_by_key(|&name| Interner::resolve(name));
@@ -114,23 +113,16 @@ impl<'hir> Typeck<'hir> {
     /// For a trait impl that is the *trait's* full method list, not the block's own: a trait
     /// method with a default body is available on the type whether or not the block overrode it,
     /// so an impl that supplies nothing at all still collides with everything the trait declares.
-    fn effective_methods(&self, header: &ImplHeader) -> Vec<Symbol> {
+    fn effective_methods(&self, header: &ExtendHeader) -> Vec<Symbol> {
         let Some(trait_ref) = &header.trait_ref else {
             return header.methods.keys().copied().collect();
         };
 
-        let OwnerNode::Trait(trait_) = self.hir.def(trait_ref.def) else {
-            unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-        };
-        trait_
+        self.hir
+            .trait_(trait_ref.def)
             .functions
             .iter()
-            .map(|&function| {
-                let OwnerNode::Function(function) = self.hir.def(function) else {
-                    unreachable!("a trait's `functions` list holds only functions");
-                };
-                function.name.text
-            })
+            .map(|&function| self.hir.function(function).name.text)
             .collect()
     }
 }

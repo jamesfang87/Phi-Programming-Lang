@@ -57,19 +57,19 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, Mutability, SelfMode, Symbol};
+use crate::diagnostics::typeck::traits::get_name_of_trait;
 use crate::diagnostics::typeck::traits::method::{
     function_name_span, report_ambiguous_method, report_call_arg_count, report_call_arg_mismatch,
     report_field_is_a_method, report_no_field, report_no_method, report_no_receiver,
     report_not_callable, report_private_field, report_receiver_mode, report_receiver_not_a_place,
-    report_receiver_not_mutable, report_receiver_unknown,
+    report_receiver_not_mutable, report_receiver_type_unknown,
 };
-use crate::diagnostics::typeck::traits::trait_name;
 use crate::driver::source::SrcSpan;
-use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Local, Node, OwnerNode, PatKind, Res};
-use crate::typeck::Typeck;
+use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Local, OwnerNode, PatKind, Res};
 use crate::typeck::traits::index::ImplId;
 use crate::typeck::traits::solve::match_ty;
 use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::Typeck;
 
 /// One way the member being called could be reached, and everything it takes to read that
 /// method's signature in the caller's terms.
@@ -184,8 +184,7 @@ impl<'hir> Typeck<'hir> {
                 .map(|&arg| self.resolve_deep(arg))
                 .collect();
             self.types.record_call(id, def, resolved);
-        } else if let Node::Expr(expr) = self.hir.node(callee)
-            && let ExprKind::Path(path) = &expr.kind
+        } else if let ExprKind::Path(path) = &self.hir.expr(callee).kind
             && let Res::Function(def) = path.res
         {
             // A named, non-generic function: nothing to instantiate, but MIR lowering still
@@ -202,9 +201,7 @@ impl<'hir> Typeck<'hir> {
     /// reads far better once the argument list has had its say; see
     /// [`register_instantiation`](Typeck::register_instantiation).
     fn callee_sig(&mut self, callee: HirId) -> (Ty, Option<(DefId, Vec<Ty>)>) {
-        let Node::Expr(expr) = self.hir.node(callee) else {
-            unreachable!("a call's callee always names an expression");
-        };
+        let expr = self.hir.expr(callee);
 
         // Anything but a path -- a closure, a field holding a function, a parenthesized
         // expression -- has no declaration behind it to instantiate, so its type is already the
@@ -279,7 +276,7 @@ impl<'hir> Typeck<'hir> {
 
         // Step 1. Not deferred; see the [module docs](self).
         if matches!(self.tcx.kind(receiver_ty), TyKind::Var(_)) {
-            report_receiver_unknown(member, self.hir.expr(receiver).span);
+            report_receiver_type_unknown(member, self.hir.expr(receiver).span);
             return self.check_args_only(args);
         }
         if matches!(self.tcx.kind(receiver_ty), TyKind::Error) {
@@ -499,7 +496,7 @@ impl<'hir> Typeck<'hir> {
                             );
                         };
                         (
-                            trait_name(self.hir, def),
+                            get_name_of_trait(self.hir, def),
                             function_name_span(self.hir, candidate.method),
                         )
                     })
@@ -527,9 +524,7 @@ impl<'hir> Typeck<'hir> {
         subst: &HashMap<HirId, Ty>,
         self_ty: Ty,
     ) -> (Vec<Ty>, Option<Ty>, Vec<Ty>) {
-        let OwnerNode::Function(function) = self.hir.def(method) else {
-            unreachable!("a candidate's method is always a function");
-        };
+        let function = self.hir.function(method);
         let generics = function.generics.clone();
 
         let mut subst = subst.clone();
@@ -619,10 +614,8 @@ impl<'hir> Typeck<'hir> {
     /// [`lower_ty`](Typeck::lower_ty) -- so the pairs that do line up are taken and the rest left
     /// out, rather than reporting the same count twice.
     fn trait_subst(&self, trait_def: DefId, args: &[Ty]) -> HashMap<HirId, Ty> {
-        let OwnerNode::Trait(trait_) = self.hir.def(trait_def) else {
-            unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-        };
-        trait_
+        self.hir
+            .trait_(trait_def)
             .generics
             .iter()
             .copied()
@@ -632,26 +625,18 @@ impl<'hir> Typeck<'hir> {
 
     /// The method `trait_def` declares under `name`, if it declares one.
     fn trait_method(&self, trait_def: DefId, name: Symbol) -> Option<DefId> {
-        let OwnerNode::Trait(trait_) = self.hir.def(trait_def) else {
-            unreachable!("a TraitRef's def always names a trait; the index is what enforces it");
-        };
-        trait_.functions.iter().copied().find(|&function| {
-            let OwnerNode::Function(function) = self.hir.def(function) else {
-                unreachable!("a trait's `functions` holds only functions");
-            };
-            function.name.text == name
-        })
+        self.hir
+            .trait_(trait_def)
+            .functions
+            .iter()
+            .copied()
+            .find(|&function| self.hir.function(function).name.text == name)
     }
 
     /// How `method` takes its receiver, or `None` for an associated function that takes none.
     fn receiver_mode(&self, method: DefId) -> Option<SelfMode> {
-        let OwnerNode::Function(function) = self.hir.def(method) else {
-            unreachable!("a candidate's method is always a function");
-        };
-        let Node::SelfParam(self_param) = self.hir.node(function.self_param?) else {
-            unreachable!("a function's self param slot always holds a Node::SelfParam");
-        };
-        Some(self_param.mode)
+        let function = self.hir.function(method);
+        Some(self.hir.self_param(function.self_param?).mode)
     }
 
     // -----------------------------------------------------------------
@@ -794,9 +779,7 @@ impl<'hir> Typeck<'hir> {
                 if self.let_mutability.get(&pat_id) != Some(&Mutability::Immutable) {
                     return Ok(());
                 }
-                let Node::Pat(pat) = self.hir.node(pat_id) else {
-                    unreachable!("Local::Variable always names a binding pattern");
-                };
+                let pat = self.hir.pat(pat_id);
                 let PatKind::Binding { name, .. } = pat.kind else {
                     unreachable!("Local::Variable always names a Binding pattern");
                 };
@@ -823,7 +806,7 @@ impl<'hir> Typeck<'hir> {
         let base_ty = self.resolve_deep(base_ty);
 
         if matches!(self.tcx.kind(base_ty), TyKind::Var(_)) {
-            report_receiver_unknown(member, self.hir.expr(base).span);
+            report_receiver_type_unknown(member, self.hir.expr(base).span);
             return self.tcx.error();
         }
         if matches!(self.tcx.kind(base_ty), TyKind::Error) {
@@ -941,23 +924,7 @@ mod tests {
 
     /// The `DefId` of the top-level definition named `name`.
     fn named(checker: &Typeck<'_>, name: &str) -> DefId {
-        checker
-            .hir
-            .root()
-            .items
-            .iter()
-            .copied()
-            .find(|&id| {
-                let text = match checker.hir.def(id) {
-                    OwnerNode::Struct(s) => s.name.text,
-                    OwnerNode::Enum(e) => e.name.text,
-                    OwnerNode::Trait(t) => t.name.text,
-                    OwnerNode::Function(f) => f.name.text,
-                    _ => return false,
-                };
-                Interner::resolve(text) == name
-            })
-            .unwrap_or_else(|| panic!("no definition named {name:?}"))
+        crate::testing::named_def(checker.hir, name)
     }
 
     fn trait_of(candidate: &Candidate) -> DefId {
@@ -1032,9 +999,7 @@ mod tests {
 
         let candidates = checker.method_candidates(foo_ty, Interner::intern("show"), root);
         assert_eq!(candidates.len(), 1);
-        let OwnerNode::Trait(declared) = hir.def(show) else {
-            unreachable!("`Show` is a trait");
-        };
+        let declared = hir.trait_(show);
         assert_eq!(candidates[0].method, declared.functions[0]);
     }
 
@@ -1048,9 +1013,7 @@ mod tests {
         );
         let mut checker = collected(&hir);
         let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
-        let OwnerNode::Function(function) = hir.def(f) else {
-            unreachable!("`f` is a function");
-        };
+        let function = hir.function(f);
         let t = checker.tcx.mk_generic(function.generics[0]);
 
         let candidates = checker.method_candidates(t, Interner::intern("show"), f);
@@ -1067,16 +1030,12 @@ mod tests {
         );
         let mut checker = collected(&hir);
         let f = named(&checker, "f");
-        let OwnerNode::Function(function) = hir.def(f) else {
-            unreachable!("`f` is a function");
-        };
+        let function = hir.function(f);
         let t = checker.tcx.mk_generic(function.generics[0]);
 
-        assert!(
-            checker
-                .method_candidates(t, Interner::intern("show"), f)
-                .is_empty()
-        );
+        assert!(checker
+            .method_candidates(t, Interner::intern("show"), f)
+            .is_empty());
     }
 
     #[test]
@@ -1133,11 +1092,9 @@ mod tests {
                 .len(),
             1
         );
-        assert!(
-            checker
-                .method_candidates(wrap_bar, Interner::intern("show"), root)
-                .is_empty()
-        );
+        assert!(checker
+            .method_candidates(wrap_bar, Interner::intern("show"), root)
+            .is_empty());
     }
 
     /// Two bounds naming the same trait are one candidate, not an ambiguity between a candidate
@@ -1150,9 +1107,7 @@ mod tests {
         );
         let mut checker = collected(&hir);
         let f = named(&checker, "f");
-        let OwnerNode::Function(function) = hir.def(f) else {
-            unreachable!("`f` is a function");
-        };
+        let function = hir.function(f);
         let t = checker.tcx.mk_generic(function.generics[0]);
 
         assert_eq!(
@@ -1190,11 +1145,7 @@ mod tests {
     /// has no name of its own to look it up by, and a fixture that needs this only ever writes
     /// one.
     fn extend_method(checker: &Typeck<'_>, name: &str) -> DefId {
-        let block = checker
-            .hir
-            .def_ids()
-            .find(|&id| matches!(checker.hir.def(id), OwnerNode::Extend(_)))
-            .expect("the fixture writes an extend block");
+        let block = crate::testing::first_extend(checker.hir);
         method_of(checker, block, name)
     }
 
@@ -1309,39 +1260,33 @@ mod tests {
 
     #[test]
     fn an_inherent_method_call_checks() {
-        assert!(
-            check(
-                "struct Foo {}
+        assert!(check(
+            "struct Foo {}
                  extend Foo { fun show(&self) {} }
                  fun f(x: Foo) { x.show(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     #[test]
     fn a_trait_method_call_checks() {
-        assert!(
-            check(
-                "trait Show { fun show(&self); }
+        assert!(check(
+            "trait Show { fun show(&self); }
                  struct Foo {}
                  extend Foo with Show { fun show(&self) {} }
                  fun f(x: Foo) { x.show(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     /// The case the environment exists for: nothing is known about `T` but the bound.
     #[test]
     fn a_method_reached_through_a_bound_checks() {
-        assert!(
-            check(
-                "trait Show { fun show(&self); }
+        assert!(check(
+            "trait Show { fun show(&self); }
                  fun f<T: Show>(x: T) { x.show(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     #[test]
@@ -1367,13 +1312,11 @@ mod tests {
 
     #[test]
     fn a_method_on_a_dyn_receiver_checks() {
-        assert!(
-            check(
-                "trait Show { fun show(&self); }
+        assert!(check(
+            "trait Show { fun show(&self); }
                  fun f(x: &dyn Show) { x.show(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     /// An `extend Foo` block is about `Foo` specifically, so its method is the one meant.
@@ -1425,13 +1368,11 @@ mod tests {
 
     #[test]
     fn a_field_access_checks_to_the_fields_type() {
-        assert!(
-            check(
-                "struct Foo { count: i32 }
+        assert!(check(
+            "struct Foo { count: i32 }
                  fun f(x: Foo) -> i32 { return x.count; }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     /// A field's declared type is read through the arguments the receiver applied.
@@ -1492,15 +1433,13 @@ mod tests {
 
     #[test]
     fn a_public_field_can_be_read_from_another_module() {
-        assert!(
-            crate::testing::typeck_src_files(&[
-                "module math; public struct Foo { public count: i32 }",
-                "module app;
+        assert!(crate::testing::typeck_src_files(&[
+            "module math; public struct Foo { public count: i32 }",
+            "module app;
                  import math::Foo;
                  fun f(x: Foo) -> i32 { return x.count; }",
-            ])
-            .is_empty()
-        );
+        ])
+        .is_empty());
     }
 
     /// `SymbolTable::is_visible`'s full rule, re-checked end to end for a field instead of a
@@ -1565,15 +1504,13 @@ mod tests {
             ["field `inner` is private"]
         );
         // The public field, reached the very same way, is not.
-        assert!(
-            crate::testing::typeck_src_files(&[
-                "module lib; public struct Wrap<T> { inner: T, public tag: T }",
-                "module app;
+        assert!(crate::testing::typeck_src_files(&[
+            "module lib; public struct Wrap<T> { inner: T, public tag: T }",
+            "module app;
                  import lib::Wrap;
                  fun f(x: &Wrap<i32>) -> i32 { return x.tag; }",
-            ])
-            .is_empty()
-        );
+        ])
+        .is_empty());
     }
 
     /// `field_ty`'s `owner` is the definition an access sits inside -- here an `extend` block's
@@ -1583,12 +1520,10 @@ mod tests {
     #[test]
     fn an_extend_blocks_method_reads_a_private_field_only_from_the_declaring_module() {
         // An `extend` block in the struct's own module: allowed, same as any in-module access.
-        assert!(
-            crate::testing::typeck_src_files(&["module math;
+        assert!(crate::testing::typeck_src_files(&["module math;
                  public struct Foo { count: i32 }
                  extend Foo { fun get(&self) -> i32 { return self.count; } }",])
-            .is_empty()
-        );
+        .is_empty());
 
         // An `extend` block for the same type, written in a *different* module: refused exactly
         // as a free function in that module would be.
@@ -1609,39 +1544,33 @@ mod tests {
 
     #[test]
     fn a_reference_receiver_reaches_a_ref_self_method() {
-        assert!(
-            check(
-                "struct Foo {}
+        assert!(check(
+            "struct Foo {}
                  extend Foo { fun show(&self) {} }
                  fun f(x: &Foo) { x.show(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     /// Autoref: the method wants a reference and the receiver is a place, so one is taken.
     #[test]
     fn a_value_receiver_is_autoreffed_for_a_ref_self_method() {
-        assert!(
-            check(
-                "struct Foo {}
+        assert!(check(
+            "struct Foo {}
                  extend Foo { fun show(&self) {} }
                  fun f(x: Foo) { x.show(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     #[test]
     fn a_mut_ref_receiver_reaches_a_mut_self_method() {
-        assert!(
-            check(
-                "struct Foo {}
+        assert!(check(
+            "struct Foo {}
                  extend Foo { fun bump(&mut self) {} }
                  fun f(x: &mut Foo) { x.bump(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     #[test]
@@ -1672,14 +1601,12 @@ mod tests {
 
     #[test]
     fn a_mut_self_method_may_be_called_on_a_mutable_let_binding() {
-        assert!(
-            check(
-                "struct Foo {}
+        assert!(check(
+            "struct Foo {}
                  extend Foo { fun bump(&mut self) {} }
                  fun f() { let mut x = Foo {}; x.bump(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     /// The receiver need not be a bare local for this to apply: `place_mutable_root` walks the
@@ -1704,14 +1631,12 @@ mod tests {
 
     #[test]
     fn a_value_receiver_reaches_a_by_value_self_method() {
-        assert!(
-            check(
-                "struct Foo {}
+        assert!(check(
+            "struct Foo {}
                  extend Foo { fun consume(self) {} }
                  fun f(x: Foo) { x.consume(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     #[test]
@@ -1729,14 +1654,12 @@ mod tests {
     /// `any self` is the mode that accepts every form, which is what it exists to say.
     #[test]
     fn an_any_self_method_accepts_every_receiver() {
-        assert!(
-            check(
-                "struct Foo {}
+        assert!(check(
+            "struct Foo {}
                  extend Foo { fun peek(any self) {} }
                  fun f(a: Foo, b: &Foo, c: &mut Foo) { a.peek(); b.peek(); c.peek(); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     /// A method reached on a value produced by another call has nothing to take a reference to.
@@ -1836,16 +1759,14 @@ mod tests {
 
     #[test]
     fn a_call_to_a_generic_callee_whose_bound_holds_checks() {
-        assert!(
-            check(
-                "trait Show { fun show(&self); }
+        assert!(check(
+            "trait Show { fun show(&self); }
                  struct Foo {}
                  extend Foo with Show { fun show(&self) {} }
                  fun g<T: Show>(x: T) {}
                  fun f(y: Foo) { g(y); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     /// A receiver whose type nothing pins down cannot be resolved, and unlike a bound it is not
@@ -1872,9 +1793,8 @@ mod tests {
     /// `any self` accepts every receiver shape: by value, by reference, and by `any`.
     #[test]
     fn any_self_accepts_every_receiver_shape() {
-        assert!(
-            check(
-                "struct Foo {}
+        assert!(check(
+            "struct Foo {}
                  extend Foo { fun show(any self) {} }
                  fun f(a: Foo, b: &Foo, c: &mut Foo, d: any Foo) {
                      a.show();
@@ -1882,23 +1802,20 @@ mod tests {
                      c.show();
                      d.show();
                  }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
     }
 
     /// A method's own generic parameters are instantiated fresh per call, independent of the
     /// receiver's type.
     #[test]
     fn a_methods_own_generic_parameter_is_inferred_from_its_argument() {
-        assert!(
-            check(
-                "struct Box_ {}
+        assert!(check(
+            "struct Box_ {}
                  extend Box_ { fun identity<T>(&self, x: T) -> T { return x; } }
                  fun f(b: Box_, n: i32) -> i32 { return b.identity(n); }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
         assert_eq!(
             check(
                 "struct Box_ {}
@@ -1913,9 +1830,8 @@ mod tests {
     /// own type arguments, not left as the block's bare parameter.
     #[test]
     fn indexing_a_generic_type_reads_v_through_the_receivers_own_arguments() {
-        assert!(
-            check(
-                "module core::ops;
+        assert!(check(
+            "module core::ops;
 
                  public trait Index<K, V> { fun index(&self, key: K) -> &V; }
 
@@ -1926,9 +1842,8 @@ mod tests {
                  }
 
                  fun f(m: Map<bool>) -> &bool { return m[0]; }"
-            )
-            .is_empty()
-        );
+        )
+        .is_empty());
         assert_eq!(
             check(
                 "module core::ops;

@@ -111,6 +111,14 @@ impl<'a> BodyLowerCtx<'a> {
     /// the pattern is tested first; a refutation runs `else_block`, which typeck already
     /// guarantees diverges, so there is no fallthrough to close off, only the reserved block's
     /// mandatory terminator.
+    ///
+    /// A bare `let name = init;` -- no destructuring, and, with no `else`, always irrefutable --
+    /// is special-cased to lower `init` directly into one local for `name`, rather than through an
+    /// intermediate "scrutinee" local that `bind_pat` would then copy into a second, separate one:
+    /// there is no structure to test and nothing else the scrutinee's own place would be projected
+    /// out of. Every other shape keeps the general scrutinee-then-bind path: a `Tuple` pattern
+    /// needs a stable place to project each element from, and an `else`'s own refutation test
+    /// needs one to test against before any binding happens.
     fn lower_let(
         &mut self,
         mutability: Mutability,
@@ -119,6 +127,18 @@ impl<'a> BodyLowerCtx<'a> {
         else_block: Option<HirId>,
         span: SrcSpan,
     ) {
+        if else_block.is_none()
+            && let PatKind::Binding { name, .. } = self.hir.pat(pat).kind
+        {
+            let init_ty = self.expr_ty(init);
+            let local = self.new_local(init_ty, mutability, Some(name), span);
+            self.push_stmt(StatementKind::StorageLive(local), span);
+            self.lower_expr_into(init, Place::from_local(local));
+            self.bind_local(pat, local);
+            self.register_exit_obligation(ExitObligation::StorageDead(local));
+            return;
+        }
+
         let init_ty = self.expr_ty(init);
         let scrutinee = self.new_local(init_ty, mutability, None, span);
         self.push_stmt(StatementKind::StorageLive(scrutinee), span);
@@ -149,16 +169,15 @@ impl<'a> BodyLowerCtx<'a> {
     fn lower_with_lend(&mut self, lend: &crate::hir::WithLend) {
         let span = lend.span;
         let ty = self.expr_ty(lend.init);
-        let local = self.new_local(ty, Mutability::Immutable, None, span);
-        self.push_stmt(StatementKind::StorageLive(local), span);
-        self.lower_expr_into(lend.init, Place::from_local(local));
-
-        let PatKind::Binding { .. } = self.hir.pat(lend.pat).kind else {
+        let PatKind::Binding { name, .. } = self.hir.pat(lend.pat).kind else {
             panic!(
                 "mir::lower: a `with` lend pattern other than a plain binding is not yet \
                  implemented"
             );
         };
+        let local = self.new_local(ty, Mutability::Immutable, Some(name), span);
+        self.push_stmt(StatementKind::StorageLive(local), span);
+        self.lower_expr_into(lend.init, Place::from_local(local));
         self.bind_local(lend.pat, local);
         self.register_exit_obligation(ExitObligation::StorageDead(local));
     }

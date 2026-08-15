@@ -45,9 +45,6 @@ impl OwnerLowerer<'_, '_> {
 
     /// `while let pat = scrutinee { body }` ->
     /// `loop { match scrutinee { pat => { body }, _ => break } }`.
-    ///
-    /// Unlike [`Self::lower_while`], the body can't be spliced into the loop directly -- it only
-    /// runs when the pattern matches -- so it stays nested inside the matching arm.
     pub(super) fn lower_while_let(
         &mut self,
         pat: &ast::Pat,
@@ -91,9 +88,6 @@ impl OwnerLowerer<'_, '_> {
     }
 
     /// `while cond { body }` desugars to `loop { if !cond { break }; body }`.
-    ///
-    /// Unlike [`Self::lower_while_let`], the body always runs when the loop doesn't break, so it
-    /// gets spliced directly into the loop rather than nested inside a match arm.
     pub(super) fn lower_while(&mut self, cond: &ast::Expr, body: &ast::Block) -> HirId {
         let span = cond.span;
         self.synth_expr(span, |low, _loop_id| {
