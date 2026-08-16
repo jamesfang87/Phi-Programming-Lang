@@ -68,10 +68,6 @@ impl OwnerLowerer<'_, '_> {
                 base: self.lower_expr(base),
                 index: self.lower_expr(index),
             },
-            // `path` is looked up through the ordinary `lower_path`: `Resolver::visit_expr`'s
-            // `Ctor` arm (`src/nameres/resolver.rs`) resolves a struct literal's own name through
-            // `resolve_type_path` and records it under the expression's own `NodeId`, exactly as
-            // `TyKind::Path` does, so a missing entry here is a lowering bug like any other path.
             ast::ExprKind::Ctor { path, payload } => ExprKind::Ctor {
                 path: path.as_ref().map(|path| self.cx.lower_path(node_id, path)),
                 payload: self.lower_record_fields(payload),
@@ -130,20 +126,7 @@ impl OwnerLowerer<'_, '_> {
         }
     }
 
-    // TODO: Why did you write code this way?
-    // Are you stupid? just desugar it inside the AST; you know that its a reference to a
-    // variable so just make it a path...
-    // you're actually dumb as hell.
-    /// Lowers a record payload's fields, desugaring the `{ l }` shorthand into `{ l: l }` so
-    /// that every field has a real expression behind it in the HIR.
-    ///
-    /// The shorthand's implicit value has no `ast::Expr` behind it -- it's synthesized here,
-    /// during lowering, from the field's own name -- so AST-level resolution can't key its
-    /// answer under an `Expr`'s `NodeId` the way [`Self::lower_expr`] does. It keys under the
-    /// `PayloadField`'s own `NodeId` instead, against the same single-segment path this
-    /// synthesizes (`Resolver::visit_record_fields` in `src/nameres/resolver.rs`), which
-    /// is why this looks the answer up with `f.id` as the owner rather than treating it as
-    /// unresolved.
+    /// Also desugars { l } into { l: l }
     fn lower_record_fields(
         &mut self,
         fields: &[ast::PayloadField<ast::Expr>],
@@ -178,7 +161,7 @@ impl OwnerLowerer<'_, '_> {
         ret: &Option<ast::Ty>,
         body: &ast::Expr,
     ) -> DefId {
-        let item_id = self.cx.items.alloc(Some(self.def_id()));
+        let item_id = self.cx.def_id_allocator.alloc(Some(self.def_id()));
         let mut ow = OwnerLowerer::new(self.cx, item_id);
         let root = ow.reserve_root();
         let params = params.iter().map(|p| ow.lower_closure_param(p)).collect();

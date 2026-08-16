@@ -4,8 +4,8 @@ use crate::diagnostics::typeck::lower_ty::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
-use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
+use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     pub fn lower_ty(&mut self, id: HirId) -> Ty {
@@ -75,11 +75,8 @@ impl<'hir> Typeck<'hir> {
                 };
                 self.lower_def(def_id, declared, args, span, id.owner)
             }
-            // A trait names every type that implements it, not one type of its own: it is a
-            // type only spelled `dyn Trait` ([`Typeck::lower_dyn`]), or usable as a bound on a
-            // generic parameter ([`Typeck::collect_bounds`]) -- neither of which is an ordinary
-            // type position, so a bare trait reaching one here is always a mistake.
             Res::Type(Type::Def(TyDef::Trait(_))) => {
+                // There can be no bare traits, this is a mistake
                 report_trait_as_ty(span);
                 self.tcx.error()
             }
@@ -204,8 +201,8 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::Mutability;
     use crate::ast::interner::Interner;
+    use crate::ast::Mutability;
     use crate::diagnostics::DiagCtx;
     use crate::hir::{DefId, Hir, HirId, OwnerNode};
     use crate::nameres::PrimTy;

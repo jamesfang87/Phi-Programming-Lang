@@ -1,10 +1,3 @@
-//! [`DefIdAllocator`] and [`ArenaBuilder`], the two helpers lowering uses to construct the HIR.
-//!
-//! Lowering needs to allocate ids and fill in nodes before it knows the full shape of what it is
-//! building. [`DefIdAllocator`] hands out global [`DefId`]s as new definitions are discovered.
-//! [`ArenaBuilder`] hands out [`LocalId`]s within one owner's arena, and lets a parent node
-//! reserve a slot for a child before the child has been lowered.
-
 use crate::hir::arena::{Arena, Node};
 use crate::hir::ids::{DefId, HirId, LocalId};
 
@@ -61,7 +54,7 @@ impl Default for DefIdAllocator {
     }
 }
 
-/// [`ArenaBuilder`] builds one owner's [`Arena`] while its AST subtree is being lowered.
+/// [`ArenaBuilder`] builds one owner's [`Arena`].
 /// Lowering creates a new [`ArenaBuilder`] for every definition that requires an arena.
 ///
 /// A nested owner (a closure inside a function body, or a method inside an `extend` block) gets
