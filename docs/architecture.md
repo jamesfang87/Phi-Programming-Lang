@@ -380,15 +380,81 @@ pub fn current_self_entry(&self) -> Option<Option<TyDef>>
 
 The actual name resolution phase runs in several phases: 
 1. A collection phase adds all items such as functions, modules, and types into `ModuleScope`s
-2. An import phase resolves all imports, reporting errors for conflicting glob imports,,importing private items, etc.
+2. An import phase resolves all imports, reporting errors for conflicting glob imports, importing private items, etc.
 3. The prelude, which contains `LangItem`s (a collection of traits and types which are fundamental to Phi) is collected
 4. A resolution phase resolves references found in bodies (such as the bodies of functions).
+
+## Lowering #1 (AST -> HIR)
+Before you read this section, it could possibly be more useful to read the section detailing the HIR below, primarily to gain an understanding of the HIR first. 
+
+Broadly, the first lowering pass works in 3 distinct passes, where the first 2 can be thought of together:
+1. Every module first get assigned its `DefId`. Note that `DefId`s for modules are assigned in an order such that a child module gets assigned  its `DefId` after its parent. This is important since the HIR constructs a parent graph.
+2. Every `definition` (other than modules) get assigned their `DefId`
+1. Arenas are built and filled for each `definition`.
+
+The goal of the lowering pass is not only to create the HIR (obviously), but to also assign results from name resolution to each respective node and to desugar the language so that future analysis patterns can be simplified.
+
+### LoweringCtx
+`LoweringCtx` is a struct which keeps track of the current state of the lowering pass. It contains information such as:
+1. What is the next `DefId` which can be assigned (`DefIdAllocator`)
+2. What is the `DefId` of the `definition` with this `NodeId`
+3. What is the `HirId` of the node with this `NodeId`
+4. What is the arena of this `definition`
+5. What are the current name resolution results
+6. What are the current generics in scope
+
+```rust
+pub(super) struct LoweringCtx<'res> {
+    pub(super) def_id_allocator: DefIdAllocator,
+    pub(super) def_ids: HashMap<NodeId, DefId>,
+    pub(super) hir_ids: HashMap<NodeId, HirId>,
+    // This exists since Functions do not have their own NodeId (only Item does)
+    // This may likely change in an upcoming refactor so this doc comment
+    // may be updated soon.
+    pub(super) method_defs: HashMap<NodeId, Vec<DefId>>,
+    pub(super) arenas: HashMap<DefId, Arena>,
+    // This is for debug compilation runtime checks for correctness
+    generics_ready: HashSet<DefId>,
+    nameres: &'res NameResolutions,
+}
+```
+The `LoweringCtx` is also responsible for consuming this state to produce the final HIR through `LoweringCtx::finish`.
+
+To actually accomplish the 4 pass lowering process, `LoweringCtx` exposes several methods: `prealloc_item` and `lower_*` methods. `prealloc_item` is responsible for the second pass, which assigns `DefId` to all `definitions` other than modules. The `lower_*` methods contain the lowering code for each construct. For example, `lower_module` contains the logic for lowering modules and `lower_pat` contains the logic for lowering patterns. 
+
+Because of the structure of arenas in HIR, we also have a few other classes to help us. `ArenaBuilder` is a lower-abstraction interface for building arenas. It has 3 important public-facing methods:
+1. ```pub fn reserve(&mut self) -> HirId``` reserves the next `LocalId` in this arena. This must be called before lowering a node's children.
+2. ```pub fn fill(&mut self, id: HirId, node: impl Into<Node>)``` writes into the slot reserved by `reserve`.
+3. ```pub fn finish(self) -> Arena``` consumes the state of the `ArenaBuilder` to create the Arena.
+
+To make lowering `definitions` easier, which is the main use of `ArenaBuilder`, there is also `OwnerLowerer`, which is a thin wrapper around `ArenaBuilder`. Mostly importantly, it provides helpers (`synth_*`) for lowering expressions, statements, patterns and more which ensure that the low-level abstractions for `ArenaBuilder` are used properly (that is, `reserve` is called before `fill`). Let's examine `synth_expr`, which is the corresponding helper for expressions:
+
+```rust
+pub(super) fn synth_expr(
+    &mut self,
+    span: SrcSpan,
+     build: impl FnOnce(&mut Self, HirId) -> crate::hir::ExprKind,
+) -> HirId {
+    let hir_id = self.reserve();
+    let kind = build(self, hir_id);
+    self.fill(hir_id, Node::Expr(Expr { hir_id, kind, span }));
+    hir_id
+}
+```
+
+Here, `build` is a function which essentially allows us to construct an `hir::ExprKind` from some kind of information. `synth_expr` also ensures that `reserve` is called before `fill`, helping us write bug-free code.
+
+In the case of nested owners, `OwnerLowerer` also allows us to temporarily pause lowering of the enclosing owner to lower (potentially several) nested owners through `begin_and_pause_with_generics` and `resume`. Note that we pause at generics since the only use case is when functions inside traits and extend blocks are lowered, which only require the enclosing owner's generics.
+
+### Desugaring 
+See the section on HIR to see what is desugared. 
 
 ## High Intermediate Representation (HIR)
 The High Intermediate Representation (HIR) is an Intermediate Representation used for type inference. It is built using the AST from the `Parser` and results from `NameResolution`. The HIR has a few differences from the AST:
 1. Unlike the AST, where nodes are individually heap-allocated, nodes in the HIR are arena-allocated
 2. Nodes in the HIR are organized with a two-level ID system, like that of the Rust compiler
 3. Instead of being split between statements, expressions, and items, the HIR is more broadly split between `definitions` and `locals`. Below, we go into more detail about arena-allocation, the two-level ID system, and `definitions` and `locals`.
+4. Paths inside the HIR contain a reference to the `definition` or `local` they name.
 
 `definitions` are any node which can "own" some other value. For example, a function is a `definition` because it can "own" parameters and the statements in its body. Phi defines the following language constructs as `definitions`: Functions, Structs, Enums, Traits, Extend Blocks, Modules, and Closures. All other constructs, such as struct fields, statements, expressions, patterns, etc. are considered `locals`. Being a `definition` enables the node to own an arena, which holds all the `locals` the `definition` owns. Arenas are formatted in the following manner: the first slot holds the owner of the arena (the `definition`) while all slots after hold `locals` the definition owns. For example, a function's arena holds itself in the first slot with its parameters and any statements in its body after. Each `definition` is also assigned an unique `DefId`, which can be used to access its arena. It should be noted that `definitions` are **not** stored into arenas. For example, a module holds `definitions` but these are not stored in the module's arenas, but inside their own arenas. They are stored at the same level as their parent module in the HIR:
 
@@ -465,7 +531,115 @@ flowchart TD
 ```
 
 ### Type Representation
-To allow for unification of all instances of a type, the type checking stage uses its own representation of a type in the Phi Programming Language. Instead of storing types as values in previous stages, a `TyKind`, which represents a unique type, is interned in a `TyCtx` (type context. Users instead are given references to a canonical instance of `TyKind`.
+To allow for unification of all instances of a type, the type checking stage uses its own representation of a type in the Phi Programming Language. Instead of storing types as values in previous stages, a `TyKind`, which represents a unique type, is interned in a `TyCtx` (type context. Users instead are given references (represented by `Ty`, which can be thought of as a pointer to `TyKind`) to a canonical instance of `TyKind`. It should be noted that there is only one unique `Ty` for every `TyKind`. That is, every `Ty` which refers to the same `TyKind` is equal. This allows quick comparison for type equality. Since `Ty` also functions essentially as a pointer to `TyKind`, `Ty` can also be quickly copied and distributed, unlike `TyKind` which must be duplicated deeply (since types can nest).
+
+```rust
+pub struct Ty(u32);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum TyVar {
+    Any(u32),
+    Int(u32),
+    Float(u32),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum TyKind {
+    Var(TyVar),
+    Primitive(PrimTy),
+    Adt {
+        def: DefId,
+        args: Vec<Ty>,
+    },
+    Generic(HirId),
+    SelfTy(DefId),
+    Ref {
+        base: Ty,
+        mutability: Mutability,
+    },
+    Any(Ty),
+    Unit,
+    Tuple(Vec<Ty>),
+    Array {
+        elem: Ty,
+        len: Option<HirId>, // -> Node::Expr, the constant expression `N`
+    },
+    Fun {
+        params: Vec<Ty>,
+        ret: Option<Ty>,
+    },
+    Dyn {
+        trait_: DefId,
+        args: Vec<Ty>,
+    },
+    Never,
+    Error,
+}
+```
+Note that for type inference, we also have a variant for inference variables, which are placeholders for the types of expressions which do not yet know the type of. Inference variables are also further classified by their constraints. `TyVar::Any` represents a inference variable which can be any type. That is, we don't know anything about what type it could be and thus we could unify with (say it is) any type. `TyVar::Int` represents an inference variable which we know has to be an integer. This is mainly used for integer literals, which can be coerced into an integer of any width, but not any other type. Note that integers are defaulted to `i32` if there is no restriction on their width. `TyVar::Float` is the equivalent for floats. In Phi, floats are defaulted to `f64`.
+
+### Unification
+Unification works through a Disjoint Set Union (DSU, also please see related literature on that data structure). Essentially, we treat unique types as nodes (which is why we use the type representation above). Types which are "equivalent" are connected with an edge bidirectionally such that all types equivalent to each form connected components. Thus, we can easily and quickly query and add connectivity (whether something is the same type) using a DSU. 
+
+`Unifier`, the DSU implementation, exposes two public-facing methods, `root` and `unify`. These are the equivalent of the similar named functions in a standard DSU implement for graph connectivity. 
+
+```rust
+pub fn root(&mut self, ty: Ty) -> Ty {
+```
+`root` returns the representative of `ty`'s connected component. Note that we have explicitly design unification such that root will return a concrete type (a type that is not an inference variable) in the case that we know the type of an inference variable. For example, say you unified an inference variable and `i32`. If you call `root` on that inference variable, you will get back `i32`. This is accomplished by preferring concrete types to be the representatives of connected components over inference variables.
+
+```rust
+pub fn unify(&mut self, tcx: &TyCtx, expected: Ty, found: Ty) -> Result<(), UnifyError> {
+```
+Meanwhile, `unify` connects two types `expected` and `found`, returning a Result where success is the Unit type and `UnifyError` is the error type. If unification fails, the function is a no-op. `UnifyError` has the following variants describing why unification failed:
+
+```rust
+pub enum UnifyError {
+    Mismatch { expected: Ty, found: Ty },  // mismatch between two incompatible types (like String and i32)
+    ExpectedInteger { var: Ty, found: Ty }, // mismatch between an inference variable known to be an integer and some type that is not an integer or a var known to be an integer
+    ExpectedFloat { var: Ty, found: Ty }, // same as above but for inference variables known to be a float
+    Infinite { var: Ty, ty: Ty }, // unification which would cause an infinite type (just search this up for an explanation :-) ) 
+}
+```
+
+### `TyCtx`
+`TyCtx` stores the context of the type checking pass, such the next variable counter, every unique type, and more. It is analogous to the *environment* in type inference literature. It exposes several public methods (`mk_*`) for creating types based on their content:
+
+```rust
+pub fn mk_prim(&mut self, prim: PrimTy) -> Ty;
+pub fn mk_adt(&mut self, def: DefId, args: Vec<Ty>) -> Ty;
+pub fn mk_generic(&mut self, param: HirId) -> Ty;
+pub fn mk_ref(&mut self, base: Ty, mutability: Mutability) -> Ty;
+pub fn mk_any(&mut self, base: Ty) -> Ty;
+pub fn mk_tuple(&mut self, elems: Vec<Ty>) -> Ty;
+```
+
+### Type Resolutions
+Since field accesses and method calls cannot be resolved until after the type of the receiver is known, `TypeResolution` not only keeps track of the type of each node in the HIR, it also keeps track of the resolutions of method calls and field accesses. 
+
+```rust
+pub struct ResolvedCall {
+    pub def: DefId,
+    pub args: Vec<Ty>,
+}
+
+pub struct TypeResolutions {
+    ty: HashMap<HirId, Ty>,
+    calls: HashMap<HirId, ResolvedCall>,
+}
+
+impl TypeResolutions {
+    pub fn new() -> TypeResolutions;
+    pub fn record(&mut self, id: HirId, ty: Ty);
+    pub fn record_def(&mut self, def: DefId, ty: Ty);
+    pub fn ty(&self, id: HirId) -> Option<Ty>;
+    pub fn ty_of_def(&self, def: DefId) -> Option<Ty>;
+    pub fn tys_iter(&self) -> impl Iterator<Item = (HirId, Ty)> + '_;
+    pub fn record_call(&mut self, id: HirId, def: DefId, args: Vec<Ty>)
+    pub fn call(&self, id: HirId) -> Option<&ResolvedCall>
+    pub fn calls_iter(&self) -> impl Iterator<Item = (HirId, &ResolvedCall)> + '_
+}
+```
 
 ### Trait Solving
 Trait solving answers one question *does this type implement this trait?*. Below is a diagram outlining the structure of `typeck::traits` with the responsibility of each module.
