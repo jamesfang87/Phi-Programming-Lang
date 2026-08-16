@@ -58,7 +58,7 @@ impl Interner {
     }
 
     /// Discards every interned string on this thread.
-    /// Tests use this for isolation, exactly like [`crate::diag::DiagCtx::clear`].
+    /// Tests use this for isolation, exactly like [`crate::diagnostics::DiagCtx::clear`].
     pub fn clear() {
         INTERNER.with(|interner| *interner.borrow_mut() = InternerData::new());
     }

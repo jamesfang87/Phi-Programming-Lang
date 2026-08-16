@@ -1,7 +1,7 @@
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, SelfMode};
-use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir};
 use crate::typeck::ty::Ty;

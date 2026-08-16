@@ -24,9 +24,9 @@ use crate::diagnostics::typeck::traits::index::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
+use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
 use crate::typeck::ty::Ty;
-use crate::typeck::Typeck;
 
 /// An index into [`ImplIndex::impls`], following the [`DefId`]/[`LocalId`] newtype pattern the
 /// rest of the compiler addresses things by.
@@ -298,7 +298,7 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::diag::DiagCtx;
+    use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::testing::{lex_src, resolve_src};
     use crate::typeck::Typeck;

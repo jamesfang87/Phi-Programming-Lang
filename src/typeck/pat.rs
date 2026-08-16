@@ -10,8 +10,8 @@ use crate::diagnostics::typeck::pat::{
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, PatKind, Payload, VariantPayload};
 use crate::nameres::PrimTy;
-use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::Typeck;
+use crate::typeck::ty::{Ty, TyKind};
 
 pub(crate) struct VariantDef {
     pub id: HirId,

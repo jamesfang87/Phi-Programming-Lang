@@ -1,4 +1,4 @@
-use crate::diag::DiagCtx;
+use crate::diagnostics::DiagCtx;
 use crate::driver::source::SrcSpan;
 use crate::lexer::token::{Token, TokenKind};
 
@@ -507,7 +507,7 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diag::{DiagCtx, Diagnostic};
+    use crate::diagnostics::{DiagCtx, Diagnostic};
 
     fn lex(src: &str) -> (Vec<Token>, Vec<Diagnostic>) {
         DiagCtx::clear();
@@ -545,9 +545,11 @@ mod tests {
     fn reports_unterminated_block_comment() {
         let (_, diagnostics) = lex("/* never closed");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0]
-            .message
-            .contains("unterminated block comment"));
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unterminated block comment")
+        );
     }
 
     #[test]
@@ -908,9 +910,11 @@ mod tests {
         // The outer `*/` closes only the inner comment; the outer one is left open.
         let (_, diagnostics) = lex("/* outer /* inner */");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0]
-            .message
-            .contains("unterminated block comment"));
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unterminated block comment")
+        );
     }
 
     #[test]

@@ -24,9 +24,9 @@ fn lower_mir_src(src: &str) -> (Hir, TyCtx, TypeResolutions, LoweredProgram) {
 
 fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, LoweredProgram) {
     let hir = resolve_src(src);
-    crate::diag::DiagCtx::clear();
+    crate::diagnostics::DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
-    let diagnostics = crate::diag::DiagCtx::diagnostics();
+    let diagnostics = crate::diagnostics::DiagCtx::diagnostics();
     assert!(
         diagnostics.is_empty(),
         "unexpected diagnostics for {src:?}: {diagnostics:?}"

@@ -5,7 +5,7 @@ use crate::ast::{
     Ast, Expr, ExprKind, Function, Ident, Item, ItemKind, NodeId, ParsedSrcFile, Path, Payload,
     PayloadField, StmtKind, Symbol,
 };
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::emit_debug;
 use crate::driver::source::{FileOrigin, SrcCollector, SrcMap, SrcSpan};
 use crate::lexer::Lexer;
@@ -145,7 +145,7 @@ fn with_diags<T>(f: impl FnOnce() -> T) -> (T, Vec<Diagnostic>) {
 }
 
 /// Filters out "missing lang item" diagnostics. `resolve` (unlike `SymbolTable::new` alone)
-/// always runs `langitems::collect_ast`, which reports one for every lang item the core library
+/// always runs `langitems::ast::collect`, which reports one for every lang item the core library
 /// would declare. None of the fixtures below build a unit with a core library. That noise is
 /// expected and unrelated to what these tests check.
 fn non_lang_item_diags(diags: &[Diagnostic]) -> Vec<&Diagnostic> {

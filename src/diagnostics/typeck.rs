@@ -5,8 +5,8 @@ pub mod pat;
 pub mod traits;
 
 use crate::ast::interner::{Interner, Symbol};
-use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::typeck::ty::Ty;
 use crate::typeck::unify::UnifyError;

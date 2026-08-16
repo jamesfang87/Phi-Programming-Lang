@@ -1,8 +1,8 @@
-use crate::ast::interner::Interner;
 use crate::ast::SelfMode;
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::ast::interner::Interner;
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::typeck::traits::get_name_of_trait;
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Function, Hir, HirId};
 use crate::typeck::traits::TraitRef;
@@ -235,7 +235,9 @@ fn self_param_span(hir: &Hir, function: &Function) -> SrcSpan {
 }
 
 fn ret_span(hir: &Hir, function: &Function) -> SrcSpan {
-    function.ret.map_or(function.name.span, |id| hir.ty(id).span)
+    function
+        .ret
+        .map_or(function.name.span, |id| hir.ty(id).span)
 }
 
 fn show_ret(cx: DisplayCx<'_>, ret: Option<Ty>) -> String {

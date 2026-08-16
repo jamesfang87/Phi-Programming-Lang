@@ -1,8 +1,8 @@
-use crate::ast::interner::Interner;
 use crate::ast::Symbol;
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::ast::interner::Interner;
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::typeck::traits::get_name_of_trait;
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::hir::Hir;
 use crate::typeck::traits::index::ExtendHeader;
 

@@ -42,11 +42,11 @@ use crate::diagnostics::typeck::traits::solve::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
-use crate::typeck::traits::index::ImplId;
+use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
+use crate::typeck::traits::index::ImplId;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::Typeck;
 
 /// How deep the solver will chase an impl's obligations before giving up.
 ///
@@ -255,7 +255,8 @@ fn match_all(
 ///
 /// The two variants differ in whether the lookup can fail. [`TraitName::Def`] carries a `DefId`
 /// name resolution already produced, so it is infallible. [`TraitName::Lang`] carries a
-/// [`LangItem`](crate::langitems::LangItem), which [`LangItems::get`](crate::langitems::LangItems::get)
+/// [`LangItem`](crate::langitems::LangItem), which
+/// [`LangItems::get`](crate::langitems::hir::LangItems::get)
 /// resolves to a `DefId` only if the core library declared it -- it returns `None` otherwise,
 /// which [`Typeck::extends`] maps to [`Solution::Error`].
 ///
@@ -283,7 +284,7 @@ impl<'hir> Typeck<'hir> {
     ///
     /// Returns [`Solution::Error`] when `name` is a [`TraitName::Lang`] that did not resolve.
     /// This is distinct from [`Solution::DoesNotHold`] in what the caller must do: `Error` means
-    /// [`collect_ast`](crate::langitems::collect_ast) has already emitted a diagnostic for the
+    /// [`collect`](crate::langitems::ast::collect) has already emitted a diagnostic for the
     /// missing item and the caller must not emit another, while `DoesNotHold` is an answer about
     /// the program that the caller is expected to report. Reporting `DoesNotHold` for an
     /// unresolved lang item would attribute a missing core library to the program under
@@ -697,7 +698,7 @@ impl<'hir> Typeck<'hir> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diag::DiagCtx;
+    use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::nameres::PrimTy;
     use crate::testing::resolve_src;
@@ -1259,7 +1260,7 @@ mod tests {
         );
     }
 
-    /// `SRC` declares no core library, so `LangItems::get` returns `None` for every item.
+    /// `SRC` declares no core library, so `hir::LangItems::get` returns `None` for every item.
     /// `extends` maps that to `Solution::Error` rather than `Solution::DoesNotHold`, so the
     /// caller suppresses its diagnostic instead of reporting `Foo` as lacking an `Add` impl.
     #[test]
@@ -1310,7 +1311,7 @@ mod tests {
 
     /// `Ambiguous` and `Error` both return `false` without emitting: an unresolved `TyKind::Var`
     /// may still resolve to a type that implements the trait, and an unresolved lang item was
-    /// already reported by `langitems::collect_ast`.
+    /// already reported by `langitems::ast::collect`.
     #[test]
     fn require_extends_stays_quiet_when_the_question_has_no_answer() {
         let hir = resolve_src(SRC);
@@ -1327,7 +1328,7 @@ mod tests {
             SrcSpan::new(0, 0),
             "this operator",
         ));
-        // Error: an unresolved lang item, already reported by `langitems::collect_ast`.
+        // Error: an unresolved lang item, already reported by `langitems::ast::collect`.
         let foo_ty = {
             let foo = named(&checker, "Foo");
             checker.tcx.mk_adt(foo, vec![])

@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use smallvec::SmallVec;
 
 use crate::ast::{NodeId, Path};
-use crate::langitems::AstLangItems;
+use crate::langitems::ast::LangItems;
 use crate::nameres::res::Res;
 
 #[derive(Debug, Default)]
 pub struct NameResolutions {
     paths: HashMap<NodeId, SmallVec<[(Path, Res); 2]>>,
-    lang_items: AstLangItems,
+    lang_items: LangItems,
 }
 
 impl NameResolutions {
@@ -40,11 +40,11 @@ impl NameResolutions {
         self.paths.get(&owner).map_or(&[], |v| v.as_slice())
     }
 
-    pub fn record_lang_items(&mut self, lang_items: AstLangItems) {
+    pub fn record_lang_items(&mut self, lang_items: LangItems) {
         self.lang_items = lang_items;
     }
 
-    pub fn lang_items(&self) -> &AstLangItems {
+    pub fn lang_items(&self) -> &LangItems {
         &self.lang_items
     }
 }

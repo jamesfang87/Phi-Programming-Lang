@@ -2,13 +2,13 @@ use std::io;
 use std::path::Path;
 
 use crate::ast::Ast;
-use crate::diag::DiagCtx;
+use crate::diagnostics::DiagCtx;
 use crate::driver::cli::{BuildOptions, Config, Mode};
 use crate::driver::emit_debug;
 use crate::driver::source::{SrcCollector, SrcMap};
 use crate::hir::lower::lower_program;
-use crate::lexer::token::Token;
 use crate::lexer::Lexer;
+use crate::lexer::token::Token;
 use crate::mir;
 use crate::nameres;
 use crate::parser::Parser;
