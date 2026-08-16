@@ -2,12 +2,12 @@
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, ParsedSrcFile};
-use crate::diag::DiagCtx;
+use crate::diagnostics::DiagCtx;
 use crate::driver::source::{FileOrigin, SrcMap};
 use crate::hir::lower::lower_program;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, StmtKind};
-use crate::lexer::token::Token;
 use crate::lexer::Lexer;
+use crate::lexer::token::Token;
 use crate::nameres;
 use crate::parser::Parser;
 
@@ -228,7 +228,9 @@ pub fn first_trait(hir: &Hir) -> DefId {
 
 /// The `DefId` of the first top-level `extend` block declared in `hir`.
 pub fn first_extend(hir: &Hir) -> DefId {
-    first_item(hir, "extend block", |def| matches!(def, OwnerNode::Extend(_)))
+    first_item(hir, "extend block", |def| {
+        matches!(def, OwnerNode::Extend(_))
+    })
 }
 
 /// The `DefId` of the first method in the first top-level `extend` block declared in `hir`.

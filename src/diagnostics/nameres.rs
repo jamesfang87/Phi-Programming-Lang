@@ -1,6 +1,6 @@
 use crate::ast::Ident;
 use crate::ast::interner::Interner;
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 
 pub fn report_not_found(name: Ident) {

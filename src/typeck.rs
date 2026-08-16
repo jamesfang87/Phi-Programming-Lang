@@ -14,19 +14,18 @@ use crate::diagnostics::typeck::{
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
-    DefId, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind,
-    VariantPayload,
+    DefId, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind, VariantPayload,
 };
 use crate::langitems::LangItem;
-use crate::nameres::symbol_table::prim_ty;
 use crate::nameres::PrimTy;
+use crate::nameres::symbol_table::prim_ty;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::bounds::ObligationCx;
 use crate::typeck::traits::index::ImplIndex;
 use crate::typeck::traits::solve::{Obligation, ParamEnv, TraitName};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::{is_float, is_integer, Unifier, UnifyError};
+use crate::typeck::unify::{Unifier, UnifyError, is_float, is_integer};
 
 pub mod cast;
 pub mod expr;
@@ -1102,11 +1101,7 @@ impl<'hir> Typeck<'hir> {
         // Only a statement *of* this block is looked at. Divergence hidden inside an expression
         // this language has no syntax to express -- a call to a function that never returns, say
         // -- is not tracked, so this errs towards treating a block as completing normally.
-        if diverges {
-            self.tcx.never()
-        } else {
-            tail_ty
-        }
+        if diverges { self.tcx.never() } else { tail_ty }
     }
 
     /// Checks `def_id`'s body against the signature stage one collected for it, and bakes the
@@ -1272,7 +1267,7 @@ pub fn check(hir: &Hir) -> TypeckOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diag::{DiagCtx, Severity};
+    use crate::diagnostics::{DiagCtx, Severity};
     use crate::nameres::PrimTy;
     use crate::testing::{
         find_return, first_extend_method, first_function, first_struct, first_trait, resolve_src,

@@ -4,8 +4,8 @@ use crate::diagnostics::typeck::lower_ty::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
-use crate::typeck::ty::Ty;
 use crate::typeck::Typeck;
+use crate::typeck::ty::Ty;
 
 impl<'hir> Typeck<'hir> {
     pub fn lower_ty(&mut self, id: HirId) -> Ty {
@@ -204,9 +204,9 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::interner::Interner;
     use crate::ast::Mutability;
-    use crate::diag::DiagCtx;
+    use crate::ast::interner::Interner;
+    use crate::diagnostics::DiagCtx;
     use crate::hir::{DefId, Hir, HirId, OwnerNode};
     use crate::nameres::PrimTy;
     use crate::testing::resolve_src;

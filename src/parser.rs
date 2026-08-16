@@ -188,7 +188,7 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::ast::*;
-    use crate::diag::DiagCtx;
+    use crate::diagnostics::DiagCtx;
     use crate::testing::{lex_src, parse_src};
 
     /// Lexes and parses `src`, returning how many diagnostics were raised. Unlike

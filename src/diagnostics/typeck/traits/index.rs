@@ -1,4 +1,4 @@
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 
 pub fn report_extend_primitive(span: SrcSpan) {

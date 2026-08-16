@@ -68,17 +68,12 @@ impl OwnerLowerer<'_, '_> {
                 base: self.lower_expr(base),
                 index: self.lower_expr(index),
             },
-            // TODO: Consider this
-            // why is it even separate???
-            // `path` is looked up through `lower_ctor_path`, not `lower_path`: unlike every
-            // other path kind, `Resolver::visit_expr` (`src/nameres/resolver.rs`) does
-            // not yet record an entry for a struct literal's own name, so a missing entry here
-            // is a known gap in AST-level resolution rather than a lowering bug. See
-            // `LoweringCtx::lower_ctor_path`.
+            // `path` is looked up through the ordinary `lower_path`: `Resolver::visit_expr`'s
+            // `Ctor` arm (`src/nameres/resolver.rs`) resolves a struct literal's own name through
+            // `resolve_type_path` and records it under the expression's own `NodeId`, exactly as
+            // `TyKind::Path` does, so a missing entry here is a lowering bug like any other path.
             ast::ExprKind::Ctor { path, payload } => ExprKind::Ctor {
-                path: path
-                    .as_ref()
-                    .map(|path| self.cx.lower_ctor_path(node_id, path)),
+                path: path.as_ref().map(|path| self.cx.lower_path(node_id, path)),
                 payload: self.lower_record_fields(payload),
             },
             ast::ExprKind::Variant { variant, payload } => ExprKind::Variant {

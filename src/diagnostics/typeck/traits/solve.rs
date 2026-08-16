@@ -1,6 +1,6 @@
-use crate::diag::{DiagCtx, Diagnostic};
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::typeck::traits::get_name_of_trait;
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::Hir;
 use crate::typeck::traits::solve::{Obligation, RECURSION_LIMIT};

@@ -27,7 +27,7 @@ pub struct Hir {
     arenas: Vec<Arena>,
     parents: Vec<DefId>,
     root_module: DefId,
-    lang_items: crate::langitems::LangItems,
+    lang_items: crate::langitems::hir::LangItems,
 }
 
 impl Hir {
@@ -71,7 +71,7 @@ impl Hir {
     }
 
     /// The core-library definitions the compiler knows by name.
-    pub fn lang_items(&self) -> &crate::langitems::LangItems {
+    pub fn lang_items(&self) -> &crate::langitems::hir::LangItems {
         &self.lang_items
     }
 

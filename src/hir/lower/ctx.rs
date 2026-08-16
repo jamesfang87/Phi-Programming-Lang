@@ -151,10 +151,16 @@ impl<'res> LoweringCtx<'res> {
     /// recorded under in [`NameResolutions`] (see `NameResolutions::get`).
     ///
     /// Every path AST-level resolution visits records an entry, `Res::Err` included (see
-    /// the AST-level `Res`'s own docs on why absence and failure are kept apart). A missing
-    /// entry here indicates `owner` is wrong, not that resolution failed. This differs from a
-    /// missing `node_to_hir`/`def_ids` entry inside [`Self::translate_res`], which is checked
-    /// (and panics) separately once an entry is found.
+    /// the AST-level `Res`'s own docs on why absence and failure are kept apart). This holds
+    /// for a struct literal's own type name (`ExprKind::Ctor`'s `path`) exactly as it does for
+    /// an ordinary `ExprKind::Path`: `Resolver::visit_expr`'s `Ctor` arm
+    /// (`src/nameres/resolver.rs`) resolves it through `resolve_type_path` and records it under
+    /// the expression's own `NodeId` whenever that `path` is present at all -- the elided
+    /// `.{ ... }` form carries no `ast::Path` to look up in the first place, so its caller in
+    /// `lower_expr_kind` never reaches this function. A missing entry here indicates `owner` is
+    /// wrong, not that resolution failed. This differs from a missing `node_to_hir`/`def_ids`
+    /// entry inside [`Self::translate_res`], which is checked (and panics) separately once an
+    /// entry is found.
     pub(super) fn lower_path(&self, owner: NodeId, path: &ast::Path) -> crate::hir::Path {
         let res = self.nameres.get(owner, path).unwrap_or_else(|| {
             panic!(
@@ -191,29 +197,6 @@ impl<'res> LoweringCtx<'res> {
         match res {
             Res::Type(Type::Def(tydef)) if is_self_path(path) => Res::SelfTy(tydef),
             other => other,
-        }
-    }
-
-    /// Builds the `hir::Path` for a struct literal's own type name (`ExprKind::Ctor`'s `path`),
-    /// falling back to `Res::Err` rather than panicking on a missing entry.
-    ///
-    /// `Resolver::visit_expr`'s `Ctor` arm (`src/nameres/resolver.rs`) does record an entry for
-    /// this, keyed on the expression's own `NodeId` exactly like an ordinary `ExprKind::Path` --
-    /// so this behaves the same as [`Self::lower_path`]. The fallback avoids panicking because
-    /// this is a single, narrow call site (one `Option<Path>` field on one node kind) rather than
-    /// the general path-lookup every other caller shares. Re-checking this by hand remains
-    /// straightforward if some future edit reintroduces a gap here, unlike `Self::lower_path`'s
-    /// panic, whose whole point is to surface a miss loudly rather than let it hide.
-    pub(super) fn lower_ctor_path(&self, owner: NodeId, path: &ast::Path) -> crate::hir::Path {
-        let res = self
-            .nameres
-            .get(owner, path)
-            .map(|res| self.translate_res(res))
-            .unwrap_or(Res::Err);
-        crate::hir::Path {
-            segments: path.segments.clone(),
-            span: path.span,
-            res,
         }
     }
 
@@ -553,11 +536,12 @@ impl<'res> LoweringCtx<'res> {
 
         // Every lang item that resolved at all names a struct, enum, or trait item, and every
         // one of those got its `DefId` in the pre-allocation passes `lower_unit` runs before
-        // lowering proper starts -- so `def_ids` already has whatever `translate` needs, even
+        // lowering proper starts -- so `def_ids` already has whatever `from_ast` needs, even
         // though nothing has been lowered into an arena yet at the point this runs.
-        let lang_items = crate::langitems::translate(self.nameres.lang_items(), |node| {
-            self.def_ids.get(&node).copied()
-        });
+        let lang_items =
+            crate::langitems::hir::LangItems::from_ast(self.nameres.lang_items(), |node| {
+                self.def_ids.get(&node).copied()
+            });
 
         let parents = self.items.finish();
 

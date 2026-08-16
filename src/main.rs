@@ -4,7 +4,6 @@
 //! them that turns a returned exit code into a process exit.
 
 mod ast;
-mod diag;
 mod diagnostics;
 mod driver;
 mod hir;
