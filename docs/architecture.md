@@ -603,7 +603,17 @@ pub enum UnifyError {
 ```
 
 ### `TyCtx`
-`TyCtx` stores the context of the type checking pass, such the next variable counter, every unique type, and more. It is analogous to the *environment* in type inference literature. It exposes several public methods (`mk_*`) for creating types based on their content:
+`TyCtx` stores the context of the type checking pass, such the next variable counter, every unique type, and more. It is analogous to the *environment* in type inference literature.
+```rust
+pub struct TyCtx {
+    tykinds: Vec<TyKind>,
+    handles: HashMap<TyKind, Ty>,
+    /// Type variable counter
+    next_var: u32,
+}
+```
+
+It exposes several public methods (`mk_*`) for creating types based on their content:
 
 ```rust
 pub fn mk_prim(&mut self, prim: PrimTy) -> Ty;
@@ -613,6 +623,7 @@ pub fn mk_ref(&mut self, base: Ty, mutability: Mutability) -> Ty;
 pub fn mk_any(&mut self, base: Ty) -> Ty;
 pub fn mk_tuple(&mut self, elems: Vec<Ty>) -> Ty;
 ```
+Note that there are several more and that the ones selected above do not reflect all the methods which exist.
 
 ### Type Resolutions
 Since field accesses and method calls cannot be resolved until after the type of the receiver is known, `TypeResolution` not only keeps track of the type of each node in the HIR, it also keeps track of the resolutions of method calls and field accesses. 
