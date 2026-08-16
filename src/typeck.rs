@@ -17,15 +17,15 @@ use crate::hir::{
     DefId, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind, VariantPayload,
 };
 use crate::langitems::LangItem;
-use crate::nameres::PrimTy;
 use crate::nameres::symbol_table::prim_ty;
+use crate::nameres::PrimTy;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::bounds::ObligationCx;
 use crate::typeck::traits::index::ImplIndex;
 use crate::typeck::traits::solve::{Obligation, ParamEnv, TraitName};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::{Unifier, UnifyError, is_float, is_integer};
+use crate::typeck::unify::{is_float, is_integer, Unifier, UnifyError};
 
 pub mod cast;
 pub mod expr;
@@ -339,7 +339,7 @@ impl<'hir> Typeck<'hir> {
     fn writeback(&mut self, owner: DefId) {
         let entries: Vec<(HirId, Ty)> = self
             .types
-            .iter()
+            .tys_iter()
             .filter(|(id, _)| id.owner == owner)
             .collect();
 
@@ -1101,7 +1101,11 @@ impl<'hir> Typeck<'hir> {
         // Only a statement *of* this block is looked at. Divergence hidden inside an expression
         // this language has no syntax to express -- a call to a function that never returns, say
         // -- is not tracked, so this errs towards treating a block as completing normally.
-        if diverges { self.tcx.never() } else { tail_ty }
+        if diverges {
+            self.tcx.never()
+        } else {
+            tail_ty
+        }
     }
 
     /// Checks `def_id`'s body against the signature stage one collected for it, and bakes the
@@ -1876,15 +1880,17 @@ mod tests {
     #[test]
     fn never_displays_as_bang() {
         let hir = resolve_src("fun f() {}");
-        let checker = checker_with_signatures_collected(&hir);
-        assert_eq!(checker.cx().show(checker.tcx.never()).to_string(), "!");
+        let mut checker = checker_with_signatures_collected(&hir);
+        let never = checker.tcx.never();
+        assert_eq!(checker.cx().show(never).to_string(), "!");
     }
 
     #[test]
     fn unit_displays_as_empty_parens() {
         let hir = resolve_src("fun f() {}");
-        let checker = checker_with_signatures_collected(&hir);
-        assert_eq!(checker.cx().show(checker.tcx.unit()).to_string(), "()");
+        let mut checker = checker_with_signatures_collected(&hir);
+        let unit = checker.tcx.unit();
+        assert_eq!(checker.cx().show(unit).to_string(), "()");
     }
 
     #[test]
@@ -1904,11 +1910,9 @@ mod tests {
     #[test]
     fn error_displays_as_placeholder() {
         let hir = resolve_src("fun f() {}");
-        let checker = checker_with_signatures_collected(&hir);
-        assert_eq!(
-            checker.cx().show(checker.tcx.error()).to_string(),
-            "{error}"
-        );
+        let mut checker = checker_with_signatures_collected(&hir);
+        let error = checker.tcx.error();
+        assert_eq!(checker.cx().show(error).to_string(), "{error}");
     }
 
     #[test]

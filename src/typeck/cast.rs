@@ -1,6 +1,5 @@
 use crate::nameres::PrimTy;
 
-/// The bit width of an integer primitive, or `None` for a non-integer.
 fn int_width(prim: PrimTy) -> Option<u32> {
     match prim {
         PrimTy::I8 | PrimTy::U8 => Some(8),

@@ -25,7 +25,7 @@ pub use types::{Ty, TyKind};
 #[derive(Debug)]
 pub struct Hir {
     arenas: Vec<Arena>,
-    parents: Vec<DefId>,
+    parent_of: Vec<DefId>,
     root_module: DefId,
     lang_items: crate::langitems::hir::LangItems,
 }
@@ -78,7 +78,7 @@ impl Hir {
     /// Returns the definition that `def_id` is lexically declared inside, or `None` if `def_id`
     /// is the root module.
     pub fn parent(&self, def_id: DefId) -> Option<DefId> {
-        let parent = self.parents[def_id.index()];
+        let parent = self.parent_of[def_id.index()];
         // The root is stored as its own parent, which is how the table stays dense. Reporting
         // that as `None` is what gives a caller walking upwards a termination condition.
         (parent != def_id).then_some(parent)
@@ -108,12 +108,13 @@ impl Hir {
     }
 }
 
-/// Generates typed node accessors on [`Hir`]
+/// Generates typed lookup methods on [`Hir`] that retrieve a [`Node`] by [`HirId`] and downcast
+/// it to one expected variant.
 ///
-/// Generated typed accessors (`hir.block(id)` vs. `hir.expr(id)`) make the type expectation
+/// Generated lookup methods (`hir.block(id)` vs. `hir.expr(id)`) make the type expectation
 /// explicit at the call site and report uniform diagnostic messages that name both the expected
 /// variant and what was actually found.
-macro_rules! node_accessors {
+macro_rules! typed_node_lookup {
     ($($method:ident => $variant:ident -> $node_ty:ty),* $(,)?) => {
         impl Hir {
             $(
@@ -137,7 +138,7 @@ macro_rules! node_accessors {
     };
 }
 
-node_accessors! {
+typed_node_lookup! {
     import => Import -> Import,
     param => Param -> Param,
     closure_param => ClosureParam -> ClosureParam,
@@ -153,7 +154,9 @@ node_accessors! {
     ty => Ty -> Ty,
 }
 
-macro_rules! owner_accessors {
+/// Generates typed lookup methods on [`Hir`] that retrieve an [`OwnerNode`] by [`DefId`] and
+/// downcast it to one expected variant.
+macro_rules! typed_owner_lookup {
     ($($method:ident => $variant:ident -> $owner_ty:ty),* $(,)?) => {
         impl Hir {
             $(
@@ -172,7 +175,7 @@ macro_rules! owner_accessors {
     };
 }
 
-owner_accessors! {
+typed_owner_lookup! {
     module => Module -> Module,
     function => Function -> Function,
     struct_ => Struct -> Struct,

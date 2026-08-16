@@ -84,7 +84,7 @@ pub fn monomorphize(
         }
 
         let Some(generic_body) = program.bodies.get(&(instance.def, instance.any_mode)) else {
-            panic!("mir::monomorphize: no lowered body for {instance:?}");
+            continue;
         };
         let subst = build_subst(hir, instance.def, &instance.args);
         let mut discovered = Vec::new();
@@ -244,10 +244,9 @@ fn subst_rvalue(
                     any_mode: None,
                     args: instance.args.clone(),
                 };
-                if !output.contains_key(&closure_instance) {
-                    let Some(closure_generic_body) = program.bodies.get(&(def, None)) else {
-                        panic!("mir::monomorphize: no lowered body for closure {def:?}");
-                    };
+                if !output.contains_key(&closure_instance)
+                    && let Some(closure_generic_body) = program.bodies.get(&(def, None))
+                {
                     let closure_body = process_body(
                         tcx,
                         program,

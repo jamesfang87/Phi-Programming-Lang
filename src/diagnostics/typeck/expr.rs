@@ -1,5 +1,5 @@
-use crate::ast::Ident;
 use crate::ast::interner::Interner;
+use crate::ast::Ident;
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
@@ -390,6 +390,7 @@ pub fn report_range_endpoints_mismatch(cx: DisplayCx<'_>, err: UnifyError, span:
     );
 }
 
+/// TODO: Removes when std library Range is implemented
 pub fn report_no_range_type(span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error("a range expression has no type yet", span)

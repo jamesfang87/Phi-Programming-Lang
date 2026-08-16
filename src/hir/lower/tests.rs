@@ -90,7 +90,7 @@ fn every_item_gets_a_def_id_before_lower_module_runs() {
 
     for mod_id in ast.mod_ids() {
         let parent_def = ast.parent(mod_id).map(|id| cx.def_ids[&id]);
-        let def_id = cx.items.alloc(parent_def);
+        let def_id = cx.def_id_allocator.alloc(parent_def);
         cx.def_ids.insert(mod_id, def_id);
     }
     for mod_id in ast.mod_ids() {
@@ -103,7 +103,7 @@ fn every_item_gets_a_def_id_before_lower_module_runs() {
     // No arena exists yet -- `lower_module` was never called -- but every item's `NodeId`
     // already maps to a `DefId`, including the trait's method, which needed the trait's own id
     // to be allocated first.
-    assert!(cx.owners.is_empty());
+    assert!(cx.arenas.is_empty());
     let root = ast.module(ast.root_id());
     assert_eq!(root.items.len(), 3);
     for item in &root.items {
@@ -288,18 +288,12 @@ fn extend_methods_and_generics_are_lowered() {
 ///
 /// This can't observe *when* the generic node was built from outside -- both the old, buggy
 /// order and the fixed one produce the same final `Trait`/`Function` shape, since a function is
-/// lowered into its own separate arena from the trait's. The actual regression guard is the
-/// `debug_assert!` in `LoweringCtx::lower_trait`, right before each `self.lower_function(id, f)`
-/// call, checking that the trait's own `DefId` is already in `generics_ready`. That assertion was
-/// confirmed non-vacuous by hand: temporarily reverting `lower_trait` to the pre-fix order (lower
-/// every function, *then* lower the trait's own generics) while keeping the assertion in place
-/// made it panic, failing this test, `trait_functions_are_lowered_as_independent_owners`, and
-/// `a_methods_parent_is_its_trait_or_extend_block` -- the three tests in this file that exercise a
-/// trait's functions. There is no standing test that re-exercises the pre-fix order on every
-/// run (a debug-assert regression test would need a seam into `lower_trait`'s ordering that has
-/// no other reason to exist); the `debug_assert!` itself is the permanent guard. This test is the
-/// weaker, black-box check the task brief asks for regardless: that both the generics and the
-/// functions came out right.
+/// lowered into its own separate arena from the trait's. The real guard is that
+/// `LoweringCtx::lower_trait` lowers the trait's generics before it finishes the trait's own
+/// arena, and only then lowers any function -- reordering those statements is what a regression
+/// here would look like, and it is visible in the function body itself rather than behind a
+/// separate builder/resume split. This test is the weaker, black-box check the task brief asks
+/// for regardless: that both the generics and the functions came out right.
 #[test]
 fn a_traits_generics_are_lowered_before_its_functions() {
     let hir = lower_src("trait C<T> { fun get(self) -> T; }");
@@ -824,6 +818,24 @@ fn record_expr_shorthand_resolves_the_name_it_names() {
             }
         }
         other => panic!("expected a variant expr, got {other:?}"),
+    }
+}
+
+/// `lower_path` panics only when `owner` has no recorded resolution at all for `path` -- a
+/// lowering bug, since AST-level resolution records every path it visits, `Res::Err` included.
+/// An unresolved name is not that case: `Resolver` still records an entry for it, just one
+/// holding `Res::Err`, so `lower_path` does not panic and the reference lowers to a
+/// `hir::Path` whose `res` is `Res::Err`.
+#[test]
+fn an_unresolved_name_lowers_to_res_err_instead_of_panicking() {
+    let hir = lower_src("fun f() { let x = does_not_exist; }");
+    let init = only_init(&hir);
+    match &hir.expr(init).kind {
+        ExprKind::Path(path) => {
+            assert_eq!(text(path.segments[0]), "does_not_exist");
+            assert_eq!(path.res, Res::Err);
+        }
+        other => panic!("expected a path expr, got {other:?}"),
     }
 }
 

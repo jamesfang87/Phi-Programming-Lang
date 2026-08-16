@@ -10,8 +10,8 @@ use crate::diagnostics::typeck::pat::{
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, PatKind, Payload, VariantPayload};
 use crate::nameres::PrimTy;
-use crate::typeck::Typeck;
 use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::Typeck;
 
 pub(crate) struct VariantDef {
     pub id: HirId,
@@ -211,8 +211,6 @@ impl<'hir> Typeck<'hir> {
             .iter()
             .find(|&&id| hir.variant(id).name.text == name)?;
 
-        // A variant's declared payload is written in the enum's terms, so it is read through
-        // the arguments the matched type applied -- `some`'s payload on `Option<i32>` is `i32`.
         let subst: HashMap<HirId, Ty> = enum_.generics.iter().copied().zip(args).collect();
 
         let payload = match &hir.variant(id).payload {
@@ -248,8 +246,6 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) {
         let ty = self.resolve_deep(scrutinee_ty);
-        // A scrutinee that never settled, or already failed, has nothing to judge coverage
-        // against -- and one that can never produce a value at all needs no arm to handle it.
         if matches!(
             self.tcx.kind(ty),
             TyKind::Var(_) | TyKind::Error | TyKind::Never
@@ -259,9 +255,6 @@ impl<'hir> Typeck<'hir> {
 
         let hir = self.hir;
         let pat_kind = |arm: HirId| &hir.pat(hir.arm(arm).pat).kind;
-        // A guarded arm might not fire even when its pattern matches -- the guard could come
-        // back `false` -- so, exactly as in Rust, it never counts toward covering anything on
-        // its own. Only an arm with no guard can make a pattern's coverage certain.
         let unguarded = |arm: HirId| hir.arm(arm).guard.is_none();
 
         if arms

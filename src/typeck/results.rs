@@ -40,14 +40,10 @@ impl TypeResolutions {
         self.ty(def.owner_id())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (HirId, Ty)> + '_ {
+    pub fn tys_iter(&self) -> impl Iterator<Item = (HirId, Ty)> + '_ {
         self.ty.iter().map(|(&id, &ty)| (id, ty))
     }
 
-    /// Records that the `Call` or method-call `Access` expression `id` resolved to `def`,
-    /// instantiated with `args`. `id` is the call expression's own id, not the callee's: a
-    /// method call's callee (`Access`'s `member`) is a bare `Ident` with no `HirId` of its own,
-    /// so the call expression is the only id both call shapes have in common to key this on.
     pub fn record_call(&mut self, id: HirId, def: DefId, args: Vec<Ty>) {
         self.calls.insert(id, ResolvedCall { def, args });
     }
@@ -56,8 +52,6 @@ impl TypeResolutions {
         self.calls.get(&id)
     }
 
-    /// Every recorded call, for [`Typeck::writeback`](crate::typeck::Typeck::writeback) to
-    /// re-resolve and default each one's `args` the same way it does every plain [`Ty`] entry.
     pub fn calls_iter(&self) -> impl Iterator<Item = (HirId, &ResolvedCall)> + '_ {
         self.calls.iter().map(|(&id, call)| (id, call))
     }

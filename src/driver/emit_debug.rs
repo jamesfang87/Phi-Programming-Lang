@@ -256,7 +256,7 @@ pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_c
     let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(hir, def_id);
 
     println!("=== TypeCk results ===");
-    for (hir_id, ty) in results.iter().filter(|(id, _)| keep(id.owner)) {
+    for (hir_id, ty) in results.tys_iter().filter(|(id, _)| keep(id.owner)) {
         println!(
             "{hir_id:?} :: {} ->\n{}{}",
             fmt_node_summary(hir, hir_id),

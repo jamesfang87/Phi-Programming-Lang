@@ -125,9 +125,6 @@ pub enum AccessArgs {
 }
 
 /// This is used for field initializers and definitions record payloads
-/// Lowering desugars the `{ l }` field shorthand into `{ l: l }`, so `value` is always a real
-/// node here. This is unlike the AST's [`ast::PayloadField`](crate::ast::PayloadField), whose value is
-/// optional.
 #[derive(Clone, Debug)]
 pub struct PayloadField {
     pub name: Ident,

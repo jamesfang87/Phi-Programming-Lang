@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol, Visibility};
@@ -425,17 +425,6 @@ impl<'ast> SymbolTable<'ast> {
 
     pub fn lookup_mod(&self, module: NodeId, name: Symbol) -> Option<NodeId> {
         self.modules.get(&module)?.mods.get(&name).copied()
-    }
-
-    pub fn lookup_variant(&self, r#enum: NodeId, name: Symbol) -> Option<NodeId> {
-        let item = self.item(r#enum)?;
-        let ItemKind::Enum(e) = &item.kind else {
-            return None;
-        };
-        e.variants
-            .iter()
-            .find(|v| v.name.text == name)
-            .map(|v| v.id)
     }
 
     //-------------------------------------------------------------------------
