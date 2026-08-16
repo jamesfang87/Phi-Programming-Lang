@@ -9,11 +9,11 @@
 //! own, since `expr_parser` needs a type parser back for closures, and the two would otherwise
 //! have no way to be built together.
 
-use chumsky::prelude::*;
 use chumsky::Parser as ChumskyParser;
+use chumsky::prelude::*;
 
-use crate::ast::interner::Interner;
 use crate::ast::Mutability;
+use crate::ast::interner::Interner;
 use crate::ast::{Expr, Ident, NodeId, Path, Ty, TyKind};
 
 use crate::lexer::token::{Token, TokenKind};

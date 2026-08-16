@@ -1,6 +1,6 @@
 use chumsky::error::Rich;
 
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::lexer::token::Token;
 

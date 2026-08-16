@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn mangling_the_same_instance_twice_is_stable() {
         let hir = resolve_src("fun f() {}");
-        crate::diag::DiagCtx::clear();
+        crate::diagnostics::DiagCtx::clear();
         let checked = crate::typeck::check(&hir);
         let crate::typeck::TypeckOutput { tcx, .. } = checked;
         let def = first_function(&hir);

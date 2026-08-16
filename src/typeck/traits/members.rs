@@ -323,7 +323,7 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::diag::DiagCtx;
+    use crate::diagnostics::DiagCtx;
     use crate::hir::{Hir, OwnerNode};
     use crate::nameres::PrimTy;
     use crate::testing::resolve_src;

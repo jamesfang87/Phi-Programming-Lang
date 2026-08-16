@@ -366,7 +366,7 @@ impl<'hir> Typeck<'hir> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diag::DiagCtx;
+    use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::testing::resolve_src;
 

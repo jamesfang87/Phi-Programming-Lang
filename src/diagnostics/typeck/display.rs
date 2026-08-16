@@ -1,7 +1,7 @@
 use std::fmt;
 
-use crate::ast::interner::Interner;
 use crate::ast::Mutability;
+use crate::ast::interner::Interner;
 use crate::hir::{DefId, Hir, HirId, OwnerNode};
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};

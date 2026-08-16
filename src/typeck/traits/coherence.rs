@@ -26,14 +26,14 @@
 //! [`overlaps`](crate::typeck::traits::overlap::overlaps); the diagnostic says so rather than
 //! leaving it a mystery.
 
-use crate::ast::interner::Interner;
 use crate::ast::Symbol;
+use crate::ast::interner::Interner;
 use crate::diagnostics::typeck::traits::coherence::{
     report_conflicting_extends, report_duplicate_method,
 };
+use crate::typeck::Typeck;
 use crate::typeck::traits::index::{ExtendHeader, ImplId};
 use crate::typeck::traits::overlap::overlaps;
-use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     /// Runs both coherence checks over the whole index.
@@ -129,7 +129,7 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::diag::DiagCtx;
+    use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::testing::resolve_src;
     use crate::typeck::Typeck;

@@ -1,4 +1,4 @@
-use crate::diag::{DiagCtx, Diagnostic};
+use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::langitems::LangItem;
 
 /// Reports a lang item the core library doesn't declare.

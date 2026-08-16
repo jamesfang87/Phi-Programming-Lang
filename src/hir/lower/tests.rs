@@ -872,10 +872,7 @@ fn block_tail_expression_is_not_a_statement() {
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
-    assert!(matches!(
-        hir.stmt(body.stmts[0]).kind,
-        StmtKind::Let { .. }
-    ));
+    assert!(matches!(hir.stmt(body.stmts[0]).kind, StmtKind::Let { .. }));
     assert!(matches!(
         hir.expr(body.expr.unwrap()).kind,
         ExprKind::Path(_)
@@ -1061,7 +1058,8 @@ fn an_expression_bodied_arm_is_wrapped_in_a_block() {
         "a wrapped expression body has no statements"
     );
     assert!(matches!(
-        hir.expr(arm_block.expr.expect("the expression is the tail")).kind,
+        hir.expr(arm_block.expr.expect("the expression is the tail"))
+            .kind,
         ExprKind::Literal(_)
     ));
 }
@@ -1104,8 +1102,9 @@ fn else_if_lowers_to_a_block_holding_the_nested_if() {
 
     // The `else if` is the wrapping block's tail value, not a statement.
     assert!(outer_else.stmts.is_empty());
-    let ExprKind::If { else_block, .. } =
-        &hir.expr(outer_else.expr.expect("the nested if is the tail")).kind
+    let ExprKind::If { else_block, .. } = &hir
+        .expr(outer_else.expr.expect("the nested if is the tail"))
+        .kind
     else {
         panic!("expected the else to hold a nested if expr")
     };
