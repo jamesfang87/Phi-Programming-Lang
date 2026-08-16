@@ -22,11 +22,11 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, Path, Payload, PayloadField, Res, TyDef, Type};
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
-use crate::typeck::Typeck;
 use crate::typeck::cast;
 use crate::typeck::pat::VariantTys;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::unify::{is_float, is_integer};
+use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
@@ -606,7 +606,6 @@ impl<'hir> Typeck<'hir> {
             report_range_endpoints_mismatch(self.cx(), err, span);
         }
 
-        // TODO: unify with the std::Range
         report_no_range_type(span);
         self.tcx.error()
     }
@@ -949,15 +948,13 @@ mod tests {
 
     #[test]
     fn a_struct_literal_may_set_a_public_field_from_another_module() {
-        assert!(
-            crate::testing::typeck_src_files(&[
-                "module math; public struct Foo { public count: i32 }",
-                "module app;
+        assert!(crate::testing::typeck_src_files(&[
+            "module math; public struct Foo { public count: i32 }",
+            "module app;
                  import math::Foo;
                  fun f() -> Foo { return Foo { count: 1 }; }",
-            ])
-            .is_empty()
-        );
+        ])
+        .is_empty());
     }
 
     /// More than one private field written in the same literal is each reported on its own, the

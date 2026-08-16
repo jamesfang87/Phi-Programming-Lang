@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn error_is_compatible_with_itself() {
-        let tcx = TyCtx::new();
+        let mut tcx = TyCtx::new();
         let error = tcx.error();
         let mut u = Unifier::new();
 
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn never_is_compatible_with_error() {
-        let tcx = TyCtx::new();
+        let mut tcx = TyCtx::new();
         let never = tcx.never();
         let error = tcx.error();
         let mut u = Unifier::new();

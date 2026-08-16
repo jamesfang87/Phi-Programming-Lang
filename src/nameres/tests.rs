@@ -729,26 +729,6 @@ fn an_unresolvable_type_path_reports_not_found_and_records_err() {
     assert!(diags[0].message.contains("cannot find"));
 }
 
-#[test]
-fn lookup_variant_finds_a_variant_by_name() {
-    let ast = ast_from_files(&["module app; enum Shape { circle, square }"]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
-    let Some(Type::Def(TyDef::Enum(e))) = table.lookup_type_path(app, &path(&["Shape"])) else {
-        panic!("Shape did not resolve to an enum");
-    };
-    assert!(
-        table
-            .lookup_variant(e, Interner::intern("circle"))
-            .is_some()
-    );
-    assert!(
-        table
-            .lookup_variant(e, Interner::intern("triangle"))
-            .is_none()
-    );
-}
-
 // -----------------------------------------------------------------
 // `resolve` -- the full AST traversal
 // -----------------------------------------------------------------

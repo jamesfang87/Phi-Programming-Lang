@@ -17,12 +17,6 @@ impl OwnerLowerer<'_, '_> {
         span: SrcSpan,
     ) -> HirId {
         self.synth_ty(span, |low, _id| match kind {
-            // `Self` is an ordinary single-segment path -- both in the AST, so the AST resolver
-            // can treat it like any other name, and here: `LoweringCtx::lower_path` recognizes
-            // the written text and gives it a `Res::SelfTy` instead of an ordinary
-            // `Res::Type(Type::Def(_))`, which is what lets `lower_ty`'s `Def` arm skip the two
-            // checks that don't hold for `Self` (a trait is legal here; no argument list is
-            // expected). See `hir::Res::SelfTy` and `LoweringCtx::as_self_ty`.
             ast::TyKind::Path { path, args } => TyKind::Path {
                 path: low.cx.lower_path(node_id, path),
                 args: args.iter().map(|a| low.lower_ty(a)).collect(),

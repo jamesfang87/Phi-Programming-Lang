@@ -6,48 +6,30 @@ use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 
 pub struct TyCtx {
-    /// Every interned type, indexed by its own [`Ty`] handle.
-    kinds: Vec<TyKind>,
-
-    /// The reverse of [`TyCtx::kinds`], so an already-interned type is found instead of stored
-    /// a second time.
-    interned: HashMap<TyKind, Ty>,
-
+    tykinds: Vec<TyKind>,
+    handles: HashMap<TyKind, Ty>,
     /// Type variable counter
     next_var: u32,
-
-    error: Ty,
-    never: Ty,
-    unit: Ty,
 }
 
 impl TyCtx {
     pub fn new() -> Self {
-        let mut tcx = TyCtx {
-            kinds: Vec::new(),
-            interned: HashMap::new(),
+        TyCtx {
+            tykinds: Vec::new(),
+            handles: HashMap::new(),
             next_var: 0,
-            // Placeholders: `intern` needs the context to exist before it can be called, so the
-            // cached handles are filled in immediately below.
-            error: Ty::from_usize(0),
-            never: Ty::from_usize(0),
-            unit: Ty::from_usize(0),
-        };
-        tcx.error = tcx.intern(TyKind::Error);
-        tcx.never = tcx.intern(TyKind::Never);
-        tcx.unit = tcx.intern(TyKind::Unit);
-        tcx
+        }
     }
 
     /// Returns the handle for `kind`, interning it if this is the first time it has been seen.
     pub fn intern(&mut self, kind: TyKind) -> Ty {
-        if let Some(&ty) = self.interned.get(&kind) {
+        if let Some(&ty) = self.handles.get(&kind) {
             return ty;
         }
 
-        let ty = Ty::from_usize(self.kinds.len());
-        self.kinds.push(kind.clone());
-        self.interned.insert(kind, ty);
+        let ty = Ty::from_usize(self.tykinds.len());
+        self.tykinds.push(kind.clone());
+        self.handles.insert(kind, ty);
         ty
     }
 
@@ -55,21 +37,21 @@ impl TyCtx {
     ///
     /// Panics if `ty` was interned by a different [`TyCtx`]
     pub fn kind(&self, ty: Ty) -> &TyKind {
-        self.kinds
+        self.tykinds
             .get(ty.index())
             .expect("a Ty handle from another TyCtx (or one built by hand)")
     }
 
-    pub fn error(&self) -> Ty {
-        self.error
+    pub fn error(&mut self) -> Ty {
+        self.intern(TyKind::Error)
     }
 
-    pub fn never(&self) -> Ty {
-        self.never
+    pub fn never(&mut self) -> Ty {
+        self.intern(TyKind::Never)
     }
 
-    pub fn unit(&self) -> Ty {
-        self.unit
+    pub fn unit(&mut self) -> Ty {
+        self.intern(TyKind::Unit)
     }
 
     pub fn mk_prim(&mut self, prim: PrimTy) -> Ty {

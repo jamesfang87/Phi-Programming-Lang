@@ -26,10 +26,10 @@ mod pat;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::driver::cli::Mode;
-use crate::hir::{DefId, Hir, OwnerNode};
+use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::{AnyMode, Body};
 use crate::typeck::results::TypeResolutions;
@@ -85,6 +85,17 @@ pub(super) fn is_any_specialized(tcx: &TyCtx, types: &TypeResolutions, def_id: D
     matches!(tcx.kind(*ret), TyKind::Any(_))
 }
 
+fn item_has_errors(hir: &Hir, tcx: &TyCtx, types: &TypeResolutions, def_id: DefId) -> bool {
+    hir.arena(def_id).nodes.iter().any(|node| {
+        if matches!(node, Node::Stmt(stmt) if matches!(stmt.kind, StmtKind::Error)) {
+            return true;
+        }
+        types
+            .ty(node.hir_id())
+            .is_some_and(|ty| matches!(tcx.kind(ty), TyKind::Error))
+    })
+}
+
 /// Lowers every function, method, and closure `hir` declares into a [`LoweredProgram`]. `mode`
 /// is the project's debug/release profile, which decides whether integer arithmetic gets a
 /// [`crate::mir::CheckedBinaryOp`] and an overflow [`crate::mir::Assert`] or wraps silently.
@@ -94,10 +105,18 @@ pub fn lower_program(
     types: &TypeResolutions,
     mode: Mode,
 ) -> LoweredProgram {
+    let erroneous: HashSet<DefId> = hir
+        .def_ids()
+        .filter(|&def_id| item_has_errors(hir, tcx, types, def_id))
+        .collect();
+
     let mut bodies = HashMap::new();
     let mut worklist: Vec<Task> = Vec::new();
 
     for def_id in hir.def_ids() {
+        if erroneous.contains(&def_id) {
+            continue;
+        }
         match hir.def(def_id) {
             OwnerNode::Function(function) if function.block.is_some() => {
                 if !is_any_specialized(tcx, types, def_id) {
@@ -111,7 +130,7 @@ pub fn lower_program(
 
     while let Some(task) = worklist.pop() {
         let key = (task.def_id(), task.any_mode());
-        if bodies.contains_key(&key) {
+        if bodies.contains_key(&key) || erroneous.contains(&task.def_id()) {
             continue;
         }
         let mut ctx = BodyLowerCtx::new(hir, tcx, types, mode, task.def_id(), task.any_mode());

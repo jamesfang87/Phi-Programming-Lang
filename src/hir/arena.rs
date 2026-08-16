@@ -1,5 +1,4 @@
 use crate::driver::source::SrcSpan;
-use crate::hir::HirId;
 use crate::hir::block::{Block, Stmt};
 use crate::hir::expr::Expr;
 use crate::hir::items::{
@@ -8,6 +7,7 @@ use crate::hir::items::{
 };
 use crate::hir::pat::{Arm, Pat};
 use crate::hir::types::Ty;
+use crate::hir::HirId;
 
 #[derive(Debug)]
 pub enum Node {
@@ -38,17 +38,9 @@ pub enum OwnerNode {
     Closure(Closure),
 }
 
-/// Generates the accessors every node kind supports, from one list of variants.
-///
-/// Each of `kind_name`, `hir_id`, and `span` is otherwise a match arm per variant, and there
-/// were four such matches spread over this file and the debug dump -- so adding a node kind
-/// meant four edits, three of which the compiler could not remind you about until the fourth was
-/// wrong. Listing the variants once here is what collapses that.
-///
-/// Variants come in two groups because [`Node::Owner`] wraps another enum rather than a node
-/// struct: a `delegate` variant forwards to the same accessor on its payload, while a `field`
-/// variant reads the `hir_id` and `span` that every node struct carries directly.
-macro_rules! node_accessors {
+/// Generates the shared metadata methods every node enum supports, dispatching each one across
+/// the enum's own variants.
+macro_rules! node_dispatch {
     (
         $Enum:ident {
             $( delegate $Delegating:ident, )*
@@ -57,13 +49,6 @@ macro_rules! node_accessors {
     ) => {
         impl $Enum {
             /// The name of this node's variant, such as `"Block"` or `"Expr"`.
-            ///
-            /// This exists for the panic messages of the typed accessors on
-            /// [`Hir`](crate::hir::Hir), which report what they actually found when a child id
-            /// turns out to address the wrong kind of node. A `Debug` of the node would say the
-            /// same thing, but it would also print the node's entire subtree -- for a function
-            /// body, the whole function -- which buries the one word that makes the mismatch
-            /// diagnosable.
             pub fn kind_name(&self) -> &'static str {
                 match self {
                     $( $Enum::$Delegating(n) => n.kind_name(), )*
@@ -72,10 +57,6 @@ macro_rules! node_accessors {
             }
 
             /// The [`HirId`] this node stores for itself.
-            ///
-            /// Every node knows its own address, which is what lets
-            /// [`Hir::node`](crate::hir::Hir::node) check that an id addresses the node it names
-            /// without a per-node-kind walk.
             pub fn hir_id(&self) -> HirId {
                 match self {
                     $( $Enum::$Delegating(n) => n.hir_id(), )*
@@ -94,7 +75,7 @@ macro_rules! node_accessors {
     };
 }
 
-node_accessors!(Node {
+node_dispatch!(Node {
     delegate Owner,
     field Import,
     field Param,
@@ -111,7 +92,7 @@ node_accessors!(Node {
     field Ty,
 });
 
-node_accessors!(OwnerNode {
+node_dispatch!(OwnerNode {
     field Module,
     field Function,
     field Struct,
