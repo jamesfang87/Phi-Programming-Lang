@@ -98,7 +98,7 @@ flowchart TD
     Run -.->|"always exits 1: no backend"| ExitCode
 ```
 
-The public API in `driver::project` and `driver::pipeline` mirrors the CLI. In `project.rs`, there is `pub fn init()` and `pub fn new(project_name: &str)`, which mirror the two commands in the CLI with the same name. In `pipeline.rs`, there is `pub fn check(config: &Config, options: &BuildOptions)`, `pub fn build(config: &Config, options: &BuildOptions)`, and `pub fn run(config: &Config)`. `Config` and `BuildOptions` are kept as separate arguments rather than merged into one struct: `Config` carries the manifest -- what project this is -- while `BuildOptions` carries the flags given to the specific `build` or `check` invocation, and those two things vary independently.
+The public API in `driver::project` and `driver::pipeline` mirrors the CLI. In `project.rs`, there is `pub fn init()` and `pub fn new(project_name: &str)`, which mirror the two commands in the CLI with the same name. In `pipeline.rs`, there is `pub fn check(config: &Config, options: &BuildOptions)`, `pub fn build(config: &Config, options: &BuildOptions)`, and `pub fn run(config: &Config)`. `Config` represents the manifest, which contains information about the project. Meanwhile, `BuildOptions` carries the flags the invocation of `build` or `check`.
 
 `build` and `check` accept the same flags and differ only in that `build` additionally prints a note that code generation is not implemented yet and that `build` currently only checks; `run` builds first, then reports that there is no backend to run and exits with status 1. `--mir` and `--llvm` are both accepted by `build` and `check`, but since neither stage exists yet, passing either just prints a note that the stage is not implemented and has no other effect. `--emit-debug` dumps every stage that is actually implemented, which includes the `NameResolutions` and `TypeResolutions` dumps even though those have no flag of their own to request them individually; `--no-emit-core` never affects compilation itself, only whether the core library's definitions show up in those dumps.
 
@@ -387,10 +387,9 @@ The actual name resolution phase runs in several phases:
 ## Lowering #1 (AST -> HIR)
 Before you read this section, it could possibly be more useful to read the section detailing the HIR below, primarily to gain an understanding of the HIR first. 
 
-Broadly, the first lowering pass works in 3 distinct passes, where the first 2 can be thought of together:
-1. Every module first get assigned its `DefId`. Note that `DefId`s for modules are assigned in an order such that a child module gets assigned  its `DefId` after its parent. This is important since the HIR constructs a parent graph.
-2. Every `definition` (other than modules) get assigned their `DefId`
-1. Arenas are built and filled for each `definition`.
+Broadly, the first lowering pass works in 2 distinct passes:
+1. Every `definition` first get assigned its `DefId`. Note that `DefId`s for `definitions` are assigned in an order such that a child gets assigned  its `DefId` after its parent. This is important since the HIR constructs a parent graph.
+3. Arenas are built and filled for each `definition`.
 
 The goal of the lowering pass is not only to create the HIR (obviously), but to also assign results from name resolution to each respective node and to desugar the language so that future analysis patterns can be simplified.
 
@@ -401,7 +400,6 @@ The goal of the lowering pass is not only to create the HIR (obviously), but to 
 3. What is the `HirId` of the node with this `NodeId`
 4. What is the arena of this `definition`
 5. What are the current name resolution results
-6. What are the current generics in scope
 
 ```rust
 pub(super) struct LoweringCtx<'res> {
@@ -413,14 +411,12 @@ pub(super) struct LoweringCtx<'res> {
     // may be updated soon.
     pub(super) method_defs: HashMap<NodeId, Vec<DefId>>,
     pub(super) arenas: HashMap<DefId, Arena>,
-    // This is for debug compilation runtime checks for correctness
-    generics_ready: HashSet<DefId>,
     nameres: &'res NameResolutions,
 }
 ```
 The `LoweringCtx` is also responsible for consuming this state to produce the final HIR through `LoweringCtx::finish`.
 
-To actually accomplish the 4 pass lowering process, `LoweringCtx` exposes several methods: `prealloc_item` and `lower_*` methods. `prealloc_item` is responsible for the second pass, which assigns `DefId` to all `definitions` other than modules. The `lower_*` methods contain the lowering code for each construct. For example, `lower_module` contains the logic for lowering modules and `lower_pat` contains the logic for lowering patterns. 
+To actually accomplish the 2 pass lowering process, `LoweringCtx` exposes several methods: `prealloc_item` and `lower_*` methods. `prealloc_item` is responsible for the first pass, which assigns `DefId` to all `definitions` other than modules. It should be noted that since `ItemKind` does not include modules, the logic for modules is handled separately in the same approximate location in the source code. The `lower_*` methods contain the lowering code for each construct. For example, `lower_module` contains the logic for lowering modules and `lower_pat` contains the logic for lowering patterns. 
 
 Because of the structure of arenas in HIR, we also have a few other classes to help us. `ArenaBuilder` is a lower-abstraction interface for building arenas. It has 3 important public-facing methods:
 1. ```pub fn reserve(&mut self) -> HirId``` reserves the next `LocalId` in this arena. This must be called before lowering a node's children.
@@ -443,8 +439,6 @@ pub(super) fn synth_expr(
 ```
 
 Here, `build` is a function which essentially allows us to construct an `hir::ExprKind` from some kind of information. `synth_expr` also ensures that `reserve` is called before `fill`, helping us write bug-free code.
-
-In the case of nested owners, `OwnerLowerer` also allows us to temporarily pause lowering of the enclosing owner to lower (potentially several) nested owners through `begin_and_pause_with_generics` and `resume`. Note that we pause at generics since the only use case is when functions inside traits and extend blocks are lowered, which only require the enclosing owner's generics.
 
 ### Desugaring 
 See the section on HIR to see what is desugared. 
