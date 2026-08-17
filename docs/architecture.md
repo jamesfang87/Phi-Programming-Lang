@@ -513,12 +513,13 @@ flowchart TD
         Members["Typeck::check_trait_members"]
         Bounds["Typeck::check_declared_bounds"]
         Headers["Typeck::check_impl_headers"]
-        Obligations["Typeck::select_program_obligations"]
-        Impls --> Coherence --> Members --> Bounds --> Headers --> Obligations
+        Impls --> Coherence --> Members --> Bounds --> Headers
     end
 
     subgraph S3["3. Body checking"]
         CheckBodies["Typeck::check_module<br>checks every function/closure body<br>against the signatures S1 collected"]
+        Obligations["Typeck::select_obligations<br>proves every bound raised along the way,<br>now that inference has settled"]
+        CheckBodies --> Obligations
     end
 
     S1 --> S2 --> S3
@@ -658,7 +659,7 @@ flowchart LR
 
     Coherence -.->|"index now safe to query"| Solve
     Solve["solve<br>the query itself, plus the ParamEnv<br>of assumptions it's asked against"] --> Bounds
-    Bounds["bounds<br>asks the query where a bound is<br>instantiated, via an ObligationCx that<br>defers until inference has settled"] --> Method
+    Bounds["bounds<br>asks the query where a bound is instantiated,<br>holding each goal as an Obligation until<br>inference has settled"] --> Method
     Method["method<br>x.foo() picks the one method meant, across<br>inherent blocks, impls, bounds, and dyn receivers"]
 ```
 
