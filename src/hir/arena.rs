@@ -1,4 +1,5 @@
 use crate::driver::source::SrcSpan;
+use crate::hir::HirId;
 use crate::hir::block::{Block, Stmt};
 use crate::hir::expr::Expr;
 use crate::hir::items::{
@@ -7,7 +8,6 @@ use crate::hir::items::{
 };
 use crate::hir::pat::{Arm, Pat};
 use crate::hir::types::Ty;
-use crate::hir::HirId;
 
 #[derive(Debug)]
 pub enum Node {

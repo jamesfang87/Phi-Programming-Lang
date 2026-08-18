@@ -5,20 +5,17 @@ use crate::hir::{DefId, HirId};
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 
+#[derive(Default)]
 pub struct TyCtx {
     tykinds: Vec<TyKind>,
     handles: HashMap<TyKind, Ty>,
-    /// Type variable counter
+    /// The id the next inference variable is issued, incremented each time one is created.
     next_var: u32,
 }
 
 impl TyCtx {
     pub fn new() -> Self {
-        TyCtx {
-            tykinds: Vec::new(),
-            handles: HashMap::new(),
-            next_var: 0,
-        }
+        TyCtx::default()
     }
 
     /// Returns the handle for `kind`, interning it if this is the first time it has been seen.
@@ -35,7 +32,7 @@ impl TyCtx {
 
     /// Looks up what `ty` stands for.
     ///
-    /// Panics if `ty` was interned by a different [`TyCtx`]
+    /// Panics if `ty` was interned by a different [`TyCtx`].
     pub fn kind(&self, ty: Ty) -> &TyKind {
         self.tykinds
             .get(ty.index())
@@ -113,12 +110,6 @@ impl TyCtx {
         let id = self.next_var;
         self.next_var += 1;
         id
-    }
-}
-
-impl Default for TyCtx {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

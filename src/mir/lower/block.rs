@@ -145,11 +145,11 @@ impl<'a> BodyLowerCtx<'a> {
         self.lower_expr_into(init, Place::from_local(scrutinee));
 
         match else_block {
-            None => self.bind_pat(pat, Place::from_local(scrutinee)),
+            None => self.bind_pat(pat, Place::from_local(scrutinee), mutability),
             Some(else_id) => {
                 let fail_block = self.new_block();
                 self.test_pat(pat, Place::from_local(scrutinee), fail_block);
-                self.bind_pat(pat, Place::from_local(scrutinee));
+                self.bind_pat(pat, Place::from_local(scrutinee), mutability);
                 let after = self.current_block();
 
                 self.switch_to(fail_block);
@@ -175,7 +175,9 @@ impl<'a> BodyLowerCtx<'a> {
                  implemented"
             );
         };
-        let local = self.new_local(ty, Mutability::Immutable, Some(name), span);
+        // A `with` lend has no `mut` syntax of its own, so, like a `match` arm or a `for`
+        // binding, it is left unrestricted; see `StatementKind::CheckMutable`'s own docs.
+        let local = self.new_local(ty, Mutability::Mutable, Some(name), span);
         self.push_stmt(StatementKind::StorageLive(local), span);
         self.lower_expr_into(lend.init, Place::from_local(local));
         self.bind_local(lend.pat, local);

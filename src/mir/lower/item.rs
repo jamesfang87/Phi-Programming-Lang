@@ -56,13 +56,16 @@ impl<'a> BodyLowerCtx<'a> {
                 self.types.ty(self_id).expect("self param is typed"),
                 any_mode,
             );
-            let local = self.new_local(ty, Mutability::Immutable, None, span);
+            // A parameter, `self` included, has no `let`/`let mut` of its own to restrict it, so
+            // it is unrestricted by `mir::constck` -- matching every other binding besides a
+            // plain `let`'s; see `StatementKind::CheckMutable`'s own docs.
+            let local = self.new_local(ty, Mutability::Mutable, None, span);
             self.bind_local(self_id, local);
         }
         for &param_id in params {
             let ty = self.resolve_any(self.types.ty(param_id).expect("param is typed"), any_mode);
             let name = self.hir.param(param_id).name;
-            let local = self.new_local(ty, Mutability::Immutable, Some(name), span);
+            let local = self.new_local(ty, Mutability::Mutable, Some(name), span);
             self.bind_local(param_id, local);
         }
         let arg_count = usize::from(self_param.is_some()) + params.len();
@@ -86,12 +89,15 @@ impl<'a> BodyLowerCtx<'a> {
 
         let captures = self.captures_of(self.def_id);
         let env_ty = self.environment_ty(&captures);
-        let env_local = self.new_local(env_ty, Mutability::Immutable, None, span);
+        // The environment packs every capture into one local regardless of the mutability each
+        // was originally bound with, so it is left unrestricted rather than restricting every
+        // capture alike; see `StatementKind::CheckMutable`'s own docs for what this pass checks.
+        let env_local = self.new_local(env_ty, Mutability::Mutable, None, span);
 
         for &param_id in params {
             let ty = self.types.ty(param_id).expect("closure param is typed");
             let name = self.hir.closure_param(param_id).name;
-            let local = self.new_local(ty, Mutability::Immutable, Some(name), span);
+            let local = self.new_local(ty, Mutability::Mutable, Some(name), span);
             self.bind_local(param_id, local);
         }
         let arg_count = 1 + params.len();

@@ -1,102 +1,43 @@
-//! Trait-member checking: does an `extend .. with Trait` block provide exactly the methods that
-//! trait declares, at exactly the signatures it declared them with?
-//!
-//! Coherence has already established that at most one impl answers any one question. This is the
-//! other half of making the answer trustworthy: that the impl the solver selects actually has the
-//! members a caller who only knows the *trait* will go looking for, and that calling one through
-//! the trait and calling it directly mean the same thing. Without it, `x.show()` proved through a
-//! bound would dispatch to a body taking different arguments than the bound promised.
-//!
-//! Three rules, run per trait impl:
-//!
-//! - every method the trait declares **without a default body** has to be provided. One
-//!   diagnostic lists all of them at once, because a block missing four methods is one mistake
-//!   with four parts rather than four mistakes.
-//! - a method the trait does **not** declare is reported at its own span. An `extend .. with`
-//!   block is not a place to add extra inherent methods, because there would be no trait
-//!   declaration for a caller reaching the type through the trait to find them by.
-//! - a provided method's signature has to **equal** the declaration's.
-//!
-//! ## Equality, not unification
-//!
-//! The comparison is `==` on interned [`Ty`] handles, which is what the design asks for: a method
-//! that can unify with the declaration is still wrong. `fun show(&self, x: T)` where
-//! the trait declared `fun show(&self, x: i32)` would unify happily by binding `T := i32`, and
-//! accepting it would mean the implementation promises more than it delivers -- a caller with a
-//! `bool` would type-check against the trait and land in a body expecting an `i32`.
-//!
-//! Equality is only meaningful once both signatures are phrased in the same terms, which is what
-//! the substitution below is for. A trait's declaration is written in the trait's own vocabulary:
-//! `Self`, the trait's parameters, and the method's own parameters. The impl's is written in the
-//! impl's: the extended type, the arguments the block applied to the trait, and the method's own
-//! parameters again -- which are *different* [`HirId`]s even when the user wrote the same letter.
-//! Rewriting the declaration through all three is what makes `==` the right question.
-
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{SelfMode, Symbol};
+use crate::ast::Symbol;
 use crate::diagnostics::typeck::traits::members::{
     report_generic_count, report_missing_methods, report_not_a_member, report_param_count,
     report_param_ty, report_ret_ty, report_self_mode,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, Function, HirId};
+use crate::hir::{DefId, HirId};
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
-use crate::typeck::traits::index::ImplId;
-use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::ty::Ty;
 
 impl<'hir> Typeck<'hir> {
-    /// Checks every trait impl in the index against the trait it implements.
-    ///
-    /// Runs in the same stage as [`check_coherence`](Typeck::check_coherence) and after it, so
-    /// that a type with two conflicting impls is told about the conflict before being told about
-    /// each impl's members separately. Inherent blocks are skipped: with no trait to compare
-    /// against, every method they define is exactly as declared.
+    /// Checks every trait `extend` block in the index against the trait it implements.
     pub fn check_trait_members(&mut self) {
-        // Bucket order rather than index order, so that what comes out is grouped by the type
-        // being implemented and does not depend on a hash map's iteration order.
-        let impls: Vec<ImplId> = self
-            .impls
-            .extended_types()
-            .into_iter()
-            .flat_map(|head| self.impls.for_self(head).to_vec())
-            .collect();
-
-        for impl_id in impls {
-            self.check_impl_members(impl_id);
+        for block in self.extends.all() {
+            self.check_extend_against_trait(block);
         }
     }
 
     /// Checks one `extend .. with Trait` block against its trait.
-    fn check_impl_members(&mut self, impl_id: ImplId) {
-        let header = self.impls.header(impl_id);
-        let Some(trait_ref) = header.trait_ref.clone() else {
+    fn check_extend_against_trait(&mut self, block: DefId) {
+        let Some(trait_ref) = self.extends.trait_of(block).cloned() else {
             return;
         };
-        let (self_ty, impl_def, impl_span) = (header.self_ty, header.def, header.span);
+        let self_ty = self.adt_of_with_args(block);
 
         let hir = self.hir;
-        let block = hir.extend(impl_def);
+        let node = hir.extend(block);
+        let extend_span = node.span;
         let trait_ = hir.trait_(trait_ref.def);
-        // Declaration order on both sides, so a block missing two methods names them in the order
-        // the trait declares them and a block with two stray ones reports them top to bottom.
-        let (provided, declared) = (&block.methods, &trait_.functions);
+        // Both sides are read in declaration order, so a block missing two methods names them in
+        // the order the trait declares them, and a block with two stray ones reports them top to
+        // bottom.
+        let (provided, declared) = (&node.methods, &trait_.functions);
         let trait_generics = trait_.generics.clone();
 
-        self.check_for_missing_methods(provided, declared, &trait_ref, self_ty, impl_span);
+        self.check_for_missing_methods(provided, declared, &trait_ref, self_ty, extend_span);
 
-        let by_name: HashMap<Symbol, DefId> = declared
-            .iter()
-            .map(|&declaration| (self.hir.function(declaration).name.text, declaration))
-            .collect();
-
-        // The block's arguments to the trait stand in for the trait's own parameters. A block
-        // that wrote the wrong number of them has nothing to stand in for the rest, so signatures
-        // are left uncompared rather than reported against a half-built substitution -- every one
-        // of them would fail, and all for the same reason. The mismatch itself is reported by
-        // `check_impl_headers` in [`super::bounds`], alongside the other argument-count checks,
-        // so saying nothing here loses nothing.
         let arguments_line_up = trait_generics.len() == trait_ref.args.len();
         let trait_subst: HashMap<HirId, Ty> = trait_generics
             .into_iter()
@@ -105,9 +46,11 @@ impl<'hir> Typeck<'hir> {
 
         for &method in provided {
             let name = self.hir.function(method).name.text;
-            match by_name.get(&name) {
-                None => report_not_a_member(self.hir, self.cx(), method, &trait_ref, self_ty),
-                Some(&declaration) if arguments_line_up => {
+            match self.trait_method(trait_ref.def, name) {
+                None => {
+                    report_not_a_member(self.hir, self.display_cx(), method, &trait_ref, self_ty)
+                }
+                Some(declaration) if arguments_line_up => {
                     self.check_method_signature(method, declaration, &trait_subst, self_ty);
                 }
                 Some(_) => {}
@@ -115,17 +58,13 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Reports, once, every method the trait insists on that the block does not provide.
-    ///
-    /// A declaration with a default body is not insisted on: the type gets that body without
-    /// writing anything, which is the whole point of defaults.
     fn check_for_missing_methods(
         &self,
         provided: &[DefId],
         declared: &[DefId],
         trait_ref: &TraitRef,
         self_ty: Ty,
-        impl_span: SrcSpan,
+        extend_span: SrcSpan,
     ) {
         let present: HashSet<Symbol> = provided
             .iter()
@@ -144,16 +83,17 @@ impl<'hir> Typeck<'hir> {
             .collect();
 
         if !missing.is_empty() {
-            report_missing_methods(self.hir, self.cx(), &missing, trait_ref, self_ty, impl_span);
+            report_missing_methods(
+                self.hir,
+                self.display_cx(),
+                &missing,
+                trait_ref,
+                self_ty,
+                extend_span,
+            );
         }
     }
 
-    /// Checks that `method` is declared exactly as `declaration` declares it.
-    ///
-    /// Each step gates the next rather than being reported alongside it. Once the type parameter
-    /// lists disagree there is nothing to phrase the rest of the signature in; once the receivers
-    /// disagree every parameter after them is off by one. Reporting the follow-on differences
-    /// would describe consequences of the mistake already reported rather than separate mistakes.
     fn check_method_signature(
         &mut self,
         method: DefId,
@@ -163,9 +103,6 @@ impl<'hir> Typeck<'hir> {
     ) {
         let (found, expected) = (self.hir.function(method), self.hir.function(declaration));
 
-        // The two lists declare different `HirId`s for what the user wrote as the same letter, so
-        // the declaration's parameters have to be rewritten into the implementation's before
-        // anything mentioning them can be compared.
         if found.generics.len() != expected.generics.len() {
             report_generic_count(found, expected);
             return;
@@ -176,32 +113,31 @@ impl<'hir> Typeck<'hir> {
             subst.insert(declared, ty);
         }
 
-        // `self` is compared through the mode the user wrote rather than through the type it
-        // lowers to, because "takes `&self` where the trait takes `&mut self`" is what happened,
-        // and `&Foo` versus `&mut Foo` is only how it shows up.
-        let (found_mode, expected_mode) = (self.self_mode(found), self.self_mode(expected));
+        let (found_mode, expected_mode) =
+            (self.receiver_mode(method), self.receiver_mode(declaration));
         if found_mode != expected_mode {
             report_self_mode(self.hir, found, expected, found_mode, expected_mode);
             return;
         }
 
-        let (found_params, found_ret) = self.signature(method);
-        let (expected_params, expected_ret) = self.signature(declaration);
+        let signature = |checker: &mut Self, def| {
+            checker
+                .signature(def)
+                .expect("collect_function records every function's own signature")
+        };
+        let (found_params, found_ret) = signature(self, method);
+        let (expected_params, expected_ret) = signature(self, declaration);
         let expected_params: Vec<Ty> = expected_params
             .into_iter()
-            .map(|ty| self.subst_member_ty(ty, &subst, self_ty))
+            .map(|ty| self.subst_sig_ty(ty, &subst, self_ty))
             .collect();
-        let expected_ret = expected_ret.map(|ty| self.subst_member_ty(ty, &subst, self_ty));
+        let expected_ret = expected_ret.map(|ty| self.subst_sig_ty(ty, &subst, self_ty));
 
         if found_params.len() != expected_params.len() {
             report_param_count(found, expected, found_params.len(), expected_params.len());
             return;
         }
 
-        // A method's `self` counts as its first parameter -- see `collect_function` -- and the
-        // declaration's is `Self` in whichever mode both sides agreed on just above, which
-        // substitutes to exactly the type the implementation's lowered to. It cannot differ, and
-        // it has no name to report against, so the named parameters start after it.
         let offset = usize::from(found.self_param.is_some());
         for (index, (&got, &want)) in found_params
             .iter()
@@ -210,11 +146,9 @@ impl<'hir> Typeck<'hir> {
             .skip(offset)
         {
             if got != want {
-                // Both lists are the same length and `self` was skipped on both sides, so the
-                // declaration has a parameter at this index too.
                 report_param_ty(
                     self.hir,
-                    self.cx(),
+                    self.display_cx(),
                     found,
                     found.params[index - offset],
                     expected.params[index - offset],
@@ -227,7 +161,7 @@ impl<'hir> Typeck<'hir> {
         if found_ret != expected_ret {
             report_ret_ty(
                 self.hir,
-                self.cx(),
+                self.display_cx(),
                 found,
                 expected,
                 found_ret,
@@ -235,98 +169,16 @@ impl<'hir> Typeck<'hir> {
             );
         }
     }
-
-    /// The declaration rewritten in the implementation's terms: `Self` replaced by the type being
-    /// extended, and every parameter in `subst` by what it stands for there.
-    fn subst_member_ty(&mut self, ty: Ty, subst: &HashMap<HirId, Ty>, self_ty: Ty) -> Ty {
-        let ty = self.subst_self_ty(ty, self_ty);
-        self.subst_ty(ty, subst)
-    }
-
-    /// Replaces `Self` with the type implementing the trait, everywhere inside `ty`.
-    ///
-    /// This is deliberately separate from [`Typeck::subst_ty`], which leaves
-    /// [`TyKind::SelfTy`] alone. That is the right behavior everywhere else in the solver: inside
-    /// an `extend` block `Self` is concrete and lowers straight to the extended type, so a live
-    /// `SelfTy` never reaches the query. A trait's *declaration* is the one place one survives,
-    /// and turning it into the implementing type is what makes the two signatures comparable at
-    /// all -- folding the case into `subst_ty` would mean giving every one of its callers a self
-    /// type they have no use for.
-    fn subst_self_ty(&mut self, ty: Ty, self_ty: Ty) -> Ty {
-        match self.tcx.kind(ty).clone() {
-            TyKind::SelfTy(_) => self_ty,
-            TyKind::Adt { def, args } => {
-                let args = self.subst_self_tys(&args, self_ty);
-                self.tcx.mk_adt(def, args)
-            }
-            TyKind::Dyn { trait_, args } => {
-                let args = self.subst_self_tys(&args, self_ty);
-                self.tcx.mk_dyn(trait_, args)
-            }
-            TyKind::Tuple(elems) => {
-                let elems = self.subst_self_tys(&elems, self_ty);
-                self.tcx.mk_tuple(elems)
-            }
-            TyKind::Ref { base, mutability } => {
-                let base = self.subst_self_ty(base, self_ty);
-                self.tcx.mk_ref(base, mutability)
-            }
-            TyKind::Any(base) => {
-                let base = self.subst_self_ty(base, self_ty);
-                self.tcx.mk_any(base)
-            }
-            TyKind::Array { elem, len } => {
-                let elem = self.subst_self_ty(elem, self_ty);
-                self.tcx.mk_array(elem, len)
-            }
-            TyKind::Fun { params, ret } => {
-                let params = self.subst_self_tys(&params, self_ty);
-                let ret = ret.map(|ret| self.subst_self_ty(ret, self_ty));
-                self.tcx.mk_fun(params, ret)
-            }
-            // Nothing to substitute into, `Self` included: a `TyKind::Generic` names a parameter,
-            // which is `subst_ty`'s business rather than this function's.
-            TyKind::Var(_)
-            | TyKind::Primitive(_)
-            | TyKind::Generic(_)
-            | TyKind::Unit
-            | TyKind::Never
-            | TyKind::Error => ty,
-        }
-    }
-
-    fn subst_self_tys(&mut self, tys: &[Ty], self_ty: Ty) -> Vec<Ty> {
-        tys.iter()
-            .map(|&ty| self.subst_self_ty(ty, self_ty))
-            .collect()
-    }
-
-    /// A function's lowered signature, split into its parameter types -- `self` first, if it has
-    /// one -- and its return type.
-    fn signature(&self, def: DefId) -> (Vec<Ty>, Option<Ty>) {
-        let sig = self
-            .types
-            .ty_of_def(def)
-            .expect("collect_function records every function's own signature");
-        let TyKind::Fun { params, ret } = self.tcx.kind(sig) else {
-            unreachable!("a function's own signature always lowers to TyKind::Fun");
-        };
-        (params.clone(), *ret)
-    }
-
-    /// How a method takes its receiver, or `None` for an associated function that takes none.
-    fn self_mode(&self, function: &Function) -> Option<SelfMode> {
-        let id = function.self_param?;
-        Some(self.hir.self_param(id).mode)
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use crate::diagnostics::DiagCtx;
     use crate::hir::{Hir, OwnerNode};
     use crate::nameres::PrimTy;
-    use crate::testing::resolve_src;
+    use crate::testing::{Stage, checker_through, messages, resolve_src};
     use crate::typeck::Typeck;
     use crate::typeck::ty::TyKind;
 
@@ -338,17 +190,10 @@ mod tests {
     /// the index is built: a fixture is resolved without the core library, so name resolution
     /// reports the whole set of missing lang items first.
     fn members(hir: &Hir) -> Vec<String> {
-        let mut checker = Typeck::new(hir);
-        checker.collect_module(hir.root_id());
-        checker.build_impl_index();
-        checker.check_coherence();
+        let mut checker = checker_through(hir, Stage::Coherence);
         DiagCtx::clear();
         checker.check_trait_members();
-
-        DiagCtx::diagnostics()
-            .into_iter()
-            .map(|diagnostic| diagnostic.message)
-            .collect()
+        messages()
     }
 
     // -----------------------------------------------------------------
@@ -408,7 +253,7 @@ mod tests {
 
         let mut checker = Typeck::new(&hir);
         checker.collect_module(hir.root_id());
-        checker.build_impl_index();
+        checker.build_extend_index();
         checker.check_coherence();
         DiagCtx::clear();
         checker.check_trait_members();
@@ -697,11 +542,12 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // subst_self_ty
+    // Reading the declaration through the block's substitution
     // -----------------------------------------------------------------
 
     /// `Self` is replaced wherever it appears, however deeply nested, and nothing else is
-    /// touched.
+    /// touched. This is the half of [`Typeck::subst_sig_ty`] member checking relies on, asked
+    /// with an empty parameter substitution so that only the `Self` rule can fire.
     #[test]
     fn substituting_self_rewrites_every_occurrence_and_only_those() {
         let hir = resolve_src("struct Foo {}");
@@ -721,15 +567,16 @@ mod tests {
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
         let nested = checker.tcx.mk_tuple(vec![self_param, i32_ty]);
 
-        assert_eq!(checker.subst_self_ty(self_param, foo_ty), foo_ty);
+        let no_params = HashMap::new();
+        assert_eq!(checker.subst_sig_ty(self_param, &no_params, foo_ty), foo_ty);
 
-        let substituted = checker.subst_self_ty(nested, foo_ty);
+        let substituted = checker.subst_sig_ty(nested, &no_params, foo_ty);
         assert_eq!(
             *checker.tcx.kind(substituted),
             TyKind::Tuple(vec![foo_ty, i32_ty])
         );
         assert_eq!(
-            checker.subst_self_ty(i32_ty, foo_ty),
+            checker.subst_sig_ty(i32_ty, &no_params, foo_ty),
             i32_ty,
             "a type with no `Self` in it comes back unchanged"
         );

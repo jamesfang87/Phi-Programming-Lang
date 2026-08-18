@@ -30,4 +30,14 @@ pub enum StatementKind {
     /// without using the value it holds. Match lowering produces it for a scrutinee, and
     /// `with`-lend lowering produces it for a lend binding that is itself never read.
     PlaceMention(Place),
+    /// `CheckMutable` asserts that `place` may be written to directly at this point in the
+    /// program: that walking its projection down to a bare local, stopping the moment a `Deref`
+    /// is crossed (what a reference points at is reachable regardless of the reference-holding
+    /// local's own mutability), reaches a local other than an unadorned `let`'s. Lowering emits
+    /// one immediately alongside each surface form that writes through a place directly -- a
+    /// plain assignment, a compound assignment, and an explicit `&mut` borrow -- rather than
+    /// through an intervening reference, which the check does not restrict. It asserts nothing by
+    /// itself; [`crate::mir::constck`] is the pass that walks every `CheckMutable` a `Body`
+    /// contains and reports the ones that fail.
+    CheckMutable(Place),
 }

@@ -196,34 +196,6 @@ pub fn report_field_is_a_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
     );
 }
 
-pub fn report_receiver_not_mutable(
-    hir: &Hir,
-    member: Ident,
-    root: Ident,
-    span: SrcSpan,
-    method: DefId,
-) {
-    DiagCtx::emit(
-        Diagnostic::error(
-            format!(
-                "`{}` takes `&mut self`, and `{}` is not declared `mut`",
-                Interner::resolve(member.text),
-                Interner::resolve(root.text)
-            ),
-            span,
-        )
-        .with_label("not mutable")
-        .with_secondary(
-            method_receiver_span(hir, method),
-            "declared taking &mut self here".to_string(),
-        )
-        .with_help(format!(
-            "declare it `let mut {}` to allow this",
-            Interner::resolve(root.text)
-        )),
-    );
-}
-
 pub fn report_not_callable(cx: DisplayCx<'_>, sig: Ty, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(
