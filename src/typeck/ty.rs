@@ -22,19 +22,6 @@ pub enum TyVar {
     Float(u32),
 }
 
-impl TyVar {
-    #![allow(dead_code)]
-    pub fn id(self) -> u32 {
-        match self {
-            TyVar::Any(id) | TyVar::Int(id) | TyVar::Float(id) => id,
-        }
-    }
-
-    pub fn index(self) -> usize {
-        self.id() as usize
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
     Var(TyVar),

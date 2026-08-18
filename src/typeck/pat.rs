@@ -8,7 +8,7 @@ use crate::diagnostics::typeck::pat::{
     report_tuple_pattern_mismatch, report_variant_type_unknown,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, OwnerNode, PatKind, Payload, VariantPayload};
+use crate::hir::{DefId, Hir, HirId, OwnerNode, PatKind, Payload, PayloadField, VariantPayload};
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::Typeck;
@@ -36,7 +36,8 @@ impl VariantTys {
 
 impl<'hir> Typeck<'hir> {
     pub(crate) fn check_pat(&mut self, id: HirId, expected: Ty) {
-        let pat = self.hir.pat(id);
+        let hir: &'hir Hir = self.hir;
+        let pat = hir.pat(id);
         let span = pat.span;
 
         // Keep checking a pattern below a failed one
@@ -53,17 +54,16 @@ impl<'hir> Typeck<'hir> {
             PatKind::Literal(lit) => {
                 let found = self.check_literal(lit, span);
                 if let Err(err) = self.unifier.unify(&self.tcx, expected, found) {
-                    report_literal_pattern_mismatch(self.cx(), err, span);
+                    report_literal_pattern_mismatch(self.display_cx(), err, span);
                 }
                 expected
             }
             PatKind::Tuple(elems) => {
-                let elems = elems.clone();
                 let vars: Vec<Ty> = elems.iter().map(|_| self.tcx.next_ty_var()).collect();
                 let tuple = self.tcx.mk_tuple(vars.clone());
                 if let Err(err) = self.unifier.unify(&self.tcx, expected, tuple) {
-                    report_tuple_pattern_mismatch(self.cx(), err, span);
-                    for &elem in &elems {
+                    report_tuple_pattern_mismatch(self.display_cx(), err, span);
+                    for &elem in elems {
                         let error = self.tcx.error();
                         self.check_pat(elem, error);
                     }
@@ -76,8 +76,7 @@ impl<'hir> Typeck<'hir> {
                 }
             }
             PatKind::Variant { variant, payload } => {
-                let (variant, payload) = (*variant, self.payload_ids(payload));
-                self.check_variant_pat(expected, variant, &payload, span)
+                self.check_variant_pat(expected, *variant, payload, span)
             }
             // Already reported by the parser.
             PatKind::Error => self.tcx.error(),
@@ -90,18 +89,18 @@ impl<'hir> Typeck<'hir> {
         &mut self,
         expected: Ty,
         variant: Ident,
-        payload: &PayloadIds,
+        payload: &'hir Payload,
         span: SrcSpan,
     ) -> Ty {
-        let expected = self.resolve_deep(expected);
+        let expected = self.unifier.find_deep(&mut self.tcx, expected);
         if matches!(self.tcx.kind(expected), TyKind::Var(_)) {
             report_variant_type_unknown(variant, span);
             self.check_failed_payload(payload);
             return self.tcx.error();
         }
 
-        let Some(found) = self.lookup_variant(expected, variant.text) else {
-            report_no_variant(self.cx(), variant, expected);
+        let Some(found) = self.variant_def(expected, variant.text) else {
+            report_no_variant(self.display_cx(), variant, expected);
             self.check_failed_payload(payload);
             return self.tcx.error();
         };
@@ -114,16 +113,16 @@ impl<'hir> Typeck<'hir> {
     fn check_payload_pats(
         &mut self,
         found: &VariantDef,
-        payload: &PayloadIds,
+        payload: &'hir Payload,
         variant: Ident,
         span: SrcSpan,
     ) {
         match (&found.payload, payload) {
-            (VariantTys::Unit, PayloadIds::None) => {}
-            (VariantTys::Single(declared), PayloadIds::Single(pat)) => {
+            (VariantTys::Unit, Payload::None) => {}
+            (VariantTys::Single(declared), Payload::Single(pat)) => {
                 self.check_pat(*pat, *declared);
             }
-            (VariantTys::Record(declared), PayloadIds::Record(written)) => {
+            (VariantTys::Record(declared), Payload::Record(written)) => {
                 self.check_record_pats(declared, written, found.id);
             }
             _ => {
@@ -137,10 +136,11 @@ impl<'hir> Typeck<'hir> {
     fn check_record_pats(
         &mut self,
         declared: &[(Ident, Ty)],
-        written: &[(Ident, HirId)],
+        written: &'hir [PayloadField],
         variant: HirId,
     ) {
-        for &(name, pat) in written {
+        for field in written {
+            let (name, pat) = (field.name, field.value);
             match declared.iter().find(|(field, _)| field.text == name.text) {
                 Some(&(_, ty)) => self.check_pat(pat, ty),
                 None => {
@@ -154,43 +154,21 @@ impl<'hir> Typeck<'hir> {
 
     /// Walks the sub-patterns of a failed payload (one that has an error) so
     /// that the names they bind still have types.
-    fn check_failed_payload(&mut self, payload: &PayloadIds) {
+    fn check_failed_payload(&mut self, payload: &'hir Payload) {
         let error = self.tcx.error();
-        match payload {
-            PayloadIds::None => {}
-            PayloadIds::Single(pat) => self.check_pat(*pat, error),
-            PayloadIds::Record(fields) => {
-                for &(_, pat) in fields {
-                    self.check_pat(pat, error);
-                }
-            }
+        for pat in payload_pats(payload) {
+            self.check_pat(pat, error);
         }
     }
 
+    /// The sub-patterns directly inside `id`.
     fn pat_children(&self, id: HirId) -> Vec<HirId> {
         match &self.hir.pat(id).kind {
             PatKind::Wildcard | PatKind::Binding { .. } | PatKind::Literal(_) | PatKind::Error => {
                 Vec::new()
             }
             PatKind::Tuple(elems) => elems.clone(),
-            PatKind::Variant { payload, .. } => match payload {
-                Payload::None => Vec::new(),
-                Payload::Single(inner) => vec![*inner],
-                Payload::Record(fields) => fields.iter().map(|field| field.value).collect(),
-            },
-        }
-    }
-
-    fn payload_ids(&self, payload: &Payload) -> PayloadIds {
-        match payload {
-            Payload::None => PayloadIds::None,
-            Payload::Single(inner) => PayloadIds::Single(*inner),
-            Payload::Record(fields) => PayloadIds::Record(
-                fields
-                    .iter()
-                    .map(|field| (field.name, field.value))
-                    .collect(),
-            ),
+            PatKind::Variant { payload, .. } => payload_pats(payload),
         }
     }
 
@@ -198,11 +176,23 @@ impl<'hir> Typeck<'hir> {
     // Declaration lookups
     // -----------------------------------------------------------------
 
-    pub(crate) fn lookup_variant(&mut self, ty: Ty, name: Symbol) -> Option<VariantDef> {
-        let hir = self.hir;
+    /// Returns the definition of a `TyKind::Adt` as well as mappings between
+    /// its generic type arguments and the concrete types in a specific instance.
+    pub(crate) fn adt_and_generic_substs(&self, ty: Ty) -> Option<(DefId, HashMap<HirId, Ty>)> {
         let TyKind::Adt { def, args } = self.tcx.kind(ty).clone() else {
             return None;
         };
+        let generics = match self.hir.def(def) {
+            OwnerNode::Struct(struct_) => &struct_.generics,
+            OwnerNode::Enum(enum_) => &enum_.generics,
+            _ => return None,
+        };
+        Some((def, generics.iter().copied().zip(args).collect()))
+    }
+
+    pub(crate) fn variant_def(&mut self, ty: Ty, name: Symbol) -> Option<VariantDef> {
+        let hir = self.hir;
+        let (def, subst) = self.adt_and_generic_substs(ty)?;
         let OwnerNode::Enum(enum_) = hir.def(def) else {
             return None;
         };
@@ -210,8 +200,6 @@ impl<'hir> Typeck<'hir> {
             .variants
             .iter()
             .find(|&&id| hir.variant(id).name.text == name)?;
-
-        let subst: HashMap<HirId, Ty> = enum_.generics.iter().copied().zip(args).collect();
 
         let payload = match &hir.variant(id).payload {
             VariantPayload::Unit => VariantTys::Unit,
@@ -245,7 +233,7 @@ impl<'hir> Typeck<'hir> {
         arms: &[HirId],
         span: SrcSpan,
     ) {
-        let ty = self.resolve_deep(scrutinee_ty);
+        let ty = self.unifier.find_deep(&mut self.tcx, scrutinee_ty);
         if matches!(
             self.tcx.kind(ty),
             TyKind::Var(_) | TyKind::Error | TyKind::Never
@@ -311,13 +299,10 @@ impl<'hir> Typeck<'hir> {
 
     pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<(DefId, Vec<(Ident, HirId, Ty)>)> {
         let hir = self.hir;
-        let TyKind::Adt { def, args } = self.tcx.kind(ty).clone() else {
-            return None;
-        };
+        let (def, subst) = self.adt_and_generic_substs(ty)?;
         let OwnerNode::Struct(struct_) = hir.def(def) else {
             return None;
         };
-        let subst: HashMap<HirId, Ty> = struct_.generics.iter().copied().zip(args).collect();
 
         let fields = struct_
             .fields
@@ -338,18 +323,21 @@ impl<'hir> Typeck<'hir> {
     }
 }
 
-enum PayloadIds {
-    None,
-    Single(HirId),
-    Record(Vec<(Ident, HirId)>),
+/// The patterns a variant pattern's payload is made of, whichever shape it was written in.
+fn payload_pats(payload: &Payload) -> Vec<HirId> {
+    match payload {
+        Payload::None => Vec::new(),
+        Payload::Single(inner) => vec![*inner],
+        Payload::Record(fields) => fields.iter().map(|field| field.value).collect(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::testing::{typeck_accepts as accepts, typeck_rejects as rejects};
 
-    /// A pattern is checked against the type it matches, so a literal in one has to be able to be
-    /// that type -- which is the same question `1 == x` asks, asked in the other direction.
+    /// A pattern is checked against the type it matches, so a literal in one has to be able to
+    /// be that type, the same question `1 == x` asks, asked in the other direction.
     #[test]
     fn a_literal_pattern_has_to_match_the_scrutinees_type() {
         accepts("fun f(n: i32) -> i32 { return match n { 0 => 1, _ => 2, }; }");
@@ -441,8 +429,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Exhaustiveness -- see `Typeck::check_match_exhaustive` for exactly how much this does and
-    // does not check.
+    // Exhaustiveness
+    //
+    // See `Typeck::check_match_exhaustive` for exactly how much this does and does not check.
     // -----------------------------------------------------------------
 
     #[test]
@@ -470,8 +459,8 @@ mod tests {
         );
     }
 
-    /// Neither a tuple nor a struct is enumerated by this check -- see
-    /// `Typeck::check_match_exhaustive`'s doc comment -- so both need an explicit catch-all no
+    /// Neither a tuple nor a struct is enumerated by this check (see
+    /// `Typeck::check_match_exhaustive`'s doc comment), so both need an explicit catch-all no
     /// matter how many combinations the arms already spell out.
     #[test]
     fn a_type_this_check_does_not_enumerate_still_needs_a_wildcard() {
@@ -499,8 +488,8 @@ mod tests {
         );
     }
 
-    /// A guarded wildcard might not fire -- the guard could come back `false` -- so, exactly as
-    /// in Rust, it does not make the match exhaustive on its own.
+    /// A guarded wildcard might not fire, since the guard could come back `false`, so, exactly
+    /// as in Rust, it does not make the match exhaustive on its own.
     #[test]
     fn a_guarded_wildcard_does_not_count_toward_exhaustiveness() {
         rejects(
@@ -576,7 +565,7 @@ mod tests {
         accepts("fun f(c: char) -> i32 { return match c { 'a' => 1, _ => 2, }; }");
     }
 
-    /// A variant pattern nested two levels deep inside another variant pattern -- `Option<Shape>`
+    /// A variant pattern nested two levels deep inside another variant pattern: `Option<Shape>`
     /// matched all the way down to `Shape`'s own payload.
     #[test]
     fn a_variant_pattern_nested_inside_another_variant_pattern() {
@@ -591,8 +580,8 @@ mod tests {
                  };
              }",
         );
-        // The first arm pins the match's result type to `f64` (from `r`, `.circle`'s payload);
-        // the second arm's `true` then disagrees with that -- exactly one mismatch, on the one
+        // The first arm pins the match's result type to `f64` (from `r`, `.circle`'s payload),
+        // and the second arm's `true` then disagrees with that: exactly one mismatch, on the
         // arm that is actually wrong.
         rejects(
             "enum Option<T> { some: T, none }

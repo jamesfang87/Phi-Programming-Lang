@@ -7,6 +7,7 @@ use ariadne::{Color, Config, Fmt, Label, Report, ReportKind, sources};
 use crate::driver::source::{SrcMap, SrcSpan};
 
 pub mod langitems;
+pub mod mir;
 pub mod nameres;
 pub mod parser;
 pub mod typeck;

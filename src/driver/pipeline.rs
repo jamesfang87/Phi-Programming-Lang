@@ -7,8 +7,8 @@ use crate::driver::cli::{BuildOptions, Config, Mode};
 use crate::driver::emit_debug;
 use crate::driver::source::{SrcCollector, SrcMap};
 use crate::hir::lower::lower_program;
-use crate::lexer::token::Token;
 use crate::lexer::Lexer;
+use crate::lexer::token::Token;
 use crate::mir;
 use crate::nameres;
 use crate::parser::Parser;
@@ -84,6 +84,7 @@ pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
     }
 
     let program = mir::lower::lower_program(&hir, &mut checked.tcx, &checked.types, config.mode);
+    mir::constck::check(&program);
     let instances = mir::monomorphize::monomorphize(&hir, &mut checked.tcx, &program);
 
     if options.dumps.mir {

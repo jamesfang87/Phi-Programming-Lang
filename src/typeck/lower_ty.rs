@@ -4,8 +4,8 @@ use crate::diagnostics::typeck::lower_ty::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
-use crate::typeck::ty::Ty;
 use crate::typeck::Typeck;
+use crate::typeck::ty::Ty;
 
 impl<'hir> Typeck<'hir> {
     pub fn lower_ty(&mut self, id: HirId) -> Ty {
@@ -60,28 +60,29 @@ impl<'hir> Typeck<'hir> {
     fn lower_base(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
         match res {
             Res::Type(Type::Prim(prim)) => {
-                Self::expect_no_args(args, span, "a primitive type");
+                Self::check_no_args(args, span, "a primitive type");
                 self.tcx.mk_prim(prim)
             }
             Res::Type(Type::Generic(param)) => {
-                Self::expect_no_args(args, span, "a generic type parameter");
+                Self::check_no_args(args, span, "a generic type parameter");
                 self.tcx.mk_generic(param)
             }
-            Res::Type(Type::Def(TyDef::Struct(def_id) | TyDef::Enum(def_id))) => {
-                let declared = match self.hir.def(def_id) {
+            Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => {
+                let arity = match self.hir.def(def) {
                     OwnerNode::Struct(struct_) => struct_.generics.len(),
                     OwnerNode::Enum(enum_) => enum_.generics.len(),
                     _ => unreachable!("a TyDef::Struct/Enum always names a Struct/Enum owner"),
                 };
-                self.lower_def(def_id, declared, args, span, id.owner)
+                self.lower_def(def, arity, args, span, id.owner)
             }
             Res::Type(Type::Def(TyDef::Trait(_))) => {
-                // There can be no bare traits, this is a mistake
+                // A bare trait name is not a type; only `dyn Trait` or a bound position may
+                // name one.
                 report_trait_as_ty(span);
                 self.tcx.error()
             }
             Res::SelfTy(_) => {
-                Self::expect_no_args(args, span, "`Self`");
+                Self::check_no_args(args, span, "`Self`");
                 self.self_ty(id.owner, span)
             }
             Res::Err => self.tcx.error(),
@@ -96,31 +97,31 @@ impl<'hir> Typeck<'hir> {
 
     fn lower_def(
         &mut self,
-        def_id: DefId,
-        declared: usize,
+        def: DefId,
+        arity: usize,
         args: &[HirId],
         span: SrcSpan,
         owner: DefId,
     ) -> Ty {
-        if args.len() != declared {
-            report_arg_count(span, declared, args.len());
+        if args.len() != arity {
+            report_arg_count(span, arity, args.len());
             return self.tcx.error();
         }
 
         let args = self.lower_tys(args);
-        self.register_bound_obligations(def_id, &args, span, owner);
-        self.tcx.mk_adt(def_id, args)
+        self.register_bound_obligations(def, &args, span, owner);
+        self.tcx.mk_adt(def, args)
     }
 
     fn lower_dyn(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
         match res {
-            Res::Type(Type::Def(TyDef::Trait(def_id))) => {
-                if !self.check_arg_count(def_id, args.len(), span) {
+            Res::Type(Type::Def(TyDef::Trait(trait_def))) => {
+                if !self.check_arg_count(trait_def, args.len(), span) {
                     return self.tcx.error();
                 }
                 let args = self.lower_tys(args);
-                self.register_bound_obligations(def_id, &args, span, id.owner);
-                self.tcx.mk_dyn(def_id, args)
+                self.register_bound_obligations(trait_def, &args, span, id.owner);
+                self.tcx.mk_dyn(trait_def, args)
             }
             Res::Err => self.tcx.error(),
             _ => {
@@ -130,8 +131,8 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    pub fn self_ty(&mut self, owner_id: DefId, span: SrcSpan) -> Ty {
-        let mut introducer = owner_id;
+    pub fn self_ty(&mut self, owner: DefId, span: SrcSpan) -> Ty {
+        let mut introducer = owner;
         loop {
             if matches!(
                 self.hir.def(introducer),
@@ -187,12 +188,12 @@ impl<'hir> Typeck<'hir> {
         self_ty
     }
 
-    fn adt_of_own_params(&mut self, def_id: DefId, params: &[HirId]) -> Ty {
+    fn adt_of_own_params(&mut self, def: DefId, params: &[HirId]) -> Ty {
         let args = params.iter().map(|&id| self.tcx.mk_generic(id)).collect();
-        self.tcx.mk_adt(def_id, args)
+        self.tcx.mk_adt(def, args)
     }
 
-    fn expect_no_args(args: &[HirId], span: SrcSpan, kind: &str) {
+    fn check_no_args(args: &[HirId], span: SrcSpan, kind: &str) {
         if !args.is_empty() {
             report_unexpected_generic_args(kind, span);
         }
@@ -201,8 +202,8 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::interner::Interner;
     use crate::ast::Mutability;
+    use crate::ast::interner::Interner;
     use crate::diagnostics::DiagCtx;
     use crate::hir::{DefId, Hir, HirId, OwnerNode};
     use crate::nameres::PrimTy;
@@ -289,16 +290,16 @@ mod tests {
         }
 
         /// The signature of the function `name` declares, as `(params, ret)`.
-        fn sig(&self, def_id: DefId) -> (&[Ty], Option<Ty>) {
-            let TyKind::Fun { params, ret } = self.kind(self.def_ty(def_id)) else {
+        fn sig(&self, def: DefId) -> (&[Ty], Option<Ty>) {
+            let TyKind::Fun { params, ret } = self.kind(self.def_ty(def)) else {
                 panic!("a function's type is always a Fun type");
             };
             (params, *ret)
         }
 
-        /// The `Ty` of the `i`th generic parameter `def_id` declares.
-        fn generic(&self, def_id: DefId, i: usize) -> Ty {
-            let generics = match self.hir.def(def_id) {
+        /// The `Ty` of the `i`th generic parameter `def` declares.
+        fn generic(&self, def: DefId, i: usize) -> Ty {
+            let generics = match self.hir.def(def) {
                 OwnerNode::Struct(s) => &s.generics,
                 OwnerNode::Enum(e) => &e.generics,
                 OwnerNode::Trait(t) => &t.generics,
@@ -466,8 +467,8 @@ mod tests {
     }
 
     /// A trait names every type that implements it, not one type of its own, so writing it bare
-    /// in a type position -- rather than `dyn Show`, or as a bound on a generic parameter -- is
-    /// a mistake, not a shorthand.
+    /// in a type position, rather than `dyn Show`, or as a bound on a generic parameter, is a
+    /// mistake, not a shorthand.
     #[test]
     fn a_bare_trait_used_as_a_type_is_rejected() {
         let checked = check(
@@ -484,7 +485,7 @@ mod tests {
     }
 
     /// The same rejection wherever a trait is named in an ordinary type position, not only a
-    /// parameter -- and it is the only diagnostic even though `Index` is applied to arguments
+    /// parameter, and it is the only diagnostic even though `Index` is applied to arguments
     /// here too: naming the trait bare is already the whole mistake, so there is nothing to gain
     /// from also complaining about its argument count.
     #[test]
@@ -555,7 +556,7 @@ mod tests {
     }
 
     /// A `dyn` applied to the wrong number of arguments is an error for the same reason a struct
-    /// is -- and, unlike before, one the user can now fix by writing the arguments.
+    /// is, and, unlike before, one the user can now fix by writing the arguments.
     #[test]
     fn dyn_checks_the_traits_argument_count() {
         let checked = check(
@@ -680,9 +681,9 @@ mod tests {
         assert_eq!(checked.kind(*inner), &TyKind::Primitive(PrimTy::I32));
     }
 
-    /// `&any T` composes; the other order does not exist to test -- the parser's `any_target`
-    /// only accepts a primitive, a path, a tuple, an array, or `Self`, so `any` can never wrap a
-    /// reference (`any &T` is a parse error, not a typeck question).
+    /// `&any T` composes; the other order does not exist to test, since the parser's
+    /// `any_target` only accepts a primitive, a path, a tuple, an array, or `Self`, so `any`
+    /// can never wrap a reference (`any &T` is a parse error, not a typeck question).
     #[test]
     fn a_reference_may_wrap_any() {
         let checked = check("fun f(x: &any i32) {}");
@@ -777,7 +778,7 @@ mod tests {
 
     /// `Self` used inside a tuple field. Typeck does not size-check types (there is no codegen
     /// yet to make an infinitely-sized type observable), so this lowers exactly like any other
-    /// composite containing an `Adt` -- nothing here rejects a struct that could never actually
+    /// composite containing an `Adt`; nothing here rejects a struct that could never actually
     /// be constructed.
     #[test]
     fn self_may_appear_nested_inside_a_tuple_field() {

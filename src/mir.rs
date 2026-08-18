@@ -34,6 +34,7 @@
 #![allow(dead_code)]
 
 mod body;
+pub mod constck;
 mod ids;
 mod instance;
 pub mod lower;

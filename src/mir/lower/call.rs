@@ -8,7 +8,9 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::lower::{Task, is_any_specialized};
-use crate::mir::{AnyMode, ConstKind, Constant, Operand, Place, Rvalue, TerminatorKind};
+use crate::mir::{
+    AnyMode, ConstKind, Constant, Operand, Place, PlaceElem, Rvalue, StatementKind, TerminatorKind,
+};
 use crate::typeck::ty::{Ty, TyKind};
 
 impl<'a> BodyLowerCtx<'a> {
@@ -228,7 +230,7 @@ impl<'a> BodyLowerCtx<'a> {
             let declared = self_param
                 .and_then(|id| self.types.ty(id))
                 .unwrap_or_else(|| self.tcx.error());
-            operands.push(self.lower_arg_operand(recv_expr, declared, any_mode, span));
+            operands.push(self.lower_receiver_operand(recv_expr, declared, any_mode, span));
         }
         for (i, &arg_expr) in arg_exprs.iter().enumerate() {
             let declared = params
@@ -238,6 +240,58 @@ impl<'a> BodyLowerCtx<'a> {
             operands.push(self.lower_arg_operand(arg_expr, declared, any_mode, span));
         }
         operands
+    }
+
+    /// Builds a method call's receiver operand, adjusting it to reach the shape `self`'s declared
+    /// type asks for -- the receiver adjustment
+    /// [`Typeck::peel_receiver`](crate::typeck::Typeck::peel_receiver)'s own docs describe,
+    /// typeck having already confirmed it is legal. `SelfMode::Move` (a bare
+    /// `Self` self-parameter) and `SelfMode::Any` need none of this and fall through to
+    /// [`BodyLowerCtx::lower_arg_operand`]'s existing handling; this only widens the ordinary
+    /// `SelfMode::Immutable`/`SelfMode::Mutable` case, a plain `&`/`&mut Self`.
+    ///
+    /// Every `&`/`&mut` layer the receiver expression's own type already carries is dereferenced
+    /// away first -- however many there are, and regardless of their own mutability, since this
+    /// compiler enforces no borrow checking on a reference already in hand (see
+    /// `Typeck::place_mutable_root`'s docs) -- and a fresh reference at exactly the declared
+    /// mutability is taken of what is left. A receiver with no layers at all (an ordinary place,
+    /// `x.foo()` where `x: Foo` and `foo` takes `&mut self`) is the autoref case: the same write
+    /// a `&mut` borrow anywhere else is, so it gets the same `CheckMutable` marker
+    /// [`StatementKind::CheckMutable`]'s own docs describe, for `mir::constck` to check.
+    fn lower_receiver_operand(
+        &mut self,
+        expr_id: HirId,
+        declared_ty: Ty,
+        any_mode: Option<AnyMode>,
+        span: SrcSpan,
+    ) -> Operand {
+        let TyKind::Ref { mutability, .. } = *self.tcx.kind(declared_ty) else {
+            return self.lower_arg_operand(expr_id, declared_ty, any_mode, span);
+        };
+
+        let recv_ty = self.expr_ty(expr_id);
+        if matches!(self.tcx.kind(recv_ty), TyKind::Any(_)) {
+            panic!(
+                "mir::lower: a receiver whose own type is `any T`, reaching a `&`/`&mut self` \
+                 method, is not yet implemented"
+            );
+        }
+        let (_, derefs) = self.peel_refs(recv_ty);
+        let mut place = self.lower_place(expr_id);
+        for _ in 0..derefs {
+            place.projection.push(PlaceElem::Deref);
+        }
+        if derefs == 0 && mutability == Mutability::Mutable {
+            self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
+        }
+
+        let temp = self.new_temp(declared_ty, span);
+        self.assign(
+            Place::from_local(temp),
+            Rvalue::Ref { mutability, place },
+            span,
+        );
+        Operand::Move(Place::from_local(temp))
     }
 
     fn lower_arg_operand(
