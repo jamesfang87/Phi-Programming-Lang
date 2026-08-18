@@ -508,11 +508,11 @@ flowchart TD
     end
 
     subgraph S2["2. Trait solving setup — see Trait Solving below"]
-        Impls["Typeck::build_impl_index"]
+        Impls["Typeck::build_dxtend_index"]
         Coherence["Typeck::check_coherence"]
         Members["Typeck::check_trait_members"]
         Bounds["Typeck::check_declared_bounds"]
-        Headers["Typeck::check_impl_headers"]
+        Headers["Typeck::check_extend_headers"]
         Impls --> Coherence --> Members --> Bounds --> Headers
     end
 
@@ -648,21 +648,102 @@ impl TypeResolutions {
 ```
 
 ### Trait Solving
-Trait solving answers one question *does this type implement this trait?*. Below is a diagram outlining the structure of `typeck::traits` with the responsibility of each module.
+When we see a call to a method defined by a trait, a bound on a generic (`T: Default`), or a binary operator, we would like to ask the central question: "does this type implement this trait?". Trait solving allows us to answer this question. Below is a diagram outlining the structure of `typeck::traits` with the responsibility of each module.
 
 ```mermaid
 flowchart LR
-    Index["index<br>collects every extend block into an<br>ImplIndex, keyed for lookup"] --> Overlap
-    Overlap["overlap<br>can two impl headers both<br>apply to one type? (no diagnostics)"] --> Coherence
-    Coherence["coherence<br>whole-program conflict check,<br>built on overlap"] --> Members
-    Members["members<br>checks each impl against its trait:<br>right methods, right signatures"]
+    Index["index<br>collects every extend block into an<br>ExtendIndex"] --> Overlap
+    Overlap["overlap<br>can two extend headers both<br>apply to one type? (no diagnostics)"] --> Coherence
+    Coherence["coherence<br>whole-program conflict check,<br>which uses overlap"] --> Members
+    Members["members<br>checks each extend against its trait:<br>right methods, right signatures"]
 
-    Coherence -.->|"index now safe to query"| Solve
-    Solve["solve<br>the query itself, plus the ParamEnv<br>of assumptions it's asked against"] --> Bounds
-    Bounds["bounds<br>asks the query where a bound is instantiated,<br>holding each goal as an Obligation until<br>inference has settled"] --> Method
-    Method["method<br>x.foo() picks the one method meant, across<br>inherent blocks, impls, bounds, and dyn receivers"]
+    Coherence -.->|"the program is well-typed, we can now use the index to sollve"| Solve
+    Solve["solve<br>the query itself"] --> Bounds
+    Bounds["bounds<br>asks the query where a bound is instantiated,<br>holding each goal as an Obligation until<br>inference has determined its type"] --> Method
+    Method["method<br>x.foo() picks the correct method"]
 ```
 
+### Index
+The first stage of trait solving involves building an index of every extend block in the program. For each type (which are only structs and enums for now), we accumulate all extend blocks for that type. It should be noted that we accumulate extend blocks whether they are inherent (`extend T`) or whether they extend a type with a trait (`extend T with U`). This index allows us to query later on whether a type implements a trait or check whether the program is well-typed (no extend blocks conflict with each other).
+
+## Coherence
+After we build the index, we must check whether the program is well-typed or coherent before we use the index to answer any questions. There are several checks we must perform to assure that the program is coherent. The first check is whether there are any overlaps or conflicts between two extend headers. Suppose we have a type `Foo<T>` and a trait `Bar`. The program consisting of `extend<T> Foo<T> with Bar` and `extend Foo<i32> with Bar` is not coherent, as we don't know whether to use the method implementation inside the first extend block or the second extend block. Basically, it is ambiguous on what implementation to use. However, the program consisting of `extend Foo<bool> with Bar` and `extend Foo<i32> with Bar` is unambiguous and well-typed, as `bool` and `i32` are distinct from each other. This logic is found inside `trait::overlap`, where we compare two extend headers and check whether they overlap or not. Because generics can be any type, this actually works similarly to type unification! We can treat a generic inside a header as an inference variable and perform unification to check whether two headers overlap, similarly to checking whether two types can unify! Note that we also need to make sure that there are no methods with duplicated names. The next check is whether the definitions of methods inside extend blocks match up with those in the trait definitions. We must check that the signatures match and whether the right methods are implemented. 
+
+## Solving
+We represent the central question of trait solving with the `Query` struct:
+```rust
+// This represents a query: here, we are asking, does `type_` implement
+// `trait_`?
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Query {
+    pub type_: Ty,
+    pub trait_: TraitRef,
+}
+```
+
+The solution to a query is represented as such:
+```rust
+/// The answer to a query.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Solution {
+    Holds, /// Query::type_ does implement Query::trait_
+    DoesNotHold, /// Query::type_ does NOT implement Query::trait_
+    /// The query still contains inference variables, so it can be neither proved nor disproved
+    /// yet. Ask again once more of the body has been checked.
+    Ambiguous,
+    /// The goal contained [`TyKind::Error`]. A diagnostic for this already exists
+    Error,
+}
+```
+Note the presence of the `Ambiguous` variant; we note that it is not always immediately possible to solve a query due to some types still being inference variables at the time we first build the `Query`. For example, suppose we have the following program:
+```phi
+fun make<T: Show>() -> T {
+    return make();
+}
+
+fun f(a: Foo) {
+    let mut b = make();
+    b = a;
+}
+```
+Here, it is not immediately obvious what the types are after we create `b`. We know that `b` must be some type that implements `Show` but it is not until the next line that we know the exact type of `b` (`Foo`) and we can answer the query by asking whether `Foo` extends with `Show`.
+
+The main public interface to answer `Query` is `implements`, which takes a `Query` and all bounds current in scope (which we call the environment) to answer the `Query`:
+```rust
+pub fn implements(&mut self, query: &Query, env: &BoundsEnv) -> Solution {
+```
+
+In `BoundsEnv`, we reuse the `Query` class to represent trait bounds which are assumptions which have been declared in the current scope through trait bounds.
+```rust
+/// These represent the trait bounds which are present in the current scope.
+#[derive(Clone, Debug, Default)]
+pub struct BoundsEnv {
+    pub bounds: Vec<Query>,
+}
+```
+In `implements`, we have several checks. 
+1. We try to resolve every inference variable in query. If we cannot fully resolve every inference variable, then we report that the query is ambiguous.
+2. If there are any `TyKind::Error` in the types of the query, we propagate `Solution::Error`.
+3. Next, we check for solutions for the case of where `query.type_` is a generic by checking the environment for any declarations which state that `query.type_` implements `query.trait_`.
+4. If the query's type is `dyn T<args...>`, then we simply check whether the trait in the query is the trait in the query's type and whether the generic type arguments match up
+5. Currently, we cannot use traits with anything other than structs or enums so we check whether the query's type is one of those
+6. Now, we can search through the index to find an extend block which "proves" that this query is valid.
+7. Lastly, we must check whether the assumptions we proved the query on hold. We thus iterate through our bounds and then use implement on them.
+
+However, due to the fact that solutions can not be determined immediately, implements is difficult to work with. Thus, an `Obligation` represents a query which was previously determined as ambiguous along with `SrcSpan`s which are provided for the purposes of diagnostics. 
+```rust
+pub struct Obligation {
+    /// The bound to prove, for example `Bare: Show`.
+    pub query: Query,
+    /// Where the instantiation that raised this obligation was written.
+    pub cause: SrcSpan,
+    /// Where the bound itself was declared, e.g. on `Sorted`'s own `<T: Show>`.
+    pub declared_at: SrcSpan,
+}
+```
+At the end of type checking, we iterate through these Obligations and attempt to solve them, now that we have (hopefully) resolved all inference variables.
+
 ## Mid Intermediate Representation
+The Mid Intermediate Representation (MIR) is based on a Control Flow Graph (CFG) representation. 
 
 ## Borrow Checking
