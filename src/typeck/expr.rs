@@ -11,22 +11,21 @@ use crate::diagnostics::typeck::expr::{
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
     report_missing_fields, report_no_range_type, report_no_such_field, report_no_such_variant,
-    report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_mutable,
-    report_not_try, report_private_field, report_range_endpoints_mismatch,
-    report_record_field_unknown, report_try_error_mismatch, report_try_operand_unknown,
-    report_try_outside, report_try_return_mismatch, report_variant_enum_unknown,
-    report_variant_expr_payload_shape, report_variant_missing_fields,
-    report_variant_payload_mismatch,
+    report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_try,
+    report_private_field, report_range_endpoints_mismatch, report_record_field_unknown,
+    report_try_error_mismatch, report_try_operand_unknown, report_try_outside,
+    report_try_return_mismatch, report_variant_enum_unknown, report_variant_expr_payload_shape,
+    report_variant_missing_fields, report_variant_payload_mismatch,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, Path, Payload, PayloadField, Res, TyDef, Type};
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
+use crate::typeck::Typeck;
 use crate::typeck::cast;
 use crate::typeck::pat::VariantTys;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::unify::{is_float, is_integer};
-use crate::typeck::Typeck;
 
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
@@ -35,15 +34,15 @@ impl<'hir> Typeck<'hir> {
 
     pub(crate) fn check_assign(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) -> Ty {
         let lhs_ty = self.ty_of(lhs);
+        // Whether the local this reaches may be written to at all, rather than a plain `let`'s,
+        // is checked on the MIR this lowers to, not here; see `mir::constck`.
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
-        } else if let Err(name) = self.place_mutable_root(lhs) {
-            report_not_mutable(name, span);
         }
 
-        let rhs_ty = self.ty_of_expecting(rhs, lhs_ty);
+        let rhs_ty = self.ty_of_expecting(rhs, Some(lhs_ty));
         if let Err(err) = self.unifier.unify(&self.tcx, lhs_ty, rhs_ty) {
-            report_assign_mismatch(self.cx(), err, span);
+            report_assign_mismatch(self.display_cx(), err, span);
         }
         self.tcx.unit()
     }
@@ -56,24 +55,23 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) -> Ty {
         let lhs_ty = self.ty_of(lhs);
+        // See `check_assign`'s own comment: the mutability check itself moved to `mir::constck`.
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
-        } else if let Err(name) = self.place_mutable_root(lhs) {
-            report_not_mutable(name, span);
         }
 
-        let rhs_ty = self.ty_of_expecting(rhs, lhs_ty);
+        let rhs_ty = self.ty_of_expecting(rhs, Some(lhs_ty));
         if let Err(err) = self.unifier.unify(&self.tcx, lhs_ty, rhs_ty) {
-            report_compound_assign_mismatch(self.cx(), err, span);
+            report_compound_assign_mismatch(self.display_cx(), err, span);
             return self.tcx.unit();
         }
 
-        let operand = self.unifier.root(lhs_ty);
+        let operand = self.unifier.find_deep(&mut self.tcx, lhs_ty);
         let produced = self.check_operator(op, operand, lhs.owner, span);
         // `foo += bar` stores the operator's result back into `foo`, so an operator that produces
         // something else cannot be compounded.
         if let Err(err) = self.unifier.unify(&self.tcx, operand, produced) {
-            report_compound_assign_result_mismatch(self.cx(), err, span);
+            report_compound_assign_result_mismatch(self.display_cx(), err, span);
         }
         self.tcx.unit()
     }
@@ -84,12 +82,9 @@ impl<'hir> Typeck<'hir> {
         operand: HirId,
         expected: Option<Ty>,
     ) -> Ty {
-        if mutability == Mutability::Mutable {
-            if !self.is_place_expr(operand) {
-                report_not_assignable(self.hir.expr(operand).span);
-            } else if let Err(name) = self.place_mutable_root(operand) {
-                report_not_mutable(name, self.hir.expr(operand).span);
-            }
+        // See `check_assign`'s own comment: the mutability check itself moved to `mir::constck`.
+        if mutability == Mutability::Mutable && !self.is_place_expr(operand) {
+            report_not_assignable(self.hir.expr(operand).span);
         }
 
         let inner = expected.and_then(|expected| match *self.tcx.kind(expected) {
@@ -99,7 +94,7 @@ impl<'hir> Typeck<'hir> {
             } if m == mutability => Some(base),
             _ => None,
         });
-        let ty = self.ty_of_expecting_opt(operand, inner);
+        let ty = self.ty_of_expecting(operand, inner);
         self.tcx.mk_ref(ty, mutability)
     }
 
@@ -108,15 +103,9 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Checks `base[index]`.
-    pub(crate) fn check_index(
-        &mut self,
-        id: HirId,
-        base: HirId,
-        index: HirId,
-        span: SrcSpan,
-    ) -> Ty {
+    pub(crate) fn check_index(&mut self, id: HirId, base: HirId, index: HirId) -> Ty {
+        let span = self.hir.expr(id).span;
         let base_ty = self.ty_of(base);
-        let base_ty = self.resolve_deep(base_ty);
 
         if matches!(self.tcx.kind(base_ty), TyKind::Error) {
             self.ty_of(index);
@@ -133,7 +122,7 @@ impl<'hir> Typeck<'hir> {
             let int = self.tcx.next_int_var();
             let index_ty = self.ty_of(index);
             if let Err(err) = self.unifier.unify(&self.tcx, int, index_ty) {
-                report_index_not_int(self.cx(), err, span);
+                report_index_not_int(self.display_cx(), err, span);
             }
             return elem;
         }
@@ -146,11 +135,11 @@ impl<'hir> Typeck<'hir> {
             .method_candidates(peeled, member.text, base.owner)
             .is_empty()
         {
-            report_not_indexable(self.cx(), peeled, span);
+            report_not_indexable(self.display_cx(), peeled, span);
             self.ty_of(index);
             return self.tcx.error();
         }
-        self.check_method_call(id, base, member, &[index], span)
+        self.check_method_call(id, base, member, &[index])
     }
 
     // -----------------------------------------------------------------
@@ -159,12 +148,12 @@ impl<'hir> Typeck<'hir> {
 
     pub(crate) fn check_ctor(
         &mut self,
+        id: HirId,
         path: Option<&'hir Path>,
         payload: &'hir [PayloadField],
         expected: Option<Ty>,
-        span: SrcSpan,
-        owner: DefId,
     ) -> Ty {
+        let (span, owner) = (self.hir.expr(id).span, id.owner);
         let Some(self_ty) = self.ctor_ty(path, expected, span, owner) else {
             for field in payload {
                 self.ty_of(field.value);
@@ -173,7 +162,7 @@ impl<'hir> Typeck<'hir> {
         };
 
         let Some((struct_def, declared)) = self.struct_fields(self_ty) else {
-            report_not_a_struct_literal(self.cx(), self_ty, span);
+            report_not_a_struct_literal(self.display_cx(), self_ty, span);
             for field in payload {
                 self.ty_of(field.value);
             }
@@ -195,13 +184,17 @@ impl<'hir> Typeck<'hir> {
                     if !self.is_visible_from(struct_module, owner, visibility) {
                         report_private_field(field.name);
                     }
-                    let got = self.ty_of_expecting(field.value, want);
+                    let got = self.ty_of_expecting(field.value, Some(want));
                     if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                        report_field_type_mismatch(self.cx(), err, self.hir.expr(field.value).span);
+                        report_field_type_mismatch(
+                            self.display_cx(),
+                            err,
+                            self.hir.expr(field.value).span,
+                        );
                     }
                 }
                 None => {
-                    report_no_such_field(self.cx(), field.name, self_ty);
+                    report_no_such_field(self.display_cx(), field.name, self_ty);
                     self.ty_of(field.value);
                 }
             }
@@ -213,7 +206,7 @@ impl<'hir> Typeck<'hir> {
             .map(|(name, _, _)| Interner::resolve(name.text))
             .collect();
         if !missing.is_empty() {
-            report_missing_fields(self.cx(), &missing, self_ty, span);
+            report_missing_fields(self.display_cx(), &missing, self_ty, span);
         }
 
         self_ty
@@ -227,7 +220,7 @@ impl<'hir> Typeck<'hir> {
         owner: DefId,
     ) -> Option<Ty> {
         let Some(path) = path else {
-            let expected = expected.map(|ty| self.resolve_deep(ty));
+            let expected = expected.map(|ty| self.unifier.find_deep(&mut self.tcx, ty));
             return match expected {
                 Some(ty) if matches!(self.tcx.kind(ty), TyKind::Adt { .. }) => Some(ty),
                 Some(ty) if matches!(self.tcx.kind(ty), TyKind::Error) => None,
@@ -268,7 +261,7 @@ impl<'hir> Typeck<'hir> {
         expected: Option<Ty>,
         span: SrcSpan,
     ) -> Ty {
-        let expected = expected.map(|ty| self.resolve_deep(ty));
+        let expected = expected.map(|ty| self.unifier.find_deep(&mut self.tcx, ty));
         let self_ty = match expected {
             Some(ty) if matches!(self.tcx.kind(ty), TyKind::Error) => {
                 self.check_payload_exprs_only(payload);
@@ -282,8 +275,8 @@ impl<'hir> Typeck<'hir> {
             }
         };
 
-        let Some(found) = self.lookup_variant(self_ty, variant.text) else {
-            report_no_such_variant(self.cx(), variant, self_ty);
+        let Some(found) = self.variant_def(self_ty, variant.text) else {
+            report_no_such_variant(self.display_cx(), variant, self_ty);
             self.check_payload_exprs_only(payload);
             return self.tcx.error();
         };
@@ -292,9 +285,13 @@ impl<'hir> Typeck<'hir> {
             (VariantTys::Unit, Payload::None) => {}
             (VariantTys::Single(want), Payload::Single(value)) => {
                 let want = *want;
-                let got = self.ty_of_expecting(*value, want);
+                let got = self.ty_of_expecting(*value, Some(want));
                 if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                    report_variant_payload_mismatch(self.cx(), err, self.hir.expr(*value).span);
+                    report_variant_payload_mismatch(
+                        self.display_cx(),
+                        err,
+                        self.hir.expr(*value).span,
+                    );
                 }
             }
             (VariantTys::Record(want), Payload::Record(fields)) => {
@@ -327,9 +324,13 @@ impl<'hir> Typeck<'hir> {
                 .find(|(name, _)| name.text == field.name.text)
             {
                 Some(&(_, want)) => {
-                    let got = self.ty_of_expecting(field.value, want);
+                    let got = self.ty_of_expecting(field.value, Some(want));
                     if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                        report_field_type_mismatch(self.cx(), err, self.hir.expr(field.value).span);
+                        report_field_type_mismatch(
+                            self.display_cx(),
+                            err,
+                            self.hir.expr(field.value).span,
+                        );
                     }
                 }
                 None => {
@@ -378,24 +379,24 @@ impl<'hir> Typeck<'hir> {
         let cond_ty = self.ty_of(cond);
         let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
         if let Err(err) = self.unifier.unify(&self.tcx, bool_ty, cond_ty) {
-            report_if_cond_not_bool(self.cx(), err, self.hir.expr(cond).span);
+            report_if_cond_not_bool(self.display_cx(), err, self.hir.expr(cond).span);
         }
 
         let then_ty = self.check_block_expecting(then_block, expected);
         let Some(else_block) = else_block else {
             let unit = self.tcx.unit();
             if let Err(err) = self.unifier.unify(&self.tcx, unit, then_ty) {
-                report_if_no_else_mismatch(self.cx(), err, span);
+                report_if_no_else_mismatch(self.display_cx(), err, span);
             }
             return unit;
         };
 
         let else_ty = self.check_block_expecting(else_block, expected);
         if let Err(err) = self.unifier.unify(&self.tcx, then_ty, else_ty) {
-            report_if_branches_mismatch(self.cx(), err, span);
+            report_if_branches_mismatch(self.display_cx(), err, span);
             return self.tcx.error();
         }
-        self.unifier.root(then_ty)
+        self.unifier.find_deep(&mut self.tcx, then_ty)
     }
 
     /// Checks `match scrutinee { pat => { .. }, .. }`.
@@ -435,13 +436,13 @@ impl<'hir> Typeck<'hir> {
                 let guard_ty = self.ty_of(guard);
                 let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
                 if let Err(err) = self.unifier.unify(&self.tcx, bool_ty, guard_ty) {
-                    report_match_guard_not_bool(self.cx(), err, self.hir.expr(guard).span);
+                    report_match_guard_not_bool(self.display_cx(), err, self.hir.expr(guard).span);
                 }
             }
 
             let body = self.check_block_expecting(block, Some(result));
             if let Err(err) = self.unifier.unify(&self.tcx, result, body) {
-                report_match_arm_mismatch(self.cx(), err, arm_span);
+                report_match_arm_mismatch(self.display_cx(), err, arm_span);
             }
         }
 
@@ -449,7 +450,7 @@ impl<'hir> Typeck<'hir> {
             self.check_match_exhaustive(scrutinee_ty, arms, span);
         }
 
-        self.unifier.root(result)
+        self.unifier.find_deep(&mut self.tcx, result)
     }
 
     // -----------------------------------------------------------------
@@ -457,9 +458,9 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     /// Checks `operand?`.
-    pub(crate) fn check_try(&mut self, operand: HirId, span: SrcSpan, owner: DefId) -> Ty {
+    pub(crate) fn check_try(&mut self, id: HirId, operand: HirId) -> Ty {
+        let (span, owner) = (self.hir.expr(id).span, id.owner);
         let operand_ty = self.ty_of(operand);
-        let operand_ty = self.resolve_deep(operand_ty);
 
         if matches!(self.tcx.kind(operand_ty), TyKind::Error) {
             return self.tcx.error();
@@ -470,7 +471,7 @@ impl<'hir> Typeck<'hir> {
         }
 
         let TyKind::Adt { def, args } = self.tcx.kind(operand_ty).clone() else {
-            report_not_try(self.cx(), operand_ty, span);
+            report_not_try(self.display_cx(), operand_ty, span);
             return self.tcx.error();
         };
 
@@ -486,7 +487,7 @@ impl<'hir> Typeck<'hir> {
             return args[0];
         }
 
-        report_not_try(self.cx(), operand_ty, span);
+        report_not_try(self.display_cx(), operand_ty, span);
         self.tcx.error()
     }
 
@@ -498,22 +499,21 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
         owner: DefId,
     ) {
-        let Some(ret) = self.owner_ret(owner) else {
-            report_try_outside(self.cx(), operand_ty, span);
+        let Some(ret) = self.signature(owner).and_then(|(_, ret)| ret) else {
+            report_try_outside(self.display_cx(), operand_ty, span);
             return;
         };
-        let ret = self.resolve_deep(ret);
         if matches!(self.tcx.kind(ret), TyKind::Error) {
             return;
         }
 
         let expected_def = self.hir.lang_items().get(item);
         let TyKind::Adt { def, args } = self.tcx.kind(ret).clone() else {
-            report_try_return_mismatch(self.cx(), operand_ty, ret, span);
+            report_try_return_mismatch(self.display_cx(), operand_ty, ret, span);
             return;
         };
         if Some(def) != expected_def {
-            report_try_return_mismatch(self.cx(), operand_ty, ret, span);
+            report_try_return_mismatch(self.display_cx(), operand_ty, ret, span);
             return;
         }
 
@@ -522,41 +522,35 @@ impl<'hir> Typeck<'hir> {
         if let (Some(error_ty), Some(ret_error)) = (error_ty, args.get(1).copied())
             && let Err(err) = self.unifier.unify(&self.tcx, ret_error, error_ty)
         {
-            report_try_error_mismatch(self.cx(), err, span);
+            report_try_error_mismatch(self.display_cx(), err, span);
         }
-    }
-
-    /// Gets the return type the definition `owner` names declares, if it declares one.
-    fn owner_ret(&mut self, owner: DefId) -> Option<Ty> {
-        let sig = self.recorded_ty_of_def(owner)?;
-        let TyKind::Fun { ret, .. } = self.tcx.kind(sig) else {
-            return None;
-        };
-        *ret
     }
 
     // -----------------------------------------------------------------
     // Casting
     // -----------------------------------------------------------------
 
-    /// Checks `expr as ty`. See [`crate::typeck::cast`] for exactly which conversions this
-    /// allows
-    pub(crate) fn check_cast(&mut self, expr: HirId, ty: HirId, span: SrcSpan) -> Ty {
+    /// Checks `operand as ty`. See [`crate::typeck::cast`] for exactly which conversions this
+    /// allows.
+    pub(crate) fn check_cast(&mut self, operand: HirId, ty: HirId, span: SrcSpan) -> Ty {
         let target_ty = self.lower_ty(ty);
-        let operand_ty = self.ty_of(expr);
+        let operand_ty = self.ty_of(operand);
 
-        let target_resolved = self.unifier.root(target_ty);
+        let target_resolved = self.unifier.find_deep(&mut self.tcx, target_ty);
         let target_kind = self.tcx.kind(target_resolved).clone();
         let TyKind::Primitive(to) = target_kind else {
             if !matches!(target_kind, TyKind::Error) {
-                report_cast_target_not_primitive(self.cx(), target_resolved, self.hir.ty(ty).span);
+                report_cast_target_not_primitive(
+                    self.display_cx(),
+                    target_resolved,
+                    self.hir.ty(ty).span,
+                );
             }
             return target_ty;
         };
 
-        let operand_resolved = self.unifier.root(operand_ty);
-        let operand_span = self.hir.expr(expr).span;
-        let operand_kind = self.tcx.kind(operand_resolved).clone();
+        let operand_span = self.hir.expr(operand).span;
+        let operand_kind = self.tcx.kind(operand_ty).clone();
 
         let from = match operand_kind {
             TyKind::Primitive(prim) => prim,
@@ -574,13 +568,13 @@ impl<'hir> Typeck<'hir> {
                 return target_ty;
             }
             _ => {
-                report_cast_source_not_primitive(self.cx(), operand_resolved, operand_span);
+                report_cast_source_not_primitive(self.display_cx(), operand_ty, operand_span);
                 return target_ty;
             }
         };
 
         if let Err(reason) = cast::cast_allowed(from, to) {
-            report_cast_not_allowed(self.cx(), operand_resolved, target_resolved, reason, span);
+            report_cast_not_allowed(self.display_cx(), operand_ty, target_resolved, reason, span);
         }
 
         target_ty
@@ -603,7 +597,7 @@ impl<'hir> Typeck<'hir> {
         if let (Some(lo_ty), Some(hi_ty)) = (lo_ty, hi_ty)
             && let Err(err) = self.unifier.unify(&self.tcx, lo_ty, hi_ty)
         {
-            report_range_endpoints_mismatch(self.cx(), err, span);
+            report_range_endpoints_mismatch(self.display_cx(), err, span);
         }
 
         report_no_range_type(span);
@@ -652,10 +646,10 @@ impl<'hir> Typeck<'hir> {
 
         let body = self.check_block_expecting(closure.block, Some(ret_var));
         if let Err(err) = self.unifier.unify(&self.tcx, ret_var, body) {
-            report_closure_body_mismatch(self.cx(), err, closure.span);
+            report_closure_body_mismatch(self.display_cx(), err, closure.span);
         }
 
-        let ret = self.unifier.root(ret_var);
+        let ret = self.unifier.find_deep(&mut self.tcx, ret_var);
         let ret = (ret != self.tcx.unit()).then_some(ret);
         let sig = self.tcx.mk_fun(param_tys, ret);
         self.types.record_def(def, sig);
@@ -737,51 +731,12 @@ mod tests {
         rejects("fun f() { 1 = 2; }", "cannot be assigned to");
     }
 
-    /// A plain `let`, with no `mut`, does not allow reassignment -- unlike a `let mut`, which
-    /// `an_assignment_checks_the_value_against_the_place` above already shows accepted.
-    #[test]
-    fn a_plain_let_binding_cannot_be_assigned_to() {
-        rejects(
-            "fun f() { let x = 1; x = 2; }",
-            "cannot assign to `x`, which is not declared `mut`",
-        );
-    }
-
-    /// `let` without `mut` applies to every name a pattern introduces at once, not only its
-    /// outermost node.
-    #[test]
-    fn a_tuple_destructured_let_binding_cannot_be_assigned_to() {
-        rejects(
-            "fun f() { let (a, b) = (1, 2); a = 3; }",
-            "cannot assign to `a`, which is not declared `mut`",
-        );
-    }
-
-    /// Assigning through a field mutates the storage the root binding owns exactly as a bare
-    /// reassignment does, so it is checked the same way.
-    #[test]
-    fn a_field_of_an_immutable_let_binding_cannot_be_assigned_to() {
-        rejects(
-            "struct Pair { fst: i32, snd: i32 }
-             fun f() { let p = Pair { fst: 1, snd: 2 }; p.fst = 3; }",
-            "cannot assign to `p`, which is not declared `mut`",
-        );
-    }
-
-    /// Once the chain crosses a reference, the root binding's own `mut`-ness stops mattering: a
-    /// reference carries its own `&`/`&mut`-ness (not itself enforced yet -- see
-    /// `Typeck::place_mutable_root`'s docs), so writing through one is left alone regardless of
-    /// how the local holding it was declared.
-    #[test]
-    fn a_field_reached_through_a_reference_may_be_assigned_to_even_from_an_immutable_binding() {
-        accepts(
-            "struct Pair { fst: i32, snd: i32 }
-             fun f(p: &mut Pair) { let r = p; r.fst = 3; }",
-        );
-    }
+    // Whether a plain `let` (or a `let mut`) may be reassigned to, directly or through a field
+    // or index chain, is `mir::constck`'s question now, exercised by that module's own tests; see
+    // the comment above `a_unit_struct_constructs_and_checks` for why.
 
     /// An assignment produces nothing, so it cannot be the value of the block it ends. Read
-    /// through a closure, whose body *is* checked against its return type -- a function's is not;
+    /// through a closure, whose body *is* checked against its return type, unlike a function's;
     /// see the note on [`Typeck::check_function`](crate::typeck::Typeck).
     #[test]
     fn an_assignment_produces_no_value() {
@@ -792,7 +747,7 @@ mod tests {
     }
 
     /// `+=` asks the same question of its left side that `+` asks of its operands, so a struct
-    /// with no `Add` impl is rejected for the same reason.
+    /// with no `Add` implementation is rejected for the same reason.
     #[test]
     fn a_compound_assignment_needs_the_operators_trait() {
         accepts("fun f() { let mut x = 1; x += 2; }");
@@ -827,16 +782,8 @@ mod tests {
         );
     }
 
-    /// `&mut x` writes back to `x` exactly as an assignment would, so a plain `let` refuses it
-    /// the same way -- unlike a parameter, which has no `mut` syntax of its own and so stays
-    /// unrestricted (`a_mutable_borrow_is_not_a_shared_one` above still takes `&mut` of one).
-    #[test]
-    fn a_mutable_borrow_of_an_immutable_let_binding_is_reported() {
-        rejects(
-            "fun f() -> &mut i32 { let x = 1; return &mut x; }",
-            "cannot assign to `x`, which is not declared `mut`",
-        );
-    }
+    // Whether `&mut x` may take a mutable borrow of `x` is `mir::constck`'s question now too,
+    // for the same reason `a_plain_let_binding_cannot_be_assigned_to`'s old comment gave.
 
     // -----------------------------------------------------------------
     // Struct literals
@@ -928,11 +875,10 @@ mod tests {
         );
     }
 
-    /// A field with no `public` is private by default, but only across a module boundary --
-    /// the same rule `SymbolTable::is_visible` already enforces for a path lookup. A single-file
-    /// fixture is one module, so this needs `typeck_src_files`; the plain-`accepts`/`rejects`
-    /// fixtures above all write and read a field from inside its own declaring module, where a
-    /// private field is always reachable.
+    /// A field with no `public` is private by default, but only across a module boundary, the
+    /// same rule `SymbolTable::is_visible` enforces for a path lookup. This needs
+    /// `typeck_src_files`, since the plain `accepts`/`rejects` fixtures above all write and read
+    /// a field from inside its own declaring module, where a private field is always reachable.
     #[test]
     fn a_struct_literal_cannot_set_a_private_field_from_another_module() {
         assert_eq!(
@@ -948,20 +894,22 @@ mod tests {
 
     #[test]
     fn a_struct_literal_may_set_a_public_field_from_another_module() {
-        assert!(crate::testing::typeck_src_files(&[
-            "module math; public struct Foo { public count: i32 }",
-            "module app;
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { public count: i32 }",
+                "module app;
                  import math::Foo;
                  fun f() -> Foo { return Foo { count: 1 }; }",
-        ])
-        .is_empty());
+            ])
+            .is_empty()
+        );
     }
 
     /// More than one private field written in the same literal is each reported on its own, the
     /// same way a duplicate field and a missing field are already each reported independently.
     /// Left unwritten instead, the very same two fields are reported *missing* rather than
-    /// private -- a private field can never be supplied from outside its module, whether or not
-    /// the caller tries to name it.
+    /// private, since a private field can never be supplied from outside its module, whether or
+    /// not the caller tries to name it.
     #[test]
     fn multiple_private_fields_in_one_struct_literal_are_each_reported() {
         assert_eq!(
@@ -1298,14 +1246,17 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Loops: `while`, `for`, `while let` (all desugar to `ExprKind::Loop`; see `hir::lower::desugar`)
+    // Loops
+    //
+    // `while`, `for`, and `while let` all desugar to `ExprKind::Loop`; see
+    // `hir::lower::desugar`.
     // -----------------------------------------------------------------
 
     #[test]
     fn a_while_conditions_type_has_to_be_bool() {
         accepts("fun f(c: bool) { while c {} }");
         // `while` desugars to `loop { if !cond { break }; .. }`, so a non-bool condition is
-        // caught by the desugared `if`'s own check, not by anything `while`-specific -- `!x`
+        // caught by the desugared `if`'s own check, not by anything `while`-specific. `!x`
         // itself is accepted (`!` is a built-in operator on any primitive, `i32` included), and
         // it is the `if` around it that then rejects the non-`bool` result.
         rejects("fun f(x: i32) { while x {} }", "mismatched types");
@@ -1338,7 +1289,7 @@ mod tests {
     }
 
     /// `for pat in iter { .. }` desugars through the iterator protocol: `iter.next()` returning
-    /// an `Option`, matched against `.some(pat)`/`.none` -- see `hir::lower::desugar::lower_for`.
+    /// an `Option`, matched against `.some(pat)`/`.none`; see `hir::lower::desugar::lower_for`.
     /// No `Iterator` trait or lang item is required for this to work; method resolution finds
     /// `next` the same way it finds any other method.
     #[test]
@@ -1370,10 +1321,10 @@ mod tests {
     // Method chains and generic nesting
     // -----------------------------------------------------------------
 
-    /// Chaining `&self` methods off a call's result does not work -- the result is a temporary,
-    /// and `&self` needs a place to borrow (see `a_temporary_receiver_needing_a_place_is_rejected`
-    /// below) -- so this chains through `self`-by-value methods instead, which need no place at
-    /// all.
+    /// Chaining `&self` methods off a call's result does not work, since the result is a
+    /// temporary and `&self` needs a place to borrow (see
+    /// `a_temporary_receiver_needing_a_place_is_rejected` below), so this chains through
+    /// `self`-by-value methods instead, which need no place at all.
     #[test]
     fn method_calls_chain_left_to_right() {
         accepts(
@@ -1481,105 +1432,12 @@ mod tests {
         rejects("fun f(a: [i32; 4]) { a[0] = true; }", "mismatched types");
     }
 
-    /// `Typeck::place_mutable_root`'s walk exercised end to end: a two-level field chain and an
-    /// index, each rejected when rooted in a plain `let` and accepted once the `let` is `mut`;
-    /// and, separately, accepted regardless of the root's own `mut`-ness the moment the chain
-    /// crosses a reference, since a reference carries its own `&`/`&mut`-ness that this compiler
-    /// does not enforce yet (there is no borrow checker to weigh it).
-    ///
-    /// `assignment_through_a_field_checks_against_the_fields_type` and `..._an_index_..." above
-    /// both write through a bare *parameter*, which has no `mut` syntax of its own and so was
-    /// never in question; every case here is rooted in a `let` instead.
-    #[test]
-    fn constness_is_enforced_through_a_chain_of_fields_and_indices_but_stops_at_a_reference() {
-        let structs = "struct Inner { fst: i32 } struct Outer { inner: Inner }";
-
-        rejects(
-            &format!("{structs} fun f(o: Outer) {{ let p = o; p.inner.fst = 1; }}"),
-            "cannot assign to `p`, which is not declared `mut`",
-        );
-        accepts(&format!(
-            "{structs} fun f(o: Outer) {{ let mut p = o; p.inner.fst = 1; }}"
-        ));
-
-        rejects(
-            "fun f(a: [i32; 4]) { let arr = a; arr[0] = 1; }",
-            "cannot assign to `arr`, which is not declared `mut`",
-        );
-        accepts("fun f(a: [i32; 4]) { let mut arr = a; arr[0] = 1; }");
-
-        accepts(&format!(
-            "{structs} fun f(o: &mut Outer) {{ let r = o; r.inner.fst = 1; }}"
-        ));
-    }
-
-    /// `let mut` (or a plain `let`) applies to a whole pattern at once: every name it introduces
-    /// is affected the same way, not only the first one written -- `b` here is rejected exactly
-    /// as `a` would be, and both are accepted once the `let` that introduces them is `mut`.
-    #[test]
-    fn tuple_destructured_mutability_applies_to_every_binding_the_pattern_introduces() {
-        accepts("fun f() { let mut (a, b) = (1, 2); a = 3; b = 4; }");
-        rejects(
-            "fun f() { let (a, b) = (1, 2); a = 3; }",
-            "cannot assign to `a`, which is not declared `mut`",
-        );
-        rejects(
-            "fun f() { let (a, b) = (1, 2); b = 4; }",
-            "cannot assign to `b`, which is not declared `mut`",
-        );
-    }
-
-    /// A `for` binding, a `match` arm's, and a `with` lend all resolve through the very same
-    /// `Local::Variable` a `let` does, but none of them has `mut` syntax of its own to opt into
-    /// -- so all three stay exactly as unrestricted by this check as they were before it existed.
-    #[test]
-    fn constness_does_not_restrict_bindings_that_are_not_a_let() {
-        // A `for` binding, reassigned inside the loop body.
-        accepts(
-            "module core::option;
-             public enum Option<T> { some: T, none }
-             struct Counter { n: i32 }
-             extend Counter { fun next(&mut self) -> Option<i32> { return .none; } }
-             fun f() {
-                 let c = Counter { n: 0 };
-                 for x in c { x = 1; }
-             }",
-        );
-
-        // A `match` arm's binding.
-        accepts(
-            "enum Option<T> { some: T, none }
-             fun f(o: Option<i32>) {
-                 match o {
-                     .some(x) => { x = 1; },
-                     .none => {},
-                 }
-             }",
-        );
-
-        // A `with` lend, reassigned to a different reference of the same type.
-        accepts(
-            "fun f() {
-                 let a = 1;
-                 let b = 2;
-                 with x = &a { x = &b; }
-             }",
-        );
-    }
-
-    /// Neither a parameter nor `self` has `mut` syntax of its own, so this check leaves both
-    /// exactly as assignable as they were before it existed -- direct reassignment, a mutable
-    /// borrow, and writing through a field `self` owns, the way a `&mut self` method is meant to
-    /// be used.
-    #[test]
-    fn parameters_and_self_fields_remain_unrestricted_by_constness_checking() {
-        accepts("fun f(x: i32) { x = 5; }");
-        accepts("fun f(x: i32) -> &mut i32 { return &mut x; }");
-        accepts(
-            "struct Counter { n: i32 }
-             extend Counter { fun bump(&mut self) { self.n = self.n + 1; } }",
-        );
-    }
+    // Whether a place may be written to directly, rejecting a plain `let`'s root once `mut`
+    // fixes it, crossing a reference, a tuple-destructured binding, a `for`/`match`/`with`
+    // binding, and a parameter or `self`, is exercised by `mir::constck`'s own tests now. That
+    // check moved to the MIR this lowers to, so it is no longer typeck's own to test. See
+    // `mir::constck`'s module docs for why a `&mut self` receiver is still checked here instead,
+    // at `Typeck::place_mutable_root`'s one remaining call site.
 
     // -----------------------------------------------------------------
     // Unit structs
@@ -1592,12 +1450,12 @@ mod tests {
 
     // -----------------------------------------------------------------
     // Casting
-    // -----------------------------------------------------------------
     //
     // `crate::typeck::cast`'s own tests cover the full matrix of which primitive pairs are
-    // allowed; these exercise `check_cast` wiring that module into the rest of type checking --
-    // the target and source coming from real, possibly still-unresolved expressions, rather than
-    // two `PrimTy`s handed to it directly.
+    // allowed; these exercise `check_cast` wiring that module into the rest of type checking,
+    // with the target and source coming from real, possibly still-unresolved expressions,
+    // rather than two `PrimTy`s handed to it directly.
+    // -----------------------------------------------------------------
 
     #[test]
     fn a_widening_int_cast_is_accepted() {
@@ -1715,7 +1573,7 @@ mod tests {
     }
 
     /// An unconstrained numeric literal cast to a type in its own family behaves exactly like
-    /// giving it that type directly -- there's no existing, wider type being narrowed to lose
+    /// giving it that type directly: there is no existing, wider type being narrowed to lose
     /// anything from.
     #[test]
     fn an_unconstrained_int_literal_casts_directly_to_any_integer_type() {
@@ -1724,7 +1582,7 @@ mod tests {
 
     /// An integer literal can never unify with a float type (see `Unifier::decompose`), so a
     /// cast that would cross families has to start from a literal that already has a concrete
-    /// type of its own -- this can't default its way there.
+    /// type of its own; it cannot default its way there.
     #[test]
     fn an_unconstrained_int_literal_cannot_cast_across_families() {
         rejects(

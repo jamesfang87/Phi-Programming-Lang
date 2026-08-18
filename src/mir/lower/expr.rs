@@ -130,11 +130,13 @@ impl<'a> BodyLowerCtx<'a> {
             }
             ExprKind::Assign { lhs, rhs } => {
                 let place = self.lower_place(lhs);
+                self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
                 self.lower_expr_into(rhs, place);
                 self.assign_unit(dest, span);
             }
             ExprKind::AssignOp { op, lhs, rhs } => {
                 let place = self.lower_place(lhs);
+                self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
                 let lhs_ty = self.expr_ty(lhs);
                 let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
                 let rhs_operand = self.lower_operand(rhs);
@@ -167,6 +169,9 @@ impl<'a> BodyLowerCtx<'a> {
                     self.lower_call_like_into(operand, dest, mode, span);
                 } else {
                     let place = self.lower_place(operand);
+                    if mutability == Mutability::Mutable {
+                        self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
+                    }
                     self.assign(dest, Rvalue::Ref { mutability, place }, span);
                 }
             }

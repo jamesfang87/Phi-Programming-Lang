@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::hir::{DefId, HirId};
 use crate::typeck::ty::Ty;
 
-// Stores what a call resolves to
+/// What a call resolves to.
 #[derive(Clone, Debug)]
 pub struct ResolvedCall {
     pub def: DefId,
@@ -18,10 +18,7 @@ pub struct TypeResolutions {
 
 impl TypeResolutions {
     pub fn new() -> TypeResolutions {
-        TypeResolutions {
-            ty: HashMap::new(),
-            calls: HashMap::new(),
-        }
+        TypeResolutions::default()
     }
 
     pub fn record(&mut self, id: HirId, ty: Ty) {

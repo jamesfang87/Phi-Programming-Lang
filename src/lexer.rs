@@ -544,9 +544,11 @@ mod tests {
     fn reports_unterminated_block_comment() {
         let (_, diagnostics) = lex("/* never closed");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0]
-            .message
-            .contains("unterminated block comment"));
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unterminated block comment")
+        );
     }
 
     #[test]
@@ -907,9 +909,11 @@ mod tests {
         // The outer `*/` closes only the inner comment; the outer one is left open.
         let (_, diagnostics) = lex("/* outer /* inner */");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0]
-            .message
-            .contains("unterminated block comment"));
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unterminated block comment")
+        );
     }
 
     #[test]

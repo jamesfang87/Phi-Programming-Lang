@@ -1,129 +1,64 @@
-//! Coherence: the whole-program check that no two `extend` blocks can both answer one question.
-//!
-//! Without it [`implements`](crate::typeck::Typeck::implements) is not a function. Two impls that
-//! both match a goal would make the answer depend on which one the index happened to see first,
-//! and a call to `x.show()` would resolve to whichever body was written earlier in the file.
-//!
-//! Two checks, deliberately kept separate:
-//!
-//! - **Duplicate implementation**, grouped by `(self type's head, trait)`. This is what makes the
-//!   query a function.
-//! - **Duplicate method name**, grouped by the self type's head alone, so that inherent blocks
-//!   and impls of *different* traits are compared against each other too. This is what a call
-//!   site actually trips over.
-//!
-//! The second nearly implies the first -- but not for a marker trait with no methods, and keeping
-//! them apart is what lets the two diagnostics say different, accurate things.
-//!
-//! Both checks are pairwise within a bucket, so worst case quadratic in the impls for one type.
-//! Bucketing on the self type's head keeps the constant small; if it ever stops being small, the
-//! fix is a discriminant prefilter on the first argument, not a different design.
-//!
-//! ## Overlap is decided on shape alone
-//!
-//! `extend<T: Show> Box<T> with Show` and `extend Box<i32> with Show` conflict here even if
-//! `i32: Show` never holds, because ruling that out means proving a negative. See
-//! [`overlaps`](crate::typeck::traits::overlap::overlaps); the diagnostic says so rather than
-//! leaving it a mystery.
+//! Coherence checks for
+//! - Duplicate implementation
+//! - Duplicate method names
 
 use crate::ast::Symbol;
 use crate::ast::interner::Interner;
 use crate::diagnostics::typeck::traits::coherence::{
     report_conflicting_extends, report_duplicate_method,
 };
+use crate::hir::DefId;
 use crate::typeck::Typeck;
-use crate::typeck::traits::index::{ExtendHeader, ImplId};
 use crate::typeck::traits::overlap::overlaps;
 
 impl<'hir> Typeck<'hir> {
-    /// Runs both coherence checks over the whole index.
-    ///
-    /// Every conflict is reported and both impls stay in the index. Dropping one would change
-    /// which of two equally-valid programs compiles depending on declaration order; the
-    /// duplicate-match assertion in [`Typeck::select`](crate::typeck::Typeck) is what keeps the
-    /// surviving pair from producing an arbitrary answer instead.
     pub fn check_coherence(&mut self) {
-        for head in self.impls.extended_types() {
-            let bucket = self.impls.for_self(head).to_vec();
-            self.check_duplicate_impls(&bucket);
-            self.check_duplicate_methods(&bucket);
+        for (first, second) in self.extends.pairs_per_type() {
+            self.check_pair(first, second);
         }
     }
 
-    /// Check 1: within one type's bucket, no two impls of the same trait may overlap.
-    ///
-    /// This one test covers every case without classifying anything first. A fully generic impl
-    /// overlaps everything in its bucket; two partly concrete impls conflict exactly when their
-    /// argument lists unify; a bucket with one impl has no pair to check at all.
-    fn check_duplicate_impls(&self, bucket: &[ImplId]) {
-        for (i, &first) in bucket.iter().enumerate() {
-            for &second in &bucket[i + 1..] {
-                let (a, b) = (self.impls.header(first), self.impls.header(second));
+    fn check_pair(&mut self, first: DefId, second: DefId) {
+        let (a, b) = (self.extend_header(first), self.extend_header(second));
+        if !overlaps(&mut self.tcx, &a, &b) {
+            return;
+        }
 
-                let (Some(trait_a), Some(trait_b)) = (&a.trait_ref, &b.trait_ref) else {
-                    // At least one is an inherent block. Two inherent blocks on one type are
-                    // perfectly legal -- they just add methods -- and a name collision between
-                    // them is check 2's business.
-                    continue;
-                };
-                if trait_a.def != trait_b.def || !overlaps(&self.tcx, a, b) {
-                    continue;
-                }
+        // Check 1: no two extends of the same trait may overlap.
+        if let (Some(trait_a), Some(trait_b)) = (&a.trait_, &b.trait_)
+            && trait_a.def == trait_b.def
+        {
+            report_conflicting_extends(self.hir, self.display_cx(), &a, &b);
+        }
 
-                report_conflicting_extends(self.hir, self.cx(), a, b);
-            }
+        // Check 2: no two overlapping blocks may offer the same method name
+        for name in self.shared_method_names(first, second) {
+            report_duplicate_method(self.hir, self.display_cx(), name, &a, &b);
         }
     }
 
-    /// Check 2: within one type's bucket, no two overlapping impls may offer the same method
-    /// name.
-    ///
-    /// Grouped by the self type alone, so `extend Foo with A` and `extend Foo with B` are
-    /// compared even though they implement different traits. Two traits that both declare `size`
-    /// are caught here, at the declarations where it can be explained, instead of surfacing later
-    /// as an ambiguity at some unrelated call site.
-    fn check_duplicate_methods(&self, bucket: &[ImplId]) {
-        for (i, &first) in bucket.iter().enumerate() {
-            for &second in &bucket[i + 1..] {
-                let (a, b) = (self.impls.header(first), self.impls.header(second));
-                if !overlaps(&self.tcx, a, b) {
-                    continue;
-                }
-
-                for name in self.shared_method_names(a, b) {
-                    report_duplicate_method(self.cx(), name, a, b);
-                }
-            }
-        }
-    }
-
-    /// The method names both impls make available, in a stable order.
-    ///
-    /// Sorted by name rather than left in hash order, because two impls colliding on several
-    /// methods must report them the same way on every run.
-    fn shared_method_names(&self, a: &ExtendHeader, b: &ExtendHeader) -> Vec<Symbol> {
-        let (mut names, other) = (self.effective_methods(a), self.effective_methods(b));
+    /// The method names both blocks make available in sorted order.
+    fn shared_method_names(&self, a: DefId, b: DefId) -> Vec<Symbol> {
+        let (mut names, other) = (self.declared_methods(a), self.declared_methods(b));
         names.retain(|name| other.contains(name));
         names.sort_by_key(|&name| Interner::resolve(name));
         names
     }
 
-    /// Every method name this impl gives the type it extends.
-    ///
-    /// For a trait impl that is the *trait's* full method list, not the block's own: a trait
-    /// method with a default body is available on the type whether or not the block overrode it,
-    /// so an impl that supplies nothing at all still collides with everything the trait declares.
-    fn effective_methods(&self, header: &ExtendHeader) -> Vec<Symbol> {
-        let Some(trait_ref) = &header.trait_ref else {
-            return header.methods.keys().copied().collect();
+    /// The declared methods which are extended to a type by an extend block.
+    /// For extend-with blocks, this also includes any defaulted methods.
+    fn declared_methods(&self, extend: DefId) -> Vec<Symbol> {
+        let names = |methods: &[DefId]| {
+            methods
+                .iter()
+                .map(|&function| self.hir.function(function).name.text)
+                .collect()
         };
 
-        self.hir
-            .trait_(trait_ref.def)
-            .functions
-            .iter()
-            .map(|&function| self.hir.function(function).name.text)
-            .collect()
+        match self.extends.trait_of(extend) {
+            Some(trait_ref) => names(&self.hir.trait_(trait_ref.def).functions),
+            None => names(&self.hir.extend(extend).methods),
+        }
     }
 }
 
@@ -131,24 +66,17 @@ impl<'hir> Typeck<'hir> {
 mod tests {
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::resolve_src;
-    use crate::typeck::Typeck;
+    use crate::testing::{Stage, checker_through, messages, resolve_src};
 
     /// Runs everything up to and including coherence over `src`, and hands back what it reported.
     ///
     /// Diagnostics from name resolution are cleared first: a fixture is resolved without the core
     /// library, so every one of them reports the whole set of missing lang items.
     fn coherence(hir: &Hir) -> Vec<String> {
-        let mut checker = Typeck::new(hir);
-        checker.collect_module(hir.root_id());
-        checker.build_impl_index();
+        let mut checker = checker_through(hir, Stage::Index);
         DiagCtx::clear();
         checker.check_coherence();
-
-        DiagCtx::diagnostics()
-            .into_iter()
-            .map(|diagnostic| diagnostic.message)
-            .collect()
+        messages()
     }
 
     // -----------------------------------------------------------------
@@ -185,9 +113,7 @@ mod tests {
              extend Foo with Marker {}",
         );
 
-        let mut checker = Typeck::new(&hir);
-        checker.collect_module(hir.root_id());
-        checker.build_impl_index();
+        let mut checker = checker_through(&hir, Stage::Index);
         DiagCtx::clear();
         checker.check_coherence();
 
@@ -223,7 +149,7 @@ mod tests {
         );
     }
 
-    /// A fully generic impl overlaps a concrete one, so the two conflict even though neither is
+    /// A fully generic block overlaps a concrete one, so the two conflict even though neither is
     /// literally a duplicate of the other.
     #[test]
     fn a_generic_impl_conflicts_with_a_concrete_one() {
@@ -312,7 +238,7 @@ mod tests {
         );
     }
 
-    /// The trait's own list is what counts, not the block's. An impl that overrides nothing still
+    /// The trait's own list is what counts, not the block's. A block that overrides nothing still
     /// makes every defaulted method available on the type, and so still collides.
     #[test]
     fn an_impl_supplying_only_defaults_still_collides() {
@@ -355,7 +281,7 @@ mod tests {
         assert!(coherence(&hir).is_empty());
     }
 
-    /// Impls that cannot both apply to one type are never compared for method names, however
+    /// Blocks that cannot both apply to one type are never compared for method names, however
     /// many names they share.
     #[test]
     fn impls_for_disjoint_types_may_share_method_names() {

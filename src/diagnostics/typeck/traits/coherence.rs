@@ -3,8 +3,15 @@ use crate::ast::interner::Interner;
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::typeck::traits::get_name_of_trait;
 use crate::diagnostics::{DiagCtx, Diagnostic};
+use crate::driver::source::SrcSpan;
 use crate::hir::Hir;
-use crate::typeck::traits::index::ExtendHeader;
+use crate::typeck::traits::overlap::ExtendHeader;
+
+/// Where the block a header describes was written. A header names the block rather than carrying
+/// its span, since the two say the same thing and only the diagnostics here ask for the span.
+fn block_span(hir: &Hir, header: &ExtendHeader) -> SrcSpan {
+    hir.extend(header.def).span
+}
 
 pub fn report_conflicting_extends(
     hir: &Hir,
@@ -13,9 +20,9 @@ pub fn report_conflicting_extends(
     second: &ExtendHeader,
 ) {
     let trait_ref = second
-        .trait_ref
+        .trait_
         .as_ref()
-        .expect("only two trait impls are compared for a duplicate implementation");
+        .expect("only two extend blocks are ever compared for a duplicate implementation");
 
     DiagCtx::emit(
         Diagnostic::error(
@@ -24,11 +31,11 @@ pub fn report_conflicting_extends(
                 get_name_of_trait(hir, trait_ref.def),
                 cx.show(second.self_ty)
             ),
-            second.span,
+            block_span(hir, second),
         )
         .with_label("conflicting implementation")
         .with_secondary(
-            first.span,
+            block_span(hir, first),
             format!("`{}` is already implemented here", cx.show(first.self_ty)),
         )
         .with_help(
@@ -40,6 +47,7 @@ pub fn report_conflicting_extends(
 }
 
 pub fn report_duplicate_method(
+    hir: &Hir,
     cx: DisplayCx<'_>,
     name: Symbol,
     first: &ExtendHeader,
@@ -52,14 +60,14 @@ pub fn report_duplicate_method(
                 Interner::resolve(name),
                 cx.show(second.self_ty)
             ),
-            second.span,
+            block_span(hir, second),
         )
         .with_label(format!(
             "duplicate definition of `{}`",
             Interner::resolve(name)
         ))
         .with_secondary(
-            first.span,
+            block_span(hir, first),
             format!(
                 "`{}` already gets a method named `{}` here",
                 cx.show(first.self_ty),

@@ -10,6 +10,7 @@ use crate::lexer::Lexer;
 use crate::lexer::token::Token;
 use crate::nameres;
 use crate::parser::Parser;
+use crate::typeck::Typeck;
 
 // -----------------------------------------------------------------
 // Driving the pipeline
@@ -66,6 +67,54 @@ pub fn resolve_src(src: &str) -> Hir {
     lower_src(src)
 }
 
+/// How far through type checking's program-level stages to run.
+///
+/// The stages are cumulative, since none of them stands on its own: coherence reads the index the
+/// stage before it builds, and bound checking reads what all of them left behind. A test that
+/// wants one stage's own diagnostics runs up to it, clears [`DiagCtx`], and then calls that
+/// stage itself, which is why [`checker_through`] hands the checker back rather than the
+/// messages.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Stage {
+    /// Every signature, field, and `extend` header lowered.
+    Collect,
+    /// The above, plus the impl index built.
+    Index,
+    /// The above, plus coherence.
+    Coherence,
+    /// The above, plus trait members checked against their traits.
+    Members,
+}
+
+/// A checker driven through `stage`, ready for a test to ask the next question itself.
+///
+/// Nothing is cleared, so what a caller finds in [`DiagCtx`] afterwards is everything the stages
+/// run here reported, name resolution's own output included. A fixture resolves without the core
+/// library and so always reports every lang item as missing, which is why most callers clear at
+/// the point they care about.
+pub fn checker_through(hir: &Hir, stage: Stage) -> Typeck<'_> {
+    let mut checker = Typeck::new(hir);
+    checker.collect_module(hir.root_id());
+    if stage >= Stage::Index {
+        checker.build_extend_index();
+    }
+    if stage >= Stage::Coherence {
+        checker.check_coherence();
+    }
+    if stage >= Stage::Members {
+        checker.check_trait_members();
+    }
+    checker
+}
+
+/// Everything [`DiagCtx`] currently holds, reduced to the messages.
+pub fn messages() -> Vec<String> {
+    DiagCtx::diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
 /// Runs the whole pipeline over `src`, type checking included, and hands back the messages type
 /// checking reported.
 ///
@@ -77,11 +126,7 @@ pub fn typeck_src(src: &str) -> Vec<String> {
     let hir = resolve_src(src);
     DiagCtx::clear();
     crate::typeck::check(&hir);
-
-    DiagCtx::diagnostics()
-        .into_iter()
-        .map(|diagnostic| diagnostic.message)
-        .collect()
+    messages()
 }
 
 /// [`typeck_src`] for a program spread across several files, each its own `module`.
@@ -162,6 +207,53 @@ pub fn typeck_accepts(src: &str) {
 /// cascade, which this pass prevents, and tolerating it would mask real failures.
 pub fn typeck_rejects(src: &str, needle: &str) {
     let reported = typeck_src(src);
+    assert_eq!(reported.len(), 1, "for {src:?}: {reported:?}");
+    assert!(
+        reported[0].contains(needle),
+        "expected a diagnostic mentioning {needle:?} for {src:?}, got {reported:?}"
+    );
+}
+
+/// Runs the whole pipeline over `src` through `mir::constck`, and hands back the messages that
+/// pass reported.
+///
+/// Type checking itself is asserted clean first, the same "diagnostics-free by design" contract
+/// [`lower_mir_src`] documents: a fixture meant to exercise something type checking itself
+/// rejects belongs with [`typeck_rejects`] instead, not here.
+pub fn mir_constck_src(src: &str) -> Vec<String> {
+    let hir = resolve_src(src);
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program =
+        crate::mir::lower::lower_program(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+    crate::mir::constck::check(&program);
+
+    DiagCtx::diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+/// Asserts that `src` passes `mir::constck` with nothing reported.
+pub fn mir_constck_accepts(src: &str) {
+    let reported = mir_constck_src(src);
+    assert!(
+        reported.is_empty(),
+        "expected {src:?} to pass constness checking: {reported:?}"
+    );
+}
+
+/// Asserts that `src` is rejected by `mir::constck` with exactly one diagnostic, whose message
+/// contains `needle`. One rather than at least one, for the same reason [`typeck_rejects`]
+/// insists on it: a second diagnostic from the same fixture is usually a cascade.
+pub fn mir_constck_rejects(src: &str, needle: &str) {
+    let reported = mir_constck_src(src);
     assert_eq!(reported.len(), 1, "for {src:?}: {reported:?}");
     assert!(
         reported[0].contains(needle),

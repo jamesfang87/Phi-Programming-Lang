@@ -1,4 +1,5 @@
 use crate::nameres::PrimTy;
+use crate::typeck::unify::{is_float, is_integer};
 
 fn int_width(prim: PrimTy) -> Option<u32> {
     match prim {
@@ -14,34 +15,7 @@ fn is_signed(prim: PrimTy) -> bool {
     matches!(prim, PrimTy::I8 | PrimTy::I16 | PrimTy::I32 | PrimTy::I64)
 }
 
-fn is_integer(prim: PrimTy) -> bool {
-    int_width(prim).is_some()
-}
-
-fn is_float(prim: PrimTy) -> bool {
-    matches!(prim, PrimTy::F32 | PrimTy::F64)
-}
-
-/// - **Integer to integer** ([`int_to_int`]): only ever widening within the same signedness, or
-///   unsigned to a *strictly wider* signed type (an equal-width signed type can't hold the
-///   unsigned type's top half).
-/// - **Integer to float**: allowed only when the float's mantissa is wide enough to hold every
-///   value of the integer type exactly -- 24 bits for `f32` (so `i16`/`u16` and narrower), 53
-///   bits for `f64` (so `i32`/`u32` and narrower). `i64`/`u64` fit in neither, so they can never
-///   cast to a float here.
-/// - **Float to float**: only `f32 -> f64` widens without loss; the reverse can round.
-/// - **Float to integer**: never allowed. Any fractional part would have to be dropped, and this
-///   module has no notion of a deliberately truncating cast (see the module docs).
-/// - **`bool` to numeric**: always allowed, since `false`/`true` are exactly `0`/`1` in any
-///   integer or float type. The reverse is never allowed: most values of a numeric type are
-///   neither.
-/// - **`char` to integer**: allowed only to `i32`/`i64`/`u32`/`u64`. A `char` is a Unicode scalar
-///   value, `0..=0x10FFFF`, which needs 21 bits -- too wide for an 8- or 16-bit integer, but
-///   always in range for a 32- or 64-bit one, signed or not.
-/// - **integer to `char`**: allowed only from `u8`. Every `u8` value is a valid Unicode scalar
-///   value (the surrogate range `0xD800..=0xDFFF` starts well above `u8::MAX`), but no wider
-///   integer type has that guarantee.
-/// - **`bool`/`char`, `char`/float**: share no representation in either direction.
+/// Checks whether `from as to` is a lossless cast between two distinct primitive types.
 pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     use PrimTy::*;
 
@@ -54,6 +28,8 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
     }
 
     match (from, to) {
+        // `f32`'s 24-bit mantissa holds every 16-bit integer exactly; `f64`'s 53 bits do the
+        // same for every 32-bit integer. Wider than that, and some value would round.
         (f, F32) if is_integer(f) && int_width(f) <= Some(16) => Ok(()),
         (f, F64) if is_integer(f) && int_width(f) <= Some(32) => Ok(()),
         (f, F32 | F64) if is_integer(f) => Err(
@@ -74,11 +50,16 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
             Err("not every value of this type is `0` or `1`")
         }
 
+        // A `char` is a Unicode scalar value, `0..=0x10FFFF`, which needs 21 bits: too wide for
+        // an 8- or 16-bit integer, but always in range for a 32- or 64-bit one, signed or not.
         (Char, U32 | U64 | I32 | I64) => Ok(()),
         (Char, t) if is_integer(t) => {
             Err("a `char` can hold a codepoint as high as 0x10FFFF, wider than this type")
         }
 
+        // Every `u8` value is a valid Unicode scalar value; the surrogate range
+        // `0xD800..=0xDFFF` starts well above `u8::MAX`. No wider integer type has that
+        // guarantee.
         (U8, Char) => Ok(()),
         (f, Char) if is_integer(f) => {
             Err("not every value of this type is a valid Unicode scalar value")
@@ -95,6 +76,9 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
     }
 }
 
+/// Whether narrowing between two integer types loses information. Same-signedness widening is
+/// always fine, and unsigned to a strictly wider signed type is too, since an equal-width
+/// signed type still cannot hold the unsigned type's top half.
 fn int_to_int(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     let (from_width, to_width) = (
         int_width(from).expect("caller checked `from` is an integer"),
@@ -134,7 +118,7 @@ mod tests {
         PrimTy::Char,
     ];
 
-    /// Every one of the 144 ordered pairs is classified one way or the other -- this is what
+    /// Every one of the 144 ordered pairs is classified one way or the other, which is what
     /// guarantees the `unreachable!()` in `cast_allowed` never fires.
     #[test]
     fn every_pair_of_primitives_is_classified() {

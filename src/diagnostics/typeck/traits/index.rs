@@ -34,7 +34,7 @@ pub fn report_extend_generic(span: SrcSpan) {
     );
 }
 
-pub fn report_impl_of_non_trait(span: SrcSpan) {
+pub fn report_attempt_to_extend_with_non_trait(span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error("`with` must name a trait", span)
             .with_label("not a trait")
