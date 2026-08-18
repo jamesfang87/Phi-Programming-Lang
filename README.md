@@ -30,7 +30,7 @@ To compile and run the project, Phi provides three commands:
 phi run   // compiles and runs the executable
 phi build // compiles and generates an executable w/o running
 phi check // just checks source code w/o generating an executable
-
+```
 ---
 
 ## 2. Lexical Structure
