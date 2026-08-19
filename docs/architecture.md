@@ -730,7 +730,7 @@ In `implements`, we have several checks.
 6. Now, we can search through the index to find an extend block which "proves" that this query is valid.
 7. Lastly, we must check whether the assumptions we proved the query on hold. We thus iterate through our bounds and then use implement on them.
 
-However, due to the fact that solutions can not be determined immediately, implements is difficult to work with. Thus, an `Obligation` represents a query which was previously determined as ambiguous along with `SrcSpan`s which are provided for the purposes of diagnostics. 
+However, due to the fact that solutions can not be determined immediately, implements is difficult to work with. Thus, an `Obligation` represents a query which must hold along with `SrcSpan`s which are provided for the purposes of diagnostics. 
 ```rust
 pub struct Obligation {
     /// The bound to prove, for example `Bare: Show`.
@@ -744,6 +744,231 @@ pub struct Obligation {
 At the end of type checking, we iterate through these Obligations and attempt to solve them, now that we have (hopefully) resolved all inference variables.
 
 ## Mid Intermediate Representation
-The Mid Intermediate Representation (MIR) is based on a Control Flow Graph (CFG) representation. 
+The Mid Intermediate Representation (MIR) is based on a Control Flow Graph (CFG) representation. In the MIR, the atomic representation of code is through a `BasicBlockData`. One `BasicBlockData` holds code in the form of statements and a `terminator` which describes how the block ends, such as by calling another function, branching to another block, etc.:
+```rust
+pub struct BasicBlockData {
+    pub statements: Vec<Statement>,
+    pub terminator: Terminator,
+}
+```
+
+A `Mir::Statement` consists of its kind and its span. Its kind can consist of the following:
+```rust
+#[derive(Clone, Debug)]
+pub struct Statement {
+    pub kind: StatementKind,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub enum StatementKind {
+    /// Begins the "lifetime" of a variable
+    StorageLive(Local),
+    /// Ends the "lifetime" of a variable
+    StorageDead(Local),
+    /// Assignment of an rvalue into a place/lvalue
+    Assign(Place, Rvalue),
+    /// Sets the discriminant of an enum
+    SetDiscriminant {
+        place: Place,
+        variant: VariantIdx,
+    },
+    /// `PlaceMention` represents a call where the end result is discarded. This is mainly used to preserve side-effects
+    PlaceMention(Place),
+    /// This checks that `place` can be written to at this point in the program.
+    CheckMutable(Place),
+}
+```
+
+As we mentioned before, a `Terminator` represents how a block can "transfer" control to another block.
+
+```rust
+#[derive(Clone, Debug)]
+pub struct Terminator {
+    pub kind: TerminatorKind,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub enum TerminatorKind {
+    Goto {
+        target: BasicBlock,
+    },
+    Return,
+    /// Switch statement
+    SwitchInt {
+        discr: Operand,
+        targets: SwitchTargets,
+    },
+    Call {
+        func: Operand,
+        args: Vec<Operand>,
+        destination: Place,
+        /// This is `None` for a call whose return type is `Never`. For example, the runtime
+        /// panic function never returns control to its caller, so a call to it has no
+        /// continuation block to target.
+        target: Option<BasicBlock>,
+    },
+    Drop {
+        place: Place,
+        target: BasicBlock,
+    },
+    Assert {
+        cond: Operand,
+        expected: bool,
+        msg: AssertMessage,
+        target: BasicBlock,
+    },
+    Unreachable,
+}
+```
+It should be noted that basic blocks do not have fallthrough. Transitioning to another block uses the variant `Goto`.
+
+To represent a definition which contains run-able code, the MIR has `Body`. It should be noted that structs, enums, traits, and modules have no `Body` since they have no run-able code.
+```rust
+#[derive(Debug)]
+pub struct Body {
+    /// DefId of the definition this block is for
+    pub def_id: DefId,
+    pub basic_blocks: Vec<BasicBlockData>,
+    pub local_decls: Vec<LocalDecl>,
+    /// `param_count` is the number of `local_decls` that are parameters including `self`. Slots
+    /// `1..=param_count` are the parameters in declared order, slot `0` is always the return place,
+    /// and every slot after `param_count` is a `let` binding or a compiler-introduced temporary.
+    pub param_count: usize,
+    pub span: SrcSpan,
+}
+```
+As the comment notes, the first slot in `local_decls` is always the return place. Slots from 1 to and including `param_count` are the parameters of the function, include `self`. After that, every slot represents a `let` or a compiler-introduced temporary.
+
+## IDs
+In the MIR, there are 3 different types of IDs used for identification. 
+
+For locals, there is `Local`, which tracks the location of a `LocalDecl` inside a `Body`:
+```rust
+pub struct Local(u32);
+
+impl Local {
+    /// This is the slot every `Body` reserves for its return value.
+    pub const RETURN_PLACE: Local = Local(0);
+}
+```
+
+For basic blocks, there is `BasicBlock`, which tracks the location of a `BasicBlocKData` inside a `Body`:
+```rust
+pub struct BasicBlock(u32);
+
+impl BasicBlock {
+    /// Every `Body` begins executing at this block.
+    pub const START_BLOCK: BasicBlock = BasicBlock(0);
+}
+```
+
+Finally, `VariantIdx` names on variant of an enum by its position in that enum's declaration order.
+```rust
+pub struct VariantIdx(u32);
+```
+
+It should be noted that unlike `DefId` in the HIR, all of these ids are local to a `Body` or to an enum.
+
+## Place
+
+To represent a `LocalDecl`'s location in memory, the MIR has `Place`. Since memory locations can be further divided into subparts (such as fields of a struct), `Place` also consists of projections applied onto the local which helps the compiler discriminate memory subparts. See below for the types of projections. 
+```rust
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Place {
+    pub local: Local,
+    pub projections: Vec<Projection>,
+}
+
+/// `Projection` represents one step of a [`Place`]'s projection.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Projection {
+    /// `Deref` represents `*p`
+    Deref,
+    /// `Field` addresses the `n`th field of a struct, tuple, tuple-variant payload, or
+    /// record-variant payload.
+    Field(u32),
+    /// `Index` represents `a[i]`, where `i` is itself a local holding the index.
+    Index(Local),
+    /// `ConstantIndex` represents `a[N]` where N is a compile-time-constant
+    ConstantIndex { offset: u32, from_end: bool },
+    /// `Downcast` narrows an enum place to one variant's payload and is required before any
+    /// `Field` projection into that payload is well-typed.
+    Downcast(VariantIdx),
+}
+```
+
+## RValues
+Informally, a rvalue roughly corresponds to an expression in the AST or HIR. More specifically however, it is everything which can be on the RHS of an assignment. 
+
+```rust
+pub enum Rvalue {
+    Use(Operand),
+    /// `Ref` represents `&place` or `&mut place`.
+    Ref {
+        mutability: Mutability,
+        place: Place,
+    },
+    BinaryOp(BinaryOp, Operand, Operand),
+    /// `CheckedBinaryOp` behaves like `BinaryOp`, but it is only for integer `+`, `-`, and `*`. It
+    /// produces a `(T, bool)` tuple, where T is the result of the operation and bool is a flag
+    /// reporting whether the peration overflowed. Lowering only emits this in debug builds.
+    CheckedBinaryOp(BinaryOp, Operand, Operand),
+    UnaryOp(UnaryOp, Operand),
+    /// `kind` distinguishes a user-written `as` from a compiler-inserted coercion for function pointers. See
+    /// [`CastKind::ReifyFunPointer`].
+    Cast {
+        operand: Operand,
+        ty: Ty,
+        kind: CastKind,
+    },
+    Aggregate(Box<AggregateKind>, Vec<Operand>),
+    /// `Discriminant` reads a place's enum discriminant as an integer, feeding a `SwitchInt`
+    /// terminator.
+    Discriminant(Place),
+    /// `Len` reads the runtime length of an array or a slice.
+    Len(Place),
+}
+```
+In the `Use` variant, `Operand` represents a reference to a value. It consists of the following variants:
+```rust
+#[derive(Clone, Debug)]
+pub enum Operand {
+    /// This variant reads a trivially copyable place, and may occur any number of times for the
+    /// same place.
+    Copy(Place),
+    /// This variant reads a place by consuming it.
+    Move(Place),
+    /// This variant is a value known at compile time, which is embedded directly into the
+    /// instruction rather than read out of a local's storage.
+    Constant(Constant),
+}
+
+#[derive(Clone, Debug)]
+pub struct Constant {
+    pub ty: Ty,
+    pub kind: ConstKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum ConstKind {
+    Int(i128),
+    Float(f64),
+    Bool(bool),
+    Char(char),
+    Str(Symbol),
+    FunDef(DefId, Vec<Ty>, Option<AnyMode>),
+}
+```
+## Instance
+Since functions are monomorphized (see the section on lowering from HIR to MIR), a single `DefId` could correspond to multiple `Body`s. Here, `Instance` refers to one monomorphized instance of a definition. To fully define one instance, we need its `any` mode and its instantiations for generic type parameters:
+```rust
+pub struct Instance {
+    pub def: DefId,
+    pub any_mode: Option<AnyMode>,
+    pub args: Vec<Ty>,
+}
+```
 
 ## Borrow Checking
