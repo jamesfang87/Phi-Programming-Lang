@@ -35,10 +35,9 @@ fn check_body(body: &Body) -> bool {
     let mut lattice: Lattice = Default::default();
     let preds = body.predecessors();
 
-    // The entry state for the entry block is `DoesNotReturn` while
-    // we have a guess of `DoesReturn` for all other blocks
-    lattice.set_entry(BasicBlock::from_usize(0), State::DoesNotReturn);
-    for index in 1..body.basic_blocks.len() {
+    // We have a guess of `DoesReturn` for entry of all blocks
+    // and a guess of `DoesNotReturn` for exit of all blocks
+    for index in 0..body.basic_blocks.len() {
         let id = BasicBlock::from_usize(index);
         lattice.set_entry(id, State::DoesReturn);
         lattice.set_exit(id, State::DoesNotReturn);
@@ -185,8 +184,8 @@ mod tests {
             "enum Shape { rectangle, circle }
              fun classify(s: Shape) -> i32 {
                  match s {
-                     .rectangle => { return 1; },
-                     .circle => { return 2; },
+                     .rectangle => { return 1; }
+                     .circle => { return 2; }
                  }
                  return 0;
              }"
