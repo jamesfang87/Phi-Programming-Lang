@@ -29,6 +29,7 @@ pub enum TyKind {
     },
     /// Represents `any T`.
     Any(HirId), // -> Node::Ty
+    Iso(HirId), // -> Node::Ty
     /// Represents `(T, U, ..)`.
     Tuple(Vec<HirId>), // -> Node::Ty
     /// A fixed-size array, written `[T; N]`.

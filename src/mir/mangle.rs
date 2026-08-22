@@ -106,6 +106,7 @@ fn mangle_ty(hir: &Hir, tcx: &TyCtx, ty: Ty) -> String {
             format!("{prefix}{}", mangle_ty(hir, tcx, base))
         }
         TyKind::Any(base) => format!("any_{}", mangle_ty(hir, tcx, base)),
+        TyKind::Iso(base) => format!("iso_{}", mangle_ty(hir, tcx, base)),
         TyKind::Tuple(elems) => join_args("tuple", &elems, hir, tcx),
         TyKind::Array { elem, .. } => format!("array_{}", mangle_ty(hir, tcx, elem)),
         TyKind::Fun { params, ret } => {
