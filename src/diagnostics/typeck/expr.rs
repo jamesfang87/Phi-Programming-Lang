@@ -44,6 +44,18 @@ pub fn report_compound_assign_result_mismatch(cx: DisplayCx<'_>, err: UnifyError
 }
 
 // -----------------------------------------------------------------
+// Dereference
+// -----------------------------------------------------------------
+
+pub fn report_deref_not_a_reference(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(format!("`{}` cannot be dereferenced", cx.show(ty)), span)
+            .with_label("not a reference type")
+            .with_help("`*` only applies to a value of type `&T` or `&mut T`"),
+    );
+}
+
+// -----------------------------------------------------------------
 // Indexing
 // -----------------------------------------------------------------
 

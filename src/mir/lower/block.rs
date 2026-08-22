@@ -219,6 +219,16 @@ impl<'a> BodyLowerCtx<'a> {
 
     /// Replays a list of exit obligations, in the order they are already given (the innermost
     /// block's most-recently-registered obligation first).
+    ///
+    /// A replay always runs after the block scope the obligations came from has already been
+    /// popped (see `lower_block`'s and `StmtKind::With`'s own `pop_block_scope`-then-`replay`
+    /// pairing), so a `RunDeferred` obligation cannot lower its expression directly: were it to
+    /// need a temporary of its own -- and `new_temp` now registers a `StorageDead` obligation for
+    /// every temporary it allocates, not only a `let`/`with` local -- `register_exit_obligation`
+    /// would find no open scope to register it against. Opening a scope of its own around exactly
+    /// that one expression, then immediately popping and replaying it, gives the deferred
+    /// expression's own temporaries the same live range everything else's have, entirely self-
+    /// contained within this one replay step, before this loop moves on to the next obligation.
     pub(crate) fn replay_obligations(&mut self, obligations: &[ExitObligation]) {
         for &obligation in obligations {
             match obligation {
@@ -227,7 +237,10 @@ impl<'a> BodyLowerCtx<'a> {
                     self.push_stmt(StatementKind::StorageDead(local), span);
                 }
                 ExitObligation::RunDeferred(expr_id) => {
+                    self.push_block_scope();
                     self.lower_expr_discarding(expr_id);
+                    let nested = self.pop_block_scope();
+                    self.replay_obligations(&nested);
                 }
             }
         }

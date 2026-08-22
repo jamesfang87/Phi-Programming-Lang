@@ -427,7 +427,7 @@ pub fn walk_ty<'ast, V: Visitor<'ast>>(v: &mut V, ty: &'ast Ty) {
                 v.visit_ty(arg);
             }
         }
-        TyKind::Ref { base, .. } | TyKind::Any(base) => {
+        TyKind::Ref { base, .. } | TyKind::Any(base) | TyKind::Iso(base) => {
             v.visit_ty(base);
         }
         TyKind::Tuple(elems) => {

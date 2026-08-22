@@ -57,7 +57,7 @@ impl<'a> BodyLowerCtx<'a> {
                 any_mode,
             );
             // A parameter, `self` included, has no `let`/`let mut` of its own to restrict it, so
-            // it is unrestricted by `mir::constck` -- matching every other binding besides a
+            // it is unrestricted by `mir::checks::constck` -- matching every other binding besides a
             // plain `let`'s; see `StatementKind::CheckMutable`'s own docs.
             let local = self.new_local(ty, Mutability::Mutable, None, span);
             self.bind_local(self_id, local);

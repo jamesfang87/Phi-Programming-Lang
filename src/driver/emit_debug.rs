@@ -147,6 +147,7 @@ fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
             )
         }
         TyKind::Any(base) => format!("Any({})", fmt_ty(hir, tcx, *base, indent)),
+        TyKind::Iso(base) => format!("Iso({})", fmt_ty(hir, tcx, *base, indent)),
         TyKind::Tuple(elems) => {
             let elems: Vec<_> = elems
                 .iter()
@@ -305,7 +306,7 @@ pub fn print_mir(
                 .map(|&arg| fmt_ty(hir, tcx, arg, 0))
                 .collect::<Vec<_>>()
                 .join(", "),
-            body.arg_count
+            body.param_count
         );
         for (index, decl) in body.local_decls.iter().enumerate() {
             let name = decl
