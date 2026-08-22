@@ -9,8 +9,8 @@ use crate::diagnostics::typeck::traits::solve::report_operator_trait_missing;
 use crate::diagnostics::typeck::{
     report_binary_operand_mismatch, report_binding_type_mismatch, report_body_return_mismatch,
     report_int_suffix_on_float_literal, report_logic_op_needs_bool_operands,
-    report_operand_has_unknown_type, report_return_mismatch, report_str_literal_untyped,
-    report_unknown_literal_suffix,
+    report_operand_has_unknown_type, report_reference_field, report_return_mismatch,
+    report_str_literal_untyped, report_unknown_literal_suffix,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
@@ -154,8 +154,10 @@ impl<'hir> Typeck<'hir> {
             match &variant.payload {
                 VariantPayload::Unit => {}
                 VariantPayload::Type(ty_id) => {
+                    let payload_span = hir.ty(*ty_id).span;
                     let ty = self.lower_ty(*ty_id);
                     self.types.record(id, ty);
+                    self.check_not_a_reference(ty, payload_span);
                 }
                 VariantPayload::Record(fields) => self.collect_fields(fields),
             }
@@ -205,9 +207,22 @@ impl<'hir> Typeck<'hir> {
     fn collect_fields(&mut self, fields: &[HirId]) {
         for &id in fields {
             let field = self.hir.field(id);
+            let field_span = field.span;
 
             let ty = self.lower_ty(field.ty);
             self.types.record(id, ty);
+            self.check_not_a_reference(ty, field_span);
+        }
+    }
+
+    /// Rejects `ty` as a field's or a variant payload's own type if it stores a reference
+    /// anywhere within it, since a struct or enum has to own every value it holds. This is
+    /// what keeps a generic struct or enum from ever holding one too: `self.lower_def` refuses
+    /// to substitute a reference for a generic parameter in the first place, so a field
+    /// declared with an abstract type never ends up holding one behind the scenes.
+    fn check_not_a_reference(&mut self, ty: Ty, span: SrcSpan) {
+        if self.tcx.contains_ref(ty) {
+            report_reference_field(self.display_cx(), ty, span);
         }
     }
 
@@ -313,6 +328,10 @@ impl<'hir> Typeck<'hir> {
                          module, or Self"
                 ),
             },
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => self.check_deref(*operand, expr.span),
             ExprKind::Unary { op, operand } => {
                 let operand_ty = self.ty_of(*operand);
                 let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
@@ -320,6 +339,7 @@ impl<'hir> Typeck<'hir> {
                 let item = match op {
                     UnaryOp::Neg => LangItem::Neg,
                     UnaryOp::Not => LangItem::Not,
+                    UnaryOp::Deref => unreachable!("handled by the arm above"),
                 };
 
                 if self.is_builtin_operand(resolved)
@@ -883,10 +903,10 @@ mod tests {
             if pred(hir.def(item)) {
                 return Some(item);
             }
-            if matches!(hir.def(item), OwnerNode::Module(_)) {
-                if let Some(found) = find_owner_opt(hir, item, pred) {
-                    return Some(found);
-                }
+            if matches!(hir.def(item), OwnerNode::Module(_))
+                && let Some(found) = find_owner_opt(hir, item, pred)
+            {
+                return Some(found);
             }
         }
         None
@@ -1830,14 +1850,77 @@ mod tests {
         );
     }
 
+    /// A struct field has to own the value it holds, so a field typed as a reference is
+    /// rejected, even one that would only self-reference the struct it appears in.
     #[test]
-    fn a_self_referencing_struct_field_behind_a_reference_checks() {
-        accepts("struct Node { next: &Node }");
+    fn a_struct_field_that_is_a_reference_is_rejected() {
+        rejects("struct Node { next: &Node }", "a field cannot hold a reference");
+    }
+
+    /// The same rule applies to an enum variant's payload, whether it is a bare type or a
+    /// record field.
+    #[test]
+    fn an_enum_variant_payload_that_is_a_reference_is_rejected() {
+        rejects(
+            "enum List { cons: &List, nil }",
+            "a field cannot hold a reference",
+        );
     }
 
     #[test]
-    fn a_self_referencing_enum_variant_behind_a_reference_checks() {
-        accepts("enum List { cons: &List, nil }");
+    fn an_enum_record_variant_field_that_is_a_reference_is_rejected() {
+        rejects(
+            "enum List { cons: { next: &List }, nil }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    /// A reference nested inside a tuple or an array field is still a reference stored inline,
+    /// so it is rejected the same as a bare `&T` field.
+    #[test]
+    fn a_tuple_field_containing_a_reference_is_rejected() {
+        rejects(
+            "struct Pair { both: (i32, &i32) }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    #[test]
+    fn an_array_field_containing_a_reference_is_rejected() {
+        rejects(
+            "struct Bucket { items: [&i32; 3] }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    /// Even though a generic field is only ever declared with the abstract parameter `T`,
+    /// instantiating that parameter with a reference is rejected at the instantiation site,
+    /// since there is no way to tell, from the struct's own declaration, whether `T` ends up
+    /// in field position.
+    #[test]
+    fn instantiating_a_generic_struct_with_a_reference_argument_is_rejected() {
+        rejects(
+            "struct Boxed<T> { value: T }
+             fun f(b: Boxed<&i32>) {}",
+            "a struct or enum cannot be instantiated with a reference",
+        );
+    }
+
+    /// A generic struct instantiated with an owned type still checks, which confirms the
+    /// previous rejection is about the reference argument specifically, not about generics.
+    #[test]
+    fn instantiating_a_generic_struct_with_an_owned_argument_checks() {
+        accepts(
+            "struct Boxed<T> { value: T }
+             fun f(b: Boxed<i32>) {}",
+        );
+    }
+
+    /// The restriction is on struct/enum fields, not on references generally: a plain
+    /// reference-typed function parameter is unaffected.
+    #[test]
+    fn a_reference_typed_function_parameter_still_checks() {
+        accepts("fun f(x: &i32) {}");
     }
 
     // -----------------------------------------------------------------

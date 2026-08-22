@@ -286,6 +286,7 @@ pub enum TyKind {
         mutability: Mutability,
     },
     Any(Box<Ty>),
+    Iso(Box<Ty>),
     Tuple(Vec<Ty>),
     Array {
         elem: Box<Ty>,
@@ -501,6 +502,8 @@ pub enum UnaryOp {
     Neg,
     /// Logical negation, `!x`.
     Not,
+    /// Dereference, `*x`.
+    Deref,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
