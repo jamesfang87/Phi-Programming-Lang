@@ -1,5 +1,7 @@
+use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
+use crate::typeck::ty::Ty;
 
 pub fn report_unexpected_generic_args(kind: &str, span: SrcSpan) {
     DiagCtx::emit(
@@ -51,6 +53,23 @@ pub fn report_self_outside_item(span: SrcSpan) {
                 "`Self` names the type being defined, so it only means something inside a \
                      `struct`, `enum`, `trait`, or `extend` body",
             ),
+    );
+}
+
+pub fn report_reference_generic_arg(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "a struct or enum cannot be instantiated with a reference, found `{}`",
+                cx.show(ty)
+            ),
+            span,
+        )
+        .with_label("this generic argument stores a reference")
+        .with_help(
+            "a struct or enum field has to own the value it holds, so none of its generic \
+                 arguments may store a reference either",
+        ),
     );
 }
 

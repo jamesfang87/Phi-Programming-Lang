@@ -65,7 +65,7 @@ impl Task {
 /// [`mir::monomorphize`](crate::mir::monomorphize) substitutes each one's own remaining
 /// `TyKind::Generic`/`SelfTy` per calling context, keyed by the same pair plus a generic
 /// argument list.
-pub struct LoweredProgram {
+pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
 }
 
@@ -99,12 +99,7 @@ fn item_has_errors(hir: &Hir, tcx: &TyCtx, types: &TypeResolutions, def_id: DefI
 /// Lowers every function, method, and closure `hir` declares into a [`LoweredProgram`]. `mode`
 /// is the project's debug/release profile, which decides whether integer arithmetic gets a
 /// [`crate::mir::CheckedBinaryOp`] and an overflow [`crate::mir::Assert`] or wraps silently.
-pub fn lower_program(
-    hir: &Hir,
-    tcx: &mut TyCtx,
-    types: &TypeResolutions,
-    mode: Mode,
-) -> LoweredProgram {
+pub fn lower_program(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) -> Mir {
     let erroneous: HashSet<DefId> = hir
         .def_ids()
         .filter(|&def_id| item_has_errors(hir, tcx, types, def_id))
@@ -139,5 +134,5 @@ pub fn lower_program(
         bodies.insert(key, body);
     }
 
-    LoweredProgram { bodies }
+    Mir { bodies }
 }

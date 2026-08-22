@@ -90,7 +90,7 @@ fn calling_through_a_reified_function_pointer_still_monomorphizes_the_callee() {
                     StatementKind::Assign(
                         _,
                         Rvalue::Cast {
-                            kind: crate::mir::CastKind::ReifyFnPointer,
+                            kind: crate::mir::CastKind::ReifyFunPointer,
                             ..
                         }
                     )

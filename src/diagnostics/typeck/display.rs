@@ -67,6 +67,10 @@ impl Pretty for Ty {
                 write!(f, "any ")?;
                 base.pretty(f, cx)
             }
+            TyKind::Iso(base) => {
+                write!(f, "iso ")?;
+                base.pretty(f, cx)
+            }
             TyKind::Unit => write!(f, "()"),
             TyKind::Tuple(elems) => {
                 write!(f, "(")?;

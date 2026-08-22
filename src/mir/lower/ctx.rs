@@ -147,8 +147,20 @@ impl<'a> BodyLowerCtx<'a> {
     /// flattened sub-expression, a bounds check's length, and so on). Always immutable: nothing
     /// after lowering ever assigns into a temporary a second time in a way mutability would
     /// guard against.
+    ///
+    /// Bracketed in `StorageLive`/`StorageDead` exactly like a `let`/`with` binding's own local
+    /// (see `lower_let`/`lower_with_lend`/`bind_pat`'s `PatKind::Binding` arm), through the same
+    /// block-scoped exit-obligation mechanism: the `StorageDead` is registered against the
+    /// innermost open block scope here, and actually pushed wherever that scope's obligations are
+    /// next replayed (natural fallthrough, `break`, `continue`, or `return`). This is coarser
+    /// than a temporary's true extent -- most live only across the one statement that reads them
+    /// back -- but it is the same scope a `let` local gets, and it means no local in the finished
+    /// `Body`, named or not, is ever live without a `StorageLive`/`StorageDead` pair saying so.
     pub(crate) fn new_temp(&mut self, ty: Ty, span: SrcSpan) -> Local {
-        self.new_local(ty, Mutability::Immutable, None, span)
+        let local = self.new_local(ty, Mutability::Immutable, None, span);
+        self.push_stmt(StatementKind::StorageLive(local), span);
+        self.register_exit_obligation(ExitObligation::StorageDead(local));
+        local
     }
 
     /// Records that HIR node `id` (a parameter, a binding pattern) is addressed by `local`,
@@ -358,7 +370,7 @@ impl<'a> BodyLowerCtx<'a> {
             def_id,
             basic_blocks,
             local_decls: std::mem::take(&mut self.local_decls),
-            arg_count,
+            param_count: arg_count,
             span,
         }
     }
