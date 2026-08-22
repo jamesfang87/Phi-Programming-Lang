@@ -327,6 +327,7 @@ impl<'a> Lexer<'a> {
             "if" => TokenKind::IfKw,
             "import" => TokenKind::ImportKw,
             "in" => TokenKind::InKw,
+            "iso" => TokenKind::IsoKw,
             "let" => TokenKind::LetKw,
             "match" => TokenKind::MatchKw,
             "module" => TokenKind::ModuleKw,
