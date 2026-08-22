@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use crate::nameres::PrimTy;
 use crate::typeck::fold;
@@ -44,8 +45,8 @@ impl Unifier {
     /// The representative of `ty`'s equivalence class, registering `ty` as its
     /// equivalence class if this is the first time it has been seen.
     fn find_shallow(&mut self, ty: Ty) -> Ty {
-        if !self.parents.contains_key(&ty) {
-            self.parents.insert(ty, ty);
+        if let Entry::Vacant(e) = self.parents.entry(ty) {
+            e.insert(ty);
             self.sizes.insert(ty, 1);
             return ty;
         }

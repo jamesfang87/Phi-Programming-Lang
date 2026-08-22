@@ -10,8 +10,8 @@ use crate::diagnostics::typeck::pat::{
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, PatKind, Payload, PayloadField, VariantPayload};
 use crate::nameres::PrimTy;
-use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::Typeck;
+use crate::typeck::ty::{Ty, TyKind};
 
 pub(crate) struct VariantDef {
     pub id: HirId,
@@ -23,6 +23,10 @@ pub(crate) enum VariantTys {
     Single(Ty),
     Record(Vec<(Ident, Ty)>),
 }
+
+/// A struct's definition, paired with each field's name, `HirId`, and declared type instantiated
+/// at the receiver's generic arguments.
+type StructFields = (DefId, Vec<(Ident, HirId, Ty)>);
 
 impl VariantTys {
     pub(crate) fn describe(&self) -> &'static str {
@@ -297,7 +301,7 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<(DefId, Vec<(Ident, HirId, Ty)>)> {
+    pub(crate) fn struct_fields(&mut self, ty: Ty) -> Option<StructFields> {
         let hir = self.hir;
         let (def, subst) = self.adt_and_generic_substs(ty)?;
         let OwnerNode::Struct(struct_) = hir.def(def) else {

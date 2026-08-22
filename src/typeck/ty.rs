@@ -37,6 +37,7 @@ pub enum TyKind {
         mutability: Mutability,
     },
     Any(Ty),
+    Iso(Ty),
     Unit,
     Tuple(Vec<Ty>),
     Array {

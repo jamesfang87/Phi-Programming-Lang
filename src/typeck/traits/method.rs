@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::interner::Interner;
-use crate::ast::{Ident, Mutability, SelfMode, Symbol};
+use crate::ast::{Ident, Mutability, SelfMode, Symbol, UnaryOp};
 use crate::diagnostics::typeck::traits::get_name_of_trait;
 use crate::diagnostics::typeck::traits::method::{
     function_name_span, report_ambiguous_method, report_call_arg_count, report_call_arg_mismatch,
@@ -11,9 +11,9 @@ use crate::diagnostics::typeck::traits::method::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Res};
+use crate::typeck::Typeck;
 use crate::typeck::fold;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::Typeck;
 
 /// A function that a method call could resolve to with the substitution mapping its
 /// generic parameters to the concrete types they stand for at this call site.
@@ -520,15 +520,19 @@ impl<'hir> Typeck<'hir> {
     }
 
     pub(crate) fn is_place_expr(&self, id: HirId) -> bool {
-        match &self.hir.expr(id).kind {
-            ExprKind::Path(_) => true,
-            ExprKind::Access {
-                args: AccessArgs::None,
-                ..
-            } => true,
-            ExprKind::Index { .. } => true,
-            _ => false,
-        }
+        matches!(
+            &self.hir.expr(id).kind,
+            ExprKind::Path(_)
+                | ExprKind::Access {
+                    args: AccessArgs::None,
+                    ..
+                }
+                | ExprKind::Index { .. }
+                | ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    ..
+                }
+        )
     }
 
     // -----------------------------------------------------------------
@@ -549,6 +553,11 @@ impl<'hir> Typeck<'hir> {
 
         // A field is reached through references exactly as a method is.
         let (base_ty, _adjustment) = self.peel_receiver(base_ty);
+
+        if let TyKind::Tuple(elems) = self.tcx.kind(base_ty).clone() {
+            return self.check_tuple_field(&elems, member, base_ty);
+        }
+
         if let Some(ty) = self.field_ty(base_ty, owner, member) {
             return ty;
         }
@@ -562,6 +571,20 @@ impl<'hir> Typeck<'hir> {
             report_field_is_a_method(self.display_cx(), member, base_ty);
         }
         self.tcx.error()
+    }
+
+    /// Checks a tuple index access, such as `t.0` on `t: (i32, bool)`. `member`'s text is the
+    /// digits written after the `.`, parsed here rather than at the call site so an
+    /// out-of-range or malformed index reports through the same diagnostic a named field would.
+    fn check_tuple_field(&mut self, elems: &[Ty], member: Ident, base_ty: Ty) -> Ty {
+        let index = Interner::resolve(member.text).parse::<usize>().ok();
+        match index.and_then(|index| elems.get(index)) {
+            Some(&ty) => ty,
+            None => {
+                report_no_field(self.display_cx(), member, base_ty);
+                self.tcx.error()
+            }
+        }
     }
 
     fn field_ty(&mut self, base: Ty, owner: DefId, member: Ident) -> Option<Ty> {
@@ -621,7 +644,7 @@ mod tests {
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::testing::{
-        checker_through, find_return, first_extend_method, resolve_src, typeck_src as check, Stage,
+        Stage, checker_through, find_return, first_extend_method, resolve_src, typeck_src as check,
     };
 
     /// Runs the checker through the point candidate collection reads, without checking function
@@ -743,9 +766,11 @@ mod tests {
         let function = hir.function(f);
         let t = checker.tcx.mk_generic(function.generics[0]);
 
-        assert!(checker
-            .method_candidates(t, Interner::intern("show"), f)
-            .is_empty());
+        assert!(
+            checker
+                .method_candidates(t, Interner::intern("show"), f)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -802,9 +827,11 @@ mod tests {
                 .len(),
             1
         );
-        assert!(checker
-            .method_candidates(wrap_bar, Interner::intern("show"), root)
-            .is_empty());
+        assert!(
+            checker
+                .method_candidates(wrap_bar, Interner::intern("show"), root)
+                .is_empty()
+        );
     }
 
     /// Two bounds naming the same trait are one candidate, not an ambiguity between a candidate
@@ -984,10 +1011,12 @@ mod tests {
 
     #[test]
     fn a_conditional_impls_method_is_available_when_the_bound_holds() {
-        assert!(check(&format!(
-            "{CONDITIONAL} fun f(x: Wrap<Foo>) {{ x.show(); }}"
-        ))
-        .is_empty());
+        assert!(
+            check(&format!(
+                "{CONDITIONAL} fun f(x: Wrap<Foo>) {{ x.show(); }}"
+            ))
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1016,10 +1045,12 @@ mod tests {
     /// which for a generic caller is its own environment.
     #[test]
     fn a_conditional_impls_bound_is_discharged_from_the_callers_own_bounds() {
-        assert!(check(&format!(
-            "{CONDITIONAL} fun f<U: Show>(x: Wrap<U>) {{ x.show(); }}"
-        ))
-        .is_empty());
+        assert!(
+            check(&format!(
+                "{CONDITIONAL} fun f<U: Show>(x: Wrap<U>) {{ x.show(); }}"
+            ))
+            .is_empty()
+        );
         assert_eq!(
             check(&format!(
                 "{CONDITIONAL} fun f<U>(x: Wrap<U>) {{ x.show(); }}"
@@ -1050,33 +1081,39 @@ mod tests {
 
     #[test]
     fn an_inherent_method_call_checks() {
-        assert!(check(
-            "struct Foo {}
+        assert!(
+            check(
+                "struct Foo {}
                  extend Foo { fun show(&self) {} }
                  fun f(x: Foo) { x.show(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     #[test]
     fn a_trait_method_call_checks() {
-        assert!(check(
-            "trait Show { fun show(&self); }
+        assert!(
+            check(
+                "trait Show { fun show(&self); }
                  struct Foo {}
                  extend Foo with Show { fun show(&self) {} }
                  fun f(x: Foo) { x.show(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     /// The case the environment exists for: nothing is known about `T` but the bound.
     #[test]
     fn a_method_reached_through_a_bound_checks() {
-        assert!(check(
-            "trait Show { fun show(&self); }
+        assert!(
+            check(
+                "trait Show { fun show(&self); }
                  fun f<T: Show>(x: T) { x.show(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1102,11 +1139,13 @@ mod tests {
 
     #[test]
     fn a_method_on_a_dyn_receiver_checks() {
-        assert!(check(
-            "trait Show { fun show(&self); }
+        assert!(
+            check(
+                "trait Show { fun show(&self); }
                  fun f(x: &dyn Show) { x.show(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     /// An inherent `extend Foo` block always wins for `Foo` specifically. Coherence separately
@@ -1154,11 +1193,13 @@ mod tests {
 
     #[test]
     fn a_field_access_checks_to_the_fields_type() {
-        assert!(check(
-            "struct Foo { count: i32 }
+        assert!(
+            check(
+                "struct Foo { count: i32 }
                  fun f(x: Foo) -> i32 { return x.count; }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     /// A field's declared type is read through the arguments the receiver applied.
@@ -1170,6 +1211,41 @@ mod tests {
                  fun f(x: Wrap<i32>) -> bool { return x.inner; }"
             ),
             ["mismatched types: expected `bool`, found `i32`"]
+        );
+    }
+
+    #[test]
+    fn a_tuple_index_access_checks_to_the_elements_type() {
+        assert_eq!(
+            check("fun f(t: (i32, bool)) -> bool { return t.0; }"),
+            ["mismatched types: expected `bool`, found `i32`"]
+        );
+        assert!(check("fun f(t: (i32, bool)) -> i32 { return t.0; }").is_empty());
+        assert!(check("fun f(t: (i32, bool)) -> bool { return t.1; }").is_empty());
+    }
+
+    #[test]
+    fn a_chained_tuple_index_access_checks() {
+        assert!(check("fun f(t: ((i32, bool), i32)) -> i32 { return t.0.0; }").is_empty());
+        assert!(check("fun f(t: ((i32, bool), i32)) -> bool { return t.0.1; }").is_empty());
+    }
+
+    #[test]
+    fn a_triple_chained_tuple_index_access_checks() {
+        assert!(
+            check("fun f(t: (i32, (bool, (i32, i32)))) -> i32 { return t.1.1.0; }").is_empty()
+        );
+        assert_eq!(
+            check("fun f(t: (i32, (bool, (i32, i32)))) -> bool { return t.1.1.0; }"),
+            ["mismatched types: expected `bool`, found `i32`"]
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_tuple_index_is_reported() {
+        assert_eq!(
+            check("fun f(t: (i32, bool)) -> i32 { return t.2; }"),
+            ["no field `2` on `(i32, bool)`"]
         );
     }
 
@@ -1216,13 +1292,15 @@ mod tests {
 
     #[test]
     fn a_public_field_can_be_read_from_another_module() {
-        assert!(crate::testing::typeck_src_files(&[
-            "module math; public struct Foo { public count: i32 }",
-            "module app;
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { public count: i32 }",
+                "module app;
                  import math::Foo;
                  fun f(x: Foo) -> i32 { return x.count; }",
-        ])
-        .is_empty());
+            ])
+            .is_empty()
+        );
     }
 
     /// Re-checks `SymbolTable::is_visible`'s full rule for a field instead of a path lookup:
@@ -1284,13 +1362,15 @@ mod tests {
             ["field `inner` is private"]
         );
         // The public field, reached the very same way, is not.
-        assert!(crate::testing::typeck_src_files(&[
-            "module lib; public struct Wrap<T> { inner: T, public tag: T }",
-            "module app;
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module lib; public struct Wrap<T> { inner: T, public tag: T }",
+                "module app;
                  import lib::Wrap;
                  fun f(x: &Wrap<i32>) -> i32 { return x.tag; }",
-        ])
-        .is_empty());
+            ])
+            .is_empty()
+        );
     }
 
     /// `field_ty`'s `owner` is the definition an access sits inside, here an `extend` block's
@@ -1299,10 +1379,12 @@ mod tests {
     #[test]
     fn an_extend_blocks_method_reads_a_private_field_only_from_the_declaring_module() {
         // An `extend` block in the struct's own module: allowed, same as any in-module access.
-        assert!(crate::testing::typeck_src_files(&["module math;
+        assert!(
+            crate::testing::typeck_src_files(&["module math;
                  public struct Foo { count: i32 }
                  extend Foo { fun get(&self) -> i32 { return self.count; } }",])
-        .is_empty());
+            .is_empty()
+        );
 
         // An `extend` block for the same type, written in a *different* module: refused exactly
         // as a free function in that module would be.
@@ -1323,34 +1405,40 @@ mod tests {
 
     #[test]
     fn a_reference_receiver_reaches_a_ref_self_method() {
-        assert!(check(
-            "struct Foo {}
+        assert!(
+            check(
+                "struct Foo {}
                  extend Foo { fun show(&self) {} }
                  fun f(x: &Foo) { x.show(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     /// Autoref takes a reference automatically when the method wants one and the receiver is a
     /// place.
     #[test]
     fn a_value_receiver_is_autoreffed_for_a_ref_self_method() {
-        assert!(check(
-            "struct Foo {}
+        assert!(
+            check(
+                "struct Foo {}
                  extend Foo { fun show(&self) {} }
                  fun f(x: Foo) { x.show(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     #[test]
     fn a_mut_ref_receiver_reaches_a_mut_self_method() {
-        assert!(check(
-            "struct Foo {}
+        assert!(
+            check(
+                "struct Foo {}
                  extend Foo { fun bump(&mut self) {} }
                  fun f(x: &mut Foo) { x.bump(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1365,18 +1453,20 @@ mod tests {
         );
     }
 
-    // Whether a `&mut self` call's autoreffed receiver may be written to is `mir::constck`'s
+    // Whether a `&mut self` call's autoreffed receiver may be written to is `mir::checks::constck`'s
     // question, exercised by that module's own tests. `mir::lower::call` materializes this
     // autoref as an `Rvalue::Ref`, checked the same way an explicit `&mut` borrow is.
 
     #[test]
     fn a_value_receiver_reaches_a_by_value_self_method() {
-        assert!(check(
-            "struct Foo {}
+        assert!(
+            check(
+                "struct Foo {}
                  extend Foo { fun consume(self) {} }
                  fun f(x: Foo) { x.consume(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1394,12 +1484,14 @@ mod tests {
     /// `any self` accepts a receiver of any form: by value, by reference, or by `any`.
     #[test]
     fn an_any_self_method_accepts_every_receiver() {
-        assert!(check(
-            "struct Foo {}
+        assert!(
+            check(
+                "struct Foo {}
                  extend Foo { fun peek(any self) {} }
                  fun f(a: Foo, b: &Foo, c: &mut Foo) { a.peek(); b.peek(); c.peek(); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     /// A method reached on a value produced by another call has nothing to take a reference to.
@@ -1499,14 +1591,16 @@ mod tests {
 
     #[test]
     fn a_call_to_a_generic_callee_whose_bound_holds_checks() {
-        assert!(check(
-            "trait Show { fun show(&self); }
+        assert!(
+            check(
+                "trait Show { fun show(&self); }
                  struct Foo {}
                  extend Foo with Show { fun show(&self) {} }
                  fun g<T: Show>(x: T) {}
                  fun f(y: Foo) { g(y); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     /// A receiver whose type nothing pins down cannot be resolved, and unlike a bound it is not
@@ -1533,8 +1627,9 @@ mod tests {
     /// `any self` accepts every receiver shape: by value, by reference, and by `any`.
     #[test]
     fn any_self_accepts_every_receiver_shape() {
-        assert!(check(
-            "struct Foo {}
+        assert!(
+            check(
+                "struct Foo {}
                  extend Foo { fun show(any self) {} }
                  fun f(a: Foo, b: &Foo, c: &mut Foo, d: any Foo) {
                      a.show();
@@ -1542,20 +1637,23 @@ mod tests {
                      c.show();
                      d.show();
                  }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
     }
 
     /// A method's own generic parameters are instantiated fresh per call, independent of the
     /// receiver's type.
     #[test]
     fn a_methods_own_generic_parameter_is_inferred_from_its_argument() {
-        assert!(check(
-            "struct Box_ {}
+        assert!(
+            check(
+                "struct Box_ {}
                  extend Box_ { fun identity<T>(&self, x: T) -> T { return x; } }
                  fun f(b: Box_, n: i32) -> i32 { return b.identity(n); }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
         assert_eq!(
             check(
                 "struct Box_ {}
@@ -1570,8 +1668,9 @@ mod tests {
     /// own type arguments, not left as the block's bare parameter.
     #[test]
     fn indexing_a_generic_type_reads_v_through_the_receivers_own_arguments() {
-        assert!(check(
-            "module core::ops;
+        assert!(
+            check(
+                "module core::ops;
 
                  public trait Index<K, V> { fun index(&self, key: K) -> &V; }
 
@@ -1582,8 +1681,9 @@ mod tests {
                  }
 
                  fun f(m: Map<bool>) -> &bool { return m[0]; }"
-        )
-        .is_empty());
+            )
+            .is_empty()
+        );
         assert_eq!(
             check(
                 "module core::ops;

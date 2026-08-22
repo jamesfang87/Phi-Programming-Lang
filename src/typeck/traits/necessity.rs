@@ -108,13 +108,19 @@ fn a_conditional_impl_only_applies_when_its_own_bound_holds() {
 /// `Foo` implements `Show` and `&Foo` does not, which is the whole of the rule. The tempting
 /// simplification is to let the query see through a reference to what it points at, since a
 /// method call on a `&Foo` reaches `Foo`'s methods perfectly well; a solver that peeled the
-/// reference accepts this program, and `Sorted<&Foo>` would then hold a field whose type
+/// reference accepts this program, and `Holds<&Foo>` would then bind a parameter whose type
 /// satisfies no bound. Peeling belongs to receiver adjustment in method resolution, where the
 /// call knows how many layers it took off, and not here.
+///
+/// This is exercised through a `dyn`'s own generic argument rather than through `Sorted<U>`,
+/// the struct this module's other tests instantiate: a struct or enum can no longer be
+/// instantiated with a reference argument at all, so `Sorted<&Foo>` is rejected before its
+/// bound is even considered, and could no longer isolate step 4 on its own.
 #[test]
 fn a_reference_to_an_implementing_type_does_not_itself_implement() {
     typeck_rejects(
-        &src("fun f(x: Sorted<&Foo>) {}"),
+        &src("trait Holds<T: Show> {}
+              fun f(x: &dyn Holds<&Foo>) {}"),
         "the trait bound `&Foo: Show` is not satisfied",
     );
 }
