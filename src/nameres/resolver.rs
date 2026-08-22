@@ -313,6 +313,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             }
             TyKind::Ref { .. }
             | TyKind::Any(_)
+            | TyKind::Iso(_)
             | TyKind::Tuple(_)
             | TyKind::Array { .. }
             | TyKind::Function { .. }

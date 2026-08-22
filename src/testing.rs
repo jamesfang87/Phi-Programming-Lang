@@ -214,7 +214,7 @@ pub fn typeck_rejects(src: &str, needle: &str) {
     );
 }
 
-/// Runs the whole pipeline over `src` through `mir::constck`, and hands back the messages that
+/// Runs the whole pipeline over `src` through `mir::checks::constck`, and hands back the messages that
 /// pass reported.
 ///
 /// Type checking itself is asserted clean first, the same "diagnostics-free by design" contract
@@ -232,7 +232,7 @@ pub fn mir_constck_src(src: &str) -> Vec<String> {
     let crate::typeck::TypeckOutput { mut tcx, types } = checked;
     let program =
         crate::mir::lower::lower_program(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
-    crate::mir::constck::check(&program);
+    crate::mir::checks::constck::check(&program);
 
     DiagCtx::diagnostics()
         .into_iter()
@@ -240,7 +240,7 @@ pub fn mir_constck_src(src: &str) -> Vec<String> {
         .collect()
 }
 
-/// Asserts that `src` passes `mir::constck` with nothing reported.
+/// Asserts that `src` passes `mir::checks::constck` with nothing reported.
 pub fn mir_constck_accepts(src: &str) {
     let reported = mir_constck_src(src);
     assert!(
@@ -249,7 +249,7 @@ pub fn mir_constck_accepts(src: &str) {
     );
 }
 
-/// Asserts that `src` is rejected by `mir::constck` with exactly one diagnostic, whose message
+/// Asserts that `src` is rejected by `mir::checks::constck` with exactly one diagnostic, whose message
 /// contains `needle`. One rather than at least one, for the same reason [`typeck_rejects`]
 /// insists on it: a second diagnostic from the same fixture is usually a cascade.
 pub fn mir_constck_rejects(src: &str, needle: &str) {
