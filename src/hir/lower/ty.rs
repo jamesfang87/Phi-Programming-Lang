@@ -26,6 +26,7 @@ impl OwnerLowerer<'_, '_> {
                 mutability: *mutability,
             },
             ast::TyKind::Any(base) => TyKind::Any(low.lower_ty(base)),
+            ast::TyKind::Iso(base) => TyKind::Iso(low.lower_ty(base)),
             ast::TyKind::Tuple(tys) => TyKind::Tuple(tys.iter().map(|t| low.lower_ty(t)).collect()),
             ast::TyKind::Array { elem, len } => TyKind::Array {
                 elem: low.lower_ty(elem),
