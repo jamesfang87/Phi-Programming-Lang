@@ -34,7 +34,7 @@ mod tests;
 use std::collections::HashMap;
 
 use crate::hir::{DefId, Hir};
-use crate::mir::lower::LoweredProgram;
+use crate::mir::lower::Mir;
 use crate::mir::{
     AggregateKind, AnyMode, Body, ConstKind, Instance, Operand, Rvalue, StatementKind,
     TerminatorKind,
@@ -52,11 +52,7 @@ const INSTANTIATION_LIMIT: usize = 4096;
 /// Runs monomorphization over every `Body` `mir::lower` produced, returning one concrete `Body`
 /// per instance actually used, keyed by the same [`Instance`] the spec's "Generic
 /// monomorphization" section describes.
-pub fn monomorphize(
-    hir: &Hir,
-    tcx: &mut TyCtx,
-    program: &LoweredProgram,
-) -> HashMap<Instance, Body> {
+pub fn monomorphize(hir: &Hir, tcx: &mut TyCtx, program: &Mir) -> HashMap<Instance, Body> {
     let mut output = HashMap::new();
     let mut worklist: Vec<Instance> = Vec::new();
 
@@ -127,7 +123,7 @@ fn body_mentions_generic(tcx: &TyCtx, body: &Body) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn process_body(
     tcx: &mut TyCtx,
-    program: &LoweredProgram,
+    program: &Mir,
     generic_body: &Body,
     subst: &HashMap<crate::hir::HirId, Ty>,
     instance: &Instance,
@@ -138,7 +134,7 @@ fn process_body(
         def_id: generic_body.def_id,
         basic_blocks: Vec::with_capacity(generic_body.basic_blocks.len()),
         local_decls: Vec::with_capacity(generic_body.local_decls.len()),
-        arg_count: generic_body.arg_count,
+        param_count: generic_body.param_count,
         span: generic_body.span,
     };
 
@@ -190,7 +186,7 @@ fn process_body(
 #[allow(clippy::too_many_arguments)]
 fn subst_stmt(
     tcx: &mut TyCtx,
-    program: &LoweredProgram,
+    program: &Mir,
     kind: StatementKind,
     subst: &HashMap<crate::hir::HirId, Ty>,
     instance: &Instance,
@@ -209,7 +205,7 @@ fn subst_stmt(
 #[allow(clippy::too_many_arguments)]
 fn subst_rvalue(
     tcx: &mut TyCtx,
-    program: &LoweredProgram,
+    program: &Mir,
     rvalue: Rvalue,
     subst: &HashMap<crate::hir::HirId, Ty>,
     instance: &Instance,
@@ -282,13 +278,13 @@ fn subst_operand(
     };
     let ty = subst::subst_ty(tcx, constant.ty, subst);
     let kind = match constant.kind {
-        ConstKind::FnDef(def, args, mode) => {
+        ConstKind::FunDef(def, args, mode) => {
             let args: Vec<Ty> = args
                 .iter()
                 .map(|&a| subst::subst_ty(tcx, a, subst))
                 .collect();
             queue_fn_def(def, mode, args.clone(), output, discovered);
-            ConstKind::FnDef(def, args, mode)
+            ConstKind::FunDef(def, args, mode)
         }
         other => other,
     };

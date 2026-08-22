@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use crate::hir::visit::Visitor;
 use crate::hir::{DefId, HirId, Path, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
-use crate::mir::{AggregateKind, Local, Place, PlaceElem, Rvalue};
+use crate::mir::{AggregateKind, Local, Place, Projection, Rvalue};
 use crate::typeck::ty::Ty;
 
 struct CaptureVisitor<'hir> {
@@ -81,7 +81,7 @@ impl<'a> BodyLowerCtx<'a> {
         for (index, &hir_id) in captures.iter().enumerate() {
             let place = Place {
                 local: env_local,
-                projection: vec![PlaceElem::Field(index as u32)],
+                projections: vec![Projection::Field(index as u32)],
             };
             self.bind_place(hir_id, place);
         }

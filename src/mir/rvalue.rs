@@ -1,6 +1,3 @@
-//! This module defines [`Rvalue`], everything one `Assign` statement's right-hand side can be,
-//! built out of [`Operand`]s.
-
 use crate::ast::{BinaryOp, Mutability, UnaryOp};
 use crate::hir::DefId;
 use crate::mir::ids::VariantIdx;
@@ -44,24 +41,15 @@ pub enum Rvalue {
 pub enum CastKind {
     /// This variant is a user-written `expr as Ty`, governed by `typeck::cast::cast_allowed`.
     Primitive,
-    /// This variant is compiler-inserted and never spelled `as` in source. It materializes an
-    /// actual function-pointer value from a zero-sized `ConstKind::FnDef` operand, at the point
-    /// a named function (or a capture-free closure) is coerced to a `fun(T) -> U`-typed value
-    /// rather than called directly.
-    ReifyFnPointer,
+    /// This variant is compiler-inserted. It materializes an
+    /// actual function-pointer value from a zero-sized `ConstKind::FunDef` operand
+    ReifyFunPointer,
 }
 
 #[derive(Clone, Debug)]
 pub enum AggregateKind {
     Tuple,
     Array,
-    Adt {
-        def: DefId,
-        variant: VariantIdx,
-    },
-    /// This variant builds a closure value, and the `Vec<Operand>` alongside it supplies its
-    /// captures in declaration order.
-    Closure {
-        def: DefId,
-    },
+    Adt { def: DefId, variant: VariantIdx },
+    Closure { def: DefId },
 }

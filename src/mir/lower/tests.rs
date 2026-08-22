@@ -1,13 +1,13 @@
 //! Unit tests for `mir::lower`, in the digging-helper style `hir/lower/tests.rs` established.
 
-use crate::ast::BinaryOp;
 use crate::ast::interner::Interner;
+use crate::ast::BinaryOp;
 use crate::driver::cli::Mode;
 use crate::hir::{DefId, Hir, OwnerNode};
-use crate::mir::lower::LoweredProgram;
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
+use crate::mir::lower::Mir;
 use crate::mir::{
-    AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, Local, Operand, PlaceElem,
+    AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, Local, Operand, Projection,
     Rvalue, StatementKind, TerminatorKind,
 };
 use crate::nameres::PrimTy;
@@ -18,11 +18,11 @@ use crate::typeck::tyctx::TyCtx;
 
 /// Lexes, parses, resolves, lowers, type-checks, and MIR-lowers `src`, in debug profile.
 /// Panics if any diagnostic was reported by type checking.
-fn lower_mir_src(src: &str) -> (Hir, TyCtx, TypeResolutions, LoweredProgram) {
+fn lower_mir_src(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
     lower_mir_src_with_mode(src, Mode::Debug)
 }
 
-fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, LoweredProgram) {
+fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, Mir) {
     let hir = resolve_src(src);
     crate::diagnostics::DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
@@ -37,7 +37,7 @@ fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolution
 }
 
 /// The `Body` lowered for the first top-level function `resolve_src`d and MIR-lowered.
-fn first_function_body<'a>(program: &'a LoweredProgram, hir: &Hir) -> &'a Body {
+fn first_function_body<'a>(program: &'a Mir, hir: &Hir) -> &'a Body {
     let def_id = first_function(hir);
     program
         .bodies
@@ -49,7 +49,7 @@ fn first_function_body<'a>(program: &'a LoweredProgram, hir: &Hir) -> &'a Body {
 fn an_empty_function_returns_unit() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() {}");
     let body = first_function_body(&program, &hir);
-    assert_eq!(body.arg_count, 0);
+    assert_eq!(body.param_count, 0);
     assert_eq!(body.local_decls.len(), 1, "just the return place");
     assert_eq!(body.basic_blocks.len(), 1);
     assert!(matches!(
@@ -74,7 +74,7 @@ fn a_bare_return_assigns_unit_into_the_return_place() {
                     &s.kind,
                     StatementKind::Assign(place, Rvalue::Aggregate(kind, operands))
                         if place.local == crate::mir::Local::RETURN_PLACE
-                            && place.projection.is_empty()
+                            && place.projections.is_empty()
                             && matches!(**kind, AggregateKind::Tuple)
                             && operands.is_empty()
                 )
@@ -96,7 +96,7 @@ fn add_computes_the_sum_and_returns() {
     let (hir, _tcx, _types, program) =
         lower_mir_src("fun add(x: i32, y: i32) -> i32 { return x + y; }");
     let body = first_function_body(&program, &hir);
-    assert_eq!(body.arg_count, 2);
+    assert_eq!(body.param_count, 2);
     // Slots 0..=2 are the return place, `x`, and `y`; debug profile adds further temporaries
     // for the checked-arithmetic overflow test (see `checked_add_asserts_on_overflow` below).
     assert!(body.local_decls.len() >= 3);
@@ -131,6 +131,42 @@ fn an_if_expression_joins_both_branches() {
         .filter(|b| matches!(b.terminator.kind, TerminatorKind::SwitchInt { .. }))
         .count();
     assert_eq!(switches, 1);
+}
+
+#[test]
+fn predecessors_of_an_if_join_block_are_both_branches() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src("fun f(x: i32) -> i32 { let y = if x < 0 { 0 } else { x }; return y; }");
+    let body = first_function_body(&program, &hir);
+
+    let mut branch_blocks: Vec<_> = body
+        .basic_blocks
+        .iter()
+        .find_map(|b| match &b.terminator.kind {
+            TerminatorKind::SwitchInt { targets, .. } => Some(targets.all_targets().collect()),
+            _ => None,
+        })
+        .expect("an if/else lowers to exactly one SwitchInt");
+
+    let join_blocks: Vec<_> = branch_blocks
+        .iter()
+        .map(|&bb| match body.basic_blocks[bb.index()].terminator.kind {
+            TerminatorKind::Goto { target } => target,
+            ref other => panic!("expected the then/else block to end in a Goto, found {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        join_blocks[0], join_blocks[1],
+        "both branches join the same block"
+    );
+
+    let mut preds = body.predecessors().of(join_blocks[0]).to_vec();
+    preds.sort();
+    branch_blocks.sort();
+    assert_eq!(
+        preds, branch_blocks,
+        "the join block's predecessors are exactly the then-block and the else-block"
+    );
 }
 
 #[test]
@@ -288,6 +324,18 @@ fn storage_dead_order(body: &Body) -> Vec<Local> {
         .collect()
 }
 
+/// `body`'s own local declared with source name `name` -- for a test that needs to pick one
+/// binding's `Local` out of a body that, now that a compiler-inserted temporary gets a
+/// `StorageLive`/`StorageDead` pair exactly like a named binding's own local does, cannot assume
+/// a named binding is the only kind of local `storage_live_order`/`storage_dead_order` reports.
+fn named_local(body: &Body, name: &str) -> Local {
+    body.local_decls
+        .iter()
+        .position(|decl| decl.name.is_some_and(|n| Interner::resolve(n.text) == name))
+        .map(Local::from_usize)
+        .unwrap_or_else(|| panic!("no local named {name:?} in {body:?}"))
+}
+
 /// Every `Assert` terminator's own message, across `body`'s whole block list.
 fn assert_messages(body: &Body) -> Vec<&AssertMessage> {
     body.basic_blocks
@@ -321,7 +369,7 @@ fn call_callees(body: &Body) -> Vec<DefId> {
             TerminatorKind::Call {
                 func:
                     Operand::Constant(Constant {
-                        kind: ConstKind::FnDef(def, ..),
+                        kind: ConstKind::FunDef(def, ..),
                         ..
                     }),
                 ..
@@ -496,7 +544,7 @@ fn field_access_through_a_reference_inserts_a_deref_projection() {
         .flat_map(|b| &b.statements)
         .any(|s| match &s.kind {
             StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
-                place.projection == [PlaceElem::Deref, PlaceElem::Field(0)]
+                place.projections == [Projection::Deref, Projection::Field(0)]
             }
             _ => false,
         });
@@ -504,6 +552,41 @@ fn field_access_through_a_reference_inserts_a_deref_projection() {
         found,
         "`p.x` through a `&Point` derefs `p` before projecting to field 0"
     );
+}
+
+#[test]
+fn tuple_index_access_projects_the_written_field() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src("fun f(t: (i32, bool)) -> bool { return t.1; }");
+    let body = first_function_body(&program, &hir);
+    let found = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                place.projections == [Projection::Field(1)]
+            }
+            _ => false,
+        });
+    assert!(found, "`t.1` projects to field 1");
+}
+
+#[test]
+fn explicit_deref_of_a_reference_inserts_a_deref_projection() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f(p: &i32) -> i32 { return *p; }");
+    let body = first_function_body(&program, &hir);
+    let found = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                place.projections == [Projection::Deref]
+            }
+            _ => false,
+        });
+    assert!(found, "`*p` derefs `p` with no further projection");
 }
 
 #[test]
@@ -532,7 +615,7 @@ fn array_indexing_inserts_a_bounds_check_and_reads_the_length() {
         .flat_map(|b| &b.statements)
         .any(|s| match &s.kind {
             StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
-                matches!(place.projection.last(), Some(PlaceElem::Index(_)))
+                matches!(place.projections.last(), Some(Projection::Index(_)))
             }
             _ => false,
         });
@@ -585,7 +668,7 @@ fn a_named_function_used_as_a_value_is_reified() {
                 StatementKind::Assign(
                     _,
                     Rvalue::Cast {
-                        kind: CastKind::ReifyFnPointer,
+                        kind: CastKind::ReifyFunPointer,
                         ..
                     }
                 )
@@ -775,15 +858,26 @@ fn with_lend_storage_is_freed_in_reverse_of_acquisition_order() {
     let live = storage_live_order(body);
     let dead = storage_dead_order(body);
     let expected: Vec<Local> = live.iter().rev().copied().collect();
+    let named_live_count = live
+        .iter()
+        .filter(|&&l| body.local_decls[l.index()].name.is_some())
+        .count();
+    assert_eq!(
+        named_live_count, 4,
+        "`a`, `b`, and the two with-lends, `x` and `y`, are each made live exactly once"
+    );
     assert_eq!(
         live.len(),
-        4,
-        "`a`, `b`, and the two with-lends, `x` and `y`, are each made live exactly once"
+        5,
+        "one more than the four named bindings: `noop()`'s own discarded result gets a \
+         compiler-inserted temporary now that one of those is bracketed exactly like a named \
+         binding's own local is: {live:?}"
     );
     assert_eq!(
         dead, expected,
         "every StorageDead runs in the exact reverse of StorageLive's own order, the same \
-         last-in-first-out discipline an ordinary stack has"
+         last-in-first-out discipline an ordinary stack has -- true of the with-lends' own \
+         locals same as before, and, now, of noop()'s own temporary too"
     );
 }
 
@@ -799,7 +893,7 @@ fn with_lend_storage_is_freed_in_reverse_of_acquisition_order() {
 fn a_plain_let_binding_allocates_exactly_one_local() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() { let x = 1; }");
     let body = first_function_body(&program, &hir);
-    assert_eq!(body.arg_count, 0);
+    assert_eq!(body.param_count, 0);
     assert_eq!(
         body.local_decls.len(),
         2,
@@ -833,15 +927,16 @@ fn continue_target_only_returns_obligations_registered_since_the_loop_was_entere
 
     let mut ctx = BodyLowerCtx::new(&hir, &mut tcx, &types, Mode::Debug, def_id, None);
     ctx.push_block_scope();
-    let outer_local = ctx.new_temp(unit_ty, span);
-    ctx.register_exit_obligation(ExitObligation::StorageDead(outer_local));
+    // `new_temp` now registers its own `StorageDead` obligation, the same one a manual
+    // `register_exit_obligation` call used to be needed for here -- see its own doc comment.
+    // Only its presence on the outer scope matters below, not the local itself.
+    let _outer_local = ctx.new_temp(unit_ty, span);
 
     let break_block = ctx.new_block();
     let continue_block = ctx.new_block();
     ctx.push_loop(break_block, continue_block);
     ctx.push_block_scope();
     let inner_local = ctx.new_temp(unit_ty, span);
-    ctx.register_exit_obligation(ExitObligation::StorageDead(inner_local));
 
     let (target, obligations) = ctx.continue_target().expect("a loop is on the stack");
     assert_eq!(target, continue_block);
@@ -879,10 +974,12 @@ fn a_guard_failure_cleans_up_the_arms_bindings_before_falling_through() {
     let live = storage_live_order(body);
     assert_eq!(
         live.len(),
-        1,
-        "the only binding introduced anywhere in this match is `n`"
+        3,
+        "the scrutinee's own temporary, `n`, and the guard condition `n > 0`'s own temporary, \
+         each get a StorageLive now that a compiler-inserted temporary is bracketed exactly like \
+         a named binding: {live:?}"
     );
-    let n = live[0];
+    let n = named_local(body, "n");
     let dead_for_n = storage_dead_order(body).iter().filter(|&&l| l == n).count();
     assert_eq!(
         dead_for_n, 2,
@@ -916,8 +1013,8 @@ fn a_tuple_patterns_elements_are_tested_independently() {
         .flat_map(|b| &b.statements)
         .filter_map(|s| match &s.kind {
             StatementKind::Assign(_, Rvalue::BinaryOp(BinaryOp::Eq, Operand::Copy(place), _)) => {
-                match place.projection.last() {
-                    Some(PlaceElem::Field(i)) => Some(*i),
+                match place.projections.last() {
+                    Some(Projection::Field(i)) => Some(*i),
                     _ => None,
                 }
             }
@@ -1061,7 +1158,7 @@ fn a_closure_with_no_captures_still_gets_an_environment_local() {
         .map(|(_, body)| body)
         .expect("the closure gets its own Body");
     assert_eq!(
-        closure_body.arg_count, 1,
+        closure_body.param_count, 1,
         "the environment local is the closure's own implicit first argument, even with no \
          captures at all"
     );
@@ -1142,7 +1239,7 @@ fn an_any_returning_calls_argument_is_borrowed_to_match_the_call_sites_mode() {
 fn a_let_bound_local_carries_its_declared_name() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() { let x = 1; }");
     let body = first_function_body(&program, &hir);
-    assert_eq!(body.arg_count, 0);
+    assert_eq!(body.param_count, 0);
     // Slot 0 is the return place; slot 1 is `x` itself -- the fast, scrutinee-free path a bare
     // `Binding` pattern takes (see `a_plain_let_binding_allocates_exactly_one_local`).
     let x_decl = &body.local_decls[1];

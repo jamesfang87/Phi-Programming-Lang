@@ -17,7 +17,7 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, PatKind, Payload};
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{
-    BasicBlock, ConstKind, Constant, Operand, Place, PlaceElem, Rvalue, StatementKind,
+    BasicBlock, ConstKind, Constant, Operand, Place, Projection, Rvalue, StatementKind,
     SwitchTargets, TerminatorKind, VariantIdx,
 };
 use crate::nameres::PrimTy;
@@ -226,15 +226,15 @@ impl<'a> BodyLowerCtx<'a> {
 
                 let mut payload_place = place;
                 payload_place
-                    .projection
-                    .push(PlaceElem::Downcast(variant_idx));
+                    .projections
+                    .push(Projection::Downcast(variant_idx));
                 self.test_payload(ty, variant_idx, payload, payload_place, fail, span);
             }
             PatKind::Tuple(elems) => {
                 let elems = elems.clone();
                 for (i, &elem) in elems.iter().enumerate() {
                     let mut elem_place = place.clone();
-                    elem_place.projection.push(PlaceElem::Field(i as u32));
+                    elem_place.projections.push(Projection::Field(i as u32));
                     self.test_pat(elem, elem_place, fail);
                 }
             }
@@ -255,14 +255,14 @@ impl<'a> BodyLowerCtx<'a> {
             Payload::None => {}
             Payload::Single(pat_id) => {
                 let mut field_place = base;
-                field_place.projection.push(PlaceElem::Field(0));
+                field_place.projections.push(Projection::Field(0));
                 self.test_pat(*pat_id, field_place, fail);
             }
             Payload::Record(fields) => {
                 for field in fields {
                     let index = self.record_field_index(enum_ty, variant_idx, field.name.text);
                     let mut field_place = base.clone();
-                    field_place.projection.push(PlaceElem::Field(index));
+                    field_place.projections.push(Projection::Field(index));
                     self.test_pat(field.value, field_place, fail);
                 }
             }
@@ -308,15 +308,15 @@ impl<'a> BodyLowerCtx<'a> {
                 let (_, variant_idx) = self.variant_idx_for(ty, variant.text);
                 let mut payload_place = place;
                 payload_place
-                    .projection
-                    .push(PlaceElem::Downcast(variant_idx));
+                    .projections
+                    .push(Projection::Downcast(variant_idx));
                 self.bind_payload(ty, variant_idx, payload, payload_place, mutability);
             }
             PatKind::Tuple(elems) => {
                 let elems = elems.clone();
                 for (i, &elem) in elems.iter().enumerate() {
                     let mut elem_place = place.clone();
-                    elem_place.projection.push(PlaceElem::Field(i as u32));
+                    elem_place.projections.push(Projection::Field(i as u32));
                     self.bind_pat(elem, elem_place, mutability);
                 }
             }
@@ -336,14 +336,14 @@ impl<'a> BodyLowerCtx<'a> {
             Payload::None => {}
             Payload::Single(pat_id) => {
                 let mut field_place = base;
-                field_place.projection.push(PlaceElem::Field(0));
+                field_place.projections.push(Projection::Field(0));
                 self.bind_pat(*pat_id, field_place, mutability);
             }
             Payload::Record(fields) => {
                 for field in fields {
                     let index = self.record_field_index(enum_ty, variant_idx, field.name.text);
                     let mut field_place = base.clone();
-                    field_place.projection.push(PlaceElem::Field(index));
+                    field_place.projections.push(Projection::Field(index));
                     self.bind_pat(field.value, field_place, mutability);
                 }
             }

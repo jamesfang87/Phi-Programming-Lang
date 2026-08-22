@@ -121,3 +121,17 @@ pub fn report_body_return_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: Src
             .with_label("this function does not return its declared return type on every path"),
     );
 }
+
+pub fn report_reference_field(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("a field cannot hold a reference, found `{}`", cx.show(ty)),
+            span,
+        )
+        .with_label("this type stores a reference")
+        .with_help(
+            "a struct or enum field has to own the value it holds; take the field by value \
+                 instead of by reference",
+        ),
+    );
+}

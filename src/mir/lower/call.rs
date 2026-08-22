@@ -9,7 +9,7 @@ use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::lower::{Task, is_any_specialized};
 use crate::mir::{
-    AnyMode, ConstKind, Constant, Operand, Place, PlaceElem, Rvalue, StatementKind, TerminatorKind,
+    AnyMode, ConstKind, Constant, Operand, Place, Projection, Rvalue, StatementKind, TerminatorKind,
 };
 use crate::typeck::ty::{Ty, TyKind};
 
@@ -205,7 +205,7 @@ impl<'a> BodyLowerCtx<'a> {
         let fn_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
         Operand::Constant(Constant {
             ty: fn_ty,
-            kind: ConstKind::FnDef(def, args, any_mode),
+            kind: ConstKind::FunDef(def, args, any_mode),
         })
     }
 
@@ -257,7 +257,7 @@ impl<'a> BodyLowerCtx<'a> {
     /// mutability is taken of what is left. A receiver with no layers at all (an ordinary place,
     /// `x.foo()` where `x: Foo` and `foo` takes `&mut self`) is the autoref case: the same write
     /// a `&mut` borrow anywhere else is, so it gets the same `CheckMutable` marker
-    /// [`StatementKind::CheckMutable`]'s own docs describe, for `mir::constck` to check.
+    /// [`StatementKind::CheckMutable`]'s own docs describe, for `mir::checks::constck` to check.
     fn lower_receiver_operand(
         &mut self,
         expr_id: HirId,
@@ -279,7 +279,7 @@ impl<'a> BodyLowerCtx<'a> {
         let (_, derefs) = self.peel_refs(recv_ty);
         let mut place = self.lower_place(expr_id);
         for _ in 0..derefs {
-            place.projection.push(PlaceElem::Deref);
+            place.projections.push(Projection::Deref);
         }
         if derefs == 0 && mutability == Mutability::Mutable {
             self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
@@ -349,7 +349,7 @@ impl<'a> BodyLowerCtx<'a> {
         let def_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
         let operand = Operand::Constant(Constant {
             ty: def_ty,
-            kind: ConstKind::FnDef(def, args, None),
+            kind: ConstKind::FunDef(def, args, None),
         });
         let temp = self.new_temp(fn_value_ty, span);
         self.assign(
@@ -357,7 +357,7 @@ impl<'a> BodyLowerCtx<'a> {
             Rvalue::Cast {
                 operand,
                 ty: fn_value_ty,
-                kind: crate::mir::CastKind::ReifyFnPointer,
+                kind: crate::mir::CastKind::ReifyFunPointer,
             },
             span,
         );
