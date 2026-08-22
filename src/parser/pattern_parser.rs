@@ -36,8 +36,8 @@ impl Parser {
                 let literal = choice((
                     self.kind(TokenKind::IntLiteral).map(Expr::int),
                     self.kind(TokenKind::FloatLiteral).map(Expr::float),
-                    self.kind(TokenKind::StrLiteral).map(|t| Expr::string(t)),
-                    self.kind(TokenKind::CharLiteral).map(|t| Expr::char(t)),
+                    self.kind(TokenKind::StrLiteral).map(Expr::string),
+                    self.kind(TokenKind::CharLiteral).map(Expr::char),
                     self.kind(TokenKind::TrueKw).map(|t: Token| Expr {
                         id: NodeId::next(),
                         kind: ExprKind::Literal(Literal::Bool(true)),
