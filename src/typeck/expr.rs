@@ -6,8 +6,9 @@ use crate::diagnostics::typeck::expr::{
     report_assign_mismatch, report_cast_not_allowed, report_cast_operand_unknown,
     report_cast_source_not_primitive, report_cast_target_not_primitive,
     report_closure_body_mismatch, report_compound_assign_mismatch,
-    report_compound_assign_result_mismatch, report_ctor_not_a_struct, report_duplicate_field,
-    report_elided_ctor_unknown, report_field_type_mismatch, report_if_branches_mismatch,
+    report_compound_assign_result_mismatch, report_ctor_not_a_struct, report_deref_not_a_reference,
+    report_duplicate_field, report_elided_ctor_unknown, report_field_type_mismatch,
+    report_if_branches_mismatch,
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
     report_missing_fields, report_no_range_type, report_no_such_field, report_no_such_variant,
@@ -35,7 +36,7 @@ impl<'hir> Typeck<'hir> {
     pub(crate) fn check_assign(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) -> Ty {
         let lhs_ty = self.ty_of(lhs);
         // Whether the local this reaches may be written to at all, rather than a plain `let`'s,
-        // is checked on the MIR this lowers to, not here; see `mir::constck`.
+        // is checked on the MIR this lowers to, not here; see `mir::checks::constck`.
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
         }
@@ -55,7 +56,7 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) -> Ty {
         let lhs_ty = self.ty_of(lhs);
-        // See `check_assign`'s own comment: the mutability check itself moved to `mir::constck`.
+        // See `check_assign`'s own comment: the mutability check itself moved to `mir::checks::constck`.
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
         }
@@ -82,7 +83,7 @@ impl<'hir> Typeck<'hir> {
         operand: HirId,
         expected: Option<Ty>,
     ) -> Ty {
-        // See `check_assign`'s own comment: the mutability check itself moved to `mir::constck`.
+        // See `check_assign`'s own comment: the mutability check itself moved to `mir::checks::constck`.
         if mutability == Mutability::Mutable && !self.is_place_expr(operand) {
             report_not_assignable(self.hir.expr(operand).span);
         }
@@ -96,6 +97,20 @@ impl<'hir> Typeck<'hir> {
         });
         let ty = self.ty_of_expecting(operand, inner);
         self.tcx.mk_ref(ty, mutability)
+    }
+
+    pub(crate) fn check_deref(&mut self, operand: HirId, span: SrcSpan) -> Ty {
+        let operand_ty = self.ty_of(operand);
+        let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
+
+        match *self.tcx.kind(resolved) {
+            TyKind::Ref { base, .. } => base,
+            TyKind::Error => self.tcx.error(),
+            _ => {
+                report_deref_not_a_reference(self.display_cx(), resolved, span);
+                self.tcx.error()
+            }
+        }
     }
 
     // -----------------------------------------------------------------
@@ -732,7 +747,7 @@ mod tests {
     }
 
     // Whether a plain `let` (or a `let mut`) may be reassigned to, directly or through a field
-    // or index chain, is `mir::constck`'s question now, exercised by that module's own tests; see
+    // or index chain, is `mir::checks::constck`'s question now, exercised by that module's own tests; see
     // the comment above `a_unit_struct_constructs_and_checks` for why.
 
     /// An assignment produces nothing, so it cannot be the value of the block it ends. Read
@@ -782,7 +797,7 @@ mod tests {
         );
     }
 
-    // Whether `&mut x` may take a mutable borrow of `x` is `mir::constck`'s question now too,
+    // Whether `&mut x` may take a mutable borrow of `x` is `mir::checks::constck`'s question now too,
     // for the same reason `a_plain_let_binding_cannot_be_assigned_to`'s old comment gave.
 
     // -----------------------------------------------------------------
@@ -1086,6 +1101,29 @@ mod tests {
              fun f(o: Option<bool>) -> i32 { return match o { .some(v) => v, .none => 0, }; }",
             "mismatched types",
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Dereference
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn dereferencing_a_reference_returns_its_base_type() {
+        accepts("fun f(p: &i32) -> i32 { return *p; }");
+        accepts("fun f(p: &mut i32) -> i32 { return *p; }");
+    }
+
+    #[test]
+    fn dereferencing_a_non_reference_is_rejected() {
+        rejects(
+            "fun f(x: i32) -> i32 { return *x; }",
+            "cannot be dereferenced",
+        );
+    }
+
+    #[test]
+    fn a_dereferenced_reference_is_assignable() {
+        accepts("fun f(p: &mut i32) { *p = 1; }");
     }
 
     // -----------------------------------------------------------------
@@ -1434,9 +1472,9 @@ mod tests {
 
     // Whether a place may be written to directly, rejecting a plain `let`'s root once `mut`
     // fixes it, crossing a reference, a tuple-destructured binding, a `for`/`match`/`with`
-    // binding, and a parameter or `self`, is exercised by `mir::constck`'s own tests now. That
+    // binding, and a parameter or `self`, is exercised by `mir::checks::constck`'s own tests now. That
     // check moved to the MIR this lowers to, so it is no longer typeck's own to test. See
-    // `mir::constck`'s module docs for why a `&mut self` receiver is still checked here instead,
+    // `mir::checks::constck`'s module docs for why a `&mut self` receiver is still checked here instead,
     // at `Typeck::place_mutable_root`'s one remaining call site.
 
     // -----------------------------------------------------------------

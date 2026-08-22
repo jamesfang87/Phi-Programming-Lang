@@ -75,6 +75,10 @@ impl TyCtx {
         self.intern(TyKind::Any(base))
     }
 
+    pub fn mk_iso(&mut self, base: Ty) -> Ty {
+        self.intern(TyKind::Iso(base))
+    }
+
     pub fn mk_tuple(&mut self, elems: Vec<Ty>) -> Ty {
         self.intern(TyKind::Tuple(elems))
     }
@@ -89,6 +93,31 @@ impl TyCtx {
 
     pub fn mk_dyn(&mut self, trait_: DefId, args: Vec<Ty>) -> Ty {
         self.intern(TyKind::Dyn { trait_, args })
+    }
+
+    /// Returns whether `ty` stores a reference somewhere within it: directly, inside a tuple or
+    /// array element, or inside a struct/enum/trait object's own generic arguments (recursively,
+    /// so `Foo<Bar<&i32>>` counts too). A function type's parameters and return type are not
+    /// walked, since a function pointer holds no data of its own; it is a pointer to code, not
+    /// to a borrowed value.
+    pub fn contains_ref(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Ref { .. } => true,
+            TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_ref(elem)),
+            TyKind::Array { elem, .. } => self.contains_ref(*elem),
+            TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => {
+                args.iter().any(|&arg| self.contains_ref(arg))
+            }
+            TyKind::Any(base) | TyKind::Iso(base) => self.contains_ref(*base),
+            TyKind::Var(_)
+            | TyKind::Primitive(_)
+            | TyKind::Generic(_)
+            | TyKind::SelfTy(_)
+            | TyKind::Unit
+            | TyKind::Fun { .. }
+            | TyKind::Never
+            | TyKind::Error => false,
+        }
     }
 
     pub fn next_ty_var(&mut self) -> Ty {
