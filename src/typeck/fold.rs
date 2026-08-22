@@ -30,6 +30,10 @@ pub fn fold_ty(tcx: &mut TyCtx, ty: Ty, leaf: &mut impl FnMut(&mut TyCtx, Ty) ->
             let base = fold_ty(tcx, base, leaf);
             tcx.mk_any(base)
         }
+        TyKind::Iso(base) => {
+            let base = fold_ty(tcx, base, leaf);
+            tcx.mk_iso(base)
+        }
         TyKind::Array { elem, len } => {
             let elem = fold_ty(tcx, elem, leaf);
             tcx.mk_array(elem, len)
@@ -68,7 +72,7 @@ pub fn subst_ty(tcx: &mut TyCtx, ty: Ty, subst: &HashMap<HirId, Ty>) -> Ty {
 pub fn children(tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
     match tcx.kind(ty) {
         TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } | TyKind::Tuple(args) => args.clone(),
-        TyKind::Ref { base, .. } | TyKind::Any(base) => vec![*base],
+        TyKind::Ref { base, .. } | TyKind::Any(base) | TyKind::Iso(base) => vec![*base],
         TyKind::Array { elem, .. } => vec![*elem],
         TyKind::Fun { params, ret } => {
             let mut children = params.clone();
@@ -116,6 +120,8 @@ pub fn decompose(tcx: &TyCtx, a: Ty, b: Ty) -> Option<Vec<(Ty, Ty)>> {
         ) => (m == n).then(|| vec![(*x, *y)]),
 
         (TyKind::Any(x), TyKind::Any(y)) => Some(vec![(*x, *y)]),
+
+        (TyKind::Iso(x), TyKind::Iso(y)) => Some(vec![(*x, *y)]),
 
         (TyKind::Tuple(x), TyKind::Tuple(y)) => (x.len() == y.len()).then(|| zip(x, y)),
 

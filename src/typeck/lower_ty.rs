@@ -1,6 +1,6 @@
 use crate::diagnostics::typeck::lower_ty::{
-    report_arg_count, report_dyn_not_a_trait, report_self_cycle, report_self_outside_item,
-    report_trait_as_ty, report_unexpected_generic_args,
+    report_arg_count, report_dyn_not_a_trait, report_reference_generic_arg, report_self_cycle,
+    report_self_outside_item, report_trait_as_ty, report_unexpected_generic_args,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
@@ -25,6 +25,10 @@ impl<'hir> Typeck<'hir> {
             HirTyKind::Any(base) => {
                 let base = self.lower_ty(*base);
                 self.tcx.mk_any(base)
+            }
+            HirTyKind::Iso(base) => {
+                let base = self.lower_ty(*base);
+                self.tcx.mk_iso(base)
             }
             HirTyKind::Tuple(elems) => {
                 let elems = elems.clone();
@@ -108,9 +112,29 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         }
 
-        let args = self.lower_tys(args);
-        self.register_bound_obligations(def, &args, span, owner);
-        self.tcx.mk_adt(def, args)
+        let lowered_args = self.lower_tys(args);
+        if !self.check_no_reference_args(args, &lowered_args) {
+            return self.tcx.error();
+        }
+        self.register_bound_obligations(def, &lowered_args, span, owner);
+        self.tcx.mk_adt(def, lowered_args)
+    }
+
+    /// Rejects `hir_args`, the generic arguments a struct or enum type is being instantiated
+    /// with (already lowered into `args`, in the same order), if any of them stores a
+    /// reference anywhere within it. This is what makes the "no reference fields" rule hold
+    /// for generic types too: a field declared with an abstract type parameter can never end
+    /// up holding a reference behind the scenes, because no reference can ever be substituted
+    /// for that parameter in the first place.
+    fn check_no_reference_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
+        for (&hir_id, &arg) in hir_args.iter().zip(args) {
+            if self.tcx.contains_ref(arg) {
+                let span = self.hir.ty(hir_id).span;
+                report_reference_generic_arg(self.display_cx(), arg, span);
+                return false;
+            }
+        }
+        true
     }
 
     fn lower_dyn(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
@@ -173,11 +197,15 @@ impl<'hir> Typeck<'hir> {
             OwnerNode::Trait(_) => self.tcx.mk_self_param(introducer),
             OwnerNode::Extend(extend) => {
                 let adt_res = extend.adt_path.res;
-                let args = extend.adt_generics.clone();
-                let args = self.lower_tys(&args);
-                match adt_res {
-                    Res::Type(Type::Def(tydef)) => self.tcx.mk_adt(tydef.def_id(), args),
-                    _ => self.tcx.error(),
+                let hir_args = extend.adt_generics.clone();
+                let args = self.lower_tys(&hir_args);
+                if !self.check_no_reference_args(&hir_args, &args) {
+                    self.tcx.error()
+                } else {
+                    match adt_res {
+                        Res::Type(Type::Def(tydef)) => self.tcx.mk_adt(tydef.def_id(), args),
+                        _ => self.tcx.error(),
+                    }
                 }
             }
             _ => unreachable!("only a struct, enum, trait, or extend block introduces a `Self`"),
@@ -462,6 +490,17 @@ mod tests {
 
         let TyKind::Any(base) = checked.kind(params[3]) else {
             panic!("any i32 lowers to an Any");
+        };
+        assert_eq!(checked.kind(*base), &TyKind::Primitive(PrimTy::I32));
+    }
+
+    #[test]
+    fn iso_lowers_structurally() {
+        let checked = check("fun f(a: iso i32) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        let TyKind::Iso(base) = checked.kind(params[0]) else {
+            panic!("iso i32 lowers to an Iso");
         };
         assert_eq!(checked.kind(*base), &TyKind::Primitive(PrimTy::I32));
     }

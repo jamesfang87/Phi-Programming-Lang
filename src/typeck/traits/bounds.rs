@@ -6,9 +6,9 @@ use crate::diagnostics::typeck::traits::bounds::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId};
+use crate::typeck::Typeck;
 use crate::typeck::traits::solve::{Query, Solution};
 use crate::typeck::ty::Ty;
-use crate::typeck::Typeck;
 
 /// A trait bound which must hold
 #[derive(Clone, Debug)]
@@ -85,7 +85,7 @@ mod tests {
     use super::*;
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::{checker_through, messages, resolve_src, Stage};
+    use crate::testing::{Stage, checker_through, messages, resolve_src};
 
     // -----------------------------------------------------------------
     // Source-level
