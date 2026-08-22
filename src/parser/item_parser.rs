@@ -381,7 +381,7 @@ impl Parser {
                     .or_not(),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
-            .then(function_decl.clone()(true).repeated().collect::<Vec<_>>())
+            .then(function_decl(true).repeated().collect::<Vec<_>>())
             .then_ignore(self.kind(TokenKind::CloseBrace))
             .map(|((((visibility, trait_tok), name), generics), functions)| {
                 let end_span = if !functions.is_empty() {
@@ -450,7 +450,7 @@ impl Parser {
                     .then(generic_args.clone()),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
-            .then(function_decl.clone()(false).repeated().collect())
+            .then(function_decl(false).repeated().collect())
             .then(self.kind(TokenKind::CloseBrace))
             .map(
                 |(
@@ -549,7 +549,7 @@ impl Parser {
             .boxed();
 
         choice((
-            function_decl.clone()(false).map(|fun: Function| {
+            function_decl(false).map(|fun: Function| {
                 let span = fun.span;
                 Item {
                     id: NodeId::next(),

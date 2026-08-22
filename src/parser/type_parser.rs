@@ -20,6 +20,11 @@ use crate::lexer::token::{Token, TokenKind};
 
 use super::{BoxedP, Extra, Parser};
 
+/// The pieces `dyn Trait<Args>` parses into, before a `dyn_ty` combinator folds them into a
+/// `Ty`: the `dyn` keyword paired with the trait path, and an optional bracketed argument list
+/// paired with the closing `>` token.
+type DynTyParts = ((Token, Path), Option<(Vec<Ty>, Token)>);
+
 impl Parser {
     /// Parses a single type, using this parser's own expression parser for array lengths.
     pub fn type_parser<'a>(&'a self) -> BoxedP<'a, Ty> {
@@ -204,20 +209,18 @@ impl Parser {
                             .then(self.kind(TokenKind::CloseCaret))
                             .or_not(),
                     )
-                    .map(
-                        |((dyn_tok, path), args): ((Token, Path), Option<(Vec<Ty>, Token)>)| {
-                            let (args, end) = match args {
-                                Some((args, close_tok)) => (args, close_tok.span),
-                                None => (Vec::new(), path.span),
-                            };
+                    .map(|((dyn_tok, path), args): DynTyParts| {
+                        let (args, end) = match args {
+                            Some((args, close_tok)) => (args, close_tok.span),
+                            None => (Vec::new(), path.span),
+                        };
 
-                            Ty {
-                                id: NodeId::next(),
-                                span: dyn_tok.span.merge(end),
-                                kind: TyKind::Dyn { path, args },
-                            }
-                        },
-                    )
+                        Ty {
+                            id: NodeId::next(),
+                            span: dyn_tok.span.merge(end),
+                            kind: TyKind::Dyn { path, args },
+                        }
+                    })
                     .boxed();
 
                 // A function type looks like `fun(i32, i32) -> i32` or `fun(&str)`. Omitting
@@ -243,9 +246,28 @@ impl Parser {
                             span: fun_tok.span.merge(end_span),
                             kind: TyKind::Function {
                                 params: params.into_iter().collect(),
-                                ret: ret.map(|t| Box::new(t)),
+                                ret: ret.map(Box::new),
                             },
                         }
+                    })
+                    .boxed();
+
+                let iso_target = choice((
+                    self_ty.clone(),
+                    primitive_ty.clone(),
+                    path_ty.clone(),
+                    tuple_ty.clone(),
+                    array_ty.clone(),
+                ))
+                .boxed();
+
+                let iso_ty = self
+                    .kind(TokenKind::IsoKw)
+                    .then(iso_target)
+                    .map(|(iso_tok, inner_ty)| Ty {
+                        id: NodeId::next(),
+                        span: iso_tok.span.merge(inner_ty.span),
+                        kind: TyKind::Iso(Box::new(inner_ty)),
                     })
                     .boxed();
 
@@ -253,6 +275,7 @@ impl Parser {
                     self_ty,
                     dyn_ty,
                     any_ty,
+                    iso_ty,
                     ref_ty,
                     fn_ty,
                     primitive_ty,
@@ -620,6 +643,35 @@ mod tests {
     #[test]
     fn rejects_any_wrapping_another_any_type() {
         assert_eq!(diagnostic_count("any any i32"), 1);
+    }
+
+    #[test]
+    fn parses_iso_type() {
+        let ty = parse_ty("iso i32");
+        match &ty.kind {
+            TyKind::Iso(inner) => assert!(matches!(inner.kind, TyKind::Path { .. })),
+            other => panic!("expected an iso type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_iso_wrapping_a_ref_type() {
+        assert_eq!(diagnostic_count("iso &i32"), 1);
+    }
+
+    #[test]
+    fn rejects_iso_wrapping_a_dyn_type() {
+        assert_eq!(diagnostic_count("iso dyn Shape"), 1);
+    }
+
+    #[test]
+    fn rejects_iso_wrapping_an_any_type() {
+        assert_eq!(diagnostic_count("iso any i32"), 1);
+    }
+
+    #[test]
+    fn rejects_iso_wrapping_a_fn_type() {
+        assert_eq!(diagnostic_count("iso fun(i32) -> i32"), 1);
     }
 
     #[test]
