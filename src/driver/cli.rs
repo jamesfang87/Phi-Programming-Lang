@@ -98,7 +98,6 @@ struct ManifestProfile {
 }
 
 impl Config {
-    /// The manifest's file name
     pub const MANIFEST: &'static str = "Phi.toml";
 
     /// Reads and parses `cwd/Phi.toml`.

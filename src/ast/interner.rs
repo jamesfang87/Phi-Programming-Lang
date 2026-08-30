@@ -1,5 +1,3 @@
-//! A trivial string interner for [`Symbol`].
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -37,7 +35,8 @@ thread_local! {
 pub struct Interner;
 
 impl Interner {
-    /// Interns `text`, returning the existing `Symbol` if it's been seen before on this thread.
+    /// Interns `text`
+    /// Returning the existing `Symbol` if it's been seen before on this thread.
     pub fn intern(text: &str) -> Symbol {
         INTERNER.with(|interner| {
             let mut interner = interner.borrow_mut();
@@ -58,7 +57,7 @@ impl Interner {
     }
 
     /// Discards every interned string on this thread.
-    /// Tests use this for isolation, exactly like [`crate::diagnostics::DiagCtx::clear`].
+    /// Tests use this for isolation
     pub fn clear() {
         INTERNER.with(|interner| *interner.borrow_mut() = InternerData::new());
     }

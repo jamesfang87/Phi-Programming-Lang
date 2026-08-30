@@ -1,16 +1,3 @@
-//! Closure capture analysis and construction.
-//!
-//! No capture analysis exists anywhere else in the compiler; this module is where it is written.
-//! [`BodyLowerCtx::captures_of`] walks a closure's own body (via [`crate::hir::visit::Visitor`],
-//! which already stops at an arena boundary by default -- exactly what finding *this* closure's
-//! own free variables needs, since a variable a *nested* closure captures is that nested
-//! closure's own concern, found separately when it is lowered as its own task) and collects
-//! every outer local it reads, in first-occurrence order. The environment those captures are
-//! packed into has no declared type of its own to name (a closure's environment is synthesized,
-//! not written in source), so it is represented internally as a plain tuple, one element per
-//! capture in that same order: `Field(n)` addresses the `n`th capture exactly as it would any
-//! other tuple element.
-
 use std::collections::HashSet;
 
 use crate::hir::visit::Visitor;

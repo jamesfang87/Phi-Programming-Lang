@@ -1,8 +1,3 @@
-//! This module defines the index types the MIR uses to address its own tables. [`Local`]
-//! addresses one slot of a [`Body`](crate::mir::Body)'s `local_decls`, [`BasicBlock`] addresses
-//! one slot of a `Body`'s `basic_blocks`, and [`VariantIdx`] names one variant of an enum by its
-//! declaration order, the position of its `HirId` within `Enum::variants`, independent of both.
-
 /// `Local` addresses one slot of a [`Body`](crate::mir::Body)'s `local_decls`. Slot `0` is
 /// always the return place, and slots `1..=arg_count` are always the parameters, by the
 /// convention `local_decls` itself documents. Every later slot is a `let` binding or a
@@ -40,18 +35,25 @@ impl BasicBlock {
     }
 }
 
-/// `VariantIdx` names one variant of an enum by its position in that enum's declared variant
-/// order, matching `hir::Enum::variants`' own order. It is used by
-/// [`PlaceElem::Downcast`](crate::mir::PlaceElem),
-/// [`AggregateKind::Adt`](crate::mir::AggregateKind), and
-/// [`StatementKind::SetDiscriminant`](crate::mir::StatementKind), each of which narrows or builds
-/// one variant of an enum named separately by a `DefId`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct VariantIdx(u32);
 
 impl VariantIdx {
     pub(crate) fn from_usize(index: usize) -> Self {
         VariantIdx(index as u32)
+    }
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct StatementId(u32);
+
+impl StatementId {
+    pub(crate) fn from_usize(index: usize) -> Self {
+        StatementId(index as u32)
     }
 
     pub fn index(self) -> usize {

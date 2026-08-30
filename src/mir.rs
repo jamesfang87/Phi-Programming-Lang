@@ -14,7 +14,7 @@ mod statement;
 mod terminator;
 
 pub use body::{BasicBlockData, Body, LocalDecl, Predecessors};
-pub use ids::{BasicBlock, Local, VariantIdx};
+pub use ids::{BasicBlock, Local, StatementId, VariantIdx};
 pub use instance::{AnyMode, Instance};
 pub use operand::{ConstKind, Constant, Operand};
 pub use place::{Place, Projection};

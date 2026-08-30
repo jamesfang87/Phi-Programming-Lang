@@ -1,13 +1,3 @@
-//! Name mangling: turning one monomorphized [`Instance`] into a unique, stable, linker-safe
-//! symbol name.
-//!
-//! [`mangle`] builds an underscore-joined path from the instance's definition up through its
-//! enclosing modules (readable, but not load-bearing for uniqueness on its own, since escaping a
-//! type's rendering to `[A-Za-z0-9_]` is lossy in principle -- two distinct types could in theory
-//! render to the same escaped string), then appends a fixed-width FNV-1a hash of the instance's
-//! own `Debug` representation, which is exact: `Instance` interns every `Ty` it carries, so its
-//! `Debug` output already distinguishes any two instances `PartialEq`/`Hash` would.
-
 use crate::ast::Mutability;
 use crate::ast::interner::Interner;
 use crate::hir::{DefId, Hir, OwnerNode};
@@ -15,9 +5,6 @@ use crate::mir::{AnyMode, Instance};
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
-/// Builds `instance`'s symbol name: a readable path, its generic arguments and `any`-mode (if
-/// any), and a hash suffix guaranteeing uniqueness. Only `[A-Za-z0-9_]` ever appears in the
-/// result, matching what an eventual object-file symbol needs.
 pub fn mangle(hir: &Hir, tcx: &TyCtx, instance: &Instance) -> String {
     let mut name = ancestor_path(hir, instance.def).join("_");
 
@@ -39,24 +26,17 @@ pub fn mangle(hir: &Hir, tcx: &TyCtx, instance: &Instance) -> String {
     name
 }
 
-/// `def`'s own name, followed by each ancestor's, from the root module down -- `Hir::parent`
-/// walked all the way up, then reversed.
 fn ancestor_path(hir: &Hir, def: DefId) -> Vec<String> {
     let mut chain = Vec::new();
     let mut current = Some(def);
     while let Some(id) = current {
-        chain.push(escape(&def_name(hir, id)));
+        chain.push(replace_non_alphanumeric_chars(&def_name(hir, id)));
         current = hir.parent(id);
     }
     chain.reverse();
     chain
 }
 
-/// A human-readable name for `def`, for the mangled name's readable prefix. Not required to be
-/// unique on its own -- see the module docs -- so an `extend` block (which the language gives no
-/// name of its own) and a closure (likewise) get a serviceable placeholder rather than a real
-/// lookup: `def`'s own numeric index is already globally unique, which is all this needs from
-/// them.
 fn def_name(hir: &Hir, def: DefId) -> String {
     match hir.def(def) {
         OwnerNode::Module(m) => m
@@ -75,7 +55,7 @@ fn def_name(hir: &Hir, def: DefId) -> String {
 }
 
 /// Replaces every character that is not `[A-Za-z0-9_]` with `_`.
-fn escape(s: &str) -> String {
+fn replace_non_alphanumeric_chars(s: &str) -> String {
     s.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '_' {
@@ -87,9 +67,6 @@ fn escape(s: &str) -> String {
         .collect()
 }
 
-/// A structural, escaped rendering of `ty`, for a generic argument's contribution to the
-/// mangled name. Panics on `Generic`/`SelfTy`/`Var`: an [`Instance`] this is called on is
-/// expected to already be fully concrete, `mir::monomorphize`'s whole job.
 fn mangle_ty(hir: &Hir, tcx: &TyCtx, ty: Ty) -> String {
     match tcx.kind(ty).clone() {
         TyKind::Primitive(prim) => format!("{prim:?}"),
@@ -132,10 +109,6 @@ fn join_args(head: &str, args: &[Ty], hir: &Hir, tcx: &TyCtx) -> String {
     format!("{head}_{}", rendered.join("_"))
 }
 
-/// A 64-bit FNV-1a hash of `instance`'s `Debug` representation. `Instance` interns every `Ty`
-/// it holds, so two instances that are not `PartialEq` always render different `Debug` text,
-/// making this exact rather than merely probabilistic (modulo ordinary hash collisions, which a
-/// 64-bit digest makes vanishingly unlikely).
 fn hash_instance(instance: &Instance) -> u64 {
     fnv1a(format!("{instance:?}").as_bytes())
 }

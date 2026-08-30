@@ -1,14 +1,3 @@
-//! Parses types. A type shows up in a few places:
-//!
-//! - `let x: i32 = 0;`
-//! - `fun add(x: i32, y: i32) -> i32 { ... }`
-//! - `struct Foo { field: any Shape }`
-//!
-//! Array types can carry a length expression (`[i32; 5]`), so this grammar needs an expression
-//! parser. [`Parser::type_parser_with_expr`] takes one as a parameter instead of building its
-//! own, since `expr_parser` needs a type parser back for closures, and the two would otherwise
-//! have no way to be built together.
-
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
@@ -20,13 +9,7 @@ use crate::lexer::token::{Token, TokenKind};
 
 use super::{BoxedP, Extra, Parser};
 
-/// The pieces `dyn Trait<Args>` parses into, before a `dyn_ty` combinator folds them into a
-/// `Ty`: the `dyn` keyword paired with the trait path, and an optional bracketed argument list
-/// paired with the closing `>` token.
-type DynTyParts = ((Token, Path), Option<(Vec<Ty>, Token)>);
-
 impl Parser {
-    /// Parses a single type, using this parser's own expression parser for array lengths.
     pub fn type_parser<'a>(&'a self) -> BoxedP<'a, Ty> {
         self.type_parser_with_expr(self.expr_parser())
     }
@@ -52,13 +35,6 @@ impl Parser {
                 .map(|t: Token| Ty::primitive(t))
                 .boxed();
 
-                // A named type, with an optional generic argument list: `String`, `Option<T>`,
-                // `Result<T, E>`.
-                //
-                // Unlike an expression, a type has no other meaning for `<`, so the argument
-                // list is taken greedily wherever one follows a path. Nesting needs no special
-                // handling either: the lexer only ever produces `>` as a single `CloseCaret`,
-                // never a shift token, so `Array<Option<T>>` closes as two ordinary tokens.
                 let path_ty = self
                     .path_parser()
                     .then(
@@ -87,11 +63,6 @@ impl Parser {
                     })
                     .boxed();
 
-                // `Self` is an ordinary single-segment path in the AST, not its own `TyKind`, so
-                // the AST resolver can treat it like any other name instead of needing a special
-                // case. HIR lowering keeps it an ordinary `TyKind::Path` too; what marks it as
-                // `Self` is `path.res` (`hir::Res::SelfTy`), not a distinct HIR node kind -- see
-                // `LoweringCtx::as_self_ty`.
                 let self_ty = self
                     .kind(TokenKind::UpperSelfKw)
                     .map(|self_tok| {
@@ -148,8 +119,6 @@ impl Parser {
                     })
                     .boxed();
 
-                // `any` may only wrap a base (primitive or path), tuple, array, or `Self` type.
-                // It can never wrap a reference, `dyn`, or another `any`.
                 let any_target = choice((
                     self_ty.clone(),
                     primitive_ty.clone(),
@@ -191,9 +160,6 @@ impl Parser {
                     })
                     .boxed();
 
-                // `dyn Trait`, with the same optional argument list a named type takes: a trait
-                // that declares parameters has to be applied to them before it names a type, so
-                // `dyn Index<K, V>` is as ordinary as `Map<K, V>`.
                 let dyn_ty = self
                     .kind(TokenKind::DynKw)
                     .then(self.path_parser())
@@ -209,7 +175,7 @@ impl Parser {
                             .then(self.kind(TokenKind::CloseCaret))
                             .or_not(),
                     )
-                    .map(|((dyn_tok, path), args): DynTyParts| {
+                    .map(|((dyn_tok, path), args): ((Token, Path), Option<(Vec<Ty>, Token)>)| {
                         let (args, end) = match args {
                             Some((args, close_tok)) => (args, close_tok.span),
                             None => (Vec::new(), path.span),
@@ -223,9 +189,7 @@ impl Parser {
                     })
                     .boxed();
 
-                // A function type looks like `fun(i32, i32) -> i32` or `fun(&str)`. Omitting
-                // `->` means the function returns no value.
-                let fn_ty = self
+                let fun_ty = self
                     .kind(TokenKind::FunKw)
                     .then_ignore(self.kind(TokenKind::OpenParen))
                     .then(
@@ -277,7 +241,7 @@ impl Parser {
                     any_ty,
                     iso_ty,
                     ref_ty,
-                    fn_ty,
+                    fun_ty,
                     primitive_ty,
                     tuple_ty,
                     array_ty,

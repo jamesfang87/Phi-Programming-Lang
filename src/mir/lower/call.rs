@@ -1,8 +1,3 @@
-//! Call lowering: uniform call syntax (a method's receiver becomes `args[0]`), the
-//! `Res::Function`/indirect-place split a callee can be, `dyn` dispatch's deliberate panic
-//! (its vtable/fat-pointer layout is a later pass, per the spec's own "Status" section), and
-//! `any`-mode projection specialization.
-
 use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Res};
@@ -339,6 +334,15 @@ impl<'a> BodyLowerCtx<'a> {
     /// Materializes a named function as a `fun(T) -> U`-typed value: `Rvalue::Cast` with
     /// `CastKind::ReifyFnPointer`, into a fresh temporary, per the spec's "Operand and Rvalue"
     /// section.
+    ///
+    /// `def`'s own signature may still carry unresolved `any` positions here -- typeck does not
+    /// resolve them when a named function is used as a bare value rather than called outright, so
+    /// `fn_value_ty` (computed from that signature) can too. A call site picks `any`'s mode from
+    /// how the call's own result is used, and a bare reference like this is not a call at all, so
+    /// there is no such usage to consult. Rather than reject the reference, this pins it to
+    /// `AnyMode::Owned` -- every `any` position becomes its plain `T` -- the same fallback
+    /// `resolve_any` already gives a definition that is not `any`-specialized at all, so an
+    /// indirect call through the resulting pointer always finds a compiled body.
     pub(crate) fn reify_fn_pointer(
         &mut self,
         def: DefId,
@@ -347,9 +351,19 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) -> Operand {
         let def_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
+        let any_mode = if is_any_specialized(self.tcx, self.types, def) {
+            self.discover(Task::AnySpecialized(def, AnyMode::Owned));
+            Some(AnyMode::Owned)
+        } else {
+            None
+        };
+        let fn_value_ty = match any_mode {
+            Some(mode) => self.resolve_any_fn_ty(fn_value_ty, mode),
+            None => fn_value_ty,
+        };
         let operand = Operand::Constant(Constant {
             ty: def_ty,
-            kind: ConstKind::FunDef(def, args, None),
+            kind: ConstKind::FunDef(def, args, any_mode),
         });
         let temp = self.new_temp(fn_value_ty, span);
         self.assign(
@@ -362,5 +376,22 @@ impl<'a> BodyLowerCtx<'a> {
             span,
         );
         Operand::Move(Place::from_local(temp))
+    }
+
+    /// Resolves every `any` position in a `fun(..) -> ..`-shaped type under `mode`, the same way
+    /// [`BodyLowerCtx::resolve_any`] resolves one position at a time for a parameter or return
+    /// type when lowering a definition's own body. A reified function pointer's type is built
+    /// from the same signature a body is lowered from, so it needs the same treatment applied
+    /// across every parameter and the return type at once.
+    fn resolve_any_fn_ty(&mut self, fn_ty: Ty, mode: AnyMode) -> Ty {
+        let TyKind::Fun { params, ret } = self.tcx.kind(fn_ty).clone() else {
+            return fn_ty;
+        };
+        let params = params
+            .into_iter()
+            .map(|p| self.resolve_any(p, Some(mode)))
+            .collect();
+        let ret = ret.map(|r| self.resolve_any(r, Some(mode)));
+        self.tcx.mk_fun(params, ret)
     }
 }

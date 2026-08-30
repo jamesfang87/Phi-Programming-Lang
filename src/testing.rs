@@ -186,8 +186,7 @@ pub fn lower_mir_src(
         "unexpected diagnostics for {src:?}: {diagnostics:?}"
     );
     let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-    let program =
-        crate::mir::lower::lower_program(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+    let program = crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
     let instances = crate::mir::monomorphize::monomorphize(&hir, &mut tcx, &program);
     (hir, tcx, types, instances)
 }
@@ -230,8 +229,7 @@ pub fn mir_constck_src(src: &str) -> Vec<String> {
         "unexpected diagnostics for {src:?}: {diagnostics:?}"
     );
     let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-    let program =
-        crate::mir::lower::lower_program(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+    let program = crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
     crate::mir::checks::constck::check(&program);
 
     DiagCtx::diagnostics()
@@ -254,6 +252,53 @@ pub fn mir_constck_accepts(src: &str) {
 /// insists on it: a second diagnostic from the same fixture is usually a cascade.
 pub fn mir_constck_rejects(src: &str, needle: &str) {
     let reported = mir_constck_src(src);
+    assert_eq!(reported.len(), 1, "for {src:?}: {reported:?}");
+    assert!(
+        reported[0].contains(needle),
+        "expected a diagnostic mentioning {needle:?} for {src:?}, got {reported:?}"
+    );
+}
+
+/// Runs the whole pipeline over `src` through `mir::checks::borrowck::definite_init`, and hands
+/// back the messages that pass reported.
+///
+/// Type checking itself is asserted clean first, the same "diagnostics-free by design" contract
+/// [`lower_mir_src`] documents: a fixture meant to exercise something type checking itself
+/// rejects belongs with [`typeck_rejects`] instead, not here.
+pub fn mir_definite_init_src(src: &str) -> Vec<String> {
+    let hir = resolve_src(src);
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+    crate::mir::checks::borrowck::definite_init::check(&program);
+
+    DiagCtx::diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+/// Asserts that `src` passes `mir::checks::borrowck::definite_init` with nothing reported.
+pub fn mir_definite_init_accepts(src: &str) {
+    let reported = mir_definite_init_src(src);
+    assert!(
+        reported.is_empty(),
+        "expected {src:?} to pass definite-initialization checking: {reported:?}"
+    );
+}
+
+/// Asserts that `src` is rejected by `mir::checks::borrowck::definite_init` with exactly one
+/// diagnostic, whose message contains `needle`. One rather than at least one, for the same reason
+/// [`typeck_rejects`] insists on it: a second diagnostic from the same fixture is usually a
+/// cascade.
+pub fn mir_definite_init_rejects(src: &str, needle: &str) {
+    let reported = mir_definite_init_src(src);
     assert_eq!(reported.len(), 1, "for {src:?}: {reported:?}");
     assert!(
         reported[0].contains(needle),

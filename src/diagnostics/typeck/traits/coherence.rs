@@ -7,9 +7,7 @@ use crate::driver::source::SrcSpan;
 use crate::hir::Hir;
 use crate::typeck::traits::overlap::ExtendHeader;
 
-/// Where the block a header describes was written. A header names the block rather than carrying
-/// its span, since the two say the same thing and only the diagnostics here ask for the span.
-fn block_span(hir: &Hir, header: &ExtendHeader) -> SrcSpan {
+fn extend_span(hir: &Hir, header: &ExtendHeader) -> SrcSpan {
     hir.extend(header.def).span
 }
 
@@ -31,11 +29,11 @@ pub fn report_conflicting_extends(
                 get_name_of_trait(hir, trait_ref.def),
                 cx.show(second.self_ty)
             ),
-            block_span(hir, second),
+            extend_span(hir, second),
         )
         .with_label("conflicting implementation")
         .with_secondary(
-            block_span(hir, first),
+            extend_span(hir, first),
             format!("`{}` is already implemented here", cx.show(first.self_ty)),
         )
         .with_help(
@@ -60,14 +58,14 @@ pub fn report_duplicate_method(
                 Interner::resolve(name),
                 cx.show(second.self_ty)
             ),
-            block_span(hir, second),
+            extend_span(hir, second),
         )
         .with_label(format!(
             "duplicate definition of `{}`",
             Interner::resolve(name)
         ))
         .with_secondary(
-            block_span(hir, first),
+            extend_span(hir, first),
             format!(
                 "`{}` already gets a method named `{}` here",
                 cx.show(first.self_ty),

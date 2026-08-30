@@ -1,5 +1,3 @@
-//! [`AstBuilder`] which turns a build's parsed files into the [`Ast`] module tree.
-
 use std::collections::HashMap;
 
 use crate::ast::{Ast, Ident, Module, NodeId, Path, Symbol};

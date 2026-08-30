@@ -18,10 +18,8 @@ fn escape_char(c: char) -> char {
     }
 }
 
-/// The lexer only checks that a string or char literal's escapes are valid. It does not convert
-/// them to their real values, since it works with spans, not owned strings. Later stages need
-/// the actual value, so this function does that conversion.
-fn unescape(chars: &[char]) -> String {
+/// Converts the escape values inside a string/char literal
+fn escape(chars: &[char]) -> String {
     let mut out = String::with_capacity(chars.len());
     let mut i = 0;
     while i < chars.len() {
@@ -36,8 +34,8 @@ fn unescape(chars: &[char]) -> String {
     out
 }
 
-/// Splits a lexed number's text into its value and, if present, its type suffix (the `i64` in
-/// `42_i64`, without the leading `_`).
+/// Splits a lexed number's text into its value its type suffix if present
+/// Ex: 42_i64 -> 42 and i64
 fn split_suffix(text: &str) -> (&str, Option<&str>) {
     let bytes = text.as_bytes();
     for i in 0..bytes.len() {
@@ -57,7 +55,7 @@ impl Expr {
         }
     }
 
-    /// Builds an integer literal expression from its token, e.g. `42` or the suffixed `42_i64`.
+    /// Builds an integer literal expression from its token, e.g. `42` or `42_i64`.
     pub fn int(tok: Token) -> Expr {
         let text = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");
@@ -73,9 +71,7 @@ impl Expr {
         }
     }
 
-    /// Builds a float literal expression from its token, e.g. `3.14` or the suffixed
-    /// `3.14_f32`. See [`Expr::int`] for the suffix handling; the two are shared through
-    /// [`split_suffix`] below.
+    /// Builds a float literal expression from its token, e.g. `3.14` or `3.14_f32`.
     pub fn float(tok: Token) -> Expr {
         let text = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");
@@ -99,7 +95,7 @@ impl Expr {
         let inner: Vec<char> = chars[1..chars.len() - 1].chars().collect();
         Expr {
             id: NodeId::next(),
-            kind: ExprKind::Literal(Literal::Str(Interner::intern(&unescape(&inner)))),
+            kind: ExprKind::Literal(Literal::Str(Interner::intern(&escape(&inner)))),
             span: tok.span,
         }
     }
@@ -110,7 +106,7 @@ impl Expr {
             .expect("lexer token span should always resolve to a source file");
         // Drop the surrounding quote characters before unescaping.
         let inner: Vec<char> = chars[1..chars.len() - 1].chars().collect();
-        let ch = unescape(&inner).chars().next().unwrap_or('\0');
+        let ch = escape(&inner).chars().next().unwrap_or('\0');
         Expr {
             id: NodeId::next(),
             kind: ExprKind::Literal(Literal::Char(ch)),
