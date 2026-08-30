@@ -80,14 +80,12 @@ impl Pretty for Ty {
                     }
                     elem.pretty(f, cx)?;
                 }
-                // `(T,)` disambiguates a one-element tuple from a merely parenthesized `T`
+                // `(T,)` disambiguates a one-element tuple from a parenthesized `T`
                 if elems.len() == 1 {
                     write!(f, ",")?;
                 }
                 write!(f, ")")
             }
-            // `len` addresses an unevaluated constant expression rather than a number (see
-            // `TyKind::Array`), so there's no value here yet to print.
             TyKind::Array { elem, .. } => {
                 write!(f, "[")?;
                 elem.pretty(f, cx)?;

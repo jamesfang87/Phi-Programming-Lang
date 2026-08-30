@@ -1,21 +1,3 @@
-//! Lowering #2: builds one [`Body`] per function, method, and closure out of a fully
-//! type-checked [`Hir`].
-//!
-//! [`lower_program`] is the entry point. It seeds a worklist with every ordinary (non-`any`)
-//! function, method, and closure the `Hir` declares -- found by a flat scan of
-//! [`Hir::def_ids`], since every one of those already has its own arena and its own `DefId`
-//! regardless of whether it is a free function, a trait/`extend` method, or a closure nested
-//! inside another body. A function or method whose return type is `any T` is not seeded
-//! directly: [`AnyMode`] specialization is a structural choice (it changes whether a parameter's
-//! `Place` needs a `Deref` projection at all), so it can only be decided once some call site
-//! demands a specific mode. Lowering that call site pushes the `(DefId, AnyMode)` pair it needs
-//! onto the same worklist, `mir::lower::call`'s job; see [`Task`].
-//!
-//! Ordinary generic substitution needs none of this: a generic body lowers once, with
-//! `TyKind::Generic`/`SelfTy` left exactly as `TypeResolutions` already recorded them, and
-//! substituting those into a concrete `Body` per instantiation is `mir::monomorphize`'s job, a
-//! separate pass over this one's output.
-
 mod block;
 mod call;
 mod closure;
@@ -96,10 +78,7 @@ fn item_has_errors(hir: &Hir, tcx: &TyCtx, types: &TypeResolutions, def_id: DefI
     })
 }
 
-/// Lowers every function, method, and closure `hir` declares into a [`LoweredProgram`]. `mode`
-/// is the project's debug/release profile, which decides whether integer arithmetic gets a
-/// [`crate::mir::CheckedBinaryOp`] and an overflow [`crate::mir::Assert`] or wraps silently.
-pub fn lower_program(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) -> Mir {
+pub fn lower(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) -> Mir {
     let erroneous: HashSet<DefId> = hir
         .def_ids()
         .filter(|&def_id| item_has_errors(hir, tcx, types, def_id))

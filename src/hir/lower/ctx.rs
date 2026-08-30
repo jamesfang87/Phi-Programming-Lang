@@ -1,6 +1,3 @@
-//! Orchestrates lowering: allocates `DefId`s, lowers each module's items into their own
-//! owners, and assembles the final `Hir` once every item has been lowered.
-
 use std::collections::HashMap;
 
 use crate::ast::{self, NodeId};

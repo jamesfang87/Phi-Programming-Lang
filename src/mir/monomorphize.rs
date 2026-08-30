@@ -152,6 +152,7 @@ fn process_body(
             .statements
             .iter()
             .map(|stmt| crate::mir::Statement {
+                id: stmt.id,
                 kind: subst_stmt(
                     tcx,
                     program,

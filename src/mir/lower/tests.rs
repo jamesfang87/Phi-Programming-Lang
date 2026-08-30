@@ -1,11 +1,9 @@
-//! Unit tests for `mir::lower`, in the digging-helper style `hir/lower/tests.rs` established.
-
-use crate::ast::interner::Interner;
 use crate::ast::BinaryOp;
+use crate::ast::interner::Interner;
 use crate::driver::cli::Mode;
 use crate::hir::{DefId, Hir, OwnerNode};
-use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::lower::Mir;
+use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{
     AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, Local, Operand, Projection,
     Rvalue, StatementKind, TerminatorKind,
@@ -32,7 +30,7 @@ fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolution
         "unexpected diagnostics for {src:?}: {diagnostics:?}"
     );
     let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-    let program = super::lower_program(&hir, &mut tcx, &types, mode);
+    let program = super::lower(&hir, &mut tcx, &types, mode);
     (hir, tcx, types, program)
 }
 

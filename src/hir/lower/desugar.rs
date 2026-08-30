@@ -1,6 +1,3 @@
-//! Desugars `while`/`for` loops into [`ExprKind::Loop`], and the `let` forms of `if`/`while`
-//! into [`ExprKind::Match`].
-
 use crate::ast;
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, Mutability};

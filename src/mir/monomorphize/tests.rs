@@ -1,5 +1,3 @@
-//! Unit tests for `mir::monomorphize`.
-
 use crate::mir::{Rvalue, StatementKind};
 use crate::testing::lower_mir_src;
 

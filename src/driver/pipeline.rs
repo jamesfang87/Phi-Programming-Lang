@@ -83,9 +83,8 @@ pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
         );
     }
 
-    let program = mir::lower::lower_program(&hir, &mut checked.tcx, &checked.types, config.mode);
-    mir::checks::constck::check(&program);
-    mir::checks::always_return::check(&program);
+    let program = mir::lower::lower(&hir, &mut checked.tcx, &checked.types, config.mode);
+    mir::checks::run_checks(&program);
     let instances = mir::monomorphize::monomorphize(&hir, &mut checked.tcx, &program);
 
     if options.dumps.mir {

@@ -91,8 +91,6 @@ pub fn walk_module<'ast, V: Visitor<'ast>>(v: &mut V, module: &'ast Module, ast:
 /// Dispatches on what kind of item `item` is.
 pub fn walk_item<'ast, V: Visitor<'ast>>(v: &mut V, item: &'ast Item) {
     match &item.kind {
-        // A file's own `module foo::bar;` header is sorted out of `items` before the AST is
-        // built (see `Ast::new`), so this arm is here for exhaustiveness
         ItemKind::ModuleDecl(_) => {}
         ItemKind::Import(import) => v.visit_import(import),
         ItemKind::Function(f) => v.visit_function(f),
@@ -255,7 +253,8 @@ pub fn walk_stmt<'ast, V: Visitor<'ast>>(v: &mut V, stmt: &'ast Stmt) {
             else_block,
             ..
         } => {
-            // The initializer is visited before the pattern binds, so that `let x = x;` reads
+            // The initializer is visited before the pattern binds.
+            // This is so that `let x = x;` reads
             // the outer `x` rather than the one being declared.
             v.visit_expr(init);
             if let Some(ty) = ty {
