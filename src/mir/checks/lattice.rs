@@ -1,35 +1,33 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash};
 
-use crate::mir::BasicBlock;
-
-pub struct Lattice<SomeState> {
-    pub entry: HashMap<BasicBlock, SomeState>,
-    pub exit: HashMap<BasicBlock, SomeState>,
+pub struct Lattice<Key: Hash + Eq, SomeState> {
+    pub entry: HashMap<Key, SomeState>,
+    pub exit: HashMap<Key, SomeState>,
 }
 
-impl<SomeState> Lattice<SomeState> {
+impl<Key: Hash + Eq, SomeState> Lattice<Key, SomeState> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn set_entry(&mut self, block: BasicBlock, state: SomeState) -> Option<SomeState> {
-        self.entry.insert(block, state)
+    pub fn set_entry(&mut self, key: Key, state: SomeState) -> Option<SomeState> {
+        self.entry.insert(key, state)
     }
 
-    pub fn set_exit(&mut self, block: BasicBlock, state: SomeState) -> Option<SomeState> {
-        self.exit.insert(block, state)
+    pub fn set_exit(&mut self, key: Key, state: SomeState) -> Option<SomeState> {
+        self.exit.insert(key, state)
     }
 
-    pub fn entry(&self, block: BasicBlock) -> Option<&SomeState> {
-        self.entry.get(&block)
+    pub fn entry(&self, key: Key) -> Option<&SomeState> {
+        self.entry.get(&key)
     }
 
-    pub fn exit(&self, block: BasicBlock) -> Option<&SomeState> {
-        self.exit.get(&block)
+    pub fn exit(&self, key: Key) -> Option<&SomeState> {
+        self.exit.get(&key)
     }
 }
 
-impl<SomeState> Default for Lattice<SomeState> {
+impl<Key: Hash + Eq, SomeState> Default for Lattice<Key, SomeState> {
     fn default() -> Self {
         Self {
             entry: HashMap::new(),

@@ -1,13 +1,8 @@
-//! Constness-check pass: walks every [`Body`] and reports each [`StatementKind::CheckMutable`]
-//! that fails, per that variant's own docs. Runs once per generic body, ahead of monomorphization.
-
 use crate::diagnostics::mir::constck::report_not_mutable;
 use crate::driver::source::SrcSpan;
 use crate::mir::lower::Mir;
 use crate::mir::{Body, Place, Projection, StatementKind};
 
-/// Checks every body in `program`, reporting a diagnostic for each place that a `=`, a compound
-/// assignment, or an explicit `&mut` borrow reaches but may not write to directly.
 pub fn check(program: &Mir) {
     for body in program.bodies.values() {
         check_body(body);
@@ -24,8 +19,6 @@ fn check_body(body: &Body) {
     }
 }
 
-/// Walks `place`'s projection down to its root local without crossing a `Deref`, and reports a
-/// diagnostic if that root is an immutable `let`.
 fn check_place(body: &Body, place: &Place, span: SrcSpan) {
     if place.projections.contains(&Projection::Deref) {
         return;

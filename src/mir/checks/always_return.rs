@@ -1,5 +1,5 @@
 use crate::diagnostics::mir::always_return::report_not_all_paths_return;
-use crate::mir::{checks::lattice, lower::Mir, BasicBlock, Body, TerminatorKind};
+use crate::mir::{BasicBlock, Body, TerminatorKind, checks::lattice, lower::Mir};
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -7,7 +7,7 @@ enum State {
     DoesNotReturn,
 }
 
-type Lattice = lattice::Lattice<State>;
+type Lattice = lattice::Lattice<BasicBlock, State>;
 
 pub fn check(mir: &Mir) {
     for body in mir.bodies.values() {
@@ -93,7 +93,7 @@ mod tests {
     use super::check_body;
     use crate::diagnostics::DiagCtx;
     use crate::driver::cli::Mode;
-    use crate::mir::lower::lower_program;
+    use crate::mir::lower::lower;
     use crate::testing::{first_function, resolve_src};
     use crate::typeck::{self, TypeckOutput};
 
@@ -104,7 +104,7 @@ mod tests {
         let diagnostics = DiagCtx::diagnostics();
         assert!(diagnostics.is_empty(), "{src:?}: {diagnostics:?}");
         let TypeckOutput { mut tcx, types } = checked;
-        let program = lower_program(&hir, &mut tcx, &types, Mode::Debug);
+        let program = lower(&hir, &mut tcx, &types, Mode::Debug);
         let def_id = first_function(&hir);
         let body = program
             .bodies
