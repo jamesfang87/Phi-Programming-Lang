@@ -4,7 +4,7 @@ use crate::mir::instance::AnyMode;
 use crate::mir::place::Place;
 use crate::typeck::ty::Ty;
 
-/// `Operand` is a value simple enough to appear directly as an argument to a binary operator, a
+/// `Operand` is an argument to a binary operator, a
 /// call, or an aggregate, without needing a temporary of its own.
 #[derive(Clone, Debug)]
 pub enum Operand {
@@ -14,7 +14,7 @@ pub enum Operand {
     /// This variant reads a place by consuming it.
     Move(Place),
     /// This variant is a value known at compile time, which is embedded directly into the
-    /// instruction rather than read out of a local's storage.
+    /// instruction
     Constant(Constant),
 }
 

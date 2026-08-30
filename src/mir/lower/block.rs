@@ -1,7 +1,3 @@
-//! Block and statement lowering: `let`/`let-else`, `with` lends, block-scoped `defer`,
-//! `break`/`continue`/`return`, and the block-level exit-obligation replay every one of those
-//! shares.
-
 use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, PatKind, StmtKind};

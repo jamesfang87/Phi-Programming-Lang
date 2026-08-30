@@ -1,8 +1,3 @@
-//! [`BodyLowerCtx::lower_item`], the entry point that lowers one whole definition -- a
-//! function, a method, or a closure -- into its finished [`Body`]: setting up the return place
-//! and every parameter's local, lowering the block, and closing off whichever basic block
-//! lowering the block left open with an implicit `Return`.
-
 use crate::ast::Mutability;
 use crate::hir::{HirId, OwnerNode};
 use crate::mir::lower::Task;

@@ -1,17 +1,3 @@
-//! `if`/`match`/`loop` lowering and the pattern decision-tree compiler.
-//!
-//! A `match` (and `if`, its two-arm cousin already split apart at the HIR level) compiles to a
-//! sequence of *candidates*, one per arm, tested in source order: [`BodyLowerCtx::test_pat`]
-//! only tests a pattern's structure, and [`BodyLowerCtx::bind_pat`] -- run only once a
-//! candidate's structure has already fully matched -- is a separate walk over the same pattern
-//! that performs the actual bindings. Splitting the two avoids ever having to unwind a partial
-//! binding when a *later* part of the same pattern goes on to refute: nothing binds until
-//! everything already matched.
-//!
-//! This is the first version's straightforward *sequential* candidate chain (test arm 1's tests
-//! in full; on any refutation, fall to arm 2; and so on), not rustc's shared/merged decision
-//! tree that reorders and shares common prefix tests across arms for efficiency.
-
 use crate::ast::{BinaryOp, Literal};
 use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, PatKind, Payload};

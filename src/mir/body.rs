@@ -59,10 +59,9 @@ pub struct LocalDecl {
     pub span: SrcSpan,
 }
 
-/// `BasicBlockData` holds one basic block: a sequence of `statements` ending in
-/// exactly one `terminator`. There is no fallthrough between adjacent blocks in
-/// `Body::basic_blocks`. A block that merely continues into the next still ends with an explicit
-/// `Goto`.
+/// `BasicBlockData` holds the data for one basic block.
+/// It consists of a sequence of `statements` ending in
+/// exactly one `terminator`.
 #[derive(Debug)]
 pub struct BasicBlockData {
     pub statements: Vec<Statement>,

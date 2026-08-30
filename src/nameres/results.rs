@@ -34,7 +34,7 @@ impl NameResolutions {
             .map(|(_, res)| *res)
     }
 
-    /// This returns every (Path, Res) for a NodeId `owner`.
+    /// This returns every (Path, Res) pair for a NodeId `owner`.
     /// If there are none, then this is empty
     pub fn entries(&self, owner: NodeId) -> &[(Path, Res)] {
         self.paths.get(&owner).map_or(&[], |v| v.as_slice())

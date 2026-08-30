@@ -1,5 +1,3 @@
-//! Constructors that build [`Type`] nodes directly from lexer tokens.
-
 use super::*;
 use crate::ast::interner::Interner;
 use crate::lexer::token::Token;

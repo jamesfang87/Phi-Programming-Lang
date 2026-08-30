@@ -250,10 +250,7 @@ impl TokenKind {
 
 impl std::fmt::Display for TokenKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Do not call `self.to_string()` here. Rust would resolve it to the blanket
-        // `ToString::to_string(&self)` instead of the inherent method above, because it is an
-        // exact match on `&TokenKind`. That calls back into this `fmt` and recurses forever.
-        // The explicit UFCS call below picks the inherent method and avoids the loop.
+        // Do not call `self.to_string()` here.
         f.write_str(TokenKind::to_string(*self))
     }
 }

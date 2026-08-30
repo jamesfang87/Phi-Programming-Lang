@@ -1,10 +1,11 @@
 use crate::driver::source::SrcSpan;
-use crate::mir::ids::{Local, VariantIdx};
+use crate::mir::ids::{Local, StatementId, VariantIdx};
 use crate::mir::place::Place;
 use crate::mir::rvalue::Rvalue;
 
 #[derive(Clone, Debug)]
 pub struct Statement {
+    pub id: StatementId,
     pub kind: StatementKind,
     pub span: SrcSpan,
 }

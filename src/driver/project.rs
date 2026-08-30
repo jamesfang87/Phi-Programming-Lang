@@ -33,7 +33,6 @@ fn init_at(path: &Path) -> io::Result<()> {
     let template = b"// Hello, Phi!\nfun main() {\n    println(\"Hello, world!\");\n}\n";
     fs::write(&main_phi, template)?;
 
-    // `.` has no useful file name, so fall back to what the directory actually resolves to.
     let manifest_name = fs::canonicalize(path)?
         .file_name()
         .unwrap_or_default()

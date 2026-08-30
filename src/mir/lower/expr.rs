@@ -1,11 +1,3 @@
-//! Expression lowering: the flattening the spec's "Operand and Rvalue" section describes. Every
-//! `ExprKind` funnels through [`BodyLowerCtx::lower_expr_into`], which lowers a value into a
-//! destination `Place` via whatever statements or control flow it needs.
-//! [`BodyLowerCtx::lower_operand`] and [`BodyLowerCtx::lower_place`] are the two convenience
-//! entry points that check whether an expression is *already* a bare operand or place first,
-//! only falling back to a fresh temporary and `lower_expr_into` when it is not -- so a plain
-//! local read such as `x` in `x + y` never gets a redundant temporary of its own.
-
 use crate::ast::{BinaryOp, Literal, Mutability, UnaryOp};
 use crate::driver::source::SrcSpan;
 use crate::hir::{ExprKind, HirId, Local as HirLocal, Res};

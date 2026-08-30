@@ -1,13 +1,3 @@
-//! Parses expressions, blocks, and statements.
-//!
-//! Expression precedence goes from tightest to loosest as the file reads top to bottom: postfix
-//! operators, then prefix operators, then the binary operators in the usual arithmetic order,
-//! then ranges, then assignment.
-//!
-//! [`BraceForms`] controls whether a bare `{` after an expression opens a struct literal or a
-//! record payload. Condition and scrutinee positions (`if cond { ... }`, `match x { ... }`) turn
-//! this off, so the `{` there always starts the following block instead.
-
 use chumsky::Parser as ChumskyParser;
 use chumsky::input::InputRef;
 use chumsky::prelude::*;
@@ -46,8 +36,7 @@ impl Parser {
     /// Builds the mutually recursive expression and block parsers together, returning
     /// `(expr_parser, block_parser)`.
     ///
-    /// They have to be built together because each recurses into the other: an expression can
-    /// hold a block, and a block's statements can hold expressions.
+    /// They are required by chumsky to be built together since each recurses into the other.
     pub(crate) fn expr_and_block_parsers<'a>(&'a self) -> (BoxedP<'a, Expr>, BoxedP<'a, Block>) {
         let mut expr: ExprRec<'a> = Recursive::declare();
         // `expr` with brace forms denied. Used for condition and scrutinee positions.
@@ -1947,9 +1936,7 @@ mod tests {
     /// closing brace already marks where the arm ends.
     #[test]
     fn block_bodied_match_arms_do_not_require_commas() {
-        let expr = parse_expr(
-            "match s { .rectangle => { return 1; } .circle => { return 2; } }",
-        );
+        let expr = parse_expr("match s { .rectangle => { return 1; } .circle => { return 2; } }");
         match &expr.kind {
             ExprKind::Match { arms, .. } => {
                 assert_eq!(arms.len(), 2);
