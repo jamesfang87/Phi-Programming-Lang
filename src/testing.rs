@@ -306,6 +306,42 @@ pub fn mir_definite_init_rejects(src: &str, needle: &str) {
     );
 }
 
+pub fn mir_never_read_src(src: &str) -> Vec<String> {
+    let hir = resolve_src(src);
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+    crate::mir::checks::never_read::check(&program);
+
+    DiagCtx::diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+pub fn mir_never_read_accepts(src: &str) {
+    let reported = mir_never_read_src(src);
+    assert!(
+        reported.is_empty(),
+        "expected {src:?} to pass never-read checking: {reported:?}"
+    );
+}
+
+pub fn mir_never_read_rejects(src: &str, needle: &str) {
+    let reported = mir_never_read_src(src);
+    assert_eq!(reported.len(), 1, "for {src:?}: {reported:?}");
+    assert!(
+        reported[0].contains(needle),
+        "expected a diagnostic mentioning {needle:?} for {src:?}, got {reported:?}"
+    );
+}
+
 fn assert_clean(src: &str) {
     let diagnostics = DiagCtx::diagnostics();
     assert!(
