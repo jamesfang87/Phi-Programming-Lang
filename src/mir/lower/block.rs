@@ -175,6 +175,7 @@ impl<'a> BodyLowerCtx<'a> {
         // binding, it is left unrestricted; see `StatementKind::CheckMutable`'s own docs.
         let local = self.new_local(ty, Mutability::Mutable, Some(name), span);
         self.push_stmt(StatementKind::StorageLive(local), span);
+        self.push_stmt(StatementKind::WithLend(local), span);
         self.lower_expr_into(lend.init, Place::from_local(local));
         self.bind_local(lend.pat, local);
         self.register_exit_obligation(ExitObligation::StorageDead(local));

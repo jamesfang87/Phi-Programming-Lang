@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::ast::interner::Interner;
 use crate::diagnostics::mir::never_read::report_value_never_read;
 use crate::driver::source::SrcSpan;
 use crate::mir::{
@@ -137,7 +138,9 @@ fn apply_statement(unread: &mut UnreadLocals, stmt: &Statement) {
         StatementKind::PlaceMention(place) => {
             apply_place(unread, place);
         }
-        StatementKind::SetDiscriminant { .. } | StatementKind::CheckMutable(_) => {}
+        StatementKind::SetDiscriminant { .. }
+        | StatementKind::CheckMutable(_)
+        | StatementKind::WithLend(_) => {}
     }
 }
 
@@ -167,6 +170,7 @@ fn apply_terminator(unread: &mut UnreadLocals, terminator: &Terminator) {
 fn check_never_read(unread: &UnreadLocals, body: &Body, local: Local, span: SrcSpan) {
     if unread.contains(&local)
         && let Some(name) = body.local_decls[local.index()].name
+        && !Interner::resolve(name.text).starts_with('_')
     {
         report_value_never_read(name, span);
     }
@@ -186,7 +190,8 @@ fn check_statement(unread: &mut UnreadLocals, body: &Body, stmt: &Statement) {
         StatementKind::StorageLive(_)
         | StatementKind::PlaceMention(_)
         | StatementKind::SetDiscriminant { .. }
-        | StatementKind::CheckMutable(_) => apply_statement(unread, stmt),
+        | StatementKind::CheckMutable(_)
+        | StatementKind::WithLend(_) => apply_statement(unread, stmt),
     }
 }
 
@@ -250,6 +255,11 @@ mod tests {
              fun f() { let a = 1; take(a); let b = 2; }",
             "value assigned to `b` is never read",
         );
+    }
+
+    #[test]
+    fn a_local_whose_name_starts_with_underscore_is_never_reported() {
+        accepts("fun f() { let _unused = 1; }");
     }
 
     #[test]

@@ -2,6 +2,8 @@ use crate::mir::Local;
 use crate::mir::lower::Mir;
 
 pub(crate) mod definite_init;
+pub(crate) mod exclusivity;
+pub(crate) mod lifetimes;
 
 /// `Register` is a simplification of [`Place`](crate::mir::Place) for borrowcking. It
 /// only contains projections (field access and constant index) for the purposes of narrowing
@@ -20,4 +22,5 @@ pub enum SubRegisters {
 
 pub fn check(mir: &Mir) {
     definite_init::check(mir);
+    exclusivity::check(mir);
 }

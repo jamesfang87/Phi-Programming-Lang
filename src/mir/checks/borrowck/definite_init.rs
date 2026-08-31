@@ -113,8 +113,8 @@ fn register_of(place: &Place) -> Option<Register> {
             Projection::ConstantIndex { offset, from_end } => {
                 subregister.push(SubRegisters::ConstantIndex { offset, from_end })
             }
-            Projection::Downcast(_) => {}
-            Projection::Deref | Projection::Index(_) => return None,
+            Projection::Downcast(_) | Projection::Index(_) => {}
+            Projection::Deref => return None,
         }
     }
     Some(Register {
@@ -184,7 +184,8 @@ fn apply_statement(dead: &mut DeadRegisters, stmt: &Statement) {
         }
         StatementKind::PlaceMention(_)
         | StatementKind::SetDiscriminant { .. }
-        | StatementKind::CheckMutable(_) => {}
+        | StatementKind::CheckMutable(_)
+        | StatementKind::WithLend(_) => {}
     }
 }
 
@@ -272,7 +273,8 @@ fn check_statement(dead: &mut DeadRegisters, body: &Body, stmt: &Statement) {
         StatementKind::StorageLive(_)
         | StatementKind::StorageDead(_)
         | StatementKind::SetDiscriminant { .. }
-        | StatementKind::CheckMutable(_) => apply_statement(dead, stmt),
+        | StatementKind::CheckMutable(_)
+        | StatementKind::WithLend(_) => apply_statement(dead, stmt),
     }
 }
 
