@@ -1260,3 +1260,70 @@ fn a_with_lends_local_carries_its_declared_name() {
         .expect("a with-bound local carries its declared name");
     assert_eq!(Interner::resolve(name.text), "x");
 }
+
+// -----------------------------------------------------------------
+// Copy vs Move classification
+// -----------------------------------------------------------------
+
+/// A shared reference grants no exclusive access, so re-reading the same place holding one is
+/// exactly as sound as re-reading any other trivially copyable value: `operand_for_place` treats
+/// `&T` the same as a primitive. A `&mut T` still cannot be duplicated this way (it *is*
+/// exclusive access), so it keeps falling through to `Operand::Move` -- see
+/// `a_mutably_referenced_place_is_moved_not_copied`, just below.
+#[test]
+fn a_shared_reference_is_copied_not_moved() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "fun f(a: i32) {
+             let r = &a;
+             use_ref(r);
+             use_ref(r);
+         }
+         fun use_ref(r: &i32) {}",
+    );
+    let body = first_function_body(&program, &hir);
+    let call_args: Vec<&Operand> = body
+        .basic_blocks
+        .iter()
+        .filter_map(|b| match &b.terminator.kind {
+            TerminatorKind::Call { args, .. } => args.first(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(call_args.len(), 2, "both calls to `use_ref` pass `r`");
+    for arg in call_args {
+        assert!(
+            matches!(arg, Operand::Copy(_)),
+            "a shared reference is reusable without consuming it, so each call reads `r` by \
+             `Operand::Copy`, not `Operand::Move`: got {arg:?}"
+        );
+    }
+}
+
+/// The mirror of `a_shared_reference_is_copied_not_moved`: a `&mut` reference grants exclusive
+/// access, so duplicating it defeats the whole point of exclusivity. It still gets
+/// `Operand::Move`.
+#[test]
+fn a_mutably_referenced_place_is_moved_not_copied() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "fun f(a: i32) {
+             let mut a = a;
+             let r = &mut a;
+             use_ref(r);
+         }
+         fun use_ref(r: &mut i32) {}",
+    );
+    let body = first_function_body(&program, &hir);
+    let call_arg = body
+        .basic_blocks
+        .iter()
+        .find_map(|b| match &b.terminator.kind {
+            TerminatorKind::Call { args, .. } => args.first(),
+            _ => None,
+        })
+        .expect("`use_ref(r)` is called");
+    assert!(
+        matches!(call_arg, Operand::Move(_)),
+        "a `&mut` reference is exclusive access, so it is consumed by `Operand::Move`, not \
+         `Operand::Copy`: got {call_arg:?}"
+    );
+}

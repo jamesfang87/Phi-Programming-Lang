@@ -18,4 +18,8 @@ pub enum StatementKind {
     SetDiscriminant { place: Place, variant: VariantIdx },
     PlaceMention(Place),
     CheckMutable(Place),
+    /// Marks `local` as bound by a `with` lend rather than a `let`. This carries no runtime
+    /// effect; `mir::checks::borrowck::lifetimes` reads it to tell a `with`-lend borrow, whose
+    /// lifetime always runs to its `StorageDead`, from an ordinary borrow, whose lifetime is NLL.
+    WithLend(Local),
 }
