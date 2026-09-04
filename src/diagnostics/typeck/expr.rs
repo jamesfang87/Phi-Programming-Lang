@@ -80,6 +80,17 @@ pub fn report_index_not_int(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     );
 }
 
+// -----------------------------------------------------------------
+// `new`
+// -----------------------------------------------------------------
+
+pub fn report_new_array_count_not_usize(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(cx.show(err).to_string(), span)
+            .with_label("`new [elem; count]`'s count is a `usize`"),
+    );
+}
+
 pub fn report_not_indexable(cx: DisplayCx<'_>, base: Ty, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(format!("`{}` cannot be indexed", cx.show(base)), span)

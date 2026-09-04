@@ -15,6 +15,8 @@ pub enum PrimTy {
     F64,
     Bool,
     Char,
+    Usize,
+    Str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

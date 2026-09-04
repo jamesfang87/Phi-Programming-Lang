@@ -20,6 +20,17 @@ pub fn report_return_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan)
     );
 }
 
+pub fn report_bodiless_function(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("this function has no body", span)
+            .with_label("a function declared here must have a body")
+            .with_help(
+                "only the compiler's own intrinsics may omit one, and only when declared in \
+                 the core library",
+            ),
+    );
+}
+
 pub fn report_operand_has_unknown_type(span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -65,17 +76,6 @@ pub fn report_logic_op_needs_bool_operands(
     );
 }
 
-// TODO: Remove when std library String is programmed
-pub fn report_str_literal_untyped(span: SrcSpan) {
-    DiagCtx::emit(
-        Diagnostic::error("a string literal has no type yet", span)
-            .with_label("`str` is not a type the core library declares")
-            .with_help(
-                "the core library declares no string type and no lang item names one, \
-                             so there is nothing for this literal to be",
-            ),
-    );
-}
 
 pub fn report_unknown_literal_suffix(suffix: Symbol, span: SrcSpan) {
     DiagCtx::emit(
@@ -119,6 +119,21 @@ pub fn report_body_return_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: Src
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span)
             .with_label("this function does not return its declared return type on every path"),
+    );
+}
+
+pub fn report_any_outside_signature(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("`any` may only appear in a parameter or return type, found `{}`", cx.show(ty)),
+            span,
+        )
+        .with_label("this type carries `any` outside a function signature")
+        .with_help(
+            "`any` describes how a function accepts or hands back a value, not a type a \
+                 field, binding, or generic argument can hold; give the field or binding a \
+                 concrete type instead",
+        ),
     );
 }
 

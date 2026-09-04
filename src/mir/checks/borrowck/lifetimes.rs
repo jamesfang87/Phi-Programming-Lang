@@ -387,10 +387,18 @@ fn mark_operand_alias_used(held: &HeldAliases, operand: &Operand, used: &mut Liv
 
 fn mark_rvalue_aliases_used(held: &HeldAliases, rvalue: &Rvalue, used: &mut LiveAliasSet) {
     match rvalue {
-        Rvalue::Use(operand) | Rvalue::UnaryOp(_, operand) | Rvalue::Cast { operand, .. } => {
+        Rvalue::Use(operand)
+        | Rvalue::UnaryOp(_, operand)
+        | Rvalue::Cast { operand, .. }
+        | Rvalue::New(operand) => {
             mark_operand_alias_used(held, operand, used);
         }
-        Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
+        Rvalue::BinaryOp(_, lhs, rhs)
+        | Rvalue::CheckedBinaryOp(_, lhs, rhs)
+        | Rvalue::NewArray {
+            elem: lhs,
+            count: rhs,
+        } => {
             mark_operand_alias_used(held, lhs, used);
             mark_operand_alias_used(held, rhs, used);
         }

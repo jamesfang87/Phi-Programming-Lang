@@ -9,7 +9,7 @@ use crate::mir::{
     Rvalue, StatementKind, TerminatorKind,
 };
 use crate::nameres::PrimTy;
-use crate::testing::{first_extend_method, first_function, resolve_src};
+use crate::testing::{first_extend_method, first_function, first_struct, resolve_src};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;
 use crate::typeck::tyctx::TyCtx;
@@ -647,6 +647,39 @@ fn a_primitive_cast_produces_a_cast_rvalue_with_the_target_type() {
         matches!(tcx.kind(ty), TyKind::Primitive(PrimTy::I64)),
         "the cast's own recorded type is the target, i64, not the operand's, i32"
     );
+}
+
+#[test]
+fn new_produces_a_new_rvalue() {
+    let (hir, tcx, _types, program) = lower_mir_src("fun f() -> iso i32 { return new 1; }");
+    let body = first_function_body(&program, &hir);
+    let found = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .find_map(|s| match &s.kind {
+            StatementKind::Assign(place, Rvalue::New(_)) => Some(place.clone()),
+            _ => None,
+        });
+    let place = found.expect("`new 1` lowers to a New rvalue");
+    let local_ty = body.local_decls[place.local.index()].ty;
+    assert!(
+        matches!(tcx.kind(local_ty), TyKind::Iso(_)),
+        "the New rvalue is assigned into a local typed `iso T`"
+    );
+}
+
+#[test]
+fn new_array_produces_a_new_array_rvalue_with_both_operands() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src("fun f(n: usize) -> iso [u8] { return new [0_u8; n]; }");
+    let body = first_function_body(&program, &hir);
+    let found = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| matches!(&s.kind, StatementKind::Assign(_, Rvalue::NewArray { .. })));
+    assert!(found, "`new [0_u8; n]` lowers to a NewArray rvalue");
 }
 
 #[test]
@@ -1326,4 +1359,22 @@ fn a_mutably_referenced_place_is_moved_not_copied() {
         "a `&mut` reference is exclusive access, so it is consumed by `Operand::Move`, not \
          `Operand::Copy`: got {call_arg:?}"
     );
+}
+
+#[test]
+fn lower_populates_every_new_mir_field() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "struct Point { x: i32, y: i32 }
+         fun main() -> i32 { let p = Point { x: 1, y: 2 }; return p.x; }",
+    );
+
+    let point_def = first_struct(&hir);
+    assert!(matches!(
+        program.adts.get(&point_def),
+        Some(crate::mir::AdtDef::Struct { fields, .. }) if fields.len() == 2
+    ));
+    assert!(program.array_lens.is_empty());
+    assert!(program.vtables.is_empty());
+    assert_eq!(program.def_names.leaf(point_def), "Point");
+    assert_eq!(program.main, Some(first_function(&hir)));
 }

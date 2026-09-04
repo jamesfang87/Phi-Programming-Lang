@@ -1,0 +1,11 @@
+module core::io;
+
+/// Writes the bytes in buf to the file descriptor fd.
+///
+/// Returns the number of bytes written on success. A negative return value
+/// indicates that the write failed.
+///
+/// fd is an operating-system file descriptor, such as the standard output
+/// or standard error descriptor. The function does not append a terminator
+/// or otherwise modify the contents of buf.
+public fun write_bytes(fd: i32, buf: &[u8]) -> i64;

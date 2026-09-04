@@ -476,6 +476,15 @@ pub enum ExprKind {
         expr: Box<Expr>,
         ty: Ty,
     },
+    /// `new <expr>`: allocates storage for `expr`'s type, moves `expr` into it, and yields
+    /// `iso T`.
+    New(Box<Expr>),
+    /// `new [<elem>; <count>]`: allocates storage for `count` elements, each initialized to
+    /// `elem`, and yields `iso [T]`. Unlike `[T; N]`'s `N`, `count` need not be a constant.
+    NewArray {
+        elem: Box<Expr>,
+        count: Box<Expr>,
+    },
     Error,
 }
 

@@ -108,10 +108,18 @@ fn apply_operand(unread: &mut UnreadLocals, operand: &Operand) {
 
 fn apply_rvalue(unread: &mut UnreadLocals, rvalue: &Rvalue) {
     match rvalue {
-        Rvalue::Use(operand) | Rvalue::UnaryOp(_, operand) | Rvalue::Cast { operand, .. } => {
+        Rvalue::Use(operand)
+        | Rvalue::UnaryOp(_, operand)
+        | Rvalue::Cast { operand, .. }
+        | Rvalue::New(operand) => {
             apply_operand(unread, operand);
         }
-        Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
+        Rvalue::BinaryOp(_, lhs, rhs)
+        | Rvalue::CheckedBinaryOp(_, lhs, rhs)
+        | Rvalue::NewArray {
+            elem: lhs,
+            count: rhs,
+        } => {
             apply_operand(unread, lhs);
             apply_operand(unread, rhs);
         }

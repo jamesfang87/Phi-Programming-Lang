@@ -33,6 +33,7 @@ pub enum TokenKind {
     MatchKw,
     ModuleKw,
     MutKw,
+    NewKw,
     PublicKw,
     ReturnKw,
     LowerSelfKw, // `self`
@@ -61,11 +62,15 @@ pub enum TokenKind {
     U16,
     U32,
     U64,
+    Usize,
     // FLOATING-POINT TYPES
     F32,
     F64,
     // TEXT TYPES
-    String, // `str` type keyword
+    //
+    // `String` is not a keyword: it is an ordinary identifier the core library resolves to a
+    // lang-item-backed struct.
+    Str, // `str`, the second-class text primitive
     Char,
 
     // SYNTAX DELIMITERS
@@ -171,6 +176,7 @@ impl TokenKind {
             TokenKind::MatchKw => "match",
             TokenKind::ModuleKw => "module",
             TokenKind::MutKw => "mut",
+            TokenKind::NewKw => "new",
             TokenKind::PublicKw => "public",
             TokenKind::ReturnKw => "return",
             TokenKind::LowerSelfKw => "self",
@@ -194,9 +200,10 @@ impl TokenKind {
             TokenKind::U16 => "u16",
             TokenKind::U32 => "u32",
             TokenKind::U64 => "u64",
+            TokenKind::Usize => "usize",
             TokenKind::F32 => "f32",
             TokenKind::F64 => "f64",
-            TokenKind::String => "str",
+            TokenKind::Str => "str",
             TokenKind::Char => "char",
             TokenKind::OpenParen => "(",
             TokenKind::CloseParen => ")",

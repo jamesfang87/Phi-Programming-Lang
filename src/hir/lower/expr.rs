@@ -114,6 +114,11 @@ impl OwnerLowerer<'_, '_> {
                 expr: self.lower_expr(expr),
                 ty: self.lower_ty(ty),
             },
+            ast::ExprKind::New(operand) => ExprKind::New(self.lower_expr(operand)),
+            ast::ExprKind::NewArray { elem, count } => ExprKind::NewArray {
+                elem: self.lower_expr(elem),
+                count: self.lower_expr(count),
+            },
             ast::ExprKind::Error => ExprKind::Error,
         }
     }

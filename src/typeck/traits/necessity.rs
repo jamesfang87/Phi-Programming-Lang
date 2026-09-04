@@ -131,14 +131,20 @@ fn a_reference_to_an_implementing_type_does_not_itself_implement() {
 /// ever answer this goal; the trait a `dyn` names is the whole of what it implements, and that is
 /// a rule rather than an entry in a table. Without step 3 the first line below is rejected, and a
 /// trait object could never be passed anywhere its own trait is required.
+///
+/// The bound lives on `Container`'s own generic parameter rather than a struct field, and the
+/// `dyn Show`/`dyn Other` argument sits behind the outer `dyn`'s `&`, not stored anywhere: `dyn`
+/// has no size of its own (`typeck::tests`' `dyn` restriction tests cover that separately), so a
+/// bare one can never be a struct's field type or generic argument in the first place, only a
+/// bound checked at a position like this one.
 #[test]
 fn a_dyn_satisfies_the_trait_it_names_and_no_other() {
     let messages = typeck_src(
         "trait Show { fun show(&self); }
          trait Other { fun other(&self); }
-         struct Sorted<T: Show> { inner: T }
-         fun f(x: Sorted<dyn Show>) {}
-         fun g(x: Sorted<dyn Other>) {}",
+         trait Container<T: Show> { fun get(&self) -> T; }
+         fun f(x: &dyn Container<dyn Show>) {}
+         fun g(x: &dyn Container<dyn Other>) {}",
     );
     assert_eq!(
         messages,

@@ -173,6 +173,8 @@ fn prim_name(prim: PrimTy) -> &'static str {
         PrimTy::F64 => "f64",
         PrimTy::Bool => "bool",
         PrimTy::Char => "char",
+        PrimTy::Usize => "usize",
+        PrimTy::Str => "str",
     }
 }
 

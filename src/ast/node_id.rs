@@ -22,7 +22,6 @@ mod tests {
     use std::sync::Mutex;
     use std::thread;
 
-    /// Allocating `NodeId`s from several threads at once should never hand out a duplicate.
     #[test]
     fn concurrent_allocation_never_duplicates_an_id() {
         let seen: Mutex<Vec<NodeId>> = Mutex::new(Vec::new());

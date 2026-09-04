@@ -11,11 +11,15 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 
 use crate::driver::cli::Mode;
-use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
+use crate::hir::{DefId, Hir, HirId, Node, OwnerNode, StmtKind};
+use crate::langitems::hir::LangItems;
+use crate::mir::adt::{collect_adt_defs, AdtDef};
+use crate::mir::def_names::{collect_def_names, DefNames};
 use crate::mir::lower::ctx::BodyLowerCtx;
+use crate::mir::vtables::{collect_vtables, VtableInfo};
 use crate::mir::{AnyMode, Body};
 use crate::typeck::results::TypeResolutions;
-use crate::typeck::ty::TyKind;
+use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
 /// One unit of lowering work. `Ordinary` is a definition with no `any` anywhere in its
@@ -49,6 +53,12 @@ impl Task {
 /// argument list.
 pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
+    pub adts: HashMap<DefId, AdtDef>,
+    pub vtables: HashMap<(Ty, DefId), VtableInfo>,
+    pub array_lens: HashMap<HirId, u64>,
+    pub def_names: DefNames,
+    pub lang_items: LangItems,
+    pub main: Option<DefId>,
 }
 
 /// Whether `def_id`'s return type is itself `any T`, the one condition the README ties `any`
@@ -113,5 +123,77 @@ pub fn lower(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) ->
         bodies.insert(key, body);
     }
 
-    Mir { bodies }
+    Mir {
+        bodies,
+        adts: collect_adt_defs(hir, types),
+        vtables: collect_vtables(hir, types),
+        array_lens: collect_array_lens(tcx, hir),
+        def_names: collect_def_names(hir),
+        lang_items: hir.lang_items().clone(),
+        main: find_crate_root_main(hir),
+    }
+}
+
+fn collect_array_lens(tcx: &TyCtx, hir: &Hir) -> HashMap<HirId, u64> {
+    let mut out = HashMap::new();
+    for ty in tcx.all_tys() {
+        if let TyKind::Array { len: Some(len_id), .. } = tcx.kind(ty) {
+            out.entry(*len_id)
+                .or_insert_with(|| array_len_from_hir(hir, *len_id));
+        }
+    }
+    out
+}
+
+fn array_len_from_hir(hir: &Hir, len_id: HirId) -> u64 {
+    use crate::ast::Literal;
+    use crate::ast::interner::Interner;
+    use crate::hir::ExprKind;
+
+    let expr = hir.expr(len_id);
+    match &expr.kind {
+        ExprKind::Literal(Literal::Int { value, .. }) => Interner::resolve(*value)
+            .parse::<u64>()
+            .unwrap_or_else(|_| panic!("array length literal {value:?} does not parse as u64")),
+        _ => panic!("array length must be an integer literal in v1 codegen"),
+    }
+}
+
+fn is_named_main(hir: &Hir, def: DefId) -> bool {
+    matches!(
+        hir.def(def),
+        OwnerNode::Function(f) if crate::ast::interner::Interner::resolve(f.name.text) == "main"
+    )
+}
+
+fn find_crate_root_main(hir: &Hir) -> Option<DefId> {
+    let root = hir.root();
+    let mut candidates: Vec<DefId> = root
+        .items
+        .iter()
+        .copied()
+        .filter(|&def| is_named_main(hir, def))
+        .collect();
+
+    for &item in &root.items {
+        if let OwnerNode::Module(child) = hir.def(item) {
+            candidates.extend(
+                child
+                    .items
+                    .iter()
+                    .copied()
+                    .filter(|&def| is_named_main(hir, def)),
+            );
+        }
+    }
+
+    match candidates.as_slice() {
+        [] => None,
+        [one] => Some(*one),
+        _ => panic!(
+            "found {} `main` functions at the crate root; the OS entry point is ambiguous: {:?}",
+            candidates.len(),
+            candidates
+        ),
+    }
 }

@@ -7,12 +7,12 @@ use crate::diagnostics::typeck::pat::{
 };
 use crate::diagnostics::typeck::traits::solve::report_operator_trait_missing;
 use crate::diagnostics::typeck::{
-    report_binary_operand_mismatch, report_binding_type_mismatch, report_body_return_mismatch,
-    report_int_suffix_on_float_literal, report_logic_op_needs_bool_operands,
-    report_operand_has_unknown_type, report_reference_field, report_return_mismatch,
-    report_str_literal_untyped, report_unknown_literal_suffix,
+    report_any_outside_signature, report_binary_operand_mismatch, report_binding_type_mismatch,
+    report_bodiless_function, report_body_return_mismatch, report_int_suffix_on_float_literal,
+    report_logic_op_needs_bool_operands, report_operand_has_unknown_type, report_reference_field,
+    report_return_mismatch, report_unknown_literal_suffix,
 };
-use crate::driver::source::SrcSpan;
+use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
     DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, PatKind, Res, StmtKind, VariantPayload,
@@ -77,8 +77,6 @@ impl<'hir> Typeck<'hir> {
     }
 
     pub fn collect_function(&mut self, function: DefId) {
-        // Re-borrowed as `&'hir Hir` so the values read through it can outlive this method's
-        // mutable borrow of `self`, with nothing needing to be cloned to escape it.
         let hir: &'hir Hir = self.hir;
         let function_node = hir.function(function);
         let (generics, self_param, params, ret) = (
@@ -90,20 +88,26 @@ impl<'hir> Typeck<'hir> {
 
         self.collect_generics(generics);
 
-        // The receiver, if there is one, is treated as an ordinary first parameter here, so the
-        // rest of the signature is built the same way for every function.
         let mut param_tys = Vec::with_capacity(params.len() + usize::from(self_param.is_some()));
         if let Some(id) = self_param {
             param_tys.push(self.collect_self_param(id));
         }
+
         for &id in params {
             let param = hir.param(id);
 
             let ty = self.lower_ty(param.ty);
             self.types.record(id, ty);
+            self.check_no_dyn(ty, hir.ty(param.ty).span);
             param_tys.push(ty);
         }
-        let ret = ret.map(|ret| self.lower_ty(ret));
+
+        let ret = ret.map(|ret| {
+            let ret_span = hir.ty(ret).span;
+            let ret = self.lower_ty(ret);
+            self.check_no_dyn(ret, ret_span);
+            ret
+        });
 
         let sig = self.tcx.mk_fun(param_tys, ret);
         self.types.record_def(function, sig);
@@ -130,8 +134,6 @@ impl<'hir> Typeck<'hir> {
         let (generics, fields, span) =
             (&struct_node.generics, &struct_node.fields, struct_node.span);
 
-        // The generics have to be recorded first: the struct's type is itself applied to
-        // them.
         self.collect_generics(generics);
         let self_ty = self.self_ty(r#struct, span);
         self.types.record_def(r#struct, self_ty);
@@ -158,6 +160,8 @@ impl<'hir> Typeck<'hir> {
                     let ty = self.lower_ty(*ty_id);
                     self.types.record(id, ty);
                     self.check_not_a_reference(ty, payload_span);
+                    self.check_not_any(ty, payload_span);
+                    self.check_no_dyn(ty, payload_span);
                 }
                 VariantPayload::Record(fields) => self.collect_fields(fields),
             }
@@ -170,8 +174,6 @@ impl<'hir> Typeck<'hir> {
         let (generics, span) = (&trait_node.generics, trait_node.span);
 
         self.collect_generics(generics);
-        // A trait names no type of its own, so what it gets recorded as is the `Self` it stands
-        // for: the placeholder every implementing type substitutes.
         let self_ty = self.self_ty(r#trait, span);
         self.types.record_def(r#trait, self_ty);
     }
@@ -186,13 +188,10 @@ impl<'hir> Typeck<'hir> {
             extend_node.span,
         );
 
-        // The first group declares parameters, the other two apply arguments
         self.collect_generics(extend_generics);
         self.lower_tys(adt_generics);
         self.lower_tys(trait_generics);
 
-        // Which is the extended type applied to `adt_generics`, so this is also what `Self`
-        // means inside each method of the block.
         let self_ty = self.self_ty(extend, span);
         self.types.record_def(extend, self_ty);
     }
@@ -212,17 +211,20 @@ impl<'hir> Typeck<'hir> {
             let ty = self.lower_ty(field.ty);
             self.types.record(id, ty);
             self.check_not_a_reference(ty, field_span);
+            self.check_not_any(ty, field_span);
+            self.check_no_dyn(ty, field_span);
         }
     }
 
-    /// Rejects `ty` as a field's or a variant payload's own type if it stores a reference
-    /// anywhere within it, since a struct or enum has to own every value it holds. This is
-    /// what keeps a generic struct or enum from ever holding one too: `self.lower_def` refuses
-    /// to substitute a reference for a generic parameter in the first place, so a field
-    /// declared with an abstract type never ends up holding one behind the scenes.
     fn check_not_a_reference(&mut self, ty: Ty, span: SrcSpan) {
         if self.tcx.contains_ref(ty) {
             report_reference_field(self.display_cx(), ty, span);
+        }
+    }
+
+    fn check_not_any(&mut self, ty: Ty, span: SrcSpan) {
+        if self.tcx.contains_any(ty) {
+            report_any_outside_signature(self.display_cx(), ty, span);
         }
     }
 
@@ -232,7 +234,6 @@ impl<'hir> Typeck<'hir> {
         Check(self).visit_module(module);
     }
 
-    /// Returns the type of the node `id` names.
     fn ty_of(&mut self, id: HirId) -> Ty {
         self.ty_of_expecting(id, None)
     }
@@ -242,9 +243,6 @@ impl<'hir> Typeck<'hir> {
             return self.unifier.find_deep(&mut self.tcx, ty);
         }
 
-        // An expression is the only node that works its own type out on demand. Everything else
-        // is recorded by the collection pass that declares it, so one reaching here means a pass
-        // ran out of order.
         debug_assert!(
             matches!(self.hir.node(id), Node::Expr(_)),
             "{} node {id:?} was asked for its type before whatever records one ran",
@@ -256,8 +254,6 @@ impl<'hir> Typeck<'hir> {
         self.unifier.find_deep(&mut self.tcx, ty)
     }
 
-    /// Replaces every type recorded for `owner`'s nodes with its fully resolved form, once that
-    /// owner's body has been checked.
     fn writeback(&mut self, owner: DefId) {
         let entries: Vec<(HirId, Ty)> = self
             .types
@@ -392,6 +388,8 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Block(block_id) => self.check_block_expecting(*block_id, expected),
             ExprKind::Closure(def) => self.check_closure(*def, expected),
             ExprKind::Cast { expr: operand, ty } => self.check_cast(*operand, *ty, expr.span),
+            ExprKind::New(operand) => self.check_new(*operand),
+            ExprKind::NewArray { elem, count } => self.check_new_array(*elem, *count),
             ExprKind::Error => self.tcx.error(),
         }
     }
@@ -400,9 +398,6 @@ impl<'hir> Typeck<'hir> {
         let operand = self.peel_any(operand);
         let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
 
-        // The trait the operator dispatches to, and what the expression produces once it does.
-        // Every `core::ops` trait an arithmetic operator names returns `Self`, so those produce
-        // the operand's own type, and the comparisons produce `bool`.
         let (item, produced) = match op {
             BinaryOp::Add => (LangItem::Add, operand),
             BinaryOp::Sub => (LangItem::Sub, operand),
@@ -414,8 +409,6 @@ impl<'hir> Typeck<'hir> {
                 (LangItem::Comparable, bool_ty)
             }
             BinaryOp::And | BinaryOp::Or => {
-                // Not overloadable, so there is no trait to reach for and nothing to produce but
-                // the `bool` both operands already have to be.
                 if let Err(error) = self.unifier.unify(&self.tcx, operand, bool_ty) {
                     report_logic_op_needs_bool_operands(self.display_cx(), error, operand, span);
                 }
@@ -502,10 +495,7 @@ impl<'hir> Typeck<'hir> {
                     }
                 },
             },
-            Literal::Str(_) => {
-                report_str_literal_untyped(span);
-                self.tcx.error()
-            }
+            Literal::Str(_) => self.tcx.mk_prim(PrimTy::Str),
         }
     }
 
@@ -571,7 +561,13 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn check_binding(&mut self, pat: HirId, ty: Option<HirId>, init: HirId, span: SrcSpan) {
-        let declared = ty.map(|ty| self.lower_ty(ty));
+        let declared = ty.map(|ty_id| {
+            let declared = self.lower_ty(ty_id);
+            let span = self.hir.ty(ty_id).span;
+            self.check_not_any(declared, span);
+            self.check_no_dyn(declared, span);
+            declared
+        });
         let init_ty = self.ty_of_expecting(init, declared);
 
         let bound = match declared {
@@ -611,9 +607,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The parameter types and the return type `def`'s own signature lowered to, with `self`
-    /// counted as the first parameter (see [`collect_function`](Typeck::collect_function)).
-    /// `None` for a definition that is not a function.
     pub(crate) fn signature(&mut self, def: DefId) -> Option<(Vec<Ty>, Option<Ty>)> {
         let sig = self.ty_of(def.owner_id());
         match self.tcx.kind(sig) {
@@ -622,8 +615,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The type a `return` inside `owner` has to produce, which is `Unit` wherever no return type
-    /// is declared.
     fn return_ty(&mut self, owner: DefId) -> Ty {
         match self.signature(owner) {
             Some((_, Some(ret))) => ret,
@@ -664,8 +655,6 @@ impl<'hir> Typeck<'hir> {
             self.check_stmt(stmt);
             diverges |= match self.hir.stmt(stmt).kind {
                 StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue => true,
-                // An `if` written as a bare statement can itself diverge on every branch, so
-                // its expression type is checked against `Never` too.
                 StmtKind::Expr(expr) => self.ty_of(expr) == self.tcx.never(),
                 _ => false,
             };
@@ -682,14 +671,35 @@ impl<'hir> Typeck<'hir> {
     pub fn check_function(&mut self, function: DefId) {
         let function_node = self.hir.function(function);
 
-        if let Some(block) = function_node.block {
-            let ret = self.return_ty(function);
-            let body = self.check_block_expecting(block, Some(ret));
-            if let Err(err) = self.unify_allowing_any(ret, body) {
-                report_body_return_mismatch(self.display_cx(), err, function_node.span);
+        match function_node.block {
+            Some(block) => {
+                let ret = self.return_ty(function);
+                let body = self.check_block_expecting(block, Some(ret));
+                if let Err(err) = self.unify_allowing_any(ret, body) {
+                    report_body_return_mismatch(self.display_cx(), err, function_node.span);
+                }
             }
+            None => self.check_bodiless_function(function, function_node.span),
         }
         self.writeback(function);
+    }
+
+    fn check_bodiless_function(&mut self, function: DefId, span: SrcSpan) {
+        let parent = self
+            .hir
+            .parent(function)
+            .expect("a function is never the root module, so it always has a parent");
+        if !matches!(self.hir.def(parent), OwnerNode::Module(_)) {
+            return;
+        }
+
+        let declared_in_core = SrcMap::file_containing(span.get_begin())
+            .is_some_and(|file| file.origin == FileOrigin::Core);
+        let is_write_bytes = self.hir.lang_items().get(LangItem::WriteBytes) == Some(function);
+
+        if !declared_in_core || !is_write_bytes {
+            report_bodiless_function(span);
+        }
     }
 }
 
@@ -784,18 +794,16 @@ mod tests {
     use crate::testing::{
         Stage, checker_through, find_return, first_extend_method, first_function, first_struct,
         first_trait, resolve_src, typeck_accepts as accepts, typeck_rejects as rejects,
+        typeck_src_as_core,
     };
     use crate::typeck::unify::UnifyError;
 
-    /// Builds a `Typeck` with every signature collected, ready for `check_stmt` to be called
-    /// directly on one of `def`'s statements.
     fn checker_with_signatures_collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
         checker_through(hir, Stage::Collect)
     }
 
     #[test]
     fn return_stmt_accepts_a_value_matching_the_return_type() {
-        // `0`'s int-inference var unifies fine with the declared `i32` return type.
         let hir = resolve_src("fun f() -> i32 { return 0; }");
         let def = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def);
@@ -825,9 +833,6 @@ mod tests {
 
     #[test]
     fn return_stmt_in_a_function_with_no_declared_return_type_rejects_a_value() {
-        // No `-> T` means the function returns `Unit`, so returning a `bool` from it is an
-        // error. This used to lower to `Never` instead, which unifies with everything and so
-        // accepted any returned value at all.
         let hir = resolve_src("fun f() { return true; }");
         let def = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def);
@@ -841,23 +846,16 @@ mod tests {
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
-    /// A bare `return;`, with no expression, produces `Unit`, exactly what a function with no
-    /// declared return type itself produces, so the two agree.
     #[test]
     fn a_bare_return_with_no_declared_return_type_checks() {
         accepts("fun f() { return; }");
     }
 
-    /// A bare `return;` still has to agree with a *declared* return type, the same as `return`
-    /// with a value does.
     #[test]
     fn a_bare_return_in_a_function_declaring_a_return_type_is_rejected() {
         rejects("fun f() -> i32 { return; }", "mismatched types");
     }
 
-    /// Defect 2's end-to-end shape: `Never`/`Error`/`Unit` are interned once per pass, so a
-    /// merge involving one used to leak across every function checked afterwards. Both of these
-    /// functions are individually valid, and checking them together must stay that way.
     #[test]
     fn two_functions_with_no_return_type_do_not_interfere() {
         let hir = resolve_src(
@@ -872,25 +870,39 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
+    #[test]
+    fn bodiless_free_function_in_a_user_file_is_rejected() {
+        rejects("fun write_bytes(fd: i32) -> i64;", "no body");
+    }
+
+    #[test]
+    fn bodiless_free_function_in_a_core_file_with_an_unknown_name_is_rejected() {
+        let reported = typeck_src_as_core("module core::io; fun mystery_intrinsic() -> i64;");
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(reported[0].contains("no body"), "{reported:?}");
+    }
+
+    #[test]
+    fn write_bytes_declared_in_core_is_accepted() {
+        let reported = typeck_src_as_core(
+            "module core::io; public fun write_bytes(fd: i32, buf: &[u8]) -> i64;",
+        );
+        assert!(reported.is_empty(), "{reported:?}");
+    }
+
+    #[test]
+    fn bodiless_trait_method_is_unaffected() {
+        accepts("trait Shape { fun area(&self) -> i32; }");
+    }
+
     // -----------------------------------------------------------------
     // check_expr
     // -----------------------------------------------------------------
 
-    /// A checker with signatures collected and the extend index built, ready to answer trait
-    /// questions, which is what [`Typeck::implements_operator`] needs, since it is reached
-    /// through [`Typeck::extends`] rather than the plain unifier.
     fn checker_with_impls_built<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
         checker_through(hir, Stage::Index)
     }
 
-    /// The `DefId` of the first item anywhere in `hir`'s module tree that `pred` accepts,
-    /// recursing into submodules.
-    ///
-    /// [`first_function`]/[`first_struct`] only look at the root module's own items, which is
-    /// enough for a fixture with no `module` header of its own. A lang item's own trait has to
-    /// live at its real path (`core::ops::Add`, for [`LangItem::path`]) to resolve at all, so
-    /// these tests nest their fixture's whole program under `module core::ops;` and need to find
-    /// their way back into it.
     fn find_owner(hir: &Hir, from: DefId, pred: &impl Fn(&OwnerNode) -> bool) -> DefId {
         find_owner_opt(hir, from, pred)
             .unwrap_or_else(|| panic!("no item matching the predicate anywhere under {from:?}"))
@@ -912,11 +924,6 @@ mod tests {
         None
     }
 
-    /// `a + b` on a struct with an `extend Foo with Add` block resolves through the solver:
-    /// [`Typeck::implements_operator`] asks [`Typeck::extends`] whether `Foo` implements the trait
-    /// `LangItem::Add` names, gets back `Solution::Holds`, and the arm returns `Foo` itself as
-    /// the result, since every operator trait in `core::ops` returns `Self`, so there is no
-    /// associated type to project.
     #[test]
     fn binary_add_on_a_struct_with_an_add_impl_resolves_through_the_solver() {
         let hir = resolve_src(
@@ -952,8 +959,6 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
-    /// The same shape, minus the `extend` block: `Solution::DoesNotHold` reports that `Foo`
-    /// doesn't implement `Add`, the same way an unsatisfied bound would.
     #[test]
     fn binary_add_on_a_struct_with_no_add_impl_is_rejected() {
         let hir = resolve_src(
@@ -984,9 +989,6 @@ mod tests {
         assert!(diagnostics[0].message.contains("Add"), "{diagnostics:?}");
     }
 
-    /// `1 + 2` never reaches the solver at all: an operand still typed as a primitive short-
-    /// circuits `implements_operator` entirely, so ordinary arithmetic keeps working in a
-    /// fixture with no core library, and so no lang items, in sight.
     #[test]
     fn binary_add_on_primitives_bypasses_the_solver() {
         let hir = resolve_src("fun f() -> i32 { return 1 + 2; }");
@@ -1000,14 +1002,6 @@ mod tests {
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
-    /// Defect: `is_builtin_operand`'s predecessor recognized only an already-concrete
-    /// primitive, so two unsuffixed literals, neither one resolved yet, fell through to
-    /// the solver, which answered `Ambiguous`, which `implements_operator` (rightly) does not
-    /// report. The whole expression silently checked to `Error` instead of `i32`, with no
-    /// diagnostic anywhere: `Error` absorbs into the `return` type's unification and the
-    /// mistake vanishes. `binary_add_on_primitives_bypasses_the_solver` above only ever
-    /// asserted "no diagnostics", which this defect also satisfied, so this test checks the
-    /// actual resolved type instead.
     #[test]
     fn binary_add_between_two_unresolved_int_literals_resolves_to_the_return_type() {
         let hir = resolve_src("fun f() -> i32 { return 1 + 2; }");
@@ -1028,11 +1022,6 @@ mod tests {
         );
     }
 
-    /// The genuinely ambiguous case `is_builtin_operand` does not, and should not, swallow: two
-    /// operands that stay wholly unconstrained variables all the way to the operator, with
-    /// nothing anywhere pinning either one down. Reported immediately rather than silently
-    /// becoming `Error`, the same way an unknown method receiver is: there is no later pass
-    /// this could be deferred to that would ever know more.
     #[test]
     fn an_operator_on_two_still_unresolved_operands_needs_an_annotation() {
         use crate::testing::typeck_rejects;
@@ -1048,9 +1037,6 @@ mod tests {
         );
     }
 
-    /// `ty_of` records on first use and reads through the unifier afterwards, so a type read
-    /// back after it has been unified with something concrete comes back as the concrete type
-    /// rather than the variable that was originally recorded.
     #[test]
     fn a_type_read_back_after_unification_is_the_unified_type() {
         let hir = resolve_src("fun f() -> i32 { return 1; }");
@@ -1073,9 +1059,6 @@ mod tests {
         assert_eq!(checker.ty_of(expr_id), i32_ty);
     }
 
-    /// Reading through the unifier only helps while the unifier is still around. `writeback`
-    /// bakes the resolution into the table so that everything downstream of the pass, which
-    /// gets the table and the `TyCtx`, but no union-find, reads settled types.
     #[test]
     fn writeback_leaves_no_unresolved_variables_behind() {
         let hir = resolve_src("fun f() -> i32 { return 1; }");
@@ -1096,10 +1079,6 @@ mod tests {
         );
     }
 
-    /// A local whose initializer is never unified against anything else, with no annotation and
-    /// no later use pinning its type down, still leaves `writeback` with a bare `TyVar` to
-    /// resolve. `default_unconstrained` is what turns that into `i32`, the same fallback an
-    /// unsuffixed integer literal gets in Rust.
     #[test]
     fn an_unconstrained_int_literal_defaults_to_i32() {
         let hir = resolve_src("fun f() { let x = 5; }");
@@ -1216,7 +1195,6 @@ mod tests {
         assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::F32));
     }
 
-    /// A whole number written with a float suffix is that float, not an error: `5_f64` is `5.0`.
     #[test]
     fn whole_number_with_a_float_suffix_checks_to_the_float_primitive() {
         let hir = resolve_src("fun f() -> f64 { return 5_f64; }");
@@ -1308,7 +1286,7 @@ mod tests {
             "fun g() -> bool { return true; }
              fun f() -> bool { return g; }",
         );
-        // `first_function` finds `g`; `f` is the second top-level function.
+
         let module = hir.root();
         let g_def = first_function(&hir);
         let f_def = module
@@ -1562,8 +1540,6 @@ mod tests {
         assert_eq!(checker.display_cx().show(ty).to_string(), "dyn Greet");
     }
 
-    /// A `UnifyError` renders itself, so the wording lives next to the variant it explains
-    /// rather than in a `match` somewhere in the checker.
     #[test]
     fn a_mismatch_names_both_types_as_the_user_wrote_them() {
         let hir = resolve_src("fun f() {}");
@@ -1593,29 +1569,16 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // A function's body is checked against its declared return type: see `check_function`'s doc
-    // comment for how one `unify` against the body's own `check_block_expecting` result covers
-    // all three shapes below at once.
-    // -----------------------------------------------------------------
-
-    /// A function's trailing expression is checked against its own declared return type, the
-    /// same as the equivalent closure already was (see
-    /// `a_closure_checks_to_a_function_type_of_its_parameters_and_body` in `expr.rs`).
     #[test]
     fn a_functions_trailing_expression_is_checked_against_its_return_type() {
         rejects("fun f() -> i32 { true }", "mismatched types");
     }
 
-    /// An empty body produces `()`, which is rejected for a function declaring any other return
-    /// type.
     #[test]
     fn an_empty_body_is_checked_against_a_declared_return_type() {
         rejects("fun f() -> i32 {}", "mismatched types");
     }
 
-    /// Only the `if` branch returns; falling through the missing `else` produces `()`, not the
-    /// declared `i32`.
     #[test]
     fn a_partial_return_does_not_guarantee_every_path_produces_the_declared_type() {
         rejects(
@@ -1624,18 +1587,11 @@ mod tests {
         );
     }
 
-    /// An `if`/`else` that returns on every branch is accepted as the body's tail expression --
-    /// `check_if` unifies the two branches together, and a branch whose own block diverged is
-    /// `Never`, which is what lets this differ from the previous test's missing `else`.
     #[test]
     fn a_function_body_ending_in_an_if_else_that_always_returns_checks() {
         accepts("fun f(c: bool) -> i32 { if c { return 1; } else { return 2; } }");
     }
 
-    /// The same `if`/`else`, but written as a statement (note the trailing `;`) with unreachable
-    /// code after it rather than as the block's tail expression. `check_block_expecting` has to
-    /// recognize this case by the `if`'s own checked type coming out `Never`, since it is not
-    /// literally a `return`/`break`/`continue` at the statement level.
     #[test]
     fn a_statement_position_if_else_that_always_returns_still_lets_later_code_check() {
         accepts(
@@ -1647,11 +1603,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Primitives, broadly
+    // Primitives
     // -----------------------------------------------------------------
 
-    /// Every integer primitive is usable as a parameter and return type, and round-trips through
-    /// a bare `return` unchanged.
     #[test]
     fn every_integer_primitive_round_trips_through_a_function_signature() {
         for name in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"] {
@@ -1689,43 +1643,22 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // `&&` and `||`: not overloadable, and require `bool` on both sides
-    // -----------------------------------------------------------------
-
     #[test]
     fn and_and_or_accept_two_bools() {
         accepts("fun f(a: bool, b: bool) -> bool { return a && b; }");
         accepts("fun f(a: bool, b: bool) -> bool { return a || b; }");
     }
 
-    /// `1 && true` is one mistake, one diagnostic (the stated design principle behind
-    /// `TyKind::Error`/`Never` absorbing everywhere else in this pass): the `Binary` arm's own
-    /// `unify(lhs, rhs)` fails, reports it, and returns `Error` immediately rather than letting
-    /// `check_operator`'s `And`/`Or` branch unify the same still-unresolved operand against
-    /// `bool` and report the identical mismatch a second time.
     #[test]
     fn and_rejects_operands_of_different_types_exactly_once() {
         rejects("fun f() { let x = 1 && true; }", "mismatched types");
     }
 
-    /// Two operands that agree with each other but are not `bool` are still rejected: `&&`/`||`
-    /// are hardcoded to `bool` and never reach the solver at all. The specific "need bool
-    /// operands" wording lives in the diagnostic's label, not its top-level message, so it is
-    /// checked against `UnifyError`'s own rendering instead; see
-    /// `an_int_var_mismatch_says_an_integer_type_was_expected` above for that wording's source.
     #[test]
     fn and_rejects_two_operands_of_the_same_non_bool_type() {
         rejects("fun f() { let x = 1 && 2; }", "expected an integer type");
     }
 
-    // -----------------------------------------------------------------
-    // Every operator lang item on one struct
-    // -----------------------------------------------------------------
-
-    /// One `extend` block providing every operator trait `core::ops` declares, exercising each
-    /// operator once. `Comparable` alone backs all four of `<`/`<=`/`>`/`>=`, and `Eq` backs both
-    /// `==` and `!=`; see `Typeck::check_operator`.
     #[test]
     fn a_struct_implementing_every_operator_trait_supports_every_operator() {
         accepts(
@@ -1772,9 +1705,6 @@ mod tests {
         );
     }
 
-    /// Each operator names its own trait in the diagnostic when the implementation is missing,
-    /// not a generic "operator" message: `Sub`, `Neg`, and `Comparable` here, matching the
-    /// already-covered `Add` case.
     #[test]
     fn sub_neg_and_comparable_each_report_their_own_missing_trait() {
         rejects(
@@ -1801,11 +1731,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Shadowing and recursion, checked (not just resolved)
+    // Shadowing and recursion
     // -----------------------------------------------------------------
 
-    /// A `let` may rebind a name at a different type; the later binding is what a subsequent use
-    /// sees, and its type is unaffected by the type the same name had before.
     #[test]
     fn a_let_may_rebind_a_name_at_a_different_type() {
         accepts(
@@ -1817,7 +1745,6 @@ mod tests {
         );
     }
 
-    /// A block-scoped shadow does not affect the outer binding once the inner block ends.
     #[test]
     fn a_block_scoped_shadow_does_not_leak_out() {
         accepts(
@@ -1850,15 +1777,14 @@ mod tests {
         );
     }
 
-    /// A struct field has to own the value it holds, so a field typed as a reference is
-    /// rejected, even one that would only self-reference the struct it appears in.
     #[test]
     fn a_struct_field_that_is_a_reference_is_rejected() {
-        rejects("struct Node { next: &Node }", "a field cannot hold a reference");
+        rejects(
+            "struct Node { next: &Node }",
+            "a field cannot hold a reference",
+        );
     }
 
-    /// The same rule applies to an enum variant's payload, whether it is a bare type or a
-    /// record field.
     #[test]
     fn an_enum_variant_payload_that_is_a_reference_is_rejected() {
         rejects(
@@ -1875,8 +1801,6 @@ mod tests {
         );
     }
 
-    /// A reference nested inside a tuple or an array field is still a reference stored inline,
-    /// so it is rejected the same as a bare `&T` field.
     #[test]
     fn a_tuple_field_containing_a_reference_is_rejected() {
         rejects(
@@ -1893,21 +1817,40 @@ mod tests {
         );
     }
 
-    /// Even though a generic field is only ever declared with the abstract parameter `T`,
-    /// instantiating that parameter with a reference is rejected at the instantiation site,
-    /// since there is no way to tell, from the struct's own declaration, whether `T` ends up
-    /// in field position.
     #[test]
-    fn instantiating_a_generic_struct_with_a_reference_argument_is_rejected() {
+    fn instantiating_a_generic_struct_with_a_reference_argument_in_a_field_is_rejected() {
         rejects(
             "struct Boxed<T> { value: T }
+             struct Outer { boxed: Boxed<&i32> }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    #[test]
+    fn instantiating_a_generic_struct_with_a_reference_argument_as_a_parameter_checks() {
+        accepts(
+            "struct Boxed<T> { value: T }
              fun f(b: Boxed<&i32>) {}",
+        );
+    }
+
+    #[test]
+    fn instantiating_a_generic_struct_with_a_reference_argument_as_a_return_type_checks() {
+        accepts(
+            "struct Boxed<T> { value: T }
+             fun f(b: &i32) -> Boxed<&i32> { return Boxed { value: b }; }",
+        );
+    }
+
+    #[test]
+    fn extending_a_generic_struct_with_a_reference_argument_is_rejected() {
+        rejects(
+            "struct Boxed<T> { value: T }
+             extend Boxed<&i32> { fun get(&self) {} }",
             "a struct or enum cannot be instantiated with a reference",
         );
     }
 
-    /// A generic struct instantiated with an owned type still checks, which confirms the
-    /// previous rejection is about the reference argument specifically, not about generics.
     #[test]
     fn instantiating_a_generic_struct_with_an_owned_argument_checks() {
         accepts(
@@ -1916,16 +1859,148 @@ mod tests {
         );
     }
 
-    /// The restriction is on struct/enum fields, not on references generally: a plain
-    /// reference-typed function parameter is unaffected.
     #[test]
     fn a_reference_typed_function_parameter_still_checks() {
         accepts("fun f(x: &i32) {}");
     }
 
     // -----------------------------------------------------------------
-    // `let`: refutability against `else`
+    // `any` is confined to a function's parameter and return types
     // -----------------------------------------------------------------
+
+    #[test]
+    fn any_as_a_parameter_or_return_type_checks() {
+        accepts("fun f(x: any i32) -> any i32 { return x; }");
+    }
+
+    #[test]
+    fn a_struct_field_that_is_any_is_rejected() {
+        rejects(
+            "struct Wrap { inner: any i32 }",
+            "`any` may only appear in a parameter or return type",
+        );
+    }
+
+    #[test]
+    fn an_enum_variant_payload_that_is_any_is_rejected() {
+        rejects(
+            "enum Opt { some: any i32, none }",
+            "`any` may only appear in a parameter or return type",
+        );
+    }
+
+    #[test]
+    fn a_tuple_field_containing_any_is_rejected() {
+        rejects(
+            "struct Pair { both: (i32, any i32) }",
+            "`any` may only appear in a parameter or return type",
+        );
+    }
+
+    #[test]
+    fn instantiating_a_generic_struct_with_any_as_the_argument_is_rejected() {
+        rejects(
+            "struct Boxed<T> { value: T }
+             fun f(b: Boxed<any i32>) {}",
+            "`any` may only appear in a parameter or return type",
+        );
+    }
+
+    #[test]
+    fn a_let_binding_annotated_any_is_rejected() {
+        rejects(
+            "fun f(x: any i32) { let y: any i32 = x; }",
+            "`any` may only appear in a parameter or return type",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `dyn` requires wrapping with `&` or `iso`
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_bare_dyn_parameter_is_rejected() {
+        rejects(
+            "trait Show { fun show(&self); }
+             fun f(x: dyn Show) {}",
+            "`dyn` has no size known at compile time",
+        );
+    }
+
+    #[test]
+    fn a_bare_dyn_return_type_is_rejected() {
+        let messages = crate::testing::typeck_src(
+            "trait Show { fun show(&self); }
+             fun f() -> dyn Show { }",
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("`dyn` has no size known at compile time")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn a_reference_typed_dyn_parameter_checks() {
+        accepts(
+            "trait Show { fun show(&self); }
+             fun f(x: &dyn Show) {}",
+        );
+    }
+
+    #[test]
+    fn an_iso_typed_dyn_parameter_checks() {
+        accepts(
+            "trait Show { fun show(&self); }
+             fun f(x: iso dyn Show) {}",
+        );
+    }
+
+    #[test]
+    fn a_struct_field_that_is_a_bare_dyn_is_rejected() {
+        rejects(
+            "trait Show { fun show(&self); }
+             struct Wrap { inner: dyn Show }",
+            "`dyn` has no size known at compile time",
+        );
+    }
+
+    #[test]
+    fn a_struct_field_that_is_a_reference_to_dyn_is_rejected() {
+        rejects(
+            "trait Show { fun show(&self); }
+             struct Wrap { inner: &dyn Show }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    #[test]
+    fn a_struct_field_that_is_an_iso_dyn_checks() {
+        accepts(
+            "trait Show { fun show(&self); }
+             struct Wrap { inner: iso dyn Show }",
+        );
+    }
+
+    #[test]
+    fn instantiating_a_generic_struct_with_a_bare_dyn_argument_in_a_field_is_rejected() {
+        rejects(
+            "trait Show { fun show(&self); }
+             struct Boxed<T> { value: T }
+             struct Outer { boxed: Boxed<dyn Show> }",
+            "`dyn` has no size known at compile time",
+        );
+    }
+
+    #[test]
+    fn instantiating_a_generic_struct_with_an_iso_dyn_argument_in_a_field_checks() {
+        accepts(
+            "trait Show { fun show(&self); }
+             struct Boxed<T> { value: T }
+             struct Outer { boxed: Boxed<iso dyn Show> }",
+        );
+    }
 
     #[test]
     fn a_plain_binding_pattern_needs_no_else() {
@@ -1971,9 +2046,6 @@ mod tests {
         );
     }
 
-    /// A single-variant enum's own pattern is irrefutable, the same rule
-    /// `check_match_exhaustive` already applies to a `match` with one unguarded arm naming that
-    /// variant and nothing else.
     #[test]
     fn a_single_variant_enums_pattern_is_irrefutable() {
         accepts(
@@ -2003,9 +2075,6 @@ mod tests {
         );
     }
 
-    /// A `with` lend is never checked for refutability at all: its own pattern is always a
-    /// plain binding (`mir::lower::block::lower_with_lend` panics on anything else), and it has
-    /// no `else` to reject one against in the first place.
     #[test]
     fn a_with_lends_pattern_is_never_checked_for_refutability() {
         accepts("fun f(x: i32) { with y = &x { let _ = y; } }");

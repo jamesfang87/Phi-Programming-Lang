@@ -264,6 +264,7 @@ pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_c
 pub fn print_mir(
     hir: &Hir,
     tcx: &TyCtx,
+    mir: &crate::mir::Mir,
     instances: &HashMap<Instance, Body>,
     exclude_core_in_emit: bool,
 ) {
@@ -274,7 +275,7 @@ pub fn print_mir(
         .filter(|(instance, _)| !exclude_core_in_emit || is_user_def(hir, instance.def))
         .map(|(instance, body)| {
             (
-                crate::mir::mangle::mangle(hir, tcx, instance),
+                crate::mir::mangle::mangle(mir, tcx, instance),
                 instance,
                 body,
             )

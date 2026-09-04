@@ -47,3 +47,7 @@ public trait IndexSet<K, V> {
 public trait Drop {
     fun drop(self);
 }
+
+public trait Copy {
+    fun copy(&self) -> Self;
+}

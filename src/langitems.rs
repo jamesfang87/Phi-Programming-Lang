@@ -33,8 +33,13 @@ pub enum LangItem {
     Index,
     IndexSet,
     Drop,
+    Copy,
     /// `core::iter::Iterator`, which is used to desugar `for` loops
     Iterator,
+    /// `core::io::write_bytes`, the one function the bodiless-intrinsic rule admits. Unlike
+    /// every other lang item, this one names a function rather than a type, so it resolves
+    /// through the value namespace instead of the type namespace.
+    WriteBytes,
 }
 
 impl LangItem {
@@ -53,7 +58,9 @@ impl LangItem {
         LangItem::Index,
         LangItem::IndexSet,
         LangItem::Drop,
+        LangItem::Copy,
         LangItem::Iterator,
+        LangItem::WriteBytes,
     ];
 
     pub fn path(self) -> &'static [&'static str] {
@@ -72,7 +79,9 @@ impl LangItem {
             LangItem::Index => &["core", "ops", "Index"],
             LangItem::IndexSet => &["core", "ops", "IndexSet"],
             LangItem::Drop => &["core", "ops", "Drop"],
+            LangItem::Copy => &["core", "ops", "Copy"],
             LangItem::Iterator => &["core", "iter", "Iterator"],
+            LangItem::WriteBytes => &["core", "io", "write_bytes"],
         }
     }
 

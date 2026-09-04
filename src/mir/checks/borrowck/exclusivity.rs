@@ -13,7 +13,7 @@ use crate::mir::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AccessKind {
     Read,
-    Exclusive,
+    Write,
 }
 
 pub fn check(mir: &Mir) {
@@ -64,7 +64,7 @@ fn registers_conflict(a: &Register, b: &Register) -> bool {
 
 fn access_kind_for_borrow(mutability: Mutability) -> AccessKind {
     match mutability {
-        Mutability::Mutable => AccessKind::Exclusive,
+        Mutability::Mutable => AccessKind::Write,
         Mutability::Immutable => AccessKind::Read,
     }
 }
@@ -92,7 +92,7 @@ fn check_register_access(
         }
         let conflicts = match kind {
             AccessKind::Read => alias.kind == Mutability::Mutable,
-            AccessKind::Exclusive => true,
+            AccessKind::Write => true,
         };
         if conflicts {
             report_conflict(body, register, span);
@@ -126,7 +126,7 @@ fn check_operand(
             check_place_access(body, aliases, live, place, AccessKind::Read, span)
         }
         Operand::Move(place) => {
-            check_place_access(body, aliases, live, place, AccessKind::Exclusive, span)
+            check_place_access(body, aliases, live, place, AccessKind::Write, span)
         }
         Operand::Constant(_) => {}
     }
@@ -150,10 +150,18 @@ fn check_assign_rvalue(
                 span,
             );
         }
-        Rvalue::Use(operand) | Rvalue::UnaryOp(_, operand) | Rvalue::Cast { operand, .. } => {
+        Rvalue::Use(operand)
+        | Rvalue::UnaryOp(_, operand)
+        | Rvalue::Cast { operand, .. }
+        | Rvalue::New(operand) => {
             check_operand(body, aliases, live, operand, span);
         }
-        Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
+        Rvalue::BinaryOp(_, lhs, rhs)
+        | Rvalue::CheckedBinaryOp(_, lhs, rhs)
+        | Rvalue::NewArray {
+            elem: lhs,
+            count: rhs,
+        } => {
             check_operand(body, aliases, live, lhs, span);
             check_operand(body, aliases, live, rhs, span);
         }
@@ -177,13 +185,13 @@ fn check_statement(
     match &stmt.kind {
         StatementKind::Assign(place, rvalue) => {
             check_assign_rvalue(body, aliases, live, rvalue, stmt.span);
-            check_place_access(body, aliases, live, place, AccessKind::Exclusive, stmt.span);
+            check_place_access(body, aliases, live, place, AccessKind::Write, stmt.span);
         }
         StatementKind::PlaceMention(place) => {
             check_place_access(body, aliases, live, place, AccessKind::Read, stmt.span);
         }
         StatementKind::SetDiscriminant { place, .. } => {
-            check_place_access(body, aliases, live, place, AccessKind::Exclusive, stmt.span);
+            check_place_access(body, aliases, live, place, AccessKind::Write, stmt.span);
         }
         StatementKind::StorageLive(_)
         | StatementKind::StorageDead(_)
@@ -220,7 +228,7 @@ fn check_terminator(
                 aliases,
                 live,
                 destination,
-                AccessKind::Exclusive,
+                AccessKind::Write,
                 terminator.span,
             );
         }
@@ -230,7 +238,7 @@ fn check_terminator(
                 aliases,
                 live,
                 place,
-                AccessKind::Exclusive,
+                AccessKind::Write,
                 terminator.span,
             );
         }
