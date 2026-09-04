@@ -251,9 +251,9 @@ impl<'hir> Typeck<'hir> {
         let mut candidates = Vec::new();
 
         // Inherent and trait `extend` blocks, both keyed on the head of the self type, so only
-        // a struct or enum receiver can match one.
-        if let TyKind::Adt { def, .. } = *self.tcx.kind(base) {
-            for block in self.extends.for_type(def).to_vec() {
+        // a struct, enum, or primitive receiver can match one.
+        if let Some(head) = self.type_head(base) {
+            for block in self.extends.for_type(head).to_vec() {
                 if let Some(candidate) = self.candidate_from_extend_block(block, base, member) {
                     candidates.push(candidate);
                 }
@@ -1793,6 +1793,16 @@ mod tests {
                  min(true, b);
              }",
             "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_primitive_extend_blocks_method_is_callable_on_the_primitive() {
+        use crate::testing::typeck_accepts;
+
+        typeck_accepts(
+            "extend i32 { fun double(&self) -> i32 { return 0; } }
+             fun f(x: i32) -> i32 { return x.double(); }",
         );
     }
 }
