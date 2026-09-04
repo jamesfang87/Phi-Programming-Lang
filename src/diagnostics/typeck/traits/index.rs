@@ -1,17 +1,6 @@
 use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 
-pub fn report_extend_primitive(span: SrcSpan) {
-    DiagCtx::emit(
-        Diagnostic::error("a primitive type cannot be extended", span)
-            .with_label("not a struct or enum")
-            .with_help(
-                "only a `struct` or an `enum` can be extended, so that the type being \
-                     implemented has a definition to attach the implementation to",
-            ),
-    );
-}
-
 pub fn report_extend_trait(span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error("a trait cannot be extended", span)
