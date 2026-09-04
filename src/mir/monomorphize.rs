@@ -264,6 +264,13 @@ fn subst_rvalue(
         }
         Rvalue::Discriminant(place) => Rvalue::Discriminant(place),
         Rvalue::Len(place) => Rvalue::Len(place),
+        Rvalue::New(operand) => {
+            Rvalue::New(subst_operand(tcx, operand, subst, output, discovered))
+        }
+        Rvalue::NewArray { elem, count } => Rvalue::NewArray {
+            elem: subst_operand(tcx, elem, subst, output, discovered),
+            count: subst_operand(tcx, count, subst, output, discovered),
+        },
     }
 }
 

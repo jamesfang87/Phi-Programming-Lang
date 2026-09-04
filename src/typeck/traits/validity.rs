@@ -43,8 +43,12 @@ impl<'hir> Typeck<'hir> {
                 self.extends.trait_of(block).cloned(),
             );
 
+            // An indexed extend block's self type is an ADT, unless lowering it already
+            // rejected one of its own generic arguments (a reference, `any`, or a bare `dyn`
+            // substituted in) -- that already reported a diagnostic, so there is nothing left
+            // to check here.
             let TyKind::Adt { def, args } = self.tcx.kind(self_ty).clone() else {
-                unreachable!("an indexed extend block's self type is always an ADT");
+                continue;
             };
             let node = self.hir.extend(block);
             let (adt_path, trait_path) = (&node.adt_path, node.trait_path.as_ref());

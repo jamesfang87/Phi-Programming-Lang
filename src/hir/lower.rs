@@ -14,7 +14,7 @@ use crate::hir::Hir;
 use crate::nameres::NameResolutions;
 use ctx::LoweringCtx;
 
-pub fn lower_program(ast: &Ast, res: &NameResolutions) -> Hir {
+pub fn lower_ast(ast: &Ast, res: &NameResolutions) -> Hir {
     let mut cx = LoweringCtx::new(res);
 
     for mod_id in ast.mod_ids() {

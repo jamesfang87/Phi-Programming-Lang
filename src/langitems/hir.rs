@@ -4,7 +4,7 @@ use super::LangItem;
 use crate::ast::NodeId;
 use crate::hir::DefId;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct LangItems {
     items: HashMap<LangItem, DefId>,
 }

@@ -3,7 +3,6 @@ use crate::ast::interner::Interner;
 use crate::lexer::token::Token;
 
 impl Ty {
-    /// Builds the type for a primitive keyword token, such as `i32` or `bool`.
     pub fn primitive(tok: Token) -> Ty {
         let ident = Ident {
             text: Interner::intern(tok.kind.to_string()),

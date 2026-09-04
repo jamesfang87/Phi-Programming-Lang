@@ -39,6 +39,10 @@ impl TyCtx {
             .expect("a Ty handle from another TyCtx (or one built by hand)")
     }
 
+    pub fn all_tys(&self) -> impl Iterator<Item = Ty> + '_ {
+        (0..self.tykinds.len()).map(Ty::from_usize)
+    }
+
     pub fn error(&mut self) -> Ty {
         self.intern(TyKind::Error)
     }
@@ -103,12 +107,74 @@ impl TyCtx {
     pub fn contains_ref(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Ref { .. } => true,
+            // `str` shares `&[u8]`'s representation and its standing under MVS: it is
+            // second-class, so it is treated as a reference everywhere `contains_ref` is
+            // consulted -- a field, a variant payload, and a generic argument may not hold one,
+            // while a parameter, a local, and a return type may.
+            TyKind::Primitive(PrimTy::Str) => true,
             TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_ref(elem)),
             TyKind::Array { elem, .. } => self.contains_ref(*elem),
             TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => {
                 args.iter().any(|&arg| self.contains_ref(arg))
             }
             TyKind::Any(base) | TyKind::Iso(base) => self.contains_ref(*base),
+            TyKind::Var(_)
+            | TyKind::Primitive(_)
+            | TyKind::Generic(_)
+            | TyKind::SelfTy(_)
+            | TyKind::Unit
+            | TyKind::Fun { .. }
+            | TyKind::Never
+            | TyKind::Error => false,
+        }
+    }
+
+    /// Returns whether `ty` holds a `dyn Trait` somewhere that isn't sized: directly, inside a
+    /// tuple or array element, or inside a struct/enum's own generic arguments (recursively).
+    /// `dyn Trait` carries no size of its own, so the only two things that ever give it one are
+    /// `&`/`&mut` and `iso` -- each absorbs exactly the `dyn` immediately beneath it, but not
+    /// one nested any deeper (`&(dyn Trait, i32)` is still unsized: the tuple itself has no
+    /// size, so a reference to it can never have been formed). A function type's parameters and
+    /// return type are not walked, for the same reason `contains_ref` and `contains_any` do not
+    /// walk them -- a function pointer holds no data of its own -- but a function type's own
+    /// params and return type are checked directly where `lower_ty` lowers them, since that
+    /// *is* itself a sizedness position for each of those types.
+    pub fn contains_bare_dyn(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Dyn { .. } => true,
+            TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_bare_dyn(elem)),
+            TyKind::Array { elem, .. } => self.contains_bare_dyn(*elem),
+            TyKind::Adt { args, .. } => args.iter().any(|&arg| self.contains_bare_dyn(arg)),
+            TyKind::Any(base) => self.contains_bare_dyn(*base),
+            TyKind::Ref { base, .. } | TyKind::Iso(base) => match self.kind(*base) {
+                TyKind::Dyn { .. } => false,
+                _ => self.contains_bare_dyn(*base),
+            },
+            TyKind::Var(_)
+            | TyKind::Primitive(_)
+            | TyKind::Generic(_)
+            | TyKind::SelfTy(_)
+            | TyKind::Unit
+            | TyKind::Fun { .. }
+            | TyKind::Never
+            | TyKind::Error => false,
+        }
+    }
+
+    /// Returns whether `ty` carries `any` somewhere within it: directly, inside a tuple or
+    /// array element, or inside a struct/enum/trait object's own generic arguments
+    /// (recursively, so `Foo<Bar<any i32>>` counts too). A function type's parameters and
+    /// return type are not walked: `any` in that position belongs to that function's own
+    /// signature, which is exactly where `any` is allowed to be.
+    pub fn contains_any(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Any(_) => true,
+            TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_any(elem)),
+            TyKind::Array { elem, .. } => self.contains_any(*elem),
+            TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => {
+                args.iter().any(|&arg| self.contains_any(arg))
+            }
+            TyKind::Ref { base, .. } | TyKind::Iso(base) => self.contains_any(*base),
             TyKind::Var(_)
             | TyKind::Primitive(_)
             | TyKind::Generic(_)
@@ -145,6 +211,17 @@ impl TyCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_tys_yields_every_interned_handle_in_interning_order() {
+        let mut tcx = TyCtx::new();
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let bool_ty = tcx.mk_prim(PrimTy::Bool);
+        let ref_ty = tcx.mk_ref(i32_ty, Mutability::Immutable);
+
+        let all: Vec<Ty> = tcx.all_tys().collect();
+        assert_eq!(all, vec![i32_ty, bool_ty, ref_ty]);
+    }
 
     #[test]
     fn structurally_equal_types_intern_to_the_same_handle() {

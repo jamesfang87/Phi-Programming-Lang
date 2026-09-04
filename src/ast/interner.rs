@@ -35,8 +35,6 @@ thread_local! {
 pub struct Interner;
 
 impl Interner {
-    /// Interns `text`
-    /// Returning the existing `Symbol` if it's been seen before on this thread.
     pub fn intern(text: &str) -> Symbol {
         INTERNER.with(|interner| {
             let mut interner = interner.borrow_mut();
@@ -51,13 +49,10 @@ impl Interner {
         })
     }
 
-    /// Resolves a `Symbol` back to the text it was interned from.
     pub fn resolve(sym: Symbol) -> &'static str {
         INTERNER.with(|interner| interner.borrow().strings[sym.id() as usize])
     }
 
-    /// Discards every interned string on this thread.
-    /// Tests use this for isolation
     pub fn clear() {
         INTERNER.with(|interner| *interner.borrow_mut() = InternerData::new());
     }

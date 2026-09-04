@@ -150,10 +150,18 @@ fn apply_operand(dead: &mut DeadRegisters, operand: &Operand) {
 
 fn apply_rvalue(dead: &mut DeadRegisters, rvalue: &Rvalue) {
     match rvalue {
-        Rvalue::Use(operand) | Rvalue::UnaryOp(_, operand) | Rvalue::Cast { operand, .. } => {
+        Rvalue::Use(operand)
+        | Rvalue::UnaryOp(_, operand)
+        | Rvalue::Cast { operand, .. }
+        | Rvalue::New(operand) => {
             apply_operand(dead, operand);
         }
-        Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
+        Rvalue::BinaryOp(_, lhs, rhs)
+        | Rvalue::CheckedBinaryOp(_, lhs, rhs)
+        | Rvalue::NewArray {
+            elem: lhs,
+            count: rhs,
+        } => {
             apply_operand(dead, lhs);
             apply_operand(dead, rhs);
         }
@@ -241,10 +249,18 @@ fn check_operand(dead: &mut DeadRegisters, body: &Body, operand: &Operand, span:
 
 fn check_rvalue(dead: &mut DeadRegisters, body: &Body, rvalue: &Rvalue, span: SrcSpan) {
     match rvalue {
-        Rvalue::Use(operand) | Rvalue::UnaryOp(_, operand) | Rvalue::Cast { operand, .. } => {
+        Rvalue::Use(operand)
+        | Rvalue::UnaryOp(_, operand)
+        | Rvalue::Cast { operand, .. }
+        | Rvalue::New(operand) => {
             check_operand(dead, body, operand, span);
         }
-        Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
+        Rvalue::BinaryOp(_, lhs, rhs)
+        | Rvalue::CheckedBinaryOp(_, lhs, rhs)
+        | Rvalue::NewArray {
+            elem: lhs,
+            count: rhs,
+        } => {
             check_operand(dead, body, lhs, span);
             check_operand(dead, body, rhs, span);
         }
