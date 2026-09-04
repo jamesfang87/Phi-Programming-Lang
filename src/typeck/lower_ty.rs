@@ -271,6 +271,10 @@ impl<'hir> Typeck<'hir> {
                 } else {
                     match adt_res {
                         Res::Type(Type::Def(tydef)) => self.tcx.mk_adt(tydef.def_id(), args),
+                        Res::Type(Type::Prim(prim)) => {
+                            Self::check_no_args(&hir_args, span, "a primitive type");
+                            self.tcx.mk_prim(prim)
+                        }
                         _ => self.tcx.error(),
                     }
                 }
@@ -724,6 +728,17 @@ mod tests {
                 def: wrap,
                 args: vec![checked.generic(extend, 0)],
             }
+        );
+    }
+
+    #[test]
+    fn a_primitive_extend_blocks_self_ty_is_the_primitive() {
+        let checked = check("extend i32 { fun get(&self) -> Self {} }");
+        let extend = checked.extend();
+
+        assert_eq!(
+            checked.kind(checked.def_ty(extend)),
+            &TyKind::Primitive(PrimTy::I32)
         );
     }
 
