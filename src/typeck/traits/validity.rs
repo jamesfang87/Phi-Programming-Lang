@@ -3,8 +3,8 @@ use crate::diagnostics::typeck::traits::validity::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, Path, Res, TyDef, Type};
-use crate::typeck::ty::TyKind;
 use crate::typeck::Typeck;
+use crate::typeck::ty::TyKind;
 
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
@@ -43,8 +43,12 @@ impl<'hir> Typeck<'hir> {
                 self.extends.trait_of(block).cloned(),
             );
 
+            // An indexed extend block's self type is an ADT, unless lowering it already
+            // rejected one of its own generic arguments (a reference, `any`, or a bare `dyn`
+            // substituted in) -- that already reported a diagnostic, so there is nothing left
+            // to check here.
             let TyKind::Adt { def, args } = self.tcx.kind(self_ty).clone() else {
-                unreachable!("an indexed extend block's self type is always an ADT");
+                continue;
             };
             let node = self.hir.extend(block);
             let (adt_path, trait_path) = (&node.adt_path, node.trait_path.as_ref());
@@ -89,7 +93,7 @@ impl<'hir> Typeck<'hir> {
 mod tests {
     use super::*;
     use crate::diagnostics::DiagCtx;
-    use crate::testing::{checker_through, messages, resolve_src, Stage};
+    use crate::testing::{Stage, checker_through, messages, resolve_src};
 
     /// Runs everything up to and including header/bound validity checking over `src`, and hands
     /// back everything type checking reported.

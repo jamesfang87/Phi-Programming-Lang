@@ -1,23 +1,9 @@
-//! `if`/`match`/`loop` lowering and the pattern decision-tree compiler.
-//!
-//! A `match` (and `if`, its two-arm cousin already split apart at the HIR level) compiles to a
-//! sequence of *candidates*, one per arm, tested in source order: [`BodyLowerCtx::test_pat`]
-//! only tests a pattern's structure, and [`BodyLowerCtx::bind_pat`] -- run only once a
-//! candidate's structure has already fully matched -- is a separate walk over the same pattern
-//! that performs the actual bindings. Splitting the two avoids ever having to unwind a partial
-//! binding when a *later* part of the same pattern goes on to refute: nothing binds until
-//! everything already matched.
-//!
-//! This is the first version's straightforward *sequential* candidate chain (test arm 1's tests
-//! in full; on any refutation, fall to arm 2; and so on), not rustc's shared/merged decision
-//! tree that reorders and shares common prefix tests across arms for efficiency.
-
 use crate::ast::{BinaryOp, Literal};
 use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, PatKind, Payload};
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{
-    BasicBlock, ConstKind, Constant, Operand, Place, PlaceElem, Rvalue, StatementKind,
+    BasicBlock, ConstKind, Constant, Operand, Place, Projection, Rvalue, StatementKind,
     SwitchTargets, TerminatorKind, VariantIdx,
 };
 use crate::nameres::PrimTy;
@@ -226,15 +212,15 @@ impl<'a> BodyLowerCtx<'a> {
 
                 let mut payload_place = place;
                 payload_place
-                    .projection
-                    .push(PlaceElem::Downcast(variant_idx));
+                    .projections
+                    .push(Projection::Downcast(variant_idx));
                 self.test_payload(ty, variant_idx, payload, payload_place, fail, span);
             }
             PatKind::Tuple(elems) => {
                 let elems = elems.clone();
                 for (i, &elem) in elems.iter().enumerate() {
                     let mut elem_place = place.clone();
-                    elem_place.projection.push(PlaceElem::Field(i as u32));
+                    elem_place.projections.push(Projection::Field(i as u32));
                     self.test_pat(elem, elem_place, fail);
                 }
             }
@@ -255,14 +241,14 @@ impl<'a> BodyLowerCtx<'a> {
             Payload::None => {}
             Payload::Single(pat_id) => {
                 let mut field_place = base;
-                field_place.projection.push(PlaceElem::Field(0));
+                field_place.projections.push(Projection::Field(0));
                 self.test_pat(*pat_id, field_place, fail);
             }
             Payload::Record(fields) => {
                 for field in fields {
                     let index = self.record_field_index(enum_ty, variant_idx, field.name.text);
                     let mut field_place = base.clone();
-                    field_place.projection.push(PlaceElem::Field(index));
+                    field_place.projections.push(Projection::Field(index));
                     self.test_pat(field.value, field_place, fail);
                 }
             }
@@ -308,15 +294,15 @@ impl<'a> BodyLowerCtx<'a> {
                 let (_, variant_idx) = self.variant_idx_for(ty, variant.text);
                 let mut payload_place = place;
                 payload_place
-                    .projection
-                    .push(PlaceElem::Downcast(variant_idx));
+                    .projections
+                    .push(Projection::Downcast(variant_idx));
                 self.bind_payload(ty, variant_idx, payload, payload_place, mutability);
             }
             PatKind::Tuple(elems) => {
                 let elems = elems.clone();
                 for (i, &elem) in elems.iter().enumerate() {
                     let mut elem_place = place.clone();
-                    elem_place.projection.push(PlaceElem::Field(i as u32));
+                    elem_place.projections.push(Projection::Field(i as u32));
                     self.bind_pat(elem, elem_place, mutability);
                 }
             }
@@ -336,14 +322,14 @@ impl<'a> BodyLowerCtx<'a> {
             Payload::None => {}
             Payload::Single(pat_id) => {
                 let mut field_place = base;
-                field_place.projection.push(PlaceElem::Field(0));
+                field_place.projections.push(Projection::Field(0));
                 self.bind_pat(*pat_id, field_place, mutability);
             }
             Payload::Record(fields) => {
                 for field in fields {
                     let index = self.record_field_index(enum_ty, variant_idx, field.name.text);
                     let mut field_place = base.clone();
-                    field_place.projection.push(PlaceElem::Field(index));
+                    field_place.projections.push(Projection::Field(index));
                     self.bind_pat(field.value, field_place, mutability);
                 }
             }

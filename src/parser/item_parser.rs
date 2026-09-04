@@ -1,6 +1,3 @@
-//! Parses top-level items: functions, structs, enums, traits, `extend` blocks, modules, and
-//! imports.
-
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
@@ -18,7 +15,6 @@ use crate::lexer::token::TokenKind;
 use super::{BoxedP, Parser};
 
 impl Parser {
-    /// Parses a single top-level item.
     pub fn item_parser<'a>(&'a self) -> BoxedP<'a, Item> {
         let ident = self.ident_parser();
         let type_p = self.type_parser();
@@ -381,7 +377,7 @@ impl Parser {
                     .or_not(),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
-            .then(function_decl.clone()(true).repeated().collect::<Vec<_>>())
+            .then(function_decl(true).repeated().collect::<Vec<_>>())
             .then_ignore(self.kind(TokenKind::CloseBrace))
             .map(|((((visibility, trait_tok), name), generics), functions)| {
                 let end_span = if !functions.is_empty() {
@@ -406,15 +402,6 @@ impl Parser {
                 }
             });
 
-        // An `extend` block looks like `extend<T> Adt<T> with Trait<T> { methods }`, or
-        // `extend Adt<T> { methods }` to add inherent methods without implementing a trait.
-        // Each of the three angle-bracket groups (the `extend` block's own generics, the
-        // ADT's, and the trait's) is independent and optional.
-        // An `extend` block's first angle-bracket group *declares* type parameters, exactly as
-        // `struct Foo<T>` does, so it is parsed with the same grammar and yields the same
-        // `Generic`s. Its position is what says so -- only the group directly after `extend` can
-        // be a declaration -- and reading it as a declaration here is what keeps every later pass
-        // from having to recover that fact from a type that happens to be a bare name.
         let generic_params = self
             .kind(TokenKind::OpenCaret)
             .ignore_then(generics.clone())
@@ -422,8 +409,6 @@ impl Parser {
             .or_not()
             .boxed();
 
-        // The other two groups -- the ADT's and the trait's -- *apply* arguments, so they are
-        // type lists: `extend Map<i32, bool> with Index<i32, bool>` is as valid as `Map<K, V>`.
         let generic_args = self
             .kind(TokenKind::OpenCaret)
             .ignore_then(
@@ -450,7 +435,7 @@ impl Parser {
                     .then(generic_args.clone()),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
-            .then(function_decl.clone()(false).repeated().collect())
+            .then(function_decl(false).repeated().collect())
             .then(self.kind(TokenKind::CloseBrace))
             .map(
                 |(
@@ -549,7 +534,12 @@ impl Parser {
             .boxed();
 
         choice((
-            function_decl.clone()(false).map(|fun: Function| {
+            // `allow_no_impl: true` here is what lets a free function end in `;` instead of a
+            // body at all -- syntactically the same allowance a trait method declaration gets.
+            // Nothing at the grammar level restricts who may do this; the bodiless-intrinsic
+            // rule that actually restricts it is a typeck concern (`Typeck::check_function`),
+            // since deciding it needs the function's resolved `DefId` and the file it came from.
+            function_decl(true).map(|fun: Function| {
                 let span = fun.span;
                 Item {
                     id: NodeId::next(),
@@ -606,6 +596,17 @@ mod tests {
         assert!(f.self_param.is_none());
         assert!(f.params.is_empty());
         assert!(f.ret.is_none());
+    }
+
+    /// A free function may end in `;` instead of a body, the same allowance a trait method
+    /// declaration gets. The grammar admits this for every free function; the bodiless-intrinsic
+    /// rule restricting who may actually do it is a typeck concern, not a parser one.
+    #[test]
+    fn parses_bodiless_free_function() {
+        let item = parse_item("fun write_bytes(fd: i32) -> i64;");
+        let f = as_function(&item);
+        assert_eq!(text(f.name), "write_bytes");
+        assert!(f.block.is_none());
     }
 
     #[test]

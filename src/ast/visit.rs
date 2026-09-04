@@ -4,7 +4,6 @@ use crate::ast::{
     StmtKind, Struct, Trait, Ty, TyKind, Variant, VariantPayload,
 };
 
-/// A traversal over the AST. See the [module docs](self) for how overriding works.
 pub trait Visitor<'ast>: Sized {
     fn visit_module(&mut self, module: &'ast Module, ast: &'ast Ast) {
         walk_module(self, module, ast);
@@ -88,11 +87,8 @@ pub fn walk_module<'ast, V: Visitor<'ast>>(v: &mut V, module: &'ast Module, ast:
     }
 }
 
-/// Dispatches on what kind of item `item` is.
 pub fn walk_item<'ast, V: Visitor<'ast>>(v: &mut V, item: &'ast Item) {
     match &item.kind {
-        // A file's own `module foo::bar;` header is sorted out of `items` before the AST is
-        // built (see `Ast::new`), so this arm is here for exhaustiveness
         ItemKind::ModuleDecl(_) => {}
         ItemKind::Import(import) => v.visit_import(import),
         ItemKind::Function(f) => v.visit_function(f),
@@ -255,7 +251,8 @@ pub fn walk_stmt<'ast, V: Visitor<'ast>>(v: &mut V, stmt: &'ast Stmt) {
             else_block,
             ..
         } => {
-            // The initializer is visited before the pattern binds, so that `let x = x;` reads
+            // The initializer is visited before the pattern binds.
+            // This is so that `let x = x;` reads
             // the outer `x` rather than the one being declared.
             v.visit_expr(init);
             if let Some(ty) = ty {
@@ -399,6 +396,11 @@ pub fn walk_expr<'ast, V: Visitor<'ast>>(v: &mut V, expr: &'ast Expr) {
             v.visit_expr(expr);
             v.visit_ty(ty);
         }
+        ExprKind::New(operand) => v.visit_expr(operand),
+        ExprKind::NewArray { elem, count } => {
+            v.visit_expr(elem);
+            v.visit_expr(count);
+        }
         ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::Error => {}
     }
 }
@@ -419,7 +421,6 @@ pub fn walk_pat<'ast, V: Visitor<'ast>>(v: &mut V, pat: &'ast Pat) {
     }
 }
 
-/// An array's length is a constant expression, not a type.
 pub fn walk_ty<'ast, V: Visitor<'ast>>(v: &mut V, ty: &'ast Ty) {
     match &ty.kind {
         TyKind::Path { args, .. } | TyKind::Dyn { args, .. } => {
@@ -427,7 +428,7 @@ pub fn walk_ty<'ast, V: Visitor<'ast>>(v: &mut V, ty: &'ast Ty) {
                 v.visit_ty(arg);
             }
         }
-        TyKind::Ref { base, .. } | TyKind::Any(base) => {
+        TyKind::Ref { base, .. } | TyKind::Any(base) | TyKind::Iso(base) => {
             v.visit_ty(base);
         }
         TyKind::Tuple(elems) => {
@@ -493,9 +494,6 @@ mod tests {
         generics: usize,
         params: usize,
         fields: usize,
-        /// Counts `visit_closure` calls, one per closure. Kept separate from `exprs` because a
-        /// closure's `ExprKind::Closure` arm dispatches to `visit_closure` rather than being
-        /// counted as an ordinary expression a second time.
         closures: usize,
         closure_params: usize,
     }
@@ -587,11 +585,6 @@ mod tests {
         assert_eq!(c.exprs, 7, "the arm's guard was not visited");
     }
 
-    /// The one place this module departs from the HIR visitor's literal shape: `ExprKind::Closure`
-    /// has no wrapping node, so `visit_closure` takes its params, return annotation, and body as
-    /// separate arguments. Asserting *exact* counts, not just "at least one", is the point: a
-    /// `walk_expr` that both called `visit_closure` and separately looped the params would
-    /// double-visit, and only an exact count catches that.
     #[test]
     fn the_walk_reaches_a_closures_params_return_type_and_body_exactly_once() {
         let ast = ast_from("fun f() { let g = |x: i32| -> i32 { x }; }");
@@ -618,8 +611,6 @@ mod tests {
 
     #[test]
     fn the_walk_reaches_a_with_lends_annotation_pattern_and_initializer() {
-        // The old HIR-side resolver skipped a `with` lend's type annotation silently; this
-        // guards against that gap reappearing here.
         let ast = ast_from("fun f() { with x: i32 = 1 { g(x); } }");
         let mut c = Counter::default();
         c.visit_module(ast.root(), &ast);

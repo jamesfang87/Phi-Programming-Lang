@@ -6,7 +6,7 @@ fn int_width(prim: PrimTy) -> Option<u32> {
         PrimTy::I8 | PrimTy::U8 => Some(8),
         PrimTy::I16 | PrimTy::U16 => Some(16),
         PrimTy::I32 | PrimTy::U32 => Some(32),
-        PrimTy::I64 | PrimTy::U64 => Some(64),
+        PrimTy::I64 | PrimTy::U64 | PrimTy::Usize => Some(64),
         _ => None,
     }
 }
@@ -21,6 +21,13 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
 
     if from == to {
         return Ok(());
+    }
+
+    // `str` casts nowhere among the primitives: its only legal cast target is `&[u8]`, which
+    // isn't a primitive and so is handled separately, in `Typeck::check_cast`, before this
+    // function is ever called.
+    if from == Str || to == Str {
+        return Err("`str` has no primitive-to-primitive cast; see `str as &[u8]`");
     }
 
     if is_integer(from) && is_integer(to) {
@@ -103,7 +110,7 @@ fn int_to_int(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
 mod tests {
     use super::*;
 
-    const ALL: [PrimTy; 12] = [
+    const ALL: [PrimTy; 14] = [
         PrimTy::I8,
         PrimTy::I16,
         PrimTy::I32,
@@ -112,10 +119,12 @@ mod tests {
         PrimTy::U16,
         PrimTy::U32,
         PrimTy::U64,
+        PrimTy::Usize,
         PrimTy::F32,
         PrimTy::F64,
         PrimTy::Bool,
         PrimTy::Char,
+        PrimTy::Str,
     ];
 
     /// Every one of the 144 ordered pairs is classified one way or the other, which is what
@@ -282,5 +291,28 @@ mod tests {
     fn char_and_float_share_no_representation() {
         assert!(cast_allowed(PrimTy::Char, PrimTy::F32).is_err());
         assert!(cast_allowed(PrimTy::F64, PrimTy::Char).is_err());
+    }
+
+    /// `usize` is a 64-bit unsigned integer for casting purposes (see the codegen spec: "usize
+    /// is assumed 64-bit"), so it follows the same same-signedness widening rule as `u64`.
+    #[test]
+    fn usize_behaves_as_a_64_bit_unsigned_integer() {
+        assert!(cast_allowed(PrimTy::U8, PrimTy::Usize).is_ok());
+        assert!(cast_allowed(PrimTy::U64, PrimTy::Usize).is_ok());
+        assert!(cast_allowed(PrimTy::Usize, PrimTy::U64).is_ok());
+        assert!(cast_allowed(PrimTy::Usize, PrimTy::U8).is_err());
+        assert!(cast_allowed(PrimTy::Usize, PrimTy::I64).is_err());
+    }
+
+    /// `str`'s only legal cast is to `&[u8]`, which isn't a primitive and so is handled outside
+    /// `cast_allowed` entirely (see `Typeck::check_cast`); every primitive-to-primitive pairing
+    /// involving `str` is rejected here.
+    #[test]
+    fn str_has_no_primitive_to_primitive_cast() {
+        assert!(cast_allowed(PrimTy::Str, PrimTy::Str).is_ok());
+        for prim in ALL.iter().copied().filter(|&p| p != PrimTy::Str) {
+            assert!(cast_allowed(PrimTy::Str, prim).is_err(), "str as {prim:?}");
+            assert!(cast_allowed(prim, PrimTy::Str).is_err(), "{prim:?} as str");
+        }
     }
 }

@@ -1,18 +1,10 @@
-//! Expression lowering: the flattening the spec's "Operand and Rvalue" section describes. Every
-//! `ExprKind` funnels through [`BodyLowerCtx::lower_expr_into`], which lowers a value into a
-//! destination `Place` via whatever statements or control flow it needs.
-//! [`BodyLowerCtx::lower_operand`] and [`BodyLowerCtx::lower_place`] are the two convenience
-//! entry points that check whether an expression is *already* a bare operand or place first,
-//! only falling back to a fresh temporary and `lower_expr_into` when it is not -- so a plain
-//! local read such as `x` in `x + y` never gets a redundant temporary of its own.
-
 use crate::ast::{BinaryOp, Literal, Mutability, UnaryOp};
 use crate::driver::source::SrcSpan;
 use crate::hir::{ExprKind, HirId, Local as HirLocal, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::{
-    AggregateKind, AssertMessage, CastKind, ConstKind, Constant, Operand, Place, PlaceElem, Rvalue,
-    StatementKind, TerminatorKind,
+    AggregateKind, AssertMessage, CastKind, ConstKind, Constant, Operand, Place, Projection,
+    Rvalue, StatementKind, TerminatorKind,
 };
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind};
@@ -76,6 +68,10 @@ impl<'a> BodyLowerCtx<'a> {
             } => self.lower_field_place(base, member),
             ExprKind::Index { base, index } => self.lower_index_place(base, index, span),
             ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => self.lower_deref_place(operand),
+            ExprKind::Unary {
                 op: UnaryOp::Not, ..
             } => unreachable!("`!` is never a place"),
             _ => {
@@ -92,20 +88,52 @@ impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn lower_expr_discarding(&mut self, expr_id: HirId) {
         let expr = self.hir.expr(expr_id);
         let span = expr.span;
-        match expr.kind {
-            // A bare place mentioned as a statement is evaluated for whatever side effect that
-            // has (an index's bounds check, chiefly) without reading the value it holds.
+        match expr.kind.clone() {
             ExprKind::Path(_) | ExprKind::Access { .. } | ExprKind::Index { .. } => {
                 let place = self.lower_place(expr_id);
                 self.push_stmt(StatementKind::PlaceMention(place), span);
             }
             ExprKind::Literal(_) => {}
+            ExprKind::Assign { lhs, rhs } => {
+                self.lower_assign_effect(lhs, rhs, span);
+            }
+            ExprKind::AssignOp { op, lhs, rhs } => {
+                self.lower_assign_op_effect(op, lhs, rhs, span);
+            }
             _ => {
                 let ty = self.expr_ty(expr_id);
                 let temp = self.new_temp(ty, span);
                 self.lower_expr_into(expr_id, Place::from_local(temp));
             }
         }
+    }
+
+    fn lower_assign_effect(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) {
+        let place = self.lower_place(lhs);
+        self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
+        self.lower_expr_into(rhs, place);
+    }
+
+    fn lower_assign_op_effect(&mut self, op: BinaryOp, lhs: HirId, rhs: HirId, span: SrcSpan) {
+        let place = self.lower_place(lhs);
+        self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
+        let lhs_ty = self.expr_ty(lhs);
+        let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
+        let rhs_operand = self.lower_operand(rhs);
+        let result_local = self.new_temp(lhs_ty, span);
+        self.lower_binary_op_into(
+            op,
+            lhs_operand,
+            rhs_operand,
+            Place::from_local(result_local),
+            lhs_ty,
+            span,
+        );
+        self.assign(
+            place,
+            Rvalue::Use(Operand::Move(Place::from_local(result_local))),
+            span,
+        );
     }
 
     /// The main dispatcher. Lowers `expr_id`'s value into `dest`, ending with `dest` holding the
@@ -119,6 +147,14 @@ impl<'a> BodyLowerCtx<'a> {
         match expr.kind.clone() {
             ExprKind::Literal(_) | ExprKind::Path(_) => {
                 let operand = self.lower_operand(expr_id);
+                self.assign(dest, Rvalue::Use(operand), span);
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => {
+                let place = self.lower_deref_place(operand);
+                let operand = self.operand_for_place(place, ty);
                 self.assign(dest, Rvalue::Use(operand), span);
             }
             ExprKind::Unary { op, operand } => {
@@ -242,6 +278,15 @@ impl<'a> BodyLowerCtx<'a> {
                     span,
                 );
             }
+            ExprKind::New(operand) => {
+                let operand = self.lower_operand(operand);
+                self.assign(dest, Rvalue::New(operand), span);
+            }
+            ExprKind::NewArray { elem, count } => {
+                let elem = self.lower_operand(elem);
+                let count = self.lower_operand(count);
+                self.assign(dest, Rvalue::NewArray { elem, count }, span);
+            }
             ExprKind::Range { .. } => {
                 panic!("mir::lower: range expressions are not yet implemented")
             }
@@ -277,11 +322,21 @@ impl<'a> BodyLowerCtx<'a> {
         self.push_stmt(StatementKind::Assign(dest, rvalue), span);
     }
 
-    /// `Copy` for a trivially copyable place (a primitive), `Move` otherwise -- exactly the
-    /// spec's rule, with no liveness analysis: the classification follows only from `ty`'s own
-    /// shape.
+    /// `Copy` for a trivially copyable place -- a primitive, or a shared `&T` -- `Move`
+    /// otherwise, with no liveness analysis: the classification follows only from `ty`'s own
+    /// shape. A shared reference grants no exclusive access, so reading the same place holding
+    /// one twice is exactly as sound as reading a primitive twice; a `&mut T` grants exclusive
+    /// access, so duplicating it would defeat the point and it still falls to `Move`.
     pub(crate) fn operand_for_place(&self, place: Place, ty: Ty) -> Operand {
-        if matches!(self.tcx.kind(ty), TyKind::Primitive(_)) {
+        let trivially_copyable = matches!(
+            self.tcx.kind(ty),
+            TyKind::Primitive(_)
+                | TyKind::Ref {
+                    mutability: Mutability::Immutable,
+                    ..
+                }
+        );
+        if trivially_copyable {
             Operand::Copy(place)
         } else {
             Operand::Move(place)
@@ -320,15 +375,24 @@ impl<'a> BodyLowerCtx<'a> {
         Constant { ty, kind }
     }
 
+    fn lower_deref_place(&mut self, operand: HirId) -> Place {
+        let operand_ty = self.expr_ty(operand);
+        let mut place = self.lower_place(operand);
+        if matches!(self.tcx.kind(operand_ty), TyKind::Ref { .. }) {
+            place.projections.push(Projection::Deref);
+        }
+        place
+    }
+
     fn lower_field_place(&mut self, base: HirId, member: crate::ast::Ident) -> Place {
         let base_ty = self.expr_ty(base);
         let mut place = self.lower_place(base);
         let (peeled_ty, derefs) = self.peel_refs(base_ty);
         for _ in 0..derefs {
-            place.projection.push(PlaceElem::Deref);
+            place.projections.push(Projection::Deref);
         }
         let index = self.field_index(peeled_ty, member.text);
-        place.projection.push(PlaceElem::Field(index));
+        place.projections.push(Projection::Field(index));
         place
     }
 
@@ -345,10 +409,18 @@ impl<'a> BodyLowerCtx<'a> {
     }
 
     /// The declared field index of `member` on struct type `ty`, by name -- nominal, so no
-    /// typeck help is needed, exactly as `planning/mir.md`'s `rect.l` example describes.
+    /// typeck help is needed, exactly as `planning/mir.md`'s `rect.l` example describes. For a
+    /// tuple type, `member` is instead the tuple index written in source (`.0`, `.1`, ...),
+    /// already checked in range by typeck.
     fn field_index(&self, ty: Ty, member: crate::ast::interner::Symbol) -> u32 {
+        if matches!(self.tcx.kind(ty), TyKind::Tuple(_)) {
+            return crate::ast::interner::Interner::resolve(member)
+                .parse::<u32>()
+                .unwrap_or_else(|_| panic!("mir::lower: tuple field index is not a number"));
+        }
+
         let TyKind::Adt { def, .. } = *self.tcx.kind(ty) else {
-            panic!("mir::lower: field access on a non-struct type")
+            panic!("mir::lower: field access on a non-struct, non-tuple type")
         };
         let s = self.hir.struct_(def);
         s.fields
@@ -363,7 +435,7 @@ impl<'a> BodyLowerCtx<'a> {
         let (peeled, derefs) = self.peel_refs(base_ty);
         let mut place = self.lower_place(base);
         for _ in 0..derefs {
-            place.projection.push(PlaceElem::Deref);
+            place.projections.push(Projection::Deref);
         }
 
         match self.tcx.kind(peeled).clone() {
@@ -400,7 +472,7 @@ impl<'a> BodyLowerCtx<'a> {
                     span,
                 );
                 self.switch_to(assert_target);
-                place.projection.push(PlaceElem::Index(index_local));
+                place.projections.push(Projection::Index(index_local));
                 place
             }
             // An overloaded `Index`/`IndexSet` receiver: `check_index` already resolved this as
@@ -544,7 +616,7 @@ impl<'a> BodyLowerCtx<'a> {
             );
             let overflowed = Place {
                 local: pair_local,
-                projection: vec![PlaceElem::Field(1)],
+                projections: vec![Projection::Field(1)],
             };
             let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
             let not_overflowed_local = self.new_temp(bool_ty, span);
@@ -566,7 +638,7 @@ impl<'a> BodyLowerCtx<'a> {
             self.switch_to(target);
             let result = Place {
                 local: pair_local,
-                projection: vec![PlaceElem::Field(0)],
+                projections: vec![Projection::Field(0)],
             };
             self.assign(dest, Rvalue::Use(Operand::Move(result)), span);
         } else {
@@ -724,8 +796,8 @@ impl<'a> BodyLowerCtx<'a> {
 
         self.switch_to(err_block);
         let mut err_place = scrutinee_place.clone();
-        err_place.projection.push(PlaceElem::Downcast(err_idx));
-        err_place.projection.push(PlaceElem::Field(0));
+        err_place.projections.push(Projection::Downcast(err_idx));
+        err_place.projections.push(Projection::Field(0));
         let err_ty = match self.tcx.kind(scrutinee_ty).clone() {
             TyKind::Adt { args, .. } if args.len() == 2 => args[1],
             _ => panic!("mir::lower: `?`'s operand is not a two-argument Result"),
@@ -751,8 +823,8 @@ impl<'a> BodyLowerCtx<'a> {
 
         self.switch_to(ok_block);
         let mut ok_place = scrutinee_place;
-        ok_place.projection.push(PlaceElem::Downcast(ok_idx));
-        ok_place.projection.push(PlaceElem::Field(0));
+        ok_place.projections.push(Projection::Downcast(ok_idx));
+        ok_place.projections.push(Projection::Field(0));
         let ok_operand = self.operand_for_place(ok_place, ok_ty);
         self.assign(dest, Rvalue::Use(ok_operand), span);
     }

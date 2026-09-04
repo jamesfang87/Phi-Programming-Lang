@@ -1,5 +1,3 @@
-//! Lowers blocks and statements.
-
 use crate::ast;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{HirId, StmtKind, WithLend};

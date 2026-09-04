@@ -286,6 +286,7 @@ pub enum TyKind {
         mutability: Mutability,
     },
     Any(Box<Ty>),
+    Iso(Box<Ty>),
     Tuple(Vec<Ty>),
     Array {
         elem: Box<Ty>,
@@ -475,6 +476,15 @@ pub enum ExprKind {
         expr: Box<Expr>,
         ty: Ty,
     },
+    /// `new <expr>`: allocates storage for `expr`'s type, moves `expr` into it, and yields
+    /// `iso T`.
+    New(Box<Expr>),
+    /// `new [<elem>; <count>]`: allocates storage for `count` elements, each initialized to
+    /// `elem`, and yields `iso [T]`. Unlike `[T; N]`'s `N`, `count` need not be a constant.
+    NewArray {
+        elem: Box<Expr>,
+        count: Box<Expr>,
+    },
     Error,
 }
 
@@ -501,6 +511,8 @@ pub enum UnaryOp {
     Neg,
     /// Logical negation, `!x`.
     Not,
+    /// Dereference, `*x`.
+    Deref,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

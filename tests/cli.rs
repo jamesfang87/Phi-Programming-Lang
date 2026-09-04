@@ -196,15 +196,21 @@ fn a_type_error_fails_the_build() {
 }
 
 #[test]
-fn release_mode_is_noted_as_having_no_effect() {
-    let dir = scratch("release_mode_noted");
-    write_release_manifest(&dir, "release_mode_noted");
+fn release_mode_builds_and_runs_with_no_note() {
+    let dir = scratch("release_mode_runs");
+    write_release_manifest(&dir, "release_mode_runs");
     write_main(&dir, CLEAN_MAIN);
-    let output = run(&dir, &["check"]);
-    assert_eq!(code(&output), 0);
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
     assert!(
-        stderr(&output).contains("release"),
-        "release mode should be noted as having no effect: {}",
+        !stderr(&output).contains("release"),
+        "release mode is implemented now (O2 via `EmitOptions::release`); no note should print: {}",
         stderr(&output)
     );
 }
@@ -224,21 +230,45 @@ fn debug_mode_prints_no_release_note() {
 }
 
 #[test]
-fn run_on_a_clean_project_reports_the_missing_backend() {
-    let dir = scratch("run_missing_backend");
-    write_manifest(&dir, "run_missing_backend");
+fn run_on_a_clean_project_actually_runs() {
+    let dir = scratch("run_clean_project");
+    write_manifest(&dir, "run_clean_project");
     write_main(&dir, CLEAN_MAIN);
     let output = run(&dir, &["run"]);
-    assert_ne!(code(&output), 0);
-    assert!(
-        stderr(&output).contains("backend"),
-        "the error should mention the missing code generation backend: {}",
+    assert_eq!(
+        code(&output),
+        0,
+        "an empty `main` should build, link, and run successfully\nstdout: {}\nstderr: {}",
+        stdout(&output),
         stderr(&output)
     );
 }
 
-/// `--mir` now dumps a real stage (Lowering #2 plus monomorphization), unlike `--llvm`, which
-/// still has no effect. This is the end-to-end counterpart to `mir::lower`'s and
+/// The end-to-end proof that `phi run` runs a program: a real `main` that writes bytes to
+/// stdout via `core::io::write_bytes`, run through the actual `phi` binary (parse through
+/// codegen, object emission, linking, and process execution), with its stdout checked
+/// byte-for-byte and its exit status checked to be 0.
+#[test]
+fn run_executes_a_program_and_propagates_exit_status() {
+    let dir = scratch("run_hello_world");
+    write_manifest(&dir, "run_hello_world");
+    write_main(
+        &dir,
+        "module app;\n\nfun main() {\n    core::io::write_bytes(1, \"hello\" as &[u8]);\n}\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "hello");
+}
+
+/// `--mir` dumps a real stage (Lowering #2 plus monomorphization). This is the end-to-end
+/// counterpart to `mir::lower`'s and
 /// `mir::monomorphize`'s own unit tests: it exercises the whole `phi build --mir` path through
 /// the real binary, the way `tests/golden.rs` does for `--ast`.
 #[test]
@@ -263,4 +293,171 @@ fn mir_dump_shows_the_lowered_and_monomorphized_function() {
         out.contains("Call") && out.contains("Return"),
         "the dump should show add's Call terminator (from main) and its own Return: {out}"
     );
+}
+
+// -----------------------------------------------------------------
+// Task 13: end-to-end fixtures proving the back end works on real programs
+// -----------------------------------------------------------------
+//
+// Each test below compiles, links, and runs a real `.phi` program through the actual `phi`
+// binary and asserts on its observable behavior (stdout bytes, exit status) -- not merely that
+// codegen produced valid IR (Tasks 2-12's own inline tests already cover that). Two items from
+// the task brief's numbered list are not represented here:
+//
+// - Array indexing (item 5): there is no source-level array-literal expression in this version
+//   of the language at all (`codegen::body`'s `array_aggregate_builds_via_insert_value` test
+//   documents this: `AggregateKind::Array` is only ever reachable by hand-built MIR). The only
+//   surface-level array constructor is `new [elem; count]`, which produces `iso [T]`, and
+//   indexing (`typeck::expr::check_index`) reaches an array's element type only by peeling
+//   `&`/`&mut`/`any` layers off the base (`peel_receiver`) -- it does not peel `iso`. Per the
+//   runtime-semantics design doc (Sec. 3, "AST, HIR, typeck"): "There is no auto-deref in this
+//   spec; a method call on an `iso` receiver and field access through one are deliberately left
+//   to a later spec." So there is no program a real user could write today that produces a
+//   sized, indexable array value; this is a documented, deliberate gap, not a bug to route
+//   around.
+// - `new`/`iso` allocation and field/element access (item 6, optional): blocked by the exact
+//   same deliberate no-auto-deref gap above -- `p.x` on `p: iso Point` fails typeck with `no
+//   field `x` on `iso Point`` because `peel_receiver` does not strip `Iso`, and `*p` fails with
+//   `` `iso Point` cannot be dereferenced `` because `check_deref` only accepts `TyKind::Ref`.
+//   Confirmed by hand against the built binary before writing this comment.
+
+/// Item 1: an unconditional `i32` addition that overflows aborts the process. The overflow
+/// happens on the addition itself, so the following `if` (added only to give `c` a read and
+/// keep the test's stderr free of an unrelated "never read" warning) is never reached -- the
+/// process aborts before it can print `unreachable`.
+#[test]
+fn integer_overflow_aborts_with_a_nonzero_exit_code() {
+    let dir = scratch("overflow_aborts");
+    write_manifest(&dir, "overflow_aborts");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         fun main() {\n    \
+             let a: i32 = 2147483647;\n    \
+             let b: i32 = 1;\n    \
+             let c = a + b;\n    \
+             if c == 0 {\n        \
+                 core::io::write_bytes(1, \"unreachable\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_ne!(
+        code(&output),
+        0,
+        "an i32 overflow must abort, not silently wrap\nstdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(
+        stdout(&output),
+        "",
+        "the process must abort before reaching the `if`, so nothing should print"
+    );
+    assert!(
+        stderr(&output).contains("arithmetic overflow"),
+        "the abort should be reported by name: {}",
+        stderr(&output)
+    );
+}
+
+/// Item 2: real arithmetic (`1 + 2`) produces the right runtime value. There is no
+/// `Display`/formatting yet, so the result is made observable by branching on a comparison
+/// against the expected value and writing one of two distinct literal strings -- a subtly wrong
+/// codegen lowering of `+` (e.g. swapped operands, wrong width) would produce `wrong-sum`
+/// instead of `computed-3`, and this test would catch it byte-for-byte.
+#[test]
+fn addition_computes_the_correct_value() {
+    let dir = scratch("addition_correct");
+    write_manifest(&dir, "addition_correct");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         fun main() {\n    \
+             let a: i32 = 1;\n    \
+             let b: i32 = 2;\n    \
+             let c = a + b;\n    \
+             if c == 3 {\n        \
+                 core::io::write_bytes(1, \"computed-3\" as &[u8]);\n    \
+             } else {\n        \
+                 core::io::write_bytes(1, \"wrong-sum\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "computed-3");
+}
+
+/// Item 3: `if`/`else` selects the branch a runtime comparison actually calls for, not just
+/// whichever branch codegen happens to emit first. `5 > 10` is false, so the correct run takes
+/// the `else` arm; a codegen bug that inverted the branch condition (or a `br` that jumped to
+/// the wrong block) would make this print `then-branch` instead.
+#[test]
+fn if_else_selects_the_correct_branch() {
+    let dir = scratch("if_else_branch");
+    write_manifest(&dir, "if_else_branch");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         fun main() {\n    \
+             let x: i32 = 5;\n    \
+             let y: i32 = 10;\n    \
+             if x > y {\n        \
+                 core::io::write_bytes(1, \"then-branch\" as &[u8]);\n    \
+             } else {\n        \
+                 core::io::write_bytes(1, \"else-branch\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "else-branch");
+}
+
+/// Item 4: a struct is constructed with field values and a field read back out matches what was
+/// written in. `p.x` reads back through the aggregate `Point { x: 7, y: 9 }` that was just
+/// built; a codegen bug that mixed up field offsets (e.g. reading `y`'s slot for `x`, or padding
+/// the aggregate wrong) would make the comparison fail and print `field-bad` instead.
+#[test]
+fn struct_field_is_read_back_after_construction() {
+    let dir = scratch("struct_field_readback");
+    write_manifest(&dir, "struct_field_readback");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         struct Point {\n    \
+             x: i32,\n    \
+             y: i32,\n\
+         }\n\n\
+         fun main() {\n    \
+             let p = Point { x: 7, y: 9 };\n    \
+             if p.x == 7 {\n        \
+                 core::io::write_bytes(1, \"field-ok\" as &[u8]);\n    \
+             } else {\n        \
+                 core::io::write_bytes(1, \"field-bad\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "field-ok");
 }

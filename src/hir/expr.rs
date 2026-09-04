@@ -107,6 +107,13 @@ pub enum ExprKind {
         expr: HirId, // -> Node::Expr
         ty: HirId,   // -> Node::Ty
     },
+    /// `new <expr>`. See [`crate::ast::ExprKind::New`].
+    New(HirId), // -> Node::Expr
+    /// `new [<elem>; <count>]`. See [`crate::ast::ExprKind::NewArray`].
+    NewArray {
+        elem: HirId,  // -> Node::Expr
+        count: HirId, // -> Node::Expr
+    },
     Error,
 }
 
