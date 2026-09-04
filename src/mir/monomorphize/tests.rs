@@ -1,7 +1,5 @@
-//! Unit tests for `mir::monomorphize`.
-
 use crate::mir::{Rvalue, StatementKind};
-use crate::testing::lower_mir_src;
+use crate::testing::lower_to_mir;
 
 fn monomorphized(
     src: &str,
@@ -9,7 +7,7 @@ fn monomorphized(
     crate::typeck::tyctx::TyCtx,
     std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
 ) {
-    let (_hir, tcx, _types, instances) = lower_mir_src(src);
+    let (_hir, tcx, _types, _mir, instances) = lower_to_mir(src);
     (tcx, instances)
 }
 
@@ -90,7 +88,7 @@ fn calling_through_a_reified_function_pointer_still_monomorphizes_the_callee() {
                     StatementKind::Assign(
                         _,
                         Rvalue::Cast {
-                            kind: crate::mir::CastKind::ReifyFnPointer,
+                            kind: crate::mir::CastKind::ReifyFunPointer,
                             ..
                         }
                     )
