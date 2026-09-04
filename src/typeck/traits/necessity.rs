@@ -103,7 +103,7 @@ fn a_conditional_impl_only_applies_when_its_own_bound_holds() {
     );
 }
 
-/// Step 4: only a struct, an enum, or a `dyn` implements anything.
+/// Step 4: only a struct, an enum, a primitive, or a `dyn` implements anything.
 ///
 /// `Foo` implements `Show` and `&Foo` does not, which is the whole of the rule. The tempting
 /// simplification is to let the query see through a reference to what it points at, since a
