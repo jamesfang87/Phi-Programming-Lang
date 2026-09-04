@@ -134,9 +134,7 @@ impl<'hir> Typeck<'hir> {
     fn extend_head(&self, block: DefId) -> Option<TypeHead> {
         let node = self.hir.extend(block);
         match node.adt_path.res {
-            Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => {
-                Some(TypeHead::Adt(def))
-            }
+            Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => Some(TypeHead::Adt(def)),
             Res::Type(Type::Prim(prim)) => Some(TypeHead::Prim(prim)),
             Res::Type(Type::Def(TyDef::Trait(_))) => {
                 report_extend_trait(node.span);
