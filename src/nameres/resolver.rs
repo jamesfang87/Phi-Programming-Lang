@@ -275,8 +275,8 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         }
 
         let pushed_self = match adt_res {
-            Res::Type(Type::Def(def)) => {
-                self.table.push_self(Type::Def(def));
+            Res::Type(ty @ (Type::Def(_) | Type::Prim(_))) => {
+                self.table.push_self(ty);
                 true
             }
             Res::Err => {
