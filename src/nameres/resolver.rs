@@ -59,7 +59,7 @@ impl<'ast> Resolver<'ast> {
 
         if path.segments.len() == 1 && last.text == Interner::intern("Self") {
             return match self.table.current_self_entry() {
-                Some(Some(def)) => Res::Type(Type::Def(def)),
+                Some(Some(ty)) => Res::Type(ty),
                 Some(None) => Res::Err,
                 None => {
                     report_self_unavailable(last.span);
@@ -221,7 +221,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         let item_id = self
             .current_item
             .expect("visit_struct is reached only through visit_item, which sets current_item");
-        self.table.push_self(TyDef::Struct(item_id));
+        self.table.push_self(Type::Def(TyDef::Struct(item_id)));
         self.push_generics_opt(&s.generics);
         visit::walk_struct(self, s);
         self.table.pop_generics();
@@ -232,7 +232,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         let item_id = self
             .current_item
             .expect("visit_enum is reached only through visit_item, which sets current_item");
-        self.table.push_self(TyDef::Enum(item_id));
+        self.table.push_self(Type::Def(TyDef::Enum(item_id)));
         self.push_generics_opt(&e.generics);
         visit::walk_enum(self, e);
         self.table.pop_generics();
@@ -243,7 +243,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         let item_id = self
             .current_item
             .expect("visit_trait is reached only through visit_item, which sets current_item");
-        self.table.push_self(TyDef::Trait(item_id));
+        self.table.push_self(Type::Def(TyDef::Trait(item_id)));
         self.push_generics_opt(&t.generics);
         visit::walk_trait(self, t);
         self.table.pop_generics();
@@ -276,7 +276,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
 
         let pushed_self = match adt_res {
             Res::Type(Type::Def(def)) => {
-                self.table.push_self(def);
+                self.table.push_self(Type::Def(def));
                 true
             }
             Res::Err => {
