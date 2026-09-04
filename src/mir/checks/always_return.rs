@@ -91,20 +91,10 @@ fn check_body(body: &Body) -> bool {
 #[cfg(test)]
 mod tests {
     use super::check_body;
-    use crate::diagnostics::DiagCtx;
-    use crate::driver::cli::Mode;
-    use crate::mir::lower::lower;
-    use crate::testing::{first_function, resolve_src};
-    use crate::typeck::{self, TypeckOutput};
+    use crate::testing::{OPS_PREAMBLE, first_function, lower_mir_src_files};
 
     fn always_returns(src: &str) -> bool {
-        let hir = resolve_src(src);
-        DiagCtx::clear();
-        let checked = typeck::check(&hir);
-        let diagnostics = DiagCtx::diagnostics();
-        assert!(diagnostics.is_empty(), "{src:?}: {diagnostics:?}");
-        let TypeckOutput { mut tcx, types } = checked;
-        let program = lower(&hir, &mut tcx, &types, Mode::Debug);
+        let (hir, _tcx, _types, program, _instances) = lower_mir_src_files(&[OPS_PREAMBLE, src]);
         let def_id = first_function(&hir);
         let body = program
             .bodies
