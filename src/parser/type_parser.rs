@@ -1,14 +1,3 @@
-//! Parses types. A type shows up in a few places:
-//!
-//! - `let x: i32 = 0;`
-//! - `fun add(x: i32, y: i32) -> i32 { ... }`
-//! - `struct Foo { field: any Shape }`
-//!
-//! Array types can carry a length expression (`[i32; 5]`), so this grammar needs an expression
-//! parser. [`Parser::type_parser_with_expr`] takes one as a parameter instead of building its
-//! own, since `expr_parser` needs a type parser back for closures, and the two would otherwise
-//! have no way to be built together.
-
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
@@ -21,7 +10,6 @@ use crate::lexer::token::{Token, TokenKind};
 use super::{BoxedP, Extra, Parser};
 
 impl Parser {
-    /// Parses a single type, using this parser's own expression parser for array lengths.
     pub fn type_parser<'a>(&'a self) -> BoxedP<'a, Ty> {
         self.type_parser_with_expr(self.expr_parser())
     }
@@ -38,22 +26,16 @@ impl Parser {
                     self.kind(TokenKind::U16),
                     self.kind(TokenKind::U32),
                     self.kind(TokenKind::U64),
+                    self.kind(TokenKind::Usize),
                     self.kind(TokenKind::F32),
                     self.kind(TokenKind::F64),
                     self.kind(TokenKind::BoolKw),
                     self.kind(TokenKind::Char),
-                    self.kind(TokenKind::String),
+                    self.kind(TokenKind::Str),
                 ))
                 .map(|t: Token| Ty::primitive(t))
                 .boxed();
 
-                // A named type, with an optional generic argument list: `String`, `Option<T>`,
-                // `Result<T, E>`.
-                //
-                // Unlike an expression, a type has no other meaning for `<`, so the argument
-                // list is taken greedily wherever one follows a path. Nesting needs no special
-                // handling either: the lexer only ever produces `>` as a single `CloseCaret`,
-                // never a shift token, so `Array<Option<T>>` closes as two ordinary tokens.
                 let path_ty = self
                     .path_parser()
                     .then(
@@ -82,11 +64,6 @@ impl Parser {
                     })
                     .boxed();
 
-                // `Self` is an ordinary single-segment path in the AST, not its own `TyKind`, so
-                // the AST resolver can treat it like any other name instead of needing a special
-                // case. HIR lowering keeps it an ordinary `TyKind::Path` too; what marks it as
-                // `Self` is `path.res` (`hir::Res::SelfTy`), not a distinct HIR node kind -- see
-                // `LoweringCtx::as_self_ty`.
                 let self_ty = self
                     .kind(TokenKind::UpperSelfKw)
                     .map(|self_tok| {
@@ -143,8 +120,6 @@ impl Parser {
                     })
                     .boxed();
 
-                // `any` may only wrap a base (primitive or path), tuple, array, or `Self` type.
-                // It can never wrap a reference, `dyn`, or another `any`.
                 let any_target = choice((
                     self_ty.clone(),
                     primitive_ty.clone(),
@@ -164,31 +139,6 @@ impl Parser {
                     })
                     .boxed();
 
-                let ref_ty = self
-                    .kind(TokenKind::Amp)
-                    .then(self.kind(TokenKind::MutKw).or_not())
-                    .then(ty.clone())
-                    .map(|((amp_tok, mut_tok), ty)| {
-                        let mutability = if mut_tok.is_some() {
-                            Mutability::Mutable
-                        } else {
-                            Mutability::Immutable
-                        };
-
-                        Ty {
-                            id: NodeId::next(),
-                            span: amp_tok.span.merge(ty.span),
-                            kind: TyKind::Ref {
-                                base: Box::new(ty),
-                                mutability,
-                            },
-                        }
-                    })
-                    .boxed();
-
-                // `dyn Trait`, with the same optional argument list a named type takes: a trait
-                // that declares parameters has to be applied to them before it names a type, so
-                // `dyn Index<K, V>` is as ordinary as `Map<K, V>`.
                 let dyn_ty = self
                     .kind(TokenKind::DynKw)
                     .then(self.path_parser())
@@ -204,25 +154,21 @@ impl Parser {
                             .then(self.kind(TokenKind::CloseCaret))
                             .or_not(),
                     )
-                    .map(
-                        |((dyn_tok, path), args): ((Token, Path), Option<(Vec<Ty>, Token)>)| {
-                            let (args, end) = match args {
-                                Some((args, close_tok)) => (args, close_tok.span),
-                                None => (Vec::new(), path.span),
-                            };
+                    .map(|((dyn_tok, path), args): ((Token, Path), Option<(Vec<Ty>, Token)>)| {
+                        let (args, end) = match args {
+                            Some((args, close_tok)) => (args, close_tok.span),
+                            None => (Vec::new(), path.span),
+                        };
 
-                            Ty {
-                                id: NodeId::next(),
-                                span: dyn_tok.span.merge(end),
-                                kind: TyKind::Dyn { path, args },
-                            }
-                        },
-                    )
+                        Ty {
+                            id: NodeId::next(),
+                            span: dyn_tok.span.merge(end),
+                            kind: TyKind::Dyn { path, args },
+                        }
+                    })
                     .boxed();
 
-                // A function type looks like `fun(i32, i32) -> i32` or `fun(&str)`. Omitting
-                // `->` means the function returns no value.
-                let fn_ty = self
+                let fun_ty = self
                     .kind(TokenKind::FunKw)
                     .then_ignore(self.kind(TokenKind::OpenParen))
                     .then(
@@ -243,7 +189,69 @@ impl Parser {
                             span: fun_tok.span.merge(end_span),
                             kind: TyKind::Function {
                                 params: params.into_iter().collect(),
-                                ret: ret.map(|t| Box::new(t)),
+                                ret: ret.map(Box::new),
+                            },
+                        }
+                    })
+                    .boxed();
+
+                // `iso` is this language's owning pointer, the counterpart of Rust's `Box`, so
+                // it takes a `dyn Trait` target too: `iso dyn Trait` is `Box<dyn Trait>`, the
+                // usual way an unsized trait object is owned rather than borrowed.
+                let iso_target = choice((
+                    self_ty.clone(),
+                    primitive_ty.clone(),
+                    path_ty.clone(),
+                    tuple_ty.clone(),
+                    array_ty.clone(),
+                    dyn_ty.clone(),
+                ))
+                .boxed();
+
+                let iso_ty = self
+                    .kind(TokenKind::IsoKw)
+                    .then(iso_target)
+                    .map(|(iso_tok, inner_ty)| Ty {
+                        id: NodeId::next(),
+                        span: iso_tok.span.merge(inner_ty.span),
+                        kind: TyKind::Iso(Box::new(inner_ty)),
+                    })
+                    .boxed();
+
+                // A reference may not wrap another reference (no `& &T` pointer-chasing) or
+                // `any` (`any` already composes the other way, as `&any T`, so `& &T` on top of
+                // `any` would only ever add a redundant indirection). Everything else -- `dyn`,
+                // `iso`, a function type, a primitive, a path, a tuple, or an array -- is a
+                // valid reference target.
+                let ref_target = choice((
+                    self_ty.clone(),
+                    dyn_ty.clone(),
+                    iso_ty.clone(),
+                    fun_ty.clone(),
+                    primitive_ty.clone(),
+                    tuple_ty.clone(),
+                    array_ty.clone(),
+                    path_ty.clone(),
+                ))
+                .boxed();
+
+                let ref_ty = self
+                    .kind(TokenKind::Amp)
+                    .then(self.kind(TokenKind::MutKw).or_not())
+                    .then(ref_target)
+                    .map(|((amp_tok, mut_tok), ty)| {
+                        let mutability = if mut_tok.is_some() {
+                            Mutability::Mutable
+                        } else {
+                            Mutability::Immutable
+                        };
+
+                        Ty {
+                            id: NodeId::next(),
+                            span: amp_tok.span.merge(ty.span),
+                            kind: TyKind::Ref {
+                                base: Box::new(ty),
+                                mutability,
                             },
                         }
                     })
@@ -253,8 +261,9 @@ impl Parser {
                     self_ty,
                     dyn_ty,
                     any_ty,
+                    iso_ty,
                     ref_ty,
-                    fn_ty,
+                    fun_ty,
                     primitive_ty,
                     tuple_ty,
                     array_ty,
@@ -315,7 +324,7 @@ mod tests {
 
     #[test]
     fn parses_primitive_types() {
-        for src in ["i32", "u64", "f64", "bool", "char", "str"] {
+        for src in ["i32", "u64", "usize", "f64", "bool", "char", "str"] {
             let ty = parse_ty(src);
             assert_eq!(base_name(&ty), src);
         }
@@ -488,24 +497,12 @@ mod tests {
         }
     }
 
+    /// A reference may not wrap another reference: no pointer-chasing. `&&i32` can't be spelled
+    /// this way anyway, since the lexer tokenizes `&&` as a single `DoubleAmp` token, but
+    /// `&mut &i32` reaches the same shape through two separate `&` tokens and is rejected too.
     #[test]
-    fn parses_ref_to_ref_type() {
-        // `&mut &i32` is a mutable reference to an immutable reference. `&&i32` can't be
-        // spelled this way, since the lexer tokenizes `&&` as a single `DoubleAmp` token.
-        let ty = parse_ty("&mut &i32");
-        match &ty.kind {
-            TyKind::Ref { mutability, base } => {
-                assert!(matches!(mutability, Mutability::Mutable));
-                match &base.kind {
-                    TyKind::Ref { mutability, base } => {
-                        assert!(matches!(mutability, Mutability::Immutable));
-                        assert!(matches!(base.kind, TyKind::Path { .. }));
-                    }
-                    other => panic!("expected a nested ref type, got {other:?}"),
-                }
-            }
-            other => panic!("expected a ref type, got {other:?}"),
-        }
+    fn rejects_ref_wrapping_a_ref_type() {
+        assert_eq!(diagnostic_count("&mut &i32"), 1);
     }
 
     #[test]
@@ -612,6 +609,14 @@ mod tests {
         assert_eq!(diagnostic_count("any &i32"), 1);
     }
 
+    /// The other direction is rejected too: a reference may not wrap `any`. `any` describes how
+    /// a value crosses a function boundary; layering a reference on top of that would just be a
+    /// second, redundant indirection.
+    #[test]
+    fn rejects_ref_wrapping_an_any_type() {
+        assert_eq!(diagnostic_count("&any i32"), 1);
+    }
+
     #[test]
     fn rejects_any_wrapping_a_dyn_type() {
         assert_eq!(diagnostic_count("any dyn Shape"), 1);
@@ -620,6 +625,41 @@ mod tests {
     #[test]
     fn rejects_any_wrapping_another_any_type() {
         assert_eq!(diagnostic_count("any any i32"), 1);
+    }
+
+    #[test]
+    fn parses_iso_type() {
+        let ty = parse_ty("iso i32");
+        match &ty.kind {
+            TyKind::Iso(inner) => assert!(matches!(inner.kind, TyKind::Path { .. })),
+            other => panic!("expected an iso type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_iso_wrapping_a_ref_type() {
+        assert_eq!(diagnostic_count("iso &i32"), 1);
+    }
+
+    /// `iso` is this language's owning pointer -- Rust's `Box` -- so `iso dyn Trait` is the
+    /// usual way to own an unsized trait object, the same shape as `Box<dyn Trait>`.
+    #[test]
+    fn parses_iso_dyn_type() {
+        let ty = parse_ty("iso dyn Shape");
+        match &ty.kind {
+            TyKind::Iso(inner) => assert!(matches!(inner.kind, TyKind::Dyn { .. })),
+            other => panic!("expected an iso type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_iso_wrapping_an_any_type() {
+        assert_eq!(diagnostic_count("iso any i32"), 1);
+    }
+
+    #[test]
+    fn rejects_iso_wrapping_a_fn_type() {
+        assert_eq!(diagnostic_count("iso fun(i32) -> i32"), 1);
     }
 
     #[test]

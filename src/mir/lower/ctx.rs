@@ -1,15 +1,3 @@
-//! [`BodyLowerCtx`], the per-`Body` builder every corner of `mir::lower` lowers into. It plays
-//! the role [`OwnerLowerer`](crate::hir::lower) plays for Lowering #1: one context owns exactly
-//! one `Body`-in-progress, and the rest of `mir::lower`'s submodules are `impl` blocks on it.
-//!
-//! Unlike an HIR arena, built by `reserve`-then-`fill` in tree order, a `Body`'s basic blocks are
-//! built in control-flow order: [`BodyLowerCtx::new_block`] reserves an empty block with no
-//! terminator yet, [`BodyLowerCtx::switch_to`] moves the "current block" cursor onto one, and
-//! [`BodyLowerCtx::push_stmt`]/[`BodyLowerCtx::set_terminator`] append to whichever block the
-//! cursor currently names. [`BodyLowerCtx::finish`] panics if any reserved block was never given
-//! a terminator, the same "this is a lowering-pass bug, not a user error" discipline
-//! `hir::lower::ctx`'s `def_id_of`/`hir_id_of` already use.
-
 use std::collections::HashMap;
 
 use crate::ast::{Ident, Mutability};
@@ -18,8 +6,8 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId};
 use crate::mir::lower::Task;
 use crate::mir::{
-    AnyMode, BasicBlock, BasicBlockData, Body, Local, LocalDecl, Place, Statement, StatementKind,
-    Terminator, TerminatorKind,
+    AnyMode, BasicBlock, BasicBlockData, Body, Local, LocalDecl, Place, Statement, StatementId,
+    StatementKind, Terminator, TerminatorKind,
 };
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::Ty;
@@ -69,6 +57,7 @@ pub(crate) struct BodyLowerCtx<'a> {
     local_decls: Vec<LocalDecl>,
     blocks: Vec<BlockBuilder>,
     current: BasicBlock,
+    next_stmt_id: usize,
 
     /// Maps a HIR node that names one value slot -- a parameter, a `let`/`with` binding's
     /// pattern, a closure's implicit environment -- to the `Place` lowering allocated for it.
@@ -112,6 +101,7 @@ impl<'a> BodyLowerCtx<'a> {
             local_decls: Vec::new(),
             blocks: Vec::new(),
             current: BasicBlock::from_usize(0),
+            next_stmt_id: 0,
             hir_locals: HashMap::new(),
             loop_stack: Vec::new(),
             block_scopes: Vec::new(),
@@ -147,8 +137,20 @@ impl<'a> BodyLowerCtx<'a> {
     /// flattened sub-expression, a bounds check's length, and so on). Always immutable: nothing
     /// after lowering ever assigns into a temporary a second time in a way mutability would
     /// guard against.
+    ///
+    /// Bracketed in `StorageLive`/`StorageDead` exactly like a `let`/`with` binding's own local
+    /// (see `lower_let`/`lower_with_lend`/`bind_pat`'s `PatKind::Binding` arm), through the same
+    /// block-scoped exit-obligation mechanism: the `StorageDead` is registered against the
+    /// innermost open block scope here, and actually pushed wherever that scope's obligations are
+    /// next replayed (natural fallthrough, `break`, `continue`, or `return`). This is coarser
+    /// than a temporary's true extent -- most live only across the one statement that reads them
+    /// back -- but it is the same scope a `let` local gets, and it means no local in the finished
+    /// `Body`, named or not, is ever live without a `StorageLive`/`StorageDead` pair saying so.
     pub(crate) fn new_temp(&mut self, ty: Ty, span: SrcSpan) -> Local {
-        self.new_local(ty, Mutability::Immutable, None, span)
+        let local = self.new_local(ty, Mutability::Immutable, None, span);
+        self.push_stmt(StatementKind::StorageLive(local), span);
+        self.register_exit_obligation(ExitObligation::StorageDead(local));
+        local
     }
 
     /// Records that HIR node `id` (a parameter, a binding pattern) is addressed by `local`,
@@ -206,9 +208,11 @@ impl<'a> BodyLowerCtx<'a> {
     }
 
     pub(crate) fn push_stmt(&mut self, kind: StatementKind, span: SrcSpan) {
+        let id = StatementId::from_usize(self.next_stmt_id);
+        self.next_stmt_id += 1;
         self.blocks[self.current.index()]
             .statements
-            .push(Statement { kind, span });
+            .push(Statement { id, kind, span });
     }
 
     /// Sets the current block's terminator. Panics if it already has one -- a block gets exactly
@@ -358,7 +362,7 @@ impl<'a> BodyLowerCtx<'a> {
             def_id,
             basic_blocks,
             local_decls: std::mem::take(&mut self.local_decls),
-            arg_count,
+            param_count: arg_count,
             span,
         }
     }

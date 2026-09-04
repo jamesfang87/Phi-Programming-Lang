@@ -44,6 +44,18 @@ pub fn report_compound_assign_result_mismatch(cx: DisplayCx<'_>, err: UnifyError
 }
 
 // -----------------------------------------------------------------
+// Dereference
+// -----------------------------------------------------------------
+
+pub fn report_deref_not_a_reference(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(format!("`{}` cannot be dereferenced", cx.show(ty)), span)
+            .with_label("not a reference type")
+            .with_help("`*` only applies to a value of type `&T` or `&mut T`"),
+    );
+}
+
+// -----------------------------------------------------------------
 // Indexing
 // -----------------------------------------------------------------
 
@@ -65,6 +77,17 @@ pub fn report_index_not_int(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span)
             .with_label("an array is indexed by an integer"),
+    );
+}
+
+// -----------------------------------------------------------------
+// `new`
+// -----------------------------------------------------------------
+
+pub fn report_new_array_count_not_usize(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(cx.show(err).to_string(), span)
+            .with_label("`new [elem; count]`'s count is a `usize`"),
     );
 }
 

@@ -7,7 +7,7 @@ use crate::hir::{
     AccessArgs, ExprKind, Function, Local, LoopSource, Module, OwnerNode, PatKind, Payload, Res,
     StmtKind, TyKind, VariantPayload,
 };
-use crate::testing::{lower_src, parse_src};
+use crate::testing::{lower_to_hir, parse_src};
 
 // -----------------------------------------------------------------
 // Running the lowering pipeline
@@ -61,7 +61,7 @@ fn only_function(hir: &Hir) -> (DefId, &Function) {
 /// plus the root module: six in total.
 #[test]
 fn every_definition_has_a_def_id_before_any_body_is_lowered() {
-    let hir = lower_src("struct A {} fun f() {} enum E { x } trait T {} extend A {}");
+    let hir = lower_to_hir("struct A {} fun f() {} enum E { x } trait T {} extend A {}");
     assert_eq!(hir.def_ids().count(), 6);
 }
 
@@ -71,7 +71,7 @@ fn every_definition_has_a_def_id_before_any_body_is_lowered() {
 /// though `Foo`'s own item is pre-allocated after `f`'s.
 #[test]
 fn a_forward_reference_resolves_to_an_already_allocated_def_id() {
-    let hir = lower_src("fun f(x: Foo) {} struct Foo {}");
+    let hir = lower_to_hir("fun f(x: Foo) {} struct Foo {}");
     assert_eq!(hir.def_ids().count(), 3);
 }
 
@@ -135,7 +135,7 @@ fn every_item_gets_a_def_id_before_lower_module_runs() {
 
 #[test]
 fn function_is_declared_in_the_module() {
-    let hir = lower_src("fun main() {}");
+    let hir = lower_to_hir("fun main() {}");
     let m = hir.root();
     let id = find_value(&hir, m, "main");
     let f = hir.function(id);
@@ -151,7 +151,7 @@ fn function_is_declared_in_the_module() {
 
 #[test]
 fn function_params_and_return_type_are_lowered() {
-    let hir = lower_src("fun add(x: i32, y: i32) -> i32 { x + y }");
+    let hir = lower_to_hir("fun add(x: i32, y: i32) -> i32 { x + y }");
     let (_, f) = only_function(&hir);
     assert_eq!(f.params.len(), 2);
     let x = hir.param(f.params[0]);
@@ -182,7 +182,7 @@ fn function_params_and_return_type_are_lowered() {
 /// annotation, exactly like a `let`'s or a parameter's.
 #[test]
 fn a_cast_expr_lowers_its_operand_and_target_type() {
-    let hir = lower_src("fun f(x: i32) -> i64 { x as i64 }");
+    let hir = lower_to_hir("fun f(x: i32) -> i64 { x as i64 }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.expect("expected a body"));
     let tail = hir.expr(body.expr.expect("expected a tail expression"));
@@ -206,7 +206,7 @@ fn a_cast_expr_lowers_its_operand_and_target_type() {
 
 #[test]
 fn struct_has_its_fields_lowered() {
-    let hir = lower_src("struct Point { x: i32, y: i32 }");
+    let hir = lower_to_hir("struct Point { x: i32, y: i32 }");
     let m = hir.root();
     let id = find_type(&hir, m, "Point");
     let s = hir.struct_(id);
@@ -218,7 +218,7 @@ fn struct_has_its_fields_lowered() {
 
 #[test]
 fn enum_variants_are_lowered() {
-    let hir = lower_src("enum Shape { Circle: f64, Rectangle: { w: f64, h: f64 }, Point }");
+    let hir = lower_to_hir("enum Shape { Circle: f64, Rectangle: { w: f64, h: f64 }, Point }");
     let m = hir.root();
     let id = find_type(&hir, m, "Shape");
     let e = hir.enum_(id);
@@ -240,7 +240,7 @@ fn enum_variants_are_lowered() {
 
 #[test]
 fn trait_functions_are_lowered_as_independent_owners() {
-    let hir = lower_src("trait Shape { fun area(&self) -> f64; }");
+    let hir = lower_to_hir("trait Shape { fun area(&self) -> f64; }");
     let m = hir.root();
     let id = find_type(&hir, m, "Shape");
     let t = hir.trait_(id);
@@ -258,7 +258,7 @@ fn trait_functions_are_lowered_as_independent_owners() {
 
 #[test]
 fn extend_methods_and_generics_are_lowered() {
-    let hir = lower_src("extend<T> Box<T> with Container<T> { fun get(&self) {} }");
+    let hir = lower_to_hir("extend<T> Box<T> with Container<T> { fun get(&self) {} }");
     let m = hir.root();
     // `extend` blocks aren't named, so they're only reachable through the module's item list.
     assert_eq!(m.items.len(), 1);
@@ -296,7 +296,7 @@ fn extend_methods_and_generics_are_lowered() {
 /// for regardless: that both the generics and the functions came out right.
 #[test]
 fn a_traits_generics_are_lowered_before_its_functions() {
-    let hir = lower_src("trait C<T> { fun get(self) -> T; }");
+    let hir = lower_to_hir("trait C<T> { fun get(self) -> T; }");
     let m = hir.root();
     let id = find_type(&hir, m, "C");
     let t = hir.trait_(id);
@@ -310,7 +310,7 @@ fn a_traits_generics_are_lowered_before_its_functions() {
 /// Same regression, for an `extend` block's own (`extend<T>`) generics against its methods.
 #[test]
 fn an_extend_blocks_generics_are_lowered_before_its_methods() {
-    let hir = lower_src("struct S {} extend<T> S { fun get(self) -> T {} }");
+    let hir = lower_to_hir("struct S {} extend<T> S { fun get(self) -> T {} }");
     let extend_id = crate::testing::first_extend(&hir);
     let e = hir.extend(extend_id);
     assert_eq!(e.extend_generics.len(), 1);
@@ -322,7 +322,7 @@ fn an_extend_blocks_generics_are_lowered_before_its_methods() {
 
 #[test]
 fn generic_params_carry_their_bounds() {
-    let hir = lower_src("struct Wrapper<T: Clone> { value: T }");
+    let hir = lower_to_hir("struct Wrapper<T: Clone> { value: T }");
     let m = hir.root();
     let id = find_type(&hir, m, "Wrapper");
     let s = hir.struct_(id);
@@ -335,7 +335,7 @@ fn generic_params_carry_their_bounds() {
 
 #[test]
 fn import_glob_and_alias_are_lowered_into_the_module() {
-    let hir = lower_src("import math::vector as mv; import math::*;");
+    let hir = lower_to_hir("import math::vector as mv; import math::*;");
     let m = hir.root();
     assert_eq!(m.imports.len(), 2);
     let aliased = hir.import(m.imports[0]);
@@ -373,7 +373,7 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
 
     let ast = Ast::new(vec![unit]);
     let surface_results = crate::nameres::resolve(&ast);
-    let hir = lower_program(&ast, &surface_results);
+    let hir = lower_ast(&ast, &surface_results);
     let root = hir.root();
     // The root's only item is the synthesized `math`, which in turn holds `math::vector`.
     assert_eq!(root.items.len(), 1);
@@ -425,7 +425,7 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
 
 #[test]
 fn a_free_items_parent_is_its_module() {
-    let hir = lower_src("fun f() {} struct S { x: i32 }");
+    let hir = lower_to_hir("fun f() {} struct S { x: i32 }");
     let root = hir.root();
     let f_id = find_value(&hir, root, "f");
     let s_id = find_type(&hir, root, "S");
@@ -437,7 +437,7 @@ fn a_free_items_parent_is_its_module() {
 
 #[test]
 fn a_methods_parent_is_its_trait_or_extend_block() {
-    let hir = lower_src(
+    let hir = lower_to_hir(
         "trait T { fun t(self) {} }
          struct S {}
          extend S with T { fun m(self) {} }",
@@ -460,7 +460,7 @@ fn a_methods_parent_is_its_trait_or_extend_block() {
 
 #[test]
 fn a_closures_parent_is_the_owner_it_appears_in() {
-    let hir = lower_src("fun f() { let g = || 1; }");
+    let hir = lower_to_hir("fun f() { let g = || 1; }");
     let (f_id, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
@@ -480,7 +480,7 @@ fn a_closures_parent_is_the_owner_it_appears_in() {
 
 #[test]
 fn lowers_compound_types() {
-    let hir = lower_src(
+    let hir = lower_to_hir(
         "fun f(a: &mut i32, b: any Draw, c: (i32, bool), d: [i32; 3], e: fun(i32) -> i32) {}",
     );
     let (_, f) = only_function(&hir);
@@ -524,7 +524,7 @@ fn lowers_compound_types() {
 #[test]
 fn lowers_ctor_tuple_and_range_exprs() {
     let hir =
-        lower_src("fun f() { let p = Point { x: 1, y: 2 }; let t = (1, 2, 3); let r = 0..5; }");
+        lower_to_hir("fun f() { let p = Point { x: 1, y: 2 }; let t = (1, 2, 3); let r = 0..5; }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 3);
@@ -569,7 +569,7 @@ fn lowers_ctor_tuple_and_range_exprs() {
 fn lowers_access_and_index_exprs() {
     // `a.b` and `.c(1)` are the same node kind -- which is a field and which is a method call
     // isn't known until typeck -- so they differ only in their `AccessArgs`.
-    let hir = lower_src("fun f() { a.b.c(1)[0] }");
+    let hir = lower_to_hir("fun f() { a.b.c(1)[0] }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let tail = hir.expr(body.expr.unwrap());
@@ -594,7 +594,8 @@ fn lowers_access_and_index_exprs() {
 
 #[test]
 fn lowers_if_and_match_exprs() {
-    let hir = lower_src("fun f() { if x { 1 } else { 2 }; match x { .circle(r) => 1, _ => 0 } }");
+    let hir =
+        lower_to_hir("fun f() { if x { 1 } else { 2 }; match x { .circle(r) => 1, _ => 0 } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
@@ -645,7 +646,7 @@ fn only_init(hir: &Hir) -> HirId {
 
 #[test]
 fn payload_less_variant_lowers_with_no_payload() {
-    let hir = lower_src("fun f() { let x = .none; }");
+    let hir = lower_to_hir("fun f() { let x = .none; }");
     let init = only_init(&hir);
     match &hir.expr(init).kind {
         ExprKind::Variant { variant, payload } => {
@@ -660,7 +661,7 @@ fn payload_less_variant_lowers_with_no_payload() {
 /// `ExprKind::Tuple` in the payload slot rather than to several arguments.
 #[test]
 fn tuple_payload_lowers_as_one_value() {
-    let hir = lower_src("fun f() { let x = .parallelogram((1.0, 2.0)); }");
+    let hir = lower_to_hir("fun f() { let x = .parallelogram((1.0, 2.0)); }");
     let init = only_init(&hir);
     match &hir.expr(init).kind {
         ExprKind::Variant { variant, payload } => {
@@ -679,7 +680,7 @@ fn tuple_payload_lowers_as_one_value() {
 
 #[test]
 fn record_payload_keeps_its_field_names() {
-    let hir = lower_src("fun f() { let x = .square { l: 4.0 }; }");
+    let hir = lower_to_hir("fun f() { let x = .square { l: 4.0 }; }");
     let init = only_init(&hir);
     match &hir.expr(init).kind {
         ExprKind::Variant { variant, payload } => {
@@ -701,7 +702,7 @@ fn record_payload_keeps_its_field_names() {
 /// `{ l }` is shorthand for `{ l: l }`, so lowering must leave a real expression behind it.
 #[test]
 fn record_payload_field_shorthand_is_desugared() {
-    let hir = lower_src("fun f() { let x = .square { l }; }");
+    let hir = lower_to_hir("fun f() { let x = .square { l }; }");
     let init = only_init(&hir);
     match &hir.expr(init).kind {
         ExprKind::Variant { payload, .. } => {
@@ -721,7 +722,7 @@ fn record_payload_field_shorthand_is_desugared() {
 /// The same shorthand on the pattern side becomes a real binding pattern.
 #[test]
 fn record_pattern_field_shorthand_is_desugared() {
-    let hir = lower_src("fun f() { match x { .square { l } => l, _ => 0 } }");
+    let hir = lower_to_hir("fun f() { match x { .square { l } => l, _ => 0 } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let ExprKind::Match { arms, .. } = &hir.expr(body.expr.unwrap()).kind else {
@@ -751,7 +752,7 @@ fn record_pattern_field_shorthand_is_desugared() {
 /// lowering panic.
 #[test]
 fn record_pattern_shorthand_binds_reachable_in_the_arm_body() {
-    let hir = lower_src("fun f() { match x { .rect { w, h } => w, _ => 0 } }");
+    let hir = lower_to_hir("fun f() { match x { .rect { w, h } => w, _ => 0 } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let ExprKind::Match { arms, .. } = &hir.expr(body.expr.unwrap()).kind else {
@@ -791,7 +792,7 @@ fn record_pattern_shorthand_binds_reachable_in_the_arm_body() {
 /// scope resolves through it rather than landing on `Res::Err`.
 #[test]
 fn record_expr_shorthand_resolves_the_name_it_names() {
-    let hir = lower_src("fun f(w: i32) { let x = .square { w }; }");
+    let hir = lower_to_hir("fun f(w: i32) { let x = .square { w }; }");
     let (_, f) = only_function(&hir);
     let w_param = f.params[0];
 
@@ -828,7 +829,7 @@ fn record_expr_shorthand_resolves_the_name_it_names() {
 /// `hir::Path` whose `res` is `Res::Err`.
 #[test]
 fn an_unresolved_name_lowers_to_res_err_instead_of_panicking() {
-    let hir = lower_src("fun f() { let x = does_not_exist; }");
+    let hir = lower_to_hir("fun f() { let x = does_not_exist; }");
     let init = only_init(&hir);
     match &hir.expr(init).kind {
         ExprKind::Path(path) => {
@@ -841,7 +842,7 @@ fn an_unresolved_name_lowers_to_res_err_instead_of_panicking() {
 
 #[test]
 fn elided_struct_literal_names_no_type() {
-    let hir = lower_src("fun f() { let x = .{ l: 4.0, w: 6.0 }; }");
+    let hir = lower_to_hir("fun f() { let x = .{ l: 4.0, w: 6.0 }; }");
     let init = only_init(&hir);
     match &hir.expr(init).kind {
         ExprKind::Ctor { path, payload } => {
@@ -855,7 +856,7 @@ fn elided_struct_literal_names_no_type() {
 
 #[test]
 fn closure_is_lowered_as_its_own_owner() {
-    let hir = lower_src("fun f() { let add = |x: i32, y: i32| -> i32 { x + y }; }");
+    let hir = lower_to_hir("fun f() { let add = |x: i32, y: i32| -> i32 { x + y }; }");
     let (id, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
@@ -880,7 +881,7 @@ fn closure_is_lowered_as_its_own_owner() {
 
 #[test]
 fn block_tail_expression_is_not_a_statement() {
-    let hir = lower_src("fun f() { let x = 1; x }");
+    let hir = lower_to_hir("fun f() { let x = 1; x }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
@@ -895,13 +896,13 @@ fn block_tail_expression_is_not_a_statement() {
 /// block's tail without one and an ordinary statement with one.
 #[test]
 fn a_trailing_semicolon_discards_the_block_value() {
-    let hir = lower_src("fun f() { g() }");
+    let hir = lower_to_hir("fun f() { g() }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert!(body.stmts.is_empty());
     assert!(body.expr.is_some());
 
-    let hir = lower_src("fun f() { g(); }");
+    let hir = lower_to_hir("fun f() { g(); }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
@@ -912,7 +913,7 @@ fn a_trailing_semicolon_discards_the_block_value() {
 /// so both spellings remain distinguishable in the last position.
 #[test]
 fn a_block_bodied_expression_is_a_tail_only_without_a_semicolon() {
-    let hir = lower_src("fun f() { if c { 1 } else { 2 } }");
+    let hir = lower_to_hir("fun f() { if c { 1 } else { 2 } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert!(body.stmts.is_empty());
@@ -921,7 +922,7 @@ fn a_block_bodied_expression_is_a_tail_only_without_a_semicolon() {
         ExprKind::If { .. }
     ));
 
-    let hir = lower_src("fun f() { if c { 1 } else { 2 }; }");
+    let hir = lower_to_hir("fun f() { if c { 1 } else { 2 }; }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 1);
@@ -934,7 +935,8 @@ fn a_block_bodied_expression_is_a_tail_only_without_a_semicolon() {
 
 #[test]
 fn lowers_break_continue_return_defer_stmts() {
-    let hir = lower_src("fun f() { while true { break; continue; } return 1; defer cleanup(); }");
+    let hir =
+        lower_to_hir("fun f() { while true { break; continue; } return 1; defer cleanup(); }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert_eq!(body.stmts.len(), 3);
@@ -947,7 +949,7 @@ fn lowers_break_continue_return_defer_stmts() {
 
 #[test]
 fn lowers_with_stmt_lends() {
-    let hir = lower_src("fun f() { with x = &a, y = &mut b { foo(); } }");
+    let hir = lower_to_hir("fun f() { with x = &a, y = &mut b { foo(); } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     match &hir.stmt(body.stmts[0]).kind {
@@ -987,7 +989,7 @@ fn lowers_with_stmt_lends() {
 #[test]
 fn while_loop_desugars_to_loop_with_negated_guard() {
     // `while cond { body }` -> `loop { if !cond { break; } body... }` (see `lower_while`).
-    let hir = lower_src("fun f() { while x < 5 { foo(); } }");
+    let hir = lower_to_hir("fun f() { while x < 5 { foo(); } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let StmtKind::Expr(loop_expr_id) = hir.stmt(body.stmts[0]).kind else {
@@ -1036,7 +1038,7 @@ fn while_loop_desugars_to_loop_with_negated_guard() {
 #[test]
 fn if_let_desugars_to_a_match() {
     // `if let pat = e { a } else { b }` -> `match e { pat => { a }, _ => { b } }`.
-    let hir = lower_src("fun f() -> i32 { if let .some(x) = o { x } else { 0 } }");
+    let hir = lower_to_hir("fun f() -> i32 { if let .some(x) = o { x } else { 0 } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     match &hir.expr(body.expr.unwrap()).kind {
@@ -1056,7 +1058,7 @@ fn if_let_desugars_to_a_match() {
 /// bare expression gets a block whose tail value is that expression.
 #[test]
 fn an_expression_bodied_arm_is_wrapped_in_a_block() {
-    let hir = lower_src("fun f() { match o { .some(x) => 1, _ => 2 } }");
+    let hir = lower_to_hir("fun f() { match o { .some(x) => 1, _ => 2 } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let ExprKind::Match { arms, .. } = &hir.expr(body.expr.unwrap()).kind else {
@@ -1079,7 +1081,7 @@ fn an_expression_bodied_arm_is_wrapped_in_a_block() {
 /// The same wrapping applies to a closure written with a bare expression body.
 #[test]
 fn an_expression_bodied_closure_is_wrapped_in_a_block() {
-    let hir = lower_src("fun f() { let g = |x: i32| -> i32 x; }");
+    let hir = lower_to_hir("fun f() { let g = |x: i32| -> i32 x; }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
@@ -1103,7 +1105,7 @@ fn an_expression_bodied_closure_is_wrapped_in_a_block() {
 /// how long the chain is, instead of the `else` alternating between an `If` and a `Block`.
 #[test]
 fn else_if_lowers_to_a_block_holding_the_nested_if() {
-    let hir = lower_src("fun f() { if a { 1 } else if b { 2 } else { 3 } }");
+    let hir = lower_to_hir("fun f() { if a { 1 } else if b { 2 } else { 3 } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
 
@@ -1132,7 +1134,7 @@ fn else_if_lowers_to_a_block_holding_the_nested_if() {
 /// arm is always there -- yielding an empty block, the same value an `else`-less `if` produces.
 #[test]
 fn if_let_without_else_still_gets_a_wildcard_arm() {
-    let hir = lower_src("fun f() { if let .some(x) = o { foo(x); } }");
+    let hir = lower_to_hir("fun f() { if let .some(x) = o { foo(x); } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     match &hir.expr(body.expr.unwrap()).kind {
@@ -1150,7 +1152,7 @@ fn if_let_without_else_still_gets_a_wildcard_arm() {
 #[test]
 fn while_let_desugars_to_a_loop_around_a_match() {
     // `while let pat = e { body }` -> `loop { match e { pat => { body }, _ => break } }`.
-    let hir = lower_src("fun f() { while let .some(x) = next() { foo(x); } }");
+    let hir = lower_to_hir("fun f() { while let .some(x) = next() { foo(x); } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     let StmtKind::Expr(loop_expr_id) = hir.stmt(body.stmts[0]).kind else {
@@ -1190,7 +1192,7 @@ fn for_loop_desugars_to_iterator_protocol() {
     // `for pat in iter { body }` ->
     // `{ let mut __iter = iter; loop { match __iter.next() { Some(pat) => body, None => break } } }`
     // (see `lower_for`).
-    let hir = lower_src("fun f() { for x in xs { foo(x); } }");
+    let hir = lower_to_hir("fun f() { for x in xs { foo(x); } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
     assert!(body.expr.is_none());

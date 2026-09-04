@@ -20,10 +20,9 @@ use crate::nameres::symbol_table::SymbolTable;
 pub(super) struct Resolver<'ast> {
     pub(super) table: SymbolTable<'ast>,
     results: NameResolutions,
-    /// The module the node currently inside is written in. This is used
-    /// as `from` in lookups SymbolTable
+    /// This is used as `from` in lookups SymbolTable
     current_module: NodeId,
-    /// The `Item` currently being considered, if any.
+    /// The `Item` currently being considered
     current_item: Option<NodeId>,
 }
 
@@ -85,8 +84,6 @@ impl<'ast> Resolver<'ast> {
     }
 
     fn push_generics(&mut self, generics: &'ast [Generic]) {
-        // Built one at a time, rather than a bare `collect`, so that a repeated name is caught
-        // instead of silently letting the later parameter win.
         let mut params = HashMap::new();
         for g in generics {
             match params.entry(g.name.text) {
@@ -172,8 +169,6 @@ impl<'ast> Resolver<'ast> {
     }
 }
 
-/// Builds a single-segment [`Path`] for `ident`. Used when looking up a name that has no `Path`
-/// in the source, such as a record payload shorthand field's implicit value.
 fn single_segment_path(ident: Ident) -> Path {
     Path {
         segments: vec![ident],
@@ -181,9 +176,7 @@ fn single_segment_path(ident: Ident) -> Path {
     }
 }
 
-/// Constructs an `Ident` for `self`. `ast::SelfParam` carries no `Ident`, only a `SelfMode`,
-/// since the parser does not need to spell the name.
-fn self_ident(span: SrcSpan) -> Ident {
+fn ident_for_lowercase_self(span: SrcSpan) -> Ident {
     Ident {
         text: Interner::intern("self"),
         span,
@@ -208,8 +201,10 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
 
         self.table.push_scope();
         if let Some(self_param) = &f.self_param {
-            self.table
-                .insert_local(self_ident(self_param.span), Local::SelfParam(self_param.id));
+            self.table.insert_local(
+                ident_for_lowercase_self(self_param.span),
+                Local::SelfParam(self_param.id),
+            );
         }
         for p in &f.params {
             self.table.insert_local(p.name, Local::Param(p.id));
@@ -313,6 +308,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             }
             TyKind::Ref { .. }
             | TyKind::Any(_)
+            | TyKind::Iso(_)
             | TyKind::Tuple(_)
             | TyKind::Array { .. }
             | TyKind::Function { .. }

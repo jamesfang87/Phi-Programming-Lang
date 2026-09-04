@@ -1,14 +1,5 @@
-//! Parses expressions, blocks, and statements.
-//!
-//! Expression precedence goes from tightest to loosest as the file reads top to bottom: postfix
-//! operators, then prefix operators, then the binary operators in the usual arithmetic order,
-//! then ranges, then assignment.
-//!
-//! [`BraceForms`] controls whether a bare `{` after an expression opens a struct literal or a
-//! record payload. Condition and scrutinee positions (`if cond { ... }`, `match x { ... }`) turn
-//! this off, so the `{` there always starts the following block instead.
-
 use chumsky::Parser as ChumskyParser;
+use chumsky::input::InputRef;
 use chumsky::prelude::*;
 use chumsky::recursive::Indirect;
 
@@ -45,8 +36,7 @@ impl Parser {
     /// Builds the mutually recursive expression and block parsers together, returning
     /// `(expr_parser, block_parser)`.
     ///
-    /// They have to be built together because each recurses into the other: an expression can
-    /// hold a block, and a block's statements can hold expressions.
+    /// They are required by chumsky to be built together since each recurses into the other.
     pub(crate) fn expr_and_block_parsers<'a>(&'a self) -> (BoxedP<'a, Expr>, BoxedP<'a, Block>) {
         let mut expr: ExprRec<'a> = Recursive::declare();
         // `expr` with brace forms denied. Used for condition and scrutinee positions.
@@ -84,8 +74,8 @@ impl Parser {
             let literal = choice((
                 self.kind(TokenKind::IntLiteral).map(Expr::int),
                 self.kind(TokenKind::FloatLiteral).map(Expr::float),
-                self.kind(TokenKind::StrLiteral).map(|t| Expr::string(t)),
-                self.kind(TokenKind::CharLiteral).map(|t| Expr::char(t)),
+                self.kind(TokenKind::StrLiteral).map(Expr::string),
+                self.kind(TokenKind::CharLiteral).map(Expr::char),
                 self.kind(TokenKind::TrueKw).map(|t: Token| Expr {
                     id: NodeId::next(),
                     kind: ExprKind::Literal(Literal::Bool(true)),
@@ -380,6 +370,13 @@ impl Parser {
                 })
                 .boxed();
 
+            // An arm body that's a bare `{ .. }` block is tried before the general expression
+            // grammar, and without postfix chaining after it. Otherwise a body like
+            // `{ return 1; } .circle => ..` would parse the next arm's leading `.circle` as a
+            // field access on the block instead of as the start of the next arm, which would
+            // then defeat comma elision for block bodies entirely.
+            let arm_body = choice((block_expr.clone(), expr.clone())).boxed();
+
             let match_arm = pattern
                 .clone()
                 .then(
@@ -388,7 +385,7 @@ impl Parser {
                         .or_not(),
                 )
                 .then_ignore(self.kind(TokenKind::FatArrow))
-                .then(expr.clone())
+                .then(arm_body)
                 .map(|((pat, guard), body)| {
                     let span = pat.span.merge(body.span);
                     Arm {
@@ -401,16 +398,42 @@ impl Parser {
                 })
                 .boxed();
 
+            // Arms whose body is a bare `{ ... }` block behave like Rust's block-like match
+            // arms: the comma after them is optional, since the closing brace already marks
+            // where the arm ends. Arms with any other body still require a separating comma,
+            // since there'd otherwise be no way to tell where one arm's expression ends and the
+            // next arm's pattern begins.
+            let match_arms = custom(move |inp: &mut InputRef<'a, '_, &'a [Token], Extra<'a>>| {
+                let mut arms = Vec::new();
+                loop {
+                    match inp.peek() {
+                        Some(t) if t.kind == TokenKind::CloseBrace => break,
+                        None => break,
+                        _ => {}
+                    }
+
+                    let arm = inp.parse(match_arm.clone())?;
+                    let comma_optional = matches!(arm.body.kind, ExprKind::Block(_));
+                    arms.push(arm);
+
+                    match inp.peek() {
+                        Some(t) if t.kind == TokenKind::CloseBrace => break,
+                        Some(t) if t.kind == TokenKind::Comma => inp.skip(),
+                        _ if comma_optional => {}
+                        _ => {
+                            inp.parse(self.kind(TokenKind::Comma))?;
+                        }
+                    }
+                }
+                Ok(arms)
+            })
+            .boxed();
+
             let match_expr = self
                 .kind(TokenKind::MatchKw)
                 .then(expr_ns.clone())
                 .then_ignore(self.kind(TokenKind::OpenBrace))
-                .then(
-                    match_arm
-                        .separated_by(self.kind(TokenKind::Comma))
-                        .allow_trailing()
-                        .collect::<Vec<_>>(),
-                )
+                .then(match_arms)
                 .then(self.kind(TokenKind::CloseBrace))
                 .map(|(((match_tok, scrutinee), arms), close_tok)| {
                     let span = match_tok.span.merge(close_tok.span);
@@ -538,6 +561,7 @@ impl Parser {
             // any prefix operator, so `-x.y` parses as `-(x.y)`.
             enum Postfix {
                 Access(Ident, AccessArgs),
+                TupleFieldPair(Ident, Ident),
                 Index(Expr),
                 Try,
             }
@@ -550,9 +574,17 @@ impl Parser {
                 BraceForms::Deny => self.never(),
             };
 
-            let access_op = self
+            let tuple_index = self.kind(TokenKind::IntLiteral).map(|t: Token| Ident {
+                text: Interner::intern(
+                    &SrcMap::text_of(t.span)
+                        .expect("lexer token span should always resolve to a source file"),
+                ),
+                span: t.span,
+            });
+
+            let access_single = self
                 .kind(TokenKind::Period)
-                .ignore_then(ident.clone())
+                .ignore_then(choice((ident.clone(), tuple_index)))
                 .then(
                     choice((
                         self.kind(TokenKind::OpenParen)
@@ -575,6 +607,34 @@ impl Parser {
                         (Postfix::Access(name, AccessArgs::None), span)
                     }
                 });
+
+            let tuple_index_pair = self.kind(TokenKind::FloatLiteral).map(|t: Token| {
+                let text = SrcMap::text_of(t.span)
+                    .expect("lexer token span should always resolve to a source file");
+                let dot = text
+                    .find('.')
+                    .expect("a `FloatLiteral` token's text always contains a '.'");
+                let begin = t.span.get_begin();
+                let first = Ident {
+                    text: Interner::intern(&text[..dot]),
+                    span: SrcSpan::new(begin, begin + dot),
+                };
+                let second = Ident {
+                    text: Interner::intern(&text[dot + 1..]),
+                    span: SrcSpan::new(begin + dot + 1, t.span.get_end()),
+                };
+                (first, second)
+            });
+
+            let access_pair = self
+                .kind(TokenKind::Period)
+                .ignore_then(tuple_index_pair)
+                .map(|(first, second)| {
+                    let span = second.span;
+                    (Postfix::TupleFieldPair(first, second), span)
+                });
+
+            let access_op = choice((access_pair, access_single));
 
             let index_op = self
                 .kind(TokenKind::OpenBracket)
@@ -601,6 +661,27 @@ impl Parser {
                             },
                             span,
                         },
+                        Postfix::TupleFieldPair(first, second) => {
+                            let inner_span = receiver.span.merge(first.span);
+                            let inner = Expr {
+                                id: NodeId::next(),
+                                kind: ExprKind::Access {
+                                    base: Box::new(receiver),
+                                    member: first,
+                                    args: AccessArgs::None,
+                                },
+                                span: inner_span,
+                            };
+                            Expr {
+                                id: NodeId::next(),
+                                kind: ExprKind::Access {
+                                    base: Box::new(inner),
+                                    member: second,
+                                    args: AccessArgs::None,
+                                },
+                                span,
+                            }
+                        }
                         Postfix::Index(index) => Expr {
                             id: NodeId::next(),
                             kind: ExprKind::Index {
@@ -628,6 +709,8 @@ impl Parser {
                     .map(|t: Token| (Prefix::Unary(UnaryOp::Neg), t.span)),
                 self.kind(TokenKind::Bang)
                     .map(|t: Token| (Prefix::Unary(UnaryOp::Not), t.span)),
+                self.kind(TokenKind::Star)
+                    .map(|t: Token| (Prefix::Unary(UnaryOp::Deref), t.span)),
                 self.kind(TokenKind::Amp)
                     .then(self.kind(TokenKind::MutKw).or_not())
                     .map(|(amp_tok, mut_tok)| {
@@ -664,12 +747,50 @@ impl Parser {
                 })
                 .boxed();
 
+            // `new [elem; count]` is its own form -- there is no general array-repeat
+            // expression to reuse, since a bare `[elem; count]` value could never exist on its
+            // own once `count` is a runtime value (an unsized value cannot sit in an ordinary
+            // place; see the "Alternatives considered" discussion in Spec A1). `new e` is the
+            // general form, wrapping `unary` so `new` binds looser than a call or any other
+            // postfix/prefix operator but tighter than any binary operator: `new f(x)` allocates
+            // the result of `f(x)`.
+            let new_array = self
+                .kind(TokenKind::NewKw)
+                .then_ignore(self.kind(TokenKind::OpenBracket))
+                .then(expr.clone())
+                .then_ignore(self.kind(TokenKind::Semicolon))
+                .then(expr.clone())
+                .then(self.kind(TokenKind::CloseBracket))
+                .map(|(((new_tok, elem), count), close_tok)| Expr {
+                    id: NodeId::next(),
+                    span: new_tok.span.merge(close_tok.span),
+                    kind: ExprKind::NewArray {
+                        elem: Box::new(elem),
+                        count: Box::new(count),
+                    },
+                })
+                .boxed();
+
+            let new_value = self
+                .kind(TokenKind::NewKw)
+                .then(unary.clone())
+                .map(|(new_tok, operand)| {
+                    let span = new_tok.span.merge(operand.span);
+                    Expr {
+                        id: NodeId::next(),
+                        kind: ExprKind::New(Box::new(operand)),
+                        span,
+                    }
+                })
+                .boxed();
+
+            let unary_or_new = choice((new_array, new_value, unary.clone())).boxed();
+
             // `as` binds tighter than every binary operator but looser than unary prefix and
             // postfix operators, exactly as in Rust: `-x as i64` is `(-x) as i64`, and
             // `x as i64 + 1` is `(x as i64) + 1`. `.foldl` makes a chain like `x as i32 as i64`
             // left-associative, casting `x` to `i32` and then that result to `i64`.
-            let cast = unary
-                .clone()
+            let cast = unary_or_new
                 .foldl(
                     self.kind(TokenKind::AsKw)
                         .ignore_then(type_p.clone())
@@ -1192,6 +1313,59 @@ mod tests {
         }
     }
 
+    // -----------------------------------------------------------------
+    // `new`
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parses_new_expr() {
+        let expr = parse_expr("new 1");
+        match &expr.kind {
+            ExprKind::New(operand) => {
+                assert!(matches!(operand.kind, ExprKind::Literal(Literal::Int { .. })));
+            }
+            other => panic!("expected a new expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_new_array_expr() {
+        let expr = parse_expr("new [0; n]");
+        match &expr.kind {
+            ExprKind::NewArray { elem, count } => {
+                assert!(matches!(elem.kind, ExprKind::Literal(Literal::Int { .. })));
+                assert!(matches!(count.kind, ExprKind::Path(_)));
+            }
+            other => panic!("expected a new array expr, got {other:?}"),
+        }
+    }
+
+    /// `new` binds looser than a call: `new f(x)` allocates the result of `f(x)`, not the
+    /// result of allocating `f` and then calling it.
+    #[test]
+    fn new_binds_looser_than_a_call() {
+        let expr = parse_expr("new f(x)");
+        match &expr.kind {
+            ExprKind::New(operand) => {
+                assert!(matches!(operand.kind, ExprKind::Call { .. }));
+            }
+            other => panic!("expected a new expr wrapping a call, got {other:?}"),
+        }
+    }
+
+    /// `new` binds tighter than any binary operator: `new x + 1` is `(new x) + 1`.
+    #[test]
+    fn new_binds_tighter_than_a_binary_operator() {
+        let expr = parse_expr("new x + 1");
+        match &expr.kind {
+            ExprKind::Binary { op, lhs, .. } => {
+                assert!(matches!(op, BinaryOp::Add));
+                assert!(matches!(lhs.kind, ExprKind::New(_)));
+            }
+            other => panic!("expected a binary expr with a new lhs, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parses_self_expr() {
         let expr = parse_expr("self");
@@ -1211,6 +1385,66 @@ mod tests {
                 assert!(matches!(base.kind, ExprKind::Path(_)));
                 assert_eq!(Interner::resolve(member.text), "x");
                 assert!(matches!(args, AccessArgs::None));
+            }
+            other => panic!("expected an access expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_tuple_index_access() {
+        let expr = parse_expr("t.0");
+        match &expr.kind {
+            ExprKind::Access { base, member, args } => {
+                assert!(matches!(base.kind, ExprKind::Path(_)));
+                assert_eq!(Interner::resolve(member.text), "0");
+                assert!(matches!(args, AccessArgs::None));
+            }
+            other => panic!("expected an access expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_chained_tuple_index_access() {
+        let expr = parse_expr("t.0.1");
+        match &expr.kind {
+            ExprKind::Access { base, member, args } => {
+                assert_eq!(Interner::resolve(member.text), "1");
+                assert!(matches!(args, AccessArgs::None));
+                match &base.kind {
+                    ExprKind::Access { base, member, args } => {
+                        assert!(matches!(base.kind, ExprKind::Path(_)));
+                        assert_eq!(Interner::resolve(member.text), "0");
+                        assert!(matches!(args, AccessArgs::None));
+                    }
+                    other => panic!("expected an access expr, got {other:?}"),
+                }
+            }
+            other => panic!("expected an access expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_triple_chained_tuple_index_access() {
+        let expr = parse_expr("t.0.1.2");
+        match &expr.kind {
+            ExprKind::Access { base, member, args } => {
+                assert_eq!(Interner::resolve(member.text), "2");
+                assert!(matches!(args, AccessArgs::None));
+                match &base.kind {
+                    ExprKind::Access { base, member, args } => {
+                        assert_eq!(Interner::resolve(member.text), "1");
+                        assert!(matches!(args, AccessArgs::None));
+                        match &base.kind {
+                            ExprKind::Access { base, member, args } => {
+                                assert!(matches!(base.kind, ExprKind::Path(_)));
+                                assert_eq!(Interner::resolve(member.text), "0");
+                                assert!(matches!(args, AccessArgs::None));
+                            }
+                            other => panic!("expected an access expr, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected an access expr, got {other:?}"),
+                }
             }
             other => panic!("expected an access expr, got {other:?}"),
         }
@@ -1785,6 +2019,55 @@ mod tests {
                 assert!(arms[0].guard.is_some());
                 assert!(arms[1].guard.is_none());
             }
+            other => panic!("expected a match expr, got {other:?}"),
+        }
+    }
+
+    /// An arm whose body is a bare `{ .. }` block needs no comma before the next arm, since the
+    /// closing brace already marks where the arm ends.
+    #[test]
+    fn block_bodied_match_arms_do_not_require_commas() {
+        let expr = parse_expr("match s { .rectangle => { return 1; } .circle => { return 2; } }");
+        match &expr.kind {
+            ExprKind::Match { arms, .. } => {
+                assert_eq!(arms.len(), 2);
+                assert!(matches!(arms[0].body.kind, ExprKind::Block(_)));
+                assert!(matches!(arms[1].body.kind, ExprKind::Block(_)));
+            }
+            other => panic!("expected a match expr, got {other:?}"),
+        }
+    }
+
+    /// A comma between block-bodied arms is still accepted; it's optional, not forbidden.
+    #[test]
+    fn block_bodied_match_arms_still_allow_commas() {
+        let expr = parse_expr("match s { .rectangle => { return 1; }, .circle => { return 2; } }");
+        match &expr.kind {
+            ExprKind::Match { arms, .. } => assert_eq!(arms.len(), 2),
+            other => panic!("expected a match expr, got {other:?}"),
+        }
+    }
+
+    /// An arm whose body is a plain expression, with no enclosing `{ .. }`, still requires a
+    /// comma before the next arm: there would otherwise be no way to tell where the expression
+    /// ends and the next arm's pattern begins.
+    #[test]
+    fn expr_bodied_match_arms_require_commas() {
+        let (tokens, _) = lex_src("match s { .a => 1 .b => 2 }");
+        let parser = Parser::new();
+        let (output, errors) = parser.expr_parser().parse(&tokens[..]).into_output_errors();
+        assert!(
+            !errors.is_empty(),
+            "expected a parse error for a missing comma, got {output:?}"
+        );
+    }
+
+    /// A trailing comma after the last arm is optional regardless of that arm's body.
+    #[test]
+    fn parses_match_with_trailing_comma_after_expr_arm() {
+        let expr = parse_expr("match s { .a => 1, .b => 2, }");
+        match &expr.kind {
+            ExprKind::Match { arms, .. } => assert_eq!(arms.len(), 2),
             other => panic!("expected a match expr, got {other:?}"),
         }
     }

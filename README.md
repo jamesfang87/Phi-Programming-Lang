@@ -4,6 +4,21 @@ Phi is a modern programming language inspired by Hylo and Rust, guaranteeing mem
 
 ---
 
+## Building
+
+`phi` links against LLVM 20 through `inkwell`. Install it and point the build at it:
+
+```bash
+brew install llvm@20
+export LLVM_SYS_201_PREFIX=/opt/homebrew/opt/llvm@20
+cargo build
+```
+
+Without `LLVM_SYS_201_PREFIX` set to an LLVM 20 installation, `llvm-sys`'s build script fails
+looking for `llvm-config`.
+
+---
+
 ## 1. Getting Started
 
 Every Phi program begins with a `main` function:
@@ -711,3 +726,20 @@ fun main() {
 ```
 
 ---
+
+## 16. Heap Allocations
+A heap-allocated value can be declared with `iso`:
+
+```phi
+struct Box<T> {
+    inner: iso T,
+}
+```
+Heap-allocated values cannot be copied. Their memory is freed when the variable goes out of scope.
+To allocated a value onto the heap, use the `new` keyword. 
+
+```phi
+let box = Box<i32> { inner: new 67 };
+```
+
+

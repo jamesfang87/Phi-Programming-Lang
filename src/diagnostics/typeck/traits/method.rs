@@ -64,8 +64,6 @@ pub fn report_ambiguous_method(member: Ident, candidates: &[(&str, SrcSpan)]) {
              all of them, so nothing here says which was meant",
     );
 
-    // Every candidate gets underlined, not just the first two. Which ones collided is the
-    // whole question here, and the answer is the set.
     for &(name, span) in candidates {
         diag = diag.with_secondary(span, format!("`{name}` declares it here"));
     }

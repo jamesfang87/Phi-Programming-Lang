@@ -17,8 +17,6 @@ use crate::nameres::results::NameResolutions;
 use crate::nameres::symbol_table::SymbolTable;
 use crate::parser::Parser;
 
-/// Builds an `Ident` naming `text`, with a throwaway span (for tests exercising scope
-/// stacks, where the span is never inspected).
 fn ident(text: &str) -> Ident {
     Ident {
         text: Interner::intern(text),

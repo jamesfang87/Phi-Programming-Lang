@@ -1,13 +1,3 @@
-//! Parses patterns. A pattern shows up in a few places:
-//!
-//! - `let (x, y) = point;`
-//! - `for item in items { ... }`
-//! - `match shape { .circle(r) => ..., _ => ... }`
-//!
-//! A pattern is its own small recursive grammar, separate from expressions, but it reuses the
-//! expression literal parsers so `match x { 1 => ... }` accepts the same literal forms as an
-//! expression would.
-
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
@@ -18,7 +8,6 @@ use crate::lexer::token::{Token, TokenKind};
 use super::{BoxedP, Extra, Parser};
 
 impl Parser {
-    /// Parses a single pattern: a wildcard, a literal, a tuple, a variant, or a binding.
     pub fn pattern_parser<'a>(&'a self) -> BoxedP<'a, Pat> {
         let ident = self.ident_parser();
 
@@ -36,8 +25,8 @@ impl Parser {
                 let literal = choice((
                     self.kind(TokenKind::IntLiteral).map(Expr::int),
                     self.kind(TokenKind::FloatLiteral).map(Expr::float),
-                    self.kind(TokenKind::StrLiteral).map(|t| Expr::string(t)),
-                    self.kind(TokenKind::CharLiteral).map(|t| Expr::char(t)),
+                    self.kind(TokenKind::StrLiteral).map(Expr::string),
+                    self.kind(TokenKind::CharLiteral).map(Expr::char),
                     self.kind(TokenKind::TrueKw).map(|t: Token| Expr {
                         id: NodeId::next(),
                         kind: ExprKind::Literal(Literal::Bool(true)),
@@ -79,8 +68,8 @@ impl Parser {
                     })
                     .boxed();
 
-                // `{ l }` binds the field to its own name. `{ l: <pat> }` destructures it
-                // further with a nested pattern.
+                // `{ l }` binds the field to its own name
+                // `{ l: <pat> }` allows for further destructuring with a nested pattern
                 let payload_field = ident
                     .clone()
                     .then(

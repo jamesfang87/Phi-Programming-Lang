@@ -1,6 +1,3 @@
-//! This module defines [`Terminator`], the one explicit transfer of control every basic block
-//! ends in, and [`TerminatorKind`], the shapes that transfer can take.
-
 use crate::ast::BinaryOp;
 use crate::driver::source::SrcSpan;
 use crate::mir::ids::BasicBlock;
@@ -19,6 +16,7 @@ pub enum TerminatorKind {
         target: BasicBlock,
     },
     Return,
+    /// Switch statement
     SwitchInt {
         discr: Operand,
         targets: SwitchTargets,
@@ -45,30 +43,50 @@ pub enum TerminatorKind {
     Unreachable,
 }
 
+impl Terminator {
+    pub fn successors(&self) -> impl Iterator<Item = BasicBlock> + '_ {
+        self.kind.successors()
+    }
+}
+
+impl TerminatorKind {
+    pub fn successors(&self) -> impl Iterator<Item = BasicBlock> + '_ {
+        let single = match self {
+            TerminatorKind::Goto { target }
+            | TerminatorKind::Drop { target, .. }
+            | TerminatorKind::Assert { target, .. } => Some(*target),
+            TerminatorKind::Call { target, .. } => *target,
+            TerminatorKind::Return
+            | TerminatorKind::Unreachable
+            | TerminatorKind::SwitchInt { .. } => None,
+        };
+        let switch = match self {
+            TerminatorKind::SwitchInt { targets, .. } => Some(targets.all_targets()),
+            _ => None,
+        };
+        single.into_iter().chain(switch.into_iter().flatten())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SwitchTargets {
     pub values: Vec<(u128, BasicBlock)>,
     pub otherwise: BasicBlock,
 }
 
-/// `AssertMessage` is the panic that an `Assert` terminator's failure edge reports. Lowering
-/// inserts one variant per check on its own, never in response to a user-written assertion, since
-/// the language has no surface syntax for one: a `CheckedBinaryOp`'s overflow flag, the zero
-/// check ahead of integer division or remainder, and the bounds check ahead of a
-/// `PlaceElem::Index` projection. This type is not itself part of the original planning sketch.
-/// It fills in what `Assert`'s `msg` field needs to hold to cover the overflow, division-by-zero,
-/// and bounds checks that lowering inserts.
+impl SwitchTargets {
+    pub fn all_targets(&self) -> impl Iterator<Item = BasicBlock> + '_ {
+        self.values
+            .iter()
+            .map(|(_, target)| *target)
+            .chain(std::iter::once(self.otherwise))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum AssertMessage {
-    /// This variant reports that `op` overflowed on its two operands, and pairs with the
-    /// `CheckedBinaryOp` computing the same operation immediately before this `Assert`.
     Overflow(BinaryOp, Operand, Operand),
     DivisionByZero(Operand),
     RemainderByZero(Operand),
-    /// This variant reports that `index` was not less than `len`, ahead of a
-    /// `PlaceElem::Index` projection using it.
-    BoundsCheck {
-        len: Operand,
-        index: Operand,
-    },
+    BoundsCheck { len: Operand, index: Operand },
 }

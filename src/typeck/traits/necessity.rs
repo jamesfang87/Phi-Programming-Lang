@@ -108,13 +108,19 @@ fn a_conditional_impl_only_applies_when_its_own_bound_holds() {
 /// `Foo` implements `Show` and `&Foo` does not, which is the whole of the rule. The tempting
 /// simplification is to let the query see through a reference to what it points at, since a
 /// method call on a `&Foo` reaches `Foo`'s methods perfectly well; a solver that peeled the
-/// reference accepts this program, and `Sorted<&Foo>` would then hold a field whose type
+/// reference accepts this program, and `Holds<&Foo>` would then bind a parameter whose type
 /// satisfies no bound. Peeling belongs to receiver adjustment in method resolution, where the
 /// call knows how many layers it took off, and not here.
+///
+/// This is exercised through a `dyn`'s own generic argument rather than through `Sorted<U>`,
+/// the struct this module's other tests instantiate: a struct or enum can no longer be
+/// instantiated with a reference argument at all, so `Sorted<&Foo>` is rejected before its
+/// bound is even considered, and could no longer isolate step 4 on its own.
 #[test]
 fn a_reference_to_an_implementing_type_does_not_itself_implement() {
     typeck_rejects(
-        &src("fun f(x: Sorted<&Foo>) {}"),
+        &src("trait Holds<T: Show> {}
+              fun f(x: &dyn Holds<&Foo>) {}"),
         "the trait bound `&Foo: Show` is not satisfied",
     );
 }
@@ -125,14 +131,20 @@ fn a_reference_to_an_implementing_type_does_not_itself_implement() {
 /// ever answer this goal; the trait a `dyn` names is the whole of what it implements, and that is
 /// a rule rather than an entry in a table. Without step 3 the first line below is rejected, and a
 /// trait object could never be passed anywhere its own trait is required.
+///
+/// The bound lives on `Container`'s own generic parameter rather than a struct field, and the
+/// `dyn Show`/`dyn Other` argument sits behind the outer `dyn`'s `&`, not stored anywhere: `dyn`
+/// has no size of its own (`typeck::tests`' `dyn` restriction tests cover that separately), so a
+/// bare one can never be a struct's field type or generic argument in the first place, only a
+/// bound checked at a position like this one.
 #[test]
 fn a_dyn_satisfies_the_trait_it_names_and_no_other() {
     let messages = typeck_src(
         "trait Show { fun show(&self); }
          trait Other { fun other(&self); }
-         struct Sorted<T: Show> { inner: T }
-         fun f(x: Sorted<dyn Show>) {}
-         fun g(x: Sorted<dyn Other>) {}",
+         trait Container<T: Show> { fun get(&self) -> T; }
+         fun f(x: &dyn Container<dyn Show>) {}
+         fun g(x: &dyn Container<dyn Other>) {}",
     );
     assert_eq!(
         messages,

@@ -1,23 +1,14 @@
-//! Call lowering: uniform call syntax (a method's receiver becomes `args[0]`), the
-//! `Res::Function`/indirect-place split a callee can be, `dyn` dispatch's deliberate panic
-//! (its vtable/fat-pointer layout is a later pass, per the spec's own "Status" section), and
-//! `any`-mode projection specialization.
-
 use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::lower::{Task, is_any_specialized};
 use crate::mir::{
-    AnyMode, ConstKind, Constant, Operand, Place, PlaceElem, Rvalue, StatementKind, TerminatorKind,
+    AnyMode, ConstKind, Constant, Operand, Place, Projection, Rvalue, TerminatorKind,
 };
 use crate::typeck::ty::{Ty, TyKind};
 
 impl<'a> BodyLowerCtx<'a> {
-    /// Whether `expr_id` is a call (a `Call`, a method-shaped `Access`, or an overloaded
-    /// `Index`) whose resolved callee is specialized by `any`-mode -- used by `ExprKind::Borrow`
-    /// to decide whether its operand needs the mode-aware call lowering below instead of an
-    /// ordinary place-borrow.
     pub(crate) fn is_any_specialized_call(&self, expr_id: HirId) -> bool {
         let Some(def) = self.call_target_def(expr_id) else {
             return false;
@@ -25,8 +16,6 @@ impl<'a> BodyLowerCtx<'a> {
         is_any_specialized(self.tcx, self.types, def)
     }
 
-    /// The statically-resolved callee `DefId` a `Call`/method-`Access`/overloaded-`Index`
-    /// expression names, if any -- `None` for an indirect call through a `fun`-typed place.
     fn call_target_def(&self, expr_id: HirId) -> Option<DefId> {
         match &self.hir.expr(expr_id).kind {
             ExprKind::Call { callee, .. } => match &self.hir.expr(*callee).kind {
@@ -45,9 +34,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// Lowers a `Call`, a method-shaped `Access`, or an overloaded `Index` into a `Call`
-    /// terminator targeting `dest`, then continues in the fresh block the call returns to.
-    /// `mode` only matters for a callee whose return type is `any T`; it is ignored otherwise.
     pub(crate) fn lower_call_like_into(
         &mut self,
         expr_id: HirId,
@@ -105,12 +91,6 @@ impl<'a> BodyLowerCtx<'a> {
             }
         };
 
-        // Per the spec: `target` is `None` exactly when this call's own return type is `Never`
-        // -- the runtime panic function, for instance, which never returns control to its
-        // caller. There is still a fresh block to switch to afterward, the same "dead code after
-        // a hard exit" block every other diverging terminator (`Return`, `Goto` after `break`/
-        // `continue`) already gets, so `self.current` stays open for whatever the caller does
-        // next, even though nothing ever actually reaches it.
         let call_ty = self.expr_ty(expr_id);
         let never_returns = matches!(self.tcx.kind(call_ty), TyKind::Never);
         let target = if never_returns {
@@ -131,9 +111,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.switch_to(fresh);
     }
 
-    /// Panics with a clear message if `receiver_expr`'s peeled type is `dyn Trait` -- vtable
-    /// dispatch is deliberately not yet implemented; see the spec's own "Status" section, which
-    /// defers a `dyn` value's fat-pointer layout to a later pass.
     fn check_not_dyn_dispatch(&mut self, receiver_expr: HirId, span: SrcSpan) {
         let receiver_ty = self.expr_ty(receiver_expr);
         let (peeled, _) = self.peel_refs(receiver_ty);
@@ -147,7 +124,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// Strips `Any` layers off `ty`, the way `peel_refs` strips `Ref` layers.
     fn peel_any(&self, ty: Ty) -> (Ty, u32) {
         let mut current = ty;
         let mut count = 0;
@@ -158,10 +134,6 @@ impl<'a> BodyLowerCtx<'a> {
         (current, count)
     }
 
-    /// The callee of a `Call` expression specifically: a direct call to a named function, or an
-    /// indirect call through whatever place a non-path (or non-function-path) callee expression
-    /// addresses. Never reifies -- that coercion is for a function used as a *value*, and this
-    /// position is precisely the one place a named function is not one.
     fn lower_callee(
         &mut self,
         call_expr_id: HirId,
@@ -186,9 +158,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// Builds the `Operand::Constant(FnDef(..))` naming `def`, instantiated with `args`,
-    /// discovering an `AnySpecialized` lowering task for `mode` when `def`'s return type is
-    /// `any T`.
     fn resolved_fn_operand(
         &mut self,
         def: DefId,
@@ -205,14 +174,10 @@ impl<'a> BodyLowerCtx<'a> {
         let fn_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
         Operand::Constant(Constant {
             ty: fn_ty,
-            kind: ConstKind::FnDef(def, args, any_mode),
+            kind: ConstKind::FunDef(def, args, any_mode),
         })
     }
 
-    /// Builds a call's argument list, receiver first when there is one. An `any`-typed
-    /// parameter's argument is auto-projected to match `any_mode` -- borrowed into a fresh
-    /// temporary if the mode calls for a reference -- rather than requiring the caller to have
-    /// written `&`/`&mut` explicitly, matching the README's own `min(a, b)` example.
     fn lower_call_args(
         &mut self,
         def: DefId,
@@ -242,22 +207,6 @@ impl<'a> BodyLowerCtx<'a> {
         operands
     }
 
-    /// Builds a method call's receiver operand, adjusting it to reach the shape `self`'s declared
-    /// type asks for -- the receiver adjustment
-    /// [`Typeck::peel_receiver`](crate::typeck::Typeck::peel_receiver)'s own docs describe,
-    /// typeck having already confirmed it is legal. `SelfMode::Move` (a bare
-    /// `Self` self-parameter) and `SelfMode::Any` need none of this and fall through to
-    /// [`BodyLowerCtx::lower_arg_operand`]'s existing handling; this only widens the ordinary
-    /// `SelfMode::Immutable`/`SelfMode::Mutable` case, a plain `&`/`&mut Self`.
-    ///
-    /// Every `&`/`&mut` layer the receiver expression's own type already carries is dereferenced
-    /// away first -- however many there are, and regardless of their own mutability, since this
-    /// compiler enforces no borrow checking on a reference already in hand (see
-    /// `Typeck::place_mutable_root`'s docs) -- and a fresh reference at exactly the declared
-    /// mutability is taken of what is left. A receiver with no layers at all (an ordinary place,
-    /// `x.foo()` where `x: Foo` and `foo` takes `&mut self`) is the autoref case: the same write
-    /// a `&mut` borrow anywhere else is, so it gets the same `CheckMutable` marker
-    /// [`StatementKind::CheckMutable`]'s own docs describe, for `mir::constck` to check.
     fn lower_receiver_operand(
         &mut self,
         expr_id: HirId,
@@ -279,10 +228,11 @@ impl<'a> BodyLowerCtx<'a> {
         let (_, derefs) = self.peel_refs(recv_ty);
         let mut place = self.lower_place(expr_id);
         for _ in 0..derefs {
-            place.projection.push(PlaceElem::Deref);
+            place.projections.push(Projection::Deref);
         }
+
         if derefs == 0 && mutability == Mutability::Mutable {
-            self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
+            self.push_stmt(crate::mir::StatementKind::CheckMutable(place.clone()), span);
         }
 
         let temp = self.new_temp(declared_ty, span);
@@ -339,6 +289,15 @@ impl<'a> BodyLowerCtx<'a> {
     /// Materializes a named function as a `fun(T) -> U`-typed value: `Rvalue::Cast` with
     /// `CastKind::ReifyFnPointer`, into a fresh temporary, per the spec's "Operand and Rvalue"
     /// section.
+    ///
+    /// `def`'s own signature may still carry unresolved `any` positions here -- typeck does not
+    /// resolve them when a named function is used as a bare value rather than called outright, so
+    /// `fn_value_ty` (computed from that signature) can too. A call site picks `any`'s mode from
+    /// how the call's own result is used, and a bare reference like this is not a call at all, so
+    /// there is no such usage to consult. Rather than reject the reference, this pins it to
+    /// `AnyMode::Owned` -- every `any` position becomes its plain `T` -- the same fallback
+    /// `resolve_any` already gives a definition that is not `any`-specialized at all, so an
+    /// indirect call through the resulting pointer always finds a compiled body.
     pub(crate) fn reify_fn_pointer(
         &mut self,
         def: DefId,
@@ -347,9 +306,19 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) -> Operand {
         let def_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
+        let any_mode = if is_any_specialized(self.tcx, self.types, def) {
+            self.discover(Task::AnySpecialized(def, AnyMode::Owned));
+            Some(AnyMode::Owned)
+        } else {
+            None
+        };
+        let fn_value_ty = match any_mode {
+            Some(mode) => self.resolve_any_fn_ty(fn_value_ty, mode),
+            None => fn_value_ty,
+        };
         let operand = Operand::Constant(Constant {
             ty: def_ty,
-            kind: ConstKind::FnDef(def, args, None),
+            kind: ConstKind::FunDef(def, args, any_mode),
         });
         let temp = self.new_temp(fn_value_ty, span);
         self.assign(
@@ -357,10 +326,27 @@ impl<'a> BodyLowerCtx<'a> {
             Rvalue::Cast {
                 operand,
                 ty: fn_value_ty,
-                kind: crate::mir::CastKind::ReifyFnPointer,
+                kind: crate::mir::CastKind::ReifyFunPointer,
             },
             span,
         );
         Operand::Move(Place::from_local(temp))
+    }
+
+    /// Resolves every `any` position in a `fun(..) -> ..`-shaped type under `mode`, the same way
+    /// [`BodyLowerCtx::resolve_any`] resolves one position at a time for a parameter or return
+    /// type when lowering a definition's own body. A reified function pointer's type is built
+    /// from the same signature a body is lowered from, so it needs the same treatment applied
+    /// across every parameter and the return type at once.
+    fn resolve_any_fn_ty(&mut self, fn_ty: Ty, mode: AnyMode) -> Ty {
+        let TyKind::Fun { params, ret } = self.tcx.kind(fn_ty).clone() else {
+            return fn_ty;
+        };
+        let params = params
+            .into_iter()
+            .map(|p| self.resolve_any(p, Some(mode)))
+            .collect();
+        let ret = ret.map(|r| self.resolve_any(r, Some(mode)));
+        self.tcx.mk_fun(params, ret)
     }
 }

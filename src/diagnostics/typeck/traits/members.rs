@@ -46,8 +46,6 @@ pub fn report_missing_methods(
              each implementation; giving the declaration a body makes it optional instead",
     );
 
-    // One label per missing method rather than one for the trait as a whole: a trait with
-    // twenty methods and two missing should point at the two.
     for &declaration in missing {
         let declaration = hir.function(declaration);
         diag = diag.with_secondary(
