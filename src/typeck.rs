@@ -338,7 +338,7 @@ impl<'hir> Typeck<'hir> {
                     UnaryOp::Deref => unreachable!("handled by the arm above"),
                 };
 
-                if self.is_builtin_operand(resolved)
+                if self.is_undefaulted_numeric_var(resolved)
                     || self.implements_operator(item, resolved, id.owner, expr.span)
                 {
                     resolved
@@ -416,7 +416,8 @@ impl<'hir> Typeck<'hir> {
             }
         };
 
-        if self.is_builtin_operand(operand) || self.implements_operator(item, operand, owner, span)
+        if self.is_undefaulted_numeric_var(operand)
+            || self.implements_operator(item, operand, owner, span)
         {
             produced
         } else {
@@ -452,11 +453,8 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    fn is_builtin_operand(&self, ty: Ty) -> bool {
-        matches!(
-            self.tcx.kind(ty),
-            TyKind::Primitive(_) | TyKind::Var(TyVar::Int(_) | TyVar::Float(_))
-        )
+    fn is_undefaulted_numeric_var(&self, ty: Ty) -> bool {
+        matches!(self.tcx.kind(ty), TyKind::Var(TyVar::Int(_) | TyVar::Float(_)))
     }
 
     /// Strips every `any` layer off `ty`
@@ -1727,6 +1725,31 @@ mod tests {
              struct N { v: i32 }
              fun f(a: N, b: N) -> bool { return a < b; }",
             "does not implement `Comparable`",
+        );
+    }
+
+    #[test]
+    fn an_undefaulted_int_literal_still_gets_the_arithmetic_operators_for_free() {
+        accepts("fun f() { let a = 1; let b = 2; let _ = a + b; }");
+    }
+
+    #[test]
+    fn a_concretely_typed_primitive_needs_a_real_impl_for_arithmetic() {
+        rejects(
+            "module core::ops;
+             public trait Add { fun add(&self, other: &Self) -> Self; }
+             fun f(x: i32) -> i32 { return x + 1; }",
+            "does not implement `Add`",
+        );
+    }
+
+    #[test]
+    fn a_concretely_typed_primitive_with_a_real_impl_gets_arithmetic() {
+        accepts(
+            "module core::ops;
+             public trait Add { fun add(&self, other: &Self) -> Self; }
+             extend i32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+             fun f(x: i32) -> i32 { return x + 1; }",
         );
     }
 
