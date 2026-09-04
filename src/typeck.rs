@@ -454,7 +454,10 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn is_undefaulted_numeric_var(&self, ty: Ty) -> bool {
-        matches!(self.tcx.kind(ty), TyKind::Var(TyVar::Int(_) | TyVar::Float(_)))
+        matches!(
+            self.tcx.kind(ty),
+            TyKind::Var(TyVar::Int(_) | TyVar::Float(_))
+        )
     }
 
     /// Strips every `any` layer off `ty`
