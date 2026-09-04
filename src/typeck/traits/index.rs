@@ -2,18 +2,31 @@ use std::collections::HashMap;
 
 use crate::ast::Symbol;
 use crate::diagnostics::typeck::traits::index::{
-    report_attempt_to_extend_with_non_trait, report_extend_generic, report_extend_primitive,
-    report_extend_trait,
+    report_attempt_to_extend_with_non_trait, report_extend_generic, report_extend_trait,
 };
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
+use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
-use crate::typeck::ty::Ty;
+use crate::typeck::ty::{Ty, TyKind};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TypeHead {
+    Adt(DefId),
+    Prim(PrimTy),
+}
+
+fn sort_key(head: &TypeHead) -> (u8, usize) {
+    match *head {
+        TypeHead::Adt(def) => (0, def.index()),
+        TypeHead::Prim(prim) => (1, prim as usize),
+    }
+}
 
 #[derive(Default)]
 pub struct ExtendIndex {
     /// Type -> All extend blocks for it.
-    by_adt: HashMap<DefId, Vec<DefId>>,
+    by_adt: HashMap<TypeHead, Vec<DefId>>,
 
     /// Extend block -> the trait that it implements.
     by_extend: HashMap<DefId, TraitRef>,
@@ -24,7 +37,7 @@ impl ExtendIndex {
         ExtendIndex::default()
     }
 
-    fn push(&mut self, head: DefId, block: DefId, trait_: Option<TraitRef>) {
+    fn push(&mut self, head: TypeHead, block: DefId, trait_: Option<TraitRef>) {
         self.by_adt.entry(head).or_default().push(block);
         if let Some(trait_) = trait_ {
             self.by_extend.insert(block, trait_);
@@ -37,7 +50,7 @@ impl ExtendIndex {
     }
 
     /// The blocks extending `head`, in declaration order.
-    pub fn for_type(&self, head: DefId) -> &[DefId] {
+    pub fn for_type(&self, head: TypeHead) -> &[DefId] {
         self.by_adt.get(&head).map_or(&[], Vec::as_slice)
     }
 
@@ -51,9 +64,9 @@ impl ExtendIndex {
         self.len() == 0
     }
 
-    pub fn extended_types(&self) -> Vec<DefId> {
-        let mut heads: Vec<DefId> = self.by_adt.keys().copied().collect();
-        heads.sort_unstable();
+    pub fn extended_types(&self) -> Vec<TypeHead> {
+        let mut heads: Vec<TypeHead> = self.by_adt.keys().copied().collect();
+        heads.sort_unstable_by_key(sort_key);
         heads
     }
 
@@ -86,7 +99,7 @@ impl<'hir> Typeck<'hir> {
             .collect();
 
         for block in extends {
-            let Some(head) = self.adt_of(block) else {
+            let Some(head) = self.extend_head(block) else {
                 continue;
             };
             let trait_ = self.trait_of(block, &hir.extend(block).trait_generics);
@@ -110,16 +123,23 @@ impl<'hir> Typeck<'hir> {
             .find(|&method| self.hir.function(method).name.text == method_name)
     }
 
-    fn adt_of(&self, block: DefId) -> Option<DefId> {
+    pub(crate) fn type_head(&self, ty: Ty) -> Option<TypeHead> {
+        match *self.tcx.kind(ty) {
+            TyKind::Adt { def, .. } => Some(TypeHead::Adt(def)),
+            TyKind::Primitive(prim) => Some(TypeHead::Prim(prim)),
+            _ => None,
+        }
+    }
+
+    fn extend_head(&self, block: DefId) -> Option<TypeHead> {
         let node = self.hir.extend(block);
         match node.adt_path.res {
-            Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => Some(def),
+            Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => {
+                Some(TypeHead::Adt(def))
+            }
+            Res::Type(Type::Prim(prim)) => Some(TypeHead::Prim(prim)),
             Res::Type(Type::Def(TyDef::Trait(_))) => {
                 report_extend_trait(node.span);
-                None
-            }
-            Res::Type(Type::Prim(_)) => {
-                report_extend_primitive(node.span);
                 None
             }
             Res::Type(Type::Generic(_)) => {
@@ -163,6 +183,7 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
+    use super::TypeHead;
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::testing::{Stage, checker_through, lex_src, messages, resolve_src};
@@ -201,6 +222,18 @@ mod tests {
     }
 
     #[test]
+    fn a_primitive_extend_is_indexed_against_the_primitive() {
+        let hir = resolve_src("extend i32 { fun get(&self) -> i32 { return *self; } }");
+        let checker = indexed(&hir);
+
+        assert_eq!(checker.extends.len(), 1);
+        let head = TypeHead::Prim(crate::nameres::PrimTy::I32);
+        let block = checker.extends.for_type(head)[0];
+        assert!(checker.extends.trait_of(block).is_none());
+        assert!(messages().is_empty(), "{:?}", messages());
+    }
+
+    #[test]
     fn a_trait_extend_records_the_trait_it_implements() {
         let hir = resolve_src(
             "trait Show { fun show(&self); }
@@ -234,21 +267,17 @@ mod tests {
         assert_eq!(generics[0].owner, block);
     }
 
-    /// `extend i32 with Add` is rejected, but not here: a primitive is a keyword token and the
-    /// extended type is parsed as a path of identifiers, so the parser never builds the block at
-    /// all. [`Typeck::adt_of`]'s primitive arm is what would catch it the day a path may name
-    /// one, which is why the arm exists with no reachable path to it today.
     #[test]
-    fn extending_a_primitive_is_rejected_before_type_checking() {
+    fn extending_a_tuple_is_rejected_before_type_checking() {
         let (tokens, offset) = lex_src(
             "trait Show { fun show(&self); }
-             extend i32 with Show { fun show(&self) {} }",
+             extend (i32, i32) with Show { fun show(&self) {} }",
         );
         crate::parser::Parser::new().parse(&tokens, offset);
 
         assert!(
             !DiagCtx::diagnostics().is_empty(),
-            "a primitive in `extend` position is a parse error"
+            "a tuple in `extend` position is a parse error"
         );
         DiagCtx::clear();
     }
@@ -319,11 +348,11 @@ mod tests {
         assert!(checker.extends.extended_types().is_empty());
     }
 
-    fn foo(checker: &Typeck<'_>) -> crate::hir::DefId {
-        crate::testing::named_def(checker.hir, "Foo")
+    fn foo(checker: &Typeck<'_>) -> TypeHead {
+        TypeHead::Adt(crate::testing::named_def(checker.hir, "Foo"))
     }
 
-    fn wrap(checker: &Typeck<'_>) -> crate::hir::DefId {
-        crate::testing::named_def(checker.hir, "Wrap")
+    fn wrap(checker: &Typeck<'_>) -> TypeHead {
+        TypeHead::Adt(crate::testing::named_def(checker.hir, "Wrap"))
     }
 }
