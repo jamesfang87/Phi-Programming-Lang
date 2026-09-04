@@ -1269,9 +1269,17 @@ mod tests {
 
     #[test]
     fn a_closure_checks_to_a_function_type_of_its_parameters_and_body() {
-        accepts("fun f() { let g: fun(i32) -> i32 = |x: i32| { x + 1 }; }");
+        accepts(
+            "module core::ops;
+             public trait Add { fun add(&self, other: &Self) -> Self; }
+             extend i32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+             fun f() { let g: fun(i32) -> i32 = |x: i32| { x + 1 }; }",
+        );
         rejects(
-            "fun f() { let g: fun(i32) -> bool = |x: i32| { x + 1 }; }",
+            "module core::ops;
+             public trait Add { fun add(&self, other: &Self) -> Self; }
+             extend i32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+             fun f() { let g: fun(i32) -> bool = |x: i32| { x + 1 }; }",
             "mismatched types",
         );
     }
@@ -1488,12 +1496,24 @@ mod tests {
 
     #[test]
     fn a_while_conditions_type_has_to_be_bool() {
-        accepts("fun f(c: bool) { while c {} }");
+        accepts(
+            "module core::ops;
+             public trait Not { fun not(&self) -> Self; }
+             extend bool with Not { fun not(&self) -> Self { return !*self; } }
+             fun f(c: bool) { while c {} }",
+        );
         // `while` desugars to `loop { if !cond { break }; .. }`, so a non-bool condition is
-        // caught by the desugared `if`'s own check, not by anything `while`-specific. `!x`
-        // itself is accepted (`!` is a built-in operator on any primitive, `i32` included), and
-        // it is the `if` around it that then rejects the non-`bool` result.
-        rejects("fun f(x: i32) { while x {} }", "mismatched types");
+        // caught by the desugared `if`'s own check, not by anything `while`-specific. `!x` on a
+        // non-bool operand needs its own real `Not` impl now (`i32` has none in this fixture),
+        // so the rejection here comes from `does not implement \`Not\``, not from the `if`
+        // around it as it did under the old bypass.
+        rejects(
+            "module core::ops;
+             public trait Not { fun not(&self) -> Self; }
+             extend bool with Not { fun not(&self) -> Self { return !*self; } }
+             fun f(x: i32) { while x {} }",
+            "does not implement `Not`",
+        );
     }
 
     #[test]
