@@ -706,6 +706,16 @@ fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
 }
 
 #[test]
+fn self_resolves_to_a_primitive_inside_a_primitive_extend_block() {
+    let ast = ast_from("extend i32 { fun f(x: Self) {} }");
+    let (_, diags) = with_diags(|| resolve(&ast));
+    assert!(
+        !diags.iter().any(|d| d.message.contains("`Self`")),
+        "unexpected diagnostics: {diags:?}"
+    );
+}
+
+#[test]
 fn self_outside_a_definition_errors() {
     let ast = ast_from("fun main() {}");
     let table = SymbolTable::new(&ast);
