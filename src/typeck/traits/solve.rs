@@ -5,6 +5,7 @@ use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::Typeck;
 use crate::typeck::fold;
 use crate::typeck::traits::TraitRef;
+use crate::typeck::traits::index::TypeHead;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
@@ -128,14 +129,14 @@ impl<'hir> Typeck<'hir> {
             };
         }
 
-        // Only a struct, an enum, or (handled above) a `dyn` can implement a trait, so anything
-        // else answers no.
-        let TyKind::Adt { def, .. } = *self.tcx.kind(query.self_ty) else {
+        // A struct, an enum, a primitive, or (handled above) a `dyn` can implement a trait;
+        // anything else -- a reference, a generic parameter, a tuple, ... -- answers no.
+        let Some(head) = self.type_head(query.self_ty) else {
             return Solution::DoesNotHold;
         };
 
         // Looks for an extend block in the index that proves the query.
-        let Some((block, subst)) = self.search_index(def, &query) else {
+        let Some((block, subst)) = self.search_index(head, &query) else {
             return Solution::DoesNotHold;
         };
 
@@ -155,7 +156,7 @@ impl<'hir> Typeck<'hir> {
     }
 
     /// The first block in the index that proves `goal`, and what its parameters had to be.
-    fn search_index(&self, head: DefId, goal: &Query) -> Option<(DefId, HashMap<HirId, Ty>)> {
+    fn search_index(&self, head: TypeHead, goal: &Query) -> Option<(DefId, HashMap<HirId, Ty>)> {
         self.extends
             .for_type(head)
             .iter()
@@ -526,6 +527,23 @@ mod tests {
         assert_eq!(
             checker.implements(&goal, &BoundsEnv::default()),
             Solution::DoesNotHold
+        );
+    }
+
+    #[test]
+    fn a_primitive_satisfies_a_trait_it_extends() {
+        let hir = resolve_src(
+            "trait Show { fun show(&self); }
+             extend i32 with Show { fun show(&self) {} }",
+        );
+        let mut checker = solver(&hir);
+        let show = named(&checker, "Show");
+        let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
+
+        let query = Query::new(i32_ty, show);
+        assert_eq!(
+            checker.implements(&query, &BoundsEnv::default()),
+            Solution::Holds
         );
     }
 
