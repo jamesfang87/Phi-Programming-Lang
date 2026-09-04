@@ -14,27 +14,33 @@ impl Parser {
         self.type_parser_with_expr(self.expr_parser())
     }
 
+    pub(crate) fn primitive_token_parser<'a>(&'a self) -> BoxedP<'a, Token> {
+        choice((
+            self.kind(TokenKind::I8),
+            self.kind(TokenKind::I16),
+            self.kind(TokenKind::I32),
+            self.kind(TokenKind::I64),
+            self.kind(TokenKind::U8),
+            self.kind(TokenKind::U16),
+            self.kind(TokenKind::U32),
+            self.kind(TokenKind::U64),
+            self.kind(TokenKind::Usize),
+            self.kind(TokenKind::F32),
+            self.kind(TokenKind::F64),
+            self.kind(TokenKind::BoolKw),
+            self.kind(TokenKind::Char),
+            self.kind(TokenKind::Str),
+        ))
+        .boxed()
+    }
+
     pub(crate) fn type_parser_with_expr<'a>(&'a self, expr: BoxedP<'a, Expr>) -> BoxedP<'a, Ty> {
         recursive(
             |ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Ty, Extra<'a>>>| {
-                let primitive_ty = choice((
-                    self.kind(TokenKind::I8),
-                    self.kind(TokenKind::I16),
-                    self.kind(TokenKind::I32),
-                    self.kind(TokenKind::I64),
-                    self.kind(TokenKind::U8),
-                    self.kind(TokenKind::U16),
-                    self.kind(TokenKind::U32),
-                    self.kind(TokenKind::U64),
-                    self.kind(TokenKind::Usize),
-                    self.kind(TokenKind::F32),
-                    self.kind(TokenKind::F64),
-                    self.kind(TokenKind::BoolKw),
-                    self.kind(TokenKind::Char),
-                    self.kind(TokenKind::Str),
-                ))
-                .map(|t: Token| Ty::primitive(t))
-                .boxed();
+                let primitive_ty = self
+                    .primitive_token_parser()
+                    .map(|t: Token| Ty::primitive(t))
+                    .boxed();
 
                 let path_ty = self
                     .path_parser()
