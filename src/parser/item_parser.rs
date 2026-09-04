@@ -5,8 +5,8 @@ use crate::ast::Ident;
 use crate::ast::Import;
 use crate::ast::ModuleDecl;
 use crate::ast::{
-    Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param, SelfMode, SelfParam,
-    Struct, Trait, Variant, VariantPayload, Visibility,
+    Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param, Path, SelfMode,
+    SelfParam, Struct, Trait, Variant, VariantPayload, Visibility,
 };
 
 use crate::driver::source::SrcSpan;
@@ -423,10 +423,15 @@ impl Parser {
             .or_not()
             .boxed();
 
+        let extend_self = self
+            .path_parser()
+            .or(self.primitive_token_parser().map(Path::primitive))
+            .boxed();
+
         let extend = self
             .kind(TokenKind::ExtendKw)
             .then(generic_params)
-            .then(self.path_parser())
+            .then(extend_self)
             .then(generic_args.clone())
             .then(
                 self.kind(TokenKind::WithKw)
@@ -780,6 +785,31 @@ mod tests {
                 assert!(e.trait_path.is_none());
                 assert!(e.trait_generics.is_none());
                 assert_eq!(e.methods.len(), 1);
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_primitive() {
+        let item = parse_item("extend i32 { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert_eq!(e.adt_path.segments.len(), 1);
+                assert_eq!(Interner::resolve(e.adt_path.segments[0].text), "i32");
+                assert!(e.adt_generics.is_none());
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_primitive_with_a_trait() {
+        let item = parse_item("extend bool with Show { fun show(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert_eq!(Interner::resolve(e.adt_path.segments[0].text), "bool");
+                assert!(e.trait_path.is_some());
             }
             other => panic!("expected an extend item, got {other:?}"),
         }
