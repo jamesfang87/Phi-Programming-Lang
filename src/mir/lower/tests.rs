@@ -1,15 +1,24 @@
 use crate::ast::BinaryOp;
 use crate::ast::interner::Interner;
+use crate::ast::{Ast, ParsedSrcFile};
+use crate::diagnostics::DiagCtx;
 use crate::driver::cli::Mode;
+use crate::driver::source::{FileOrigin, SrcMap};
+use crate::hir::lower::lower_ast;
 use crate::hir::{DefId, Hir, OwnerNode};
+use crate::lexer::Lexer;
 use crate::mir::lower::Mir;
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{
     AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, Local, Operand, Projection,
     Rvalue, StatementKind, TerminatorKind,
 };
+use crate::nameres;
 use crate::nameres::PrimTy;
-use crate::testing::{first_extend_method, first_function, first_struct, resolve_src};
+use crate::parser::Parser;
+use crate::testing::{
+    OPS_PREAMBLE, first_extend_method, first_function, first_struct, resolve_src,
+};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;
 use crate::typeck::tyctx::TyCtx;
@@ -18,6 +27,37 @@ use crate::typeck::tyctx::TyCtx;
 /// Panics if any diagnostic was reported by type checking.
 fn lower_mir_src(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
     lower_mir_src_with_mode(src, Mode::Debug)
+}
+
+fn parse_file(src: &str) -> ParsedSrcFile {
+    let chars: Vec<char> = src.chars().collect();
+    let offset = SrcMap::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
+    let tokens = Lexer::new(&chars, offset).tokenize();
+    Parser::new().parse(&tokens, offset)
+}
+
+fn lower_mir_src_with_ops(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
+    lower_mir_src_with_ops_and_mode(src, Mode::Debug)
+}
+
+fn lower_mir_src_with_ops_and_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, Mir) {
+    DiagCtx::clear();
+    Interner::clear();
+    let files = vec![parse_file(OPS_PREAMBLE), parse_file(src)];
+    let ast = Ast::new(files);
+    let res = nameres::resolve(&ast);
+    let hir = lower_ast(&ast, &res);
+
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = super::lower(&hir, &mut tcx, &types, mode);
+    (hir, tcx, types, program)
 }
 
 fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, Mir) {
@@ -92,7 +132,7 @@ fn a_bare_return_assigns_unit_into_the_return_place() {
 #[test]
 fn add_computes_the_sum_and_returns() {
     let (hir, _tcx, _types, program) =
-        lower_mir_src("fun add(x: i32, y: i32) -> i32 { return x + y; }");
+        lower_mir_src_with_ops("fun add(x: i32, y: i32) -> i32 { return x + y; }");
     let body = first_function_body(&program, &hir);
     assert_eq!(body.param_count, 2);
     // Slots 0..=2 are the return place, `x`, and `y`; debug profile adds further temporaries
@@ -119,7 +159,7 @@ fn add_computes_the_sum_and_returns() {
 #[test]
 fn an_if_expression_joins_both_branches() {
     let (hir, _tcx, _types, program) =
-        lower_mir_src("fun f(x: i32) -> i32 { return if x < 0 { 0 } else { x }; }");
+        lower_mir_src_with_ops("fun f(x: i32) -> i32 { return if x < 0 { 0 } else { x }; }");
     let body = first_function_body(&program, &hir);
     // then-block, else-block, join-block, plus the entry block that switches on the condition.
     assert!(body.basic_blocks.len() >= 4);
@@ -133,8 +173,9 @@ fn an_if_expression_joins_both_branches() {
 
 #[test]
 fn predecessors_of_an_if_join_block_are_both_branches() {
-    let (hir, _tcx, _types, program) =
-        lower_mir_src("fun f(x: i32) -> i32 { let y = if x < 0 { 0 } else { x }; return y; }");
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
+        "fun f(x: i32) -> i32 { let y = if x < 0 { 0 } else { x }; return y; }",
+    );
     let body = first_function_body(&program, &hir);
 
     let mut branch_blocks: Vec<_> = body
@@ -169,7 +210,7 @@ fn predecessors_of_an_if_join_block_are_both_branches() {
 
 #[test]
 fn a_release_profile_body_wraps_instead_of_checking() {
-    let (hir, _tcx, _types, program) = lower_mir_src_with_mode(
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops_and_mode(
         "fun add(x: i32, y: i32) -> i32 { return x + y; }",
         Mode::Release,
     );
@@ -238,7 +279,7 @@ fn a_struct_literal_lowers_to_an_adt_aggregate() {
 
 #[test]
 fn a_variant_match_switches_on_the_discriminant() {
-    let (hir, _tcx, _types, program) = lower_mir_src(
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
         "struct Rectangle { public l: f64, public w: f64 }
          enum Shape { rectangle: Rectangle, circle: f64 }
          fun area(s: Shape) -> f64 {
@@ -262,7 +303,7 @@ fn a_variant_match_switches_on_the_discriminant() {
 
 #[test]
 fn a_capturing_closure_lowers_its_own_body() {
-    let (hir, _tcx, _types, program) = lower_mir_src(
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
         "fun f() -> i32 {
              let x = 5;
              let add_x = |y: i32| -> i32 { return x + y; };
@@ -273,7 +314,7 @@ fn a_capturing_closure_lowers_its_own_body() {
     let closure_bodies = program
         .bodies
         .iter()
-        .filter(|((def, _), _)| *def != first_function(&hir))
+        .filter(|((def, _), _)| matches!(hir.def(*def), OwnerNode::Closure(_)))
         .count();
     assert_eq!(closure_bodies, 1, "exactly one closure body was lowered");
 }
@@ -385,7 +426,7 @@ fn call_callees(body: &Body) -> Vec<DefId> {
 /// other two operators `lower_binary_op_into` checks in a debug-profile body.
 #[test]
 fn checked_arithmetic_covers_add_sub_and_mul() {
-    let (hir, _tcx, _types, program) = lower_mir_src(
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
         "fun f(x: i32, y: i32) -> i32 {
              let a = x + y;
              let b = x - y;
@@ -412,7 +453,7 @@ fn checked_arithmetic_covers_add_sub_and_mul() {
 #[test]
 fn comparisons_are_never_checked_or_wrapped() {
     let (hir, _tcx, _types, program) =
-        lower_mir_src("fun f(x: i32, y: i32) -> bool { return x < y; }");
+        lower_mir_src_with_ops("fun f(x: i32, y: i32) -> bool { return x < y; }");
     let body = first_function_body(&program, &hir);
     assert!(
         checked_binary_ops(body).is_empty(),
@@ -434,7 +475,7 @@ fn comparisons_are_never_checked_or_wrapped() {
 #[test]
 fn division_by_zero_inserts_an_assert_and_is_never_checked_for_overflow() {
     let (hir, _tcx, _types, program) =
-        lower_mir_src("fun f(x: i32, y: i32) -> i32 { return x / y; }");
+        lower_mir_src_with_ops("fun f(x: i32, y: i32) -> i32 { return x / y; }");
     let body = first_function_body(&program, &hir);
     assert!(
         assert_messages(body)
@@ -465,7 +506,7 @@ fn division_by_zero_inserts_an_assert_and_is_never_checked_for_overflow() {
 #[test]
 fn remainder_by_zero_inserts_an_assert() {
     let (hir, _tcx, _types, program) =
-        lower_mir_src("fun f(x: i32, y: i32) -> i32 { return x % y; }");
+        lower_mir_src_with_ops("fun f(x: i32, y: i32) -> i32 { return x % y; }");
     let body = first_function_body(&program, &hir);
     assert!(
         assert_messages(body)
@@ -480,7 +521,7 @@ fn remainder_by_zero_inserts_an_assert() {
 /// release build.
 #[test]
 fn division_by_zero_assert_survives_release_mode() {
-    let (hir, _tcx, _types, program) = lower_mir_src_with_mode(
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops_and_mode(
         "fun f(x: i32, y: i32) -> i32 { return x / y; }",
         Mode::Release,
     );
@@ -502,7 +543,7 @@ fn division_by_zero_assert_survives_release_mode() {
 #[test]
 fn float_division_has_no_assert_and_is_never_checked() {
     let (hir, _tcx, _types, program) =
-        lower_mir_src("fun f(x: f64, y: f64) -> f64 { return x / y; }");
+        lower_mir_src_with_ops("fun f(x: f64, y: f64) -> f64 { return x / y; }");
     let body = first_function_body(&program, &hir);
     assert!(
         assert_messages(body).is_empty(),
@@ -993,7 +1034,7 @@ fn continue_target_only_returns_obligations_registered_since_the_loop_was_entere
 /// guard-failure path, once more on the success path.
 #[test]
 fn a_guard_failure_cleans_up_the_arms_bindings_before_falling_through() {
-    let (hir, _tcx, _types, program) = lower_mir_src(
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
         "fun f(x: i32) -> i32 {
              return match x {
                  n if n > 0 => n,
@@ -1236,7 +1277,7 @@ fn a_compound_assignments_index_target_is_evaluated_only_once() {
 /// `&`.
 #[test]
 fn an_any_returning_calls_argument_is_borrowed_to_match_the_call_sites_mode() {
-    let (hir, tcx, _types, program) = lower_mir_src(
+    let (hir, tcx, _types, program) = lower_mir_src_with_ops(
         "fun min(x: any i32, y: any i32) -> any i32 {
              return if x < y { x } else { y };
          }
