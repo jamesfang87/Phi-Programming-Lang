@@ -1,21 +1,3 @@
-//! Lowering #2: builds one [`Body`] per function, method, and closure out of a fully
-//! type-checked [`Hir`].
-//!
-//! [`lower_program`] is the entry point. It seeds a worklist with every ordinary (non-`any`)
-//! function, method, and closure the `Hir` declares -- found by a flat scan of
-//! [`Hir::def_ids`], since every one of those already has its own arena and its own `DefId`
-//! regardless of whether it is a free function, a trait/`extend` method, or a closure nested
-//! inside another body. A function or method whose return type is `any T` is not seeded
-//! directly: [`AnyMode`] specialization is a structural choice (it changes whether a parameter's
-//! `Place` needs a `Deref` projection at all), so it can only be decided once some call site
-//! demands a specific mode. Lowering that call site pushes the `(DefId, AnyMode)` pair it needs
-//! onto the same worklist, `mir::lower::call`'s job; see [`Task`].
-//!
-//! Ordinary generic substitution needs none of this: a generic body lowers once, with
-//! `TyKind::Generic`/`SelfTy` left exactly as `TypeResolutions` already recorded them, and
-//! substituting those into a concrete `Body` per instantiation is `mir::monomorphize`'s job, a
-//! separate pass over this one's output.
-
 mod block;
 mod call;
 mod closure;
@@ -29,11 +11,15 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 
 use crate::driver::cli::Mode;
-use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
+use crate::hir::{DefId, Hir, HirId, Node, OwnerNode, StmtKind};
+use crate::langitems::hir::LangItems;
+use crate::mir::adt::{collect_adt_defs, AdtDef};
+use crate::mir::def_names::{collect_def_names, DefNames};
 use crate::mir::lower::ctx::BodyLowerCtx;
+use crate::mir::vtables::{collect_vtables, VtableInfo};
 use crate::mir::{AnyMode, Body};
 use crate::typeck::results::TypeResolutions;
-use crate::typeck::ty::TyKind;
+use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
 /// One unit of lowering work. `Ordinary` is a definition with no `any` anywhere in its
@@ -65,8 +51,14 @@ impl Task {
 /// [`mir::monomorphize`](crate::mir::monomorphize) substitutes each one's own remaining
 /// `TyKind::Generic`/`SelfTy` per calling context, keyed by the same pair plus a generic
 /// argument list.
-pub struct LoweredProgram {
+pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
+    pub adts: HashMap<DefId, AdtDef>,
+    pub vtables: HashMap<(Ty, DefId), VtableInfo>,
+    pub array_lens: HashMap<HirId, u64>,
+    pub def_names: DefNames,
+    pub lang_items: LangItems,
+    pub main: Option<DefId>,
 }
 
 /// Whether `def_id`'s return type is itself `any T`, the one condition the README ties `any`
@@ -96,15 +88,7 @@ fn item_has_errors(hir: &Hir, tcx: &TyCtx, types: &TypeResolutions, def_id: DefI
     })
 }
 
-/// Lowers every function, method, and closure `hir` declares into a [`LoweredProgram`]. `mode`
-/// is the project's debug/release profile, which decides whether integer arithmetic gets a
-/// [`crate::mir::CheckedBinaryOp`] and an overflow [`crate::mir::Assert`] or wraps silently.
-pub fn lower_program(
-    hir: &Hir,
-    tcx: &mut TyCtx,
-    types: &TypeResolutions,
-    mode: Mode,
-) -> LoweredProgram {
+pub fn lower(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) -> Mir {
     let erroneous: HashSet<DefId> = hir
         .def_ids()
         .filter(|&def_id| item_has_errors(hir, tcx, types, def_id))
@@ -139,5 +123,77 @@ pub fn lower_program(
         bodies.insert(key, body);
     }
 
-    LoweredProgram { bodies }
+    Mir {
+        bodies,
+        adts: collect_adt_defs(hir, types),
+        vtables: collect_vtables(hir, types),
+        array_lens: collect_array_lens(tcx, hir),
+        def_names: collect_def_names(hir),
+        lang_items: hir.lang_items().clone(),
+        main: find_crate_root_main(hir),
+    }
+}
+
+fn collect_array_lens(tcx: &TyCtx, hir: &Hir) -> HashMap<HirId, u64> {
+    let mut out = HashMap::new();
+    for ty in tcx.all_tys() {
+        if let TyKind::Array { len: Some(len_id), .. } = tcx.kind(ty) {
+            out.entry(*len_id)
+                .or_insert_with(|| array_len_from_hir(hir, *len_id));
+        }
+    }
+    out
+}
+
+fn array_len_from_hir(hir: &Hir, len_id: HirId) -> u64 {
+    use crate::ast::Literal;
+    use crate::ast::interner::Interner;
+    use crate::hir::ExprKind;
+
+    let expr = hir.expr(len_id);
+    match &expr.kind {
+        ExprKind::Literal(Literal::Int { value, .. }) => Interner::resolve(*value)
+            .parse::<u64>()
+            .unwrap_or_else(|_| panic!("array length literal {value:?} does not parse as u64")),
+        _ => panic!("array length must be an integer literal in v1 codegen"),
+    }
+}
+
+fn is_named_main(hir: &Hir, def: DefId) -> bool {
+    matches!(
+        hir.def(def),
+        OwnerNode::Function(f) if crate::ast::interner::Interner::resolve(f.name.text) == "main"
+    )
+}
+
+fn find_crate_root_main(hir: &Hir) -> Option<DefId> {
+    let root = hir.root();
+    let mut candidates: Vec<DefId> = root
+        .items
+        .iter()
+        .copied()
+        .filter(|&def| is_named_main(hir, def))
+        .collect();
+
+    for &item in &root.items {
+        if let OwnerNode::Module(child) = hir.def(item) {
+            candidates.extend(
+                child
+                    .items
+                    .iter()
+                    .copied()
+                    .filter(|&def| is_named_main(hir, def)),
+            );
+        }
+    }
+
+    match candidates.as_slice() {
+        [] => None,
+        [one] => Some(*one),
+        _ => panic!(
+            "found {} `main` functions at the crate root; the OS entry point is ambiguous: {:?}",
+            candidates.len(),
+            candidates
+        ),
+    }
 }
