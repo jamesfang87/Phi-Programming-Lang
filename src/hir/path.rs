@@ -20,7 +20,7 @@ pub enum Res {
     Module(DefId),
     /// We keep Self separate, unlike nameres::Res, since it must behave
     /// differently for typeck
-    SelfTy(TyDef),
+    SelfTy(Type),
     Err,
 }
 

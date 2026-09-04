@@ -98,7 +98,7 @@ impl<'res> LoweringCtx<'res> {
     // TODO: Code smell... probably need refactoring
     fn as_self_ty(&self, path: &ast::Path, res: Res) -> Res {
         match res {
-            Res::Type(Type::Def(tydef)) if is_self_path(path) => Res::SelfTy(tydef),
+            Res::Type(ty) if is_self_path(path) => Res::SelfTy(ty),
             other => other,
         }
     }
