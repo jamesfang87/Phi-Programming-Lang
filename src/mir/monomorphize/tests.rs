@@ -1,5 +1,5 @@
 use crate::mir::{Rvalue, StatementKind};
-use crate::testing::lower_to_mir;
+use crate::testing::{OPS_PREAMBLE, lower_mir_src_files, lower_to_mir};
 
 fn monomorphized(
     src: &str,
@@ -11,9 +11,20 @@ fn monomorphized(
     (tcx, instances)
 }
 
+fn monomorphized_with_ops(
+    src: &str,
+) -> std::collections::HashMap<crate::mir::Instance, crate::mir::Body> {
+    let (hir, _tcx, _types, _mir, instances) = lower_mir_src_files(&[OPS_PREAMBLE, src]);
+    let top_level: std::collections::HashSet<_> = hir.root().items.iter().copied().collect();
+    instances
+        .into_iter()
+        .filter(|(instance, _)| top_level.contains(&instance.def))
+        .collect()
+}
+
 #[test]
 fn a_non_generic_body_monomorphizes_to_exactly_itself() {
-    let (_tcx, instances) = monomorphized("fun add(x: i32, y: i32) -> i32 { return x + y; }");
+    let instances = monomorphized_with_ops("fun add(x: i32, y: i32) -> i32 { return x + y; }");
     assert_eq!(instances.len(), 1);
     let (instance, _) = instances.iter().next().unwrap();
     assert!(instance.args.is_empty());
@@ -71,7 +82,7 @@ fn a_recursive_generic_call_with_the_same_argument_does_not_loop_forever() {
 
 #[test]
 fn calling_through_a_reified_function_pointer_still_monomorphizes_the_callee() {
-    let (_tcx, instances) = monomorphized(
+    let instances = monomorphized_with_ops(
         "fun double(x: i32) -> i32 { return x + x; }
          fun apply(f: fun(i32) -> i32, x: i32) -> i32 { return f(x); }
          fun g() -> i32 { return apply(double, 1); }",
