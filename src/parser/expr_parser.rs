@@ -747,12 +747,50 @@ impl Parser {
                 })
                 .boxed();
 
+            // `new [elem; count]` is its own form -- there is no general array-repeat
+            // expression to reuse, since a bare `[elem; count]` value could never exist on its
+            // own once `count` is a runtime value (an unsized value cannot sit in an ordinary
+            // place; see the "Alternatives considered" discussion in Spec A1). `new e` is the
+            // general form, wrapping `unary` so `new` binds looser than a call or any other
+            // postfix/prefix operator but tighter than any binary operator: `new f(x)` allocates
+            // the result of `f(x)`.
+            let new_array = self
+                .kind(TokenKind::NewKw)
+                .then_ignore(self.kind(TokenKind::OpenBracket))
+                .then(expr.clone())
+                .then_ignore(self.kind(TokenKind::Semicolon))
+                .then(expr.clone())
+                .then(self.kind(TokenKind::CloseBracket))
+                .map(|(((new_tok, elem), count), close_tok)| Expr {
+                    id: NodeId::next(),
+                    span: new_tok.span.merge(close_tok.span),
+                    kind: ExprKind::NewArray {
+                        elem: Box::new(elem),
+                        count: Box::new(count),
+                    },
+                })
+                .boxed();
+
+            let new_value = self
+                .kind(TokenKind::NewKw)
+                .then(unary.clone())
+                .map(|(new_tok, operand)| {
+                    let span = new_tok.span.merge(operand.span);
+                    Expr {
+                        id: NodeId::next(),
+                        kind: ExprKind::New(Box::new(operand)),
+                        span,
+                    }
+                })
+                .boxed();
+
+            let unary_or_new = choice((new_array, new_value, unary.clone())).boxed();
+
             // `as` binds tighter than every binary operator but looser than unary prefix and
             // postfix operators, exactly as in Rust: `-x as i64` is `(-x) as i64`, and
             // `x as i64 + 1` is `(x as i64) + 1`. `.foldl` makes a chain like `x as i32 as i64`
             // left-associative, casting `x` to `i32` and then that result to `i64`.
-            let cast = unary
-                .clone()
+            let cast = unary_or_new
                 .foldl(
                     self.kind(TokenKind::AsKw)
                         .ignore_then(type_p.clone())
@@ -1272,6 +1310,59 @@ mod tests {
                 ));
             }
             other => panic!("expected a borrow expr, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // `new`
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn parses_new_expr() {
+        let expr = parse_expr("new 1");
+        match &expr.kind {
+            ExprKind::New(operand) => {
+                assert!(matches!(operand.kind, ExprKind::Literal(Literal::Int { .. })));
+            }
+            other => panic!("expected a new expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_new_array_expr() {
+        let expr = parse_expr("new [0; n]");
+        match &expr.kind {
+            ExprKind::NewArray { elem, count } => {
+                assert!(matches!(elem.kind, ExprKind::Literal(Literal::Int { .. })));
+                assert!(matches!(count.kind, ExprKind::Path(_)));
+            }
+            other => panic!("expected a new array expr, got {other:?}"),
+        }
+    }
+
+    /// `new` binds looser than a call: `new f(x)` allocates the result of `f(x)`, not the
+    /// result of allocating `f` and then calling it.
+    #[test]
+    fn new_binds_looser_than_a_call() {
+        let expr = parse_expr("new f(x)");
+        match &expr.kind {
+            ExprKind::New(operand) => {
+                assert!(matches!(operand.kind, ExprKind::Call { .. }));
+            }
+            other => panic!("expected a new expr wrapping a call, got {other:?}"),
+        }
+    }
+
+    /// `new` binds tighter than any binary operator: `new x + 1` is `(new x) + 1`.
+    #[test]
+    fn new_binds_tighter_than_a_binary_operator() {
+        let expr = parse_expr("new x + 1");
+        match &expr.kind {
+            ExprKind::Binary { op, lhs, .. } => {
+                assert!(matches!(op, BinaryOp::Add));
+                assert!(matches!(lhs.kind, ExprKind::New(_)));
+            }
+            other => panic!("expected a binary expr with a new lhs, got {other:?}"),
         }
     }
 

@@ -32,6 +32,14 @@ pub enum Rvalue {
     Discriminant(Place),
     /// `Len` reads the length of an array or a slice-typed place.
     Len(Place),
+    /// Allocates storage for the operand's type, moves the operand into it, and produces an
+    /// `iso T` naming that storage. Allocation and initialization are one step: an `iso` local
+    /// is never observably allocated-but-uninitialized.
+    New(Operand),
+    /// Allocates storage for `count` elements and initializes every one of them to `elem`,
+    /// producing `iso [T]`. `count` is a `usize` operand, so the length is not required to be a
+    /// constant.
+    NewArray { elem: Operand, count: Operand },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

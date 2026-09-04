@@ -247,6 +247,7 @@ pub(crate) fn is_integer(prim: PrimTy) -> bool {
             | PrimTy::U16
             | PrimTy::U32
             | PrimTy::U64
+            | PrimTy::Usize
     )
 }
 

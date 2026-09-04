@@ -1,7 +1,8 @@
+use crate::ast::Mutability;
 use crate::diagnostics::mir::constck::report_not_mutable;
 use crate::driver::source::SrcSpan;
 use crate::mir::lower::Mir;
-use crate::mir::{Body, Place, Projection, StatementKind};
+use crate::mir::{Body, Operand, Place, Projection, Rvalue, StatementKind};
 
 pub fn check(program: &Mir) {
     for body in program.bodies.values() {
@@ -13,9 +14,16 @@ fn check_body(body: &Body) {
     for block in &body.basic_blocks {
         for stmt in &block.statements {
             if let StatementKind::CheckMutable(place) = &stmt.kind {
-                check_place(body, place, stmt.span);
+                check_place(body, &place, stmt.span);
             }
         }
+    }
+}
+
+fn check_operand(body: &Body, operand: &Operand, span: SrcSpan) {
+    match operand {
+        Operand::Move(place) => check_place(body, place, span),
+        Operand::Copy(_) | Operand::Constant(_) => {}
     }
 }
 
@@ -23,11 +31,13 @@ fn check_place(body: &Body, place: &Place, span: SrcSpan) {
     if place.projections.contains(&Projection::Deref) {
         return;
     }
+
     let decl = &body.local_decls[place.local.index()];
+    let Some(name) = decl.name else {
+        return;
+    };
+
     if decl.mutability == crate::ast::Mutability::Immutable {
-        let name = decl.name.unwrap_or_else(|| {
-            panic!("an immutable local reachable through CheckMutable is always named")
-        });
         report_not_mutable(name, span);
     }
 }

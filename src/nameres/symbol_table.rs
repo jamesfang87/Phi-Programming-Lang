@@ -83,10 +83,12 @@ pub fn prim_ty(name: Symbol) -> Option<PrimTy> {
         "u16" => PrimTy::U16,
         "u32" => PrimTy::U32,
         "u64" => PrimTy::U64,
+        "usize" => PrimTy::Usize,
         "f32" => PrimTy::F32,
         "f64" => PrimTy::F64,
         "bool" => PrimTy::Bool,
         "char" => PrimTy::Char,
+        "str" => PrimTy::Str,
         _ => return None,
     })
 }

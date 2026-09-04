@@ -56,6 +56,24 @@ pub fn report_self_outside_item(span: SrcSpan) {
     );
 }
 
+pub fn report_unsized_dyn(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "`dyn` has no size known at compile time, found `{}`",
+                cx.show(ty)
+            ),
+            span,
+        )
+        .with_label("this type is not sized")
+        .with_help(
+            "a `dyn` value can only be used through a fixed-size indirection; write \
+                 `&dyn Trait` (or `&mut dyn Trait`) to borrow it, or `iso dyn Trait` to own it \
+                 behind a pointer",
+        ),
+    );
+}
+
 pub fn report_reference_generic_arg(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(

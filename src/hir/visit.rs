@@ -397,6 +397,11 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
             v.visit_expr(*expr);
             v.visit_ty(*ty);
         }
+        ExprKind::New(operand) => v.visit_expr(*operand),
+        ExprKind::NewArray { elem, count } => {
+            v.visit_expr(*elem);
+            v.visit_expr(*count);
+        }
         ExprKind::Literal(_) | ExprKind::Error => {}
     }
 }
@@ -463,7 +468,7 @@ fn payload_values(payload: &Payload) -> Vec<HirId> {
 mod tests {
     use super::*;
     use crate::hir::{Node, Res};
-    use crate::testing::lower_src;
+    use crate::testing::lower_to_hir;
 
     /// Records the `HirId` of every node the walk reaches, every `DefId` it enters, and every
     /// `Path` it passes to `visit_path`. Overrides `visit_nested_owner` to traverse nested owners,
@@ -640,7 +645,7 @@ mod tests {
     /// and another would skip.
     #[test]
     fn the_walk_reaches_every_node_in_every_arena() {
-        let hir = lower_src(EVERYTHING);
+        let hir = lower_to_hir(EVERYTHING);
         let recorder = Recorder::walk(&hir);
 
         let mut visited = recorder.visited.clone();
@@ -661,7 +666,7 @@ mod tests {
     /// comparison, since `Recorder` collects both from what it reached.
     #[test]
     fn the_walk_enters_every_owner() {
-        let hir = lower_src(EVERYTHING);
+        let hir = lower_to_hir(EVERYTHING);
         let recorder = Recorder::walk(&hir);
 
         let missed: Vec<_> = hir
@@ -676,7 +681,7 @@ mod tests {
     /// `Typeck` and lowered twice by MIR lowering.
     #[test]
     fn the_walk_reaches_each_node_exactly_once() {
-        let hir = lower_src(EVERYTHING);
+        let hir = lower_to_hir(EVERYTHING);
         let recorder = Recorder::walk(&hir);
 
         let mut seen = recorder.visited.clone();
@@ -689,7 +694,7 @@ mod tests {
     /// parameter's bound and an `extend` header's `adt_path` and `trait_path`.
     #[test]
     fn visit_path_fires_for_paths_outside_expressions() {
-        let hir = lower_src(EVERYTHING);
+        let hir = lower_to_hir(EVERYTHING);
         let recorder = Recorder::walk(&hir);
 
         let named: Vec<String> = recorder
@@ -736,7 +741,7 @@ mod tests {
             }
         }
 
-        let hir = lower_src("fun f() { let g = |x: i32| { x + 1 }; }");
+        let hir = lower_to_hir("fun f() { let g = |x: i32| { x + 1 }; }");
         let function = crate::testing::first_function(&hir);
         let mut v = Shallow {
             hir: &hir,
@@ -756,7 +761,7 @@ mod tests {
     /// pre-visitor name resolution did on every `if`/`else`.
     #[test]
     fn an_else_branch_is_walked_as_a_block() {
-        let hir = lower_src("fun f(c: bool) { if c { let a = 1; } else { let b = 2; } }");
+        let hir = lower_to_hir("fun f(c: bool) { if c { let a = 1; } else { let b = 2; } }");
         let recorder = Recorder::walk(&hir);
 
         let blocks = recorder
@@ -772,7 +777,7 @@ mod tests {
     /// name resolution omitted from its walk entirely.
     #[test]
     fn a_let_annotation_and_else_block_are_walked() {
-        let hir = lower_src("fun f() { let x: i32 = 1 else { let y = 2; }; }");
+        let hir = lower_to_hir("fun f() { let x: i32 = 1 else { let y = 2; }; }");
         let recorder = Recorder::walk(&hir);
 
         assert!(
@@ -795,7 +800,7 @@ mod tests {
     /// type walk back into the expression walk.
     #[test]
     fn an_array_length_is_walked_as_an_expression() {
-        let hir = lower_src("fun f(a: [i32; 4]) {}");
+        let hir = lower_to_hir("fun f(a: [i32; 4]) {}");
         let recorder = Recorder::walk(&hir);
 
         assert!(
@@ -811,7 +816,7 @@ mod tests {
     /// intact, rather than a copy rebuilt from `segments`.
     #[test]
     fn visit_path_carries_the_resolution_lowering_attached() {
-        let hir = lower_src("fun f(n: i32) -> i32 { return n; }");
+        let hir = lower_to_hir("fun f(n: i32) -> i32 { return n; }");
         let recorder = Recorder::walk(&hir);
 
         assert!(

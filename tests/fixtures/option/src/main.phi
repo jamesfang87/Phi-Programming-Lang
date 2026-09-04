@@ -4,3 +4,6 @@ public enum Option<T> {
     some: T,
     none,
 }
+
+fun main() {
+}

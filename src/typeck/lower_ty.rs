@@ -1,7 +1,9 @@
 use crate::diagnostics::typeck::lower_ty::{
     report_arg_count, report_dyn_not_a_trait, report_reference_generic_arg, report_self_cycle,
     report_self_outside_item, report_trait_as_ty, report_unexpected_generic_args,
+    report_unsized_dyn,
 };
+use crate::diagnostics::typeck::report_any_outside_signature;
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
 use crate::typeck::Typeck;
@@ -41,9 +43,17 @@ impl<'hir> Typeck<'hir> {
                 self.tcx.mk_array(elem, len)
             }
             HirTyKind::Function { params, ret } => {
-                let (params, ret) = (params.clone(), *ret);
-                let params = self.lower_tys(&params);
-                let ret = ret.map(|ret| self.lower_ty(ret));
+                let (hir_params, ret) = (params.clone(), *ret);
+                let params = self.lower_tys(&hir_params);
+                for (&hir_id, &param) in hir_params.iter().zip(&params) {
+                    self.check_no_dyn(param, self.hir.ty(hir_id).span);
+                }
+                let ret = ret.map(|ret| {
+                    let ret_span = self.hir.ty(ret).span;
+                    let ret = self.lower_ty(ret);
+                    self.check_no_dyn(ret, ret_span);
+                    ret
+                });
                 self.tcx.mk_fun(params, ret)
             }
             HirTyKind::Dyn { path, args } => {
@@ -113,19 +123,28 @@ impl<'hir> Typeck<'hir> {
         }
 
         let lowered_args = self.lower_tys(args);
-        if !self.check_no_reference_args(args, &lowered_args) {
+        // A reference generic argument is not rejected here: whether `T = &U` is fine depends
+        // on where the instantiated type ends up, not on the instantiation itself, so that is
+        // left to `check_not_a_reference` to catch once this type is actually put into a field
+        // or a variant payload -- the one place a reference may never be stored. A function's
+        // own parameter and return types are never checked that way, which is what leaves
+        // `fun f(x: Wrap<&i32>)` unrejected while `struct Outer { w: Wrap<&i32> }` still is.
+        if !self.check_no_any_args(args, &lowered_args) {
+            return self.tcx.error();
+        }
+        if !self.check_no_dyn_args(args, &lowered_args) {
             return self.tcx.error();
         }
         self.register_bound_obligations(def, &lowered_args, span, owner);
         self.tcx.mk_adt(def, lowered_args)
     }
 
-    /// Rejects `hir_args`, the generic arguments a struct or enum type is being instantiated
-    /// with (already lowered into `args`, in the same order), if any of them stores a
-    /// reference anywhere within it. This is what makes the "no reference fields" rule hold
-    /// for generic types too: a field declared with an abstract type parameter can never end
-    /// up holding a reference behind the scenes, because no reference can ever be substituted
-    /// for that parameter in the first place.
+    /// Rejects `hir_args`, the generic arguments an `extend` block applies to the struct or
+    /// enum it extends (already lowered into `args`, in the same order), if any of them stores
+    /// a reference anywhere within it. Unlike an ordinary instantiation such as a function
+    /// parameter's type, an `extend` block's arguments settle what `Self` -- and so every field
+    /// -- means throughout the block, so a reference substituted in here is exactly as
+    /// permanent as one written directly into a field, and is rejected the same way.
     fn check_no_reference_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
         for (&hir_id, &arg) in hir_args.iter().zip(args) {
             if self.tcx.contains_ref(arg) {
@@ -135,6 +154,51 @@ impl<'hir> Typeck<'hir> {
             }
         }
         true
+    }
+
+    /// Rejects `hir_args`, the generic arguments a struct or enum type is being instantiated
+    /// with (already lowered into `args`, in the same order), if any of them carries `any`
+    /// anywhere within it. This is what keeps `any` confined to a function's own parameter and
+    /// return types even through a generic parameter: a field declared with an abstract type
+    /// can never end up holding `any` behind the scenes, because `any` can never be substituted
+    /// for that parameter in the first place.
+    fn check_no_any_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
+        for (&hir_id, &arg) in hir_args.iter().zip(args) {
+            if self.tcx.contains_any(arg) {
+                let span = self.hir.ty(hir_id).span;
+                report_any_outside_signature(self.display_cx(), arg, span);
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Rejects `hir_args`, the generic arguments a struct or enum type is being instantiated
+    /// with (already lowered into `args`, in the same order), if any of them holds an unsized
+    /// `dyn Trait` that is not itself behind `&` or `iso`. This keeps a generic field from ever
+    /// being instantiated with something that has no size: a field declared with an abstract
+    /// type parameter can never end up holding a bare `dyn` behind the scenes, because a bare
+    /// `dyn` can never be substituted for that parameter in the first place.
+    fn check_no_dyn_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
+        for (&hir_id, &arg) in hir_args.iter().zip(args) {
+            if self.tcx.contains_bare_dyn(arg) {
+                let span = self.hir.ty(hir_id).span;
+                report_unsized_dyn(self.display_cx(), arg, span);
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Rejects `ty` if it holds an unsized `dyn Trait` that is not itself behind `&` or `iso`.
+    /// Unlike `any`, which is welcome in a signature and confined everywhere else, `dyn`'s
+    /// restriction is not about position at all: a bare `dyn Trait` has no size in any
+    /// position, a function's own parameter and return types included, so this is called
+    /// everywhere a type is put to use, not only outside a signature.
+    pub(crate) fn check_no_dyn(&mut self, ty: Ty, span: SrcSpan) {
+        if self.tcx.contains_bare_dyn(ty) {
+            report_unsized_dyn(self.display_cx(), ty, span);
+        }
     }
 
     fn lower_dyn(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
@@ -199,7 +263,10 @@ impl<'hir> Typeck<'hir> {
                 let adt_res = extend.adt_path.res;
                 let hir_args = extend.adt_generics.clone();
                 let args = self.lower_tys(&hir_args);
-                if !self.check_no_reference_args(&hir_args, &args) {
+                if !self.check_no_reference_args(&hir_args, &args)
+                    || !self.check_no_any_args(&hir_args, &args)
+                    || !self.check_no_dyn_args(&hir_args, &args)
+                {
                     self.tcx.error()
                 } else {
                     match adt_res {
@@ -702,37 +769,10 @@ mod tests {
     // -----------------------------------------------------------------
     // Deeper composition
     // -----------------------------------------------------------------
-
-    /// A reference to a reference. Written with a space (`& &i32`) rather than `&&i32`, since
-    /// the lexer tokenizes `&&` as one `DoubleAmp` token (the logical-and operator) rather than
-    /// two `&`s.
-    #[test]
-    fn a_reference_to_a_reference_lowers_to_nested_refs() {
-        let checked = check("fun f(x: & &i32) {}");
-        let (params, _) = checked.sig(checked.def("f"));
-
-        let TyKind::Ref { base: outer, .. } = checked.kind(params[0]) else {
-            panic!("& &i32 lowers to a Ref");
-        };
-        let TyKind::Ref { base: inner, .. } = checked.kind(*outer) else {
-            panic!("the outer Ref's base is itself a Ref");
-        };
-        assert_eq!(checked.kind(*inner), &TyKind::Primitive(PrimTy::I32));
-    }
-
-    /// `&any T` composes; the other order does not exist to test, since the parser's
-    /// `any_target` only accepts a primitive, a path, a tuple, an array, or `Self`, so `any`
-    /// can never wrap a reference (`any &T` is a parse error, not a typeck question).
-    #[test]
-    fn a_reference_may_wrap_any() {
-        let checked = check("fun f(x: &any i32) {}");
-        let (params, _) = checked.sig(checked.def("f"));
-
-        let TyKind::Ref { base, .. } = checked.kind(params[0]) else {
-            panic!("&any i32 lowers to a Ref wrapping Any");
-        };
-        assert!(matches!(checked.kind(*base), TyKind::Any(_)));
-    }
+    //
+    // A reference wrapping another reference (`& &T`) or wrapping `any` (`&any T`) is rejected
+    // at parse time -- see `parser::type_parser::tests::rejects_ref_wrapping_a_ref_type` and
+    // `rejects_ref_wrapping_an_any_type` -- so there is nothing left for typeck to lower here.
 
     #[test]
     fn a_function_type_is_usable_as_a_parameter_annotation() {

@@ -3,8 +3,6 @@ use crate::ast::interner::Interner;
 use crate::driver::source::{SrcMap, SrcSpan};
 use crate::lexer::token::Token;
 
-/// Maps the character following a `\` to the value it escapes. Returns unrecognized characters
-/// unchanged, so an unknown escape does not stop lexing.
 fn escape_char(c: char) -> char {
     match c {
         '\'' => '\'',
@@ -18,7 +16,6 @@ fn escape_char(c: char) -> char {
     }
 }
 
-/// Converts the escape values inside a string/char literal
 fn escape(chars: &[char]) -> String {
     let mut out = String::with_capacity(chars.len());
     let mut i = 0;
@@ -34,8 +31,6 @@ fn escape(chars: &[char]) -> String {
     out
 }
 
-/// Splits a lexed number's text into its value its type suffix if present
-/// Ex: 42_i64 -> 42 and i64
 fn split_suffix(text: &str) -> (&str, Option<&str>) {
     let bytes = text.as_bytes();
     for i in 0..bytes.len() {
@@ -55,7 +50,6 @@ impl Expr {
         }
     }
 
-    /// Builds an integer literal expression from its token, e.g. `42` or `42_i64`.
     pub fn int(tok: Token) -> Expr {
         let text = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");
@@ -71,7 +65,6 @@ impl Expr {
         }
     }
 
-    /// Builds a float literal expression from its token, e.g. `3.14` or `3.14_f32`.
     pub fn float(tok: Token) -> Expr {
         let text = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");
@@ -87,7 +80,6 @@ impl Expr {
         }
     }
 
-    /// Builds a string literal expression from a `"..."` token, unescaping its contents.
     pub fn string(tok: Token) -> Expr {
         let chars = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");
@@ -100,7 +92,6 @@ impl Expr {
         }
     }
 
-    /// Builds a char literal expression from a `'...'` token, unescaping its contents.
     pub fn char(tok: Token) -> Expr {
         let chars = SrcMap::text_of(tok.span)
             .expect("lexer token span should always resolve to a source file");

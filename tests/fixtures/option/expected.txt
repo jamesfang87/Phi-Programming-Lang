@@ -122,5 +122,47 @@ Item {
         end: 61,
     },
 }
+Item {
+    id: NodeId(
+        11,
+    ),
+    kind: Function(
+        Function {
+            visibility: Private,
+            name: Ident {
+                text: Symbol(
+                    5,
+                ),
+                span: SrcSpan {
+                    begin: 70,
+                    end: 74,
+                },
+            },
+            generics: [],
+            self_param: None,
+            params: [],
+            ret: None,
+            block: Some(
+                Block {
+                    id: NodeId(
+                        10,
+                    ),
+                    stmts: [],
+                    span: SrcSpan {
+                        begin: 77,
+                        end: 80,
+                    },
+                },
+            ),
+            span: SrcSpan {
+                begin: 66,
+                end: 80,
+            },
+        },
+    ),
+    span: SrcSpan {
+        begin: 66,
+        end: 80,
+    },
+}
 === stderr ===
-note: code generation is not implemented yet; 'build' currently only checks

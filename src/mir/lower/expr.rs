@@ -89,21 +89,11 @@ impl<'a> BodyLowerCtx<'a> {
         let expr = self.hir.expr(expr_id);
         let span = expr.span;
         match expr.kind.clone() {
-            // A bare place mentioned as a statement is evaluated for whatever side effect that
-            // has (an index's bounds check, chiefly) without reading the value it holds.
             ExprKind::Path(_) | ExprKind::Access { .. } | ExprKind::Index { .. } => {
                 let place = self.lower_place(expr_id);
                 self.push_stmt(StatementKind::PlaceMention(place), span);
             }
             ExprKind::Literal(_) => {}
-            // `x = y` and `x op= y` are typed `()` -- see `check_assign`/`check_assign_op` --
-            // purely so assignment can sit anywhere an ordinary expression can (a block's own
-            // tail position without a trailing `;`, chiefly), the same reason C, Rust, and
-            // JavaScript all type it this way. As a *statement*, though, nothing ever reads that
-            // `()`, so unlike `lower_expr_into` (which still needs it, for the rare case
-            // something downstream actually does read it) this runs only the assignment's real
-            // place-write, with no destination temp, and no companion write of `()` into one, at
-            // all.
             ExprKind::Assign { lhs, rhs } => {
                 self.lower_assign_effect(lhs, rhs, span);
             }
@@ -118,19 +108,12 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// `x = y`'s real work: check `x` is a place lowering may write to, then lower `y` directly
-    /// into it. Shared by [`BodyLowerCtx::lower_expr_into`] (which additionally needs the
-    /// expression's own `()` value, for the destination it was given) and
-    /// [`BodyLowerCtx::lower_expr_discarding`] (which does not).
     fn lower_assign_effect(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) {
         let place = self.lower_place(lhs);
         self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
         self.lower_expr_into(rhs, place);
     }
 
-    /// `x op= y`'s real work, the compound-assignment counterpart of
-    /// [`BodyLowerCtx::lower_assign_effect`]: `x`'s current value and `y` feed the operator, and
-    /// the result is written back into `x`.
     fn lower_assign_op_effect(&mut self, op: BinaryOp, lhs: HirId, rhs: HirId, span: SrcSpan) {
         let place = self.lower_place(lhs);
         self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
@@ -294,6 +277,15 @@ impl<'a> BodyLowerCtx<'a> {
                     },
                     span,
                 );
+            }
+            ExprKind::New(operand) => {
+                let operand = self.lower_operand(operand);
+                self.assign(dest, Rvalue::New(operand), span);
+            }
+            ExprKind::NewArray { elem, count } => {
+                let elem = self.lower_operand(elem);
+                let count = self.lower_operand(count);
+                self.assign(dest, Rvalue::NewArray { elem, count }, span);
             }
             ExprKind::Range { .. } => {
                 panic!("mir::lower: range expressions are not yet implemented")

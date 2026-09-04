@@ -534,7 +534,12 @@ impl Parser {
             .boxed();
 
         choice((
-            function_decl(false).map(|fun: Function| {
+            // `allow_no_impl: true` here is what lets a free function end in `;` instead of a
+            // body at all -- syntactically the same allowance a trait method declaration gets.
+            // Nothing at the grammar level restricts who may do this; the bodiless-intrinsic
+            // rule that actually restricts it is a typeck concern (`Typeck::check_function`),
+            // since deciding it needs the function's resolved `DefId` and the file it came from.
+            function_decl(true).map(|fun: Function| {
                 let span = fun.span;
                 Item {
                     id: NodeId::next(),
@@ -591,6 +596,17 @@ mod tests {
         assert!(f.self_param.is_none());
         assert!(f.params.is_empty());
         assert!(f.ret.is_none());
+    }
+
+    /// A free function may end in `;` instead of a body, the same allowance a trait method
+    /// declaration gets. The grammar admits this for every free function; the bodiless-intrinsic
+    /// rule restricting who may actually do it is a typeck concern, not a parser one.
+    #[test]
+    fn parses_bodiless_free_function() {
+        let item = parse_item("fun write_bytes(fd: i32) -> i64;");
+        let f = as_function(&item);
+        assert_eq!(text(f.name), "write_bytes");
+        assert!(f.block.is_none());
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::mir::{Rvalue, StatementKind};
-use crate::testing::lower_mir_src;
+use crate::testing::lower_to_mir;
 
 fn monomorphized(
     src: &str,
@@ -7,7 +7,7 @@ fn monomorphized(
     crate::typeck::tyctx::TyCtx,
     std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
 ) {
-    let (_hir, tcx, _types, instances) = lower_mir_src(src);
+    let (_hir, tcx, _types, _mir, instances) = lower_to_mir(src);
     (tcx, instances)
 }
 
