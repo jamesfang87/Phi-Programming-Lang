@@ -1288,7 +1288,24 @@ mod tests {
         crate::mir::Mir,
         std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
     ) {
-        let hir = crate::testing::resolve_src(src);
+        crate::diagnostics::DiagCtx::clear();
+        crate::ast::interner::Interner::clear();
+        let files: Vec<crate::ast::ParsedSrcFile> = [crate::testing::OPS_PREAMBLE, src]
+            .iter()
+            .map(|src| {
+                let chars: Vec<char> = src.chars().collect();
+                let offset = crate::driver::source::SrcMap::add_file(
+                    "<test>".to_string(),
+                    chars.clone(),
+                    crate::driver::source::FileOrigin::User,
+                );
+                let tokens = crate::lexer::Lexer::new(&chars, offset).tokenize();
+                crate::parser::Parser::new().parse(&tokens, offset)
+            })
+            .collect();
+        let ast = crate::ast::Ast::new(files);
+        let res = crate::nameres::resolve(&ast);
+        let hir = crate::hir::lower::lower_ast(&ast, &res);
         crate::diagnostics::DiagCtx::clear();
         let checked = crate::typeck::check(&hir);
         let diagnostics = crate::diagnostics::DiagCtx::diagnostics();
@@ -1357,8 +1374,10 @@ mod tests {
 
     #[test]
     fn overflow_checked_add_yields_pair() {
-        let (hir, mut tcx, _types, mir, instances) =
-            crate::testing::lower_to_mir("fun f(a: i32, b: i32) -> i32 { a + b }");
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
+            crate::testing::OPS_PREAMBLE,
+            "fun f(a: i32, b: i32) -> i32 { a + b }",
+        ]);
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
         module.verify().unwrap();
@@ -1394,10 +1413,11 @@ mod tests {
 
     #[test]
     fn a_reified_function_pointer_resolves_to_the_functions_own_global() {
-        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
+            crate::testing::OPS_PREAMBLE,
             "fun f() -> fun(i32, i32) -> i32 { return add; }
              fun add(x: i32, y: i32) -> i32 { return x + y; }",
-        );
+        ]);
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
         module.verify().unwrap();
@@ -1527,8 +1547,10 @@ mod tests {
 
     #[test]
     fn division_by_zero_assert_writes_and_aborts_on_failure() {
-        let (hir, mut tcx, _types, mir, instances) =
-            crate::testing::lower_to_mir("fun f(a: i32, b: i32) -> i32 { return a / b; }");
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
+            crate::testing::OPS_PREAMBLE,
+            "fun f(a: i32, b: i32) -> i32 { return a / b; }",
+        ]);
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
         module.verify().unwrap();
