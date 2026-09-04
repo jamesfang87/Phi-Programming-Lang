@@ -6,13 +6,15 @@ use crate::diagnostics::typeck::expr::{
     report_assign_mismatch, report_cast_not_allowed, report_cast_operand_unknown,
     report_cast_source_not_primitive, report_cast_target_not_primitive,
     report_closure_body_mismatch, report_compound_assign_mismatch,
-    report_compound_assign_result_mismatch, report_ctor_not_a_struct, report_duplicate_field,
-    report_elided_ctor_unknown, report_field_type_mismatch, report_if_branches_mismatch,
+    report_compound_assign_result_mismatch, report_ctor_not_a_struct, report_deref_not_a_reference,
+    report_duplicate_field, report_elided_ctor_unknown, report_field_type_mismatch,
+    report_if_branches_mismatch,
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
-    report_missing_fields, report_no_range_type, report_no_such_field, report_no_such_variant,
-    report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_try,
-    report_private_field, report_range_endpoints_mismatch, report_record_field_unknown,
+    report_missing_fields, report_new_array_count_not_usize, report_no_range_type,
+    report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
+    report_not_assignable, report_not_indexable, report_not_try, report_private_field,
+    report_range_endpoints_mismatch, report_record_field_unknown,
     report_try_error_mismatch, report_try_operand_unknown, report_try_outside,
     report_try_return_mismatch, report_variant_enum_unknown, report_variant_expr_payload_shape,
     report_variant_missing_fields, report_variant_payload_mismatch,
@@ -35,7 +37,7 @@ impl<'hir> Typeck<'hir> {
     pub(crate) fn check_assign(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) -> Ty {
         let lhs_ty = self.ty_of(lhs);
         // Whether the local this reaches may be written to at all, rather than a plain `let`'s,
-        // is checked on the MIR this lowers to, not here; see `mir::constck`.
+        // is checked on the MIR this lowers to, not here; see `mir::checks::constck`.
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
         }
@@ -55,7 +57,7 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) -> Ty {
         let lhs_ty = self.ty_of(lhs);
-        // See `check_assign`'s own comment: the mutability check itself moved to `mir::constck`.
+        // See `check_assign`'s own comment: the mutability check itself moved to `mir::checks::constck`.
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
         }
@@ -82,7 +84,7 @@ impl<'hir> Typeck<'hir> {
         operand: HirId,
         expected: Option<Ty>,
     ) -> Ty {
-        // See `check_assign`'s own comment: the mutability check itself moved to `mir::constck`.
+        // See `check_assign`'s own comment: the mutability check itself moved to `mir::checks::constck`.
         if mutability == Mutability::Mutable && !self.is_place_expr(operand) {
             report_not_assignable(self.hir.expr(operand).span);
         }
@@ -96,6 +98,20 @@ impl<'hir> Typeck<'hir> {
         });
         let ty = self.ty_of_expecting(operand, inner);
         self.tcx.mk_ref(ty, mutability)
+    }
+
+    pub(crate) fn check_deref(&mut self, operand: HirId, span: SrcSpan) -> Ty {
+        let operand_ty = self.ty_of(operand);
+        let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
+
+        match *self.tcx.kind(resolved) {
+            TyKind::Ref { base, .. } => base,
+            TyKind::Error => self.tcx.error(),
+            _ => {
+                report_deref_not_a_reference(self.display_cx(), resolved, span);
+                self.tcx.error()
+            }
+        }
     }
 
     // -----------------------------------------------------------------
@@ -537,6 +553,19 @@ impl<'hir> Typeck<'hir> {
         let operand_ty = self.ty_of(operand);
 
         let target_resolved = self.unifier.find_deep(&mut self.tcx, target_ty);
+        let operand_resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
+
+        // `str as &[u8]` is the one cast that isn't primitive-to-primitive: both sides share a
+        // representation (`{ pointer, usize }`), so it costs nothing at runtime, but the target
+        // is a reference to a slice, not a primitive, so it has to be special-cased ahead of the
+        // "target must be primitive" check below. The reverse, `&[u8] as str`, is not accepted
+        // here or anywhere else: it would assert a UTF-8 property this compiler cannot check.
+        if matches!(self.tcx.kind(operand_resolved), TyKind::Primitive(PrimTy::Str))
+            && self.is_byte_slice_ref(target_resolved)
+        {
+            return target_ty;
+        }
+
         let target_kind = self.tcx.kind(target_resolved).clone();
         let TyKind::Primitive(to) = target_kind else {
             if !matches!(target_kind, TyKind::Error) {
@@ -578,6 +607,44 @@ impl<'hir> Typeck<'hir> {
         }
 
         target_ty
+    }
+
+    /// Whether `ty` is `&[u8]`: an immutable reference to an unsized array of `u8`. The one
+    /// shape `str` is ever allowed to cast to.
+    fn is_byte_slice_ref(&self, ty: Ty) -> bool {
+        let TyKind::Ref { base, mutability } = *self.tcx.kind(ty) else {
+            return false;
+        };
+        if mutability != Mutability::Immutable {
+            return false;
+        }
+        let TyKind::Array { elem, len: None } = *self.tcx.kind(base) else {
+            return false;
+        };
+        matches!(self.tcx.kind(elem), TyKind::Primitive(PrimTy::U8))
+    }
+
+    // -----------------------------------------------------------------
+    // `new`, the `iso` constructor
+    // -----------------------------------------------------------------
+
+    /// Checks `new e`: `e: T` gives `new e` the type `iso T`.
+    pub(crate) fn check_new(&mut self, operand: HirId) -> Ty {
+        let operand_ty = self.ty_of(operand);
+        self.tcx.mk_iso(operand_ty)
+    }
+
+    /// Checks `new [elem; count]`: `elem: T` and `count: usize` give it the type `iso [T]`, the
+    /// unsized array whose length is carried at runtime rather than fixed by the type.
+    pub(crate) fn check_new_array(&mut self, elem: HirId, count: HirId) -> Ty {
+        let elem_ty = self.ty_of(elem);
+        let count_ty = self.ty_of(count);
+        let usize_ty = self.tcx.mk_prim(PrimTy::Usize);
+        if let Err(err) = self.unifier.unify(&self.tcx, count_ty, usize_ty) {
+            report_new_array_count_not_usize(self.display_cx(), err, self.hir.expr(count).span);
+        }
+        let array_ty = self.tcx.mk_array(elem_ty, None);
+        self.tcx.mk_iso(array_ty)
     }
 
     // -----------------------------------------------------------------
@@ -732,7 +799,7 @@ mod tests {
     }
 
     // Whether a plain `let` (or a `let mut`) may be reassigned to, directly or through a field
-    // or index chain, is `mir::constck`'s question now, exercised by that module's own tests; see
+    // or index chain, is `mir::checks::constck`'s question now, exercised by that module's own tests; see
     // the comment above `a_unit_struct_constructs_and_checks` for why.
 
     /// An assignment produces nothing, so it cannot be the value of the block it ends. Read
@@ -782,7 +849,7 @@ mod tests {
         );
     }
 
-    // Whether `&mut x` may take a mutable borrow of `x` is `mir::constck`'s question now too,
+    // Whether `&mut x` may take a mutable borrow of `x` is `mir::checks::constck`'s question now too,
     // for the same reason `a_plain_let_binding_cannot_be_assigned_to`'s old comment gave.
 
     // -----------------------------------------------------------------
@@ -1089,6 +1156,29 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // Dereference
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn dereferencing_a_reference_returns_its_base_type() {
+        accepts("fun f(p: &i32) -> i32 { return *p; }");
+        accepts("fun f(p: &mut i32) -> i32 { return *p; }");
+    }
+
+    #[test]
+    fn dereferencing_a_non_reference_is_rejected() {
+        rejects(
+            "fun f(x: i32) -> i32 { return *x; }",
+            "cannot be dereferenced",
+        );
+    }
+
+    #[test]
+    fn a_dereferenced_reference_is_assignable() {
+        accepts("fun f(p: &mut i32) { *p = 1; }");
+    }
+
+    // -----------------------------------------------------------------
     // Indexing
     // -----------------------------------------------------------------
 
@@ -1233,15 +1323,159 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // `new`, the `iso` constructor
+    // -----------------------------------------------------------------
+
+    /// `new e` allocates storage for `e`'s type and yields `iso T`.
+    #[test]
+    fn new_of_a_value_has_type_iso_of_that_values_type() {
+        accepts("fun f() { let x: iso i32 = new 1; }");
+    }
+
+    /// `new [e; n]` requires `n: usize` and yields `iso [T]`, the unsized array whose length is
+    /// carried at runtime.
+    #[test]
+    fn new_array_requires_a_usize_count_and_yields_iso_of_unsized_array() {
+        accepts("fun f(n: usize) { let buf: iso [u8] = new [0_u8; n]; }");
+    }
+
+    /// A count that isn't `usize` is rejected, the same as any other type mismatch.
+    #[test]
+    fn new_array_rejects_a_non_usize_count() {
+        rejects(
+            "fun f() { let buf = new [0_u8; true]; }",
+            "mismatched types",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `usize`
+    // -----------------------------------------------------------------
+
+    /// `usize` unifies with an unsuffixed integer literal exactly like any other unsigned
+    /// primitive.
+    #[test]
+    fn an_unsuffixed_literal_unifies_with_usize() {
+        accepts("fun f() { let n: usize = 0; }");
+    }
+
+    /// The `_usize` suffix names the type directly, the same as `_u64` or any other integer
+    /// suffix.
+    #[test]
+    fn a_usize_suffixed_literal_checks() {
+        accepts("fun f() { let n = 0_usize; }");
+    }
+
+    // -----------------------------------------------------------------
+    // `str`
+    // -----------------------------------------------------------------
+
+    /// A string literal's bytes live in a read-only constant, so the literal itself just names
+    /// them: no allocation, no copy, and a `str` type.
+    #[test]
+    fn a_string_literal_has_type_str() {
+        accepts("fun f() { let s: str = \"hi\"; }");
+    }
+
+    /// `str` and `&[u8]` share a representation -- both are `{ pointer, usize }` -- so reaching
+    /// a `str`'s bytes is an ordinary, no-op-at-runtime cast, not a method.
+    #[test]
+    fn str_as_byte_slice_checks() {
+        accepts("fun f(s: str) -> &[u8] { return s as &[u8]; }");
+    }
+
+    /// The reverse direction would assert a UTF-8 property the compiler cannot check, so it is
+    /// rejected: `str` is the only cast a `&[u8]` may not make.
+    #[test]
+    fn byte_slice_as_str_is_rejected() {
+        rejects(
+            "fun f(b: &[u8]) -> str { return b as str; }",
+            "cannot cast a value of type",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `str` is second-class: same standing as `&T`
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_struct_field_that_is_str_is_rejected() {
+        rejects(
+            "struct Config { name: str }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    #[test]
+    fn an_enum_variant_payload_that_is_str_is_rejected() {
+        rejects(
+            "enum Opt { some: str, none }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    /// An array element is still a stored value, so `str` nested inside one is rejected the
+    /// same way a bare `str` field is.
+    #[test]
+    fn an_array_field_of_str_is_rejected() {
+        rejects(
+            "struct Wrap { buf: [str; 2] }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    /// Instantiating a generic parameter with `str` is caught once the instantiated type is
+    /// actually put into a field, the same way an ordinary reference argument is (see
+    /// `instantiating_a_generic_struct_with_a_reference_argument_in_a_field_is_rejected`):
+    /// there is no way to tell, from `Boxed`'s own declaration, whether `T` ends up in field
+    /// position.
+    #[test]
+    fn instantiating_a_generic_struct_with_str_in_a_field_is_rejected() {
+        rejects(
+            "struct Boxed<T> { value: T }
+             struct Outer { boxed: Boxed<str> }",
+            "a field cannot hold a reference",
+        );
+    }
+
+    /// The same instantiation used only as a function's own parameter type is accepted, exactly
+    /// as it is for an ordinary reference argument: nothing stores `Boxed<str>` anywhere.
+    #[test]
+    fn instantiating_a_generic_struct_with_str_as_a_parameter_checks() {
+        accepts(
+            "struct Boxed<T> { value: T }
+             fun f(b: Boxed<str>) {}",
+        );
+    }
+
+    /// A parameter, unlike a field, may hold `str` directly: second-class values are exactly
+    /// what parameters accept.
+    #[test]
+    fn str_as_a_parameter_checks() {
+        accepts("fun greet(name: str) {}");
+    }
+
+    /// A local's declared type is not a field either, so `str` is accepted there too.
+    #[test]
+    fn str_as_a_local_checks() {
+        accepts("fun f(s: str) { let t: str = s; }");
+    }
+
+    /// Nor is a return type.
+    #[test]
+    fn str_as_a_return_type_checks() {
+        accepts("fun f(s: str) -> str { return s; }");
+    }
+
+    // -----------------------------------------------------------------
     // What has no type yet
     // -----------------------------------------------------------------
 
-    /// Neither of these is a gap in this pass: a string literal and a range are values of types
-    /// the core library does not declare and no lang item names, so there is nothing for either
-    /// to be. Both report rather than panicking, which is what they used to do.
+    /// A range is not a gap in this pass: it is a value of a type the core library does not
+    /// declare and no lang item names, so there is nothing for it to be. It reports rather than
+    /// panicking, which is what it used to do.
     #[test]
-    fn a_string_literal_and_a_range_report_that_they_have_no_type() {
-        rejects("fun f() { let s = \"hi\"; }", "string literal has no type");
+    fn a_range_reports_that_it_has_no_type() {
         rejects("fun f() { let r = 1..2; }", "range expression has no type");
     }
 
@@ -1434,9 +1668,9 @@ mod tests {
 
     // Whether a place may be written to directly, rejecting a plain `let`'s root once `mut`
     // fixes it, crossing a reference, a tuple-destructured binding, a `for`/`match`/`with`
-    // binding, and a parameter or `self`, is exercised by `mir::constck`'s own tests now. That
+    // binding, and a parameter or `self`, is exercised by `mir::checks::constck`'s own tests now. That
     // check moved to the MIR this lowers to, so it is no longer typeck's own to test. See
-    // `mir::constck`'s module docs for why a `&mut self` receiver is still checked here instead,
+    // `mir::checks::constck`'s module docs for why a `&mut self` receiver is still checked here instead,
     // at `Typeck::place_mutable_root`'s one remaining call site.
 
     // -----------------------------------------------------------------

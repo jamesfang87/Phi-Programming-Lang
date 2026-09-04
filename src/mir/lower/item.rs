@@ -1,8 +1,3 @@
-//! [`BodyLowerCtx::lower_item`], the entry point that lowers one whole definition -- a
-//! function, a method, or a closure -- into its finished [`Body`]: setting up the return place
-//! and every parameter's local, lowering the block, and closing off whichever basic block
-//! lowering the block left open with an implicit `Return`.
-
 use crate::ast::Mutability;
 use crate::hir::{HirId, OwnerNode};
 use crate::mir::lower::Task;
@@ -57,7 +52,7 @@ impl<'a> BodyLowerCtx<'a> {
                 any_mode,
             );
             // A parameter, `self` included, has no `let`/`let mut` of its own to restrict it, so
-            // it is unrestricted by `mir::constck` -- matching every other binding besides a
+            // it is unrestricted by `mir::checks::constck` -- matching every other binding besides a
             // plain `let`'s; see `StatementKind::CheckMutable`'s own docs.
             let local = self.new_local(ty, Mutability::Mutable, None, span);
             self.bind_local(self_id, local);

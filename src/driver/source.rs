@@ -176,6 +176,7 @@ impl SrcMap {
 
 /// Every file of the core library as `(name, source)`.
 const CORE_FILES: &[(&str, &str)] = &[
+    ("core/io.phi", include_str!("../../lib/core/io.phi")),
     ("core/iter.phi", include_str!("../../lib/core/iter.phi")),
     ("core/ops.phi", include_str!("../../lib/core/ops.phi")),
     ("core/option.phi", include_str!("../../lib/core/option.phi")),

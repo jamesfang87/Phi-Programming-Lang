@@ -98,7 +98,6 @@ struct ManifestProfile {
 }
 
 impl Config {
-    /// The manifest's file name
     pub const MANIFEST: &'static str = "Phi.toml";
 
     /// Reads and parses `cwd/Phi.toml`.
@@ -305,9 +304,9 @@ mod tests {
         );
     }
 
-    /// `--mir` now dumps a real stage; `--llvm` still does not (there is no backend yet). Both
-    /// still just need to parse and set their own flag here -- `pipeline::note_unimplemented_dumps`
-    /// is what actually decides which one prints a "not implemented" note.
+    /// `--mir` and `--llvm` both dump a real stage now -- this test only checks that both flags
+    /// parse and set their own field here; `pipeline::build` is what actually prints the LLVM IR
+    /// dump when `--llvm` is set.
     #[test]
     fn mir_and_llvm_flags_parse() {
         let dumps = opts(&["--mir", "--llvm"]).expect("both are accepted").dumps;

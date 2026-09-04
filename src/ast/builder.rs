@@ -1,14 +1,10 @@
-//! [`AstBuilder`] which turns a build's parsed files into the [`Ast`] module tree.
-
 use std::collections::HashMap;
 
 use crate::ast::{Ast, Ident, Module, NodeId, Path, Symbol};
 use crate::driver::source::SrcSpan;
 
-/// Builds an [`Ast`]'s module tree, keeping the path index that only construction needs.
 pub(super) struct AstBuilder {
     pub(super) ast: Ast,
-    /// Module path -> its [`NodeId`]
     by_path: HashMap<Vec<Symbol>, NodeId>,
 }
 
@@ -46,7 +42,6 @@ impl AstBuilder {
                 current = existing;
                 continue;
             }
-            // `current` is still the module one level up: the parent of the one being created.
             let path_segments = segments[..=i].to_vec();
             let span = path_segments[0]
                 .span
@@ -81,9 +76,6 @@ mod tests {
     use crate::ast::{ModuleDecl, NodeId, ParsedSrcFile};
     use crate::testing::parse_src;
 
-    /// Attaches a `module a::b;` header to a parsed file by hand. The parser doesn't currently
-    /// wire a file's header into [`ParsedSrcFile::module`], so this is what exercises the tree
-    /// building below it.
     fn with_header(mut file: ParsedSrcFile, segments: &[&str]) -> ParsedSrcFile {
         let span = file.span;
         file.module = Some(ModuleDecl {
@@ -146,8 +138,6 @@ mod tests {
 
     #[test]
     fn two_files_declaring_one_module_are_merged() {
-        // One parse cloned into two files: `parse_src` clears the interner, so parsing twice in
-        // one test would leave the first file's symbols naming whatever was interned after it.
         let file = parse_src("import a::b; fun first() {}");
         let ast = Ast::new(vec![
             with_header(file.clone(), &["math"]),
@@ -177,8 +167,6 @@ mod tests {
         }
     }
 
-    /// A module declared explicitly by one file and implicitly, as an ancestor, by another is one
-    /// module either way around -- whichever file the build happens to reach first.
     #[test]
     fn an_ancestor_declared_by_its_own_file_is_not_duplicated() {
         let file = parse_src("fun a() {}");

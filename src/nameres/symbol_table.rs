@@ -83,10 +83,12 @@ pub fn prim_ty(name: Symbol) -> Option<PrimTy> {
         "u16" => PrimTy::U16,
         "u32" => PrimTy::U32,
         "u64" => PrimTy::U64,
+        "usize" => PrimTy::Usize,
         "f32" => PrimTy::F32,
         "f64" => PrimTy::F64,
         "bool" => PrimTy::Bool,
         "char" => PrimTy::Char,
+        "str" => PrimTy::Str,
         _ => return None,
     })
 }
@@ -147,8 +149,7 @@ impl<'ast> SymbolTable<'ast> {
             }
         }
 
-        // Submodules come from `Module::children`, not `items`. A module's own item list
-        // keeps only its direct declarations, not children.
+        // Recall that submodules come from `Module::children`, not `items`
         let children = module.children.clone();
         for &child_id in &children {
             let child = self.ast.module(child_id);
@@ -209,7 +210,11 @@ impl<'ast> SymbolTable<'ast> {
         let type_res =
             self.resolve_import_type_path(root, &import.path)
                 .and_then(|(module, def)| {
-                    if self.is_visible(importing_module, module, self.visibility(def.node_id())) {
+                    if self.is_visible_from(
+                        importing_module,
+                        module,
+                        self.visibility(def.node_id()),
+                    ) {
                         Some(def)
                     } else {
                         private_hit = true;
@@ -219,7 +224,7 @@ impl<'ast> SymbolTable<'ast> {
         let val_res =
             self.resolve_import_value_path(root, &import.path)
                 .and_then(|(module, id)| {
-                    if self.is_visible(importing_module, module, self.visibility(id)) {
+                    if self.is_visible_from(importing_module, module, self.visibility(id)) {
                         Some(id)
                     } else {
                         private_hit = true;
@@ -298,9 +303,6 @@ impl<'ast> SymbolTable<'ast> {
         }
     }
 
-    /// Resolves an import's value-namespace target, alongside the module its scope was found
-    /// in -- `resolve_import` needs that module to decide whether the importing module is
-    /// allowed to see it at all.
     fn resolve_import_value_path(&self, base: NodeId, path: &Path) -> Option<(NodeId, NodeId)> {
         let (name, modules) = path.segments.split_last()?;
         let module = self.walk_modules(base, modules)?;
@@ -308,7 +310,6 @@ impl<'ast> SymbolTable<'ast> {
             .map(|id| (module, id))
     }
 
-    /// [`Self::resolve_import_value_path`], for the type namespace.
     fn resolve_import_type_path(&self, base: NodeId, path: &Path) -> Option<(NodeId, TyDef)> {
         let (name, modules) = path.segments.split_last()?;
         let module = self.walk_modules(base, modules)?;
@@ -357,7 +358,7 @@ impl<'ast> SymbolTable<'ast> {
         self.in_module_chain(from, |base| {
             let module = self.walk_modules(base, prefix)?;
             let id = self.lookup_function(module, last.text)?;
-            self.is_visible(from, module, self.visibility(id))
+            self.is_visible_from(from, module, self.visibility(id))
                 .then_some(Res::Function(id))
         })
     }
@@ -380,7 +381,7 @@ impl<'ast> SymbolTable<'ast> {
         self.in_module_chain(from, |base| {
             let module = self.walk_modules(base, prefix)?;
             let def = self.lookup_type(module, last.text)?;
-            self.is_visible(from, module, self.visibility(def.node_id()))
+            self.is_visible_from(from, module, self.visibility(def.node_id()))
                 .then_some(Type::Def(def))
         })
     }
@@ -433,25 +434,17 @@ impl<'ast> SymbolTable<'ast> {
         self.items.get(&id).copied()
     }
 
-    /// The `public`/`private` declared on `id`'s own item -- the flag every item-carrying
-    /// `ItemKind` already stores, not something re-derived from where it lives in the tree.
     fn visibility(&self, id: NodeId) -> Visibility {
         match self.item(id).map(|item| &item.kind) {
             Some(ItemKind::Function(f)) => f.visibility,
             Some(ItemKind::Struct(s)) => s.visibility,
             Some(ItemKind::Enum(e)) => e.visibility,
             Some(ItemKind::Trait(t)) => t.visibility,
-            // `extend` blocks are unnamed and modules carry no visibility of their own; neither
-            // is ever looked up through this path.
             _ => Visibility::Public,
         }
     }
 
-    /// Whether an item declared `visibility` in `owner` -- the module whose scope it was just
-    /// found in -- is reachable from `from`. `public` is visible everywhere a path can name it;
-    /// `private` (the default) only reaches the declaring module and its own descendants, so
-    /// `owner` must appear in `from`'s chain of ancestors (or be `from` itself).
-    fn is_visible(&self, from: NodeId, owner: NodeId, visibility: Visibility) -> bool {
+    fn is_visible_from(&self, from: NodeId, owner: NodeId, visibility: Visibility) -> bool {
         match visibility {
             Visibility::Public => true,
             Visibility::Private => self.module_chain(from).contains(&owner),
@@ -514,7 +507,7 @@ impl<'ast> SymbolTable<'ast> {
     }
 
     /// This is used for cases where due to a program error, a Self does not exist.
-    /// For example, an `extend`  block whose `adt_path` didn't find anything.
+    /// For example, an `extend` block whose `adt_path` is unresolved
     pub fn push_self_unresolved(&mut self) {
         self.self_scopes.push(None);
     }
@@ -523,18 +516,13 @@ impl<'ast> SymbolTable<'ast> {
         self.self_scopes.pop();
     }
 
-    /// Collapses "no enclosing `Self`" and "the enclosing definition's target already failed
-    /// to resolve" into one `None`, since most callers just want "is there a resolved `Self`
-    /// or not." [`Self::current_self_entry`] keeps the two apart, for the one caller that needs
-    /// to.
+    /// Returns the current self entry if present and None if not
     pub fn current_self(&self) -> Option<TyDef> {
         self.current_self_entry().flatten()
     }
 
-    /// The raw top of the `Self` scope stack, without [`Self::current_self`]'s collapsing.
-    /// Tells an empty stack (`None`, `Self` is not available at all) apart from a stack topped
-    /// by [`Self::push_self_unresolved`] (`Some(None)`, `Self` sits inside a definition whose
-    /// target already failed) from one resolved to a type (`Some(Some(def))`).
+    /// This allows for the disambiguation of `Self` not being available in the
+    /// context and cases where `Self` does not exist due to a program error.
     pub fn current_self_entry(&self) -> Option<Option<TyDef>> {
         self.self_scopes.last().copied()
     }
