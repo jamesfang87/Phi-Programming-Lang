@@ -15,7 +15,7 @@ const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
 pub struct SymbolTable<'ast> {
     local_scopes: Vec<HashMap<Symbol, Local>>,
     generic_scopes: Vec<HashMap<Symbol, Type>>,
-    self_scopes: Vec<Option<TyDef>>,
+    self_scopes: Vec<Option<Type>>,
 
     modules: HashMap<NodeId, ModuleScope>,
     items: HashMap<NodeId, &'ast Item>,
@@ -374,7 +374,7 @@ impl<'ast> SymbolTable<'ast> {
                 return Some(generic);
             }
             if last.text == Interner::intern("Self") {
-                return self.current_self().map(Type::Def);
+                return self.current_self();
             }
         }
 
@@ -502,7 +502,7 @@ impl<'ast> SymbolTable<'ast> {
 
     //-------------------------------------------------------------------------
 
-    pub fn push_self(&mut self, ty: TyDef) {
+    pub fn push_self(&mut self, ty: Type) {
         self.self_scopes.push(Some(ty));
     }
 
@@ -517,13 +517,13 @@ impl<'ast> SymbolTable<'ast> {
     }
 
     /// Returns the current self entry if present and None if not
-    pub fn current_self(&self) -> Option<TyDef> {
+    pub fn current_self(&self) -> Option<Type> {
         self.current_self_entry().flatten()
     }
 
     /// This allows for the disambiguation of `Self` not being available in the
     /// context and cases where `Self` does not exist due to a program error.
-    pub fn current_self_entry(&self) -> Option<Option<TyDef>> {
+    pub fn current_self_entry(&self) -> Option<Option<Type>> {
         self.self_scopes.last().copied()
     }
 }

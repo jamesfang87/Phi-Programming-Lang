@@ -477,8 +477,8 @@ fn self_reads_the_innermost_scope_and_is_none_when_the_stack_is_empty() {
     let mut t = SymbolTable::new(&ast);
     let s = NodeId::next();
     assert_eq!(t.current_self(), None);
-    t.push_self(TyDef::Struct(s));
-    assert_eq!(t.current_self(), Some(TyDef::Struct(s)));
+    t.push_self(Type::Def(TyDef::Struct(s)));
+    assert_eq!(t.current_self(), Some(Type::Def(TyDef::Struct(s))));
     t.pop_self();
     assert_eq!(t.current_self(), None);
 }
@@ -606,7 +606,7 @@ fn pushing_generics_leaves_locals_and_self_untouched() {
     let ast = ast_from("fun main() {}");
     let mut t = SymbolTable::new(&ast);
     let local = NodeId::next();
-    let self_def = TyDef::Struct(NodeId::next());
+    let self_def = Type::Def(TyDef::Struct(NodeId::next()));
     let x = Interner::intern("x");
 
     t.push_scope();
@@ -639,7 +639,7 @@ fn pushing_a_local_scope_or_self_leaves_generics_untouched() {
     assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
     t.pop_scope();
 
-    t.push_self(TyDef::Struct(NodeId::next()));
+    t.push_self(Type::Def(TyDef::Struct(NodeId::next())));
     assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
     t.pop_self();
 
@@ -696,7 +696,7 @@ fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
         TyDef::Enum(NodeId::next()),
         TyDef::Trait(NodeId::next()),
     ] {
-        r.table.push_self(def);
+        r.table.push_self(Type::Def(def));
         assert_eq!(
             r.resolve_type_path(&path(&["Self"])),
             Res::Type(Type::Def(def))
