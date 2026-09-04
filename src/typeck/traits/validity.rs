@@ -42,21 +42,22 @@ impl<'hir> Typeck<'hir> {
                 self.adt_of_with_args(block),
                 self.extends.trait_of(block).cloned(),
             );
-
-            // An indexed extend block's self type is an ADT, unless lowering it already
-            // rejected one of its own generic arguments (a reference, `any`, or a bare `dyn`
-            // substituted in) -- that already reported a diagnostic, so there is nothing left
-            // to check here.
-            let TyKind::Adt { def, args } = self.tcx.kind(self_ty).clone() else {
-                continue;
-            };
             let node = self.hir.extend(block);
             let (adt_path, trait_path) = (&node.adt_path, node.trait_path.as_ref());
 
-            if self.check_arg_count(def, args.len(), adt_path.span) {
+            // Only an ADT self type has its own generic arity to check against a declaration --
+            // a primitive is never generic (already enforced when its `Ty` was built, in
+            // `self_ty`), and anything else here already had a diagnostic reported when its own
+            // generic arguments were rejected (a reference, `any`, or a bare `dyn` substituted
+            // in), so there is nothing left to check for those.
+            if let TyKind::Adt { def, args } = self.tcx.kind(self_ty).clone()
+                && self.check_arg_count(def, args.len(), adt_path.span)
+            {
                 self.register_bound_obligations(def, &args, adt_path.span, block);
             }
 
+            // The `with`-clause trait's own arity has to be checked regardless of what kind of
+            // head the block extends.
             if let Some(trait_ref) = trait_ref {
                 let span = trait_path.map_or(node.span, |path| path.span);
                 if self.check_arg_count(trait_ref.def, trait_ref.args.len(), span) {
@@ -189,6 +190,19 @@ mod tests {
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index { fun get(&self, key: i32) -> bool {} }",
+        );
+
+        assert_eq!(
+            validity(&hir),
+            ["`Index` takes 2 generic arguments but 0 were supplied"]
+        );
+    }
+
+    #[test]
+    fn a_primitive_with_clause_missing_the_traits_arguments_is_reported() {
+        let hir = resolve_src(
+            "trait Index<K, V> { fun get(&self, key: K) -> V; }
+             extend i32 with Index { fun get(&self, key: i32) -> bool { return true; } }",
         );
 
         assert_eq!(
