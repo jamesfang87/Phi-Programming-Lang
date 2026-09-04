@@ -63,8 +63,6 @@ fn node_kind(node: &Node) -> String {
 }
 
 /// The longest a source snippet in a summary is allowed to be before it's cut off with `...`,
-/// so a summary line stays a summary line even when the node it describes spans a whole
-/// function body.
 const MAX_SNIPPET_LEN: usize = 60;
 
 /// Collapses `text` to a single line (removing newlines and indentation from multi-line spans)
@@ -105,9 +103,6 @@ fn pad(indent: usize) -> String {
     INDENT.repeat(indent)
 }
 
-/// Joins already-rendered `items` into a parenthesized/braced block, one per line, indented one
-/// level deeper than `indent`. Empty `items` collapses to `open` and `close` stuck together with
-/// nothing between them, e.g. `()`.
 fn block(open: &str, close: &str, items: &[String], indent: usize) -> String {
     if items.is_empty() {
         return format!("{open}{close}");
@@ -147,6 +142,7 @@ fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
             )
         }
         TyKind::Any(base) => format!("Any({})", fmt_ty(hir, tcx, *base, indent)),
+        TyKind::Iso(base) => format!("Iso({})", fmt_ty(hir, tcx, *base, indent)),
         TyKind::Tuple(elems) => {
             let elems: Vec<_> = elems
                 .iter()
@@ -223,7 +219,6 @@ pub fn print_ast(ast: &Ast) {
     }
 }
 
-/// A module's dotted path, or `<root>` for the root module, which has none.
 fn fmt_mod_path(module: &Module) -> String {
     if module.path.segments.is_empty() {
         return "<root>".to_string();
@@ -266,15 +261,10 @@ pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_c
     }
 }
 
-/// Dumps the monomorphized MIR: one `--- {mangled name} ---` section per [`Instance`], each
-/// giving its `def_id`/`arg_count`, its locals with their types rendered through [`fmt_ty`]
-/// (matching [`print_typeck`]'s own convention, since a bare `Ty` prints only its interned
-/// index), and its basic blocks via their derived `Debug`, which is already self-describing for
-/// everything but the `Ty`s a `LocalDecl`/`Constant`/`Cast` carries. Sections are sorted by
-/// mangled name, for deterministic output across runs.
 pub fn print_mir(
     hir: &Hir,
     tcx: &TyCtx,
+    mir: &crate::mir::Mir,
     instances: &HashMap<Instance, Body>,
     exclude_core_in_emit: bool,
 ) {
@@ -285,7 +275,7 @@ pub fn print_mir(
         .filter(|(instance, _)| !exclude_core_in_emit || is_user_def(hir, instance.def))
         .map(|(instance, body)| {
             (
-                crate::mir::mangle::mangle(hir, tcx, instance),
+                crate::mir::mangle::mangle(mir, tcx, instance),
                 instance,
                 body,
             )
@@ -305,7 +295,7 @@ pub fn print_mir(
                 .map(|&arg| fmt_ty(hir, tcx, arg, 0))
                 .collect::<Vec<_>>()
                 .join(", "),
-            body.arg_count
+            body.param_count
         );
         for (index, decl) in body.local_decls.iter().enumerate() {
             let name = decl
@@ -324,41 +314,13 @@ pub fn print_mir(
     }
 }
 
-// ===========================================================================
-// Name resolution dump
-//
-// `crate::nameres::resolve` runs on the `Ast`, before lowering -- see `pipeline.rs`. This dump
-// makes its output inspectable directly, without going through the `hir::Path`s it ends up
-// attached to.
-// ===========================================================================
-
-/// Everything [`fmt_res`] needs to turn a `Res` into readable text without ever
-/// printing the `NodeId` it carries: a lookup from that id back to the declaration it names,
-/// built by a single traversal of the whole AST.
-///
-/// `NameResolutions` records only ids -- `Res::Function(NodeId)`,
-/// `Res::Local(Local::Variable(NodeId))`, and so on -- so turning one back into a name needs
-/// somewhere to look the id up. `SymbolTable` already keeps a `NodeId -> &Item` map for
-/// exactly this reason (see its doc comment), but a `Generic`, a `Param`, a `SelfParam`, and a
-/// pattern binding are none of them `Item`s, and `nameres_to_string` only receives an
-/// `Ast`, not a `SymbolTable`. So this dump builds its own table, covering every kind of node a
-/// `Res` can name, in the one walk that also drives [`Self::owners`].
 struct Names<'ast> {
     items: HashMap<AstNodeId, &'ast AstItem>,
     generics: HashMap<AstNodeId, &'ast AstGeneric>,
     params: HashMap<AstNodeId, &'ast AstParam>,
     self_params: HashMap<AstNodeId, &'ast AstSelfParam>,
     bindings: HashMap<AstNodeId, AstIdent>,
-    /// Every node that can own an entry in `NameResolutions`: a `Generic`'s own id (bounds), an
-    /// `extend` item's id (`adt_path`/`trait_path`), a `Ty`'s id, an `Expr`'s id --  see
-    /// `resolver.rs`'s calls to `results.record`, which this list mirrors. `entries(owner)`
-    /// needs the *owner*, not the `Res`, so collecting every owner here in one walk is what lets
-    /// [`nameres_to_string`] find every entry there is without re-walking the AST a
-    /// second time just to rediscover them.
     owners: Vec<AstNodeId>,
-    /// The `Item` currently being walked, if any. Mirrors `resolver.rs`'s own `current_item`:
-    /// `Extend` has no `NodeId` of its own, so [`Self::visit_extend`] reads this to know which
-    /// owner its `adt_path`/`trait_path` entries were recorded under.
     current_item: Option<AstNodeId>,
 }
 
@@ -424,9 +386,6 @@ impl<'ast> AstVisitor<'ast> for Names<'ast> {
     }
 }
 
-/// A written name's `file:line:col`, or `<unknown>` if `span` doesn't land in any registered
-/// file -- which should not happen for anything actually parsed, but keeps this printable
-/// rather than panicking if it's ever asked about a synthetic span.
 fn res_location(span: SrcSpan) -> String {
     match SrcMap::file_containing(span.get_begin()) {
         Some(file) => {
@@ -437,9 +396,6 @@ fn res_location(span: SrcSpan) -> String {
     }
 }
 
-/// Renders a resolved name as `` Kind `name` (location) `` -- what every arm of
-/// [`fmt_res`] reduces to once the `NodeId` it started from has been swapped for the
-/// declaration it names.
 fn fmt_named(kind: &str, name: Symbol, span: SrcSpan) -> String {
     format!(
         "{kind} `{}` ({})",
@@ -448,9 +404,6 @@ fn fmt_named(kind: &str, name: Symbol, span: SrcSpan) -> String {
     )
 }
 
-/// Renders a `TyDef`'s target -- a struct, enum, or trait item -- by its declared name, not its
-/// `NodeId`. `kind` is one of `"Struct"`, `"Enum"`, `"Trait"`, matching which `TyDef` variant
-/// `id` came from.
 fn fmt_ty_def(names: &Names, kind: &str, id: AstNodeId) -> String {
     let item =
         names.items.get(&id).copied().unwrap_or_else(|| {
@@ -467,13 +420,6 @@ fn fmt_ty_def(names: &Names, kind: &str, id: AstNodeId) -> String {
     fmt_named(kind, name.text, name.span)
 }
 
-/// Renders `res` by what it names, never by the `NodeId` it carries.
-///
-/// This is the essential half of the no-`NodeId` rule described on
-/// [`nameres_to_string`]: every arm below reaches into `names` (or, for
-/// `Res::Module`, `ast` directly) to recover a written name and span, and formats *that*.
-/// `names` is [`Names`], built by walking the whole AST once; `ast` is only needed here
-/// for `Res::Module`, whose target is an `ast::Module`, not an `Item`.
 fn fmt_res(names: &Names, ast: &Ast, res: NameResRes) -> String {
     match res {
         NameResRes::Err => "Err".to_string(),
@@ -530,25 +476,6 @@ fn fmt_res(names: &Names, ast: &Ast, res: NameResRes) -> String {
     }
 }
 
-/// A span-ordered, `NodeId`-free rendering of name resolution's output.
-///
-/// **Span-ordered.** [`crate::ast::NodeId`] comes from a single global atomic counter, and its
-/// assignment order is deterministic only because parsing currently runs sequentially, file by
-/// file. The counter is global specifically to enable parallel parsing later. Once it does, the
-/// id order for nodes across files becomes unpredictable. A dump ordered by `NodeId` (or by
-/// hash-map iteration order) would vary between runs for no reason a diff could explain. Sorting
-/// by source span instead costs nothing today (while parsing is sequential, span order and id
-/// order agree) and pins the dump to the one thing about a program that remains stable when
-/// parsing parallelizes: where its text sits in its own file.
-///
-/// **Never prints a `NodeId`.** Same reason: an id that isn't stable across parallel parsing
-/// should not appear in a file meant to be diffed for meaning rather than mechanism. Every `Res`
-/// is rendered by what it names instead of by its id -- the declaration's own written name and
-/// span, recovered through [`Names`], the lookup table this function builds by walking
-/// `ast` once. See [`fmt_res`] for how each `Res` variant does that.
-///
-/// Structured as a pure string builder -- with [`print_nameres`] as the thin `println!`
-/// wrapper around it -- so a test can assert on the string directly instead of capturing stdout.
 pub fn nameres_to_string(ast: &Ast, results: &NameResolutions) -> String {
     let mut names = Names::new();
     names.visit_module(ast.module(ast.root_id()), ast);
@@ -563,8 +490,6 @@ pub fn nameres_to_string(ast: &Ast, results: &NameResolutions) -> String {
                 .map(|(path, res)| (path.span, path, *res))
         })
         .collect();
-    // Rule 1: sorted by source span -- never by `NodeId`, never by hash-map iteration order.
-    // See the doc comment above.
     entries.sort_by_key(|(span, _, _)| span.get_begin());
 
     let mut out = String::new();
@@ -580,16 +505,12 @@ pub fn nameres_to_string(ast: &Ast, results: &NameResolutions) -> String {
             "{path_text} ({}) ->\n{}{}\n",
             res_location(span),
             pad(1),
-            // Rule 2: rendered by what `res` names, never by its `NodeId`. See the doc comment
-            // above and `fmt_res`.
             fmt_res(&names, ast, res)
         ));
     }
     out
 }
 
-/// Thin `println!` wrapper around [`nameres_to_string`]; see its doc comment for what
-/// the dump guarantees (span order, no `NodeId`) and why.
 pub fn print_nameres(ast: &Ast, results: &NameResolutions) {
     println!("{}", nameres_to_string(ast, results));
 }
