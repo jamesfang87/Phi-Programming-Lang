@@ -200,7 +200,12 @@ fn apply_statement(dead: &mut DeadRegisters, stmt: &Statement) {
 fn apply_terminator(dead: &mut DeadRegisters, terminator: &Terminator) {
     match &terminator.kind {
         TerminatorKind::SwitchInt { discr, .. } => apply_operand(dead, discr),
-        TerminatorKind::Assert { cond, .. } => apply_operand(dead, cond),
+        TerminatorKind::Assert { cond, msg, .. } => {
+            apply_operand(dead, cond);
+            if let Some(msg) = msg.user_message() {
+                apply_operand(dead, msg);
+            }
+        }
         TerminatorKind::Call {
             func,
             args,
@@ -299,8 +304,11 @@ fn check_terminator(dead: &mut DeadRegisters, body: &Body, terminator: &Terminat
         TerminatorKind::SwitchInt { discr, .. } => {
             check_operand(dead, body, discr, terminator.span);
         }
-        TerminatorKind::Assert { cond, .. } => {
+        TerminatorKind::Assert { cond, msg, .. } => {
             check_operand(dead, body, cond, terminator.span);
+            if let Some(msg) = msg.user_message() {
+                check_operand(dead, body, msg, terminator.span);
+            }
         }
         TerminatorKind::Call {
             func,
@@ -332,6 +340,11 @@ mod tests {
     #[test]
     fn using_a_local_before_any_move_is_fine() {
         accepts("fun f() { let a = 1; let b = a; let _ = b; }");
+    }
+
+    #[test]
+    fn a_let_bound_to_a_diverging_call_is_never_flagged_on_the_unreachable_fallthrough() {
+        accepts("fun f() -> i32 { let x = panic(); return x; }");
     }
 
     #[test]

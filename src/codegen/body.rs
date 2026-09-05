@@ -1040,7 +1040,7 @@ fn lower_terminator<'ctx>(
                 .unwrap();
 
             cx.builder.position_at_end(fail_block);
-            lower_assert_failure(cx, msg);
+            lower_assert_failure(cx, tcx, mir, locals, local_decls, msg);
         }
         TerminatorKind::Unreachable => {
             cx.builder.build_unreachable().unwrap();
@@ -1218,24 +1218,51 @@ fn push_call_param_type<'ctx>(
     }
 }
 
-fn lower_assert_failure<'ctx>(cx: &mut CodegenCtx<'ctx>, msg: &AssertMessage) {
-    let text = assert_message_text(msg);
-    let bytes = text.as_bytes();
-    let global = cx.module.add_global(
-        cx.llvm.i8_type().array_type(bytes.len() as u32),
-        None,
-        "assert.msg",
-    );
-    global.set_initializer(&cx.llvm.const_string(bytes, false));
-    global.set_linkage(inkwell::module::Linkage::Private);
-    global.set_constant(true);
-    let ptr = global.as_pointer_value();
-
+fn lower_assert_failure<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    msg: &AssertMessage,
+) {
     let fd = cx.llvm.i32_type().const_int(2, false);
-    let len = cx.llvm.i64_type().const_int(bytes.len() as u64, false);
-    cx.builder
-        .build_call(cx.libc.write, &[fd.into(), ptr.into(), len.into()], "write")
-        .unwrap();
+    match msg.user_message() {
+        Some(operand) => {
+            let value =
+                lower_operand(cx, tcx, mir, locals, local_decls, operand).into_struct_value();
+            let ptr = cx
+                .builder
+                .build_extract_value(value, 0, "msg.ptr")
+                .unwrap()
+                .into_pointer_value();
+            let len = cx
+                .builder
+                .build_extract_value(value, 1, "msg.len")
+                .unwrap()
+                .into_int_value();
+            cx.builder
+                .build_call(cx.libc.write, &[fd.into(), ptr.into(), len.into()], "write")
+                .unwrap();
+        }
+        None => {
+            let text = assert_message_text(msg);
+            let bytes = text.as_bytes();
+            let global = cx.module.add_global(
+                cx.llvm.i8_type().array_type(bytes.len() as u32),
+                None,
+                "assert.msg",
+            );
+            global.set_initializer(&cx.llvm.const_string(bytes, false));
+            global.set_linkage(inkwell::module::Linkage::Private);
+            global.set_constant(true);
+            let ptr = global.as_pointer_value();
+            let len = cx.llvm.i64_type().const_int(bytes.len() as u64, false);
+            cx.builder
+                .build_call(cx.libc.write, &[fd.into(), ptr.into(), len.into()], "write")
+                .unwrap();
+        }
+    }
 
     cx.builder.build_call(cx.libc.abort, &[], "abort").unwrap();
     cx.builder.build_unreachable().unwrap();
@@ -1249,6 +1276,9 @@ fn assert_message_text(msg: &AssertMessage) -> &'static str {
             "attempt to calculate the remainder with a divisor of zero\n"
         }
         AssertMessage::BoundsCheck { .. } => "index out of bounds\n",
+        AssertMessage::Assert(_) => "assertion failed\n",
+        AssertMessage::Panic(_) => "explicit panic\n",
+        AssertMessage::Unreachable(_) => "internal error: entered unreachable code\n",
     }
 }
 

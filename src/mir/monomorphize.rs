@@ -36,8 +36,8 @@ use std::collections::HashMap;
 use crate::hir::{DefId, Hir};
 use crate::mir::lower::Mir;
 use crate::mir::{
-    AggregateKind, AnyMode, Body, ConstKind, Instance, Operand, Rvalue, StatementKind,
-    TerminatorKind,
+    AggregateKind, AnyMode, AssertMessage, Body, ConstKind, Instance, Operand, Rvalue,
+    StatementKind, TerminatorKind,
 };
 use crate::typeck::ty::Ty;
 use crate::typeck::tyctx::TyCtx;
@@ -350,9 +350,30 @@ fn subst_terminator(
         } => TerminatorKind::Assert {
             cond: subst_operand(tcx, cond, subst, output, discovered),
             expected,
-            msg,
+            msg: subst_assert_message(tcx, msg, subst, output, discovered),
             target,
         },
+        other => other,
+    }
+}
+
+fn subst_assert_message(
+    tcx: &mut TyCtx,
+    msg: AssertMessage,
+    subst: &HashMap<crate::hir::HirId, Ty>,
+    output: &mut HashMap<Instance, Body>,
+    discovered: &mut Vec<Instance>,
+) -> AssertMessage {
+    match msg {
+        AssertMessage::Assert(m) => {
+            AssertMessage::Assert(m.map(|op| subst_operand(tcx, op, subst, output, discovered)))
+        }
+        AssertMessage::Panic(m) => {
+            AssertMessage::Panic(m.map(|op| subst_operand(tcx, op, subst, output, discovered)))
+        }
+        AssertMessage::Unreachable(m) => AssertMessage::Unreachable(
+            m.map(|op| subst_operand(tcx, op, subst, output, discovered)),
+        ),
         other => other,
     }
 }
