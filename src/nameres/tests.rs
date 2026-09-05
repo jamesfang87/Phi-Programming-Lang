@@ -760,6 +760,14 @@ fn extend_item_id(ast: &Ast) -> NodeId {
     find_item(ast, |kind| matches!(kind, ItemKind::Extend(_))).id
 }
 
+fn extend_self_ty_id(ast: &Ast) -> NodeId {
+    let ItemKind::Extend(e) = &find_item(ast, |kind| matches!(kind, ItemKind::Extend(_))).kind
+    else {
+        unreachable!("just matched on ItemKind::Extend");
+    };
+    e.self_ty.id
+}
+
 /// The first generic parameter declared anywhere in `ast`, wherever it's found -- every fixture
 /// that uses this declares exactly one.
 fn first_generic_id(ast: &Ast) -> NodeId {
@@ -823,8 +831,9 @@ fn an_extend_blocks_two_paths_are_told_apart_by_what_they_name() {
         ast_from_files(&["module app; struct Vec2 {} trait Show {} extend Vec2 with Show {}"]);
     let r = resolve(&ast);
     let item = extend_item_id(&ast);
+    let self_ty = extend_self_ty_id(&ast);
     assert!(matches!(
-        r.get(item, &path(&["Vec2"])),
+        r.get(self_ty, &path(&["Vec2"])),
         Some(Res::Type(Type::Def(TyDef::Struct(_))))
     ));
     assert!(matches!(
@@ -837,6 +846,7 @@ fn an_extend_blocks_two_paths_are_told_apart_by_what_they_name() {
 fn an_extend_blocks_two_identical_paths_conflict_and_only_the_adt_path_is_recorded() {
     let ast = ast_from_files(&["module app; struct Vec2 {} extend Vec2 with Vec2 {}"]);
     let item = extend_item_id(&ast);
+    let self_ty = extend_self_ty_id(&ast);
     let (r, diags) = with_diags(|| resolve(&ast));
     assert!(
         diags.iter().any(|d| d
@@ -845,12 +855,12 @@ fn an_extend_blocks_two_identical_paths_conflict_and_only_the_adt_path_is_record
         "expected a self-extend diagnostic, got {diags:?}"
     );
     assert!(matches!(
-        r.get(item, &path(&["Vec2"])),
+        r.get(self_ty, &path(&["Vec2"])),
         Some(Res::Type(Type::Def(TyDef::Struct(_))))
     ));
-    // Only one entry for `Vec2` -- the invariant `NameResolutions::record`'s `debug_assert!`
-    // guards would otherwise be violated by recording the same path twice.
-    assert_eq!(r.entries(item).len(), 1);
+    // The trait path is flagged as self-extending before it's ever resolved, so the item itself
+    // owns no entries -- only `self_ty`'s own node does.
+    assert_eq!(r.entries(item).len(), 0);
 }
 
 #[test]

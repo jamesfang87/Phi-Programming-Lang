@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use crate::ast::Symbol;
+use crate::ast::{Mutability, Symbol};
 use crate::diagnostics::typeck::traits::index::{
-    report_attempt_to_extend_with_non_trait, report_extend_generic, report_extend_trait,
+    report_attempt_to_extend_with_non_trait, report_extend_any, report_extend_bare_self,
+    report_extend_dyn, report_extend_generic, report_extend_trait, report_extend_unsized,
 };
-use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
+use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
@@ -14,12 +15,23 @@ use crate::typeck::ty::{Ty, TyKind};
 pub(crate) enum TypeHead {
     Adt(DefId),
     Prim(PrimTy),
+    Tuple(usize),
+    Array,
+    Ref(Mutability),
+    Fun(usize),
+    Iso,
 }
 
 fn sort_key(head: &TypeHead) -> (u8, usize) {
     match *head {
         TypeHead::Adt(def) => (0, def.index()),
         TypeHead::Prim(prim) => (1, prim as usize),
+        TypeHead::Tuple(arity) => (2, arity),
+        TypeHead::Array => (3, 0),
+        TypeHead::Ref(Mutability::Immutable) => (4, 0),
+        TypeHead::Ref(Mutability::Mutable) => (4, 1),
+        TypeHead::Fun(arity) => (5, arity),
+        TypeHead::Iso => (6, 0),
     }
 }
 
@@ -127,28 +139,59 @@ impl<'hir> Typeck<'hir> {
         match *self.tcx.kind(ty) {
             TyKind::Adt { def, .. } => Some(TypeHead::Adt(def)),
             TyKind::Primitive(prim) => Some(TypeHead::Prim(prim)),
+            TyKind::Tuple(ref elems) => Some(TypeHead::Tuple(elems.len())),
+            TyKind::Array { .. } => Some(TypeHead::Array),
+            TyKind::Ref { mutability, .. } => Some(TypeHead::Ref(mutability)),
+            TyKind::Fun { ref params, .. } => Some(TypeHead::Fun(params.len())),
+            TyKind::Iso(_) => Some(TypeHead::Iso),
             _ => None,
         }
     }
 
     fn extend_head(&self, block: DefId) -> Option<TypeHead> {
         let node = self.hir.extend(block);
-        match node.adt_path.res {
-            Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => Some(TypeHead::Adt(def)),
-            Res::Type(Type::Prim(prim)) => Some(TypeHead::Prim(prim)),
-            Res::Type(Type::Def(TyDef::Trait(_))) => {
-                report_extend_trait(node.span);
+        match &self.hir.ty(node.self_ty).kind {
+            HirTyKind::Path { path, .. } => match path.res {
+                Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => {
+                    Some(TypeHead::Adt(def))
+                }
+                Res::Type(Type::Prim(prim)) => Some(TypeHead::Prim(prim)),
+                Res::Type(Type::Def(TyDef::Trait(_))) => {
+                    report_extend_trait(node.span);
+                    None
+                }
+                Res::Type(Type::Generic(_)) => {
+                    report_extend_generic(node.span);
+                    None
+                }
+                Res::Err => None,
+                Res::SelfTy(_) | Res::Local(_) | Res::Function(_) | Res::Module(_) => unreachable!(
+                    "an extend block's own path cannot resolve to Self, a local, a function, or \
+                     a module"
+                ),
+            },
+            HirTyKind::Tuple(elems) => Some(TypeHead::Tuple(elems.len())),
+            HirTyKind::Array { len: None, .. } => {
+                report_extend_unsized(node.span);
                 None
             }
-            Res::Type(Type::Generic(_)) => {
-                report_extend_generic(node.span);
+            HirTyKind::Array { len: Some(_), .. } => Some(TypeHead::Array),
+            HirTyKind::Ref { mutability, .. } => Some(TypeHead::Ref(*mutability)),
+            HirTyKind::Function { params, .. } => Some(TypeHead::Fun(params.len())),
+            HirTyKind::Iso(_) => Some(TypeHead::Iso),
+            HirTyKind::Any(_) => {
+                report_extend_any(node.span);
                 None
             }
-            Res::Err => None,
-            Res::SelfTy(_) | Res::Local(_) | Res::Function(_) | Res::Module(_) => unreachable!(
-                "an extend block's own path cannot resolve to Self, a local, a function, or a \
-                 module"
-            ),
+            HirTyKind::Dyn { .. } => {
+                report_extend_dyn(node.span);
+                None
+            }
+            HirTyKind::SelfTy(_) => {
+                report_extend_bare_self(node.span);
+                None
+            }
+            HirTyKind::Error => None,
         }
     }
 
@@ -184,7 +227,7 @@ mod tests {
     use super::TypeHead;
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::{Stage, checker_through, lex_src, messages, resolve_src};
+    use crate::testing::{Stage, checker_through, messages, resolve_src};
     use crate::typeck::Typeck;
 
     /// Runs collection and index construction over `src`, and hands back the checker so a test
@@ -266,18 +309,33 @@ mod tests {
     }
 
     #[test]
-    fn extending_a_tuple_is_rejected_before_type_checking() {
-        let (tokens, offset) = lex_src(
-            "trait Show { fun show(&self); }
-             extend (i32, i32) with Show { fun show(&self) {} }",
-        );
-        crate::parser::Parser::new().parse(&tokens, offset);
+    fn a_tuple_extend_is_indexed_against_its_arity() {
+        let hir = resolve_src("extend (i32, i32) { fun get(&self) {} }");
+        let checker = indexed(&hir);
 
-        assert!(
-            !DiagCtx::diagnostics().is_empty(),
-            "a tuple in `extend` position is a parse error"
+        assert_eq!(checker.extends.len(), 1);
+        let head = TypeHead::Tuple(2);
+        let block = checker.extends.for_type(head)[0];
+        assert!(checker.extends.trait_of(block).is_none());
+        assert!(messages().is_empty(), "{:?}", messages());
+    }
+
+    #[test]
+    fn extending_an_unsized_array_is_rejected() {
+        let hir = resolve_src(
+            "trait Show { fun show(&self); }
+             extend [i32] with Show { fun show(&self) {} }",
         );
-        DiagCtx::clear();
+        let checker = indexed(&hir);
+
+        assert!(checker.extends.is_empty());
+        assert!(
+            messages()
+                .iter()
+                .any(|m| m.contains("unsized array cannot be extended")),
+            "{:?}",
+            messages()
+        );
     }
 
     /// The reachable non-nominal case: a path that names a type parameter rather than a type.
@@ -290,6 +348,36 @@ mod tests {
         let checker = indexed(&hir);
 
         assert_eq!(messages(), ["a generic type parameter cannot be extended"]);
+        assert!(
+            checker.extends.is_empty(),
+            "a rejected extend must not reach the index"
+        );
+    }
+
+    #[test]
+    fn extending_any_is_reported_and_dropped() {
+        let hir = resolve_src(
+            "trait Show { fun show(&self); }
+             extend any i32 with Show { fun show(&self) {} }",
+        );
+        let checker = indexed(&hir);
+
+        assert_eq!(messages(), ["`any` cannot be extended"]);
+        assert!(
+            checker.extends.is_empty(),
+            "a rejected extend must not reach the index"
+        );
+    }
+
+    #[test]
+    fn extending_a_dyn_trait_is_reported_and_dropped() {
+        let hir = resolve_src(
+            "trait Show { fun show(&self); }
+             extend dyn Show with Show { fun show(&self) {} }",
+        );
+        let checker = indexed(&hir);
+
+        assert_eq!(messages(), ["`dyn Trait` cannot be extended"]);
         assert!(
             checker.extends.is_empty(),
             "a rejected extend must not reach the index"

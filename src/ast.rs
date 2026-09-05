@@ -179,11 +179,10 @@ pub struct Trait {
 pub struct Extend {
     /// The type parameters the `extend` block itself introduces, from `extend<T>`.
     pub extend_generics: Option<Vec<Generic>>,
-    /// The extended type's own generic arguments, from `Foo<T>`.
-    pub adt_generics: Option<Vec<Ty>>,
+    /// The extended type itself, from `Foo<T>` (or `(T, U)`, `&T`, `i32`, ...).
+    pub self_ty: Ty,
     /// The optional `with`-clause trait's generic arguments, from `with Bar<T>`.
     pub trait_generics: Option<Vec<Ty>>,
-    pub adt_path: Path,
     pub trait_path: Option<Path>,
     pub methods: Vec<Function>,
     pub span: SrcSpan,

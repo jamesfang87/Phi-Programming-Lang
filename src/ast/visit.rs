@@ -157,11 +157,7 @@ pub fn walk_extend<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Extend) {
             v.visit_generic(g);
         }
     }
-    if let Some(generics) = &e.adt_generics {
-        for ty in generics {
-            v.visit_ty(ty);
-        }
-    }
+    v.visit_ty(&e.self_ty);
     if let Some(generics) = &e.trait_generics {
         for ty in generics {
             v.visit_ty(ty);

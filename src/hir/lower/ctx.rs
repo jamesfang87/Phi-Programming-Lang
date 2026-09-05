@@ -311,8 +311,9 @@ impl<'res> LoweringCtx<'res> {
     }
 
     /// `node_id` is the enclosing `ast::Item`'s own id -- `Extend` has none of its own
-    /// (`src/ast.rs`) -- which is what `adt_path`/`trait_path` are recorded under in
-    /// `NameResolutions`, per `Resolver::visit_extend`.
+    /// (`src/ast.rs`) -- which is what `trait_path` is recorded under in `NameResolutions`;
+    /// `self_ty`'s own resolution is recorded under its own node id instead, per
+    /// `Resolver::visit_extend`.
     fn lower_extend(
         &mut self,
         node_id: NodeId,
@@ -323,20 +324,14 @@ impl<'res> LoweringCtx<'res> {
         // See `lower_trait`: same pre-allocated, positional pairing for a method's `DefId`, and
         // the same reason `methods` needs nothing from actually lowering a method -- it is just
         // `method_ids`. `extend_generics` still has to come first, before everything else built
-        // here: `adt_generics`/`trait_generics`/`adt_path`/`trait_path` can name it, same as
+        // here: `self_ty`/`trait_generics`/`trait_path` can name it, same as
         // `extend<T> Box<T> for Container<T>` names `T` in `Box<T>`, and so can a method. The
         // former only get a chance to because they are lowered here, through `ow`, before it
         // finishes; the latter, because `self` is free again by the time each method lowers.
         let mut ow = OwnerLowerer::new(self, item_id);
         let root = ow.reserve_root();
         let extend_generics = ow.lower_generics(e.extend_generics.as_deref().unwrap_or(&[]));
-        let adt_generics = e
-            .adt_generics
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .map(|t| ow.lower_ty(t))
-            .collect();
+        let self_ty = ow.lower_ty(&e.self_ty);
         let trait_generics = e
             .trait_generics
             .as_deref()
@@ -344,16 +339,14 @@ impl<'res> LoweringCtx<'res> {
             .iter()
             .map(|t| ow.lower_ty(t))
             .collect();
-        let adt_path = ow.cx.lower_path(node_id, &e.adt_path);
         let trait_path = e.trait_path.as_ref().map(|p| ow.cx.lower_path(node_id, p));
         ow.fill(
             root,
             OwnerNode::Extend(Extend {
                 hir_id: root,
                 extend_generics,
-                adt_generics,
+                self_ty,
                 trait_generics,
-                adt_path,
                 trait_path,
                 methods: method_ids.clone(),
                 span: e.span,
@@ -398,7 +391,7 @@ impl<'res> LoweringCtx<'res> {
     }
 }
 
-fn is_self_path(path: &ast::Path) -> bool {
+pub(super) fn is_self_path(path: &ast::Path) -> bool {
     match path.segments.as_slice() {
         [segment] => crate::ast::interner::Interner::resolve(segment.text) == "Self",
         _ => false,
