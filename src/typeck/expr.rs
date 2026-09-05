@@ -3,18 +3,18 @@ use std::collections::HashSet;
 use crate::ast::interner::Interner;
 use crate::ast::{BinaryOp, Ident, Mutability};
 use crate::diagnostics::typeck::expr::{
-    report_assign_mismatch, report_cast_not_allowed, report_cast_operand_unknown,
-    report_cast_source_not_primitive, report_cast_target_not_primitive,
-    report_closure_body_mismatch, report_compound_assign_mismatch,
-    report_compound_assign_result_mismatch, report_ctor_not_a_struct, report_deref_not_a_reference,
-    report_duplicate_field, report_elided_ctor_unknown, report_field_type_mismatch,
-    report_if_branches_mismatch,
+    report_assert_cond_not_bool, report_assign_mismatch, report_cast_not_allowed,
+    report_cast_operand_unknown, report_cast_source_not_primitive,
+    report_cast_target_not_primitive, report_closure_body_mismatch,
+    report_compound_assign_mismatch, report_compound_assign_result_mismatch,
+    report_ctor_not_a_struct, report_deref_not_a_reference, report_duplicate_field,
+    report_elided_ctor_unknown, report_field_type_mismatch, report_if_branches_mismatch,
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
     report_missing_fields, report_new_array_count_not_usize, report_no_range_type,
     report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
-    report_not_assignable, report_not_indexable, report_not_try, report_private_field,
-    report_range_endpoints_mismatch, report_record_field_unknown,
+    report_not_assignable, report_not_indexable, report_not_try, report_panic_message_not_str,
+    report_private_field, report_range_endpoints_mismatch, report_record_field_unknown,
     report_try_error_mismatch, report_try_operand_unknown, report_try_outside,
     report_try_return_mismatch, report_variant_enum_unknown, report_variant_expr_payload_shape,
     report_variant_missing_fields, report_variant_payload_mismatch,
@@ -467,6 +467,27 @@ impl<'hir> Typeck<'hir> {
         }
 
         self.unifier.find_deep(&mut self.tcx, result)
+    }
+
+    pub(crate) fn check_assert(&mut self, cond: HirId, msg: Option<HirId>) -> Ty {
+        let cond_ty = self.ty_of(cond);
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+        if let Err(err) = self.unifier.unify(&self.tcx, bool_ty, cond_ty) {
+            report_assert_cond_not_bool(self.display_cx(), err, self.hir.expr(cond).span);
+        }
+        self.check_panic_message(msg);
+        self.tcx.unit()
+    }
+
+    pub(crate) fn check_panic_message(&mut self, msg: Option<HirId>) -> Ty {
+        if let Some(msg) = msg {
+            let msg_ty = self.ty_of(msg);
+            let str_ty = self.tcx.mk_prim(PrimTy::Str);
+            if let Err(err) = self.unifier.unify(&self.tcx, str_ty, msg_ty) {
+                report_panic_message_not_str(self.display_cx(), err, self.hir.expr(msg).span);
+            }
+        }
+        self.tcx.never()
     }
 
     // -----------------------------------------------------------------
@@ -1853,5 +1874,49 @@ mod tests {
     #[test]
     fn chained_casts_check_left_to_right() {
         accepts("fun f() { let x: i8 = 1; let y = x as i32 as i64; }");
+    }
+
+    #[test]
+    fn assert_accepts_a_bool_condition() {
+        accepts("fun f(x: bool) { assert(x); }");
+    }
+
+    #[test]
+    fn assert_rejects_a_non_bool_condition() {
+        rejects("fun f(x: i32) { assert(x); }", "mismatched types");
+    }
+
+    #[test]
+    fn assert_accepts_a_str_message() {
+        accepts(r#"fun f(x: bool) { assert(x, "x must hold"); }"#);
+    }
+
+    #[test]
+    fn assert_rejects_a_non_str_message() {
+        rejects("fun f(x: bool) { assert(x, 1); }", "mismatched types");
+    }
+
+    #[test]
+    fn panic_rejects_a_non_str_message() {
+        rejects("fun f() { panic(1); }", "mismatched types");
+    }
+
+    #[test]
+    fn unreachable_rejects_a_non_str_message() {
+        rejects("fun f() { unreachable(1); }", "mismatched types");
+    }
+
+    #[test]
+    fn panic_unifies_with_any_expected_type() {
+        accepts("fun f() -> i32 { if true { return 1; } panic(); }");
+    }
+
+    #[test]
+    fn unreachable_unifies_with_any_expected_type() {
+        accepts(
+            "fun f(x: bool) -> i32 {
+                 if x { return 1; } else { unreachable(); }
+             }",
+        );
     }
 }

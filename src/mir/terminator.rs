@@ -89,4 +89,21 @@ pub enum AssertMessage {
     DivisionByZero(Operand),
     RemainderByZero(Operand),
     BoundsCheck { len: Operand, index: Operand },
+    Assert(Option<Operand>),
+    Panic(Option<Operand>),
+    Unreachable(Option<Operand>),
+}
+
+impl AssertMessage {
+    pub fn user_message(&self) -> Option<&Operand> {
+        match self {
+            AssertMessage::Assert(msg)
+            | AssertMessage::Panic(msg)
+            | AssertMessage::Unreachable(msg) => msg.as_ref(),
+            AssertMessage::Overflow(..)
+            | AssertMessage::DivisionByZero(_)
+            | AssertMessage::RemainderByZero(_)
+            | AssertMessage::BoundsCheck { .. } => None,
+        }
+    }
 }

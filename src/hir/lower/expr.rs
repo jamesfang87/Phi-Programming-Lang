@@ -119,6 +119,16 @@ impl OwnerLowerer<'_, '_> {
                 elem: self.lower_expr(elem),
                 count: self.lower_expr(count),
             },
+            ast::ExprKind::Assert { cond, msg } => ExprKind::Assert {
+                cond: self.lower_expr(cond),
+                msg: msg.as_ref().map(|m| self.lower_expr(m)),
+            },
+            ast::ExprKind::Panic { msg } => ExprKind::Panic {
+                msg: msg.as_ref().map(|m| self.lower_expr(m)),
+            },
+            ast::ExprKind::Unreachable { msg } => ExprKind::Unreachable {
+                msg: msg.as_ref().map(|m| self.lower_expr(m)),
+            },
             ast::ExprKind::Error => ExprKind::Error,
         }
     }

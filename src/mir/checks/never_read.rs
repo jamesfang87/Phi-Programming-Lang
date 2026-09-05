@@ -155,7 +155,12 @@ fn apply_statement(unread: &mut UnreadLocals, stmt: &Statement) {
 fn apply_terminator(unread: &mut UnreadLocals, terminator: &Terminator) {
     match &terminator.kind {
         TerminatorKind::SwitchInt { discr, .. } => apply_operand(unread, discr),
-        TerminatorKind::Assert { cond, .. } => apply_operand(unread, cond),
+        TerminatorKind::Assert { cond, msg, .. } => {
+            apply_operand(unread, cond);
+            if let Some(msg) = msg.user_message() {
+                apply_operand(unread, msg);
+            }
+        }
         TerminatorKind::Call {
             func,
             args,

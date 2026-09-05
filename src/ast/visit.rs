@@ -401,6 +401,17 @@ pub fn walk_expr<'ast, V: Visitor<'ast>>(v: &mut V, expr: &'ast Expr) {
             v.visit_expr(elem);
             v.visit_expr(count);
         }
+        ExprKind::Assert { cond, msg } => {
+            v.visit_expr(cond);
+            if let Some(msg) = msg {
+                v.visit_expr(msg);
+            }
+        }
+        ExprKind::Panic { msg } | ExprKind::Unreachable { msg } => {
+            if let Some(msg) = msg {
+                v.visit_expr(msg);
+            }
+        }
         ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::Error => {}
     }
 }

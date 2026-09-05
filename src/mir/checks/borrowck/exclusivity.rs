@@ -210,8 +210,11 @@ fn check_terminator(
         TerminatorKind::SwitchInt { discr, .. } => {
             check_operand(body, aliases, live, discr, terminator.span);
         }
-        TerminatorKind::Assert { cond, .. } => {
+        TerminatorKind::Assert { cond, msg, .. } => {
             check_operand(body, aliases, live, cond, terminator.span);
+            if let Some(msg) = msg.user_message() {
+                check_operand(body, aliases, live, msg, terminator.span);
+            }
         }
         TerminatorKind::Call {
             func,

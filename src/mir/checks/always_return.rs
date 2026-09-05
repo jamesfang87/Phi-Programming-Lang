@@ -225,4 +225,16 @@ mod tests {
     fn an_empty_match_that_proves_the_rest_of_the_function_unreachable_still_always_returns() {
         assert!(always_returns("fun f(x: i32) -> i32 { match x {}; }"));
     }
+
+    #[test]
+    fn a_function_that_only_panics_always_returns() {
+        assert!(always_returns(
+            r#"fun f() -> i32 { panic("not implemented"); }"#
+        ));
+    }
+
+    #[test]
+    fn a_function_that_only_reaches_unreachable_always_returns() {
+        assert!(always_returns("fun f() -> i32 { unreachable(); }"));
+    }
 }
