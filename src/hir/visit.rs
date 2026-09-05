@@ -178,10 +178,10 @@ pub fn walk_extend<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
     for &id in &extend.extend_generics {
         v.visit_generic(id);
     }
-    for &id in extend.adt_generics.iter().chain(&extend.trait_generics) {
+    v.visit_ty(extend.self_ty);
+    for &id in &extend.trait_generics {
         v.visit_ty(id);
     }
-    v.visit_path(&extend.adt_path);
     if let Some(path) = &extend.trait_path {
         v.visit_path(path);
     }
@@ -435,9 +435,13 @@ pub fn walk_pat<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
 
 pub fn walk_ty<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     match &v.hir().ty(id).kind {
-        // `Self` is an ordinary single-segment path here; what sets it apart is `path.res`.
         TyKind::Path { path, args } | TyKind::Dyn { path, args } => {
             v.visit_path(path);
+            for &arg in args {
+                v.visit_ty(arg);
+            }
+        }
+        TyKind::SelfTy(args) => {
             for &arg in args {
                 v.visit_ty(arg);
             }

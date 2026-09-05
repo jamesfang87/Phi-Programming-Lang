@@ -265,9 +265,14 @@ fn extend_methods_and_generics_are_lowered() {
     let id = m.items[0];
     let e = hir.extend(id);
     assert_eq!(e.extend_generics.len(), 1);
-    assert_eq!(e.adt_generics.len(), 1);
     assert_eq!(e.trait_generics.len(), 1);
-    assert_eq!(text(e.adt_path.segments[0]), "Box");
+    match &hir.ty(e.self_ty).kind {
+        TyKind::Path { path, args } => {
+            assert_eq!(text(path.segments[0]), "Box");
+            assert_eq!(args.len(), 1);
+        }
+        other => panic!("expected `Box<T>` to lower to a path type, got {other:?}"),
+    }
     assert_eq!(
         text(
             e.trait_path

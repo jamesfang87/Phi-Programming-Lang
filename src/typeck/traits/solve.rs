@@ -548,6 +548,24 @@ mod tests {
     }
 
     #[test]
+    fn a_tuple_satisfies_a_trait_it_extends() {
+        let hir = resolve_src(
+            "trait Show { fun show(&self); }
+             extend (i32, i32) with Show { fun show(&self) {} }",
+        );
+        let mut checker = solver(&hir);
+        let show = named(&checker, "Show");
+        let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
+        let tuple_ty = checker.tcx.mk_tuple(vec![i32_ty, i32_ty]);
+
+        let query = Query::new(tuple_ty, show);
+        assert_eq!(
+            checker.implements(&query, &BoundsEnv::default()),
+            Solution::Holds
+        );
+    }
+
+    #[test]
     fn dyn_implements_exactly_the_trait_it_names() {
         let hir = resolve_src(
             "trait Show { fun show(&self); }

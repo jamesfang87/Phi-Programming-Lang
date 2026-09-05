@@ -1420,6 +1420,21 @@ mod tests {
     }
 
     #[test]
+    fn a_tuple_extend_blocks_method_codegens_and_verifies() {
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
+            "extend (i32, i32) { fun first(&self) -> i32 { return 0; } }
+             fun f(x: (i32, i32)) -> i32 { return x.first(); }",
+        );
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        assert!(
+            module.verify().is_ok(),
+            "{}",
+            module.print_to_string().to_string()
+        );
+    }
+
+    #[test]
     fn switch_int_lowers_to_switch_instruction() {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f(x: bool) -> i32 { if x { 1 } else { 2 } }");

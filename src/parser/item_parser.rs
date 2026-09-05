@@ -5,8 +5,8 @@ use crate::ast::Ident;
 use crate::ast::Import;
 use crate::ast::ModuleDecl;
 use crate::ast::{
-    Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param, Path, SelfMode,
-    SelfParam, Struct, Trait, Variant, VariantPayload, Visibility,
+    Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param, SelfMode, SelfParam,
+    Struct, Trait, TyKind, Variant, VariantPayload, Visibility,
 };
 
 use crate::driver::source::SrcSpan;
@@ -423,16 +423,10 @@ impl Parser {
             .or_not()
             .boxed();
 
-        let extend_self = self
-            .path_parser()
-            .or(self.primitive_token_parser().map(Path::primitive))
-            .boxed();
-
         let extend = self
             .kind(TokenKind::ExtendKw)
             .then(generic_params)
-            .then(extend_self)
-            .then(generic_args.clone())
+            .then(self.type_parser())
             .then(
                 self.kind(TokenKind::WithKw)
                     .ignore_then(self.path_parser())
@@ -446,7 +440,7 @@ impl Parser {
                 |(
                     (
                         (
-                            (((extend_tok, extend_generics), adt_path), adt_generics),
+                            ((extend_tok, extend_generics), self_ty),
                             (trait_path, trait_generics),
                         ),
                         methods,
@@ -456,9 +450,8 @@ impl Parser {
                     let span = extend_tok.span.merge(close_tok.span);
                     let extend = Extend {
                         extend_generics,
-                        adt_generics,
+                        self_ty,
                         trait_generics,
-                        adt_path,
                         trait_path,
                         methods,
                         span,
@@ -744,8 +737,14 @@ mod tests {
         match &item.kind {
             ItemKind::Extend(e) => {
                 assert!(e.extend_generics.is_some());
-                assert_eq!(text(e.adt_path.segments[0]), "Box");
-                assert!(e.adt_generics.is_some());
+                let TyKind::Path { path, args } = &e.self_ty.kind else {
+                    panic!(
+                        "expected `Box<T>` to parse as a path type, got {:?}",
+                        e.self_ty.kind
+                    );
+                };
+                assert_eq!(text(path.segments[0]), "Box");
+                assert!(!args.is_empty());
                 let trait_path = e.trait_path.as_ref().expect("expected a trait path");
                 assert_eq!(text(trait_path.segments[0]), "Container");
                 assert!(e.trait_generics.is_some());
@@ -766,7 +765,13 @@ mod tests {
         match &item.kind {
             ItemKind::Extend(e) => {
                 assert_eq!(e.extend_generics.as_deref().map(<[_]>::len), Some(2));
-                assert_eq!(e.adt_generics.as_deref().map(<[_]>::len), Some(2));
+                let TyKind::Path { args, .. } = &e.self_ty.kind else {
+                    panic!(
+                        "expected `Map<K, V>` to parse as a path type, got {:?}",
+                        e.self_ty.kind
+                    );
+                };
+                assert_eq!(args.len(), 2);
                 assert_eq!(e.trait_generics.as_deref().map(<[_]>::len), Some(2));
 
                 let trait_path = e.trait_path.as_ref().expect("expected a trait path");
@@ -795,9 +800,12 @@ mod tests {
         let item = parse_item("extend i32 { fun get(&self) {} }");
         match item.kind {
             ItemKind::Extend(e) => {
-                assert_eq!(e.adt_path.segments.len(), 1);
-                assert_eq!(Interner::resolve(e.adt_path.segments[0].text), "i32");
-                assert!(e.adt_generics.is_none());
+                let TyKind::Path { path, args } = &e.self_ty.kind else {
+                    panic!("expected `i32` to parse as a path type, got {:?}", e.self_ty.kind);
+                };
+                assert_eq!(path.segments.len(), 1);
+                assert_eq!(Interner::resolve(path.segments[0].text), "i32");
+                assert!(args.is_empty());
             }
             other => panic!("expected an extend item, got {other:?}"),
         }
@@ -808,8 +816,66 @@ mod tests {
         let item = parse_item("extend bool with Show { fun show(&self) {} }");
         match item.kind {
             ItemKind::Extend(e) => {
-                assert_eq!(Interner::resolve(e.adt_path.segments[0].text), "bool");
+                let TyKind::Path { path, .. } = &e.self_ty.kind else {
+                    panic!("expected `bool` to parse as a path type, got {:?}", e.self_ty.kind);
+                };
+                assert_eq!(Interner::resolve(path.segments[0].text), "bool");
                 assert!(e.trait_path.is_some());
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_tuple() {
+        let item = parse_item("extend (i32, i32) { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Tuple(_)));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_an_array() {
+        let item = parse_item("extend [i32; 4] { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Array { .. }));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_reference() {
+        let item = parse_item("extend &i32 { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Ref { .. }));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_function_type() {
+        let item = parse_item("extend fun(i32) -> i32 { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Function { .. }));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_an_iso() {
+        let item = parse_item("extend iso i32 { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Iso(_)));
             }
             other => panic!("expected an extend item, got {other:?}"),
         }
