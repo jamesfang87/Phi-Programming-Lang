@@ -1356,6 +1356,20 @@ mod tests {
     }
 
     #[test]
+    fn parses_deref_expr() {
+        let expr = parse_expr("*p");
+        match &expr.kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => {
+                assert!(matches!(operand.kind, ExprKind::Path(_)));
+            }
+            other => panic!("expected a deref expr, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parses_borrow_of_negated_expr() {
         // `&-x` exercises stacking a borrow prefix on top of a unary prefix.
         let expr = parse_expr("&-x");

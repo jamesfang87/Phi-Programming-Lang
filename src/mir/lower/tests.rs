@@ -40,6 +40,30 @@ fn lower_mir_src_with_ops(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
     lower_mir_src_with_ops_and_mode(src, Mode::Debug)
 }
 
+const COPY_DROP_PREAMBLE: &str = "module core::ops;
+     public trait Copy {}
+     public trait Drop {}";
+
+fn lower_mir_src_with_copy_and_drop(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
+    DiagCtx::clear();
+    Interner::clear();
+    let files = vec![parse_file(COPY_DROP_PREAMBLE), parse_file(src)];
+    let ast = Ast::new(files);
+    let res = nameres::resolve(&ast);
+    let hir = lower_ast(&ast, &res);
+
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = super::lower(&hir, &mut tcx, &types, Mode::Debug);
+    (hir, tcx, types, program)
+}
+
 fn lower_mir_src_with_ops_and_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, Mir) {
     DiagCtx::clear();
     Interner::clear();
@@ -626,6 +650,80 @@ fn explicit_deref_of_a_reference_inserts_a_deref_projection() {
             _ => false,
         });
     assert!(found, "`*p` derefs `p` with no further projection");
+}
+
+#[test]
+fn explicit_deref_of_an_owned_pointer_inserts_a_deref_projection() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f(p: iso i32) -> i32 { return *p; }");
+    let body = first_function_body(&program, &hir);
+    let found = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                place.projections == [Projection::Deref]
+            }
+            _ => false,
+        });
+    assert!(found, "`*p` derefs `p` with no further projection");
+}
+
+fn deref_operand_kind(program: &Mir, hir: &Hir) -> &'static str {
+    let body = first_function_body(program, hir);
+    body.basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .find_map(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place)))
+                if place.projections == [Projection::Deref] =>
+            {
+                Some("copy")
+            }
+            StatementKind::Assign(_, Rvalue::Use(Operand::Move(place)))
+                if place.projections == [Projection::Deref] =>
+            {
+                Some("move")
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected a deref read among the lowered statements"))
+}
+
+#[test]
+fn dereferencing_a_copy_type_copies_the_value() {
+    let (hir, _tcx, _types, program) = lower_mir_src_with_copy_and_drop(
+        "import core::ops::Copy;
+
+         struct Point { x: i32 }
+         extend Point with Copy {}
+
+         fun f(p: iso Point) -> Point { return *p; }",
+    );
+    assert_eq!(deref_operand_kind(&program, &hir), "copy");
+}
+
+#[test]
+fn dereferencing_a_drop_type_moves_the_value() {
+    let (hir, _tcx, _types, program) = lower_mir_src_with_copy_and_drop(
+        "import core::ops::Drop;
+
+         struct Handle { x: i32 }
+         extend Handle with Drop {}
+
+         fun f(p: iso Handle) -> Handle { return *p; }",
+    );
+    assert_eq!(deref_operand_kind(&program, &hir), "move");
+}
+
+#[test]
+fn dereferencing_a_type_with_neither_copy_nor_drop_moves_the_value() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "struct Plain { x: i32 }
+
+         fun f(p: iso Plain) -> Plain { return *p; }",
+    );
+    assert_eq!(deref_operand_kind(&program, &hir), "move");
 }
 
 #[test]

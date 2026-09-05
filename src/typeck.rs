@@ -336,7 +336,7 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Unary {
                 op: UnaryOp::Deref,
                 operand,
-            } => self.check_deref(*operand, expr.span),
+            } => self.check_deref(id, *operand, expr.span),
             ExprKind::Unary { op, operand } => {
                 let operand_ty = self.ty_of(*operand);
                 let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
