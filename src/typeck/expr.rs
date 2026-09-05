@@ -28,6 +28,8 @@ use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
 use crate::typeck::cast;
 use crate::typeck::pat::VariantTys;
+use crate::typeck::results::DerefMode;
+use crate::typeck::traits::solve::{Query, Solution};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::unify::{is_float, is_integer};
 
@@ -102,18 +104,41 @@ impl<'hir> Typeck<'hir> {
         self.tcx.mk_ref(ty, mutability)
     }
 
-    pub(crate) fn check_deref(&mut self, operand: HirId, span: SrcSpan) -> Ty {
+    pub(crate) fn check_deref(&mut self, id: HirId, operand: HirId, span: SrcSpan) -> Ty {
         let operand_ty = self.ty_of(operand);
         let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
 
-        match *self.tcx.kind(resolved) {
-            TyKind::Ref { base, .. } => base,
-            TyKind::Error => self.tcx.error(),
+        let base = match *self.tcx.kind(resolved) {
+            TyKind::Ref { base, .. } | TyKind::Iso(base) => base,
+            TyKind::Error => return self.tcx.error(),
             _ => {
                 report_deref_not_a_reference(self.display_cx(), resolved, span);
-                self.tcx.error()
+                return self.tcx.error();
             }
+        };
+
+        let mode = self.deref_mode(base, id.owner);
+        self.types.record_deref(id, mode);
+        base
+    }
+
+    fn deref_mode(&mut self, ty: Ty, owner: DefId) -> DerefMode {
+        if self.holds_lang_trait(LangItem::Drop, ty, owner) {
+            DerefMode::Move
+        } else if self.holds_lang_trait(LangItem::Copy, ty, owner) {
+            DerefMode::Copy
+        } else {
+            DerefMode::Move
         }
+    }
+
+    fn holds_lang_trait(&mut self, item: LangItem, ty: Ty, owner: DefId) -> bool {
+        let Some(def) = self.hir.lang_items().get(item) else {
+            return false;
+        };
+        let goal = Query::new(ty, def);
+        let env = self.bounds_env(owner);
+        matches!(self.implements(&goal, &env), Solution::Holds)
     }
 
     // -----------------------------------------------------------------
@@ -1197,6 +1222,11 @@ mod tests {
     fn dereferencing_a_reference_returns_its_base_type() {
         accepts("fun f(p: &i32) -> i32 { return *p; }");
         accepts("fun f(p: &mut i32) -> i32 { return *p; }");
+    }
+
+    #[test]
+    fn dereferencing_an_owned_pointer_returns_its_base_type() {
+        accepts("fun f(p: iso i32) -> i32 { return *p; }");
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::mir::{
     Rvalue, StatementKind, TerminatorKind,
 };
 use crate::nameres::PrimTy;
+use crate::typeck::results::DerefMode;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::unify::{is_float, is_integer};
 
@@ -154,7 +155,10 @@ impl<'a> BodyLowerCtx<'a> {
                 operand,
             } => {
                 let place = self.lower_deref_place(operand);
-                let operand = self.operand_for_place(place, ty);
+                let operand = match self.types.deref_mode(expr_id) {
+                    DerefMode::Copy => Operand::Copy(place),
+                    DerefMode::Move => Operand::Move(place),
+                };
                 self.assign(dest, Rvalue::Use(operand), span);
             }
             ExprKind::Unary { op, operand } => {
@@ -423,7 +427,7 @@ impl<'a> BodyLowerCtx<'a> {
     fn lower_deref_place(&mut self, operand: HirId) -> Place {
         let operand_ty = self.expr_ty(operand);
         let mut place = self.lower_place(operand);
-        if matches!(self.tcx.kind(operand_ty), TyKind::Ref { .. }) {
+        if matches!(self.tcx.kind(operand_ty), TyKind::Ref { .. } | TyKind::Iso(_)) {
             place.projections.push(Projection::Deref);
         }
         place
