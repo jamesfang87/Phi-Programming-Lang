@@ -2,6 +2,7 @@
 
 use crate::ast;
 use crate::driver::source::SrcSpan;
+use crate::hir::lower::ctx::is_self_path;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{HirId, TyKind};
 
@@ -17,6 +18,9 @@ impl OwnerLowerer<'_, '_> {
         span: SrcSpan,
     ) -> HirId {
         self.synth_ty(span, |low, _id| match kind {
+            ast::TyKind::Path { path, args } if is_self_path(path) => {
+                TyKind::SelfTy(args.iter().map(|a| low.lower_ty(a)).collect())
+            }
             ast::TyKind::Path { path, args } => TyKind::Path {
                 path: low.cx.lower_path(node_id, path),
                 args: args.iter().map(|a| low.lower_ty(a)).collect(),

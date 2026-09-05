@@ -15,7 +15,8 @@ use crate::diagnostics::typeck::{
 use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
-    DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, PatKind, Res, StmtKind, VariantPayload,
+    DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, PatKind, Res, StmtKind,
+    TyKind as HirTyKind, VariantPayload,
 };
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
@@ -181,15 +182,23 @@ impl<'hir> Typeck<'hir> {
     pub fn collect_extend(&mut self, extend: DefId) {
         let hir: &'hir Hir = self.hir;
         let extend_node = hir.extend(extend);
-        let (extend_generics, adt_generics, trait_generics, span) = (
+        let (extend_generics, self_ty_id, trait_generics, span) = (
             &extend_node.extend_generics,
-            &extend_node.adt_generics,
+            extend_node.self_ty,
             &extend_node.trait_generics,
             extend_node.span,
         );
 
         self.collect_generics(extend_generics);
-        self.lower_tys(adt_generics);
+        match &self.hir.ty(self_ty_id).kind {
+            HirTyKind::Path { args, .. } => {
+                let args = args.clone();
+                self.lower_tys(&args);
+            }
+            _ => {
+                self.lower_ty(self_ty_id);
+            }
+        }
         self.lower_tys(trait_generics);
 
         let self_ty = self.self_ty(extend, span);
