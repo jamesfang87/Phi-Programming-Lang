@@ -43,7 +43,8 @@ impl<'hir> Typeck<'hir> {
                 self.extends.trait_of(block).cloned(),
             );
             let node = self.hir.extend(block);
-            let (adt_path, trait_path) = (&node.adt_path, node.trait_path.as_ref());
+            let trait_path = node.trait_path.as_ref();
+            let self_ty_span = self.hir.ty(node.self_ty).span;
 
             // Only an ADT self type has its own generic arity to check against a declaration --
             // a primitive is never generic (already enforced when its `Ty` was built, in
@@ -51,9 +52,9 @@ impl<'hir> Typeck<'hir> {
             // generic arguments were rejected (a reference, `any`, or a bare `dyn` substituted
             // in), so there is nothing left to check for those.
             if let TyKind::Adt { def, args } = self.tcx.kind(self_ty).clone()
-                && self.check_arg_count(def, args.len(), adt_path.span)
+                && self.check_arg_count(def, args.len(), self_ty_span)
             {
-                self.register_bound_obligations(def, &args, adt_path.span, block);
+                self.register_bound_obligations(def, &args, self_ty_span, block);
             }
 
             // The `with`-clause trait's own arity has to be checked regardless of what kind of

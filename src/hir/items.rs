@@ -101,9 +101,8 @@ pub struct Trait {
 pub struct Extend {
     pub hir_id: HirId,
     pub extend_generics: Vec<HirId>, // -> Node::Generic
-    pub adt_generics: Vec<HirId>,    // -> Node::Ty
+    pub self_ty: HirId,              // -> Node::Ty
     pub trait_generics: Vec<HirId>,  // -> Node::Ty
-    pub adt_path: Path,
     pub trait_path: Option<Path>,
     pub methods: Vec<DefId>,
     pub span: SrcSpan,

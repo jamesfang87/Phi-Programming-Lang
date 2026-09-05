@@ -250,8 +250,8 @@ impl<'hir> Typeck<'hir> {
     ) -> Vec<Candidate> {
         let mut candidates = Vec::new();
 
-        // Inherent and trait `extend` blocks, both keyed on the head of the self type, so only
-        // a struct, enum, or primitive receiver can match one.
+        // Inherent and trait `extend` blocks, both keyed on the head of the self type -- a
+        // struct, enum, primitive, tuple, array, reference, function type, or `iso`.
         if let Some(head) = self.type_head(base) {
             for block in self.extends.for_type(head).to_vec() {
                 if let Some(candidate) = self.candidate_from_extend_block(block, base, member) {
@@ -1803,6 +1803,16 @@ mod tests {
         typeck_accepts(
             "extend i32 { fun double(&self) -> i32 { return 0; } }
              fun f(x: i32) -> i32 { return x.double(); }",
+        );
+    }
+
+    #[test]
+    fn a_tuple_extend_blocks_method_is_callable_on_the_tuple() {
+        use crate::testing::typeck_accepts;
+
+        typeck_accepts(
+            "extend (i32, i32) { fun first(&self) -> i32 { return 0; } }
+             fun f(x: (i32, i32)) -> i32 { return x.first(); }",
         );
     }
 }
