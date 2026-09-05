@@ -257,11 +257,12 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
 
         self.push_generics_opt(&e.extend_generics);
 
-        let adt_res = self.resolve_type_path(&e.adt_path);
-        self.results.record(item_id, e.adt_path.clone(), adt_res);
-
         if let Some(trait_path) = &e.trait_path {
-            if *trait_path == e.adt_path {
+            let self_path = match &e.self_ty.kind {
+                TyKind::Path { path, .. } => Some(path),
+                _ => None,
+            };
+            if self_path == Some(trait_path) {
                 report_self_extend(
                     *trait_path
                         .segments
@@ -274,19 +275,32 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             }
         }
 
-        let pushed_self = match adt_res {
-            Res::Type(ty @ (Type::Def(_) | Type::Prim(_))) => {
+        self.visit_ty(&e.self_ty);
+        let self_res = match &e.self_ty.kind {
+            TyKind::Path { path, .. } => self.results.get(e.self_ty.id, path),
+            _ => None,
+        };
+
+        let pushed_self = match self_res {
+            Some(Res::Type(ty @ (Type::Def(_) | Type::Prim(_)))) => {
                 self.table.push_self(ty);
                 true
             }
-            Res::Err => {
+            Some(Res::Err) => {
                 self.table.push_self_unresolved();
                 true
             }
             _ => false,
         };
 
-        visit::walk_extend(self, e);
+        if let Some(generics) = &e.trait_generics {
+            for ty in generics {
+                self.visit_ty(ty);
+            }
+        }
+        for m in &e.methods {
+            self.visit_function(m);
+        }
 
         if pushed_self {
             self.table.pop_self();

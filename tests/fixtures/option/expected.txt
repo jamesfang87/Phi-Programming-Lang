@@ -4,7 +4,7 @@
 // module option
 Item {
     id: NodeId(
-        9,
+        10,
     ),
     kind: Enum(
         Enum {
@@ -22,7 +22,7 @@ Item {
                 [
                     Generic {
                         id: NodeId(
-                            5,
+                            6,
                         ),
                         name: Ident {
                             text: Symbol(
@@ -44,7 +44,7 @@ Item {
             variants: [
                 Variant {
                     id: NodeId(
-                        7,
+                        8,
                     ),
                     name: Ident {
                         text: Symbol(
@@ -58,7 +58,7 @@ Item {
                     payload: Type(
                         Ty {
                             id: NodeId(
-                                6,
+                                7,
                             ),
                             kind: Path {
                                 path: Path {
@@ -93,7 +93,7 @@ Item {
                 },
                 Variant {
                     id: NodeId(
-                        8,
+                        9,
                     ),
                     name: Ident {
                         text: Symbol(
@@ -124,7 +124,7 @@ Item {
 }
 Item {
     id: NodeId(
-        11,
+        12,
     ),
     kind: Function(
         Function {
@@ -145,7 +145,7 @@ Item {
             block: Some(
                 Block {
                     id: NodeId(
-                        10,
+                        11,
                     ),
                     stmts: [],
                     span: SrcSpan {
