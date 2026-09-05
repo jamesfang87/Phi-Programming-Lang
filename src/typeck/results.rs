@@ -10,10 +10,17 @@ pub struct ResolvedCall {
     pub args: Vec<Ty>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DerefMode {
+    Copy,
+    Move,
+}
+
 #[derive(Default)]
 pub struct TypeResolutions {
     ty: HashMap<HirId, Ty>,
     calls: HashMap<HirId, ResolvedCall>,
+    derefs: HashMap<HirId, DerefMode>,
 }
 
 impl TypeResolutions {
@@ -51,5 +58,13 @@ impl TypeResolutions {
 
     pub fn calls_iter(&self) -> impl Iterator<Item = (HirId, &ResolvedCall)> + '_ {
         self.calls.iter().map(|(&id, call)| (id, call))
+    }
+
+    pub fn record_deref(&mut self, id: HirId, mode: DerefMode) {
+        self.derefs.insert(id, mode);
+    }
+
+    pub fn deref_mode(&self, id: HirId) -> DerefMode {
+        self.derefs[&id]
     }
 }
