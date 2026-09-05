@@ -485,6 +485,16 @@ pub enum ExprKind {
         elem: Box<Expr>,
         count: Box<Expr>,
     },
+    Assert {
+        cond: Box<Expr>,
+        msg: Option<Box<Expr>>,
+    },
+    Panic {
+        msg: Option<Box<Expr>>,
+    },
+    Unreachable {
+        msg: Option<Box<Expr>>,
+    },
     Error,
 }
 

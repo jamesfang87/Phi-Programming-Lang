@@ -59,8 +59,10 @@ impl<'a> BodyLowerCtx<'a> {
                 else_block,
                 ..
             } => {
+                let ty = self.expr_ty(init);
+                let diverges = matches!(self.tcx.kind(ty), crate::typeck::ty::TyKind::Never);
                 self.lower_let(mutability, pat, init, else_block, span);
-                false
+                diverges
             }
             StmtKind::With { ref lends, block } => {
                 let lends = lends.clone();

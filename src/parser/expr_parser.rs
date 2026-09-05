@@ -139,6 +139,63 @@ impl Parser {
                 })
                 .boxed();
 
+            let assert_expr = self
+                .kind(TokenKind::Assert)
+                .then_ignore(self.kind(TokenKind::OpenParen))
+                .then(expr.clone())
+                .then(
+                    self.kind(TokenKind::Comma)
+                        .ignore_then(expr.clone())
+                        .or_not(),
+                )
+                .then(self.kind(TokenKind::CloseParen))
+                .map(|(((assert_tok, cond), msg), close_tok)| {
+                    let span = assert_tok.span.merge(close_tok.span);
+                    Expr {
+                        id: NodeId::next(),
+                        kind: ExprKind::Assert {
+                            cond: Box::new(cond),
+                            msg: msg.map(Box::new),
+                        },
+                        span,
+                    }
+                })
+                .boxed();
+
+            let panic_expr = self
+                .kind(TokenKind::Panic)
+                .then_ignore(self.kind(TokenKind::OpenParen))
+                .then(expr.clone().or_not())
+                .then(self.kind(TokenKind::CloseParen))
+                .map(|((panic_tok, msg), close_tok)| {
+                    let span = panic_tok.span.merge(close_tok.span);
+                    Expr {
+                        id: NodeId::next(),
+                        kind: ExprKind::Panic {
+                            msg: msg.map(Box::new),
+                        },
+                        span,
+                    }
+                })
+                .boxed();
+
+            let unreachable_expr = self
+                .kind(TokenKind::Unreachable)
+                .then_ignore(self.kind(TokenKind::OpenParen))
+                .then(expr.clone().or_not())
+                .then(self.kind(TokenKind::CloseParen))
+                .map(|((unreachable_tok, msg), close_tok)| {
+                    let span = unreachable_tok.span.merge(close_tok.span);
+                    Expr {
+                        id: NodeId::next(),
+                        kind: ExprKind::Unreachable {
+                            msg: msg.map(Box::new),
+                        },
+                        span,
+                    }
+                })
+                .boxed();
+
             // This parses one field of a `Path { field: expr, ... }` struct literal, or
             // `Path { field }` as shorthand for `Path { field: field }`.
             let ctor_field = ident
@@ -544,6 +601,9 @@ impl Parser {
                 match_expr,
                 spawn_expr,
                 concurrent_expr,
+                assert_expr,
+                panic_expr,
+                unreachable_expr,
                 call,
                 ctor,
                 // `elided_ctor` and `variant` both start with `.`. Try `elided_ctor` first: it
@@ -2258,6 +2318,66 @@ mod tests {
                 assert!(matches!(lhs.kind, ExprKind::Access { .. }));
             }
             other => panic!("expected an assign expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_assert_with_no_message() {
+        let expr = parse_expr("assert(x)");
+        match &expr.kind {
+            ExprKind::Assert { cond, msg } => {
+                assert!(matches!(cond.kind, ExprKind::Path(_)));
+                assert!(msg.is_none());
+            }
+            other => panic!("expected an assert expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_assert_with_a_message() {
+        let expr = parse_expr(r#"assert(x, "x must be set")"#);
+        match &expr.kind {
+            ExprKind::Assert { cond, msg } => {
+                assert!(matches!(cond.kind, ExprKind::Path(_)));
+                assert!(matches!(
+                    msg.as_deref(),
+                    Some(Expr {
+                        kind: ExprKind::Literal(_),
+                        ..
+                    })
+                ));
+            }
+            other => panic!("expected an assert expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_panic_with_no_message() {
+        let expr = parse_expr("panic()");
+        assert!(matches!(expr.kind, ExprKind::Panic { msg: None }));
+    }
+
+    #[test]
+    fn parses_panic_with_a_message() {
+        let expr = parse_expr(r#"panic("oh no")"#);
+        match &expr.kind {
+            ExprKind::Panic { msg } => assert!(msg.is_some()),
+            other => panic!("expected a panic expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_unreachable_with_no_message() {
+        let expr = parse_expr("unreachable()");
+        assert!(matches!(expr.kind, ExprKind::Unreachable { msg: None }));
+    }
+
+    #[test]
+    fn parses_unreachable_with_a_message() {
+        let expr = parse_expr(r#"unreachable("should never happen")"#);
+        match &expr.kind {
+            ExprKind::Unreachable { msg } => assert!(msg.is_some()),
+            other => panic!("expected an unreachable expr, got {other:?}"),
         }
     }
 }

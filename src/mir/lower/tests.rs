@@ -1419,3 +1419,60 @@ fn lower_populates_every_new_mir_field() {
     assert_eq!(program.def_names.leaf(point_def), "Point");
     assert_eq!(program.main, Some(first_function(&hir)));
 }
+
+fn assert_terminator(body: &Body) -> (bool, &AssertMessage) {
+    body.basic_blocks
+        .iter()
+        .find_map(|b| match &b.terminator.kind {
+            TerminatorKind::Assert { expected, msg, .. } => Some((*expected, msg)),
+            _ => None,
+        })
+        .expect("an `Assert` terminator is present")
+}
+
+#[test]
+fn assert_lowers_to_an_assert_terminator_expecting_the_condition_to_hold() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f(x: bool) { assert(x); }");
+    let body = first_function_body(&program, &hir);
+    let (expected, msg) = assert_terminator(body);
+    assert!(
+        expected,
+        "a plain `assert` traps when its condition is false"
+    );
+    assert!(matches!(msg, AssertMessage::Assert(None)));
+}
+
+#[test]
+fn assert_with_a_message_carries_the_message_operand() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src(r#"fun f(x: bool) { assert(x, "x must hold"); }"#);
+    let body = first_function_body(&program, &hir);
+    let (_, msg) = assert_terminator(body);
+    assert!(matches!(msg, AssertMessage::Assert(Some(_))));
+}
+
+#[test]
+fn panic_lowers_to_an_always_failing_assert() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f() { panic(); }");
+    let body = first_function_body(&program, &hir);
+    let (expected, msg) = assert_terminator(body);
+    assert!(!expected, "`panic` traps unconditionally");
+    assert!(matches!(msg, AssertMessage::Panic(None)));
+}
+
+#[test]
+fn panic_with_a_message_carries_the_message_operand() {
+    let (hir, _tcx, _types, program) = lower_mir_src(r#"fun f() { panic("boom"); }"#);
+    let body = first_function_body(&program, &hir);
+    let (_, msg) = assert_terminator(body);
+    assert!(matches!(msg, AssertMessage::Panic(Some(_))));
+}
+
+#[test]
+fn unreachable_lowers_to_an_always_failing_assert() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f() { unreachable(); }");
+    let body = first_function_body(&program, &hir);
+    let (expected, msg) = assert_terminator(body);
+    assert!(!expected, "`unreachable` traps unconditionally");
+    assert!(matches!(msg, AssertMessage::Unreachable(None)));
+}

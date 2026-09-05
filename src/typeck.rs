@@ -390,6 +390,10 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Cast { expr: operand, ty } => self.check_cast(*operand, *ty, expr.span),
             ExprKind::New(operand) => self.check_new(*operand),
             ExprKind::NewArray { elem, count } => self.check_new_array(*elem, *count),
+            ExprKind::Assert { cond, msg } => self.check_assert(*cond, *msg),
+            ExprKind::Panic { msg } | ExprKind::Unreachable { msg } => {
+                self.check_panic_message(*msg)
+            }
             ExprKind::Error => self.tcx.error(),
         }
     }

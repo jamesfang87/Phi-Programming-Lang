@@ -302,6 +302,20 @@ pub fn report_if_branches_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: Src
     );
 }
 
+pub fn report_assert_cond_not_bool(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(cx.show(err).to_string(), span)
+            .with_label("an `assert` condition has to be a `bool`"),
+    );
+}
+
+pub fn report_panic_message_not_str(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(cx.show(err).to_string(), span)
+            .with_label("a panic message has to be a `str`"),
+    );
+}
+
 pub fn report_match_arm_mismatch(cx: DisplayCx<'_>, err: UnifyError, arm_span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), arm_span)

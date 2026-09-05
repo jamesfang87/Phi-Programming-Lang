@@ -437,7 +437,12 @@ fn mark_terminator_aliases_used(
 ) {
     match &terminator.kind {
         TerminatorKind::SwitchInt { discr, .. } => mark_operand_alias_used(held, discr, used),
-        TerminatorKind::Assert { cond, .. } => mark_operand_alias_used(held, cond, used),
+        TerminatorKind::Assert { cond, msg, .. } => {
+            mark_operand_alias_used(held, cond, used);
+            if let Some(msg) = msg.user_message() {
+                mark_operand_alias_used(held, msg, used);
+            }
+        }
         TerminatorKind::Call {
             func,
             args,

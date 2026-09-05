@@ -161,6 +161,132 @@ mod tests {
     }
 
     #[test]
+    fn panic_writes_its_message_to_stderr_and_aborts() {
+        let (_hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir(r#"fun main() { panic("boom"); }"#);
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
+            .expect("codegen succeeds");
+
+        let dir = tempdir_for_test("panic");
+        let exe = emit(
+            &module,
+            &EmitOptions {
+                output_path: dir.join("panic"),
+                release: false,
+            },
+        )
+        .expect("emit succeeds");
+
+        let output = std::process::Command::new(&exe)
+            .output()
+            .expect("linked binary runs");
+        assert!(
+            !output.status.success(),
+            "a panicking program aborts rather than exiting cleanly"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("boom"),
+            "stderr: {:?}",
+            output.stderr
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn assert_false_aborts_with_the_default_message() {
+        let (_hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir("fun main() { assert(false); }");
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
+            .expect("codegen succeeds");
+
+        let dir = tempdir_for_test("assert-false");
+        let exe = emit(
+            &module,
+            &EmitOptions {
+                output_path: dir.join("assert-false"),
+                release: false,
+            },
+        )
+        .expect("emit succeeds");
+
+        let output = std::process::Command::new(&exe)
+            .output()
+            .expect("linked binary runs");
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("assertion failed"),
+            "stderr: {:?}",
+            output.stderr
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn assert_true_does_not_abort() {
+        let (_hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir("fun main() { assert(true); }");
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
+            .expect("codegen succeeds");
+
+        let dir = tempdir_for_test("assert-true");
+        let exe = emit(
+            &module,
+            &EmitOptions {
+                output_path: dir.join("assert-true"),
+                release: false,
+            },
+        )
+        .expect("emit succeeds");
+
+        let output = std::process::Command::new(&exe)
+            .output()
+            .expect("linked binary runs");
+        assert!(
+            output.status.success(),
+            "process exited: {:?}",
+            output.status
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unreachable_aborts_with_its_own_default_message() {
+        let (_hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir("fun main() { unreachable(); }");
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
+            .expect("codegen succeeds");
+
+        let dir = tempdir_for_test("unreachable");
+        let exe = emit(
+            &module,
+            &EmitOptions {
+                output_path: dir.join("unreachable"),
+                release: false,
+            },
+        )
+        .expect("emit succeeds");
+
+        let output = std::process::Command::new(&exe)
+            .output()
+            .expect("linked binary runs");
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("entered unreachable code"),
+            "stderr: {:?}",
+            output.stderr
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn verification_failure_reports_module_ir_alongside_the_error() {
         let llvm = inkwell::context::Context::create();
         let module = llvm.create_module("bad");

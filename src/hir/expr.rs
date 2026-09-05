@@ -114,6 +114,16 @@ pub enum ExprKind {
         elem: HirId,  // -> Node::Expr
         count: HirId, // -> Node::Expr
     },
+    Assert {
+        cond: HirId,        // -> Node::Expr
+        msg: Option<HirId>, // -> Node::Expr
+    },
+    Panic {
+        msg: Option<HirId>, // -> Node::Expr
+    },
+    Unreachable {
+        msg: Option<HirId>, // -> Node::Expr
+    },
     Error,
 }
 

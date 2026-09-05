@@ -296,9 +296,54 @@ impl<'a> BodyLowerCtx<'a> {
             ExprKind::Concurrent(_) => panic!(
                 "mir::lower: `concurrent` is not yet implemented (the runtime nursery API is illustrative only)"
             ),
+            ExprKind::Assert { cond, msg } => {
+                self.lower_trap_into(Some(cond), msg, AssertMessage::Assert, dest, span);
+            }
+            ExprKind::Panic { msg } => {
+                self.lower_trap_into(None, msg, AssertMessage::Panic, dest, span);
+            }
+            ExprKind::Unreachable { msg } => {
+                self.lower_trap_into(None, msg, AssertMessage::Unreachable, dest, span);
+            }
             ExprKind::Error => {
                 unreachable!("a fully type-checked body contains no ExprKind::Error")
             }
+        }
+    }
+
+    fn lower_trap_into(
+        &mut self,
+        cond: Option<HirId>,
+        msg: Option<HirId>,
+        make_msg: fn(Option<Operand>) -> AssertMessage,
+        dest: Place,
+        span: SrcSpan,
+    ) {
+        let msg_operand = msg.map(|m| self.lower_operand(m));
+        let (cond_operand, expected) = match cond {
+            Some(cond) => (self.lower_operand(cond), true),
+            None => {
+                let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+                let operand = Operand::Constant(Constant {
+                    ty: bool_ty,
+                    kind: ConstKind::Bool(true),
+                });
+                (operand, false)
+            }
+        };
+        let target = self.new_block();
+        self.set_terminator(
+            TerminatorKind::Assert {
+                cond: cond_operand,
+                expected,
+                msg: make_msg(msg_operand),
+                target,
+            },
+            span,
+        );
+        self.switch_to(target);
+        if cond.is_some() {
+            self.assign_unit(dest, span);
         }
     }
 
