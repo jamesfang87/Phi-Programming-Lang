@@ -15,10 +15,12 @@ use crate::diagnostics::typeck::expr::{
     report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
     report_not_assignable, report_not_indexable, report_not_try, report_panic_message_not_str,
     report_private_field, report_range_endpoints_mismatch, report_record_field_unknown,
-    report_try_error_mismatch, report_try_operand_unknown, report_try_outside,
-    report_try_return_mismatch, report_variant_enum_unknown, report_variant_expr_payload_shape,
-    report_variant_missing_fields, report_variant_payload_mismatch,
+    report_reference_in_new, report_try_error_mismatch, report_try_operand_unknown,
+    report_try_outside, report_try_return_mismatch, report_variant_enum_unknown,
+    report_variant_expr_payload_shape, report_variant_missing_fields,
+    report_variant_payload_mismatch,
 };
+use crate::diagnostics::typeck::report_any_outside_signature;
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, Path, Payload, PayloadField, Res, TyDef, Type};
 use crate::langitems::LangItem;
@@ -652,6 +654,7 @@ impl<'hir> Typeck<'hir> {
     /// Checks `new e`: `e: T` gives `new e` the type `iso T`.
     pub(crate) fn check_new(&mut self, operand: HirId) -> Ty {
         let operand_ty = self.ty_of(operand);
+        self.check_storable_in_iso(operand_ty, self.hir.expr(operand).span);
         self.tcx.mk_iso(operand_ty)
     }
 
@@ -664,8 +667,18 @@ impl<'hir> Typeck<'hir> {
         if let Err(err) = self.unifier.unify(&self.tcx, count_ty, usize_ty) {
             report_new_array_count_not_usize(self.display_cx(), err, self.hir.expr(count).span);
         }
+        self.check_storable_in_iso(elem_ty, self.hir.expr(elem).span);
         let array_ty = self.tcx.mk_array(elem_ty, None);
         self.tcx.mk_iso(array_ty)
+    }
+
+    fn check_storable_in_iso(&mut self, ty: Ty, span: SrcSpan) {
+        if self.tcx.contains_ref(ty) {
+            report_reference_in_new(self.display_cx(), ty, span);
+        }
+        if self.tcx.contains_any(ty) {
+            report_any_outside_signature(self.display_cx(), ty, span);
+        }
     }
 
     // -----------------------------------------------------------------
@@ -1366,6 +1379,38 @@ mod tests {
     #[test]
     fn new_array_requires_a_usize_count_and_yields_iso_of_unsized_array() {
         accepts("fun f(n: usize) { let buf: iso [u8] = new [0_u8; n]; }");
+    }
+
+    #[test]
+    fn new_of_a_reference_is_rejected() {
+        rejects(
+            "fun f(x: &i32) { let y = new x; }",
+            "`new` cannot store a reference",
+        );
+    }
+
+    #[test]
+    fn new_of_a_value_that_transitively_holds_a_reference_is_rejected() {
+        rejects(
+            "fun f(x: &i32) { let y = new (x, 1); }",
+            "`new` cannot store a reference",
+        );
+    }
+
+    #[test]
+    fn new_array_with_a_reference_elem_is_rejected() {
+        rejects(
+            "fun f(x: &i32) { let y = new [x; 1]; }",
+            "`new` cannot store a reference",
+        );
+    }
+
+    #[test]
+    fn new_of_an_any_typed_value_is_rejected() {
+        rejects(
+            "fun f(x: any i32) { let y = new x; }",
+            "`any` may only appear in a parameter or return type",
+        );
     }
 
     /// A count that isn't `usize` is rejected, the same as any other type mismatch.

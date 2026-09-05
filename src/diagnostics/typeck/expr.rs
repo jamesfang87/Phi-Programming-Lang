@@ -91,6 +91,17 @@ pub fn report_new_array_count_not_usize(cx: DisplayCx<'_>, err: UnifyError, span
     );
 }
 
+pub fn report_reference_in_new(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("`new` cannot store a reference, found `{}`", cx.show(ty)),
+            span,
+        )
+        .with_label("this type stores a reference")
+        .with_help("`iso` has to own the value it points to; take the value by value instead of by reference before passing it to `new`"),
+    );
+}
+
 pub fn report_not_indexable(cx: DisplayCx<'_>, base: Ty, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(format!("`{}` cannot be indexed", cx.show(base)), span)
