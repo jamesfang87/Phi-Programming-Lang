@@ -22,6 +22,7 @@ pub enum TyKind {
         path: Path,
         args: Vec<HirId>, // -> Node::Ty
     },
+    SelfTy(Vec<HirId>), // -> Node::Ty
     /// Represents `&T` or `&mut T`.
     Ref {
         base: HirId, // -> Node::Ty

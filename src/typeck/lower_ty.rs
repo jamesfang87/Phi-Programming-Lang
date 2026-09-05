@@ -19,6 +19,11 @@ impl<'hir> Typeck<'hir> {
                 let (res, args) = (path.res, args.clone());
                 self.lower_base(id, res, &args, span)
             }
+            HirTyKind::SelfTy(args) => {
+                let args = args.clone();
+                Self::check_no_args(&args, span, "`Self`");
+                self.self_ty(id.owner, span)
+            }
             HirTyKind::Ref { base, mutability } => {
                 let (base, mutability) = (*base, *mutability);
                 let base = self.lower_ty(base);
@@ -95,15 +100,17 @@ impl<'hir> Typeck<'hir> {
                 report_trait_as_ty(span);
                 self.tcx.error()
             }
-            Res::SelfTy(_) => {
-                Self::check_no_args(args, span, "`Self`");
-                self.self_ty(id.owner, span)
-            }
             Res::Err => self.tcx.error(),
             Res::Local(_) | Res::Function(_) | Res::Module(_) => {
                 unreachable!(
                     "name resolution never resolves a type-position path to a local, a \
                      function, or a module"
+                )
+            }
+            Res::SelfTy(_) => {
+                unreachable!(
+                    "a literal `Self` in type position lowers straight to `HirTyKind::SelfTy`, \
+                     never to `HirTyKind::Path` with `Res::SelfTy`"
                 )
             }
         }
@@ -260,23 +267,33 @@ impl<'hir> Typeck<'hir> {
             }
             OwnerNode::Trait(_) => self.tcx.mk_self_param(introducer),
             OwnerNode::Extend(extend) => {
-                let adt_res = extend.adt_path.res;
-                let hir_args = extend.adt_generics.clone();
-                let args = self.lower_tys(&hir_args);
-                if !self.check_no_reference_args(&hir_args, &args)
-                    || !self.check_no_any_args(&hir_args, &args)
-                    || !self.check_no_dyn_args(&hir_args, &args)
-                {
-                    self.tcx.error()
-                } else {
-                    match adt_res {
-                        Res::Type(Type::Def(tydef)) => self.tcx.mk_adt(tydef.def_id(), args),
-                        Res::Type(Type::Prim(prim)) => {
-                            Self::check_no_args(&hir_args, span, "a primitive type");
-                            self.tcx.mk_prim(prim)
+                let self_ty_id = extend.self_ty;
+                let adt_path = match &self.hir.ty(self_ty_id).kind {
+                    HirTyKind::Path { path, args } => Some((path.res, args.clone())),
+                    _ => None,
+                };
+                match adt_path {
+                    Some((adt_res, hir_args)) => {
+                        let args = self.lower_tys(&hir_args);
+                        if !self.check_no_reference_args(&hir_args, &args)
+                            || !self.check_no_any_args(&hir_args, &args)
+                            || !self.check_no_dyn_args(&hir_args, &args)
+                        {
+                            self.tcx.error()
+                        } else {
+                            match adt_res {
+                                Res::Type(Type::Def(tydef)) => {
+                                    self.tcx.mk_adt(tydef.def_id(), args)
+                                }
+                                Res::Type(Type::Prim(prim)) => {
+                                    Self::check_no_args(&hir_args, span, "a primitive type");
+                                    self.tcx.mk_prim(prim)
+                                }
+                                _ => self.tcx.error(),
+                            }
                         }
-                        _ => self.tcx.error(),
                     }
+                    None => self.lower_ty(self_ty_id),
                 }
             }
             _ => unreachable!("only a struct, enum, trait, or extend block introduces a `Self`"),
