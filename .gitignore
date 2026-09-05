@@ -5,8 +5,3 @@ target/
 .DS_Store
 */.DS_Store
 
-# agent worktrees
-.claude/worktrees/
-
-# local worktrees
-.worktrees/
