@@ -187,6 +187,18 @@ const CORE_FILES: &[(&str, &str)] = &[
     ("core/result.phi", include_str!("../../lib/core/result.phi")),
 ];
 
+/// Every file of the standard library as `(name, source)`.
+///
+/// Unlike `core`, `std` is never auto-imported through a prelude -- a project only pulls in
+/// what it names with `import std::...;`. Its files are registered unconditionally anyway
+/// (see [`SrcCollector::collect_std`]), so name resolution can see and resolve those imports;
+/// `std`'s definitions simply sit unused in the module tree when nothing imports them.
+const STD_FILES: &[(&str, &str)] = &[
+    ("std/range.phi", include_str!("../../lib/std/range.phi")),
+    ("std/string.phi", include_str!("../../lib/std/string.phi")),
+    ("std/vector.phi", include_str!("../../lib/std/vector.phi")),
+];
+
 /// Namespace for discovering source files and registering them with the [`SrcMap`].
 pub struct SrcCollector;
 
@@ -223,6 +235,31 @@ impl SrcCollector {
     /// stays correct no matter what any other thread does concurrently.
     pub fn collect_core() -> Vec<&'static SrcFile> {
         CORE_FILES
+            .iter()
+            .map(|&(name, source)| {
+                let offset =
+                    SrcMap::add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
+                SrcMap::file_containing(offset)
+                    .expect("the file this call just registered at `offset`")
+            })
+            .collect()
+    }
+
+    /// Registers every standard library file with the [`SrcMap`], in the order [`STD_FILES`]
+    /// lists them, and returns exactly the [`SrcFile`]s this call registered.
+    ///
+    /// This follows the same reasoning as [`SrcCollector::collect_core`]: `std` is compiled
+    /// into the build from source, unconditionally, every time, and its files carry ordinary
+    /// `module std::..;` declarations so lowering assembles them into the module tree the same
+    /// way it does `core`'s and the user's. Its `FileOrigin` is also [`FileOrigin::Core`] --
+    /// `std` is compiled-in library code, not user code, so it's already excluded from
+    /// `--no-emit-core` dumps the same way `core` is, without needing a separate flag.
+    ///
+    /// Callers should register `std` after `core` (see [`SrcCollector::collect_core`]'s note
+    /// on why `core` is registered after the user's project), so that `std`'s files sit last
+    /// in the offset space.
+    pub fn collect_std() -> Vec<&'static SrcFile> {
+        STD_FILES
             .iter()
             .map(|&(name, source)| {
                 let offset =

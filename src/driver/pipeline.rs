@@ -20,9 +20,11 @@ use crate::typeck;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::tyctx::TyCtx;
 
-/// Collects every `.phi` file under `src_dir`, and the core library, into the source map.
+/// Collects every `.phi` file under `src_dir`, and the core and standard libraries, into the
+/// source map.
 ///
-/// The core library is registered second on purpose; see [`SrcCollector::collect_core`].
+/// `core` and `std` are registered after the user's project, in that order, on purpose; see
+/// [`SrcCollector::collect_core`] and [`SrcCollector::collect_std`].
 fn collect_sources(src_dir: &Path) -> io::Result<()> {
     if !src_dir.is_dir() {
         return Err(io::Error::new(
@@ -32,6 +34,7 @@ fn collect_sources(src_dir: &Path) -> io::Result<()> {
     }
     SrcCollector::collect(src_dir)?;
     SrcCollector::collect_core();
+    SrcCollector::collect_std();
     Ok(())
 }
 
