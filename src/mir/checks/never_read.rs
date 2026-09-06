@@ -19,11 +19,12 @@ pub fn check(mir: &Mir) {
 }
 
 fn meet(predecessor_states: &[&UnreadLocals]) -> UnreadLocals {
-    let mut merged = UnreadLocals::new();
-    for state in predecessor_states {
-        merged.extend((*state).iter().cloned());
+    match predecessor_states.split_first() {
+        None => UnreadLocals::new(),
+        Some((first, rest)) => rest.iter().fold((*first).clone(), |acc, state| {
+            acc.intersection(state).cloned().collect()
+        }),
     }
-    merged
 }
 
 fn check_body(body: &Body) {
@@ -58,13 +59,12 @@ fn fixed_point(body: &Body) -> Lattice {
                 .expect("every block's entry is given above")
                 .clone();
             let new_entry = meet(&pred_states);
-
             if old_entry != new_entry {
                 changed = true;
             }
             lattice.set_entry(id, new_entry.clone());
 
-            let mut new_exit = new_entry;
+            let mut new_exit = new_entry.clone();
             for stmt in &block.statements {
                 apply_statement(&mut new_exit, stmt);
             }
@@ -74,6 +74,7 @@ fn fixed_point(body: &Body) -> Lattice {
             if *old_exit != new_exit {
                 changed = true;
             }
+
             lattice.set_exit(id, new_exit);
         }
     }
@@ -239,11 +240,10 @@ mod tests {
     }
 
     #[test]
-    fn a_local_read_on_only_one_branch_of_an_if_is_still_rejected() {
-        rejects(
-            "fun f(cond: bool) { let a = 1; if cond { let _ = a; } }",
-            "value assigned to `a` is never read",
-        );
+    fn a_local_read_on_only_one_branch_of_an_if_is_fine() {
+        // `a` is read whenever `cond` is true, so the assignment is not dead: liveness only
+        // needs a read on some path, not every path.
+        accepts("fun f(cond: bool) { let a = 1; if cond { let _ = a; } }");
     }
 
     #[test]
