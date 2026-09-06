@@ -100,18 +100,15 @@ fn unpack_params<'ctx>(
     locals: &HashMap<Local, PointerValue<'ctx>>,
     sret: bool,
 ) {
-    let param_offset = sret as usize;
-    for (param_idx, local_idx) in (1..=body.param_count).enumerate() {
+    let mut llvm_idx = sret as usize;
+    for local_idx in 1..=body.param_count {
         let decl = &body.local_decls[local_idx];
         let dest = locals[&Local::from_usize(local_idx)];
         match ty::abi_class(tcx, decl.ty) {
             ty::AbiClass::Fat => {
-                let word0 = function
-                    .get_nth_param((param_offset + param_idx * 2) as u32)
-                    .unwrap();
-                let word1 = function
-                    .get_nth_param((param_offset + param_idx * 2 + 1) as u32)
-                    .unwrap();
+                let word0 = function.get_nth_param(llvm_idx as u32).unwrap();
+                let word1 = function.get_nth_param((llvm_idx + 1) as u32).unwrap();
+                llvm_idx += 2;
                 let struct_ty = ty::llvm_type(cx, tcx, mir, decl.ty).into_struct_type();
                 let field0 = cx
                     .builder
@@ -126,18 +123,18 @@ fn unpack_params<'ctx>(
             }
             ty::AbiClass::Indirect => {
                 let src = function
-                    .get_nth_param((param_offset + param_idx) as u32)
+                    .get_nth_param(llvm_idx as u32)
                     .unwrap()
                     .into_pointer_value();
+                llvm_idx += 1;
                 let size = layout::layout_of(tcx, mir, decl.ty).size;
                 cx.builder
                     .build_memcpy(dest, 8, src, 8, cx.llvm.i64_type().const_int(size, false))
                     .unwrap();
             }
             ty::AbiClass::Scalar => {
-                let param = function
-                    .get_nth_param((param_offset + param_idx) as u32)
-                    .unwrap();
+                let param = function.get_nth_param(llvm_idx as u32).unwrap();
+                llvm_idx += 1;
                 cx.builder.build_store(dest, param).unwrap();
             }
             ty::AbiClass::Void => {}
@@ -156,8 +153,7 @@ pub fn lower_operand<'ctx>(
     match operand {
         Operand::Constant(constant) => konst::lower_constant(cx, tcx, mir, constant),
         Operand::Copy(place_) | Operand::Move(place_) => {
-            let (ptr, place_ty) =
-                place::lower_place(cx, tcx, mir, locals, local_decls, place_);
+            let (ptr, place_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
             let llvm_ty = ty::llvm_type(cx, tcx, mir, place_ty);
             cx.builder.build_load(llvm_ty, ptr, "load").unwrap()
         }
@@ -174,8 +170,7 @@ fn lower_statement<'ctx>(
 ) {
     match &stmt.kind {
         StatementKind::Assign(place_, rvalue) => {
-            let (ptr, dest_ty) =
-                place::lower_place(cx, tcx, mir, locals, local_decls, place_);
+            let (ptr, dest_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
             let value = lower_rvalue(cx, mir, tcx, locals, local_decls, dest_ty, rvalue);
             cx.builder.build_store(ptr, value).unwrap();
         }
@@ -183,8 +178,7 @@ fn lower_statement<'ctx>(
             place: place_,
             variant,
         } => {
-            let (ptr, enum_ty) =
-                place::lower_place(cx, tcx, mir, locals, local_decls, place_);
+            let (ptr, enum_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
             let enum_llvm_ty = ty::llvm_type(cx, tcx, mir, enum_ty).into_struct_type();
             let tag_ptr = cx
                 .builder
@@ -241,16 +235,9 @@ fn lower_rvalue<'ctx>(
         {
             cx.llvm.struct_type(&[], false).const_zero().into()
         }
-        Rvalue::Aggregate(kind, operands) => lower_aggregate(
-            cx,
-            mir,
-            tcx,
-            locals,
-            local_decls,
-            dest_ty,
-            kind,
-            operands,
-        ),
+        Rvalue::Aggregate(kind, operands) => {
+            lower_aggregate(cx, mir, tcx, locals, local_decls, dest_ty, kind, operands)
+        }
         Rvalue::CheckedBinaryOp(op, lhs, rhs) => {
             let operand_ty = operand_ty(tcx, local_decls, lhs);
             let lhs_val = lower_operand(cx, tcx, mir, locals, local_decls, lhs);
@@ -272,8 +259,7 @@ fn lower_rvalue<'ctx>(
             }
         }
         Rvalue::Discriminant(place_) => {
-            let (ptr, place_ty) =
-                place::lower_place(cx, tcx, mir, locals, local_decls, place_);
+            let (ptr, place_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
             let enum_llvm_ty = ty::llvm_type(cx, tcx, mir, place_ty).into_struct_type();
             let tag_ptr = cx
                 .builder
@@ -1025,8 +1011,7 @@ fn lower_terminator<'ctx>(
             msg,
             target,
         } => {
-            let cond_val =
-                lower_operand(cx, tcx, mir, locals, local_decls, cond).into_int_value();
+            let cond_val = lower_operand(cx, tcx, mir, locals, local_decls, cond).into_int_value();
             let function = cx.builder.get_insert_block().unwrap().get_parent().unwrap();
             let ok_block = blocks[target.index()];
             let fail_block = cx.llvm.append_basic_block(function, "assert.fail");
@@ -1068,8 +1053,7 @@ fn lower_call<'ctx>(
     destination: &Place,
     target: Option<crate::mir::BasicBlock>,
 ) {
-    let (dest_ptr, dest_ty) =
-        place::lower_place(cx, tcx, mir, locals, local_decls, destination);
+    let (dest_ptr, dest_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, destination);
     let indirect_return = matches!(ty::abi_class(tcx, dest_ty), ty::AbiClass::Indirect);
 
     let mut arg_vals: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
@@ -1110,8 +1094,7 @@ fn lower_call<'ctx>(
             cx.builder.build_call(function, &arg_vals, "call").unwrap()
         }
     } else {
-        let fn_ptr =
-            lower_operand(cx, tcx, mir, locals, local_decls, func).into_pointer_value();
+        let fn_ptr = lower_operand(cx, tcx, mir, locals, local_decls, func).into_pointer_value();
         let func_ty = operand_ty(tcx, local_decls, func);
         let fn_type = indirect_fn_type(cx, tcx, mir, func_ty);
         cx.builder
@@ -1148,8 +1131,7 @@ fn push_call_arg<'ctx>(
     match ty::abi_class(tcx, arg_ty) {
         ty::AbiClass::Void => {}
         ty::AbiClass::Fat => {
-            let val = lower_operand(cx, tcx, mir, locals, local_decls, operand)
-                .into_struct_value();
+            let val = lower_operand(cx, tcx, mir, locals, local_decls, operand).into_struct_value();
             let word0 = cx.builder.build_extract_value(val, 0, "arg0").unwrap();
             let word1 = cx.builder.build_extract_value(val, 1, "arg1").unwrap();
             out.push(word0.into());
@@ -1648,6 +1630,28 @@ mod tests {
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("call i32 %"), "{ir}");
         assert!(!ir.contains("call i32 @"), "{ir}");
+    }
+
+    #[test]
+    fn a_scalar_parameter_followed_by_a_fat_one_unpacks_both_at_the_right_offsets() {
+        // `unpack_params` used to compute each parameter's LLVM index from `param_idx` alone --
+        // `param_offset + param_idx` for a one-word (`Scalar`/`Indirect`) parameter, and
+        // `param_offset + param_idx * 2` for a two-word (`Fat`) one. That's only correct when
+        // every parameter before the current one has the same word width the current branch
+        // assumes. Here `n` takes LLVM param 0 (one word) and `s` should take LLVM params 1-2
+        // (two words, since `str` is `Fat`), but the old formula computed `s`'s words as
+        // `1 * 2 = 2` and `3`, one past the last real parameter -- so codegen panicked on the
+        // out-of-range `get_nth_param` before ever reaching this test's assertions.
+        let (hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir("fun f(n: i32, s: str) -> &[u8] { return s as &[u8]; }");
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
+            .expect("codegen succeeds");
+        assert!(
+            module.verify().is_ok(),
+            "{}",
+            module.print_to_string().to_string()
+        );
     }
 
     #[test]
