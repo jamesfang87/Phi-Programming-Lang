@@ -1,34 +1,36 @@
-public struct String
+module std::string;
+
+public struct String {
     buf: iso [u8],
     len: usize,
 }
 
 extend String {
-    public fun new() -> String {
-        return String { buf: new [0u8; 0], len: 0 };
+    public fun empty() -> String {
+        return String { buf: new [0_u8; 0], len: 0 };
     }
 
     public fun from(s: str) -> String {
-        
+        unreachable("not yet implemented");
     }
 
-    public fun len(&self) -> usize { 
-        return self.len; 
+    public fun len(&self) -> usize {
+        return self.len;
     }
 
     public fun as_bytes(&self) -> &[u8] {
-
+        unreachable("not yet implemented");
     }
 
     public fun as_str(&self) -> str {
-
+        unreachable("not yet implemented");
     }
 
     public fun push_str(&mut self, s: str) {
-    
+        unreachable("not yet implemented");
     }
 
     fun reserve(&mut self, extra: usize) {
-            
+        unreachable("not yet implemented");
     }
 }
