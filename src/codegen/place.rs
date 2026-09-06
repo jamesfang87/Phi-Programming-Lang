@@ -53,14 +53,10 @@ pub fn lower_place<'ctx>(
                 };
                 ty = elem;
             }
-            Projection::ConstantIndex { offset, from_end } => {
+            Projection::ConstantIndex(offset) => {
                 let elem = elem_ty(tcx, ty);
                 let elem_llvm_ty = ty::llvm_type(cx, tcx, mir, elem);
-                let idx = if *from_end {
-                    todo!("Task 7: needs Len's logic for from_end indexing")
-                } else {
-                    cx.llvm.i64_type().const_int(*offset as u64, false)
-                };
+                let idx = cx.llvm.i64_type().const_int(*offset as u64, false);
                 ptr = unsafe {
                     cx.builder
                         .build_gep(elem_llvm_ty, ptr, &[idx], "elem")

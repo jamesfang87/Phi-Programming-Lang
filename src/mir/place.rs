@@ -31,7 +31,7 @@ pub enum Projection {
     /// `Index` represents `a[i]`, where `i` is itself a local holding the index.
     Index(Local),
     /// `ConstantIndex` represents `a[N]` where N is a compile-time-constant
-    ConstantIndex { offset: u32, from_end: bool },
+    ConstantIndex(u32),
     /// `Downcast` narrows an enum place to one variant's payload and is required before any
     /// `Field` projection into that payload is well-typed.
     Downcast(VariantIdx),
