@@ -439,10 +439,7 @@ impl Parser {
             .map(
                 |(
                     (
-                        (
-                            ((extend_tok, extend_generics), self_ty),
-                            (trait_path, trait_generics),
-                        ),
+                        (((extend_tok, extend_generics), self_ty), (trait_path, trait_generics)),
                         methods,
                     ),
                     close_tok,
@@ -801,7 +798,10 @@ mod tests {
         match item.kind {
             ItemKind::Extend(e) => {
                 let TyKind::Path { path, args } = &e.self_ty.kind else {
-                    panic!("expected `i32` to parse as a path type, got {:?}", e.self_ty.kind);
+                    panic!(
+                        "expected `i32` to parse as a path type, got {:?}",
+                        e.self_ty.kind
+                    );
                 };
                 assert_eq!(path.segments.len(), 1);
                 assert_eq!(Interner::resolve(path.segments[0].text), "i32");
@@ -817,7 +817,10 @@ mod tests {
         match item.kind {
             ItemKind::Extend(e) => {
                 let TyKind::Path { path, .. } = &e.self_ty.kind else {
-                    panic!("expected `bool` to parse as a path type, got {:?}", e.self_ty.kind);
+                    panic!(
+                        "expected `bool` to parse as a path type, got {:?}",
+                        e.self_ty.kind
+                    );
                 };
                 assert_eq!(Interner::resolve(path.segments[0].text), "bool");
                 assert!(e.trait_path.is_some());

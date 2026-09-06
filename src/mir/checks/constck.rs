@@ -1,8 +1,7 @@
-use crate::ast::Mutability;
 use crate::diagnostics::mir::constck::report_not_mutable;
 use crate::driver::source::SrcSpan;
 use crate::mir::lower::Mir;
-use crate::mir::{Body, Operand, Place, Projection, Rvalue, StatementKind};
+use crate::mir::{Body, Operand, Place, Projection, StatementKind};
 
 pub fn check(program: &Mir) {
     for body in program.bodies.values() {
