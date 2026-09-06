@@ -47,7 +47,11 @@ pub fn emit(module: &Module, options: &EmitOptions) -> Result<PathBuf, CodegenEr
         .write_to_file(module, FileType::Object, &object_path)
         .map_err(|e| CodegenError::Verification(e.to_string()))?;
 
-    link(&object_path, &options.output_path)
+    let result = link(&object_path, &options.output_path);
+    if result.is_ok() {
+        let _ = std::fs::remove_file(&object_path);
+    }
+    result
 }
 
 fn link(object_path: &Path, output_path: &Path) -> Result<PathBuf, CodegenError> {
