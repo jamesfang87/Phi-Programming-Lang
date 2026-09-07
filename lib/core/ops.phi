@@ -144,3 +144,21 @@ extend u64 with Comparable { fun less_than(&self, other: &Self) -> bool { return
 extend usize with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
 extend f32 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
 extend f64 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+
+extend i8 with Copy { fun copy(&self) -> Self { return *self; } }
+extend i16 with Copy { fun copy(&self) -> Self { return *self; } }
+extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+extend i64 with Copy { fun copy(&self) -> Self { return *self; } }
+extend u8 with Copy { fun copy(&self) -> Self { return *self; } }
+extend u16 with Copy { fun copy(&self) -> Self { return *self; } }
+extend u32 with Copy { fun copy(&self) -> Self { return *self; } }
+extend u64 with Copy { fun copy(&self) -> Self { return *self; } }
+extend usize with Copy { fun copy(&self) -> Self { return *self; } }
+extend f32 with Copy { fun copy(&self) -> Self { return *self; } }
+extend f64 with Copy { fun copy(&self) -> Self { return *self; } }
+extend bool with Copy { fun copy(&self) -> Self { return *self; } }
+extend char with Copy { fun copy(&self) -> Self { return *self; } }
+
+extend str with Copy { fun copy(&self) -> Self { return *self; } }
+
+extend<T> &T with Copy { fun copy(&self) -> Self { return *self; } }

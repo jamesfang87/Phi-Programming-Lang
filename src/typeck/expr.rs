@@ -11,8 +11,8 @@ use crate::diagnostics::typeck::expr::{
     report_elided_ctor_unknown, report_field_type_mismatch, report_if_branches_mismatch,
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
-    report_missing_fields, report_new_array_count_not_usize, report_no_range_type,
-    report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
+    report_missing_fields, report_move_out_of_reference, report_new_array_count_not_usize,
+    report_no_range_type, report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
     report_not_assignable, report_not_indexable, report_not_try, report_panic_message_not_str,
     report_private_field, report_range_endpoints_mismatch, report_record_field_unknown,
     report_reference_in_new, report_try_error_mismatch, report_try_operand_unknown,
@@ -33,13 +33,19 @@ use crate::typeck::traits::solve::{Query, Solution};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::unify::{is_float, is_integer};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DerefContext {
+    Value,
+    Place,
+}
+
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
     // Assignment
     // -----------------------------------------------------------------
 
     pub(crate) fn check_assign(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) -> Ty {
-        let lhs_ty = self.ty_of(lhs);
+        let lhs_ty = self.ty_of_as_place(lhs);
         // Whether the local this reaches may be written to at all, rather than a plain `let`'s,
         // is checked on the MIR this lowers to, not here; see `mir::checks::constck`.
         if !self.is_place_expr(lhs) {
@@ -60,7 +66,7 @@ impl<'hir> Typeck<'hir> {
         rhs: HirId,
         span: SrcSpan,
     ) -> Ty {
-        let lhs_ty = self.ty_of(lhs);
+        let lhs_ty = self.ty_of_as_place(lhs);
         // See `check_assign`'s own comment: the mutability check itself moved to `mir::checks::constck`.
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.hir.expr(lhs).span);
@@ -100,16 +106,27 @@ impl<'hir> Typeck<'hir> {
             } if m == mutability => Some(base),
             _ => None,
         });
-        let ty = self.ty_of_expecting(operand, inner);
+        let ty = self.ty_of_as_place_expecting(operand, inner);
         self.tcx.mk_ref(ty, mutability)
     }
 
     pub(crate) fn check_deref(&mut self, id: HirId, operand: HirId, span: SrcSpan) -> Ty {
-        let operand_ty = self.ty_of(operand);
+        self.check_deref_as(id, operand, span, DerefContext::Value)
+    }
+
+    pub(crate) fn check_deref_as(
+        &mut self,
+        id: HirId,
+        operand: HirId,
+        span: SrcSpan,
+        ctx: DerefContext,
+    ) -> Ty {
+        let operand_ty = self.ty_of_as_place(operand);
         let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
 
-        let base = match *self.tcx.kind(resolved) {
-            TyKind::Ref { base, .. } | TyKind::Iso(base) => base,
+        let (base, from_reference) = match *self.tcx.kind(resolved) {
+            TyKind::Ref { base, .. } => (base, true),
+            TyKind::Iso(base) => (base, false),
             TyKind::Error => return self.tcx.error(),
             _ => {
                 report_deref_not_a_reference(self.display_cx(), resolved, span);
@@ -119,10 +136,19 @@ impl<'hir> Typeck<'hir> {
 
         let mode = self.deref_mode(base, id.owner);
         self.types.record_deref(id, mode);
+
+        if ctx == DerefContext::Value && from_reference && mode == DerefMode::Move {
+            report_move_out_of_reference(self.display_cx(), base, span);
+            return self.tcx.error();
+        }
+
         base
     }
 
     fn deref_mode(&mut self, ty: Ty, owner: DefId) -> DerefMode {
+        if matches!(self.tcx.kind(ty), TyKind::Var(TyVar::Int(_) | TyVar::Float(_))) {
+            return DerefMode::Copy;
+        }
         if self.holds_lang_trait(LangItem::Drop, ty, owner) {
             DerefMode::Move
         } else if self.holds_lang_trait(LangItem::Copy, ty, owner) {
@@ -148,7 +174,7 @@ impl<'hir> Typeck<'hir> {
     /// Checks `base[index]`.
     pub(crate) fn check_index(&mut self, id: HirId, base: HirId, index: HirId) -> Ty {
         let span = self.hir.expr(id).span;
-        let base_ty = self.ty_of(base);
+        let base_ty = self.ty_of_as_place(base);
 
         if matches!(self.tcx.kind(base_ty), TyKind::Error) {
             self.ty_of(index);
@@ -1220,8 +1246,18 @@ mod tests {
 
     #[test]
     fn dereferencing_a_reference_returns_its_base_type() {
-        accepts("fun f(p: &i32) -> i32 { return *p; }");
-        accepts("fun f(p: &mut i32) -> i32 { return *p; }");
+        accepts(
+            "module core::ops;
+             public trait Copy { fun copy(&self) -> Self; }
+             extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+             fun f(p: &i32) -> i32 { return *p; }",
+        );
+        accepts(
+            "module core::ops;
+             public trait Copy { fun copy(&self) -> Self; }
+             extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+             fun f(p: &mut i32) -> i32 { return *p; }",
+        );
     }
 
     #[test]
@@ -1240,6 +1276,104 @@ mod tests {
     #[test]
     fn a_dereferenced_reference_is_assignable() {
         accepts("fun f(p: &mut i32) { *p = 1; }");
+    }
+
+    #[test]
+    fn moving_a_non_copy_value_out_of_a_shared_reference_is_rejected() {
+        rejects(
+            "struct S { x: i32 }
+             fun f(p: &S) -> S { return *p; }",
+            "cannot move",
+        );
+    }
+
+    #[test]
+    fn moving_a_non_copy_value_out_of_a_mutable_reference_is_rejected() {
+        rejects(
+            "struct S { x: i32 }
+             fun f(p: &mut S) -> S { return *p; }",
+            "cannot move",
+        );
+    }
+
+    #[test]
+    fn moving_a_non_copy_value_out_of_an_owned_pointer_is_fine() {
+        accepts(
+            "struct S { x: i32 }
+             fun f(p: iso S) -> S { return *p; }",
+        );
+    }
+
+    #[test]
+    fn copying_a_copy_value_through_a_reference_is_fine() {
+        accepts(
+            "module core::ops;
+             public trait Copy { fun copy(&self) -> Self; }
+             extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+             fun f(p: &i32) -> i32 { return *p; }",
+        );
+        accepts(
+            "module core::ops;
+             public trait Copy { fun copy(&self) -> Self; }
+             extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+             fun f(p: &mut i32) -> i32 { return *p; }",
+        );
+    }
+
+    #[test]
+    fn reading_a_field_through_a_reference_to_a_non_copy_struct_is_fine() {
+        accepts(
+            "struct S { x: i32 }
+             fun f(p: &S) -> i32 { return (*p).x; }",
+        );
+    }
+
+    #[test]
+    fn assigning_through_a_reference_to_a_non_copy_struct_is_fine() {
+        accepts(
+            "struct S { x: i32 }
+             fun f(p: &mut S, s: S) { *p = s; }",
+        );
+    }
+
+    #[test]
+    fn a_ref_self_method_called_through_an_explicit_deref_is_fine() {
+        accepts(
+            "struct Counter { n: i32 }
+             extend Counter { fun peek(&self) -> i32 { return self.n; } }
+             fun f(p: &Counter) -> i32 { return (*p).peek(); }",
+        );
+    }
+
+    #[test]
+    fn a_mut_self_method_called_through_an_explicit_deref_is_fine() {
+        accepts(
+            "struct Counter { n: i32 }
+             extend Counter { fun bump(&mut self) { self.n = self.n + 1; } }
+             fun f(p: &mut Counter) { (*p).bump(); }",
+        );
+    }
+
+    #[test]
+    fn a_by_value_self_method_called_through_an_explicit_deref_is_rejected() {
+        rejects(
+            "struct Counter { n: i32 }
+             extend Counter { fun consume(self) {} }
+             fun f(p: &Counter) { (*p).consume(); }",
+            "cannot move",
+        );
+    }
+
+    #[test]
+    fn moving_the_whole_pointee_out_of_a_mutable_reference_is_rejected() {
+        rejects(
+            "struct Inner { v: i32 }
+             fun f(p: &mut Inner) -> Inner {
+                 let q = *p;
+                 return q;
+             }",
+            "cannot move",
+        );
     }
 
     // -----------------------------------------------------------------
@@ -1336,13 +1470,17 @@ mod tests {
         accepts(
             "module core::ops;
              public trait Add { fun add(&self, other: &Self) -> Self; }
+             public trait Copy { fun copy(&self) -> Self; }
              extend i32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+             extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
              fun f() { let g: fun(i32) -> i32 = |x: i32| { x + 1 }; }",
         );
         rejects(
             "module core::ops;
              public trait Add { fun add(&self, other: &Self) -> Self; }
+             public trait Copy { fun copy(&self) -> Self; }
              extend i32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+             extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
              fun f() { let g: fun(i32) -> bool = |x: i32| { x + 1 }; }",
             "mismatched types",
         );
@@ -1595,7 +1733,9 @@ mod tests {
         accepts(
             "module core::ops;
              public trait Not { fun not(&self) -> Self; }
+             public trait Copy { fun copy(&self) -> Self; }
              extend bool with Not { fun not(&self) -> Self { return !*self; } }
+             extend bool with Copy { fun copy(&self) -> Self { return *self; } }
              fun f(c: bool) { while c {} }",
         );
         // `while` desugars to `loop { if !cond { break }; .. }`, so a non-bool condition is
@@ -1606,7 +1746,9 @@ mod tests {
         rejects(
             "module core::ops;
              public trait Not { fun not(&self) -> Self; }
+             public trait Copy { fun copy(&self) -> Self; }
              extend bool with Not { fun not(&self) -> Self { return !*self; } }
+             extend bool with Copy { fun copy(&self) -> Self { return *self; } }
              fun f(x: i32) { while x {} }",
             "does not implement `Not`",
         );

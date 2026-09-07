@@ -2,15 +2,14 @@ use std::collections::HashSet;
 
 use crate::diagnostics::mir::definite_init::report_use_of_moved_value;
 use crate::driver::source::SrcSpan;
-use crate::mir::checks::borrowck::{Register, SubRegisters};
+use crate::mir::checks::borrowck::{Register, register_of};
 use crate::mir::{
-    BasicBlock, Body, Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator,
-    TerminatorKind, checks::lattice, lower::Mir,
+    BasicBlock, Body, Operand, Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    checks::lattice, lower::Mir,
 };
 
-/// The set of registers currently moved-from. A register's absence means it is live
+/// The set of registers currently dead. A register's absence means it is live
 type DeadRegisters = HashSet<Register>;
-
 type Lattice = lattice::Lattice<BasicBlock, DeadRegisters>;
 
 pub fn check(mir: &Mir) {
@@ -104,25 +103,6 @@ fn report_body(body: &Body, lattice: &Lattice) {
     }
 }
 
-/// Converts `place` to `Register`
-fn register_of(place: &Place) -> Option<Register> {
-    let mut subregister = Vec::with_capacity(place.projections.len());
-    for projection in &place.projections {
-        match *projection {
-            Projection::Field(n) => subregister.push(SubRegisters::Field(n)),
-            Projection::ConstantIndex { offset, from_end } => {
-                subregister.push(SubRegisters::ConstantIndex { offset, from_end })
-            }
-            Projection::Downcast(_) | Projection::Index(_) => {}
-            Projection::Deref => return None,
-        }
-    }
-    Some(Register {
-        owner: place.local,
-        subregister,
-    })
-}
-
 /// Checks if a register is dead.
 fn is_dead(dead: &DeadRegisters, register: &Register) -> bool {
     (0..=register.subregister.len()).any(|len| {
@@ -141,10 +121,8 @@ fn mark_live(dead: &mut DeadRegisters, register: &Register) {
 }
 
 fn apply_operand(dead: &mut DeadRegisters, operand: &Operand) {
-    if let Operand::Move(place) = operand
-        && let Some(register) = register_of(place)
-    {
-        dead.insert(register);
+    if let Operand::Move(place) = operand {
+        dead.insert(register_of(place));
     }
 }
 
@@ -186,9 +164,7 @@ fn apply_statement(dead: &mut DeadRegisters, stmt: &Statement) {
         }
         StatementKind::Assign(place, rvalue) => {
             apply_rvalue(dead, rvalue);
-            if let Some(register) = register_of(place) {
-                mark_live(dead, &register);
-            }
+            mark_live(dead, &register_of(place));
         }
         StatementKind::PlaceMention(_)
         | StatementKind::SetDiscriminant { .. }
@@ -216,23 +192,17 @@ fn apply_terminator(dead: &mut DeadRegisters, terminator: &Terminator) {
             for arg in args {
                 apply_operand(dead, arg);
             }
-            if let Some(register) = register_of(destination) {
-                mark_live(dead, &register);
-            }
+            mark_live(dead, &register_of(destination));
         }
         TerminatorKind::Drop { place, .. } => {
-            if let Some(register) = register_of(place) {
-                dead.insert(register);
-            }
+            dead.insert(register_of(place));
         }
         TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {}
     }
 }
 
 fn check_read(dead: &DeadRegisters, body: &Body, place: &Place, span: SrcSpan) {
-    let Some(register) = register_of(place) else {
-        return;
-    };
+    let register = register_of(place);
     if is_dead(dead, &register) {
         let name = body.local_decls[register.owner.index()]
             .name
@@ -284,9 +254,7 @@ fn check_statement(dead: &mut DeadRegisters, body: &Body, stmt: &Statement) {
     match &stmt.kind {
         StatementKind::Assign(place, rvalue) => {
             check_rvalue(dead, body, rvalue, stmt.span);
-            if let Some(register) = register_of(place) {
-                mark_live(dead, &register);
-            }
+            mark_live(dead, &register_of(place));
         }
         StatementKind::PlaceMention(place) => {
             check_read(dead, body, place, stmt.span);
@@ -320,9 +288,7 @@ fn check_terminator(dead: &mut DeadRegisters, body: &Body, terminator: &Terminat
             for arg in args {
                 check_operand(dead, body, arg, terminator.span);
             }
-            if let Some(register) = register_of(destination) {
-                mark_live(dead, &register);
-            }
+            mark_live(dead, &register_of(destination));
         }
         TerminatorKind::Drop { .. }
         | TerminatorKind::Goto { .. }
@@ -472,4 +438,70 @@ mod tests {
              }",
         );
     }
+
+    #[test]
+    fn reading_a_field_through_a_pointer_before_any_move_is_fine() {
+        accepts(
+            "struct S { x: i32 }
+             fun f(p: &S) -> i32 { return (*p).x; }",
+        );
+    }
+
+    #[test]
+    fn moving_one_field_through_a_pointer_still_permits_reading_a_sibling_field() {
+        accepts(
+            "struct Inner { v: i32 }
+             struct P { x: Inner, y: Inner }
+             fun f(p: &mut P) {
+                 let x = (*p).x;
+                 let _ = x;
+                 let _ = (*p).y;
+             }",
+        );
+    }
+
+    #[test]
+    fn moving_one_field_through_a_pointer_forbids_reading_that_same_field_again() {
+        rejects(
+            "struct Inner { v: i32 }
+             struct P { x: Inner, y: Inner }
+             fun f(p: &mut P) {
+                 let x = (*p).x;
+                 let _ = x;
+                 let _ = (*p).x;
+             }",
+            "use of moved value `p`",
+        );
+    }
+
+    #[test]
+    fn moving_a_field_through_a_pointer_on_only_one_branch_leaves_it_dead_afterward() {
+        rejects(
+            "struct Inner { v: i32 }
+             struct P { x: Inner, y: Inner }
+             fun f(p: &mut P, cond: bool) {
+                 if cond {
+                     let q = (*p).x;
+                     let _ = q;
+                 }
+                 let _ = (*p).x;
+             }",
+            "use of moved value `p`",
+        );
+    }
+
+    #[test]
+    fn reassigning_a_field_through_a_pointer_after_moving_it_cures_it() {
+        accepts(
+            "struct Inner { v: i32 }
+             struct P { x: Inner, y: Inner }
+             fun f(p: &mut P) {
+                 let q = (*p).x;
+                 let _ = q;
+                 (*p).x = Inner { v: 2 };
+                 let _ = (*p).x;
+             }",
+        );
+    }
+
 }

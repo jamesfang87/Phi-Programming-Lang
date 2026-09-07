@@ -12,6 +12,7 @@ use crate::diagnostics::typeck::traits::method::{
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Res};
 use crate::typeck::Typeck;
+use crate::typeck::expr::DerefContext;
 use crate::typeck::fold;
 use crate::typeck::ty::{Ty, TyKind};
 
@@ -165,7 +166,7 @@ impl<'hir> Typeck<'hir> {
         args: &[HirId],
     ) -> Ty {
         let owner = receiver.owner;
-        let receiver_ty = self.ty_of(receiver);
+        let receiver_ty = self.ty_of_as_place(receiver);
 
         // Step 1: the receiver's type must already be known. Resolution picks a candidate from
         // what the receiver's type is, so unlike a trait bound it cannot defer to a later pass.
@@ -498,6 +499,12 @@ impl<'hir> Typeck<'hir> {
             SelfMode::Move => {
                 if !layers.is_empty() {
                     report_receiver_mode(self.hir, member, mode, span, method);
+                } else if let ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    operand,
+                } = self.hir.expr(receiver).kind
+                {
+                    self.check_deref_as(receiver, operand, span, DerefContext::Value);
                 }
             }
             SelfMode::Immutable => {
@@ -541,7 +548,7 @@ impl<'hir> Typeck<'hir> {
 
     fn check_field(&mut self, base: HirId, member: Ident) -> Ty {
         let owner = base.owner;
-        let base_ty = self.ty_of(base);
+        let base_ty = self.ty_of_as_place(base);
 
         if matches!(self.tcx.kind(base_ty), TyKind::Var(_)) {
             report_receiver_type_unknown(member, self.hir.expr(base).span);

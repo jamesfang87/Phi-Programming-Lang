@@ -290,6 +290,10 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
                 self.table.push_self_unresolved();
                 true
             }
+            None if !matches!(e.self_ty.kind, TyKind::Path { .. }) => {
+                self.table.push_self_unresolved();
+                true
+            }
             _ => false,
         };
 
