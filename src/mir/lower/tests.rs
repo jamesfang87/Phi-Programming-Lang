@@ -637,7 +637,8 @@ fn tuple_index_access_projects_the_written_field() {
 
 #[test]
 fn explicit_deref_of_a_reference_inserts_a_deref_projection() {
-    let (hir, _tcx, _types, program) = lower_mir_src("fun f(p: &i32) -> i32 { return *p; }");
+    let (hir, _tcx, _types, program) =
+        lower_mir_src_with_ops("fun f(p: &i32) -> i32 { return *p; }");
     let body = first_function_body(&program, &hir);
     let found = body
         .basic_blocks

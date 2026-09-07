@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::Mutability;
 use crate::diagnostics::mir::exclusivity::report_exclusivity_violation;
 use crate::driver::source::SrcSpan;
-use crate::mir::checks::borrowck::Register;
-use crate::mir::checks::borrowck::lifetimes::{self, Alias, AliasId, Lifetimes, register_of};
+use crate::mir::checks::borrowck::lifetimes::{self, Alias, AliasId, Lifetimes};
+use crate::mir::checks::borrowck::{Register, register_of};
 use crate::mir::{
     BasicBlock, BasicBlockData, Body, Operand, Place, Rvalue, Statement, StatementKind, Terminator,
     TerminatorKind, lower::Mir,
@@ -59,7 +59,7 @@ fn live_aliases_by_point(
 
 fn registers_conflict(a: &Register, b: &Register) -> bool {
     a.owner == b.owner
-        && (a.subregister.is_empty() || b.subregister.is_empty() || a.subregister == b.subregister)
+        && (a.subregister.starts_with(&b.subregister) || b.subregister.starts_with(&a.subregister))
 }
 
 fn access_kind_for_borrow(mutability: Mutability) -> AccessKind {
@@ -109,9 +109,7 @@ fn check_place_access(
     kind: AccessKind,
     span: SrcSpan,
 ) {
-    if let Some(register) = register_of(place) {
-        check_register_access(body, aliases, live, &register, kind, span);
-    }
+    check_register_access(body, aliases, live, &register_of(place), kind, span);
 }
 
 fn check_operand(
@@ -374,6 +372,184 @@ mod tests {
                  let _ = *r;
              }",
             "cannot use `p`",
+        );
+    }
+
+    #[test]
+    fn reading_a_field_through_a_shared_pointer_with_no_live_borrows_is_fine() {
+        accepts(
+            "struct S { x: i32 }
+             fun f(p: &S) -> i32 { return (*p).x; }",
+        );
+    }
+
+    #[test]
+    fn writing_a_field_through_a_mutable_pointer_with_no_live_borrows_is_fine() {
+        accepts(
+            "struct S { x: i32 }
+             fun f(p: &mut S) { (*p).x = 5; }",
+        );
+    }
+
+    #[test]
+    fn two_shared_borrows_of_the_same_field_through_a_pointer_are_fine() {
+        accepts(
+            "struct S { x: i32 }
+             fun f(p: &S) {
+                 let r = &(*p).x;
+                 let s = &(*p).x;
+                 let _ = *r + *s;
+             }",
+        );
+    }
+
+    #[test]
+    fn borrowing_two_disjoint_fields_through_a_pointer_mutably_at_once_is_fine() {
+        accepts(
+            "struct S { x: i32, y: i32 }
+             fun f(p: &mut S) {
+                 let rx = &mut (*p).x;
+                 let ry = &mut (*p).y;
+                 let _ = *rx;
+                 let _ = *ry;
+             }",
+        );
+    }
+
+    #[test]
+    fn mutably_borrowing_a_field_through_a_pointer_while_a_shared_borrow_of_it_is_alive_is_rejected()
+     {
+        rejects(
+            "struct S { x: i32 }
+             fun f(p: &mut S) {
+                 let r = &(*p).x;
+                 let s = &mut (*p).x;
+                 let _ = *r;
+                 let _ = *s;
+             }",
+            "cannot use `p`",
+        );
+    }
+
+    #[test]
+    fn writing_a_field_through_a_pointer_while_a_shared_borrow_of_that_field_is_alive_is_rejected()
+    {
+        rejects(
+            "struct S { x: i32 }
+             fun f(p: &mut S) {
+                 let r = &(*p).x;
+                 (*p).x = 5;
+                 let _ = *r;
+             }",
+            "cannot use `p`",
+        );
+    }
+
+    #[test]
+    fn an_immutable_reborrow_of_the_whole_pointee_conflicts_with_writing_one_of_its_fields() {
+        rejects(
+            "struct S { x: i32 }
+             fun f(p: &mut S) {
+                 let r = &*p;
+                 (*p).x = 5;
+                 let _ = (*r).x;
+             }",
+            "cannot use `p`",
+        );
+    }
+
+    #[test]
+    fn a_mutable_reborrow_of_the_whole_pointee_conflicts_with_reading_one_of_its_fields() {
+        rejects(
+            "struct S { x: i32 }
+             fun f(p: &mut S) -> i32 {
+                 let r = &mut *p;
+                 let v = (*p).x;
+                 let _ = (*r).x;
+                 return v;
+             }",
+            "cannot use `p`",
+        );
+    }
+
+    #[test]
+    fn a_mutable_borrow_of_a_field_conflicts_with_a_mutable_reborrow_of_the_whole_pointee() {
+        rejects(
+            "struct S { x: i32 }
+             fun f(p: &mut S) {
+                 let r = &mut (*p).x;
+                 let s = &mut *p;
+                 let _ = *r;
+                 let _ = (*s).x;
+             }",
+            "cannot use `p`",
+        );
+    }
+
+    #[test]
+    fn two_immutable_reborrows_of_the_whole_pointee_are_fine() {
+        accepts(
+            "struct S { x: i32 }
+             fun f(p: &S) -> i32 {
+                 let q = &*p;
+                 return (*p).x + (*q).x;
+             }",
+        );
+    }
+
+    #[test]
+    fn a_ref_self_call_through_a_pointer_is_fine_with_another_shared_borrow_alive() {
+        accepts(
+            "struct Counter { n: i32 }
+             extend Counter { fun peek(&self) -> i32 { return self.n; } }
+             fun f(p: &Counter) -> i32 {
+                 let r = &(*p).n;
+                 let v = p.peek();
+                 return v + *r;
+             }",
+        );
+    }
+
+    #[test]
+    fn a_mut_self_call_through_a_pointer_reborrows_the_whole_pointee_and_conflicts_with_a_live_field_borrow()
+     {
+        rejects(
+            "struct Counter { n: i32 }
+             extend Counter { fun bump(&mut self) { self.n = self.n + 1; } }
+             fun f(p: &mut Counter) {
+                 let r = &(*p).n;
+                 p.bump();
+                 let _ = *r;
+             }",
+            "cannot use `p`",
+        );
+    }
+
+    #[test]
+    fn a_ref_self_call_through_a_pointer_conflicts_with_a_live_mutable_field_borrow() {
+        rejects(
+            "struct Counter { n: i32 }
+             extend Counter { fun peek(&self) -> i32 { return self.n; } }
+             fun f(p: &mut Counter) -> i32 {
+                 let r = &mut (*p).n;
+                 let v = p.peek();
+                 let _ = *r;
+                 return v;
+             }",
+            "cannot use `p`",
+        );
+    }
+
+    #[test]
+    fn a_mut_self_call_through_a_pointer_is_fine_once_the_earlier_borrow_is_over() {
+        accepts(
+            "struct Counter { n: i32 }
+             extend Counter { fun bump(&mut self) { self.n = self.n + 1; } }
+             fun f(p: &mut Counter) {
+                 let r = &(*p).n;
+                 let _ = *r;
+                 p.bump();
+             }",
         );
     }
 }

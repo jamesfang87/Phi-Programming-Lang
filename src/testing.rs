@@ -72,7 +72,11 @@ pub const OPS_PREAMBLE: &str = "module core::ops;
      public trait Eq { fun eq(&self, other: &Self) -> bool; }
      public trait Comparable { fun less_than(&self, other: &Self) -> bool; }
      public trait Not { fun not(&self) -> Self; }
+     public trait Copy { fun copy(&self) -> Self; }
      extend bool with Not { fun not(&self) -> Self { return !*self; } }
+     extend bool with Copy { fun copy(&self) -> Self { return *self; } }
+     extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+     extend f64 with Copy { fun copy(&self) -> Self { return *self; } }
      extend i32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
      extend i32 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
      extend i32 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
@@ -88,6 +92,27 @@ pub const OPS_PREAMBLE: &str = "module core::ops;
      extend f64 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
      extend f64 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
      ";
+
+/// Like [`resolve_src`], but with [`OPS_PREAMBLE`] compiled alongside `src` as a second file --
+/// for a fixture that needs a real `Copy` (or other operator trait) impl to exist, such as one
+/// dereferencing a primitive through a reference in a value position, rather than one that only
+/// needs `i32`/`f64`/`bool` to parse and resolve.
+pub fn resolve_src_with_ops(src: &str) -> Hir {
+    // Not `parse_src` twice: `parse_src` clears the interner on every call (via `lex_src`), so
+    // calling it once per file would wipe out the first file's interned symbols before the
+    // second is even parsed. Clear once, up front, the same way `typeck_src_files` does.
+    DiagCtx::clear();
+    Interner::clear();
+    let parse_file = |src: &str| -> ParsedSrcFile {
+        let chars: Vec<char> = src.chars().collect();
+        let offset = SrcMap::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
+        let tokens = Lexer::new(&chars, offset).tokenize();
+        Parser::new().parse(&tokens, offset)
+    };
+    let ast = Ast::new(vec![parse_file(OPS_PREAMBLE), parse_file(src)]);
+    let res = nameres::resolve(&ast);
+    lower_ast(&ast, &res)
+}
 
 // TODO: move this into DiagCtx
 pub fn messages() -> Vec<String> {
@@ -348,7 +373,7 @@ pub fn mir_constck_rejects(src: &str, needle: &str) {
 /// [`lower_mir_src`] documents: a fixture meant to exercise something type checking itself
 /// rejects belongs with [`typeck_rejects`] instead, not here.
 pub fn mir_definite_init_src(src: &str) -> Vec<String> {
-    let hir = resolve_src(src);
+    let hir = resolve_src_with_ops(src);
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
     let diagnostics = DiagCtx::diagnostics();
@@ -389,7 +414,7 @@ pub fn mir_definite_init_rejects(src: &str, needle: &str) {
 }
 
 pub fn mir_exclusivity_src(src: &str) -> Vec<String> {
-    let hir = resolve_src(src);
+    let hir = resolve_src_with_ops(src);
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
     let diagnostics = DiagCtx::diagnostics();
