@@ -221,7 +221,8 @@ fun f() {}";
 
     #[test]
     fn vtable_global_has_size_align_null_drop_and_method_pointer() {
-        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
+        let (hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
         let mut cx = CodegenCtx::new(&llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
@@ -240,8 +241,8 @@ fun f() {}";
             ir.contains("i64 8, i64 4, ptr null"),
             "expected size 8, align 4, and a null drop-glue slot in that order:\n{ir}"
         );
-        let impl_method = mir.vtables[&(point_ty, trait_def)].methods[0]
-            .expect("Point implements greet");
+        let impl_method =
+            mir.vtables[&(point_ty, trait_def)].methods[0].expect("Point implements greet");
         let greet_name = mangle(
             &mir,
             &tcx,
@@ -259,7 +260,8 @@ fun f() {}";
 
     #[test]
     fn unsize_pairs_data_pointer_with_the_matching_vtable() {
-        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
+        let (hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
         let mut cx = CodegenCtx::new(&llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
@@ -287,7 +289,8 @@ fun f() {}";
 
     #[test]
     fn call_dyn_method_loads_the_vtable_slot_and_calls_through_it() {
-        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
+        let (hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
         let mut cx = CodegenCtx::new(&llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);

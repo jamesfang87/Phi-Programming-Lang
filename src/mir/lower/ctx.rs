@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{Ident, Mutability};
+use crate::ast::Ident;
 use crate::driver::cli::Mode;
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId};
@@ -119,17 +119,11 @@ impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn new_local(
         &mut self,
         ty: Ty,
-        mutability: Mutability,
         name: Option<Ident>,
         span: SrcSpan,
     ) -> Local {
         let local = Local::from_usize(self.local_decls.len());
-        self.local_decls.push(LocalDecl {
-            ty,
-            mutability,
-            name,
-            span,
-        });
+        self.local_decls.push(LocalDecl { ty, name, span });
         local
     }
 
@@ -147,7 +141,7 @@ impl<'a> BodyLowerCtx<'a> {
     /// back -- but it is the same scope a `let` local gets, and it means no local in the finished
     /// `Body`, named or not, is ever live without a `StorageLive`/`StorageDead` pair saying so.
     pub(crate) fn new_temp(&mut self, ty: Ty, span: SrcSpan) -> Local {
-        let local = self.new_local(ty, Mutability::Immutable, None, span);
+        let local = self.new_local(ty, None, span);
         self.push_stmt(StatementKind::StorageLive(local), span);
         self.register_exit_obligation(ExitObligation::StorageDead(local));
         local

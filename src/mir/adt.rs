@@ -145,7 +145,15 @@ mod tests {
         };
         assert_eq!(variants.len(), 3);
         assert!(variants[0].field_tys.is_empty(), "A is a unit variant");
-        assert_eq!(variants[1].field_tys.len(), 1, "B: i32 has one payload field");
-        assert_eq!(variants[2].field_tys.len(), 1, "C: {{ x: i64 }} has one record field");
+        assert_eq!(
+            variants[1].field_tys.len(),
+            1,
+            "B: i32 has one payload field"
+        );
+        assert_eq!(
+            variants[2].field_tys.len(),
+            1,
+            "C: {{ x: i64 }} has one record field"
+        );
     }
 }

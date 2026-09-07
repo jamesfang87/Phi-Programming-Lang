@@ -160,18 +160,20 @@ impl Parser {
                             .then(self.kind(TokenKind::CloseCaret))
                             .or_not(),
                     )
-                    .map(|((dyn_tok, path), args): ((Token, Path), Option<(Vec<Ty>, Token)>)| {
-                        let (args, end) = match args {
-                            Some((args, close_tok)) => (args, close_tok.span),
-                            None => (Vec::new(), path.span),
-                        };
+                    .map(
+                        |((dyn_tok, path), args): ((Token, Path), Option<(Vec<Ty>, Token)>)| {
+                            let (args, end) = match args {
+                                Some((args, close_tok)) => (args, close_tok.span),
+                                None => (Vec::new(), path.span),
+                            };
 
-                        Ty {
-                            id: NodeId::next(),
-                            span: dyn_tok.span.merge(end),
-                            kind: TyKind::Dyn { path, args },
-                        }
-                    })
+                            Ty {
+                                id: NodeId::next(),
+                                span: dyn_tok.span.merge(end),
+                                kind: TyKind::Dyn { path, args },
+                            }
+                        },
+                    )
                     .boxed();
 
                 let fun_ty = self

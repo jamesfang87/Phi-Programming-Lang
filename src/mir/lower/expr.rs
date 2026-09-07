@@ -96,7 +96,7 @@ impl<'a> BodyLowerCtx<'a> {
             }
             ExprKind::Literal(_) => {}
             ExprKind::Assign { lhs, rhs } => {
-                self.lower_assign_effect(lhs, rhs, span);
+                self.lower_assign_effect(lhs, rhs);
             }
             ExprKind::AssignOp { op, lhs, rhs } => {
                 self.lower_assign_op_effect(op, lhs, rhs, span);
@@ -109,15 +109,13 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    fn lower_assign_effect(&mut self, lhs: HirId, rhs: HirId, span: SrcSpan) {
+    fn lower_assign_effect(&mut self, lhs: HirId, rhs: HirId) {
         let place = self.lower_place(lhs);
-        self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
         self.lower_expr_into(rhs, place);
     }
 
     fn lower_assign_op_effect(&mut self, op: BinaryOp, lhs: HirId, rhs: HirId, span: SrcSpan) {
         let place = self.lower_place(lhs);
-        self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
         let lhs_ty = self.expr_ty(lhs);
         let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
         let rhs_operand = self.lower_operand(rhs);
@@ -170,13 +168,11 @@ impl<'a> BodyLowerCtx<'a> {
             }
             ExprKind::Assign { lhs, rhs } => {
                 let place = self.lower_place(lhs);
-                self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
                 self.lower_expr_into(rhs, place);
                 self.assign_unit(dest, span);
             }
             ExprKind::AssignOp { op, lhs, rhs } => {
                 let place = self.lower_place(lhs);
-                self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
                 let lhs_ty = self.expr_ty(lhs);
                 let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
                 let rhs_operand = self.lower_operand(rhs);
@@ -210,7 +206,6 @@ impl<'a> BodyLowerCtx<'a> {
                 } else {
                     let place = self.lower_place(operand);
                     if mutability == Mutability::Mutable {
-                        self.push_stmt(StatementKind::CheckMutable(place.clone()), span);
                     }
                     self.assign(dest, Rvalue::Ref { mutability, place }, span);
                 }
@@ -427,7 +422,10 @@ impl<'a> BodyLowerCtx<'a> {
     fn lower_deref_place(&mut self, operand: HirId) -> Place {
         let operand_ty = self.expr_ty(operand);
         let mut place = self.lower_place(operand);
-        if matches!(self.tcx.kind(operand_ty), TyKind::Ref { .. } | TyKind::Iso(_)) {
+        if matches!(
+            self.tcx.kind(operand_ty),
+            TyKind::Ref { .. } | TyKind::Iso(_)
+        ) {
             place.projections.push(Projection::Deref);
         }
         place

@@ -193,7 +193,6 @@ fn check_statement(
         }
         StatementKind::StorageLive(_)
         | StatementKind::StorageDead(_)
-        | StatementKind::CheckMutable(_)
         | StatementKind::WithLend(_) => {}
     }
 }

@@ -1,11 +1,18 @@
+use crate::ast::interner::Interner;
+use crate::ast::{BinaryOp, Literal, UnaryOp};
 use crate::diagnostics::typeck::lower_ty::{
-    report_arg_count, report_dyn_not_a_trait, report_reference_generic_arg, report_self_cycle,
+    report_arg_count, report_array_len_division_by_zero, report_array_len_negative,
+    report_array_len_not_constant, report_array_len_not_usize, report_array_len_overflow,
+    report_dyn_not_a_trait, report_reference_generic_arg, report_self_cycle,
     report_self_outside_item, report_trait_as_ty, report_unexpected_generic_args,
     report_unsized_dyn,
 };
 use crate::diagnostics::typeck::report_any_outside_signature;
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
+use crate::hir::{
+    DefId, ExprKind as HirExprKind, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type,
+};
+use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
 
@@ -45,7 +52,24 @@ impl<'hir> Typeck<'hir> {
             HirTyKind::Array { elem, len } => {
                 let (elem, len) = (*elem, *len);
                 let elem = self.lower_ty(elem);
-                self.tcx.mk_array(elem, len)
+                match len {
+                    None => self.tcx.mk_array(elem, None),
+                    Some(len_id) => {
+                        let len_ty = self.ty_of(len_id);
+                        let usize_ty = self.tcx.mk_prim(PrimTy::Usize);
+                        if let Err(err) = self.unifier.unify(&self.tcx, usize_ty, len_ty) {
+                            report_array_len_not_usize(
+                                self.display_cx(),
+                                err,
+                                self.hir.expr(len_id).span,
+                            );
+                        }
+                        match self.fold_array_len(len_id) {
+                            Some(len) => self.tcx.mk_array(elem, Some(len)),
+                            None => self.tcx.error(),
+                        }
+                    }
+                }
             }
             HirTyKind::Function { params, ret } => {
                 let (hir_params, ret) = (params.clone(), *ret);
@@ -74,6 +98,84 @@ impl<'hir> Typeck<'hir> {
 
     pub fn lower_tys(&mut self, ids: &[HirId]) -> Vec<Ty> {
         ids.iter().map(|&id| self.lower_ty(id)).collect()
+    }
+
+    fn fold_array_len(&mut self, len_id: HirId) -> Option<u64> {
+        let value = self.fold_const_int(len_id)?;
+        let span = self.hir.expr(len_id).span;
+        match u64::try_from(value) {
+            Ok(len) => Some(len),
+            Err(_) => {
+                report_array_len_negative(span);
+                None
+            }
+        }
+    }
+
+    fn fold_const_int(&mut self, id: HirId) -> Option<i128> {
+        let expr = self.hir.expr(id);
+        let span = expr.span;
+        match &expr.kind {
+            HirExprKind::Literal(Literal::Int { value, .. }) => {
+                match Interner::resolve(*value).parse::<i128>() {
+                    Ok(value) => Some(value),
+                    Err(_) => {
+                        report_array_len_overflow(span);
+                        None
+                    }
+                }
+            }
+            HirExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } => {
+                let operand = *operand;
+                let value = self.fold_const_int(operand)?;
+                value.checked_neg().or_else(|| {
+                    report_array_len_overflow(span);
+                    None
+                })
+            }
+            HirExprKind::Binary { op, lhs, rhs } => {
+                let (op, lhs, rhs) = (*op, *lhs, *rhs);
+                let lhs = self.fold_const_int(lhs);
+                let rhs = self.fold_const_int(rhs);
+                let (lhs, rhs) = (lhs?, rhs?);
+                self.fold_const_binary(op, lhs, rhs, span)
+            }
+            _ => {
+                report_array_len_not_constant(span);
+                None
+            }
+        }
+    }
+
+    fn fold_const_binary(
+        &mut self,
+        op: BinaryOp,
+        lhs: i128,
+        rhs: i128,
+        span: SrcSpan,
+    ) -> Option<i128> {
+        if matches!(op, BinaryOp::Div | BinaryOp::Rem) && rhs == 0 {
+            report_array_len_division_by_zero(span);
+            return None;
+        }
+        let folded = match op {
+            BinaryOp::Add => lhs.checked_add(rhs),
+            BinaryOp::Sub => lhs.checked_sub(rhs),
+            BinaryOp::Mul => lhs.checked_mul(rhs),
+            BinaryOp::Div => lhs.checked_div(rhs),
+            BinaryOp::Rem => lhs.checked_rem(rhs),
+            _ => {
+                report_array_len_not_constant(span);
+                return None;
+            }
+        };
+        folded.or_else(|| {
+            report_array_len_overflow(span);
+            None
+        })
     }
 
     fn lower_base(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
@@ -580,6 +682,96 @@ mod tests {
             panic!("any i32 lowers to an Any");
         };
         assert_eq!(checked.kind(*base), &TyKind::Primitive(PrimTy::I32));
+    }
+
+    #[test]
+    fn array_len_rejects_a_non_usize_suffix() {
+        check("fun f(a: [i32; 4_i32]) {}");
+        assert_eq!(
+            diagnostics(),
+            ["mismatched types: expected `usize`, found `i32`"]
+        );
+    }
+
+    #[test]
+    fn an_array_length_literal_is_folded_into_the_type() {
+        let checked = check("fun f(a: [i32; 4]) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        assert!(matches!(
+            checked.kind(params[0]),
+            TyKind::Array { len: Some(4), .. }
+        ));
+        assert_eq!(diagnostics(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn two_arrays_of_the_same_length_are_the_same_type() {
+        let checked = check("fun f(a: [i32; 4], b: [i32; 2 * 2]) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        assert_eq!(params[0], params[1]);
+        assert_eq!(diagnostics(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_array_length_is_folded_through_arithmetic() {
+        for (src, expected) in [
+            ("fun f(a: [i32; 2 * 4]) {}", 8),
+            ("fun f(a: [i32; 8 - 1]) {}", 7),
+            ("fun f(a: [i32; 3 + 4 * 2]) {}", 11),
+            ("fun f(a: [i32; 9 / 3]) {}", 3),
+            ("fun f(a: [i32; 9 % 4]) {}", 1),
+        ] {
+            let checked = check(src);
+            let (params, _) = checked.sig(checked.def("f"));
+            let TyKind::Array { len: Some(len), .. } = checked.kind(params[0]) else {
+                panic!("{src} lowers to a sized array");
+            };
+            assert_eq!(*len, expected, "for {src}");
+            assert_eq!(diagnostics(), Vec::<String>::new(), "for {src}");
+        }
+    }
+
+    #[test]
+    fn an_array_length_that_is_not_a_constant_is_rejected() {
+        check("fun f(n: usize, a: [i32; n]) {}");
+        assert_eq!(diagnostics(), ["array length must be a constant"]);
+    }
+
+    #[test]
+    fn an_array_length_that_calls_a_function_is_rejected() {
+        check("fun len() -> usize { return 4; } fun f(a: [i32; len()]) {}");
+        assert_eq!(diagnostics(), ["array length must be a constant"]);
+    }
+
+    #[test]
+    fn a_negative_array_length_is_rejected() {
+        check("fun f(a: [i32; 3 - 8]) {}");
+        assert_eq!(diagnostics(), ["array length cannot be negative"]);
+    }
+
+    #[test]
+    fn an_array_length_dividing_by_zero_is_rejected() {
+        check("fun f(a: [i32; 4 / 0]) {}");
+        assert_eq!(diagnostics(), ["array length divides by zero"]);
+    }
+
+    #[test]
+    fn an_array_length_that_overflows_is_rejected() {
+        check("fun f(a: [i32; 170141183460469231731687303715884105727 * 2]) {}");
+        assert_eq!(
+            diagnostics(),
+            ["array length overflowed while being evaluated"]
+        );
+    }
+
+    #[test]
+    fn a_rejected_array_length_poisons_the_array_type() {
+        let checked = check("fun f(n: usize, a: [i32; n]) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        assert_eq!(checked.kind(params[1]), &TyKind::Error);
     }
 
     #[test]

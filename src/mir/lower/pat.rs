@@ -102,14 +102,7 @@ impl<'a> BodyLowerCtx<'a> {
             self.test_pat(pat, scrutinee_place.clone(), next);
 
             self.push_block_scope();
-            // A `match` arm's binding has no `mut` syntax of its own, so, like a `for` binding
-            // or a `with` lend, it is left unrestricted; see `StatementKind::CheckMutable`'s own
-            // docs.
-            self.bind_pat(
-                pat,
-                scrutinee_place.clone(),
-                crate::ast::Mutability::Mutable,
-            );
+            self.bind_pat(pat, scrutinee_place.clone());
 
             if let Some(guard_id) = guard {
                 let guard_span = self.hir.expr(guard_id).span;
@@ -262,16 +255,11 @@ impl<'a> BodyLowerCtx<'a> {
 
     /// Binds every name a pattern known to already match introduces. Used both for an
     /// irrefutable `let`/`with` pattern (called directly, with no preceding [`test_pat`]) and
-    /// for a `match`/`if let` candidate that has already passed [`test_pat`]. `mutability` is
-    /// the `mut`-ness every `Binding` leaf this walk reaches is given, per
-    /// `StatementKind::CheckMutable`'s own docs: a `let`'s own declared mutability at a `let`
-    /// call site, and always [`Mutability::Mutable`] (unrestricted) at a `match`/`for`/`with`
-    /// one, none of which has `mut` syntax of its own.
+    /// for a `match`/`if let` candidate that has already passed [`test_pat`].
     pub(crate) fn bind_pat(
         &mut self,
         pat_id: HirId,
         place: Place,
-        mutability: crate::ast::Mutability,
     ) {
         let pat = self.hir.pat(pat_id);
         let span = pat.span;
@@ -280,7 +268,7 @@ impl<'a> BodyLowerCtx<'a> {
             PatKind::Binding { name, .. } => {
                 let name = *name;
                 let ty = self.pat_ty(pat_id);
-                let local = self.new_local(ty, mutability, Some(name), span);
+                let local = self.new_local(ty, Some(name), span);
                 self.push_stmt(StatementKind::StorageLive(local), span);
                 let operand = self.operand_for_place(place, ty);
                 self.assign(Place::from_local(local), Rvalue::Use(operand), span);
@@ -296,14 +284,14 @@ impl<'a> BodyLowerCtx<'a> {
                 payload_place
                     .projections
                     .push(Projection::Downcast(variant_idx));
-                self.bind_payload(ty, variant_idx, payload, payload_place, mutability);
+                self.bind_payload(ty, variant_idx, payload, payload_place);
             }
             PatKind::Tuple(elems) => {
                 let elems = elems.clone();
                 for (i, &elem) in elems.iter().enumerate() {
                     let mut elem_place = place.clone();
                     elem_place.projections.push(Projection::Field(i as u32));
-                    self.bind_pat(elem, elem_place, mutability);
+                    self.bind_pat(elem, elem_place);
                 }
             }
             PatKind::Error => unreachable!("a fully type-checked body contains no PatKind::Error"),
@@ -316,21 +304,20 @@ impl<'a> BodyLowerCtx<'a> {
         variant_idx: VariantIdx,
         payload: &Payload,
         base: Place,
-        mutability: crate::ast::Mutability,
     ) {
         match payload {
             Payload::None => {}
             Payload::Single(pat_id) => {
                 let mut field_place = base;
                 field_place.projections.push(Projection::Field(0));
-                self.bind_pat(*pat_id, field_place, mutability);
+                self.bind_pat(*pat_id, field_place);
             }
             Payload::Record(fields) => {
                 for field in fields {
                     let index = self.record_field_index(enum_ty, variant_idx, field.name.text);
                     let mut field_place = base.clone();
                     field_place.projections.push(Projection::Field(index));
-                    self.bind_pat(field.value, field_place, mutability);
+                    self.bind_pat(field.value, field_place);
                 }
             }
         }

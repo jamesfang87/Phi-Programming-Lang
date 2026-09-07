@@ -1,4 +1,3 @@
-use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, PatKind, StmtKind};
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
@@ -53,15 +52,11 @@ impl<'a> BodyLowerCtx<'a> {
         let span = stmt.span;
         match stmt.kind {
             StmtKind::Let {
-                mutability,
-                pat,
-                init,
-                else_block,
-                ..
+                pat, init, else_block, ..
             } => {
                 let ty = self.expr_ty(init);
                 let diverges = matches!(self.tcx.kind(ty), crate::typeck::ty::TyKind::Never);
-                self.lower_let(mutability, pat, init, else_block, span);
+                self.lower_let(pat, init, else_block, span);
                 diverges
             }
             StmtKind::With { ref lends, block } => {
@@ -119,7 +114,6 @@ impl<'a> BodyLowerCtx<'a> {
     /// needs one to test against before any binding happens.
     fn lower_let(
         &mut self,
-        mutability: Mutability,
         pat: HirId,
         init: HirId,
         else_block: Option<HirId>,
@@ -129,7 +123,7 @@ impl<'a> BodyLowerCtx<'a> {
             && let PatKind::Binding { name, .. } = self.hir.pat(pat).kind
         {
             let init_ty = self.expr_ty(init);
-            let local = self.new_local(init_ty, mutability, Some(name), span);
+            let local = self.new_local(init_ty, Some(name), span);
             self.push_stmt(StatementKind::StorageLive(local), span);
             self.lower_expr_into(init, Place::from_local(local));
             self.bind_local(pat, local);
@@ -138,16 +132,16 @@ impl<'a> BodyLowerCtx<'a> {
         }
 
         let init_ty = self.expr_ty(init);
-        let scrutinee = self.new_local(init_ty, mutability, None, span);
+        let scrutinee = self.new_local(init_ty, None, span);
         self.push_stmt(StatementKind::StorageLive(scrutinee), span);
         self.lower_expr_into(init, Place::from_local(scrutinee));
 
         match else_block {
-            None => self.bind_pat(pat, Place::from_local(scrutinee), mutability),
+            None => self.bind_pat(pat, Place::from_local(scrutinee)),
             Some(else_id) => {
                 let fail_block = self.new_block();
                 self.test_pat(pat, Place::from_local(scrutinee), fail_block);
-                self.bind_pat(pat, Place::from_local(scrutinee), mutability);
+                self.bind_pat(pat, Place::from_local(scrutinee));
                 let after = self.current_block();
 
                 self.switch_to(fail_block);
@@ -173,9 +167,7 @@ impl<'a> BodyLowerCtx<'a> {
                  implemented"
             );
         };
-        // A `with` lend has no `mut` syntax of its own, so, like a `match` arm or a `for`
-        // binding, it is left unrestricted; see `StatementKind::CheckMutable`'s own docs.
-        let local = self.new_local(ty, Mutability::Mutable, Some(name), span);
+        let local = self.new_local(ty, Some(name), span);
         self.push_stmt(StatementKind::StorageLive(local), span);
         self.push_stmt(StatementKind::WithLend(local), span);
         self.lower_expr_into(lend.init, Place::from_local(local));
