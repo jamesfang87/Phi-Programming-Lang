@@ -106,14 +106,7 @@ mod tests {
         let mut cx = CodegenCtx::new(&llvm, "t");
         let locals = std::collections::HashMap::new();
         for operand in &string_constants {
-            lower_operand(
-                &mut cx,
-                &mut tcx,
-                &mir,
-                &locals,
-                &body.local_decls,
-                operand,
-            );
+            lower_operand(&mut cx, &mut tcx, &mir, &locals, &body.local_decls, operand);
         }
 
         let ir = cx.module.print_to_string().to_string();

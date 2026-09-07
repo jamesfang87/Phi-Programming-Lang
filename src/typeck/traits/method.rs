@@ -1239,9 +1239,7 @@ mod tests {
 
     #[test]
     fn a_triple_chained_tuple_index_access_checks() {
-        assert!(
-            check("fun f(t: (i32, (bool, (i32, i32)))) -> i32 { return t.1.1.0; }").is_empty()
-        );
+        assert!(check("fun f(t: (i32, (bool, (i32, i32)))) -> i32 { return t.1.1.0; }").is_empty());
         assert_eq!(
             check("fun f(t: (i32, (bool, (i32, i32)))) -> bool { return t.1.1.0; }"),
             ["mismatched types: expected `bool`, found `i32`"]

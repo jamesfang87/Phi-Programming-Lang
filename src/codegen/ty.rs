@@ -45,8 +45,8 @@ pub fn llvm_type<'ctx>(
         TyKind::Tuple(elems) => struct_llvm_type(cx, tcx, mir, &elems),
         TyKind::Array {
             elem,
-            len: Some(len_id),
-        } => array_llvm_type(cx, tcx, mir, elem, len_id),
+            len: Some(len),
+        } => array_llvm_type(cx, tcx, mir, elem, len),
         TyKind::Adt { def, args } => adt_llvm_type(cx, tcx, mir, def, &args),
         TyKind::Dyn { .. } => two_word_type(cx),
         TyKind::Never => cx.llvm.struct_type(&[], false).into(),
@@ -100,11 +100,10 @@ fn array_llvm_type<'ctx>(
     tcx: &mut TyCtx,
     mir: &Mir,
     elem: Ty,
-    len_id: crate::hir::HirId,
+    len: u64,
 ) -> BasicTypeEnum<'ctx> {
     let elem_ty = llvm_type(cx, tcx, mir, elem);
-    let len = layout::array_len(mir, len_id) as u32;
-    elem_ty.array_type(len).into()
+    elem_ty.array_type(len as u32).into()
 }
 
 fn adt_llvm_type<'ctx>(
@@ -276,12 +275,11 @@ mod tests {
     #[test]
     fn fixed_array_is_an_llvm_array() {
         let llvm = inkwell::context::Context::create();
-        let (hir, mut tcx, _types, mir, _instances) =
+        let (_hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("fun f(a: [i32; 4]) {}");
         let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
-        let array_len_id = find_array_len_id(&hir);
-        let arr = tcx.mk_array(i32_ty, Some(array_len_id));
+        let arr = tcx.mk_array(i32_ty, Some(4));
         let got = llvm_type(&cx, &mut tcx, &mir, arr);
         assert_eq!(got, llvm.i32_type().array_type(4).into());
     }
@@ -364,22 +362,6 @@ mod tests {
         assert_eq!(fn_ty.get_return_type(), Some(llvm.i32_type().into()));
     }
 
-    fn find_array_len_id(hir: &crate::hir::Hir) -> crate::hir::HirId {
-        for def_id in hir.def_ids() {
-            if let crate::hir::OwnerNode::Function(function) = hir.def(def_id) {
-                for &param_id in &function.params {
-                    let param = hir.param(param_id);
-                    if let crate::hir::TyKind::Array {
-                        len: Some(len_id), ..
-                    } = &hir.ty(param.ty).kind
-                    {
-                        return *len_id;
-                    }
-                }
-            }
-        }
-        panic!("no array-typed parameter found");
-    }
 
     fn find_struct_def(hir: &crate::hir::Hir, name: &str) -> crate::hir::DefId {
         for def_id in hir.def_ids() {

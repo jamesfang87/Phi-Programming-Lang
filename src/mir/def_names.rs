@@ -31,7 +31,12 @@ impl DefNames {
 pub(crate) fn collect_def_names(hir: &Hir) -> DefNames {
     let leaf: HashMap<DefId, String> = hir
         .def_ids()
-        .map(|def_id| (def_id, replace_non_alphanumeric_chars(&def_name(hir, def_id))))
+        .map(|def_id| {
+            (
+                def_id,
+                replace_non_alphanumeric_chars(&def_name(hir, def_id)),
+            )
+        })
         .collect();
 
     let ancestor_path = hir
@@ -48,7 +53,10 @@ pub(crate) fn collect_def_names(hir: &Hir) -> DefNames {
         })
         .collect();
 
-    DefNames { leaf, ancestor_path }
+    DefNames {
+        leaf,
+        ancestor_path,
+    }
 }
 
 fn def_name(hir: &Hir, def: DefId) -> String {

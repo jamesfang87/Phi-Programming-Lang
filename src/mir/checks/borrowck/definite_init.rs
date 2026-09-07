@@ -168,7 +168,6 @@ fn apply_statement(dead: &mut DeadRegisters, stmt: &Statement) {
         }
         StatementKind::PlaceMention(_)
         | StatementKind::SetDiscriminant { .. }
-        | StatementKind::CheckMutable(_)
         | StatementKind::WithLend(_) => {}
     }
 }
@@ -262,7 +261,6 @@ fn check_statement(dead: &mut DeadRegisters, body: &Body, stmt: &Statement) {
         StatementKind::StorageLive(_)
         | StatementKind::StorageDead(_)
         | StatementKind::SetDiscriminant { .. }
-        | StatementKind::CheckMutable(_)
         | StatementKind::WithLend(_) => apply_statement(dead, stmt),
     }
 }
@@ -503,5 +501,4 @@ mod tests {
              }",
         );
     }
-
 }

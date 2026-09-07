@@ -1,5 +1,5 @@
-use crate::mir::{Local, Place, Projection};
 use crate::mir::lower::Mir;
+use crate::mir::{Local, Place, Projection};
 
 pub(crate) mod definite_init;
 pub(crate) mod exclusivity;

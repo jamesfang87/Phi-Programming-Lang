@@ -2,6 +2,7 @@ use crate::diagnostics::typeck::display::DisplayCx;
 use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::typeck::ty::Ty;
+use crate::typeck::unify::UnifyError;
 
 pub fn report_unexpected_generic_args(kind: &str, span: SrcSpan) {
     DiagCtx::emit(
@@ -71,6 +72,43 @@ pub fn report_unsized_dyn(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
                  `&dyn Trait` (or `&mut dyn Trait`) to borrow it, or `iso dyn Trait` to own it \
                  behind a pointer",
         ),
+    );
+}
+
+pub fn report_array_len_not_usize(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(cx.show(err).to_string(), span)
+            .with_label("the length in `[T; N]` is a `usize`"),
+    );
+}
+
+pub fn report_array_len_not_constant(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("array length must be a constant", span)
+            .with_label("not a constant")
+            .with_help(
+                "the length in `[T; N]` is part of the type, so it has to be known at \
+                 compile time; write an integer literal or an expression built from them",
+            ),
+    );
+}
+
+pub fn report_array_len_negative(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("array length cannot be negative", span).with_label("negative length"),
+    );
+}
+
+pub fn report_array_len_overflow(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("array length overflowed while being evaluated", span)
+            .with_label("does not fit in a `usize`"),
+    );
+}
+
+pub fn report_array_len_division_by_zero(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("array length divides by zero", span).with_label("divisor is zero"),
     );
 }
 

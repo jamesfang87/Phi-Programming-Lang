@@ -145,7 +145,6 @@ mod tests {
         locals.insert(local, alloca);
         let local_decls = vec![LocalDecl {
             ty: adt,
-            mutability: Mutability::Mutable,
             name: None,
             span: SrcSpan::new(0, 0),
         }];
@@ -181,7 +180,6 @@ mod tests {
         locals.insert(local, alloca);
         let local_decls = vec![LocalDecl {
             ty: ref_ty,
-            mutability: Mutability::Immutable,
             name: None,
             span: SrcSpan::new(0, 0),
         }];
@@ -217,7 +215,6 @@ mod tests {
         locals.insert(local, alloca);
         let local_decls = vec![LocalDecl {
             ty: adt,
-            mutability: Mutability::Mutable,
             name: None,
             span: SrcSpan::new(0, 0),
         }];

@@ -28,9 +28,12 @@ fn mangle_ty(mir: &Mir, tcx: &TyCtx, ty: Ty) -> String {
     match tcx.kind(ty).clone() {
         TyKind::Primitive(prim) => format!("{prim:?}"),
         TyKind::Adt { def, args } => join_args(mir.def_names.leaf(def), &args, mir, tcx),
-        TyKind::Dyn { trait_, args } => {
-            join_args(&format!("dyn_{}", mir.def_names.leaf(trait_)), &args, mir, tcx)
-        }
+        TyKind::Dyn { trait_, args } => join_args(
+            &format!("dyn_{}", mir.def_names.leaf(trait_)),
+            &args,
+            mir,
+            tcx,
+        ),
         TyKind::Ref { base, mutability } => {
             let prefix = if mutability == Mutability::Mutable {
                 "refmut_"

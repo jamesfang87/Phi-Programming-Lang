@@ -42,7 +42,7 @@ pub enum TyKind {
     Tuple(Vec<Ty>),
     Array {
         elem: Ty,
-        len: Option<HirId>, // -> Node::Expr, the constant expression `N`
+        len: Option<u64>,
     },
     Fun {
         params: Vec<Ty>,

@@ -141,7 +141,6 @@ fn process_body(
     for decl in &generic_body.local_decls {
         body.local_decls.push(crate::mir::LocalDecl {
             ty: subst::subst_ty(tcx, decl.ty, subst),
-            mutability: decl.mutability,
             name: decl.name,
             span: decl.span,
         });
@@ -264,9 +263,7 @@ fn subst_rvalue(
         }
         Rvalue::Discriminant(place) => Rvalue::Discriminant(place),
         Rvalue::Len(place) => Rvalue::Len(place),
-        Rvalue::New(operand) => {
-            Rvalue::New(subst_operand(tcx, operand, subst, output, discovered))
-        }
+        Rvalue::New(operand) => Rvalue::New(subst_operand(tcx, operand, subst, output, discovered)),
         Rvalue::NewArray { elem, count } => Rvalue::NewArray {
             elem: subst_operand(tcx, elem, subst, output, discovered),
             count: subst_operand(tcx, count, subst, output, discovered),

@@ -166,10 +166,9 @@ fn size_align_of(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> (u64, u64) {
         TyKind::Dyn { .. } => (16, 8),
         TyKind::Array {
             elem,
-            len: Some(len_id),
+            len: Some(len),
         } => {
             let (elem_size, elem_align) = size_align_of(tcx, mir, elem);
-            let len = array_len(mir, len_id);
             (round_up(elem_size, elem_align) * len, elem_align)
         }
         TyKind::Array { len: None, .. } => {
@@ -198,15 +197,6 @@ pub(super) fn is_unsized(tcx: &TyCtx, ty: Ty) -> bool {
         tcx.kind(ty),
         TyKind::Dyn { .. } | TyKind::Array { len: None, .. }
     )
-}
-
-pub(super) fn array_len(mir: &Mir, len_id: HirId) -> u64 {
-    mir.array_lens.get(&len_id).copied().unwrap_or_else(|| {
-        panic!(
-            "array_len: {len_id:?} was never recorded -- mir::lower::collect_array_lens is \
-             expected to evaluate every array type's length up front"
-        )
-    })
 }
 
 fn round_up(offset: u64, align: u64) -> u64 {

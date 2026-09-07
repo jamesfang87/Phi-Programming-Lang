@@ -39,7 +39,10 @@ pub enum Rvalue {
     /// Allocates storage for `count` elements and initializes every one of them to `elem`,
     /// producing `iso [T]`. `count` is a `usize` operand, so the length is not required to be a
     /// constant.
-    NewArray { elem: Operand, count: Operand },
+    NewArray {
+        elem: Operand,
+        count: Operand,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::ast::{Ident, Mutability};
+use crate::ast::Ident;
 use crate::driver::source::SrcSpan;
 use crate::hir::DefId;
 use crate::mir::ids::BasicBlock;
@@ -53,7 +53,6 @@ impl Predecessors {
 #[derive(Debug)]
 pub struct LocalDecl {
     pub ty: Ty,
-    pub mutability: Mutability,
     /// `name` is the source name of a user-written local. It is `None` for a compiler-introduced temporary.
     pub name: Option<Ident>,
     pub span: SrcSpan,

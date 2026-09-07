@@ -1396,7 +1396,10 @@ mod tests {
         let expr = parse_expr("new 1");
         match &expr.kind {
             ExprKind::New(operand) => {
-                assert!(matches!(operand.kind, ExprKind::Literal(Literal::Int { .. })));
+                assert!(matches!(
+                    operand.kind,
+                    ExprKind::Literal(Literal::Int { .. })
+                ));
             }
             other => panic!("expected a new expr, got {other:?}"),
         }

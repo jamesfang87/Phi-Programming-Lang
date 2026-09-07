@@ -34,6 +34,7 @@ pub mod cast;
 pub mod expr;
 pub mod fold;
 pub mod lower_ty;
+pub mod mutability;
 pub mod pat;
 pub mod results;
 pub mod traits;
@@ -817,6 +818,7 @@ pub fn check(hir: &Hir) -> TypeckOutput {
     checker.check_extend_headers();
     checker.check_module(hir.root_id());
     checker.select_obligations();
+    mutability::check(hir, &checker.tcx, &checker.types);
     TypeckOutput {
         tcx: checker.tcx,
         types: checker.types,

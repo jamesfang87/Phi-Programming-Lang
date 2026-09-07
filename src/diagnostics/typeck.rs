@@ -1,6 +1,7 @@
 pub mod display;
 pub mod expr;
 pub mod lower_ty;
+pub mod mutability;
 pub mod pat;
 pub mod traits;
 
@@ -76,7 +77,6 @@ pub fn report_logic_op_needs_bool_operands(
     );
 }
 
-
 pub fn report_unknown_literal_suffix(suffix: Symbol, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(
@@ -125,7 +125,10 @@ pub fn report_body_return_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: Src
 pub fn report_any_outside_signature(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(
-            format!("`any` may only appear in a parameter or return type, found `{}`", cx.show(ty)),
+            format!(
+                "`any` may only appear in a parameter or return type, found `{}`",
+                cx.show(ty)
+            ),
             span,
         )
         .with_label("this type carries `any` outside a function signature")

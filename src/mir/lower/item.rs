@@ -44,23 +44,20 @@ impl<'a> BodyLowerCtx<'a> {
     ) -> Body {
         let ret_ty = self.return_ty(any_mode);
         // Slot 0: the return place, by the convention every `Body` follows.
-        self.new_local(ret_ty, Mutability::Mutable, None, span);
+        self.new_local(ret_ty, None, span);
 
         if let Some(self_id) = self_param {
             let ty = self.resolve_any(
                 self.types.ty(self_id).expect("self param is typed"),
                 any_mode,
             );
-            // A parameter, `self` included, has no `let`/`let mut` of its own to restrict it, so
-            // it is unrestricted by `mir::checks::constck` -- matching every other binding besides a
-            // plain `let`'s; see `StatementKind::CheckMutable`'s own docs.
-            let local = self.new_local(ty, Mutability::Mutable, None, span);
+            let local = self.new_local(ty, None, span);
             self.bind_local(self_id, local);
         }
         for &param_id in params {
             let ty = self.resolve_any(self.types.ty(param_id).expect("param is typed"), any_mode);
             let name = self.hir.param(param_id).name;
-            let local = self.new_local(ty, Mutability::Mutable, Some(name), span);
+            let local = self.new_local(ty, Some(name), span);
             self.bind_local(param_id, local);
         }
         let arg_count = usize::from(self_param.is_some()) + params.len();
@@ -80,19 +77,16 @@ impl<'a> BodyLowerCtx<'a> {
         span: crate::driver::source::SrcSpan,
     ) -> Body {
         let ret_ty = self.return_ty(None);
-        self.new_local(ret_ty, Mutability::Mutable, None, span);
+        self.new_local(ret_ty, None, span);
 
         let captures = self.captures_of(self.def_id);
         let env_ty = self.environment_ty(&captures);
-        // The environment packs every capture into one local regardless of the mutability each
-        // was originally bound with, so it is left unrestricted rather than restricting every
-        // capture alike; see `StatementKind::CheckMutable`'s own docs for what this pass checks.
-        let env_local = self.new_local(env_ty, Mutability::Mutable, None, span);
+        let env_local = self.new_local(env_ty, None, span);
 
         for &param_id in params {
             let ty = self.types.ty(param_id).expect("closure param is typed");
             let name = self.hir.closure_param(param_id).name;
-            let local = self.new_local(ty, Mutability::Mutable, Some(name), span);
+            let local = self.new_local(ty, Some(name), span);
             self.bind_local(param_id, local);
         }
         let arg_count = 1 + params.len();
