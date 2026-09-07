@@ -3,7 +3,7 @@ use std::ops::Range;
 
 use crate::ast::Mutability;
 use crate::hir::DefId;
-use crate::mir::checks::borrowck::{Register, SubRegisters};
+use crate::mir::checks::borrowck::{Register, SubRegisters, register_of};
 use crate::mir::checks::lattice;
 use crate::mir::ids::StatementId;
 use crate::mir::{
@@ -38,6 +38,8 @@ pub struct Lifetimes {
     pub live_ranges: HashMap<AliasId, HashMap<BasicBlock, Range<usize>>>,
 }
 
+/// Variables (and fields or indicies) allow the extension
+/// of the lifetime of Aliases.
 /// For this Register, which Alias does it currently hold?
 type HeldAliases = HashMap<Register, AliasId>;
 type HeldAliasesLattice = lattice::Lattice<BasicBlock, HeldAliases>;
@@ -65,34 +67,16 @@ pub fn compute_lifetimes(body: &Body) -> Lifetimes {
     }
 }
 
-pub(crate) fn register_of(place: &Place) -> Option<Register> {
-    let mut subregister = Vec::with_capacity(place.projections.len());
-    for projection in &place.projections {
-        match *projection {
-            Projection::Field(n) => subregister.push(SubRegisters::Field(n)),
-            Projection::ConstantIndex { offset, from_end } => {
-                subregister.push(SubRegisters::ConstantIndex { offset, from_end })
-            }
-            Projection::Downcast(_) | Projection::Index(_) => {}
-            Projection::Deref => return None,
-        }
-    }
-    Some(Register {
-        owner: place.local,
-        subregister,
-    })
-}
-
-fn leading_register(place: &Place) -> Register {
+fn owning_register_of(place: &Place) -> Register {
     let mut subregister = Vec::new();
     for projection in &place.projections {
         match *projection {
+            Projection::Deref => break,
             Projection::Field(n) => subregister.push(SubRegisters::Field(n)),
-            Projection::ConstantIndex { offset, from_end } => {
-                subregister.push(SubRegisters::ConstantIndex { offset, from_end })
+            Projection::ConstantIndex(offset) => {
+                subregister.push(SubRegisters::ConstantIndex(offset))
             }
             Projection::Downcast(_) | Projection::Index(_) => {}
-            Projection::Deref => break,
         }
     }
     Register {
@@ -108,18 +92,8 @@ fn place_needs_deref(place: &Place) -> bool {
         .any(|projection| matches!(projection, Projection::Deref))
 }
 
-fn is_birth_of_alias(stmt: &Statement) -> bool {
-    if let StatementKind::Assign(
-        place,
-        Rvalue::Ref {
-            place: borrowed, ..
-        },
-    ) = &stmt.kind
-    {
-        register_of(place).is_some() && register_of(borrowed).is_some()
-    } else {
-        false
-    }
+fn creates_alias(stmt: &Statement) -> bool {
+    matches!(&stmt.kind, StatementKind::Assign(_, Rvalue::Ref { .. }))
 }
 
 fn remove_local_from_held_aliases(held: &mut HeldAliases, local: Local) {
@@ -152,15 +126,13 @@ fn collect_alias_births(body: &Body) -> HashMap<AliasId, Alias> {
                     place: borrowed,
                 },
             ) = &stmt.kind
-                && register_of(place).is_some()
-                && let Some(borrowed_register) = register_of(borrowed)
             {
                 aliases.insert(
                     stmt.id,
                     Alias {
                         id: stmt.id,
                         attached: HashSet::new(),
-                        borrows: borrowed_register,
+                        borrows: register_of(borrowed),
                         kind: *mutability,
                         with_lend: pending_with_lend.remove(&place.local),
                     },
@@ -245,31 +217,17 @@ fn apply_statement_to_held_aliases(held: &mut HeldAliases, stmt: &Statement) {
             remove_local_from_held_aliases(held, *local);
         }
         StatementKind::Assign(place, rvalue) => {
-            let Some(place_register) = register_of(place) else {
-                // The target is reached through a Deref/Index, so this write lands somewhere
-                // this pass doesn't track storage for; no local's held alias changes.
-                return;
-            };
+            let place_register = register_of(place);
 
             match rvalue {
-                Rvalue::Ref {
-                    place: borrowed, ..
-                } => {
-                    if register_of(borrowed).is_some() {
-                        held.insert(place_register, stmt.id);
-                    } else {
-                        // An untrackable borrow (a reborrow through a pointer, or of a dynamic
-                        // index) still overwrites place_register with something that isn't a
-                        // tracked alias.
-                        remove_register_from_held_aliases(held, &place_register);
-                    }
+                Rvalue::Ref { .. } => {
+                    held.insert(place_register, stmt.id);
                 }
                 // Below is for copies and moves of already held borrows
                 Rvalue::Use(Operand::Copy(src)) => {
                     // Check whether what we are assigning with is a borrow
                     // that already has been linked
-                    let held_by_src =
-                        register_of(src).and_then(|register| held.get(&register).copied());
+                    let held_by_src = held.get(&register_of(src)).copied();
                     match held_by_src {
                         Some(alias) => {
                             // Reassign to the new borrow
@@ -283,7 +241,7 @@ fn apply_statement_to_held_aliases(held: &mut HeldAliases, stmt: &Statement) {
                     }
                 }
                 Rvalue::Use(Operand::Move(src)) => {
-                    let held_by_src = register_of(src).and_then(|register| held.remove(&register));
+                    let held_by_src = held.remove(&register_of(src));
                     match held_by_src {
                         Some(alias) => {
                             held.insert(place_register, alias);
@@ -312,14 +270,10 @@ fn apply_statement_to_held_aliases(held: &mut HeldAliases, stmt: &Statement) {
 fn apply_terminator_to_held_aliases(held: &mut HeldAliases, terminator: &Terminator) {
     match &terminator.kind {
         TerminatorKind::Call { destination, .. } => {
-            if let Some(register) = register_of(destination) {
-                remove_register_from_held_aliases(held, &register);
-            }
+            remove_register_from_held_aliases(held, &register_of(destination));
         }
         TerminatorKind::Drop { place, .. } => {
-            if let Some(register) = register_of(place) {
-                remove_register_from_held_aliases(held, &register);
-            }
+            remove_register_from_held_aliases(held, &register_of(place));
         }
         TerminatorKind::Goto { .. }
         | TerminatorKind::SwitchInt { .. }
@@ -372,7 +326,7 @@ fn held_aliases_before_each_statement(
 }
 
 fn mark_place_alias_used(held: &HeldAliases, place: &Place, used: &mut LiveAliasSet) {
-    let register = leading_register(place);
+    let register = owning_register_of(place);
     if let Some(&alias) = held.get(&register) {
         used.insert(alias);
     }
@@ -508,7 +462,7 @@ fn compute_live_aliases(body: &Body, held_aliases: &HeldAliasesLattice) -> LiveA
                 &mut current,
             );
             for (index, stmt) in block.statements.iter().enumerate().rev() {
-                if is_birth_of_alias(stmt) {
+                if creates_alias(stmt) {
                     current.remove(&stmt.id);
                 }
                 mark_statement_aliases_used(&held_states[index], stmt, &mut current);
@@ -550,7 +504,7 @@ fn live_aliases_before_each_statement(
     );
     before_each[block.statements.len()] = current.clone();
     for (index, stmt) in block.statements.iter().enumerate().rev() {
-        if is_birth_of_alias(stmt) {
+        if creates_alias(stmt) {
             current.remove(&stmt.id);
             before_each[index + 1].insert(stmt.id);
         }
@@ -614,10 +568,10 @@ mod tests {
     use crate::mir::BasicBlock;
     use crate::mir::checks::borrowck::lifetimes::compute_lifetimes;
     use crate::mir::lower::Mir;
-    use crate::testing::{first_function, resolve_src};
+    use crate::testing::{first_function, resolve_src_with_ops};
 
     fn lower_mir_src(src: &str) -> (Hir, Mir) {
-        let hir = resolve_src(src);
+        let hir = resolve_src_with_ops(src);
         DiagCtx::clear();
         let checked = crate::typeck::check(&hir);
         let diagnostics = DiagCtx::diagnostics();

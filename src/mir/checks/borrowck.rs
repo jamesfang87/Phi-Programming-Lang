@@ -1,4 +1,4 @@
-use crate::mir::Local;
+use crate::mir::{Local, Place, Projection};
 use crate::mir::lower::Mir;
 
 pub(crate) mod definite_init;
@@ -16,8 +16,27 @@ pub struct Register {
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub enum SubRegisters {
+    Deref,
     Field(u32),
-    ConstantIndex { offset: u32, from_end: bool },
+    ConstantIndex(u32),
+}
+
+pub(crate) fn register_of(place: &Place) -> Register {
+    let mut subregister = Vec::with_capacity(place.projections.len());
+    for projection in &place.projections {
+        match *projection {
+            Projection::Deref => subregister.push(SubRegisters::Deref),
+            Projection::Field(n) => subregister.push(SubRegisters::Field(n)),
+            Projection::ConstantIndex(offset) => {
+                subregister.push(SubRegisters::ConstantIndex(offset))
+            }
+            Projection::Downcast(_) | Projection::Index(_) => {}
+        }
+    }
+    Register {
+        owner: place.local,
+        subregister,
+    }
 }
 
 pub fn check(mir: &Mir) {

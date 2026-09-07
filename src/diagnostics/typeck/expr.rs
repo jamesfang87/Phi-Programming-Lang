@@ -55,6 +55,21 @@ pub fn report_deref_not_a_reference(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
     );
 }
 
+pub fn report_move_out_of_reference(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!("cannot move a value of type `{}` out of a reference", cx.show(ty)),
+            span,
+        )
+        .with_label("this reference does not own the value it points to")
+        .with_help(
+            "a `&T`/`&mut T` you don't own can only be read through, not moved out of -- \
+                 implement `Copy` for the type, or dereference an owned pointer (`iso T`) \
+                 instead",
+        ),
+    );
+}
+
 // -----------------------------------------------------------------
 // Indexing
 // -----------------------------------------------------------------

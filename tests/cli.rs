@@ -395,6 +395,65 @@ fn addition_computes_the_correct_value() {
     assert_eq!(stdout(&output), "computed-3");
 }
 
+/// `core::ops::Copy` is implemented for every scalar primitive via a plain `*self` read, not
+/// just derived implicitly -- calling `.copy()` explicitly exercises the real trait method
+/// (`extend i32 with Copy { .. }` in `lib/core/ops.phi`), not merely `i32`'s ordinary by-value
+/// semantics, and confirms it returns a value equal to the original.
+#[test]
+fn calling_copy_on_a_primitive_returns_an_equal_value() {
+    let dir = scratch("copy_on_primitive");
+    write_manifest(&dir, "copy_on_primitive");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         fun main() {\n    \
+             let a: i32 = 42;\n    \
+             let b = a.copy();\n    \
+             if b == 42 {\n        \
+                 core::io::write_bytes(1, \"copy-ok\" as &[u8]);\n    \
+             } else {\n        \
+                 core::io::write_bytes(1, \"copy-bad\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "copy-ok");
+}
+
+/// `str` shares `&[u8]`'s representation (a ptr+len wide pointer, not owned data -- see
+/// `TyCtx::contains_ref`'s doc comment), so it gets `Copy` the same direct way a scalar
+/// primitive does: duplicating the wide pointer is exactly `*self`, no special-casing needed.
+#[test]
+fn calling_copy_on_a_str_returns_an_equal_value() {
+    let dir = scratch("copy_on_str");
+    write_manifest(&dir, "copy_on_str");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         fun main() {\n    \
+             let a: str = \"hello\";\n    \
+             let b = a.copy();\n    \
+             core::io::write_bytes(1, b as &[u8]);\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "hello");
+}
+
 /// Item 3: `if`/`else` selects the branch a runtime comparison actually calls for, not just
 /// whichever branch codegen happens to emit first. `5 > 10` is false, so the correct run takes
 /// the `else` arm; a codegen bug that inverted the branch condition (or a `br` that jumped to

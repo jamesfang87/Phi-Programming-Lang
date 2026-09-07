@@ -21,6 +21,7 @@ use crate::hir::{
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
 use crate::nameres::symbol_table::prim_ty;
+use crate::typeck::expr::DerefContext;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::bounds::Obligation;
 use crate::typeck::traits::index::ExtendIndex;
@@ -261,6 +262,28 @@ impl<'hir> Typeck<'hir> {
         let ty = self.check_expr(id, expected);
         self.types.record(id, ty);
         self.unifier.find_deep(&mut self.tcx, ty)
+    }
+
+    fn ty_of_as_place(&mut self, id: HirId) -> Ty {
+        self.ty_of_as_place_expecting(id, None)
+    }
+
+    fn ty_of_as_place_expecting(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
+        if let Some(ty) = self.types.ty(id) {
+            return self.unifier.find_deep(&mut self.tcx, ty);
+        }
+        let expr = self.hir.expr(id);
+        if let ExprKind::Unary {
+            op: UnaryOp::Deref,
+            operand,
+        } = expr.kind
+        {
+            let span = expr.span;
+            let ty = self.check_deref_as(id, operand, span, DerefContext::Place);
+            self.types.record(id, ty);
+            return self.unifier.find_deep(&mut self.tcx, ty);
+        }
+        self.ty_of_expecting(id, expected)
     }
 
     fn writeback(&mut self, owner: DefId) {
@@ -1764,7 +1787,9 @@ mod tests {
         accepts(
             "module core::ops;
              public trait Add { fun add(&self, other: &Self) -> Self; }
+             public trait Copy { fun copy(&self) -> Self; }
              extend i32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+             extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
              fun f(x: i32) -> i32 { return x + 1; }",
         );
     }
