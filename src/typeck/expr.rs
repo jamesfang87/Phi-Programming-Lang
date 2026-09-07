@@ -12,12 +12,12 @@ use crate::diagnostics::typeck::expr::{
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
     report_missing_fields, report_move_out_of_reference, report_new_array_count_not_usize,
-    report_no_range_type, report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
-    report_not_assignable, report_not_indexable, report_not_try, report_panic_message_not_str,
-    report_private_field, report_range_endpoints_mismatch, report_record_field_unknown,
-    report_reference_in_new, report_try_error_mismatch, report_try_operand_unknown,
-    report_try_outside, report_try_return_mismatch, report_variant_enum_unknown,
-    report_variant_expr_payload_shape, report_variant_missing_fields,
+    report_no_range_type, report_no_such_field, report_no_such_variant,
+    report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_try,
+    report_panic_message_not_str, report_private_field, report_range_endpoints_mismatch,
+    report_record_field_unknown, report_reference_in_new, report_try_error_mismatch,
+    report_try_operand_unknown, report_try_outside, report_try_return_mismatch,
+    report_variant_enum_unknown, report_variant_expr_payload_shape, report_variant_missing_fields,
     report_variant_payload_mismatch,
 };
 use crate::diagnostics::typeck::report_any_outside_signature;
@@ -146,7 +146,10 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn deref_mode(&mut self, ty: Ty, owner: DefId) -> DerefMode {
-        if matches!(self.tcx.kind(ty), TyKind::Var(TyVar::Int(_) | TyVar::Float(_))) {
+        if matches!(
+            self.tcx.kind(ty),
+            TyKind::Var(TyVar::Int(_) | TyVar::Float(_))
+        ) {
             return DerefMode::Copy;
         }
         if self.holds_lang_trait(LangItem::Drop, ty, owner) {
@@ -634,8 +637,10 @@ impl<'hir> Typeck<'hir> {
         // is a reference to a slice, not a primitive, so it has to be special-cased ahead of the
         // "target must be primitive" check below. The reverse, `&[u8] as str`, is not accepted
         // here or anywhere else: it would assert a UTF-8 property this compiler cannot check.
-        if matches!(self.tcx.kind(operand_resolved), TyKind::Primitive(PrimTy::Str))
-            && self.is_byte_slice_ref(target_resolved)
+        if matches!(
+            self.tcx.kind(operand_resolved),
+            TyKind::Primitive(PrimTy::Str)
+        ) && self.is_byte_slice_ref(target_resolved)
         {
             return target_ty;
         }

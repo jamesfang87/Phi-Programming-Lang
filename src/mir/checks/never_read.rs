@@ -148,7 +148,6 @@ fn apply_statement(unread: &mut UnreadLocals, stmt: &Statement) {
             apply_place(unread, place);
         }
         StatementKind::SetDiscriminant { .. }
-        | StatementKind::CheckMutable(_)
         | StatementKind::WithLend(_) => {}
     }
 }
@@ -204,7 +203,6 @@ fn check_statement(unread: &mut UnreadLocals, body: &Body, stmt: &Statement) {
         StatementKind::StorageLive(_)
         | StatementKind::PlaceMention(_)
         | StatementKind::SetDiscriminant { .. }
-        | StatementKind::CheckMutable(_)
         | StatementKind::WithLend(_) => apply_statement(unread, stmt),
     }
 }

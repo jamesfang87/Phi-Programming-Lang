@@ -87,7 +87,7 @@ impl TyCtx {
         self.intern(TyKind::Tuple(elems))
     }
 
-    pub fn mk_array(&mut self, elem: Ty, len: Option<HirId>) -> Ty {
+    pub fn mk_array(&mut self, elem: Ty, len: Option<u64>) -> Ty {
         self.intern(TyKind::Array { elem, len })
     }
 

@@ -194,7 +194,6 @@ fn lower_statement<'ctx>(
         StatementKind::StorageLive(_)
         | StatementKind::StorageDead(_)
         | StatementKind::PlaceMention(_)
-        | StatementKind::CheckMutable(_)
         | StatementKind::WithLend(_) => {}
     }
 }
@@ -270,7 +269,7 @@ fn lower_rvalue<'ctx>(
                 .build_load(tag_llvm_ty, tag_ptr, "discr")
                 .unwrap()
         }
-        Rvalue::Len(place_) => lower_len(cx, tcx, mir, locals, local_decls, place_),
+        Rvalue::Len(place_) => lower_len(cx, tcx, locals, local_decls, place_),
         Rvalue::New(operand) => lower_new(cx, tcx, mir, locals, local_decls, operand),
         Rvalue::NewArray { elem, count } => {
             lower_new_array(cx, tcx, mir, locals, local_decls, elem, count)
@@ -390,17 +389,14 @@ fn lower_fat_ref<'ctx>(
 fn lower_len<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
-    mir: &Mir,
     locals: &HashMap<Local, PointerValue<'ctx>>,
     local_decls: &[LocalDecl],
     place_: &Place,
 ) -> BasicValueEnum<'ctx> {
     if place_.projections.is_empty()
-        && let TyKind::Array {
-            len: Some(len_id), ..
-        } = tcx.kind(local_decls[place_.local.index()].ty).clone()
+        && let TyKind::Array { len: Some(n), .. } =
+            tcx.kind(local_decls[place_.local.index()].ty).clone()
     {
-        let n = layout::array_len(mir, len_id);
         return cx.llvm.i64_type().const_int(n, false).into();
     }
     let fat_addr = lower_fat_place_addr(tcx, locals, local_decls, place_);
@@ -1342,7 +1338,6 @@ mod tests {
             def_id,
             local_decls: vec![crate::mir::LocalDecl {
                 ty: unit,
-                mutability: crate::ast::Mutability::Immutable,
                 name: None,
                 span: dummy_span,
             }],
@@ -1658,28 +1653,24 @@ mod tests {
     fn array_aggregate_builds_via_insert_value() {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("fun f(a: [i32; 2]) {}");
-        let array_len_id = find_array_len_id(&hir);
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
-        let array_ty = tcx.mk_array(i32_ty, Some(array_len_id));
+        let array_ty = tcx.mk_array(i32_ty, Some(2));
         let unit = tcx.unit();
         let dummy_span = crate::driver::source::SrcSpan::new(0, 0);
 
         let local_decls = vec![
             crate::mir::LocalDecl {
                 ty: unit,
-                mutability: crate::ast::Mutability::Immutable,
                 name: None,
                 span: dummy_span,
             },
             crate::mir::LocalDecl {
                 ty: i32_ty,
-                mutability: crate::ast::Mutability::Immutable,
                 name: None,
                 span: dummy_span,
             },
             crate::mir::LocalDecl {
                 ty: array_ty,
-                mutability: crate::ast::Mutability::Mutable,
                 name: None,
                 span: dummy_span,
             },
@@ -1736,9 +1727,8 @@ mod tests {
     fn len_of_a_sized_array_place_is_a_compile_time_constant() {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("fun f(a: [i32; 2]) {}");
-        let array_len_id = find_array_len_id(&hir);
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
-        let array_ty = tcx.mk_array(i32_ty, Some(array_len_id));
+        let array_ty = tcx.mk_array(i32_ty, Some(2));
         let dummy_span = crate::driver::source::SrcSpan::new(0, 0);
 
         let llvm = inkwell::context::Context::create();
@@ -1752,7 +1742,6 @@ mod tests {
         let locals = std::collections::HashMap::new();
         let local_decls = vec![crate::mir::LocalDecl {
             ty: array_ty,
-            mutability: crate::ast::Mutability::Immutable,
             name: None,
             span: dummy_span,
         }];
@@ -1761,7 +1750,7 @@ mod tests {
             projections: vec![],
         };
 
-        let value = super::lower_len(&mut cx, &mut tcx, &mir, &locals, &local_decls, &place);
+        let value = super::lower_len(&mut cx, &mut tcx, &locals, &local_decls, &place);
         let int_val = value.into_int_value();
         assert!(int_val.is_const());
         assert_eq!(int_val.get_sign_extended_constant(), Some(2));
@@ -1803,7 +1792,6 @@ mod tests {
         locals.insert(local, alloca);
         let local_decls = vec![crate::mir::LocalDecl {
             ty: ref_ty,
-            mutability: crate::ast::Mutability::Immutable,
             name: None,
             span: crate::driver::source::SrcSpan::new(0, 0),
         }];
@@ -1812,7 +1800,7 @@ mod tests {
             projections: vec![crate::mir::Projection::Deref],
         };
         let rvalue = crate::mir::Rvalue::Ref {
-            mutability: crate::ast::Mutability::Immutable,
+            mutability: crate::ast::Mutability::Mutable,
             place,
         };
 
@@ -1835,22 +1823,6 @@ mod tests {
         assert!(value.is_struct_value());
     }
 
-    fn find_array_len_id(hir: &crate::hir::Hir) -> crate::hir::HirId {
-        for def_id in hir.def_ids() {
-            if let crate::hir::OwnerNode::Function(function) = hir.def(def_id) {
-                for &param_id in &function.params {
-                    let param = hir.param(param_id);
-                    if let crate::hir::TyKind::Array {
-                        len: Some(len_id), ..
-                    } = &hir.ty(param.ty).kind
-                    {
-                        return *len_id;
-                    }
-                }
-            }
-        }
-        panic!("no array-typed parameter found");
-    }
 
     fn instances_first_def(hir: &crate::hir::Hir) -> crate::hir::DefId {
         for def_id in hir.def_ids() {

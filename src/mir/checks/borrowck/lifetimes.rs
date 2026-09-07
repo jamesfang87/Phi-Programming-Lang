@@ -260,7 +260,6 @@ fn apply_statement_to_held_aliases(held: &mut HeldAliases, stmt: &Statement) {
         }
         StatementKind::PlaceMention(_)
         | StatementKind::SetDiscriminant { .. }
-        | StatementKind::CheckMutable(_)
         | StatementKind::WithLend(_) => {}
     }
 }
@@ -375,7 +374,7 @@ fn mark_statement_aliases_used(held: &HeldAliases, stmt: &Statement, used: &mut 
             }
             mark_rvalue_aliases_used(held, rvalue, used);
         }
-        StatementKind::PlaceMention(place) | StatementKind::CheckMutable(place) => {
+        StatementKind::PlaceMention(place) => {
             mark_place_alias_used(held, place, used);
         }
         StatementKind::SetDiscriminant { place, .. } => mark_place_alias_used(held, place, used),

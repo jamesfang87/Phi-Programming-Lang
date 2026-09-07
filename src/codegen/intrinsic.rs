@@ -37,8 +37,7 @@ mod tests {
     fn module_declares_the_four_libc_functions() {
         let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
-        let module =
-            crate::codegen::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = crate::codegen::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
         let ir = module.print_to_string().to_string();
         for sig in [
             "declare ptr @malloc(i64)",
@@ -58,8 +57,7 @@ mod tests {
             public fun main() { write_bytes(1, "hello" as &[u8]); }"#,
         );
         let llvm = inkwell::context::Context::create();
-        let module =
-            crate::codegen::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = crate::codegen::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("call i64 @write("), "{ir}");

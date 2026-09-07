@@ -827,9 +827,8 @@ mod tests {
     fn array_with_same_elem_and_len_is_compatible() {
         let mut tcx = TyCtx::new();
         let elem = tcx.mk_prim(PrimTy::I32);
-        let len = hir_id(0);
-        let a = tcx.mk_array(elem, Some(len));
-        let b = tcx.mk_array(elem, Some(len));
+        let a = tcx.mk_array(elem, Some(4));
+        let b = tcx.mk_array(elem, Some(4));
         let mut unifier = Unifier::new();
 
         assert_eq!(compatible(&mut unifier, &tcx, a, b), Ok(()));
@@ -847,11 +846,11 @@ mod tests {
     }
 
     #[test]
-    fn array_with_different_len_exprs_is_incompatible() {
+    fn array_with_different_lens_is_incompatible() {
         let mut tcx = TyCtx::new();
         let elem = tcx.mk_prim(PrimTy::I32);
-        let a = tcx.mk_array(elem, Some(hir_id(0)));
-        let b = tcx.mk_array(elem, Some(hir_id(1)));
+        let a = tcx.mk_array(elem, Some(4));
+        let b = tcx.mk_array(elem, Some(8));
         let mut unifier = Unifier::new();
 
         assert_eq!(
@@ -1320,7 +1319,7 @@ mod tests {
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let def = DefId::from_usize(0);
-        let len = hir_id(0);
+        let len = 4;
 
         let composites: Vec<(&str, Ty, Ty, Ty)> = vec![
             {

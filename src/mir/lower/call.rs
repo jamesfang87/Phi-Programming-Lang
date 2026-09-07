@@ -232,7 +232,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
 
         if derefs == 0 && mutability == Mutability::Mutable {
-            self.push_stmt(crate::mir::StatementKind::CheckMutable(place.clone()), span);
         }
 
         let temp = self.new_temp(declared_ty, span);

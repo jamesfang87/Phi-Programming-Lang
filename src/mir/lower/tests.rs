@@ -1513,7 +1513,6 @@ fn lower_populates_every_new_mir_field() {
         program.adts.get(&point_def),
         Some(crate::mir::AdtDef::Struct { fields, .. }) if fields.len() == 2
     ));
-    assert!(program.array_lens.is_empty());
     assert!(program.vtables.is_empty());
     assert_eq!(program.def_names.leaf(point_def), "Point");
     assert_eq!(program.main, Some(first_function(&hir)));
