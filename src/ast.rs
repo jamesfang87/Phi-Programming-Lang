@@ -435,12 +435,6 @@ pub enum ExprKind {
         payload: Payload<Expr>,
     },
     Tuple(Vec<Expr>),
-    /// `lo..hi` or, when `inclusive` is set, `lo..=hi`. Either bound may be omitted.
-    Range {
-        lo: Option<Box<Expr>>,
-        hi: Option<Box<Expr>>,
-        inclusive: bool,
-    },
     /// The `?` operator: propagates an error result out of the enclosing function.
     Try(Box<Expr>),
     If {
@@ -582,8 +576,10 @@ pub enum Payload<T> {
 /// `AccessArgs` describes how an access was written.
 ///
 /// As the grammar is ambiguous in this case, the parser can't yet tell a field access, a
-/// method call, and a payload-carrying variant construction apart.
-/// Later analysis resolves this distinction, once `base`'s type is known.
+/// method call, and a payload-carrying variant construction apart. Two later passes settle it:
+/// name resolution decides whether `base` names a type or a value -- a base naming a type makes
+/// the access a variant reached through its enum, as in `Shape.circle(1.0)` -- and, for a base
+/// naming a value, typeck picks between a field and a method once that value's type is known.
 #[derive(Clone, Debug)]
 pub enum AccessArgs {
     /// `base.member`. This could be a field, a payload-less variant, or a method referenced as
@@ -592,7 +588,8 @@ pub enum AccessArgs {
     /// `base.member(a, b)`. This could be a method call, or a variant whose single payload is
     /// `a`.
     Call(Vec<Expr>),
-    /// `base.member { f: v }`. This can only be a variant with a record payload.
+    /// `base.member { f: v }`. This can only be a variant with a record payload, so `base` has
+    /// to name the enum rather than a value of it.
     Record(Vec<PayloadField<Expr>>),
 }
 

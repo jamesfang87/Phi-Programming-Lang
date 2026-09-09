@@ -44,31 +44,24 @@ impl<'a> BodyLowerCtx<'a> {
         visitor.found
     }
 
-    /// The closure's environment local's own type: a tuple of each capture's type, in capture
-    /// order. Internal to the closure's own body; the enclosing body that builds the closure
-    /// value never inspects it, since `Aggregate::Closure`'s operand list supplies captures
-    /// positionally.
     pub(crate) fn environment_ty(&mut self, captures: &[HirId]) -> Ty {
-        let tys: Vec<Ty> = captures
-            .iter()
-            .map(|&id| {
-                self.types
-                    .ty(id)
-                    .unwrap_or_else(|| panic!("mir::lower: captured {id:?} has no recorded type"))
-            })
-            .collect();
-        self.tcx.mk_tuple(tys)
+        let mut tys: Vec<Ty> = vec![self.tcx.mk_prim(crate::nameres::PrimTy::Usize)];
+        tys.extend(captures.iter().map(|&id| {
+            self.types
+                .ty(id)
+                .unwrap_or_else(|| panic!("mir::lower: captured {id:?} has no recorded type"))
+        }));
+        let tuple = self.tcx.mk_tuple(tys);
+        self.tcx.mk_ref(tuple, crate::ast::Mutability::Mutable)
     }
 
     /// Binds every captured HIR local to a projection into the environment local, so that an
     /// ordinary `ExprKind::Path` read inside the closure's own body resolves to
-    /// `env.Field(n)` -- the "closure body's Places for captured variables project into [the
-    /// environment]" the spec's "Closures" section describes.
     pub(crate) fn bind_environment(&mut self, env_local: Local, captures: &[HirId]) {
         for (index, &hir_id) in captures.iter().enumerate() {
             let place = Place {
                 local: env_local,
-                projections: vec![Projection::Field(index as u32)],
+                projections: vec![Projection::Deref, Projection::Field(index as u32 + 1)],
             };
             self.bind_place(hir_id, place);
         }
@@ -91,7 +84,13 @@ impl<'a> BodyLowerCtx<'a> {
             .collect();
         self.assign(
             dest,
-            Rvalue::Aggregate(Box::new(AggregateKind::Closure { def: def_id }), operands),
+            Rvalue::Aggregate(
+                Box::new(AggregateKind::Closure {
+                    def: def_id,
+                    args: Vec::new(),
+                }),
+                operands,
+            ),
             span,
         );
     }

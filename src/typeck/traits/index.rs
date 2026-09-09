@@ -227,15 +227,15 @@ mod tests {
     use super::TypeHead;
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::{Stage, checker_through, messages, resolve_src};
+    use crate::testing::{Stage, checker_through, lower_to_hir};
     use crate::typeck::Typeck;
 
     /// Runs collection and index construction over `src`, and hands back the checker so a test
     /// can look at the index it built.
     ///
-    /// Body checking is deliberately not run: most expression kinds are still `todo!()`, so a
-    /// fixture would have to be written around the checker rather than around what is being
-    /// tested. Diagnostics from name resolution are cleared first, since a fixture is resolved
+    /// Body checking is deliberately not run: these tests are about which `extend` blocks land
+    /// in the index, and checking bodies would make every fixture answer for its expressions
+    /// too. Diagnostics from name resolution are cleared first, since a fixture is resolved
     /// without the core library and so reports every lang item as missing.
     fn indexed<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
         let mut checker = checker_through(hir, Stage::Collect);
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn an_inherent_extend_is_indexed_against_the_type_it_extends() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Foo {}
              extend Foo { fun get(&self) {} }",
         );
@@ -259,24 +259,24 @@ mod tests {
             "an inherent extend has no trait"
         );
         assert_eq!(hir.extend(block).methods.len(), 1);
-        assert!(messages().is_empty(), "{:?}", messages());
+        assert!(DiagCtx::messages().is_empty(), "{:?}", DiagCtx::messages());
     }
 
     #[test]
     fn a_primitive_extend_is_indexed_against_the_primitive() {
-        let hir = resolve_src("extend i32 { fun get(&self) -> i32 { return *self; } }");
+        let hir = lower_to_hir("extend i32 { fun get(&self) -> i32 { return *self; } }");
         let checker = indexed(&hir);
 
         assert_eq!(checker.extends.len(), 1);
         let head = TypeHead::Prim(crate::nameres::PrimTy::I32);
         let block = checker.extends.for_type(head)[0];
         assert!(checker.extends.trait_of(block).is_none());
-        assert!(messages().is_empty(), "{:?}", messages());
+        assert!(DiagCtx::messages().is_empty(), "{:?}", DiagCtx::messages());
     }
 
     #[test]
     fn a_trait_extend_records_the_trait_it_implements() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
@@ -289,14 +289,14 @@ mod tests {
             .trait_of(block)
             .expect("`extend Foo with Show` implements a trait");
         assert!(trait_ref.args.is_empty());
-        assert!(messages().is_empty(), "{:?}", messages());
+        assert!(DiagCtx::messages().is_empty(), "{:?}", DiagCtx::messages());
     }
 
     /// The block's own `<T>` group is what matching may bind; the struct's own `T` is a different
     /// parameter entirely and must not leak in.
     #[test]
     fn an_impls_generics_are_the_blocks_own_parameters() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Wrap<T> { inner: T }
              extend<T> Wrap<T> { fun get(&self) {} }",
         );
@@ -310,19 +310,19 @@ mod tests {
 
     #[test]
     fn a_tuple_extend_is_indexed_against_its_arity() {
-        let hir = resolve_src("extend (i32, i32) { fun get(&self) {} }");
+        let hir = lower_to_hir("extend (i32, i32) { fun get(&self) {} }");
         let checker = indexed(&hir);
 
         assert_eq!(checker.extends.len(), 1);
         let head = TypeHead::Tuple(2);
         let block = checker.extends.for_type(head)[0];
         assert!(checker.extends.trait_of(block).is_none());
-        assert!(messages().is_empty(), "{:?}", messages());
+        assert!(DiagCtx::messages().is_empty(), "{:?}", DiagCtx::messages());
     }
 
     #[test]
     fn extending_an_unsized_array_is_rejected() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              extend [i32] with Show { fun show(&self) {} }",
         );
@@ -330,24 +330,24 @@ mod tests {
 
         assert!(checker.extends.is_empty());
         assert!(
-            messages()
+            DiagCtx::messages()
                 .iter()
                 .any(|m| m.contains("unsized array cannot be extended")),
             "{:?}",
-            messages()
+            DiagCtx::messages()
         );
     }
 
     /// The reachable non-nominal case: a path that names a type parameter rather than a type.
     #[test]
     fn extending_a_type_parameter_is_reported_and_dropped() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              extend<T> T with Show { fun show(&self) {} }",
         );
         let checker = indexed(&hir);
 
-        assert_eq!(messages(), ["a generic type parameter cannot be extended"]);
+        assert_eq!(DiagCtx::messages(), ["a generic type parameter cannot be extended"]);
         assert!(
             checker.extends.is_empty(),
             "a rejected extend must not reach the index"
@@ -356,13 +356,13 @@ mod tests {
 
     #[test]
     fn extending_any_is_reported_and_dropped() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              extend any i32 with Show { fun show(&self) {} }",
         );
         let checker = indexed(&hir);
 
-        assert_eq!(messages(), ["`any` cannot be extended"]);
+        assert_eq!(DiagCtx::messages(), ["`any` cannot be extended"]);
         assert!(
             checker.extends.is_empty(),
             "a rejected extend must not reach the index"
@@ -371,13 +371,13 @@ mod tests {
 
     #[test]
     fn extending_a_dyn_trait_is_reported_and_dropped() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              extend dyn Show with Show { fun show(&self) {} }",
         );
         let checker = indexed(&hir);
 
-        assert_eq!(messages(), ["`dyn Trait` cannot be extended"]);
+        assert_eq!(DiagCtx::messages(), ["`dyn Trait` cannot be extended"]);
         assert!(
             checker.extends.is_empty(),
             "a rejected extend must not reach the index"
@@ -386,39 +386,39 @@ mod tests {
 
     #[test]
     fn extending_a_trait_is_reported_and_dropped() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              extend Show { fun show(&self) {} }",
         );
         let checker = indexed(&hir);
 
-        assert_eq!(messages(), ["a trait cannot be extended"]);
+        assert_eq!(DiagCtx::messages(), ["a trait cannot be extended"]);
         assert!(checker.extends.is_empty());
     }
 
     #[test]
     fn extending_an_unresolved_path_reports_nothing_further() {
-        let hir = resolve_src("extend Nope { fun get(&self) {} }");
+        let hir = lower_to_hir("extend Nope { fun get(&self) {} }");
         let checker = indexed(&hir);
 
         assert!(
-            messages().is_empty(),
+            DiagCtx::messages().is_empty(),
             "name resolution already reported the missing name: {:?}",
-            messages()
+            DiagCtx::messages()
         );
         assert!(checker.extends.is_empty());
     }
 
     #[test]
     fn implementing_something_that_is_not_a_trait_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Foo {}
              struct Bar {}
              extend Foo with Bar {}",
         );
         let checker = indexed(&hir);
 
-        assert_eq!(messages(), ["`with` must name a trait"]);
+        assert_eq!(DiagCtx::messages(), ["`with` must name a trait"]);
         // The block itself is still perfectly valid as an inherent block, so it stays in the index.
         assert_eq!(checker.extends.len(), 1);
     }
@@ -427,7 +427,7 @@ mod tests {
     /// which is what keeps the query from needing an "unimplemented" case of its own.
     #[test]
     fn a_type_with_no_impls_has_an_empty_bucket() {
-        let hir = resolve_src("struct Foo {}");
+        let hir = lower_to_hir("struct Foo {}");
         let checker = indexed(&hir);
 
         assert!(checker.extends.for_type(foo(&checker)).is_empty());

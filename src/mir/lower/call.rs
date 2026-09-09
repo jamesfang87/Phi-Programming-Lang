@@ -154,7 +154,7 @@ impl<'a> BodyLowerCtx<'a> {
             self.resolved_fn_operand(resolved.def, resolved.args, mode, span)
         } else {
             let place = self.lower_place(callee_id);
-            Operand::Move(place)
+            Operand::Copy(place)
         }
     }
 
@@ -225,7 +225,7 @@ impl<'a> BodyLowerCtx<'a> {
                  method, is not yet implemented"
             );
         }
-        let (_, derefs) = self.peel_refs(recv_ty);
+        let (peeled, derefs) = self.peel_refs(recv_ty);
         let mut place = self.lower_place(expr_id);
         for _ in 0..derefs {
             place.projections.push(Projection::Deref);
@@ -234,7 +234,15 @@ impl<'a> BodyLowerCtx<'a> {
         if derefs == 0 && mutability == Mutability::Mutable {
         }
 
-        let temp = self.new_temp(declared_ty, span);
+        // The temp is typed from the receiver, not from `declared_ty`. `declared_ty` is the
+        // method's `&self` as written, so for a method in `extend<T> Wrap<T>` it is `&Wrap<T>` --
+        // the block's generic parameter, with no call-site substitution applied. Using it here
+        // would put a type mentioning `T` into the *caller's* `local_decls`, and `monomorphize`
+        // seeds its roots with the bodies that mention no generic, so the caller would be dropped
+        // from the program entirely rather than diagnosed. `peeled` is the type of the place the
+        // reference is taken of, which is already concrete at this call site.
+        let temp_ty = self.tcx.mk_ref(peeled, mutability);
+        let temp = self.new_temp(temp_ty, span);
         self.assign(
             Place::from_local(temp),
             Rvalue::Ref { mutability, place },

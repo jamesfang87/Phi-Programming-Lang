@@ -249,7 +249,7 @@ fn a_bound_about_an_unresolvable_type_is_not_reported_twice() {
 fn an_unmet_bound_points_at_the_bound_that_requires_it() {
     use crate::diagnostics::DiagCtx;
 
-    let hir = crate::testing::resolve_src(&src("fun f(x: Sorted<Bare>) {}"));
+    let hir = crate::testing::lower_to_hir(&src("fun f(x: Sorted<Bare>) {}"));
     DiagCtx::clear();
     crate::typeck::check(&hir);
 

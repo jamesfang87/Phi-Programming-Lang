@@ -17,7 +17,7 @@ use crate::nameres;
 use crate::nameres::PrimTy;
 use crate::parser::Parser;
 use crate::testing::{
-    OPS_PREAMBLE, first_extend_method, first_function, first_struct, resolve_src,
+    OPS_PREAMBLE, first_extend_method, first_function, first_struct, lower_to_hir,
 };
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;
@@ -43,6 +43,34 @@ fn lower_mir_src_with_ops(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
 const COPY_DROP_PREAMBLE: &str = "module core::ops;
      public trait Copy {}
      public trait Drop {}";
+
+const REF_COPY_PREAMBLE: &str = "module core::ops;
+     public trait Copy { fun copy(&self) -> Self; }
+     extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+     extend<T> &T with Copy { fun copy(&self) -> Self { return *self; } }";
+
+/// Like [`lower_mir_src_with_copy_and_drop`], but with `Copy` implemented for `i32` and,
+/// generically, for `&T` -- needed to read through a reference to a reference (`&&T`) without
+/// moving out of either layer.
+fn lower_mir_src_with_ref_copy(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
+    DiagCtx::clear();
+    Interner::clear();
+    let files = vec![parse_file(REF_COPY_PREAMBLE), parse_file(src)];
+    let ast = Ast::new(files);
+    let res = nameres::resolve(&ast);
+    let hir = lower_ast(&ast, &res);
+
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = super::lower(&hir, &mut tcx, &types, Mode::Debug);
+    (hir, tcx, types, program)
+}
 
 fn lower_mir_src_with_copy_and_drop(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
     DiagCtx::clear();
@@ -85,7 +113,7 @@ fn lower_mir_src_with_ops_and_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeRe
 }
 
 fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, Mir) {
-    let hir = resolve_src(src);
+    let hir = lower_to_hir(src);
     crate::diagnostics::DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
     let diagnostics = crate::diagnostics::DiagCtx::diagnostics();
@@ -98,7 +126,7 @@ fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolution
     (hir, tcx, types, program)
 }
 
-/// The `Body` lowered for the first top-level function `resolve_src`d and MIR-lowered.
+/// The `Body` lowered for the first top-level function `lower_to_hir`d and MIR-lowered.
 fn first_function_body<'a>(program: &'a Mir, hir: &Hir) -> &'a Body {
     let def_id = first_function(hir);
     program
@@ -670,6 +698,24 @@ fn explicit_deref_of_an_owned_pointer_inserts_a_deref_projection() {
     assert!(found, "`*p` derefs `p` with no further projection");
 }
 
+#[test]
+fn double_deref_of_a_reference_to_a_reference_chains_two_deref_projections() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src_with_ref_copy("fun f(p: &&i32) -> i32 { return **p; }");
+    let body = first_function_body(&program, &hir);
+    let found = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                place.projections == [Projection::Deref, Projection::Deref]
+            }
+            _ => false,
+        });
+    assert!(found, "`**p` chains two deref projections onto `p`");
+}
+
 fn deref_operand_kind(program: &Mir, hir: &Hir) -> &'static str {
     let body = first_function_body(program, hir);
     body.basic_blocks
@@ -764,6 +810,40 @@ fn array_indexing_inserts_a_bounds_check_and_reads_the_length() {
 }
 
 #[test]
+fn array_indexing_by_a_constant_literal_projects_through_constant_index() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f(a: [i32; 4]) -> i32 { return a[2]; }");
+    let body = first_function_body(&program, &hir);
+    let projects_constant_index_2 = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                matches!(place.projections.last(), Some(Projection::ConstantIndex(2)))
+            }
+            _ => false,
+        });
+    assert!(
+        projects_constant_index_2,
+        "indexing by a literal projects through Projection::ConstantIndex(2), not a runtime Index local"
+    );
+    let no_dynamic_index = !body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                matches!(place.projections.last(), Some(Projection::Index(_)))
+            }
+            _ => false,
+        });
+    assert!(
+        no_dynamic_index,
+        "a literal index should not also produce a dynamic Index projection"
+    );
+}
+
+#[test]
 fn a_primitive_cast_produces_a_cast_rvalue_with_the_target_type() {
     let (hir, tcx, _types, program) = lower_mir_src("fun f(x: i32) -> i64 { return x as i64; }");
     let body = first_function_body(&program, &hir);
@@ -852,7 +932,7 @@ fn a_named_function_used_as_a_value_is_reified() {
 }
 
 #[test]
-fn an_indirect_call_through_a_function_typed_place_moves_the_callee() {
+fn an_indirect_call_through_a_function_typed_place_reads_the_callee_without_consuming_it() {
     let (hir, _tcx, _types, program) = lower_mir_src(
         "fun apply(f: fun(i32, i32) -> i32, x: i32, y: i32) -> i32 { return f(x, y); }
          fun add(x: i32, y: i32) -> i32 { return x + y; }",
@@ -862,15 +942,16 @@ fn an_indirect_call_through_a_function_typed_place_moves_the_callee() {
         matches!(
             &b.terminator.kind,
             TerminatorKind::Call {
-                func: Operand::Move(_),
+                func: Operand::Copy(_),
                 ..
             }
         )
     });
     assert!(
         indirect,
-        "calling through a `fun`-typed parameter moves its place; it names no single DefId, \
-         unlike a direct call to a named function"
+        "calling through a `fun`-typed parameter reads its place -- it names no single DefId, \
+         unlike a direct call to a named function -- and reads it without consuming it, since a \
+         closure value owns its environment and stays callable and droppable afterwards"
     );
 }
 
@@ -1334,9 +1415,13 @@ fn a_closure_with_no_captures_still_gets_an_environment_local() {
          captures at all"
     );
     let env_ty = closure_body.local_decls[1].ty;
+    let TyKind::Ref { base, .. } = *tcx.kind(env_ty) else {
+        panic!("the environment local borrows the environment the closure value owns");
+    };
     assert!(
-        matches!(tcx.kind(env_ty), TyKind::Tuple(elems) if elems.is_empty()),
-        "an empty capture list still gets a zero-element-tuple-typed environment local"
+        matches!(tcx.kind(base), TyKind::Tuple(elems) if elems.len() == 1),
+        "an empty capture list still gets an environment local, holding just the drop-glue word \
+         every environment leads with"
     );
 }
 
@@ -1503,16 +1588,13 @@ fn a_mutably_referenced_place_is_moved_not_copied() {
 
 #[test]
 fn lower_populates_every_new_mir_field() {
-    let (hir, _tcx, _types, program) = lower_mir_src(
+    let (hir, mut tcx, _types, program) = lower_mir_src(
         "struct Point { x: i32, y: i32 }
          fun main() -> i32 { let p = Point { x: 1, y: 2 }; return p.x; }",
     );
 
     let point_def = first_struct(&hir);
-    assert!(matches!(
-        program.adts.get(&point_def),
-        Some(crate::mir::AdtDef::Struct { fields, .. }) if fields.len() == 2
-    ));
+    assert_eq!(tcx.struct_field_tys(point_def, &[]).len(), 2);
     assert!(program.vtables.is_empty());
     assert_eq!(program.def_names.leaf(point_def), "Point");
     assert_eq!(program.main, Some(first_function(&hir)));

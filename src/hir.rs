@@ -106,6 +106,21 @@ impl Hir {
                 .expect("every def is nested in the root module, which is a module");
         }
     }
+
+    /// Whether `id` is a path naming a type rather than a value, as `Shape` is in
+    /// `Shape.circle(1.0)`.
+    ///
+    /// This is what separates a variant reached through its enum from a field read or a method
+    /// call: all three parse to [`ExprKind::Access`], and only the base's [`Res`] tells them
+    /// apart. Name resolution puts a type in an access base's `Res` and nowhere else, so this
+    /// answers the same question in typeck and in MIR lowering without either pass having to
+    /// record a flag for the other.
+    pub fn names_a_type(&self, id: HirId) -> bool {
+        matches!(
+            &self.expr(id).kind,
+            ExprKind::Path(path) if matches!(path.res, Res::Type(_) | Res::SelfTy(_))
+        )
+    }
 }
 
 /// Generates typed lookup methods on [`Hir`] that retrieve a [`Node`] by [`HirId`] and downcast

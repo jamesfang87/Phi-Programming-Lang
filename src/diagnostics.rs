@@ -79,6 +79,11 @@ impl Diagnostic {
         Self::new(Severity::Error, message, None)
     }
 
+    /// A warning about the program as a whole, with no source span to point at.
+    pub fn warning_global(message: impl Into<String>) -> Self {
+        Self::new(Severity::Warning, message, None)
+    }
+
     /// Sets the text shown right under the highlighted span, avoiding repetition of the
     /// diagnostic message.
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
@@ -112,22 +117,30 @@ impl Diagnostic {
             .with_config(Self::config())
             .with_message(&self.message);
 
-        report = report.with_label(
-            Label::new(primary.id())
-                .with_message(self.label.as_deref().unwrap_or(&self.message))
-                .with_color(self.severity.color()),
-        );
-
-        let mut located = vec![primary];
+        // `ariadne` starts a new source group, with its own file header, whenever a label sits
+        // above the one before it. Adding the labels in source order keeps them in one group.
+        let mut labelled = vec![(
+            span,
+            primary.clone(),
+            self.label.as_deref().unwrap_or(&self.message),
+            self.severity.color(),
+        )];
         for secondary in &self.secondary {
             let Some(at) = Located::of(secondary.span) else {
                 continue;
             };
-            report = report.with_label(
-                Label::new(at.id())
-                    .with_message(&secondary.message)
-                    .with_color(SECONDARY_COLOR),
-            );
+            labelled.push((
+                secondary.span,
+                at,
+                secondary.message.as_str(),
+                SECONDARY_COLOR,
+            ));
+        }
+        labelled.sort_by_key(|(span, ..)| (span.get_begin(), span.get_end()));
+
+        let mut located = Vec::with_capacity(labelled.len());
+        for (_, at, message, color) in labelled {
+            report = report.with_label(Label::new(at.id()).with_message(message).with_color(color));
             located.push(at);
         }
 
@@ -175,6 +188,7 @@ impl Diagnostic {
 /// The color secondary labels are drawn in.
 const SECONDARY_COLOR: Color = Color::Blue;
 
+#[derive(Clone)]
 struct Located {
     name: &'static str,
     text: String,
@@ -244,6 +258,13 @@ impl DiagCtx {
         DIAGNOSTICS.with(|d| d.borrow().clone())
     }
 
+    /// Returns just the message text of every diagnostic recorded so far on this thread, in the
+    /// order they were recorded. The spans and labels are what [`DiagCtx::report`] renders; a
+    /// caller comparing against expected output wants only the messages.
+    pub fn messages() -> Vec<String> {
+        DIAGNOSTICS.with(|d| d.borrow().iter().map(|diag| diag.message.clone()).collect())
+    }
+
     /// Returns whether any diagnostic recorded so far on this thread is error-severity.
     pub fn has_errors() -> bool {
         DIAGNOSTICS.with(|d| {
@@ -258,9 +279,16 @@ impl DiagCtx {
         DIAGNOSTICS.with(|d| d.borrow_mut().clear());
     }
 
-    /// Renders every diagnostic collected so far to stderr in source order.
+    /// Renders every diagnostic collected so far to stderr in source order, and takes them out
+    /// of the collection.
+    ///
+    /// Draining is what lets a later stage report on its own: the driver reports once the
+    /// frontend has run and again after codegen, and a diagnostic must not print twice. It also
+    /// means [`DiagCtx::has_errors`] answers about the *unreported* diagnostics after a call
+    /// here, so a caller that gates on errors has to read it before reporting, not after.
     pub fn report() {
-        for diag in Self::report_order(Self::diagnostics()) {
+        let pending = DIAGNOSTICS.with(|d| std::mem::take(&mut *d.borrow_mut()));
+        for diag in Self::report_order(pending) {
             diag.eprint();
         }
     }

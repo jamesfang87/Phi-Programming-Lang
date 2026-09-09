@@ -33,7 +33,7 @@ mod tests;
 
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Hir};
+use crate::hir::{DefId, Hir, OwnerNode};
 use crate::mir::lower::Mir;
 use crate::mir::{
     AggregateKind, AnyMode, AssertMessage, Body, ConstKind, Instance, Operand, Rvalue,
@@ -56,8 +56,20 @@ pub fn monomorphize(hir: &Hir, tcx: &mut TyCtx, program: &Mir) -> HashMap<Instan
     let mut output = HashMap::new();
     let mut worklist: Vec<Instance> = Vec::new();
 
+    // Seed the worklist with the bodies that need no substitution. This only decides *roots*:
+    // a body something else calls is reached through `discovered` regardless, so the bodies for
+    // which this test is load-bearing are the ones nothing calls -- in practice `main`.
+    //
+    // `main` is therefore seeded on its own terms, not on the test's. It is checked to declare
+    // no generics (`mir::checks::entry_point`) and nothing calls it, so it is a root by
+    // definition, with an empty argument list. Leaving it to `body_mentions_generic` made it
+    // hostage to every type in its body being concrete, and a lowering bug that put a stray
+    // generic in one of its locals dropped the program's entry point silently.
     for (&(def, any_mode), body) in &program.bodies {
-        if !body_mentions_generic(tcx, body) {
+        if matches!(hir.def(def), OwnerNode::Closure(_)) {
+            continue;
+        }
+        if Some(def) == program.main || !body_mentions_generic(tcx, body) {
             worklist.push(Instance {
                 def,
                 any_mode,
@@ -109,6 +121,16 @@ fn build_subst(hir: &Hir, def: DefId, args: &[Ty]) -> HashMap<crate::hir::HirId,
         .collect()
 }
 
+/// Whether any of `body`'s locals is typed with a generic still in it.
+///
+/// Used as the stand-in for "this body needs substituting before it can be emitted", which holds
+/// only while every local of a non-generic body is typed concretely. A lowering that puts a
+/// declared, un-substituted type into a caller's locals breaks that equivalence and holds the
+/// caller back from the roots -- see `lower_receiver_operand`, which types the `&self` temp from
+/// the receiver rather than from the method's declared `&self` for exactly this reason.
+///
+/// When it does misfire, the body is still reached if anything calls it, and `main` is seeded
+/// regardless; what is left over is a body nothing calls, which is dead code either way.
 fn body_mentions_generic(tcx: &TyCtx, body: &Body) -> bool {
     body.local_decls
         .iter()
@@ -233,8 +255,10 @@ fn subst_rvalue(
             ty: subst::subst_ty(tcx, ty, subst),
             kind,
         },
-        Rvalue::Aggregate(kind, operands) => {
-            if let AggregateKind::Closure { def } = *kind {
+        Rvalue::Aggregate(mut kind, operands) => {
+            if let AggregateKind::Closure { def, args } = &mut *kind {
+                *args = instance.args.clone();
+                let def = *def;
                 let closure_instance = Instance {
                     def,
                     any_mode: None,

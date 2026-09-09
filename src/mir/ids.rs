@@ -9,6 +9,8 @@ impl Local {
     /// This is the slot every `Body` reserves for its return value.
     pub const RETURN_PLACE: Local = Local(0);
 
+    pub const ENVIRONMENT: Local = Local(1);
+
     pub(crate) fn from_usize(index: usize) -> Self {
         Local(index as u32)
     }

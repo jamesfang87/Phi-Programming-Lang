@@ -272,7 +272,13 @@ impl<'ast> SymbolTable<'ast> {
             )
         };
 
-        // TODO: Modify AST to allow to get from NodeId
+        // Every name brought in this way is given the `import ...::*;` statement's own span. A
+        // glob carries only the imported name's `Symbol` and `NodeId`, not the `Ident` that was
+        // written at the declaration, and there is no table mapping a `NodeId` back to its AST
+        // node to recover one from. That is the right span regardless: the only diagnostic these
+        // inserts raise is `report_conflict`, and what a glob-induced conflict needs to point at
+        // is the import that pulled the colliding name in, not the unrelated declaration it
+        // collided with.
         let dest = self.modules.get_mut(&into).unwrap();
         for (text, id) in functions {
             dest.insert_function(
@@ -363,6 +369,14 @@ impl<'ast> SymbolTable<'ast> {
         })
     }
 
+    /// The raw type-namespace lookup, answering with what a name denotes.
+    ///
+    /// `Self` resolves here too, to the type it stands for -- `dyn Self` inside a trait needs
+    /// that. Callers wanting the spelling kept, so that a later pass can tell `Self` from the
+    /// type it names, want [`Resolver::resolve_type_path`] instead, which answers `Self` with
+    /// [`Res::SelfTy`] and reports the ways `Self` alone can fail.
+    ///
+    /// [`Resolver::resolve_type_path`]: crate::nameres::resolver::Resolver::resolve_type_path
     pub fn lookup_type_path(&self, from: NodeId, path: &Path) -> Option<Type> {
         let (last, prefix) = path.segments.split_last()?;
 

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
 use crate::nameres::PrimTy;
+use crate::typeck::adt::AdtDef;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 
 #[derive(Default)]
@@ -11,6 +12,7 @@ pub struct TyCtx {
     handles: HashMap<TyKind, Ty>,
     /// The id the next inference variable is issued, incremented each time one is created.
     next_var: u32,
+    adts: HashMap<DefId, AdtDef>,
 }
 
 impl TyCtx {
@@ -97,6 +99,76 @@ impl TyCtx {
 
     pub fn mk_dyn(&mut self, trait_: DefId, args: Vec<Ty>) -> Ty {
         self.intern(TyKind::Dyn { trait_, args })
+    }
+
+    pub fn enum_variant_count(&self, def: DefId) -> Option<usize> {
+        match self.adt(def) {
+            AdtDef::Struct { .. } => None,
+            AdtDef::Enum { variants, .. } => Some(variants.len()),
+        }
+    }
+
+    pub fn struct_field_tys(&mut self, def: DefId, args: &[Ty]) -> Vec<Ty> {
+        let AdtDef::Struct { generics, fields } = self.adt(def) else {
+            panic!("struct_field_tys: {def:?} is an enum, not a struct");
+        };
+        let (generics, fields) = (generics.clone(), fields.clone());
+        self.subst_declared_tys(&generics, &fields, args)
+    }
+
+    pub fn variant_field_tys(&mut self, def: DefId, args: &[Ty], variant: usize) -> Vec<Ty> {
+        let AdtDef::Enum { generics, variants } = self.adt(def) else {
+            panic!("variant_field_tys: {def:?} is a struct, not an enum");
+        };
+        let (generics, fields) = (generics.clone(), variants[variant].field_tys.clone());
+        self.subst_declared_tys(&generics, &fields, args)
+    }
+
+    pub fn needs_drop(&mut self, ty: Ty) -> bool {
+        match self.kind(ty).clone() {
+            TyKind::Iso(_) => true,
+            TyKind::Fun { .. } => true,
+            TyKind::Array { elem, .. } => self.needs_drop(elem),
+            TyKind::Tuple(elems) => elems.iter().any(|&elem| self.needs_drop(elem)),
+            TyKind::Adt { def, args } => match self.enum_variant_count(def) {
+                None => self
+                    .struct_field_tys(def, &args)
+                    .into_iter()
+                    .any(|field| self.needs_drop(field)),
+                Some(variant_count) => (0..variant_count).any(|variant| {
+                    self.variant_field_tys(def, &args, variant)
+                        .into_iter()
+                        .any(|field| self.needs_drop(field))
+                }),
+            },
+            _ => false,
+        }
+    }
+
+    fn adt(&self, def: DefId) -> &AdtDef {
+        self.adts.get(&def).unwrap_or_else(|| {
+            panic!(
+                "{def:?} names no ADT known to this TyCtx -- either it is not a struct or enum, \
+                 or `set_adts` has not run yet"
+            )
+        })
+    }
+
+    fn subst_declared_tys(&mut self, generics: &[HirId], declared: &[Ty], args: &[Ty]) -> Vec<Ty> {
+        let subst: HashMap<HirId, Ty> =
+            generics.iter().copied().zip(args.iter().copied()).collect();
+        declared
+            .iter()
+            .map(|&ty| crate::typeck::fold::subst_ty(self, ty, &subst))
+            .collect()
+    }
+
+    pub(crate) fn set_adts(&mut self, adts: HashMap<DefId, AdtDef>) {
+        assert!(
+            self.adts.is_empty(),
+            "a TyCtx's ADT definitions are collected once, before MIR lowering, and never revised"
+        );
+        self.adts = adts;
     }
 
     /// Returns whether `ty` stores a reference somewhere within it: directly, inside a tuple or
