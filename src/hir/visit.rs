@@ -366,11 +366,6 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
                 v.visit_expr(elem);
             }
         }
-        ExprKind::Range { lo, hi, .. } => {
-            for bound in [*lo, *hi].into_iter().flatten() {
-                v.visit_expr(bound);
-            }
-        }
         ExprKind::If {
             cond,
             then_block,

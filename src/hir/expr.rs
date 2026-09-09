@@ -45,7 +45,8 @@ pub enum ExprKind {
         args: Vec<HirId>, // -> Node::Expr
     },
     /// The `.` operator reaches a field, a method call, or an enum variant named through its
-    /// type.
+    /// enum. `base` naming a type rather than a value is what marks the last of the three; see
+    /// [`crate::hir::Hir::names_a_type`].
     Access {
         base: HirId, // -> Node::Expr
         member: Ident,
@@ -69,11 +70,6 @@ pub enum ExprKind {
         payload: Payload, // -> Node::Expr
     },
     Tuple(Vec<HirId>), // -> Node::Expr
-    Range {
-        lo: Option<HirId>, // -> Node::Expr
-        hi: Option<HirId>, // -> Node::Expr
-        inclusive: bool,
-    },
     /// `expr?`. Propagates an error result out of the enclosing function.
     Try(HirId), // -> Node::Expr
     /// Both branches are blocks. An `else if` chain lowers to `else { if .. }`, so a chain of

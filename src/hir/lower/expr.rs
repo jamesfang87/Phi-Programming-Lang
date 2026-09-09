@@ -79,11 +79,6 @@ impl OwnerLowerer<'_, '_> {
             ast::ExprKind::Tuple(exprs) => {
                 ExprKind::Tuple(exprs.iter().map(|e| self.lower_expr(e)).collect())
             }
-            ast::ExprKind::Range { lo, hi, inclusive } => ExprKind::Range {
-                lo: lo.as_ref().map(|e| self.lower_expr(e)),
-                hi: hi.as_ref().map(|e| self.lower_expr(e)),
-                inclusive: *inclusive,
-            },
             ast::ExprKind::Try(inner) => ExprKind::Try(self.lower_expr(inner)),
             ast::ExprKind::If {
                 cond,
