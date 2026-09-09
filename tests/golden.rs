@@ -11,7 +11,7 @@
 //! change on purpose — diff the result before committing it.
 //!
 //! A fixture known to fail because of a real, out-of-scope compiler bug belongs in
-//! [`QUARANTINED`] instead of being re-blessed: blessing a `todo!()` panic's backtrace as
+//! [`QUARANTINED`] instead of being re-blessed: blessing a crash or a spurious error as
 //! "expected" would hide the bug rather than track it. A quarantined fixture's mismatch does not
 //! fail this test, but if it ever starts matching again the test fails and says to remove it
 //! from the list -- otherwise the quarantine would silently become permanent once someone fixes
@@ -30,13 +30,14 @@ fn fixtures_dir() -> PathBuf {
 
 /// Fixtures whose `expected.txt` is known not to match the compiler's current output, and why.
 ///
-/// A quarantined fixture's mismatch is tolerated rather than blessed, because blessing a
-/// `todo!()` panic's backtrace as "expected" would hide the bug instead of documenting it. See
+/// A quarantined fixture's mismatch is tolerated rather than blessed, because blessing a crash
+/// or a spurious error as "expected" would hide the bug instead of documenting it. See
 /// [`golden_fixtures`] for what happens once a quarantined fixture starts matching again.
 const QUARANTINED: &[(&str, &str)] = &[(
     "core_library",
-    "its `map.phi` contains `&self.value`, which hits `todo!(\"check_expr: Borrow\")` at \
-     src/typeck.rs:553",
+    "no compiler bug left -- it builds cleanly at exit 0. Its `expected.txt` is simply stale in \
+     two deliberate ways: the AST dump gained `id: NodeId(..)` fields, and declaring no `fun \
+     main` now warns on stderr. Re-bless once the AST dump format has settled",
 )];
 
 /// Runs `phi build --ast` with `fixture_dir` as the working directory and formats the result
@@ -97,7 +98,7 @@ fn golden_fixtures() {
         // Blessing is checked against the quarantine *before* anything is written. A quarantined
         // fixture's current output is the very thing the quarantine exists to keep out of
         // `expected.txt` -- so a routine re-bless, run to update some unrelated fixture, must not
-        // silently capture this one's `todo!()` backtrace and call it expected.
+        // silently capture this one's failure and call it expected.
         if bless {
             if let Some(reason) = quarantine_reason {
                 println!("skipped quarantined fixture {name} ({reason})");
