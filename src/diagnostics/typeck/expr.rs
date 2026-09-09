@@ -120,6 +120,24 @@ pub fn report_reference_in_new(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
     );
 }
 
+pub fn report_owned_element_in_new_array(cx: DisplayCx<'_>, ty: Ty, span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "`new [elem; count]` cannot repeat an owning element, found `{}`",
+                cx.show(ty)
+            ),
+            span,
+        )
+        .with_label("this type owns an allocation, so it cannot be copied into every slot")
+        .with_help(
+            "the element is evaluated once and stored into all `count` slots, which would leave \
+             every slot owning the same allocation; repeat a plain value instead, and fill the \
+             array with owning ones element by element",
+        ),
+    );
+}
+
 pub fn report_not_indexable(cx: DisplayCx<'_>, base: Ty, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(format!("`{}` cannot be indexed", cx.show(base)), span)
@@ -234,6 +252,19 @@ pub fn report_variant_enum_unknown(variant: Ident, span: SrcSpan) {
             "a `.variant` takes its enum from the type it is expected to produce -- from a \
                  binding's annotation, a parameter, or the enclosing function's return type",
         ),
+    );
+}
+
+/// `x.rect { w: 1.0 }` where `x` is a value. A brace payload after a `.` builds a variant and
+/// nothing else, so its base has to name the enum rather than a value of it.
+pub fn report_variant_base_not_a_type(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("only an enum can be named before `.variant { .. }`", span)
+            .with_label("this names a value, not an enum")
+            .with_help(
+                "write `.variant { .. }` to build a variant of the expected enum, or name the \
+                 enum itself, as in `Shape.rect { .. }`",
+            ),
     );
 }
 
@@ -425,30 +456,6 @@ pub fn report_try_error_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSp
             "`?` propagates this error out of the function, whose declared error type it \
                      has to match",
         ),
-    );
-}
-
-// -----------------------------------------------------------------
-// Ranges
-// -----------------------------------------------------------------
-
-pub fn report_range_endpoints_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
-    DiagCtx::emit(
-        Diagnostic::error(cx.show(err).to_string(), span)
-            .with_label("a range's two endpoints have to have the same type"),
-    );
-}
-
-/// TODO: Removes when std library Range is implemented
-pub fn report_no_range_type(span: SrcSpan) {
-    DiagCtx::emit(
-        Diagnostic::error("a range expression has no type yet", span)
-            .with_label("`..` produces a value the core library declares no type for")
-            .with_help(
-                "a range is a value of a `Range` type, and there is no such type in `core` \
-                     and no lang item naming one; iterate with `for x in ..` over a collection \
-                     instead",
-            ),
     );
 }
 
