@@ -18,8 +18,11 @@ pub enum Res {
     Local(Local),
     Function(DefId),
     Module(DefId),
-    /// We keep Self separate, unlike nameres::Res, since it must behave
-    /// differently for typeck
+    /// A path written as `Self`, carrying the type it stands for. Kept apart from
+    /// [`Res::Type`] holding that same type because typeck has to read a signature's `Self` as
+    /// the receiver type at each call site, not as the one type the defining `extend` block is
+    /// on. Lowered straight across from [`crate::nameres::Res::SelfTy`], which draws the same
+    /// distinction.
     SelfTy(Type),
     Err,
 }
