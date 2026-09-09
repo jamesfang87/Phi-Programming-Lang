@@ -52,19 +52,8 @@ impl<'res> LoweringCtx<'res> {
             SRes::Err => Res::Err,
             SRes::Function(node) => Res::Function(self.def_id_of(node, "a function item")),
             SRes::Module(node) => Res::Module(self.def_id_of(node, "a module")),
-            SRes::Type(SType::Prim(prim)) => Res::Type(Type::Prim(prim)),
-            SRes::Type(SType::Generic(node)) => {
-                Res::Type(Type::Generic(self.hir_id_of(node, "a generic parameter")))
-            }
-            SRes::Type(SType::Def(STyDef::Struct(node))) => Res::Type(Type::Def(TyDef::Struct(
-                self.def_id_of(node, "a struct item"),
-            ))),
-            SRes::Type(SType::Def(STyDef::Enum(node))) => {
-                Res::Type(Type::Def(TyDef::Enum(self.def_id_of(node, "an enum item"))))
-            }
-            SRes::Type(SType::Def(STyDef::Trait(node))) => Res::Type(Type::Def(TyDef::Trait(
-                self.def_id_of(node, "a trait item"),
-            ))),
+            SRes::Type(ty) => Res::Type(self.translate_type(ty)),
+            SRes::SelfTy(ty) => Res::SelfTy(self.translate_type(ty)),
             SRes::Local(SLocal::Param(node)) => {
                 Res::Local(Local::Param(self.hir_id_of(node, "a parameter")))
             }
@@ -73,6 +62,24 @@ impl<'res> LoweringCtx<'res> {
             }
             SRes::Local(SLocal::Variable(node)) => {
                 Res::Local(Local::Variable(self.hir_id_of(node, "a binding pattern")))
+            }
+        }
+    }
+
+    /// Rewrites a type's `NodeId`s into the `DefId`/`HirId` the lowered arenas address it by.
+    /// Shared by `Res::Type` and `Res::SelfTy`, which differ only in how the name was written.
+    fn translate_type(&self, ty: SType) -> Type {
+        match ty {
+            SType::Prim(prim) => Type::Prim(prim),
+            SType::Generic(node) => Type::Generic(self.hir_id_of(node, "a generic parameter")),
+            SType::Def(STyDef::Struct(node)) => {
+                Type::Def(TyDef::Struct(self.def_id_of(node, "a struct item")))
+            }
+            SType::Def(STyDef::Enum(node)) => {
+                Type::Def(TyDef::Enum(self.def_id_of(node, "an enum item")))
+            }
+            SType::Def(STyDef::Trait(node)) => {
+                Type::Def(TyDef::Trait(self.def_id_of(node, "a trait item")))
             }
         }
     }
@@ -91,15 +98,7 @@ impl<'res> LoweringCtx<'res> {
         crate::hir::Path {
             segments: path.segments.clone(),
             span: path.span,
-            res: self.as_self_ty(path, self.translate_res(res)),
-        }
-    }
-
-    // TODO: Code smell... probably need refactoring
-    fn as_self_ty(&self, path: &ast::Path, res: Res) -> Res {
-        match res {
-            Res::Type(ty) if is_self_path(path) => Res::SelfTy(ty),
-            other => other,
+            res: self.translate_res(res),
         }
     }
 
