@@ -35,11 +35,6 @@ pub fn lower_to_hir(src: &str) -> Hir {
     lower_ast(&ast, &res)
 }
 
-// TODO: What the hell is the point of this?
-pub fn resolve_src(src: &str) -> Hir {
-    lower_to_hir(src)
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Stage {
     Collect,
@@ -93,11 +88,11 @@ pub const OPS_PREAMBLE: &str = "module core::ops;
      extend f64 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
      ";
 
-/// Like [`resolve_src`], but with [`OPS_PREAMBLE`] compiled alongside `src` as a second file --
+/// Like [`lower_to_hir`], but with [`OPS_PREAMBLE`] compiled alongside `src` as a second file --
 /// for a fixture that needs a real `Copy` (or other operator trait) impl to exist, such as one
 /// dereferencing a primitive through a reference in a value position, rather than one that only
 /// needs `i32`/`f64`/`bool` to parse and resolve.
-pub fn resolve_src_with_ops(src: &str) -> Hir {
+pub fn lower_to_hir_with_ops(src: &str) -> Hir {
     // Not `parse_src` twice: `parse_src` clears the interner on every call (via `lex_src`), so
     // calling it once per file would wipe out the first file's interned symbols before the
     // second is even parsed. Clear once, up front, the same way `typeck_src_files` does.
@@ -114,19 +109,11 @@ pub fn resolve_src_with_ops(src: &str) -> Hir {
     lower_ast(&ast, &res)
 }
 
-// TODO: move this into DiagCtx
-pub fn messages() -> Vec<String> {
-    DiagCtx::diagnostics()
-        .into_iter()
-        .map(|diagnostic| diagnostic.message)
-        .collect()
-}
-
 pub fn typeck_src(src: &str) -> Vec<String> {
-    let hir = resolve_src(src);
+    let hir = lower_to_hir(src);
     DiagCtx::clear();
     crate::typeck::check(&hir);
-    messages()
+    DiagCtx::messages()
 }
 
 // Why is there typeck_src and typeck_src_files?
@@ -162,7 +149,7 @@ pub fn typecheck_only(
     crate::typeck::tyctx::TyCtx,
     crate::typeck::results::TypeResolutions,
 ) {
-    let hir = resolve_src(src);
+    let hir = lower_to_hir(src);
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
     let diagnostics = DiagCtx::diagnostics();
@@ -183,7 +170,7 @@ pub fn lower_to_mir(
     crate::mir::Mir,
     std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
 ) {
-    let hir = resolve_src(src);
+    let hir = lower_to_hir(src);
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
     let diagnostics = DiagCtx::diagnostics();
@@ -279,7 +266,7 @@ pub fn typeck_src_as_core(src: &str) -> Vec<String> {
 
     DiagCtx::clear();
     crate::typeck::check(&hir);
-    messages()
+    DiagCtx::messages()
 }
 
 /// [`lower_mir_src`], but registering `src` under [`FileOrigin::Core`] instead of
@@ -327,7 +314,7 @@ pub fn lower_mir_src_as_core(
 /// [`lower_mir_src`] documents: a fixture meant to exercise something type checking itself
 /// rejects belongs with [`typeck_rejects`] instead, not here.
 pub fn mir_definite_init_src(src: &str) -> Vec<String> {
-    let hir = resolve_src_with_ops(src);
+    let hir = lower_to_hir_with_ops(src);
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
     let diagnostics = DiagCtx::diagnostics();
@@ -367,8 +354,80 @@ pub fn mir_definite_init_rejects(src: &str, needle: &str) {
     );
 }
 
+pub fn mir_captures_src(src: &str) -> Vec<String> {
+    let hir = lower_to_hir_with_ops(src);
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+    crate::mir::checks::borrowck::captures::check(&hir, &mut tcx, &program);
+
+    DiagCtx::diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+pub fn mir_captures_accepts(src: &str) {
+    let reported = mir_captures_src(src);
+    assert!(
+        reported.is_empty(),
+        "expected {src:?} to pass the closure-capture move check: {reported:?}"
+    );
+}
+
+pub fn mir_captures_rejects(src: &str, needle: &str) {
+    let reported = mir_captures_src(src);
+    assert_eq!(reported.len(), 1, "for {src:?}: {reported:?}");
+    assert!(
+        reported[0].contains(needle),
+        "expected a diagnostic mentioning {needle:?} for {src:?}, got {reported:?}"
+    );
+}
+
+pub fn mir_element_moves_src(src: &str) -> Vec<String> {
+    let hir = lower_to_hir_with_ops(src);
+    DiagCtx::clear();
+    let checked = crate::typeck::check(&hir);
+    let diagnostics = DiagCtx::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+    crate::mir::checks::borrowck::element_moves::check(&mut tcx, &program);
+
+    DiagCtx::diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+pub fn mir_element_moves_accepts(src: &str) {
+    let reported = mir_element_moves_src(src);
+    assert!(
+        reported.is_empty(),
+        "expected {src:?} to pass the array-element move check: {reported:?}"
+    );
+}
+
+pub fn mir_element_moves_rejects(src: &str, needle: &str) {
+    let reported = mir_element_moves_src(src);
+    assert_eq!(reported.len(), 1, "for {src:?}: {reported:?}");
+    assert!(
+        reported[0].contains(needle),
+        "expected a diagnostic mentioning {needle:?} for {src:?}, got {reported:?}"
+    );
+}
+
 pub fn mir_exclusivity_src(src: &str) -> Vec<String> {
-    let hir = resolve_src_with_ops(src);
+    let hir = lower_to_hir_with_ops(src);
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
     let diagnostics = DiagCtx::diagnostics();
@@ -404,7 +463,7 @@ pub fn mir_exclusivity_rejects(src: &str, needle: &str) {
 }
 
 pub fn mir_never_read_src(src: &str) -> Vec<String> {
-    let hir = resolve_src(src);
+    let hir = lower_to_hir(src);
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
     let diagnostics = DiagCtx::diagnostics();

@@ -1,4 +1,7 @@
+use crate::mir::body::LocalDecl;
 use crate::mir::ids::{Local, VariantIdx};
+use crate::typeck::ty::{Ty, TyKind};
+use crate::typeck::tyctx::TyCtx;
 
 /// A `Place` is a location in memory corresponding to a [`Local`]. Since the
 /// memory of a `Local` can be split into subparts (such as the fields of a struct),
@@ -35,4 +38,25 @@ pub enum Projection {
     /// `Downcast` narrows an enum place to one variant's payload and is required before any
     /// `Field` projection into that payload is well-typed.
     Downcast(VariantIdx),
+}
+
+pub fn place_ty(tcx: &mut TyCtx, local_decls: &[LocalDecl], place: &Place) -> Ty {
+    let mut ty = local_decls[place.local.index()].ty;
+    for projection in &place.projections {
+        ty = match (projection, tcx.kind(ty).clone()) {
+            (Projection::Deref, TyKind::Ref { base, .. } | TyKind::Iso(base)) => base,
+            (Projection::Field(index), TyKind::Tuple(elems)) => elems[*index as usize],
+            (Projection::Field(index), TyKind::Adt { def, args }) => {
+                tcx.struct_field_tys(def, &args)[*index as usize]
+            }
+            (Projection::Index(_) | Projection::ConstantIndex(_), TyKind::Array { elem, .. }) => {
+                elem
+            }
+            (Projection::Downcast(_), _) => ty,
+            (projection, kind) => {
+                panic!("place_ty: {projection:?} does not apply to a value of type {kind:?}")
+            }
+        };
+    }
+    ty
 }

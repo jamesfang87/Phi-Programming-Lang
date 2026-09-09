@@ -45,6 +45,25 @@ pub enum Rvalue {
     },
 }
 
+impl Rvalue {
+    pub fn operands(&self) -> Vec<&Operand> {
+        match self {
+            Rvalue::Use(operand)
+            | Rvalue::UnaryOp(_, operand)
+            | Rvalue::Cast { operand, .. }
+            | Rvalue::New(operand) => vec![operand],
+            Rvalue::BinaryOp(_, lhs, rhs)
+            | Rvalue::CheckedBinaryOp(_, lhs, rhs)
+            | Rvalue::NewArray {
+                elem: lhs,
+                count: rhs,
+            } => vec![lhs, rhs],
+            Rvalue::Aggregate(_, operands) => operands.iter().collect(),
+            Rvalue::Ref { .. } | Rvalue::Discriminant(_) | Rvalue::Len(_) => Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CastKind {
     /// This variant is a user-written `expr as Ty`
@@ -59,5 +78,5 @@ pub enum AggregateKind {
     Tuple,
     Array,
     Adt { def: DefId, variant: VariantIdx },
-    Closure { def: DefId },
+    Closure { def: DefId, args: Vec<Ty> },
 }

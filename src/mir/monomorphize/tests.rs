@@ -31,6 +31,33 @@ fn a_non_generic_body_monomorphizes_to_exactly_itself() {
     assert!(instance.any_mode.is_none());
 }
 
+/// `main` is collected as a root on its own terms, not because its locals happen to be
+/// concrete. It carries no type parameters, so it is never specialized -- there is exactly one
+/// instance of it, with an empty argument list.
+///
+/// The receiver here is what makes this worth pinning: a `&self` method from a generic `extend`
+/// block used to leave `&Wrap<T>` in `main`'s locals, which held `main` back from the roots and
+/// dropped the entry point from the program.
+#[test]
+fn main_is_always_collected_as_a_root() {
+    let (_hir, _tcx, _types, mir, instances) = lower_to_mir(
+        "struct Wrap<T> { value: T }\n\
+         extend<T> Wrap<T> { fun ping(&self) -> i32 { return 3; } }\n\
+         fun main() { let w: Wrap<i32> = Wrap { value: 1 }; let n = w.ping(); }",
+    );
+    let main_def = mir.main.expect("the fixture declares a crate-root `main`");
+    let mains: Vec<_> = instances
+        .keys()
+        .filter(|instance| instance.def == main_def)
+        .collect();
+    assert_eq!(mains.len(), 1, "expected exactly one `main` instance: {mains:?}");
+    assert!(
+        mains[0].args.is_empty(),
+        "`main` takes no type parameters, so it is never specialized: {:?}",
+        mains[0]
+    );
+}
+
 #[test]
 fn a_generic_function_is_instantiated_once_per_call_site_type() {
     let (_tcx, instances) = monomorphized(

@@ -13,10 +13,9 @@ use std::collections::{HashMap, HashSet};
 use crate::driver::cli::Mode;
 use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
 use crate::langitems::hir::LangItems;
-use crate::mir::adt::{collect_adt_defs, AdtDef};
-use crate::mir::def_names::{collect_def_names, DefNames};
+use crate::mir::def_names::{DefNames, collect_def_names};
 use crate::mir::lower::ctx::BodyLowerCtx;
-use crate::mir::vtables::{collect_vtables, VtableInfo};
+use crate::mir::vtables::{VtableInfo, collect_vtables};
 use crate::mir::{AnyMode, Body};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
@@ -53,7 +52,6 @@ impl Task {
 /// argument list.
 pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
-    pub adts: HashMap<DefId, AdtDef>,
     pub vtables: HashMap<(Ty, DefId), VtableInfo>,
     pub def_names: DefNames,
     pub lang_items: LangItems,
@@ -124,7 +122,6 @@ pub fn lower(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) ->
 
     Mir {
         bodies,
-        adts: collect_adt_defs(hir, types),
         vtables: collect_vtables(hir, types),
         def_names: collect_def_names(hir),
         lang_items: hir.lang_items().clone(),
@@ -140,6 +137,17 @@ fn is_named_main(hir: &Hir, def: DefId) -> bool {
 }
 
 fn find_crate_root_main(hir: &Hir) -> Option<DefId> {
+    match crate_root_main_candidates(hir).as_slice() {
+        [one] => Some(*one),
+        // No candidates: `checks::entry_point` reports the missing entry point. Several
+        // candidates: it reports the ambiguity. Either way codegen gets no entry point.
+        _ => None,
+    }
+}
+
+/// Every function named `main` at the crate root or in one of the root's direct child modules,
+/// in declaration order.
+pub(crate) fn crate_root_main_candidates(hir: &Hir) -> Vec<DefId> {
     let root = hir.root();
     let mut candidates: Vec<DefId> = root
         .items
@@ -160,13 +168,5 @@ fn find_crate_root_main(hir: &Hir) -> Option<DefId> {
         }
     }
 
-    match candidates.as_slice() {
-        [] => None,
-        [one] => Some(*one),
-        _ => panic!(
-            "found {} `main` functions at the crate root; the OS entry point is ambiguous: {:?}",
-            candidates.len(),
-            candidates
-        ),
-    }
+    candidates
 }

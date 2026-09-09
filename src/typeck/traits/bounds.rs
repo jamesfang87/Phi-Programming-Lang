@@ -85,7 +85,7 @@ mod tests {
     use super::*;
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::{Stage, checker_through, messages, resolve_src};
+    use crate::testing::{Stage, checker_through, lower_to_hir};
 
     // -----------------------------------------------------------------
     // Source-level
@@ -111,12 +111,12 @@ mod tests {
         checker.check_extend_headers();
         checker.select_obligations();
 
-        messages()
+        DiagCtx::messages()
     }
 
     #[test]
     fn a_bound_that_is_not_met_by_the_argument_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Bare {}
@@ -134,7 +134,7 @@ mod tests {
     /// being re-raised against the instantiation to get there.
     #[test]
     fn an_unmet_bound_points_at_the_declaration_that_requires_it() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Bare {}
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn a_bound_met_by_an_impl_is_accepted() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Foo {}
@@ -178,7 +178,7 @@ mod tests {
     /// or fails as one.
     #[test]
     fn a_bound_met_through_a_conditional_impl_is_accepted() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Wrap<T> { inner: T }
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn a_conditional_impl_whose_own_bound_fails_does_not_satisfy_the_goal() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Wrap<T> { inner: T }
@@ -212,7 +212,7 @@ mod tests {
     /// which is sufficient to discharge the bound.
     #[test]
     fn a_bound_met_by_an_assumption_in_scope_is_accepted() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              fun f<U: Show>(x: Sorted<U>) {}",
@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn a_parameter_passed_on_without_the_bound_it_needs_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              fun f<U>(x: Sorted<U>) {}",
@@ -236,7 +236,7 @@ mod tests {
     /// other.
     #[test]
     fn an_extend_blocks_arguments_have_to_satisfy_the_extended_types_bounds() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              struct Bare {}
@@ -262,7 +262,7 @@ mod tests {
     /// sit in would be noise about the same mistake.
     #[test]
     fn a_bound_about_an_already_broken_type_is_discharged_silently() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Sorted<T: Show> { inner: T }
              fun f(x: Sorted<Nope>) {}",

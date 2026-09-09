@@ -272,7 +272,7 @@ mod tests {
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::nameres::PrimTy;
-    use crate::testing::{Stage, checker_through, messages, resolve_src};
+    use crate::testing::{Stage, checker_through, lower_to_hir};
 
     // -----------------------------------------------------------------
     // match_ty
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn a_matching_impl_proves_the_goal() {
-        let hir = resolve_src(SRC);
+        let hir = lower_to_hir(SRC);
         let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn a_type_with_no_impl_does_not_implement() {
-        let hir = resolve_src(SRC);
+        let hir = lower_to_hir(SRC);
         let mut checker = solver(&hir);
         let (bare, show) = (named(&checker, "Bare"), named(&checker, "Show"));
         let bare_ty = checker.tcx.mk_adt(bare, vec![]);
@@ -480,7 +480,7 @@ mod tests {
     /// A goal whose self type is still an inference variable is not "no", it is "not yet".
     #[test]
     fn an_unresolved_self_type_is_ambiguous() {
-        let hir = resolve_src(SRC);
+        let hir = lower_to_hir(SRC);
         let mut checker = solver(&hir);
         let show = named(&checker, "Show");
         let var = checker.tcx.next_ty_var();
@@ -490,12 +490,12 @@ mod tests {
             checker.implements(&goal, &BoundsEnv::default()),
             Solution::Ambiguous
         );
-        assert!(messages().is_empty(), "an ambiguity is not a diagnostic");
+        assert!(DiagCtx::messages().is_empty(), "an ambiguity is not a diagnostic");
     }
 
     #[test]
     fn a_goal_containing_an_error_answers_error_without_reporting() {
-        let hir = resolve_src(SRC);
+        let hir = lower_to_hir(SRC);
         let mut checker = solver(&hir);
         let show = named(&checker, "Show");
         let error = checker.tcx.error();
@@ -506,7 +506,7 @@ mod tests {
             Solution::Error
         );
         assert!(
-            messages().is_empty(),
+            DiagCtx::messages().is_empty(),
             "a diagnostic for the error type already exists"
         );
     }
@@ -517,7 +517,7 @@ mod tests {
     fn a_reference_implements_nothing() {
         use crate::ast::Mutability;
 
-        let hir = resolve_src(SRC);
+        let hir = lower_to_hir(SRC);
         let mut checker = solver(&hir);
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn a_primitive_satisfies_a_trait_it_extends() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              extend i32 with Show { fun show(&self) {} }",
         );
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn a_tuple_satisfies_a_trait_it_extends() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              extend (i32, i32) with Show { fun show(&self) {} }",
         );
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn dyn_implements_exactly_the_trait_it_names() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              trait Other { fun other(&self); }",
         );
@@ -592,7 +592,7 @@ mod tests {
     /// goal about a bare type parameter.
     #[test]
     fn a_bound_in_the_environment_proves_a_goal_about_a_parameter() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              fun f<T: Show>(x: T) {}",
         );
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn a_parameter_with_no_bound_implements_nothing() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              fun f<T>(x: T) {}",
         );
@@ -628,7 +628,7 @@ mod tests {
     /// Inside a trait, `Self` implements that trait by definition.
     #[test]
     fn a_traits_own_self_implements_it() {
-        let hir = resolve_src("trait Show { fun show(&self); }");
+        let hir = lower_to_hir("trait Show { fun show(&self); }");
         let mut checker = solver(&hir);
         let show = named(&checker, "Show");
         let self_ty = checker.tcx.mk_self_param(show);
@@ -641,7 +641,7 @@ mod tests {
     /// A method sees the bounds of the `extend` block it is declared in, not just its own.
     #[test]
     fn a_method_inherits_its_extend_blocks_bounds() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Wrap<T> { inner: T }
              extend<T: Show> Wrap<T> { fun get(&self) {} }",
@@ -661,7 +661,7 @@ mod tests {
     /// A conditional block is honored: `Wrap<T>: Show` holds exactly when `T: Show` does.
     #[test]
     fn a_conditional_impls_own_bounds_are_proved_recursively() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Wrap<T> { inner: T }
              struct Foo {}

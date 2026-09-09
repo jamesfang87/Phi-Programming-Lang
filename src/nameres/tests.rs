@@ -697,12 +697,45 @@ fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
         TyDef::Trait(NodeId::next()),
     ] {
         r.table.push_self(Type::Def(def));
+        // `SelfTy`, not `Type`: the spelling is recorded alongside the type it stands for, so
+        // HIR lowering carries it across rather than re-deriving it from the segment text.
         assert_eq!(
             r.resolve_type_path(&path(&["Self"])),
-            Res::Type(Type::Def(def))
+            Res::SelfTy(Type::Def(def))
         );
         r.table.pop_self();
     }
+}
+
+/// `Self` reaches HIR lowering as `Res::SelfTy` through a real resolve, not just through
+/// `resolve_type_path` in isolation -- including from an access base, where `Self.circle(1.0)`
+/// names a variant through the enum an `extend` block is on.
+#[test]
+fn self_as_an_access_base_records_self_ty() {
+    let ast = ast_from_files(&[
+        "module app; enum Shape { unit } extend Shape { fun f() { let s = Self.unit; } }",
+    ]);
+    let r = resolve(&ast);
+    let base = access_base_of_first_let(&ast);
+    assert!(matches!(
+        r.get(base.id, &path(&["Self"])),
+        Some(Res::SelfTy(Type::Def(TyDef::Enum(_))))
+    ));
+}
+
+/// A type named outright stays `Res::Type`, so the two spellings really are distinguished
+/// rather than both collapsing to one variant.
+#[test]
+fn a_type_named_outright_is_not_recorded_as_self_ty() {
+    let ast = ast_from_files(&[
+        "module app; enum Shape { unit } extend Shape { fun f() { let s = Shape.unit; } }",
+    ]);
+    let r = resolve(&ast);
+    let base = access_base_of_first_let(&ast);
+    assert!(matches!(
+        r.get(base.id, &path(&["Shape"])),
+        Some(Res::Type(Type::Def(TyDef::Enum(_))))
+    ));
 }
 
 #[test]
@@ -959,6 +992,58 @@ fn a_path_expression_resolves_to_the_local_it_names() {
     );
 }
 
+/// Returns the base expression of the `.` access that a fixture's only function binds in its
+/// first `let`.
+fn access_base_of_first_let(ast: &Ast) -> &Expr {
+    let f = only_function(ast);
+    let block = f.block.as_ref().expect("the fixture's function has a body");
+    let StmtKind::Let { init, .. } = &block.stmts[0].kind else {
+        panic!("expected the first statement to be a let binding");
+    };
+    let ExprKind::Access { base, .. } = &init.kind else {
+        panic!("expected the initializer to be a `.` access");
+    };
+    base
+}
+
+/// An access base is looked up in the value namespace and, failing that, the type namespace --
+/// which is what lets `Shape.circle(1.0)` name a variant through its enum.
+#[test]
+fn an_access_base_falls_back_to_the_type_namespace() {
+    let ast = ast_from_files(&["module app; enum Shape { unit } fun f() { let s = Shape.unit; }"]);
+    let r = resolve(&ast);
+    let base = access_base_of_first_let(&ast);
+    assert!(matches!(
+        r.get(base.id, &path(&["Shape"])),
+        Some(Res::Type(Type::Def(TyDef::Enum(_))))
+    ));
+}
+
+/// The value namespace is tried first, so a local named like a type still shadows it here, the
+/// same way it does in every other expression position.
+#[test]
+fn a_local_shadows_a_type_of_the_same_name_as_an_access_base() {
+    let ast = ast_from_files(&[
+        "module app; enum Shape { unit } fun f(Shape: i32) { let s = Shape.unit; }",
+    ]);
+    let r = resolve(&ast);
+    let base = access_base_of_first_let(&ast);
+    assert!(matches!(
+        r.get(base.id, &path(&["Shape"])),
+        Some(Res::Local(Local::Param(_)))
+    ));
+}
+
+/// A base in neither namespace is reported once, not once per namespace tried.
+#[test]
+fn an_access_base_in_neither_namespace_is_reported_once() {
+    let ast = ast_from_files(&["module app; fun f() { let s = Nope.unit; }"]);
+    let (_, diags) = with_diags(|| resolve(&ast));
+    let reported = non_lang_item_diags(&diags);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(reported[0].message.contains("cannot find"), "{reported:?}");
+}
+
 #[test]
 fn a_let_rhs_sees_the_outer_x_not_the_one_it_declares() {
     // The classic bug: binding the pattern before walking the initializer would make `x` on the
@@ -1051,7 +1136,7 @@ fn an_extends_unresolved_adt_path_suppresses_the_self_diagnostic() {
 // `Identifier`, so it can never appear as `adt_path` -- see `typeck/traits/index.rs:224,433`),
 // so the "adt_path resolved but not to a TyDef" branch above can't be exercised from source text.
 // It is exercised indirectly: every extend fixture elsewhere that resolves cleanly (e.g.
-// `self_resolves_to_each_of_struct_enum_trait_and_extend`) takes the `Res::Type(Type::Def(_))`
+// every `extend Foo` fixture that resolves cleanly) takes the `Res::Type(Type::Def(_))`
 // arm, and the `_ => false` arm is straightforward enough by inspection not to need a dedicated
 // (unreachable-from-source) fixture.
 

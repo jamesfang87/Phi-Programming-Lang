@@ -12,17 +12,21 @@ use crate::diagnostics::typeck::expr::{
     report_if_cond_not_bool, report_if_no_else_mismatch, report_index_base_unknown,
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
     report_missing_fields, report_move_out_of_reference, report_new_array_count_not_usize,
-    report_no_range_type, report_no_such_field, report_no_such_variant,
-    report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_try,
-    report_panic_message_not_str, report_private_field, report_range_endpoints_mismatch,
-    report_record_field_unknown, report_reference_in_new, report_try_error_mismatch,
-    report_try_operand_unknown, report_try_outside, report_try_return_mismatch,
-    report_variant_enum_unknown, report_variant_expr_payload_shape, report_variant_missing_fields,
+    report_no_such_field, report_no_such_variant, report_not_a_struct_literal,
+    report_not_assignable, report_not_indexable, report_not_try, report_owned_element_in_new_array,
+    report_panic_message_not_str, report_private_field, report_record_field_unknown,
+    report_reference_in_new, report_try_error_mismatch, report_try_operand_unknown,
+    report_try_outside, report_try_return_mismatch, report_variant_enum_unknown,
+    report_variant_expr_payload_shape, report_variant_missing_fields,
     report_variant_payload_mismatch,
 };
+use crate::diagnostics::typeck::lower_ty::report_trait_as_ty;
 use crate::diagnostics::typeck::report_any_outside_signature;
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, Hir, HirId, Path, Payload, PayloadField, Res, TyDef, Type};
+use crate::hir::{
+    AccessArgs, DefId, ExprKind, Hir, HirId, OwnerNode, Path, Payload, PayloadField, Res, TyDef,
+    Type,
+};
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
@@ -37,6 +41,45 @@ use crate::typeck::unify::{is_float, is_integer};
 pub(crate) enum DerefContext {
     Value,
     Place,
+}
+
+/// A variant's payload as it was written, borrowed out of whichever node carried it.
+///
+/// The elided form `.circle(1.0)` parses to [`Payload`] and the qualified form
+/// `Shape.circle(1.0)` parses to [`AccessArgs`], but the two describe the same three payload
+/// shapes. Reducing both to this view is what lets [`Typeck::check_variant_of`] check them
+/// with one body instead of two that drift apart.
+#[derive(Clone, Copy)]
+pub(crate) enum WrittenPayload<'hir> {
+    None,
+    Single(HirId),
+    Record(&'hir [PayloadField]),
+    /// A parenthesised list that is not one value, as in `Shape.circle()` or
+    /// `Shape.circle(1.0, 2.0)`. No declared payload has this shape, so it always reports as a
+    /// payload-shape mismatch; it exists only because [`AccessArgs::Call`] can hold any number
+    /// of arguments while [`Payload::Single`] holds exactly one.
+    ArgList(&'hir [HirId]),
+}
+
+impl<'hir> WrittenPayload<'hir> {
+    fn from_payload(payload: &'hir Payload) -> Self {
+        match payload {
+            Payload::None => WrittenPayload::None,
+            Payload::Single(value) => WrittenPayload::Single(*value),
+            Payload::Record(fields) => WrittenPayload::Record(fields),
+        }
+    }
+
+    pub(crate) fn from_access_args(args: &'hir AccessArgs) -> Self {
+        match args {
+            AccessArgs::None => WrittenPayload::None,
+            AccessArgs::Call(args) => match args.as_slice() {
+                [value] => WrittenPayload::Single(*value),
+                args => WrittenPayload::ArgList(args),
+            },
+            AccessArgs::Record(fields) => WrittenPayload::Record(fields),
+        }
+    }
 }
 
 impl<'hir> Typeck<'hir> {
@@ -334,50 +377,114 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) -> Ty {
         let expected = expected.map(|ty| self.unifier.find_deep(&mut self.tcx, ty));
+        let written = WrittenPayload::from_payload(payload);
         let self_ty = match expected {
             Some(ty) if matches!(self.tcx.kind(ty), TyKind::Error) => {
-                self.check_payload_exprs_only(payload);
+                self.check_payload_exprs_only(written);
                 return self.tcx.error();
             }
             Some(ty) if !matches!(self.tcx.kind(ty), TyKind::Var(_)) => ty,
             _ => {
                 report_variant_enum_unknown(variant, span);
-                self.check_payload_exprs_only(payload);
+                self.check_payload_exprs_only(written);
                 return self.tcx.error();
             }
         };
 
+        self.check_variant_of(self_ty, variant, written, span)
+    }
+
+    /// Checks a variant of a known enum against the payload written for it, and returns that
+    /// enum's type.
+    ///
+    /// Both spellings land here: the elided `.circle(1.0)`, whose enum comes from the expected
+    /// type, and the qualified `Shape.circle(1.0)`, whose enum is named outright. Only where
+    /// `self_ty` comes from differs, so everything past that point is shared.
+    pub(crate) fn check_variant_of(
+        &mut self,
+        self_ty: Ty,
+        variant: Ident,
+        written: WrittenPayload<'hir>,
+        span: SrcSpan,
+    ) -> Ty {
+        if matches!(self.tcx.kind(self_ty), TyKind::Error) {
+            self.check_payload_exprs_only(written);
+            return self.tcx.error();
+        }
+
         let Some(found) = self.variant_def(self_ty, variant.text) else {
             report_no_such_variant(self.display_cx(), variant, self_ty);
-            self.check_payload_exprs_only(payload);
+            self.check_payload_exprs_only(written);
             return self.tcx.error();
         };
 
-        match (&found.payload, payload) {
-            (VariantTys::Unit, Payload::None) => {}
-            (VariantTys::Single(want), Payload::Single(value)) => {
+        match (&found.payload, written) {
+            (VariantTys::Unit, WrittenPayload::None) => {}
+            (VariantTys::Single(want), WrittenPayload::Single(value)) => {
                 let want = *want;
-                let got = self.ty_of_expecting(*value, Some(want));
+                let got = self.ty_of_expecting(value, Some(want));
                 if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
                     report_variant_payload_mismatch(
                         self.display_cx(),
                         err,
-                        self.hir.expr(*value).span,
+                        self.hir.expr(value).span,
                     );
                 }
             }
-            (VariantTys::Record(want), Payload::Record(fields)) => {
+            (VariantTys::Record(want), WrittenPayload::Record(fields)) => {
                 let want = want.clone();
                 self.check_variant_record(&want, fields, found.id);
             }
             _ => {
                 let declared = found.payload.describe();
                 report_variant_expr_payload_shape(self.hir, variant, span, declared, found.id);
-                self.check_payload_exprs_only(payload);
+                self.check_payload_exprs_only(written);
             }
         }
 
         self_ty
+    }
+
+    /// The type an access base names, for a base that names a type rather than a value -- the
+    /// `Shape` in `Shape.circle(1.0)`, or a `Self` standing for the type an `extend` block is
+    /// on.
+    ///
+    /// A path in this position carries no generic arguments of its own, so a generic enum gets
+    /// one fresh inference variable per parameter: `Option.some(1)` starts as `Option<?0>` and
+    /// `?0` is pinned by the payload and by whatever the whole expression is unified with.
+    ///
+    /// Returns `None` for a base that names a value, which is every ordinary field read and
+    /// method call.
+    pub(crate) fn named_type_of_base(&mut self, base: HirId) -> Option<Ty> {
+        let expr = self.hir.expr(base);
+        let ExprKind::Path(path) = &expr.kind else {
+            return None;
+        };
+        let (res, span) = (path.res, expr.span);
+
+        let ty = match res {
+            Res::Type(Type::Prim(prim)) => self.tcx.mk_prim(prim),
+            Res::Type(Type::Generic(param)) => self.tcx.mk_generic(param),
+            Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => {
+                let arity = match self.hir.def(def) {
+                    OwnerNode::Struct(struct_) => struct_.generics.len(),
+                    OwnerNode::Enum(enum_) => enum_.generics.len(),
+                    _ => unreachable!("a TyDef::Struct/Enum always names a Struct/Enum owner"),
+                };
+                let args = (0..arity).map(|_| self.tcx.next_ty_var()).collect();
+                self.tcx.mk_adt(def, args)
+            }
+            // A bare trait name is not a type, so it names no variants either. This is the same
+            // rejection `lower_ty` makes in type position, repeated because an access base is
+            // the one expression position a trait name can reach.
+            Res::Type(Type::Def(TyDef::Trait(_))) => {
+                report_trait_as_ty(span);
+                self.tcx.error()
+            }
+            Res::SelfTy(_) => self.self_ty(base.owner, span),
+            Res::Local(_) | Res::Function(_) | Res::Module(_) | Res::Err => return None,
+        };
+        Some(ty)
     }
 
     fn check_variant_record(
@@ -422,15 +529,23 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    fn check_payload_exprs_only(&mut self, payload: &'hir Payload) {
-        match payload {
-            Payload::None => {}
-            Payload::Single(value) => {
-                self.ty_of(*value);
+    /// Types every expression written in a payload without checking it against a declared one.
+    /// Reached once a variant has already failed: an expression left untyped here would show up
+    /// as a missing type in a later pass rather than as the mistake it may itself contain.
+    fn check_payload_exprs_only(&mut self, written: WrittenPayload<'hir>) {
+        match written {
+            WrittenPayload::None => {}
+            WrittenPayload::Single(value) => {
+                self.ty_of(value);
             }
-            Payload::Record(fields) => {
+            WrittenPayload::Record(fields) => {
                 for field in fields {
                     self.ty_of(field.value);
+                }
+            }
+            WrittenPayload::ArgList(args) => {
+                for &arg in args {
+                    self.ty_of(arg);
                 }
             }
         }
@@ -723,7 +838,11 @@ impl<'hir> Typeck<'hir> {
         if let Err(err) = self.unifier.unify(&self.tcx, count_ty, usize_ty) {
             report_new_array_count_not_usize(self.display_cx(), err, self.hir.expr(count).span);
         }
-        self.check_storable_in_iso(elem_ty, self.hir.expr(elem).span);
+        let elem_span = self.hir.expr(elem).span;
+        self.check_storable_in_iso(elem_ty, elem_span);
+        if self.tcx.needs_drop(elem_ty) {
+            report_owned_element_in_new_array(self.display_cx(), elem_ty, elem_span);
+        }
         let array_ty = self.tcx.mk_array(elem_ty, None);
         self.tcx.mk_iso(array_ty)
     }
@@ -735,30 +854,6 @@ impl<'hir> Typeck<'hir> {
         if self.tcx.contains_any(ty) {
             report_any_outside_signature(self.display_cx(), ty, span);
         }
-    }
-
-    // -----------------------------------------------------------------
-    // Ranges
-    // -----------------------------------------------------------------
-
-    /// Checks `lo..hi`.
-    pub(crate) fn check_range(
-        &mut self,
-        lo: Option<HirId>,
-        hi: Option<HirId>,
-        span: SrcSpan,
-    ) -> Ty {
-        let lo_ty = lo.map(|lo| self.ty_of(lo));
-        let hi_ty = hi.map(|hi| self.ty_of(hi));
-
-        if let (Some(lo_ty), Some(hi_ty)) = (lo_ty, hi_ty)
-            && let Err(err) = self.unifier.unify(&self.tcx, lo_ty, hi_ty)
-        {
-            report_range_endpoints_mismatch(self.display_cx(), err, span);
-        }
-
-        report_no_range_type(span);
-        self.tcx.error()
     }
 
     // -----------------------------------------------------------------
@@ -1154,6 +1249,102 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
+    // Enum variants named through their enum
+    // -----------------------------------------------------------------
+
+    /// All three payload shapes, written through the enum's own name rather than left to the
+    /// expectation. Each is the qualified spelling of a `.variant` the tests above accept.
+    #[test]
+    fn a_variant_can_be_named_through_its_enum() {
+        accepts(
+            "enum Shape { unit, circle: f64, square: { l: f64 } }
+             fun a() -> Shape { return Shape.unit; }
+             fun b() -> Shape { return Shape.circle(1.0); }
+             fun c() -> Shape { return Shape.square { l: 1.0 }; }",
+        );
+    }
+
+    /// Naming the enum is what the elided form cannot do: there is no expectation here to take
+    /// the enum from, and the qualified form still checks.
+    #[test]
+    fn naming_the_enum_supplies_what_no_expectation_would() {
+        accepts(
+            "enum Shape { unit }
+             fun f() { let s = Shape.unit; let t = s; }",
+        );
+    }
+
+    /// The enum's generic arguments are inferred from the payload, since a path in expression
+    /// position cannot carry any of its own.
+    #[test]
+    fn a_generic_enums_arguments_are_inferred_at_the_qualified_variant() {
+        accepts(
+            "enum Option<T> { some: T, none }
+             fun f() -> Option<i32> { return Option.some(1); }",
+        );
+        rejects(
+            "enum Option<T> { some: T, none }
+             fun f() -> Option<i32> { return Option.some(true); }",
+            "mismatched types",
+        );
+    }
+
+    /// `Self` names the type an `extend` block is on, so a method can build a variant of it
+    /// without repeating the enum's name.
+    #[test]
+    fn self_names_the_enum_inside_an_extend_block() {
+        accepts(
+            "enum Shape { unit, circle: f64 }
+             extend Shape { fun make() -> Shape { return Self.circle(2.0); } }",
+        );
+    }
+
+    #[test]
+    fn a_qualified_variant_the_enum_does_not_declare_is_reported() {
+        rejects(
+            "enum Shape { unit }
+             fun f() -> Shape { return Shape.square; }",
+            "no variant `square`",
+        );
+    }
+
+    #[test]
+    fn a_qualified_variant_built_with_the_wrong_payload_shape_is_reported() {
+        rejects(
+            "enum Shape { unit, circle: f64 }
+             fun f() -> Shape { return Shape.unit(1.0); }",
+            "carries no payload",
+        );
+        // An argument list that is not one value matches no declared payload at all.
+        rejects(
+            "enum Shape { unit, circle: f64 }
+             fun f() -> Shape { return Shape.circle(1.0, 2.0); }",
+            "carries a single value",
+        );
+    }
+
+    /// A struct has fields, not variants, so naming one before a `.member` finds nothing.
+    #[test]
+    fn a_variant_named_through_a_struct_is_reported() {
+        rejects(
+            "struct Point { x: i32 }
+             fun f() { let p = Point.x; }",
+            "no variant `x`",
+        );
+    }
+
+    /// A brace payload only ever builds a variant, so a base naming a value cannot carry one --
+    /// there is no field or method spelled with braces to fall back to.
+    #[test]
+    fn a_brace_payload_on_a_value_is_reported() {
+        rejects(
+            "enum Shape { square: { l: f64 } }
+             fun f(s: Shape) { let t = s.square { l: 1.0 }; }",
+            "only an enum can be named before",
+        );
+    }
+
+    // -----------------------------------------------------------------
     // Branching
     // -----------------------------------------------------------------
 
@@ -1262,6 +1453,19 @@ mod tests {
              public trait Copy { fun copy(&self) -> Self; }
              extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
              fun f(p: &mut i32) -> i32 { return *p; }",
+        );
+    }
+
+    /// `&&i32`: an outer reference whose target is itself a reference. Each `*` peels one layer,
+    /// so `**p` must type as `i32`, and both layers need `Copy` to read through without moving.
+    #[test]
+    fn dereferencing_a_reference_to_a_reference_peels_one_layer_at_a_time() {
+        accepts(
+            "module core::ops;
+             public trait Copy { fun copy(&self) -> Self; }
+             extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+             extend<T> &T with Copy { fun copy(&self) -> Self { return *self; } }
+             fun f(p: &&i32) -> i32 { return **p; }",
         );
     }
 
@@ -1579,6 +1783,28 @@ mod tests {
     }
 
     #[test]
+    fn new_array_with_an_owning_elem_is_rejected() {
+        rejects(
+            "fun f(n: usize) { let y = new [new 1; n]; }",
+            "cannot repeat an owning element",
+        );
+    }
+
+    #[test]
+    fn new_array_with_an_elem_that_owns_a_field_is_rejected() {
+        rejects(
+            "struct Handle { owned: iso i32 }
+             fun f(n: usize) { let y = new [Handle { owned: new 1 }; n]; }",
+            "cannot repeat an owning element",
+        );
+    }
+
+    #[test]
+    fn new_array_of_a_plain_element_is_still_accepted() {
+        accepts("fun f(n: usize) { let y = new [0_u8; n]; }");
+    }
+
+    #[test]
     fn new_of_an_any_typed_value_is_rejected() {
         rejects(
             "fun f(x: any i32) { let y = new x; }",
@@ -1715,15 +1941,47 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // What has no type yet
+    // Ranges
+    //
+    // `lo..hi` has no dedicated typeck rule: `parser::expr_parser` desugars it into a
+    // `std::range::Range { left, right, inclusive }` construction, so it types the same way any
+    // other struct literal does.
     // -----------------------------------------------------------------
 
-    /// A range is not a gap in this pass: it is a value of a type the core library does not
-    /// declare and no lang item names, so there is nothing for it to be. It reports rather than
-    /// panicking, which is what it used to do.
+    const OPTION_AND_RANGE: [&str; 3] = [
+        "module core::option; public enum Option<T> { some: T, none }",
+        "module core::prelude; import core::option::Option;",
+        "module std::range;
+         public struct Range<T> {
+             public left: Option<T>,
+             public right: Option<T>,
+             public inclusive: bool,
+         }",
+    ];
+
     #[test]
-    fn a_range_reports_that_it_has_no_type() {
-        rejects("fun f() { let r = 1..2; }", "range expression has no type");
+    fn a_range_expr_checks_as_a_std_range() {
+        let mut files = OPTION_AND_RANGE.to_vec();
+        files.push("fun f() { let r: Range<i32> = 1..2; }");
+        assert!(crate::testing::typeck_src_files(&files).is_empty());
+    }
+
+    #[test]
+    fn an_open_range_bound_checks_as_none() {
+        let mut files = OPTION_AND_RANGE.to_vec();
+        files.push("fun f() { let r: Range<i32> = ..2; }");
+        assert!(crate::testing::typeck_src_files(&files).is_empty());
+    }
+
+    /// The two endpoints have to agree, the same way any two values placed into fields of the
+    /// same generic parameter do -- there is no range-specific unification rule for this anymore.
+    #[test]
+    fn mismatched_range_endpoints_are_reported() {
+        let mut files = OPTION_AND_RANGE.to_vec();
+        files.push("fun f() { let r = 1..2.0; }");
+        let reported = crate::testing::typeck_src_files(&files);
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(reported[0].contains("mismatched types"));
     }
 
     // -----------------------------------------------------------------

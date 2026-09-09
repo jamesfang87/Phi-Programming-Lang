@@ -178,7 +178,7 @@ mod tests {
     use crate::diagnostics::DiagCtx;
     use crate::hir::{Hir, OwnerNode};
     use crate::nameres::PrimTy;
-    use crate::testing::{Stage, checker_through, messages, resolve_src};
+    use crate::testing::{Stage, checker_through, lower_to_hir};
     use crate::typeck::Typeck;
     use crate::typeck::ty::TyKind;
 
@@ -193,7 +193,7 @@ mod tests {
         let mut checker = checker_through(hir, Stage::Coherence);
         DiagCtx::clear();
         checker.check_trait_members();
-        messages()
+        DiagCtx::messages()
     }
 
     // -----------------------------------------------------------------
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn an_implementation_providing_exactly_the_declared_methods_is_accepted() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn a_missing_method_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show {}",
@@ -229,7 +229,7 @@ mod tests {
     /// methods is one mistake with four parts.
     #[test]
     fn every_missing_method_is_named_in_one_diagnostic() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); fun size(&self); }
              struct Foo {}
              extend Foo with Show {}",
@@ -245,7 +245,7 @@ mod tests {
     /// methods points at the ones that are actually missing rather than at itself.
     #[test]
     fn every_missing_method_is_underlined_where_it_is_declared() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); fun size(&self); fun free(&self) {} }
              struct Foo {}
              extend Foo with Show {}",
@@ -279,7 +279,7 @@ mod tests {
     /// omission.
     #[test]
     fn a_method_with_a_default_body_need_not_be_implemented() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self) {} }
              struct Foo {}
              extend Foo with Show {}",
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn a_method_with_a_default_body_may_still_be_overridden() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self) {} }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn a_method_the_trait_does_not_declare_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} fun extra(&self) {} }",
@@ -317,7 +317,7 @@ mod tests {
     /// it.
     #[test]
     fn an_inherent_block_may_define_whatever_it_likes() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Foo {}
              extend Foo { fun anything(&self) -> i32 {} }",
         );
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn too_few_parameters_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self, width: i32); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn a_parameter_of_the_wrong_type_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self, width: i32); }
              struct Foo {}
              extend Foo with Show { fun show(&self, width: bool) {} }",
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn a_wrong_return_type_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self) -> i32; }
              struct Foo {}
              extend Foo with Show { fun show(&self) -> bool {} }",
@@ -375,7 +375,7 @@ mod tests {
     /// so rather than inventing a `()` the user never wrote.
     #[test]
     fn a_missing_return_type_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self) -> i32; }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn the_wrong_receiver_mode_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&mut self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn a_receiver_where_the_declaration_has_none_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun make(); }
              struct Foo {}
              extend Foo with Show { fun make(&self) {} }",
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn a_different_number_of_type_parameters_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show<U>(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }",
@@ -433,7 +433,7 @@ mod tests {
     /// substitution does.
     #[test]
     fn a_methods_own_type_parameters_are_matched_up_positionally() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show<U>(&self, value: U); }
              struct Foo {}
              extend Foo with Show { fun show<U>(&self, value: U) {} }",
@@ -446,7 +446,7 @@ mod tests {
     /// the trait never promised the implementation would take.
     #[test]
     fn a_signature_that_merely_unifies_is_still_rejected() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self, width: i32); }
              struct Foo {}
              extend<T> Foo with Show { fun show(&self, width: T) {} }",
@@ -465,7 +465,7 @@ mod tests {
     /// `Self` in the declaration means the implementing type, so both spellings check.
     #[test]
     fn self_in_a_declaration_stands_for_the_implementing_type() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Clone { fun clone(&self) -> Self; fun copy(&self) -> Self; }
              struct Foo {}
              extend Foo with Clone { fun clone(&self) -> Foo {} fun copy(&self) -> Self {} }",
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn a_declaration_returning_self_is_not_satisfied_by_another_type() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Clone { fun clone(&self) -> Self; }
              struct Foo {}
              struct Bar {}
@@ -493,7 +493,7 @@ mod tests {
     /// implementation in whatever the block applied the trait to.
     #[test]
     fn a_generic_traits_parameters_are_substituted_from_the_blocks_arguments() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index<i32, bool> { fun get(&self, key: i32) -> bool {} }",
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn a_generic_traits_parameters_are_not_satisfied_by_the_wrong_arguments() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index<i32, bool> { fun get(&self, key: bool) -> bool {} }",
@@ -520,7 +520,7 @@ mod tests {
     /// declaration substitutes to a signature that is itself open.
     #[test]
     fn a_blocks_own_parameters_may_be_the_traits_arguments() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map<T> { inner: T }
              extend<T> Map<T> with Index<i32, T> { fun get(&self, key: i32) -> T {} }",
@@ -532,7 +532,7 @@ mod tests {
     /// A composite type is rewritten through, not just a bare `Self` or a bare parameter.
     #[test]
     fn substitution_reaches_inside_composite_types() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Index<K, V> { fun get(&self, key: (K, &Self)) -> V; }
              struct Map {}
              extend Map with Index<i32, bool> { fun get(&self, key: (i32, &Map)) -> bool {} }",
@@ -550,7 +550,7 @@ mod tests {
     /// with an empty parameter substitution so that only the `Self` rule can fire.
     #[test]
     fn substituting_self_rewrites_every_occurrence_and_only_those() {
-        let hir = resolve_src("struct Foo {}");
+        let hir = lower_to_hir("struct Foo {}");
         let mut checker = Typeck::new(&hir);
         checker.collect_module(hir.root_id());
 

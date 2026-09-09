@@ -95,7 +95,7 @@ impl<'hir> Typeck<'hir> {
 mod tests {
     use super::*;
     use crate::diagnostics::DiagCtx;
-    use crate::testing::{Stage, checker_through, messages, resolve_src};
+    use crate::testing::{Stage, checker_through, lower_to_hir};
 
     /// Runs everything up to and including header/bound validity checking over `src`, and hands
     /// back everything type checking reported.
@@ -117,7 +117,7 @@ mod tests {
         checker.check_declared_bounds();
         checker.check_extend_headers();
 
-        messages()
+        DiagCtx::messages()
     }
 
     // -----------------------------------------------------------------
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn a_bound_naming_a_struct_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Foo {}
              fun f<T: Foo>(x: T) {}",
         );
@@ -140,7 +140,7 @@ mod tests {
     /// list of kinds it might have been.
     #[test]
     fn a_bound_naming_an_enum_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "enum Direction { up, down }
              fun f<T: Direction>(x: T) {}",
         );
@@ -152,7 +152,7 @@ mod tests {
     /// block's `<T>` is collected again for every method it holds.
     #[test]
     fn a_bad_bound_on_an_extend_block_is_reported_once() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Foo {}
              struct Wrap<T> { inner: T }
              extend<T: Foo> Wrap<T> { fun a(&self) {} fun b(&self) {} }",
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn a_bound_that_did_not_resolve_reports_nothing_further() {
-        let hir = resolve_src("fun f<T: Nope>(x: T) {}");
+        let hir = lower_to_hir("fun f<T: Nope>(x: T) {}");
 
         assert!(
             validity(&hir).is_empty(),
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn a_bound_naming_a_trait_is_accepted() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              fun f<T: Show>(x: T) {}",
         );
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn a_with_clause_missing_the_traits_arguments_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index { fun get(&self, key: i32) -> bool {} }",
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn a_primitive_with_clause_missing_the_traits_arguments_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              extend i32 with Index { fun get(&self, key: i32) -> bool { return true; } }",
         );
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn a_with_clause_with_the_right_number_of_arguments_is_accepted() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              struct Map {}
              extend Map with Index<i32, bool> { fun get(&self, key: i32) -> bool {} }",
@@ -227,7 +227,7 @@ mod tests {
     /// so this is the first place that count is ever checked.
     #[test]
     fn an_extend_block_applying_the_wrong_number_of_arguments_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Wrap<T> { inner: T }
              extend Wrap<i32, bool> { fun get(&self) {} }",
         );
@@ -243,7 +243,7 @@ mod tests {
     /// `dyn` carries its own argument list, one with a spelling that fixes it.
     #[test]
     fn a_dyn_naming_a_trait_with_parameters_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Index<K, V> { fun get(&self, key: K) -> V; }
              fun f(x: &dyn Index) {}",
         );

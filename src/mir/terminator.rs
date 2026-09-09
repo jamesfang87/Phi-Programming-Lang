@@ -34,6 +34,10 @@ pub enum TerminatorKind {
         place: Place,
         target: BasicBlock,
     },
+    DropIso {
+        place: Place,
+        target: BasicBlock,
+    },
     Assert {
         cond: Operand,
         expected: bool,
@@ -50,10 +54,32 @@ impl Terminator {
 }
 
 impl TerminatorKind {
+    pub fn operands(&self) -> Vec<&Operand> {
+        match self {
+            TerminatorKind::SwitchInt { discr, .. } => vec![discr],
+            TerminatorKind::Assert { cond, msg, .. } => {
+                let mut operands = vec![cond];
+                operands.extend(msg.user_message());
+                operands
+            }
+            TerminatorKind::Call { func, args, .. } => {
+                let mut operands = vec![func];
+                operands.extend(args);
+                operands
+            }
+            TerminatorKind::Goto { .. }
+            | TerminatorKind::Return
+            | TerminatorKind::Drop { .. }
+            | TerminatorKind::DropIso { .. }
+            | TerminatorKind::Unreachable => Vec::new(),
+        }
+    }
+
     pub fn successors(&self) -> impl Iterator<Item = BasicBlock> + '_ {
         let single = match self {
             TerminatorKind::Goto { target }
             | TerminatorKind::Drop { target, .. }
+            | TerminatorKind::DropIso { target, .. }
             | TerminatorKind::Assert { target, .. } => Some(*target),
             TerminatorKind::Call { target, .. } => *target,
             TerminatorKind::Return
