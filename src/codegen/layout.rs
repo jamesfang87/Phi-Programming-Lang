@@ -1,9 +1,6 @@
-use std::collections::HashMap;
-
-use crate::hir::{DefId, HirId};
-use crate::mir::{AdtDef, Mir, VariantIdx};
+use crate::hir::DefId;
+use crate::mir::{Mir, VariantIdx};
 use crate::nameres::PrimTy;
-use crate::typeck::fold::subst_ty;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
@@ -50,12 +47,12 @@ impl TagTy {
 pub fn layout_of(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> AdtLayout {
     match tcx.kind(ty).clone() {
         TyKind::Tuple(elems) => layout_fields(tcx, mir, &elems),
-        TyKind::Adt { def, args } => match &mir.adts[&def] {
-            AdtDef::Struct { generics, fields } => {
-                let field_tys = subst_field_tys(tcx, generics, fields, &args);
+        TyKind::Adt { def, args } => match tcx.enum_variant_count(def) {
+            Some(variant_count) => enum_layout(tcx, mir, def, &args, variant_count),
+            None => {
+                let field_tys = tcx.struct_field_tys(def, &args);
                 layout_fields(tcx, mir, &field_tys)
             }
-            AdtDef::Enum { variants, .. } => enum_layout(tcx, mir, def, &args, variants.len()),
         },
         other => panic!("layout_of: {other:?} has no field-list layout"),
     }
@@ -68,7 +65,7 @@ pub fn variant_layout(
     args: &[Ty],
     variant: VariantIdx,
 ) -> AdtLayout {
-    let field_tys = variant_field_tys(tcx, mir, def, args, variant);
+    let field_tys = tcx.variant_field_tys(def, args, variant.index());
     layout_fields(tcx, mir, &field_tys)
 }
 
@@ -76,7 +73,13 @@ pub fn field_index(_ty: Ty, field: u32) -> usize {
     field as usize
 }
 
-fn enum_layout(tcx: &mut TyCtx, mir: &Mir, def: DefId, args: &[Ty], variant_count: usize) -> AdtLayout {
+fn enum_layout(
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    def: DefId,
+    args: &[Ty],
+    variant_count: usize,
+) -> AdtLayout {
     let tag_ty = TagTy::for_variant_count(variant_count);
     let (tag_size, tag_align) = tag_ty.size_align();
 
@@ -100,33 +103,6 @@ fn enum_layout(tcx: &mut TyCtx, mir: &Mir, def: DefId, args: &[Ty], variant_coun
         tag_ty: Some(tag_ty),
         payload_offset,
     }
-}
-
-fn subst_field_tys(tcx: &mut TyCtx, generics: &[HirId], fields: &[Ty], args: &[Ty]) -> Vec<Ty> {
-    let subst = generic_subst(generics, args);
-    fields.iter().map(|&declared| subst_ty(tcx, declared, &subst)).collect()
-}
-
-fn variant_field_tys(
-    tcx: &mut TyCtx,
-    mir: &Mir,
-    def: DefId,
-    args: &[Ty],
-    variant: VariantIdx,
-) -> Vec<Ty> {
-    let AdtDef::Enum { generics, variants } = &mir.adts[&def] else {
-        panic!("variant_field_tys: {def:?} is not an enum");
-    };
-    let subst = generic_subst(generics, args);
-    variants[variant.index()]
-        .field_tys
-        .iter()
-        .map(|&declared| subst_ty(tcx, declared, &subst))
-        .collect()
-}
-
-fn generic_subst(generics: &[HirId], args: &[Ty]) -> HashMap<HirId, Ty> {
-    generics.iter().copied().zip(args.iter().copied()).collect()
 }
 
 fn layout_fields(tcx: &mut TyCtx, mir: &Mir, tys: &[Ty]) -> AdtLayout {
