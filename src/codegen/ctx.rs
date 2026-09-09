@@ -21,6 +21,8 @@ pub struct CodegenCtx<'ctx> {
     pub strings: RefCell<HashMap<Symbol, PointerValue<'ctx>>>,
     pub libc: Libc<'ctx>,
     pub vtables: RefCell<HashMap<(Ty, DefId), PointerValue<'ctx>>>,
+    pub drop_glues: RefCell<HashMap<Ty, FunctionValue<'ctx>>>,
+    pub fun_thunks: RefCell<HashMap<String, FunctionValue<'ctx>>>,
 }
 
 impl<'ctx> CodegenCtx<'ctx> {
@@ -36,6 +38,8 @@ impl<'ctx> CodegenCtx<'ctx> {
             strings: RefCell::new(HashMap::new()),
             libc,
             vtables: RefCell::new(HashMap::new()),
+            drop_glues: RefCell::new(HashMap::new()),
+            fun_thunks: RefCell::new(HashMap::new()),
         }
     }
 }

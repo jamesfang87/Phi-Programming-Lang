@@ -8,8 +8,13 @@ use inkwell::targets::{
 
 use super::CodegenError;
 
-// TODO: There are already options in the driver code. Perhaps it could reuse that?
-// if not, then this is fine I guess
+/// What `emit` needs to turn a verified module into an object file and link it.
+///
+/// Deliberately not [`crate::driver::cli::Config`], which carries the parsed `Phi.toml` --
+/// project name, version, edition, and source root. Taking that here would make codegen depend
+/// on the driver, and on a manifest existing at all; `pipeline::build` projects the two fields
+/// that reach this layer (`target/<name>` and `mode == Release`) and the tests below construct
+/// it directly, with no manifest anywhere.
 pub struct EmitOptions {
     pub output_path: PathBuf,
     pub release: bool,
@@ -95,6 +100,12 @@ mod tests {
         dir
     }
 
+    /// Points the linked executable's `main` at the fixture's own `main`.
+    ///
+    /// These fixtures declare `main` inside a module rather than at the crate root, so
+    /// `mir.main` is `None` and `codegen` emits the do-nothing `main` it gives any crate with no
+    /// entry point. That placeholder is replaced here; adding a second `main` instead would let
+    /// LLVM rename one of them, and the binary would run whichever it kept.
     fn append_c_main_trampoline<'ctx>(
         llvm: &'ctx inkwell::context::Context,
         module: &Module<'ctx>,
@@ -117,6 +128,10 @@ mod tests {
         let phi_main = module
             .get_function(&phi_main_name)
             .expect("main instance was declared by codegen()");
+
+        if let Some(placeholder) = module.get_function("main") {
+            unsafe { placeholder.delete() };
+        }
 
         let c_main_type = llvm.i32_type().fn_type(&[], false);
         let c_main = module.add_function("main", c_main_type, None);

@@ -34,10 +34,13 @@ pub fn lower_constant<'ctx>(
                 args: args.clone(),
             };
             let name = mangle(mir, tcx, &instance);
-            cx.functions[&name]
-                .as_global_value()
-                .as_pointer_value()
-                .into()
+            let function = cx.functions[&name];
+            let sret = matches!(
+                tcx.kind(constant.ty).clone(),
+                TyKind::Fun { ret: Some(ret), .. }
+                    if matches!(super::ty::abi_class(tcx, ret), super::ty::AbiClass::Indirect)
+            );
+            super::closure::reify(cx, function, sret)
         }
     }
 }
