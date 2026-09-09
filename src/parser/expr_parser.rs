@@ -12,7 +12,97 @@ use crate::ast::interner::Interner;
 use crate::driver::source::{SrcMap, SrcSpan};
 use crate::lexer::token::{Token, TokenKind};
 
-use super::{BoxedP, Extra, Parser};
+use super::{BoxedP, Extra, Parser, Stop};
+
+/// Builds the `.some(<bound>)` or `.none` variant expression for one optional range endpoint.
+/// `span` is the endpoint's own span when it's present, and the range's overall span when it was
+/// omitted (there is no real source location to point at for an implicit `.none`).
+fn range_bound_variant(bound: Option<Expr>, span: SrcSpan) -> Expr {
+    let (name, payload) = match bound {
+        Some(value) => ("some", Payload::Single(Box::new(value))),
+        None => ("none", Payload::None),
+    };
+    Expr {
+        id: NodeId::next(),
+        kind: ExprKind::Variant {
+            variant: Ident {
+                text: Interner::intern(name),
+                span,
+            },
+            payload,
+        },
+        span,
+    }
+}
+
+/// Desugars `lo..hi` (or, with `inclusive` set, `lo..=hi`) into the `std::range::Range { .. }`
+/// construction a user could have written directly, so nothing past parsing needs to know range
+/// syntax exists: nameres resolves `std::range::Range` the same way it would an explicit path,
+/// and typeck/MIR lowering see an ordinary struct literal.
+fn desugar_range(lo: Option<Expr>, hi: Option<Expr>, inclusive: bool, span: SrcSpan) -> Expr {
+    let field = |name: &str, value: Expr| PayloadField {
+        id: NodeId::next(),
+        name: Ident {
+            text: Interner::intern(name),
+            span,
+        },
+        span: span.merge(value.span),
+        value: Some(value),
+    };
+    let lo_span = lo.as_ref().map_or(span, |e| e.span);
+    let hi_span = hi.as_ref().map_or(span, |e| e.span);
+    let path = Path {
+        segments: ["std", "range", "Range"]
+            .into_iter()
+            .map(|segment| Ident {
+                text: Interner::intern(segment),
+                span,
+            })
+            .collect(),
+        span,
+    };
+    Expr {
+        id: NodeId::next(),
+        kind: ExprKind::Ctor {
+            path: Some(path),
+            payload: vec![
+                field("left", range_bound_variant(lo, lo_span)),
+                field("right", range_bound_variant(hi, hi_span)),
+                field(
+                    "inclusive",
+                    Expr {
+                        id: NodeId::next(),
+                        kind: ExprKind::Literal(Literal::Bool(inclusive)),
+                        span,
+                    },
+                ),
+            ],
+        },
+        span,
+    }
+}
+
+/// Maps a token to where statement recovery stops, for the `stmt` parser below.
+///
+/// The keywords listed are the ones a statement can begin with. A `;` is consumed rather than
+/// left behind, since it terminates the statement being discarded and would otherwise be read as
+/// the start of the next one.
+fn statement_recovery_point(kind: TokenKind) -> Option<Stop> {
+    match kind {
+        TokenKind::Semicolon => Some(Stop::After),
+        TokenKind::LetKw
+        | TokenKind::ReturnKw
+        | TokenKind::WhileKw
+        | TokenKind::ForKw
+        | TokenKind::IfKw
+        | TokenKind::MatchKw
+        | TokenKind::BreakKw
+        | TokenKind::ContinueKw
+        | TokenKind::DeferKw
+        | TokenKind::WithKw => Some(Stop::Before),
+        _ => None,
+    }
+}
 
 type ExprRec<'a> = Recursive<Indirect<'a, 'a, &'a [Token], Expr, Extra<'a>>>;
 type BlockRec<'a> = Recursive<Indirect<'a, 'a, &'a [Token], Block, Extra<'a>>>;
@@ -92,6 +182,30 @@ impl Parser {
             // Uses `self` as a value, e.g. the `self` in `self.x` inside a method body.
             let self_expr = self
                 .kind(TokenKind::LowerSelfKw)
+                .map(|t: Token| {
+                    let name = Ident {
+                        text: Interner::intern(
+                            &SrcMap::text_of(t.span)
+                                .expect("lexer token span should always resolve to a source file"),
+                        ),
+                        span: t.span,
+                    };
+                    Expr {
+                        id: NodeId::next(),
+                        kind: ExprKind::Path(Path {
+                            segments: vec![name],
+                            span: t.span,
+                        }),
+                        span: t.span,
+                    }
+                })
+                .boxed();
+
+            // Uses `Self` as the name of a type, e.g. the `Self` in `Self.none` inside an
+            // `extend` block. It parses to the same single-segment path a written type name
+            // does, so name resolution is what tells the two apart.
+            let self_ty_expr = self
+                .kind(TokenKind::UpperSelfKw)
                 .map(|t: Token| {
                     let name = Ident {
                         text: Interner::intern(
@@ -611,6 +725,7 @@ impl Parser {
                 elided_ctor,
                 variant,
                 self_expr,
+                self_ty_expr,
                 decl_ref,
                 tuple_or_group,
                 block_expr,
@@ -844,7 +959,11 @@ impl Parser {
                 })
                 .boxed();
 
-            let unary_or_new = choice((new_array, new_value, unary.clone())).boxed();
+            // The `expr` label above does not cover a missing binary operand: `product`, `sum`
+            // and the levels below take this parser, not `expr`, as their right-hand side.
+            let unary_or_new = choice((new_array, new_value, unary.clone()))
+                .labelled("an expression")
+                .boxed();
 
             // `as` binds tighter than every binary operator but looser than unary prefix and
             // postfix operators, exactly as in Rust: `-x as i64` is `(-x) as i64`, and
@@ -918,7 +1037,10 @@ impl Parser {
                 .boxed();
 
             // A range can look like `a..b`, `a..=b`, `a..`, `..b`, `..=b`, or `..`; either bound
-            // is optional.
+            // is optional. There is no dedicated range expression past parsing: `desugar_range`
+            // turns it into the same `std::range::Range { .. }` construction a user could have
+            // written by hand, so nameres, typeck, and MIR lowering only ever see an ordinary
+            // struct literal.
             let range_op = choice((
                 self.kind(TokenKind::InclRange)
                     .map(|t: Token| (true, t.span)),
@@ -932,15 +1054,7 @@ impl Parser {
                         Some(h) => op_span.merge(h.span),
                         None => op_span,
                     };
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Range {
-                            lo: None,
-                            hi: hi.map(Box::new),
-                            inclusive,
-                        },
-                        span,
-                    }
+                    desugar_range(None, hi, inclusive, span)
                 },
             );
 
@@ -955,15 +1069,7 @@ impl Parser {
                             Some(h) => lo_span.merge(h.span),
                             None => lo_span.merge(op_span),
                         };
-                        Expr {
-                            id: NodeId::next(),
-                            kind: ExprKind::Range {
-                                lo: Some(Box::new(lo)),
-                                hi: hi.map(Box::new),
-                                inclusive,
-                            },
-                            span,
-                        }
+                        desugar_range(Some(lo), hi, inclusive, span)
                     }
                 });
 
@@ -1012,8 +1118,11 @@ impl Parser {
                 })
                 .boxed()
         };
-        let full = expr_body(BraceForms::Allow);
-        let restricted = expr_body(BraceForms::Deny);
+        // `labelled` replaces the expected set of a failure at the parser's first token, so a
+        // failure there reports "an expression" rather than each of the ~20 tokens that can
+        // begin one. Failures further in keep their own expected sets.
+        let full = expr_body(BraceForms::Allow).labelled("an expression");
+        let restricted = expr_body(BraceForms::Deny).labelled("an expression");
         expr.define(full);
         expr_ns.define(restricted);
 
@@ -1207,16 +1316,24 @@ impl Parser {
                 })
                 .boxed();
 
-            let expr_stmt = expr
-                .clone()
-                .then(self.kind(TokenKind::Semicolon).or_not())
-                .try_map(|(value, semi_tok), span| {
-                    if semi_tok.is_none() && !value.kind.is_block_bodied() {
-                        return Err(Rich::custom(
-                            span,
-                            "expected `;` after this expression statement",
-                        ));
-                    }
+            // A block-bodied expression ends at its `}`, so the `;` after it is optional; every
+            // other expression needs one to be a statement.
+            //
+            // The `;` is required through `Parser::kind` rather than by rejecting the parsed
+            // statement in a `try_map`. A `try_map` failure is a `Rich::custom` carrying the
+            // whole expression's span, which both mislocates the error and outranks the more
+            // precise failure the expression itself recorded further along.
+            let expr_stmt = {
+                let expr = expr.clone();
+                let semi = self.kind(TokenKind::Semicolon);
+                custom(move |inp: &mut InputRef<'a, '_, &'a [Token], Extra<'a>>| {
+                    let value = inp.parse(expr.clone())?;
+                    let semi_tok = if value.kind.is_block_bodied() {
+                        inp.parse(semi.clone().or_not())?
+                    } else {
+                        Some(inp.parse(semi.clone())?)
+                    };
+
                     let span = match semi_tok {
                         Some(semi_tok) => value.span.merge(semi_tok.span),
                         None => value.span,
@@ -1230,19 +1347,8 @@ impl Parser {
                         span,
                     })
                 })
-                .boxed();
-
-            let stmt_start = choice((
-                self.kind(TokenKind::WhileKw).ignored(),
-                self.kind(TokenKind::ForKw).ignored(),
-                self.kind(TokenKind::BreakKw).ignored(),
-                self.kind(TokenKind::ContinueKw).ignored(),
-                self.kind(TokenKind::ReturnKw).ignored(),
-                self.kind(TokenKind::DeferKw).ignored(),
-                self.kind(TokenKind::LetKw).ignored(),
-                self.kind(TokenKind::WithKw).ignored(),
-                self.kind(TokenKind::CloseBrace).ignored(),
-            ));
+            }
+            .boxed();
 
             // Recovery must not fire once the block is really at its end (just the closing
             // `}`, or a valid tail expression followed by `}`). Otherwise it would eat the
@@ -1257,14 +1363,13 @@ impl Parser {
 
             let stmt_recovery = at_terminal_position
                 .not()
-                .ignore_then(self.recover_to_boundary(
-                    stmt_start,
-                    Stmt {
+                .ignore_then(
+                    self.recover_by_skipping(statement_recovery_point, |span| Stmt {
                         id: NodeId::next(),
                         kind: StmtKind::Error,
-                        span: SrcSpan::new(0, 0),
-                    },
-                ));
+                        span,
+                    }),
+                );
 
             let stmt = choice((
                 while_let_stmt,
@@ -1305,7 +1410,7 @@ impl Parser {
                 })
                 .boxed()
         };
-        block.define(block_body);
+        block.define(block_body.labelled("a block"));
 
         (expr.boxed(), block.boxed())
     }
@@ -1577,6 +1682,26 @@ mod tests {
                     }
                     other => panic!("expected a record payload, got {other:?}"),
                 }
+            }
+            other => panic!("expected an access expr, got {other:?}"),
+        }
+    }
+
+    /// `Self` parses in expression position as the same single-segment path a written type name
+    /// produces, so `Self.none` inside an `extend` block reaches a variant the way `Shape.none`
+    /// does. Name resolution, not the parser, is what maps the segment to the enclosing type.
+    #[test]
+    fn parses_self_as_a_path_in_expression_position() {
+        let expr = parse_expr("Self.none");
+        match &expr.kind {
+            ExprKind::Access { base, member, args } => {
+                let ExprKind::Path(path) = &base.kind else {
+                    panic!("expected the base to be a path, got {:?}", base.kind);
+                };
+                assert_eq!(path.segments.len(), 1);
+                assert_eq!(Interner::resolve(path.segments[0].text), "Self");
+                assert_eq!(Interner::resolve(member.text), "none");
+                assert!(matches!(args, AccessArgs::None));
             }
             other => panic!("expected an access expr, got {other:?}"),
         }
@@ -1883,87 +2008,111 @@ mod tests {
         }
     }
 
+    /// A range desugars to `std::range::Range { left, right, inclusive }`; this pulls one
+    /// named field's value back out of that `Ctor` so the range tests can check it.
+    fn range_field<'a>(expr: &'a Expr, name: &str) -> &'a Expr {
+        match &expr.kind {
+            ExprKind::Ctor { path, payload } => {
+                let path = path.as_ref().expect("a range's `Range` is never elided");
+                assert_eq!(
+                    path.segments
+                        .iter()
+                        .map(|s| Interner::resolve(s.text))
+                        .collect::<Vec<_>>(),
+                    vec!["std", "range", "Range"]
+                );
+                payload
+                    .iter()
+                    .find(|f| Interner::resolve(f.name.text) == name)
+                    .unwrap_or_else(|| panic!("expected a `{name}` field"))
+                    .value
+                    .as_ref()
+                    .expect("range fields always have a value")
+            }
+            other => panic!("expected a range expr desugared to a ctor, got {other:?}"),
+        }
+    }
+
+    /// Asserts that `field` is `.some(_)` (`Some`) or bare `.none` (`None`).
+    fn assert_range_bound(field: &Expr, expected: Option<()>) {
+        match &field.kind {
+            ExprKind::Variant { variant, payload } => {
+                let name = Interner::resolve(variant.text);
+                match expected {
+                    Some(()) => {
+                        assert_eq!(name, "some");
+                        assert!(matches!(payload, Payload::Single(_)));
+                    }
+                    None => {
+                        assert_eq!(name, "none");
+                        assert!(matches!(payload, Payload::None));
+                    }
+                }
+            }
+            other => panic!("expected a range bound variant, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parses_exclusive_range_expr() {
         let expr = parse_expr("0..5");
-        match &expr.kind {
-            ExprKind::Range {
-                lo,
-                hi,
-                inclusive: false,
-            } => {
-                assert!(lo.is_some());
-                assert!(hi.is_some());
-            }
-            other => panic!("expected a range expr, got {other:?}"),
-        }
+        assert_range_bound(range_field(&expr, "left"), Some(()));
+        assert_range_bound(range_field(&expr, "right"), Some(()));
+        assert!(matches!(
+            range_field(&expr, "inclusive").kind,
+            ExprKind::Literal(Literal::Bool(false))
+        ));
     }
 
     #[test]
     fn parses_inclusive_range_expr() {
         let expr = parse_expr("0..=5");
         assert!(matches!(
-            expr.kind,
-            ExprKind::Range {
-                inclusive: true,
-                ..
-            }
+            range_field(&expr, "inclusive").kind,
+            ExprKind::Literal(Literal::Bool(true))
         ));
     }
 
     #[test]
     fn parses_range_without_lo() {
         let expr = parse_expr("..5");
-        match &expr.kind {
-            ExprKind::Range { lo, hi, .. } => {
-                assert!(lo.is_none());
-                assert!(hi.is_some());
-            }
-            other => panic!("expected a range expr, got {other:?}"),
-        }
+        assert_range_bound(range_field(&expr, "left"), None);
+        assert_range_bound(range_field(&expr, "right"), Some(()));
     }
 
     #[test]
     fn parses_range_without_hi() {
         let expr = parse_expr("0..");
-        match &expr.kind {
-            ExprKind::Range { lo, hi, .. } => {
-                assert!(lo.is_some());
-                assert!(hi.is_none());
-            }
-            other => panic!("expected a range expr, got {other:?}"),
-        }
+        assert_range_bound(range_field(&expr, "left"), Some(()));
+        assert_range_bound(range_field(&expr, "right"), None);
     }
 
     #[test]
     fn parses_full_range() {
         let expr = parse_expr("..");
-        assert!(matches!(
-            expr.kind,
-            ExprKind::Range {
-                lo: None,
-                hi: None,
-                ..
-            }
-        ));
+        assert_range_bound(range_field(&expr, "left"), None);
+        assert_range_bound(range_field(&expr, "right"), None);
     }
 
     #[test]
     fn parses_range_with_arithmetic_bounds() {
         // `a..b+1` should be `a..(b+1)`, since range binds looser than `+`.
         let expr = parse_expr("a..b+1");
-        match &expr.kind {
-            ExprKind::Range { hi: Some(hi), .. } => {
-                assert!(matches!(
-                    hi.kind,
-                    ExprKind::Binary {
-                        op: BinaryOp::Add,
-                        ..
-                    }
-                ));
+        let hi = range_field(&expr, "right");
+        let ExprKind::Variant {
+            payload: Payload::Single(hi),
+            ..
+        } = &hi.kind
+        else {
+            panic!("expected `right` to be `.some(_)`, got {hi:?}");
+        };
+        assert!(matches!(
+            hi.kind,
+            ExprKind::Binary {
+                op: BinaryOp::Add,
+                ..
             }
-            other => panic!("expected a range expr, got {other:?}"),
-        }
+        ));
     }
 
     #[test]
@@ -2320,7 +2469,7 @@ mod tests {
         let expr = parse_expr("x = a..b");
         match &expr.kind {
             ExprKind::Assign { rhs, .. } => {
-                assert!(matches!(rhs.kind, ExprKind::Range { .. }));
+                assert!(matches!(rhs.kind, ExprKind::Ctor { .. }));
             }
             other => panic!("expected an assign expr, got {other:?}"),
         }

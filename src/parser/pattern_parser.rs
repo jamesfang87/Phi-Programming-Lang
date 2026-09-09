@@ -141,7 +141,7 @@ impl Parser {
                     })
                     .boxed();
 
-                choice((wildcard, literal, tuple, variant, binding))
+                choice((wildcard, literal, tuple, variant, binding)).labelled("a pattern")
             },
         )
         .boxed()
