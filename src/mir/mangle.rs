@@ -87,7 +87,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{first_function, lower_to_mir, resolve_src};
+    use crate::testing::{first_function, lower_to_mir, lower_to_hir};
 
     fn mangled(src: &str) -> Vec<(Instance, String)> {
         let (_hir, tcx, _types, mir, instances) = lower_to_mir(src);
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn mangling_the_same_instance_twice_is_stable() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         crate::diagnostics::DiagCtx::clear();
         let checked = crate::typeck::check(&hir);
         let crate::typeck::TypeckOutput { mut tcx, types } = checked;

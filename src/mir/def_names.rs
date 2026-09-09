@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn leaf_is_the_bare_sanitized_name() {
-        let hir = crate::testing::resolve_src("struct Point { x: i32 }\nfun f() {}");
+        let hir = crate::testing::lower_to_hir("struct Point { x: i32 }\nfun f() {}");
         let def = find_struct_def(&hir, "Point");
         let names = collect_def_names(&hir);
         assert_eq!(names.leaf(def), "Point");
@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn ancestor_path_is_the_root_to_def_chain() {
-        let hir = crate::testing::resolve_src("fun f() {}");
+        let hir = crate::testing::lower_to_hir("fun f() {}");
         let def = crate::testing::first_function(&hir);
         let names = collect_def_names(&hir);
         let path = names.ancestor_path(def);

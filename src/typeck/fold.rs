@@ -126,7 +126,6 @@ pub fn decompose(tcx: &TyCtx, a: Ty, b: Ty) -> Option<Vec<(Ty, Ty)>> {
         (TyKind::Tuple(x), TyKind::Tuple(y)) => (x.len() == y.len()).then(|| zip(x, y)),
 
         (TyKind::Array { elem: x, len: m }, TyKind::Array { elem: y, len: n }) => {
-            // TODO: const-checking for these
             (m == n).then(|| vec![(*x, *y)])
         }
 

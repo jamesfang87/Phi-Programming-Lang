@@ -66,7 +66,7 @@ impl<'hir> Typeck<'hir> {
 mod tests {
     use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::{Stage, checker_through, messages, resolve_src};
+    use crate::testing::{Stage, checker_through, lower_to_hir};
 
     /// Runs everything up to and including coherence over `src`, and hands back what it reported.
     ///
@@ -76,7 +76,7 @@ mod tests {
         let mut checker = checker_through(hir, Stage::Index);
         DiagCtx::clear();
         checker.check_coherence();
-        messages()
+        DiagCtx::messages()
     }
 
     // -----------------------------------------------------------------
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn implementing_one_trait_twice_for_one_type_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              struct Foo {}
              extend Foo with Show { fun show(&self) {} }
@@ -106,7 +106,7 @@ mod tests {
     /// which is what has to change, and the earlier one it collides with.
     #[test]
     fn a_conflict_points_at_both_blocks() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Marker {}
              struct Foo {}
              extend Foo with Marker {}
@@ -136,7 +136,7 @@ mod tests {
     /// two checks are separate.
     #[test]
     fn implementing_a_method_less_trait_twice_is_still_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Marker {}
              struct Foo {}
              extend Foo with Marker {}
@@ -153,7 +153,7 @@ mod tests {
     /// literally a duplicate of the other.
     #[test]
     fn a_generic_impl_conflicts_with_a_concrete_one() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Marker {}
              struct Wrap<T> { inner: T }
              extend<T> Wrap<T> with Marker {}
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn impls_for_disjoint_arguments_do_not_conflict() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Marker {}
              struct Wrap<T> { inner: T }
              extend Wrap<i32> with Marker {}
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn impls_of_different_traits_for_one_type_do_not_conflict() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait A {}
              trait B {}
              struct Foo {}
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn one_trait_implemented_for_two_types_does_not_conflict() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Marker {}
              struct Foo {}
              struct Bar {}
@@ -208,7 +208,7 @@ mod tests {
     /// Proving otherwise takes negative reasoning, and the help text says as much.
     #[test]
     fn a_conditional_impl_still_conflicts_with_a_concrete_one() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait Marker {}
              struct Wrap<T> { inner: T }
              extend<T: Marker> Wrap<T> with Marker {}
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn two_traits_declaring_one_method_name_conflict_for_a_type_implementing_both() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait A { fun size(&self); }
              trait B { fun size(&self); }
              struct Foo {}
@@ -242,7 +242,7 @@ mod tests {
     /// makes every defaulted method available on the type, and so still collides.
     #[test]
     fn an_impl_supplying_only_defaults_still_collides() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait A { fun size(&self) {} }
              struct Foo {}
              extend Foo with A {}
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn an_inherent_method_conflicts_with_a_trait_method_of_the_same_name() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "trait A { fun size(&self); }
              struct Foo {}
              extend Foo with A { fun size(&self) {} }
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn two_inherent_blocks_with_different_method_names_do_not_conflict() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Foo {}
              extend Foo { fun a(&self) {} }
              extend Foo { fun b(&self) {} }",
@@ -285,7 +285,7 @@ mod tests {
     /// many names they share.
     #[test]
     fn impls_for_disjoint_types_may_share_method_names() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Wrap<T> { inner: T }
              extend Wrap<i32> { fun size(&self) {} }
              extend Wrap<bool> { fun size(&self) {} }",
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn every_shared_method_name_is_reported() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct Foo {}
              extend Foo { fun a(&self) {} fun b(&self) {} }
              extend Foo { fun a(&self) {} fun b(&self) {} }",
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn a_program_with_no_extend_blocks_reports_nothing() {
-        let hir = resolve_src("struct Foo {}");
+        let hir = lower_to_hir("struct Foo {}");
         assert!(coherence(&hir).is_empty());
     }
 }

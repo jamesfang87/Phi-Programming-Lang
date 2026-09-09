@@ -425,7 +425,7 @@ mod tests {
     use crate::diagnostics::DiagCtx;
     use crate::hir::{DefId, Hir, HirId, OwnerNode};
     use crate::nameres::PrimTy;
-    use crate::testing::resolve_src;
+    use crate::testing::lower_to_hir;
     use crate::typeck::results::TypeResolutions;
     use crate::typeck::ty::{Ty, TyKind};
     use crate::typeck::tyctx::TyCtx;
@@ -446,7 +446,7 @@ mod tests {
     /// missing here: the core library is not registered for these tests, since compiling it
     /// alongside a two-line fixture would swamp what each test is about.
     fn check(src: &str) -> Checked {
-        let hir = resolve_src(src);
+        let hir = lower_to_hir(src);
         DiagCtx::clear();
 
         let checked = crate::typeck::check(&hir);

@@ -1,6 +1,6 @@
-use crate::ast::{BinaryOp, Literal, Mutability, UnaryOp};
+use crate::ast::{BinaryOp, Ident, Literal, Mutability, UnaryOp};
 use crate::driver::source::SrcSpan;
-use crate::hir::{ExprKind, HirId, Local as HirLocal, Res};
+use crate::hir::{AccessArgs, ExprKind, HirId, Local as HirLocal, Payload, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::{
     AggregateKind, AssertMessage, CastKind, ConstKind, Constant, Operand, Place, Projection,
@@ -213,12 +213,25 @@ impl<'a> BodyLowerCtx<'a> {
             ExprKind::Call { .. } => {
                 self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
             }
+            // A variant reached through its enum, such as `Shape.circle(1.0)`. It reads as an
+            // access, but it builds a value rather than reaching into one, so it is split off
+            // ahead of the field and method arms exactly as typeck splits it off.
+            ExprKind::Access { base, member, args } if self.hir.names_a_type(base) => {
+                let payload = variant_payload_of(&args);
+                self.lower_variant_into(member, ty, &payload, dest, span);
+            }
             ExprKind::Access {
                 args: crate::hir::AccessArgs::Call(_),
                 ..
             } => {
                 self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
             }
+            // A record payload on a base that names a value is rejected by typeck, so the only
+            // `Access` left holding one would have been caught by the qualified-variant arm.
+            ExprKind::Access {
+                args: crate::hir::AccessArgs::Record(_),
+                ..
+            } => unreachable!("a record payload only ever builds a variant, handled above"),
             ExprKind::Access {
                 args: crate::hir::AccessArgs::None,
                 ..
@@ -227,10 +240,7 @@ impl<'a> BodyLowerCtx<'a> {
                 let operand = self.operand_for_place(place, ty);
                 self.assign(dest, Rvalue::Use(operand), span);
             }
-            ExprKind::Access {
-                args: crate::hir::AccessArgs::Record(_),
-                ..
-            } => unreachable!("typeck itself does not support this yet"),
+
             ExprKind::Index { .. } => {
                 if self.types.call(expr_id).is_some() {
                     self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
@@ -243,8 +253,8 @@ impl<'a> BodyLowerCtx<'a> {
             ExprKind::Ctor { payload, .. } => {
                 self.lower_ctor_into(ty, &payload, dest, span);
             }
-            ExprKind::Variant { payload, .. } => {
-                self.lower_variant_into(expr_id, ty, &payload, dest, span);
+            ExprKind::Variant { variant, payload } => {
+                self.lower_variant_into(variant, ty, &payload, dest, span);
             }
             ExprKind::Tuple(elems) => {
                 let operands = elems.iter().map(|&elem| self.lower_operand(elem)).collect();
@@ -285,9 +295,6 @@ impl<'a> BodyLowerCtx<'a> {
                 let elem = self.lower_operand(elem);
                 let count = self.lower_operand(count);
                 self.assign(dest, Rvalue::NewArray { elem, count }, span);
-            }
-            ExprKind::Range { .. } => {
-                panic!("mir::lower: range expressions are not yet implemented")
             }
             ExprKind::Spawn(_) => panic!(
                 "mir::lower: `spawn` is not yet implemented (the runtime nursery API is illustrative only)"
@@ -488,19 +495,48 @@ impl<'a> BodyLowerCtx<'a> {
         match self.tcx.kind(peeled).clone() {
             TyKind::Array { .. } => {
                 let index_ty = self.expr_ty(index);
-                let index_operand = self.lower_operand(index);
-                let index_local = self.new_temp(index_ty, span);
-                self.assign(
-                    Place::from_local(index_local),
-                    Rvalue::Use(index_operand),
-                    span,
-                );
+
+                // A compile-time-constant index (a bare integer literal, not yet folded through
+                // any arithmetic) projects through `ConstantIndex` instead of `Index`: unlike a
+                // runtime `Local`, a constant offset lets borrowck's `register_of` (see
+                // `mir::checks::borrowck::register_of`) tell `a[0]` and `a[1]` apart as disjoint
+                // sub-registers of `a` rather than treating any index into `a` as touching the
+                // whole array.
+                let projection = if let ExprKind::Literal(lit @ Literal::Int { .. }) =
+                    self.hir.expr(index).kind.clone()
+                {
+                    let text = literal_text(lit);
+                    let offset: u32 = text
+                        .parse()
+                        .unwrap_or_else(|_| panic!("mir::lower: array index {text:?} does not fit a u32"));
+                    Projection::ConstantIndex(offset)
+                } else {
+                    let index_operand = self.lower_operand(index);
+                    let index_local = self.new_temp(index_ty, span);
+                    self.assign(
+                        Place::from_local(index_local),
+                        Rvalue::Use(index_operand),
+                        span,
+                    );
+                    Projection::Index(index_local)
+                };
+
                 let len_local = self.new_temp(index_ty, span);
                 self.assign(
                     Place::from_local(len_local),
                     Rvalue::Len(place.clone()),
                     span,
                 );
+                let index_operand = match projection {
+                    Projection::ConstantIndex(offset) => Operand::Constant(Constant {
+                        ty: index_ty,
+                        kind: ConstKind::Int(offset as i128),
+                    }),
+                    Projection::Index(index_local) => {
+                        Operand::Copy(Place::from_local(index_local))
+                    }
+                    _ => unreachable!("projection is always ConstantIndex or Index here"),
+                };
                 let assert_target = self.new_block();
                 let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
                 self.set_terminator(
@@ -512,14 +548,14 @@ impl<'a> BodyLowerCtx<'a> {
                         expected: true,
                         msg: AssertMessage::BoundsCheck {
                             len: Operand::Copy(Place::from_local(len_local)),
-                            index: Operand::Copy(Place::from_local(index_local)),
+                            index: index_operand,
                         },
                         target: assert_target,
                     },
                     span,
                 );
                 self.switch_to(assert_target);
-                place.projections.push(Projection::Index(index_local));
+                place.projections.push(projection);
                 place
             }
             // An overloaded `Index`/`IndexSet` receiver: `check_index` already resolved this as
@@ -738,15 +774,12 @@ impl<'a> BodyLowerCtx<'a> {
 
     fn lower_variant_into(
         &mut self,
-        expr_id: HirId,
+        variant: Ident,
         ty: Ty,
         payload: &crate::hir::Payload,
         dest: Place,
         span: SrcSpan,
     ) {
-        let ExprKind::Variant { variant, .. } = self.hir.expr(expr_id).kind.clone() else {
-            unreachable!("lower_variant_into is only called for ExprKind::Variant")
-        };
         let (def, variant_idx) = self.variant_idx_for(ty, variant.text);
         let operands = self.lower_variant_payload_operands(def, variant_idx, payload);
         self.assign(
@@ -900,5 +933,24 @@ fn literal_text(lit: Literal) -> String {
             crate::ast::interner::Interner::resolve(value).to_string()
         }
         _ => unreachable!("literal_text is only called for Int/Float"),
+    }
+}
+
+/// Reads a qualified variant's payload (`Shape.circle(1.0)`) as the payload the elided form
+/// (`.circle(1.0)`) would have carried, so both spellings lower through one path.
+///
+/// Typeck rejects an argument list that is not exactly one value, so by the time MIR runs a
+/// `Call` payload holds exactly one argument.
+fn variant_payload_of(args: &AccessArgs) -> Payload {
+    match args {
+        AccessArgs::None => Payload::None,
+        AccessArgs::Call(args) => match args.as_slice() {
+            [value] => Payload::Single(*value),
+            args => unreachable!(
+                "typeck rejects a qualified variant carrying {} payload arguments",
+                args.len()
+            ),
+        },
+        AccessArgs::Record(fields) => Payload::Record(fields.clone()),
     }
 }

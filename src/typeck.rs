@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp, Visibility};
 use crate::diagnostics::typeck::display::DisplayCx;
@@ -25,11 +25,13 @@ use crate::typeck::expr::DerefContext;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::bounds::Obligation;
 use crate::typeck::traits::index::ExtendIndex;
+use crate::typeck::traits::method::PendingMethodCall;
 use crate::typeck::traits::solve::{Query, Solution};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::{Unifier, UnifyError, is_float, is_integer};
 
+pub mod adt;
 pub mod cast;
 pub mod expr;
 pub mod fold;
@@ -54,6 +56,14 @@ pub struct Typeck<'hir> {
     extends: ExtendIndex,
     trait_bound_obligations: BTreeMap<DefId, Vec<Obligation>>,
 
+    /// Method calls put aside because the receiver's type was still open when they were
+    /// reached. Drained at the end of the enclosing function; see
+    /// [`Typeck::settle_pending_method_calls`].
+    pending_method_calls: VecDeque<PendingMethodCall>,
+    /// Set while draining the queue above, so a call that is still unresolvable reports instead
+    /// of being deferred a second time.
+    settling_method_calls: bool,
+
     self_tys: HashMap<DefId, Ty>,
 
     /// The definitions whose `Self` is being computed right now, which
@@ -70,6 +80,8 @@ impl<'hir> Typeck<'hir> {
             unifier: Unifier::new(),
             extends: ExtendIndex::new(),
             trait_bound_obligations: BTreeMap::new(),
+            pending_method_calls: VecDeque::new(),
+            settling_method_calls: false,
             self_tys: HashMap::new(),
             computing_self_tys: HashSet::new(),
         }
@@ -403,7 +415,6 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Variant { variant, payload } => {
                 self.check_variant_expr(*variant, payload, expected, expr.span)
             }
-            ExprKind::Range { lo, hi, .. } => self.check_range(*lo, *hi, expr.span),
             ExprKind::Try(operand) => self.check_try(id, *operand),
             ExprKind::If {
                 cond,
@@ -719,6 +730,10 @@ impl<'hir> Typeck<'hir> {
             }
             None => self.check_bodiless_function(function, function_node.span),
         }
+        // Before `writeback`, so a settled call's own types are written back with everything
+        // else, and after the body, so every constraint the body places on a deferred call's
+        // receiver has already been made.
+        self.settle_pending_method_calls();
         self.writeback(function);
     }
 
@@ -811,6 +826,8 @@ pub struct TypeckOutput {
 pub fn check(hir: &Hir) -> TypeckOutput {
     let mut checker = Typeck::new(hir);
     checker.collect_module(hir.root_id());
+    let adts = adt::collect_adt_defs(hir, &checker.types);
+    checker.tcx.set_adts(adts);
     checker.build_extend_index();
     checker.check_coherence();
     checker.check_trait_members();
@@ -832,7 +849,7 @@ mod tests {
     use crate::nameres::PrimTy;
     use crate::testing::{
         Stage, checker_through, find_return, first_extend_method, first_function, first_struct,
-        first_trait, resolve_src, typeck_accepts as accepts, typeck_rejects as rejects,
+        first_trait, lower_to_hir, typeck_accepts as accepts, typeck_rejects as rejects,
         typeck_src_as_core,
     };
     use crate::typeck::unify::UnifyError;
@@ -843,7 +860,7 @@ mod tests {
 
     #[test]
     fn return_stmt_accepts_a_value_matching_the_return_type() {
-        let hir = resolve_src("fun f() -> i32 { return 0; }");
+        let hir = lower_to_hir("fun f() -> i32 { return 0; }");
         let def = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def);
 
@@ -857,7 +874,7 @@ mod tests {
 
     #[test]
     fn return_stmt_rejects_a_value_not_matching_the_return_type() {
-        let hir = resolve_src("fun f() -> i32 { return true; }");
+        let hir = lower_to_hir("fun f() -> i32 { return true; }");
         let def = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def);
 
@@ -872,7 +889,7 @@ mod tests {
 
     #[test]
     fn return_stmt_in_a_function_with_no_declared_return_type_rejects_a_value() {
-        let hir = resolve_src("fun f() { return true; }");
+        let hir = lower_to_hir("fun f() { return true; }");
         let def = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def);
 
@@ -897,7 +914,7 @@ mod tests {
 
     #[test]
     fn two_functions_with_no_return_type_do_not_interfere() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "fun f() -> bool { return true; }
              fun g() -> i32 { return 1; }",
         );
@@ -965,7 +982,7 @@ mod tests {
 
     #[test]
     fn binary_add_on_a_struct_with_an_add_impl_resolves_through_the_solver() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "module core::ops;
 
              public trait Add {
@@ -1000,7 +1017,7 @@ mod tests {
 
     #[test]
     fn binary_add_on_a_struct_with_no_add_impl_is_rejected() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "module core::ops;
 
              public trait Add {
@@ -1030,7 +1047,7 @@ mod tests {
 
     #[test]
     fn binary_add_on_primitives_bypasses_the_solver() {
-        let hir = resolve_src("fun f() -> i32 { return 1 + 2; }");
+        let hir = lower_to_hir("fun f() -> i32 { return 1 + 2; }");
         let def = first_function(&hir);
         let (stmt_id, _expr_id) = find_return(&hir, def);
         let mut checker = checker_with_impls_built(&hir);
@@ -1043,7 +1060,7 @@ mod tests {
 
     #[test]
     fn binary_add_between_two_unresolved_int_literals_resolves_to_the_return_type() {
-        let hir = resolve_src("fun f() -> i32 { return 1 + 2; }");
+        let hir = lower_to_hir("fun f() -> i32 { return 1 + 2; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1078,7 +1095,7 @@ mod tests {
 
     #[test]
     fn a_type_read_back_after_unification_is_the_unified_type() {
-        let hir = resolve_src("fun f() -> i32 { return 1; }");
+        let hir = lower_to_hir("fun f() -> i32 { return 1; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1100,7 +1117,7 @@ mod tests {
 
     #[test]
     fn writeback_leaves_no_unresolved_variables_behind() {
-        let hir = resolve_src("fun f() -> i32 { return 1; }");
+        let hir = lower_to_hir("fun f() -> i32 { return 1; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1120,7 +1137,7 @@ mod tests {
 
     #[test]
     fn an_unconstrained_int_literal_defaults_to_i32() {
-        let hir = resolve_src("fun f() { let x = 5; }");
+        let hir = lower_to_hir("fun f() { let x = 5; }");
         let def = first_function(&hir);
         let mut checker = checker_with_signatures_collected(&hir);
         checker.check_function(def);
@@ -1142,7 +1159,7 @@ mod tests {
     /// The float counterpart of the test above.
     #[test]
     fn an_unconstrained_float_literal_defaults_to_f64() {
-        let hir = resolve_src("fun f() { let x = 5.0; }");
+        let hir = lower_to_hir("fun f() { let x = 5.0; }");
         let def = first_function(&hir);
         let mut checker = checker_with_signatures_collected(&hir);
         checker.check_function(def);
@@ -1163,7 +1180,7 @@ mod tests {
 
     #[test]
     fn bool_literal_checks_to_the_bool_primitive() {
-        let hir = resolve_src("fun f() -> bool { return true; }");
+        let hir = lower_to_hir("fun f() -> bool { return true; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1175,7 +1192,7 @@ mod tests {
 
     #[test]
     fn char_literal_checks_to_the_char_primitive() {
-        let hir = resolve_src("fun f() -> char { return 'a'; }");
+        let hir = lower_to_hir("fun f() -> char { return 'a'; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1186,7 +1203,7 @@ mod tests {
 
     #[test]
     fn unsuffixed_int_literal_checks_to_an_int_inference_var() {
-        let hir = resolve_src("fun f() -> i32 { return 0; }");
+        let hir = lower_to_hir("fun f() -> i32 { return 0; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1200,7 +1217,7 @@ mod tests {
 
     #[test]
     fn unsuffixed_float_literal_checks_to_a_float_inference_var() {
-        let hir = resolve_src("fun f() -> f64 { return 0.0; }");
+        let hir = lower_to_hir("fun f() -> f64 { return 0.0; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1214,7 +1231,7 @@ mod tests {
 
     #[test]
     fn suffixed_int_literal_checks_directly_to_its_primitive() {
-        let hir = resolve_src("fun f() -> u8 { return 5_u8; }");
+        let hir = lower_to_hir("fun f() -> u8 { return 5_u8; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1225,7 +1242,7 @@ mod tests {
 
     #[test]
     fn suffixed_float_literal_checks_directly_to_its_primitive() {
-        let hir = resolve_src("fun f() -> f32 { return 3.14_f32; }");
+        let hir = lower_to_hir("fun f() -> f32 { return 3.14_f32; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1236,7 +1253,7 @@ mod tests {
 
     #[test]
     fn whole_number_with_a_float_suffix_checks_to_the_float_primitive() {
-        let hir = resolve_src("fun f() -> f64 { return 5_f64; }");
+        let hir = lower_to_hir("fun f() -> f64 { return 5_f64; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1247,7 +1264,7 @@ mod tests {
 
     #[test]
     fn digit_separators_do_not_interfere_with_a_suffix() {
-        let hir = resolve_src("fun f() -> i64 { return 1_000_000_i64; }");
+        let hir = lower_to_hir("fun f() -> i64 { return 1_000_000_i64; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1282,7 +1299,7 @@ mod tests {
 
     #[test]
     fn tuple_expr_checks_to_a_tuple_of_its_elements_types() {
-        let hir = resolve_src("fun f() -> (bool, char) { return (true, 'a'); }");
+        let hir = lower_to_hir("fun f() -> (bool, char) { return (true, 'a'); }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1310,7 +1327,7 @@ mod tests {
 
     #[test]
     fn path_to_a_parameter_checks_to_the_parameters_type() {
-        let hir = resolve_src("fun f(x: i32) -> i32 { return x; }");
+        let hir = lower_to_hir("fun f(x: i32) -> i32 { return x; }");
         let def = first_function(&hir);
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
@@ -1321,7 +1338,7 @@ mod tests {
 
     #[test]
     fn path_to_a_function_checks_to_its_signature() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "fun g() -> bool { return true; }
              fun f() -> bool { return g; }",
         );
@@ -1350,7 +1367,7 @@ mod tests {
 
     #[test]
     fn path_to_self_checks_to_the_self_parameters_type() {
-        let hir = resolve_src(
+        let hir = lower_to_hir(
             "struct S {}
              extend S { fun m(&self) -> i32 { return self; } }",
         );
@@ -1368,7 +1385,7 @@ mod tests {
 
     #[test]
     fn primitive_displays_as_its_keyword() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_prim(PrimTy::I32);
         assert_eq!(checker.display_cx().show(ty).to_string(), "i32");
@@ -1376,7 +1393,7 @@ mod tests {
 
     #[test]
     fn any_ty_var_displays_as_underscore() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.next_ty_var();
         assert_eq!(checker.display_cx().show(ty).to_string(), "_");
@@ -1384,7 +1401,7 @@ mod tests {
 
     #[test]
     fn int_var_displays_as_integer_placeholder() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.next_int_var();
         assert_eq!(checker.display_cx().show(ty).to_string(), "{integer}");
@@ -1392,7 +1409,7 @@ mod tests {
 
     #[test]
     fn float_var_displays_as_float_placeholder() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.next_float_var();
         assert_eq!(checker.display_cx().show(ty).to_string(), "{float}");
@@ -1400,7 +1417,7 @@ mod tests {
 
     #[test]
     fn never_displays_as_bang() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let never = checker.tcx.never();
         assert_eq!(checker.display_cx().show(never).to_string(), "!");
@@ -1408,7 +1425,7 @@ mod tests {
 
     #[test]
     fn unit_displays_as_empty_parens() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let unit = checker.tcx.unit();
         assert_eq!(checker.display_cx().show(unit).to_string(), "()");
@@ -1416,7 +1433,7 @@ mod tests {
 
     #[test]
     fn unit_is_a_singleton_distinct_from_the_empty_tuple() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let unit = checker.tcx.unit();
         let empty_tuple = checker.tcx.mk_tuple(vec![]);
@@ -1430,7 +1447,7 @@ mod tests {
 
     #[test]
     fn error_displays_as_placeholder() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let error = checker.tcx.error();
         assert_eq!(checker.display_cx().show(error).to_string(), "{error}");
@@ -1438,7 +1455,7 @@ mod tests {
 
     #[test]
     fn immutable_ref_displays_with_ampersand() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_ref(bool_ty, Mutability::Immutable);
@@ -1447,7 +1464,7 @@ mod tests {
 
     #[test]
     fn mutable_ref_displays_with_ampersand_mut() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_ref(bool_ty, Mutability::Mutable);
@@ -1456,7 +1473,7 @@ mod tests {
 
     #[test]
     fn any_ty_displays_with_any_keyword() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_any(bool_ty);
@@ -1465,7 +1482,7 @@ mod tests {
 
     #[test]
     fn empty_tuple_displays_as_empty_parens() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_tuple(vec![]);
         assert_eq!(checker.display_cx().show(ty).to_string(), "()");
@@ -1473,7 +1490,7 @@ mod tests {
 
     #[test]
     fn one_element_tuple_displays_with_a_trailing_comma() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let ty = checker.tcx.mk_tuple(vec![bool_ty]);
@@ -1482,7 +1499,7 @@ mod tests {
 
     #[test]
     fn multi_element_tuple_displays_comma_separated() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
         let char_ty = checker.tcx.mk_prim(PrimTy::Char);
@@ -1492,7 +1509,7 @@ mod tests {
 
     #[test]
     fn array_displays_with_brackets_and_a_placeholder_length() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
         let ty = checker.tcx.mk_array(i32_ty, None);
@@ -1501,7 +1518,7 @@ mod tests {
 
     #[test]
     fn fun_with_no_params_or_ret_displays_as_bare_fun() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_fun(vec![], None);
         assert_eq!(checker.display_cx().show(ty).to_string(), "fun()");
@@ -1509,7 +1526,7 @@ mod tests {
 
     #[test]
     fn fun_with_params_and_ret_displays_with_arrow() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
         let bool_ty = checker.tcx.mk_prim(PrimTy::Bool);
@@ -1522,7 +1539,7 @@ mod tests {
 
     #[test]
     fn generic_displays_with_its_declared_name() {
-        let hir = resolve_src("struct Wrap<T> { inner: T }");
+        let hir = lower_to_hir("struct Wrap<T> { inner: T }");
         let def = first_struct(&hir);
         let s = hir.struct_(def);
         let generic_id = s.generics[0];
@@ -1533,7 +1550,7 @@ mod tests {
 
     #[test]
     fn adt_displays_with_its_name_and_generic_args() {
-        let hir = resolve_src("struct Wrap<T> { inner: T }");
+        let hir = lower_to_hir("struct Wrap<T> { inner: T }");
         let def = first_struct(&hir);
         let checker = checker_with_signatures_collected(&hir);
 
@@ -1546,7 +1563,7 @@ mod tests {
 
     #[test]
     fn adt_with_no_generics_displays_with_just_its_name() {
-        let hir = resolve_src("struct Unit {}");
+        let hir = lower_to_hir("struct Unit {}");
         let def = first_struct(&hir);
         let checker = checker_with_signatures_collected(&hir);
 
@@ -1559,7 +1576,7 @@ mod tests {
 
     #[test]
     fn self_param_displays_as_self() {
-        let hir = resolve_src("trait Greet { fun hello(); }");
+        let hir = lower_to_hir("trait Greet { fun hello(); }");
         let def = first_trait(&hir);
         let checker = checker_with_signatures_collected(&hir);
 
@@ -1572,7 +1589,7 @@ mod tests {
 
     #[test]
     fn dyn_displays_with_dyn_keyword_and_trait_name() {
-        let hir = resolve_src("trait Greet { fun hello(); }");
+        let hir = lower_to_hir("trait Greet { fun hello(); }");
         let def = first_trait(&hir);
         let mut checker = checker_with_signatures_collected(&hir);
         let ty = checker.tcx.mk_dyn(def, vec![]);
@@ -1581,7 +1598,7 @@ mod tests {
 
     #[test]
     fn a_mismatch_names_both_types_as_the_user_wrote_them() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut tcx = TyCtx::new();
         let (expected, found) = (tcx.mk_prim(PrimTy::I32), tcx.mk_prim(PrimTy::Bool));
         let cx = DisplayCx::new(&hir, &tcx);
@@ -1595,7 +1612,7 @@ mod tests {
 
     #[test]
     fn an_int_var_mismatch_says_an_integer_type_was_expected() {
-        let hir = resolve_src("fun f() {}");
+        let hir = lower_to_hir("fun f() {}");
         let mut tcx = TyCtx::new();
         let var = tcx.next_int_var();
         let found = tcx.mk_prim(PrimTy::Bool);

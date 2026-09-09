@@ -1,11 +1,13 @@
 use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
 use chumsky::extra;
+use chumsky::input::InputRef;
 use chumsky::prelude::*;
 
 use crate::ast::interner::Interner;
 use crate::ast::{Ast, Ident, Item, ItemKind, NodeId, ParsedSrcFile, Path};
-use crate::diagnostics::parser::{report_duplicate_module, report_error};
+use crate::diagnostics::DiagCtx;
+use crate::diagnostics::parser::{report_duplicate_module, report_errors};
 use crate::driver::source::{SrcMap, SrcSpan};
 use crate::lexer::token::{Token, TokenKind};
 
@@ -13,10 +15,39 @@ type Extra<'a> = extra::Err<Rich<'a, Token>>;
 type BoxedP<'a, O> = Boxed<'a, 'a, &'a [Token], O, Extra<'a>>;
 
 mod block_parser;
+mod delimiters;
 mod expr_parser;
 mod item_parser;
 mod pattern_parser;
 mod type_parser;
+
+/// Whether [`Parser::recover_by_skipping`] leaves a token for the next parser or consumes it.
+#[derive(Clone, Copy)]
+enum Stop {
+    /// Leave the token unconsumed: it starts the next construct.
+    Before,
+    /// Consume the token: it belongs to the construct being skipped, as a `;` does to the
+    /// statement it terminates.
+    After,
+}
+
+/// Maps a token to where item recovery stops, for `Parser::grammar`.
+///
+/// The keywords listed are the ones `Parser::item_parser` accepts as an item's first token.
+fn item_recovery_point(kind: TokenKind) -> Option<Stop> {
+    matches!(
+        kind,
+        TokenKind::PublicKw
+            | TokenKind::FunKw
+            | TokenKind::StructKw
+            | TokenKind::EnumKw
+            | TokenKind::TraitKw
+            | TokenKind::ExtendKw
+            | TokenKind::ModuleKw
+            | TokenKind::ImportKw
+    )
+    .then_some(Stop::Before)
+}
 
 pub struct Parser {}
 
@@ -46,8 +77,13 @@ impl Parser {
     ) -> ParsedSrcFile {
         let (output, errors) = grammar.parse(tokens).into_output_errors();
 
-        for err in &errors {
-            report_error(err);
+        // Every failure after an unmatched delimiter is a consequence of it, so the two reports
+        // are alternatives rather than both being emitted.
+        let unmatched = delimiters::unmatched(tokens);
+        if unmatched.is_empty() {
+            report_errors(&errors, tokens, file_offset);
+        } else {
+            unmatched.into_iter().for_each(DiagCtx::emit);
         }
 
         match output {
@@ -98,7 +134,9 @@ impl Parser {
         &'a self,
         k: TokenKind,
     ) -> impl ChumskyParser<'a, &'a [Token], Token, Extra<'a>> + Clone {
-        any().filter(move |t: &Token| t.kind == k)
+        any()
+            .filter(move |t: &Token| t.kind == k)
+            .labelled(k.describe())
     }
 
     fn ident_parser<'a>(&'a self) -> BoxedP<'a, Ident> {
@@ -135,22 +173,56 @@ impl Parser {
             .boxed()
     }
 
-    /// Builds an error-recovery parser.
+    /// Builds a parser for `recover_with(via_parser(..))` that discards the tokens of a construct
+    /// the grammar rejected and returns a placeholder node in its place.
     ///
-    /// It skips at least one token, then keeps skipping until it finds a token that could
-    /// start a new instance of whatever failed to parse (`boundary`), or until input runs out.
-    /// Then it produces `fallback`.
+    /// It consumes the token the grammar failed on and then every token up to the first one
+    /// `stop` accepts, passing the span of all of them to `build`. Consuming that first token
+    /// unconditionally is what lets the `repeated()` around a recovering parser advance.
     ///
-    /// Used via `some_parser.recover_with(via_parser(self.recover_to_boundary(...)))`.
-    fn recover_to_boundary<'a, O: Clone + 'a>(
+    /// `(`, `[` and `{` groups are consumed whole, since a token `stop` accepts inside a nested
+    /// group belongs to that group rather than to the construct being discarded. Stopping there
+    /// would leave the group's closing delimiter behind, and the next parser would read it as
+    /// the end of an enclosing construct. For the same reason a closing delimiter at depth zero
+    /// always stops the skip, whatever `stop` says about it.
+    fn recover_by_skipping<'a, O: 'a>(
         &'a self,
-        boundary: impl ChumskyParser<'a, &'a [Token], (), Extra<'a>> + Clone + 'a,
-        fallback: O,
+        stop: impl Fn(TokenKind) -> Option<Stop> + Clone + 'a,
+        build: impl Fn(SrcSpan) -> O + Clone + 'a,
     ) -> impl ChumskyParser<'a, &'a [Token], O, Extra<'a>> + Clone + 'a {
-        any()
-            .ignored()
-            .then(any().and_is(boundary.not()).ignored().repeated())
-            .to(fallback)
+        custom(move |inp: &mut InputRef<'a, '_, &'a [Token], Extra<'a>>| {
+            // There is nothing to discard at end of input. Failing here rather than returning a
+            // placeholder is what terminates the `repeated()` around a recovering parser.
+            let first: Token = inp.parse(any())?;
+
+            let mut skipped = first.span;
+            let mut depth = usize::from(first.kind.opens_group());
+
+            while let Some(token) = inp.peek() {
+                if depth == 0 {
+                    match stop(token.kind) {
+                        Some(Stop::Before) => break,
+                        Some(Stop::After) => {
+                            inp.skip();
+                            skipped = skipped.merge(token.span);
+                            break;
+                        }
+                        None if token.kind.closes_group() => break,
+                        None => {}
+                    }
+                }
+
+                if token.kind.opens_group() {
+                    depth += 1;
+                } else if token.kind.closes_group() {
+                    depth -= 1;
+                }
+                inp.skip();
+                skipped = skipped.merge(token.span);
+            }
+
+            Ok(build(skipped))
+        })
     }
 
     /// Builds the whole grammar for a single file: a sequence of items followed by end-of-input.
@@ -158,25 +230,14 @@ impl Parser {
     /// The result is a flat list of items, including the file's `module` header and its imports.
     /// [`Self::assemble_file`] sorts those into the parts of a [`ParsedSrcFile`] afterwards.
     fn grammar<'a>(&'a self) -> impl ChumskyParser<'a, &'a [Token], Vec<Item>, Extra<'a>> + Clone {
-        let item_start = choice((
-            self.kind(TokenKind::PublicKw).ignored(),
-            self.kind(TokenKind::FunKw).ignored(),
-            self.kind(TokenKind::StructKw).ignored(),
-            self.kind(TokenKind::EnumKw).ignored(),
-            self.kind(TokenKind::TraitKw).ignored(),
-            self.kind(TokenKind::ExtendKw).ignored(),
-            self.kind(TokenKind::ModuleKw).ignored(),
-            self.kind(TokenKind::ImportKw).ignored(),
-        ));
-
         let item = self
             .item_parser()
-            .recover_with(via_parser(self.recover_to_boundary(
-                item_start,
-                Item {
+            .recover_with(via_parser(self.recover_by_skipping(
+                item_recovery_point,
+                |span| Item {
                     id: NodeId::next(),
                     kind: ItemKind::Error,
-                    span: SrcSpan::new(0, 0),
+                    span,
                 },
             )));
 
@@ -188,15 +249,35 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::ast::*;
-    use crate::diagnostics::DiagCtx;
+    use crate::diagnostics::{DiagCtx, Diagnostic};
+    use crate::driver::source::SrcMap;
     use crate::testing::{lex_src, parse_src};
 
-    /// Lexes and parses `src`, returning how many diagnostics were raised. Unlike
-    /// [`parse_src`], this asserts nothing, so it can exercise the error paths.
-    fn diagnostic_count(src: &str) -> usize {
+    /// Lexes and parses `src` and returns what [`DiagCtx`] collected. Unlike [`parse_src`] it
+    /// asserts nothing about the result, so it can be called on source that fails to parse.
+    fn diagnostics(src: &str) -> Vec<Diagnostic> {
         let (tokens, offset) = lex_src(src);
         let _ = Parser::new().parse(&tokens, offset);
-        DiagCtx::diagnostics().len()
+        DiagCtx::diagnostics()
+    }
+
+    fn diagnostic_count(src: &str) -> usize {
+        diagnostics(src).len()
+    }
+
+    /// The single diagnostic `src` raises. Panics if `src` raises any other number.
+    fn only_diagnostic(src: &str) -> Diagnostic {
+        let mut raised = diagnostics(src);
+        assert_eq!(raised.len(), 1, "expected exactly one diagnostic");
+        raised.remove(0)
+    }
+
+    /// The source text covered by a diagnostic's primary span.
+    fn underlined(diagnostic: &Diagnostic) -> String {
+        let span = diagnostic
+            .span
+            .expect("a parser diagnostic always carries a span");
+        SrcMap::text_of(span).expect("the span comes from a token the lexer produced")
     }
 
     /// Like [`diagnostic_count`], but also returns the (best-effort, possibly error-containing)
@@ -574,5 +655,187 @@ mod tests {
             })
             .collect();
         assert_eq!(function_names, vec!["a", "b", "c"]);
+    }
+
+    // -----------------------------------------------------------------
+    // Wording
+    // -----------------------------------------------------------------
+
+    /// After a complete expression the expected set holds `;` plus every binary, postfix and
+    /// assignment operator. `render_alternatives` keeps only the `;`.
+    #[test]
+    fn a_missing_semicolon_names_the_semicolon_and_nothing_else() {
+        let diagnostic = only_diagnostic("fun main() { let x = 1 let y = 2; }");
+        assert_eq!(diagnostic.message, "expected `;`, found `let`");
+        assert_eq!(underlined(&diagnostic), "let");
+        assert!(diagnostic.help.is_some());
+    }
+
+    /// The `labelled("an expression")` on `unary_or_new` replaces the ~20 tokens that can begin
+    /// an operand, since the failure is at the operand's first token.
+    #[test]
+    fn a_missing_operand_asks_for_an_expression() {
+        let diagnostic = only_diagnostic("fun main() { let x = 1 + ; }");
+        assert_eq!(diagnostic.message, "expected an expression, found `;`");
+    }
+
+    #[test]
+    fn a_missing_type_asks_for_a_type() {
+        let diagnostic = only_diagnostic("fun main() { let x: = 1; }");
+        assert_eq!(diagnostic.message, "expected a type, found `=`");
+    }
+
+    /// A list of nothing but keywords gets `MAX_LISTED_KEYWORDS` rather than
+    /// `MAX_LISTED_ALTERNATIVES`, so all eight item keywords are named instead of four.
+    #[test]
+    fn a_statement_written_at_file_scope_lists_every_item_keyword() {
+        let diagnostic = only_diagnostic("let x = 1;");
+        assert_eq!(
+            diagnostic.message,
+            "expected `public`, `fun`, `struct`, `enum`, `trait`, `extend`, `module`, \
+             or `import`, found `let`"
+        );
+    }
+
+    #[test]
+    fn a_keyword_borrowed_from_another_language_is_pointed_at_its_phi_spelling() {
+        for (src, suggestion) in [("fn main() {}", "`fun`"), ("pub fun main() {}", "`public`")] {
+            let help = only_diagnostic(src)
+                .help
+                .expect("a misspelled keyword sets `help`");
+            assert!(help.contains(suggestion), "for {src:?}, got {help:?}");
+        }
+    }
+
+    /// `edit_distance` charges one edit for a transposition, so `strcut` clears the threshold
+    /// `is_probable_typo_of` allows for a six-character keyword.
+    #[test]
+    fn a_transposed_keyword_is_recognised() {
+        let help = only_diagnostic("strcut P { x: i32 }")
+            .help
+            .expect("a misspelled keyword sets `help`");
+        assert!(help.contains("`struct`"), "got {help:?}");
+    }
+
+    /// `fo` is one edit from `for`, but a `let` binding accepts an identifier, so
+    /// `suggested_keyword` returns `None` and the source parses with no diagnostic at all.
+    #[test]
+    fn a_name_that_merely_resembles_a_keyword_is_left_alone() {
+        assert_eq!(diagnostic_count("fun main() { let fo = 1; }"), 0);
+    }
+
+    #[test]
+    fn a_keyword_written_where_a_name_belongs_says_so() {
+        let diagnostic = only_diagnostic("fun match() {}");
+        assert_eq!(diagnostic.message, "expected identifier, found `match`");
+        assert_eq!(
+            diagnostic.help.as_deref(),
+            Some("`match` is a keyword, so it cannot be used as a name")
+        );
+    }
+
+    /// The expected set here is the operators that could continue the condition plus the
+    /// `labelled("a block")` on the `if` body. Only the label survives narrowing.
+    #[test]
+    fn a_missing_block_asks_for_the_block() {
+        let diagnostic = only_diagnostic("fun main() { if x\n foo(); }");
+        assert_eq!(diagnostic.message, "expected a block, found identifier");
+    }
+
+    /// Three alternatives is under `MAX_LISTED_ALTERNATIVES`, so `render_alternatives` names
+    /// all of them even though `->` and `;` are terminators and `a block` is not.
+    #[test]
+    fn a_short_list_of_alternatives_is_enumerated() {
+        let diagnostic = only_diagnostic("fun add(x: i32) i32 { return x; }");
+        assert_eq!(
+            diagnostic.message,
+            "expected `->`, a block, or `;`, found `i32`"
+        );
+    }
+
+    /// The grammar's own failure is at the end of the file; `delimiters::unmatched` replaces it
+    /// with one whose span is the `{`.
+    #[test]
+    fn an_unclosed_brace_is_reported_at_the_brace_not_at_the_end_of_the_file() {
+        let diagnostic = only_diagnostic("fun main() { return 1;");
+        assert_eq!(diagnostic.message, "unclosed `{`");
+        assert_eq!(underlined(&diagnostic), "{");
+    }
+
+    /// A non-empty `delimiters::unmatched` result replaces the grammar's errors rather than
+    /// being emitted alongside them, so the mismatch is the only diagnostic.
+    #[test]
+    fn an_imbalance_suppresses_the_failures_it_causes() {
+        let diagnostic = only_diagnostic("fun main() { foo(1; } fun other() {}");
+        assert_eq!(
+            diagnostic.message,
+            "mismatched closing delimiter: expected `)`, found `}`"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Recovery
+    // -----------------------------------------------------------------
+
+    /// `recover_by_skipping` tracks nesting depth, so the `}` of the nested `if` block does not
+    /// stop the skip. Were it to stop there, the `}` would close the function body and every
+    /// statement after it would be parsed as a top-level item.
+    #[test]
+    fn recovery_skips_a_nested_block_whole() {
+        let (unit, error_count) =
+            parse_with_errors("fun main() { let a = 1 + ; if c { g(); } let b = 2; }");
+        assert_eq!(error_count, 1);
+
+        let body = only_function(&unit)
+            .block
+            .as_ref()
+            .expect("a `fun` item with a `{}` body has a block");
+        assert!(matches!(body.stmts[0].kind, StmtKind::Error));
+        assert!(matches!(body.stmts[1].kind, StmtKind::Expr { .. }));
+        assert!(matches!(body.stmts[2].kind, StmtKind::Let { .. }));
+    }
+
+    /// `statement_recovery_point` returns `Stop::After` for `;`, so the skip consumes it and
+    /// the following `foo();` parses as its own statement.
+    #[test]
+    fn recovery_stops_at_the_semicolon_that_ends_the_broken_statement() {
+        let (unit, error_count) = parse_with_errors("fun main() { 1 +; foo(); }");
+        assert_eq!(error_count, 1);
+
+        let body = only_function(&unit)
+            .block
+            .as_ref()
+            .expect("a `fun` item with a `{}` body has a block");
+        assert_eq!(body.stmts.len(), 2);
+        assert!(matches!(body.stmts[0].kind, StmtKind::Error));
+        assert!(matches!(body.stmts[1].kind, StmtKind::Expr { .. }));
+    }
+
+    /// `recover_by_skipping` passes the merged span of every token it consumed to `build`.
+    /// Later passes report against these spans, and `SrcSpan::new(0, 0)` would point them all at
+    /// the first file in the `SrcMap`.
+    #[test]
+    fn a_recovered_statement_spans_the_source_it_replaces() {
+        let (unit, _) = parse_with_errors("fun main() { 1 +; }");
+        let body = only_function(&unit)
+            .block
+            .as_ref()
+            .expect("a `fun` item with a `{}` body has a block");
+        let span = body.stmts[0].span;
+        assert_eq!(
+            SrcMap::text_of(span).expect("the span comes from a token the lexer produced"),
+            "1 +;"
+        );
+    }
+
+    #[test]
+    fn a_recovered_item_spans_the_source_it_replaces() {
+        let (unit, _) = parse_with_errors("let x = 1; fun ok() {}");
+        let span = unit.items[0].span;
+        assert!(matches!(unit.items[0].kind, ItemKind::Error));
+        assert_eq!(
+            SrcMap::text_of(span).expect("the span comes from a token the lexer produced"),
+            "let x = 1;"
+        );
     }
 }

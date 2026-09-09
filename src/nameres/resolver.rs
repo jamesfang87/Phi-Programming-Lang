@@ -49,6 +49,8 @@ impl<'ast> Resolver<'ast> {
         }
     }
 
+    /// Resolves a path in type position, and the only place [`Res::SelfTy`] is produced.
+    ///
     /// This should be used instead of a lookup_type_path due to the case of
     /// `Self`, which can have multiple reasons of failing
     pub(super) fn resolve_type_path(&self, path: &Path) -> Res {
@@ -59,7 +61,10 @@ impl<'ast> Resolver<'ast> {
 
         if path.segments.len() == 1 && last.text == Interner::intern("Self") {
             return match self.table.current_self_entry() {
-                Some(Some(ty)) => Res::Type(ty),
+                // `SelfTy`, not `Type`: that the name was written `Self` is decided here, where
+                // the path is in hand, and carried onwards rather than re-derived from the
+                // segment text by a later pass.
+                Some(Some(ty)) => Res::SelfTy(ty),
                 Some(None) => Res::Err,
                 None => {
                     report_self_unavailable(last.span);
@@ -150,6 +155,28 @@ impl<'ast> Resolver<'ast> {
                     .insert_local(field.name, Local::Variable(field.id)),
             }
         }
+    }
+
+    /// Resolves the base of a `.` access, which may name either a value (`point.x`) or a type
+    /// (`Shape.circle(1.0)`, a variant reached through its enum). Values and types live in
+    /// separate namespaces, so the value namespace is tried first: a local named `Shape` keeps
+    /// shadowing the type `Shape`, the same way it does in every other expression position.
+    ///
+    /// Only a path can name a type, so any other base is an ordinary expression.
+    fn resolve_access_base(&mut self, base: &'ast Expr) {
+        let ExprKind::Path(path) = &base.kind else {
+            self.visit_expr(base);
+            return;
+        };
+
+        // `resolve_type_path` is the fallback rather than `lookup_type_path` because it also
+        // answers for `Self` and emits the one "cannot find" this base gets when neither
+        // namespace has the name.
+        let res = match self.table.lookup_value_path(self.current_module, path) {
+            Some(res) => res,
+            None => self.resolve_type_path(path),
+        };
+        self.results.record(base.id, path.clone(), res);
     }
 
     fn visit_expr_payload(&mut self, payload: &'ast Payload<Expr>) {
@@ -369,7 +396,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             }
             ExprKind::Access { base, args, .. } => {
                 // We defer to after typeck
-                self.visit_expr(base);
+                self.resolve_access_base(base);
                 match args {
                     AccessArgs::None => {}
                     AccessArgs::Call(args) => {
