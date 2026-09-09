@@ -232,7 +232,7 @@ fn check_terminator(
                 terminator.span,
             );
         }
-        TerminatorKind::Drop { place, .. } => {
+        TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
             check_place_access(
                 body,
                 aliases,
@@ -463,7 +463,7 @@ mod tests {
             "struct S { x: i32 }
              fun f(p: &mut S) -> i32 {
                  let r = &mut *p;
-                 let v = (*p).x;
+                 let v = (*p).x; // cannot use p while r is alive
                  let _ = (*r).x;
                  return v;
              }",
@@ -549,6 +549,33 @@ mod tests {
                  let _ = *r;
                  p.bump();
              }",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Known gap: reborrow chains (`&&T`) aren't tracked transitively.
+    //
+    // `lifetimes::owning_register_of` (and its caller `mark_place_alias_used`) stop at the
+    // *first* `Deref` projection in a place and look up `held` exactly once. For `**r2`, that
+    // resolves only the alias `r2` holds (`r2` borrows `r1`) -- it never checks whether `r1`
+    // itself is currently holding a live alias with a `Deref` still left to consume. So using
+    // `r2` alone never keeps the alias `r1` holds (`r1` borrows `a`) alive; only a direct
+    // mention of `r1` by name does. The fix (not made here -- see the file's own module-level
+    // instructions) is to make that lookup chase `alias.borrows` transitively across as many
+    // hops as the place's `Deref` projections demand, instead of stopping after one.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn writing_to_a_local_while_only_reachable_through_a_reborrow_chain_is_rejected() {
+        rejects(
+            "fun f() {
+                 let mut a = 1;
+                 let r1 = &a;
+                 let r2 = &r1;
+                 a = 2;  // cannot use a or r1 while r2 is alive
+                 let _ = **r2;
+             }",
+            "cannot use `a`",
         );
     }
 }

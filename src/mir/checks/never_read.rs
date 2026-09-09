@@ -147,8 +147,7 @@ fn apply_statement(unread: &mut UnreadLocals, stmt: &Statement) {
         StatementKind::PlaceMention(place) => {
             apply_place(unread, place);
         }
-        StatementKind::SetDiscriminant { .. }
-        | StatementKind::WithLend(_) => {}
+        StatementKind::SetDiscriminant { .. } | StatementKind::WithLend(_) => {}
     }
 }
 
@@ -173,7 +172,7 @@ fn apply_terminator(unread: &mut UnreadLocals, terminator: &Terminator) {
             }
             unread.insert(destination.local);
         }
-        TerminatorKind::Drop { place, .. } => {
+        TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
             apply_place(unread, place);
         }
         TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {}
