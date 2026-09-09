@@ -555,18 +555,21 @@ fn lowers_ctor_tuple_and_range_exprs() {
         other => panic!("expected a tuple expr, got {other:?}"),
     }
 
+    // `0..5` desugars to `std::range::Range { left: .some(0), right: .some(5), inclusive: false }`
+    // at parse time, so by the time it reaches HIR it's an ordinary ctor.
     let StmtKind::Let { init: r_init, .. } = &hir.stmt(body.stmts[2]).kind else {
         panic!("expected a let statement")
     };
     match &hir.expr(*r_init).kind {
-        ExprKind::Range {
-            lo, hi, inclusive, ..
-        } => {
-            assert!(lo.is_some());
-            assert!(hi.is_some());
-            assert!(!inclusive);
+        ExprKind::Ctor { path, payload } => {
+            let path = path.as_ref().expect("a range's `Range` is never elided");
+            assert_eq!(
+                path.segments.iter().map(|s| text(*s)).collect::<Vec<_>>(),
+                vec!["std", "range", "Range"]
+            );
+            assert_eq!(payload.len(), 3);
         }
-        other => panic!("expected a range expr, got {other:?}"),
+        other => panic!("expected a range expr desugared to a ctor, got {other:?}"),
     }
 }
 
