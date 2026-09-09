@@ -103,8 +103,9 @@ fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<Fr
     }
 
     let program = mir::lower::lower(&hir, &mut checked.tcx, &checked.types, config.mode);
-    mir::checks::run_checks(&program);
+    mir::checks::run_checks(&hir, &mut checked.tcx, &program);
     let instances = mir::monomorphize::monomorphize(&hir, &mut checked.tcx, &program);
+    let instances = mir::drop_elaboration::elaborate_drops(&mut checked.tcx, instances);
 
     if options.dumps.mir {
         emit_debug::print_mir(
@@ -116,8 +117,11 @@ fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<Fr
         );
     }
 
+    // Read before reporting: `report` drains what it prints, so `has_errors` afterwards would
+    // answer about an empty collection.
+    let errored = DiagCtx::has_errors();
     DiagCtx::report();
-    if DiagCtx::has_errors() {
+    if errored {
         return Ok(None);
     }
 
@@ -153,6 +157,16 @@ pub fn build(config: &Config, options: &BuildOptions) -> io::Result<bool> {
             return Ok(false);
         }
     };
+
+    // Codegen emits diagnostics of its own -- a missing or ill-formed `main`, for one. Without
+    // this the frontend's `report` would already have run, so those would sit unrendered in the
+    // collection while the build carried on to link, turning a compiler error into whatever the
+    // linker made of the missing symbol.
+    let errored = DiagCtx::has_errors();
+    DiagCtx::report();
+    if errored {
+        return Ok(false);
+    }
 
     if options.dumps.llvm {
         // The spec requires the dumped IR to reflect the module as codegen left it -- after
