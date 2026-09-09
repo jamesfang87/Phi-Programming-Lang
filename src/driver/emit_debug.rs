@@ -461,8 +461,17 @@ fn fmt_res(names: &Names, ast: &Ast, res: NameResRes) -> String {
                 .expect("a `Local::Variable` names a binding the AST walk should collect");
             fmt_named("Variable", name.text, name.span)
         }
-        NameResRes::Type(NameResType::Prim(prim)) => format!("{prim:?}"),
-        NameResRes::Type(NameResType::Generic(id)) => {
+        NameResRes::Type(ty) => fmt_res_type(names, ty),
+        // Rendered as the spelling plus what it stands for, since that pairing is the whole
+        // reason `SelfTy` is a variant of its own rather than a `Type`.
+        NameResRes::SelfTy(ty) => format!("SelfTy `Self` -> {}", fmt_res_type(names, ty)),
+    }
+}
+
+fn fmt_res_type(names: &Names, ty: NameResType) -> String {
+    match ty {
+        NameResType::Prim(prim) => format!("{prim:?}"),
+        NameResType::Generic(id) => {
             let g = names
                 .generics
                 .get(&id)
@@ -470,9 +479,9 @@ fn fmt_res(names: &Names, ast: &Ast, res: NameResRes) -> String {
                 .expect("a `Type::Generic` names a generic the AST walk should collect");
             fmt_named("Generic", g.name.text, g.name.span)
         }
-        NameResRes::Type(NameResType::Def(TyDef::Struct(id))) => fmt_ty_def(names, "Struct", id),
-        NameResRes::Type(NameResType::Def(TyDef::Enum(id))) => fmt_ty_def(names, "Enum", id),
-        NameResRes::Type(NameResType::Def(TyDef::Trait(id))) => fmt_ty_def(names, "Trait", id),
+        NameResType::Def(TyDef::Struct(id)) => fmt_ty_def(names, "Struct", id),
+        NameResType::Def(TyDef::Enum(id)) => fmt_ty_def(names, "Enum", id),
+        NameResType::Def(TyDef::Trait(id)) => fmt_ty_def(names, "Trait", id),
     }
 }
 
