@@ -1,12 +1,3 @@
-//! End-to-end tests for the dispatch surface: `cli::main`, `exit_code`, `with_config`, and the
-//! three `pipeline` entry points (`check`/`build`/`run`).
-//!
-//! `tests/golden.rs` only ever invokes `phi build --ast` on a fixture that already has a valid
-//! `Phi.toml` and `src/` directory, so it never exercises argument parsing failures, a missing
-//! manifest, a missing `src/` directory, or the mapping from a pipeline's `Ok`/`Err` result to
-//! an exit code. This file invokes the real binary the same way `golden.rs` does (via
-//! `env!("CARGO_BIN_EXE_phi")`), against scratch directories under `target/`, to close that gap.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -50,19 +41,7 @@ fn write_main(dir: &Path, contents: &str) {
     fs::write(src_dir.join("main.phi"), contents).expect("could not write main.phi");
 }
 
-/// A project whose `main.phi` type checks cleanly under today's checker.
-///
-/// Arithmetic (`typeck.rs:549`), `&expr` (`typeck.rs:553`), and string literals
-/// (`typeck.rs:605`) all `panic!` via `todo!()` and are out of scope to fix, so this avoids all
-/// three: no operators, no borrows, no string literals. An empty `main` body types as `()`
-/// trivially, which is enough to prove the dispatch surface without depending on any
-/// unimplemented checker path.
 const CLEAN_MAIN: &str = "module clean;\n\nfun main() {\n}\n";
-
-/// A project with a genuine type error a real compiler user would hit: a function declared to
-/// return `bool` but returning an integer literal instead. This is the case that guards
-/// `exit_code`'s `Ok(false) => 1` mapping -- a regression there (mapping a failed compilation to
-/// exit code `0`) would make this test the only one in the suite to notice.
 const TYPE_ERROR_MAIN: &str = "module broken;\n\nfun broken() -> bool {\n    return 1;\n}\n";
 
 fn run(dir: &Path, args: &[&str]) -> Output {
@@ -519,4 +498,190 @@ fn struct_field_is_read_back_after_construction() {
         stderr(&output)
     );
     assert_eq!(stdout(&output), "field-ok");
+}
+
+/// A method from a *generic* `extend` block taken by `&self`. The receiver temp the call lowers
+/// to used to be typed from the method's declared `&self` (`&Wrap<T>`, the block's parameter,
+/// unsubstituted), which put a generic into `main`'s own locals; monomorphization seeds its roots
+/// with the bodies mentioning no generic, so `main` was dropped from the program and the build
+/// died at `ld` with an undefined `_main`. Exercises `&self`, `&mut self`, and a receiver reached
+/// through a reference, since only the by-value `self` path was ever correct.
+#[test]
+fn a_method_from_a_generic_extend_block_is_reachable_by_reference() {
+    let dir = scratch("generic_extend_receiver");
+    write_manifest(&dir, "generic_extend_receiver");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         struct Wrap<T> {\n    \
+             value: T,\n\
+         }\n\n\
+         extend<T> Wrap<T> {\n    \
+             fun ping(&self) -> i32 { return 3; }\n    \
+             fun bump(&mut self) -> i32 { return 5; }\n\
+         }\n\n\
+         fun main() {\n    \
+             let mut w: Wrap<i32> = Wrap { value: 100 };\n    \
+             let r = &w;\n    \
+             let total = r.ping() + w.ping() + w.bump();\n    \
+             if total == 11 {\n        \
+                 core::io::write_bytes(1, \"generic-ok\" as &[u8]);\n    \
+             } else {\n        \
+                 core::io::write_bytes(1, \"generic-bad\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "generic-ok");
+}
+
+/// A method from a `extend Pair<i32, i32>` reached on a receiver whose generic arguments are
+/// still integer literals. At the call the receiver is `Pair<{integer}, {integer}>`, which the
+/// concrete header cannot be matched against, so the call is parked and answered once the
+/// literals default. Runs the result to prove the parked call lowers and computes correctly,
+/// not merely that it type checks.
+#[test]
+fn a_method_on_a_concrete_extend_is_found_through_literal_defaulting() {
+    let dir = scratch("literal_defaulting_method");
+    write_manifest(&dir, "literal_defaulting_method");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         struct Pair<A, B> {\n    \
+             first: A,\n    \
+             second: B,\n\
+         }\n\n\
+         extend Pair<i32, i32> {\n    \
+             fun sum(&self) -> i32 { return self.first + self.second; }\n\
+         }\n\n\
+         fun main() {\n    \
+             let p = Pair { first: 4, second: 6 };\n    \
+             if p.sum() == 10 {\n        \
+                 core::io::write_bytes(1, \"sum-ok\" as &[u8]);\n    \
+             } else {\n        \
+                 core::io::write_bytes(1, \"sum-bad\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "sum-ok");
+}
+
+/// A crate with no `main` builds and runs; it just does nothing. The missing entry point is a
+/// warning, and codegen emits a `main` that returns 0, so the link still produces an executable
+/// rather than failing at `ld` with an undefined `_main`.
+#[test]
+fn a_crate_with_no_main_builds_and_runs_doing_nothing() {
+    let dir = scratch("no_main");
+    write_manifest(&dir, "no_main");
+    write_main(&dir, "module app;\n\nfun helper() -> i32 { return 1; }\n");
+
+    let build = run(&dir, &["build"]);
+    let err = stderr(&build);
+    assert_eq!(code(&build), 0, "build should succeed: {err}");
+    assert!(
+        err.contains("Warning") && err.contains("no `main` function found"),
+        "expected a missing-entry-point warning: {err}"
+    );
+    assert!(
+        !err.contains("Undefined symbols") && !err.contains("symbol(s) not found"),
+        "the link should still produce an executable: {err}"
+    );
+
+    // Runnable, and observably does nothing.
+    let output = run(&dir, &["run"]);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+}
+
+/// A variant named through its enum (`Shape.rect { .. }`) rather than left to the expected type
+/// (`.rect { .. }`). All three payload shapes go through codegen and are read back by matching
+/// on them, so a wrong variant index or a record payload built in the written rather than the
+/// declared field order would print `variant-bad`.
+#[test]
+fn a_variant_named_through_its_enum_is_built_and_matched() {
+    let dir = scratch("qualified_variant");
+    write_manifest(&dir, "qualified_variant");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         enum Shape {\n    \
+             empty,\n    \
+             circle: i32,\n    \
+             rect: { w: i32, h: i32 },\n\
+         }\n\n\
+         fun code(s: Shape) -> i32 {\n    \
+             match s {\n        \
+                 .empty => { return 1; }\n        \
+                 .circle(r) => { return r; }\n        \
+                 .rect { w, h } => { return w * h; }\n    \
+             }\n\
+         }\n\n\
+         fun main() {\n    \
+             let total = code(Shape.rect { w: 4, h: 5 })\n        \
+                 + code(Shape.circle(7))\n        \
+                 + code(Shape.empty);\n    \
+             if total == 28 {\n        \
+                 core::io::write_bytes(1, \"variant-ok\" as &[u8]);\n    \
+             } else {\n        \
+                 core::io::write_bytes(1, \"variant-bad\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "variant-ok");
+}
+
+/// A reference to a reference (`&&i32`): `r2` borrows `r1`, which itself borrows `a`, and
+/// `**r2` peels both layers back to `a`'s value. A codegen or typeck bug that mishandled the
+/// second layer of indirection (e.g. treating `r2`'s pointee as `i32` instead of `&i32`) would
+/// read garbage through the first `*` and print `double-deref-bad` instead.
+#[test]
+fn double_deref_through_a_reference_to_a_reference_reads_the_original_value() {
+    let dir = scratch("double_deref");
+    write_manifest(&dir, "double_deref");
+    write_main(
+        &dir,
+        "module app;\n\n\
+         fun main() {\n    \
+             let a: i32 = 42;\n    \
+             let r1: &i32 = &a;\n    \
+             let r2: &&i32 = &r1;\n    \
+             if **r2 == 42 {\n        \
+                 core::io::write_bytes(1, \"double-deref-ok\" as &[u8]);\n    \
+             } else {\n        \
+                 core::io::write_bytes(1, \"double-deref-bad\" as &[u8]);\n    \
+             }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "double-deref-ok");
 }
