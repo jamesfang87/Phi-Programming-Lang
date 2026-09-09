@@ -3,5 +3,6 @@ module std::range;
 public struct Range<T> {
     public left: Option<T>,
     public right: Option<T>,
+    public inclusive: bool,
 }
 
