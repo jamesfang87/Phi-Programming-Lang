@@ -59,29 +59,11 @@ pub fn compute_lifetimes(body: &Body) -> Lifetimes {
     let mut aliases = collect_alias_births(body);
     let held_aliases = compute_held_aliases(body);
     record_attached_locals(body, &held_aliases, &mut aliases);
-    let live_aliases = compute_live_aliases(body, &held_aliases);
+    let live_aliases = compute_live_aliases(body, &held_aliases, &aliases);
     let live_ranges = compute_live_ranges(body, &held_aliases, &live_aliases, &aliases);
     Lifetimes {
         aliases,
         live_ranges,
-    }
-}
-
-fn owning_register_of(place: &Place) -> Register {
-    let mut subregister = Vec::new();
-    for projection in &place.projections {
-        match *projection {
-            Projection::Deref => break,
-            Projection::Field(n) => subregister.push(SubRegisters::Field(n)),
-            Projection::ConstantIndex(offset) => {
-                subregister.push(SubRegisters::ConstantIndex(offset))
-            }
-            Projection::Downcast(_) | Projection::Index(_) => {}
-        }
-    }
-    Register {
-        owner: place.local,
-        subregister,
     }
 }
 
@@ -271,7 +253,7 @@ fn apply_terminator_to_held_aliases(held: &mut HeldAliases, terminator: &Termina
         TerminatorKind::Call { destination, .. } => {
             remove_register_from_held_aliases(held, &register_of(destination));
         }
-        TerminatorKind::Drop { place, .. } => {
+        TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
             remove_register_from_held_aliases(held, &register_of(place));
         }
         TerminatorKind::Goto { .. }
@@ -324,27 +306,72 @@ fn held_aliases_before_each_statement(
     states
 }
 
-fn mark_place_alias_used(held: &HeldAliases, place: &Place, used: &mut LiveAliasSet) {
-    let register = owning_register_of(place);
-    if let Some(&alias) = held.get(&register) {
-        used.insert(alias);
+/// Marks every alias that `place` reads through as used at this point, chasing as many
+/// `Deref` projections as needed. Each `Deref` crosses into a different allocation, so the
+/// register accumulated so far (`place.local` plus the `Field`/`ConstantIndex` projections
+/// seen before that `Deref`) is looked up in `held`; if it currently holds an alias, that
+/// alias is marked used and the walk continues from `alias.borrows` (the register the alias
+/// itself points into) with the remaining projections. If `held` has nothing at that
+/// register, the chain is broken -- there is no alias to chase into for the rest of the
+/// projections, so the walk stops instead of folding them onto the stale register.
+fn mark_place_alias_used(
+    aliases: &HashMap<AliasId, Alias>,
+    held: &HeldAliases,
+    place: &Place,
+    used: &mut LiveAliasSet,
+) {
+    let mut register = Register {
+        owner: place.local,
+        subregister: Vec::new(),
+    };
+    for &projection in &place.projections {
+        match projection {
+            Projection::Field(n) => register.subregister.push(SubRegisters::Field(n)),
+            Projection::ConstantIndex(n) => {
+                register.subregister.push(SubRegisters::ConstantIndex(n))
+            }
+            Projection::Downcast(_) | Projection::Index(_) => {}
+            Projection::Deref => {
+                let Some(&alias_id) = held.get(&register) else {
+                    return;
+                };
+                used.insert(alias_id);
+                register = aliases[&alias_id].borrows.clone();
+            }
+        }
+    }
+
+    if let Some(&alias_id) = held.get(&register) {
+        used.insert(alias_id);
     }
 }
 
-fn mark_operand_alias_used(held: &HeldAliases, operand: &Operand, used: &mut LiveAliasSet) {
+fn mark_operand_alias_used(
+    aliases: &HashMap<AliasId, Alias>,
+    held: &HeldAliases,
+    operand: &Operand,
+    used: &mut LiveAliasSet,
+) {
     match operand {
-        Operand::Copy(place) | Operand::Move(place) => mark_place_alias_used(held, place, used),
+        Operand::Copy(place) | Operand::Move(place) => {
+            mark_place_alias_used(aliases, held, place, used)
+        }
         Operand::Constant(_) => {}
     }
 }
 
-fn mark_rvalue_aliases_used(held: &HeldAliases, rvalue: &Rvalue, used: &mut LiveAliasSet) {
+fn mark_rvalue_aliases_used(
+    aliases: &HashMap<AliasId, Alias>,
+    held: &HeldAliases,
+    rvalue: &Rvalue,
+    used: &mut LiveAliasSet,
+) {
     match rvalue {
         Rvalue::Use(operand)
         | Rvalue::UnaryOp(_, operand)
         | Rvalue::Cast { operand, .. }
         | Rvalue::New(operand) => {
-            mark_operand_alias_used(held, operand, used);
+            mark_operand_alias_used(aliases, held, operand, used);
         }
         Rvalue::BinaryOp(_, lhs, rhs)
         | Rvalue::CheckedBinaryOp(_, lhs, rhs)
@@ -352,48 +379,58 @@ fn mark_rvalue_aliases_used(held: &HeldAliases, rvalue: &Rvalue, used: &mut Live
             elem: lhs,
             count: rhs,
         } => {
-            mark_operand_alias_used(held, lhs, used);
-            mark_operand_alias_used(held, rhs, used);
+            mark_operand_alias_used(aliases, held, lhs, used);
+            mark_operand_alias_used(aliases, held, rhs, used);
         }
         Rvalue::Aggregate(_, operands) => {
             for operand in operands {
-                mark_operand_alias_used(held, operand, used);
+                mark_operand_alias_used(aliases, held, operand, used);
             }
         }
         Rvalue::Ref { place, .. } | Rvalue::Discriminant(place) | Rvalue::Len(place) => {
-            mark_place_alias_used(held, place, used);
+            mark_place_alias_used(aliases, held, place, used);
         }
     }
 }
 
-fn mark_statement_aliases_used(held: &HeldAliases, stmt: &Statement, used: &mut LiveAliasSet) {
+fn mark_statement_aliases_used(
+    aliases: &HashMap<AliasId, Alias>,
+    held: &HeldAliases,
+    stmt: &Statement,
+    used: &mut LiveAliasSet,
+) {
     match &stmt.kind {
         StatementKind::Assign(place, rvalue) => {
             if place_needs_deref(place) {
-                mark_place_alias_used(held, place, used);
+                mark_place_alias_used(aliases, held, place, used);
             }
-            mark_rvalue_aliases_used(held, rvalue, used);
+            mark_rvalue_aliases_used(aliases, held, rvalue, used);
         }
         StatementKind::PlaceMention(place) => {
-            mark_place_alias_used(held, place, used);
+            mark_place_alias_used(aliases, held, place, used);
         }
-        StatementKind::SetDiscriminant { place, .. } => mark_place_alias_used(held, place, used),
+        StatementKind::SetDiscriminant { place, .. } => {
+            mark_place_alias_used(aliases, held, place, used)
+        }
         StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
         StatementKind::WithLend(_) => {}
     }
 }
 
 fn mark_terminator_aliases_used(
+    aliases: &HashMap<AliasId, Alias>,
     held: &HeldAliases,
     terminator: &Terminator,
     used: &mut LiveAliasSet,
 ) {
     match &terminator.kind {
-        TerminatorKind::SwitchInt { discr, .. } => mark_operand_alias_used(held, discr, used),
+        TerminatorKind::SwitchInt { discr, .. } => {
+            mark_operand_alias_used(aliases, held, discr, used)
+        }
         TerminatorKind::Assert { cond, msg, .. } => {
-            mark_operand_alias_used(held, cond, used);
+            mark_operand_alias_used(aliases, held, cond, used);
             if let Some(msg) = msg.user_message() {
-                mark_operand_alias_used(held, msg, used);
+                mark_operand_alias_used(aliases, held, msg, used);
             }
         }
         TerminatorKind::Call {
@@ -402,20 +439,26 @@ fn mark_terminator_aliases_used(
             destination,
             ..
         } => {
-            mark_operand_alias_used(held, func, used);
+            mark_operand_alias_used(aliases, held, func, used);
             for arg in args {
-                mark_operand_alias_used(held, arg, used);
+                mark_operand_alias_used(aliases, held, arg, used);
             }
             if place_needs_deref(destination) {
-                mark_place_alias_used(held, destination, used);
+                mark_place_alias_used(aliases, held, destination, used);
             }
         }
-        TerminatorKind::Drop { place, .. } => mark_place_alias_used(held, place, used),
+        TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
+            mark_place_alias_used(aliases, held, place, used)
+        }
         TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {}
     }
 }
 
-fn compute_live_aliases(body: &Body, held_aliases: &HeldAliasesLattice) -> LiveAliasLattice {
+fn compute_live_aliases(
+    body: &Body,
+    held_aliases: &HeldAliasesLattice,
+    aliases: &HashMap<AliasId, Alias>,
+) -> LiveAliasLattice {
     let mut lattice: LiveAliasLattice = Default::default();
 
     for index in 0..body.basic_blocks.len() {
@@ -456,6 +499,7 @@ fn compute_live_aliases(body: &Body, held_aliases: &HeldAliasesLattice) -> LiveA
 
             let mut current = new_exit;
             mark_terminator_aliases_used(
+                aliases,
                 &held_states[block.statements.len()],
                 &block.terminator,
                 &mut current,
@@ -464,7 +508,7 @@ fn compute_live_aliases(body: &Body, held_aliases: &HeldAliasesLattice) -> LiveA
                 if creates_alias(stmt) {
                     current.remove(&stmt.id);
                 }
-                mark_statement_aliases_used(&held_states[index], stmt, &mut current);
+                mark_statement_aliases_used(aliases, &held_states[index], stmt, &mut current);
             }
 
             let old_entry = lattice
@@ -493,10 +537,12 @@ fn live_aliases_before_each_statement(
     exit: &LiveAliasSet,
     held_states: &[HeldAliases],
     block: &BasicBlockData,
+    aliases: &HashMap<AliasId, Alias>,
 ) -> Vec<LiveAliasSet> {
     let mut before_each = vec![LiveAliasSet::default(); block.statements.len() + 1];
     let mut current = exit.clone();
     mark_terminator_aliases_used(
+        aliases,
         &held_states[block.statements.len()],
         &block.terminator,
         &mut current,
@@ -507,7 +553,7 @@ fn live_aliases_before_each_statement(
             current.remove(&stmt.id);
             before_each[index + 1].insert(stmt.id);
         }
-        mark_statement_aliases_used(&held_states[index], stmt, &mut current);
+        mark_statement_aliases_used(aliases, &held_states[index], stmt, &mut current);
         before_each[index] = current.clone();
     }
     before_each
@@ -530,7 +576,8 @@ fn compute_live_ranges(
         let exit_live = live_aliases
             .exit(id)
             .expect("every block's exit is given above");
-        let live_states = live_aliases_before_each_statement(exit_live, &held_states, block);
+        let live_states =
+            live_aliases_before_each_statement(exit_live, &held_states, block, aliases);
 
         for alias in aliases.values() {
             let mut start = None;
@@ -567,10 +614,10 @@ mod tests {
     use crate::mir::BasicBlock;
     use crate::mir::checks::borrowck::lifetimes::compute_lifetimes;
     use crate::mir::lower::Mir;
-    use crate::testing::{first_function, resolve_src_with_ops};
+    use crate::testing::{first_function, lower_to_hir_with_ops};
 
     fn lower_mir_src(src: &str) -> (Hir, Mir) {
-        let hir = resolve_src_with_ops(src);
+        let hir = lower_to_hir_with_ops(src);
         DiagCtx::clear();
         let checked = crate::typeck::check(&hir);
         let diagnostics = DiagCtx::diagnostics();
@@ -829,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn a_literal_array_index_is_no_more_precise_than_a_variable_one() {
+    fn a_literal_array_index_is_more_precise_than_a_variable_one() {
         let (hir, program) = lower_mir_src(
             "fun f(a: [i32; 4]) {
                  let rx = &a[0];
@@ -845,10 +892,11 @@ mod tests {
             .values()
             .map(|alias| alias.borrows.clone())
             .collect();
-        assert_eq!(
+        assert_ne!(
             borrowed_registers[0], borrowed_registers[1],
-            "a[0] and a[1] lower through the same runtime Index projection as a[i] does -- \
-             this pass has no constant-index precision today, even for literal indices"
+            "a[0] and a[1] lower through Projection::ConstantIndex, which register_of carries \
+             into distinct SubRegisters::ConstantIndex entries -- unlike a[i], these two borrows \
+             are told apart as disjoint slots of a"
         );
     }
 }

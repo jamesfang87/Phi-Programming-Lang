@@ -193,7 +193,7 @@ fn apply_terminator(dead: &mut DeadRegisters, terminator: &Terminator) {
             }
             mark_live(dead, &register_of(destination));
         }
-        TerminatorKind::Drop { place, .. } => {
+        TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
             dead.insert(register_of(place));
         }
         TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {}
@@ -289,6 +289,7 @@ fn check_terminator(dead: &mut DeadRegisters, body: &Body, terminator: &Terminat
             mark_live(dead, &register_of(destination));
         }
         TerminatorKind::Drop { .. }
+        | TerminatorKind::DropIso { .. }
         | TerminatorKind::Goto { .. }
         | TerminatorKind::Return
         | TerminatorKind::Unreachable => apply_terminator(dead, terminator),
