@@ -226,44 +226,88 @@ impl Parser {
                     })
                     .boxed();
 
-                // A reference may not wrap another reference (no `& &T` pointer-chasing) or
+                // A reference may wrap another reference (`&&T`, i.e. `TyKind::Ref { base: Ref {
+                // .. }, .. }`) -- `ref_target` recurses into `ref_ty` for that. It may not wrap
                 // `any` (`any` already composes the other way, as `&any T`, so `& &T` on top of
                 // `any` would only ever add a redundant indirection). Everything else -- `dyn`,
                 // `iso`, a function type, a primitive, a path, a tuple, or an array -- is a
                 // valid reference target.
-                let ref_target = choice((
-                    self_ty.clone(),
-                    dyn_ty.clone(),
-                    iso_ty.clone(),
-                    fun_ty.clone(),
-                    primitive_ty.clone(),
-                    tuple_ty.clone(),
-                    array_ty.clone(),
-                    path_ty.clone(),
-                ))
+                let ref_ty = recursive(
+                    |ref_ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Ty, Extra<'a>>>| {
+                        let ref_target = choice((
+                            self_ty.clone(),
+                            dyn_ty.clone(),
+                            iso_ty.clone(),
+                            fun_ty.clone(),
+                            primitive_ty.clone(),
+                            tuple_ty.clone(),
+                            array_ty.clone(),
+                            path_ty.clone(),
+                            ref_ty.clone(),
+                        ))
+                        .boxed();
+
+                        let single_amp = self
+                            .kind(TokenKind::Amp)
+                            .then(self.kind(TokenKind::MutKw).or_not())
+                            .then(ref_target.clone())
+                            .map(|((amp_tok, mut_tok), ty)| {
+                                let mutability = if mut_tok.is_some() {
+                                    Mutability::Mutable
+                                } else {
+                                    Mutability::Immutable
+                                };
+
+                                Ty {
+                                    id: NodeId::next(),
+                                    span: amp_tok.span.merge(ty.span),
+                                    kind: TyKind::Ref {
+                                        base: Box::new(ty),
+                                        mutability,
+                                    },
+                                }
+                            })
+                            .boxed();
+
+                        // The lexer tokenizes `&&` as one `DoubleAmp` token (it doubles as the
+                        // logical-and operator in expression position), so `&&T` never reaches
+                        // `single_amp` above as two separate `Amp` tokens -- this branch splits
+                        // it back into the two reference layers `&&T` denotes.
+                        let double_amp = self
+                            .kind(TokenKind::DoubleAmp)
+                            .then(self.kind(TokenKind::MutKw).or_not())
+                            .then(ref_target)
+                            .map(|((amp_tok, mut_tok), ty)| {
+                                let inner_mutability = if mut_tok.is_some() {
+                                    Mutability::Mutable
+                                } else {
+                                    Mutability::Immutable
+                                };
+
+                                let inner = Ty {
+                                    id: NodeId::next(),
+                                    span: amp_tok.span.merge(ty.span),
+                                    kind: TyKind::Ref {
+                                        base: Box::new(ty),
+                                        mutability: inner_mutability,
+                                    },
+                                };
+
+                                Ty {
+                                    id: NodeId::next(),
+                                    span: amp_tok.span.merge(inner.span),
+                                    kind: TyKind::Ref {
+                                        base: Box::new(inner),
+                                        mutability: Mutability::Immutable,
+                                    },
+                                }
+                            })
+                            .boxed();
+
+                        choice((double_amp, single_amp)).boxed()
+                    },
+                )
                 .boxed();
-
-                let ref_ty = self
-                    .kind(TokenKind::Amp)
-                    .then(self.kind(TokenKind::MutKw).or_not())
-                    .then(ref_target)
-                    .map(|((amp_tok, mut_tok), ty)| {
-                        let mutability = if mut_tok.is_some() {
-                            Mutability::Mutable
-                        } else {
-                            Mutability::Immutable
-                        };
-
-                        Ty {
-                            id: NodeId::next(),
-                            span: amp_tok.span.merge(ty.span),
-                            kind: TyKind::Ref {
-                                base: Box::new(ty),
-                                mutability,
-                            },
-                        }
-                    })
-                    .boxed();
 
                 choice((
                     self_ty,
@@ -277,6 +321,7 @@ impl Parser {
                     array_ty,
                     path_ty,
                 ))
+                .labelled("a type")
                 .boxed()
             },
         )
@@ -505,12 +550,80 @@ mod tests {
         }
     }
 
-    /// A reference may not wrap another reference: no pointer-chasing. `&&i32` can't be spelled
-    /// this way anyway, since the lexer tokenizes `&&` as a single `DoubleAmp` token, but
-    /// `&mut &i32` reaches the same shape through two separate `&` tokens and is rejected too.
+    /// A reference may wrap another reference (`&&T`): the outer reference's target is itself a
+    /// reference type. `&mut &i32` reaches that shape through two separate `&` tokens.
     #[test]
-    fn rejects_ref_wrapping_a_ref_type() {
-        assert_eq!(diagnostic_count("&mut &i32"), 1);
+    fn parses_ref_wrapping_a_ref_type_via_two_amp_tokens() {
+        let ty = parse_ty("&mut &i32");
+        match &ty.kind {
+            TyKind::Ref {
+                mutability: outer_mutability,
+                base,
+            } => {
+                assert!(matches!(outer_mutability, Mutability::Mutable));
+                match &base.kind {
+                    TyKind::Ref {
+                        mutability: inner_mutability,
+                        base: inner_base,
+                    } => {
+                        assert!(matches!(inner_mutability, Mutability::Immutable));
+                        assert!(matches!(inner_base.kind, TyKind::Path { .. }));
+                    }
+                    other => panic!("expected a nested ref type, got {other:?}"),
+                }
+            }
+            other => panic!("expected a ref type, got {other:?}"),
+        }
+    }
+
+    /// The same shape, but spelled the natural way: the lexer tokenizes `&&` as a single
+    /// `DoubleAmp` token (it's also the logical-and operator in expression position), so the
+    /// type parser must split it into two reference layers itself rather than requiring a space.
+    #[test]
+    fn parses_ref_wrapping_a_ref_type_via_double_amp_token() {
+        let ty = parse_ty("&&i32");
+        match &ty.kind {
+            TyKind::Ref {
+                mutability: outer_mutability,
+                base,
+            } => {
+                assert!(matches!(outer_mutability, Mutability::Immutable));
+                match &base.kind {
+                    TyKind::Ref {
+                        mutability: inner_mutability,
+                        base: inner_base,
+                    } => {
+                        assert!(matches!(inner_mutability, Mutability::Immutable));
+                        assert!(matches!(inner_base.kind, TyKind::Path { .. }));
+                    }
+                    other => panic!("expected a nested ref type, got {other:?}"),
+                }
+            }
+            other => panic!("expected a ref type, got {other:?}"),
+        }
+    }
+
+    /// `&&mut i32` is a valid shape too: an immutable outer reference (from the `DoubleAmp`
+    /// token) to a mutable inner reference.
+    #[test]
+    fn parses_ref_wrapping_a_mutable_ref_type_via_double_amp_token() {
+        let ty = parse_ty("&&mut i32");
+        match &ty.kind {
+            TyKind::Ref {
+                mutability: outer_mutability,
+                base,
+            } => {
+                assert!(matches!(outer_mutability, Mutability::Immutable));
+                match &base.kind {
+                    TyKind::Ref {
+                        mutability: inner_mutability,
+                        ..
+                    } => assert!(matches!(inner_mutability, Mutability::Mutable)),
+                    other => panic!("expected a nested ref type, got {other:?}"),
+                }
+            }
+            other => panic!("expected a ref type, got {other:?}"),
+        }
     }
 
     #[test]

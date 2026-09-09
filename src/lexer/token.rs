@@ -253,6 +253,55 @@ impl TokenKind {
             TokenKind::Identifier => "identifier",
         }
     }
+
+    /// Whether this kind opens a `(`, `[` or `{` group.
+    pub fn opens_group(self) -> bool {
+        matches!(
+            self,
+            TokenKind::OpenParen | TokenKind::OpenBracket | TokenKind::OpenBrace
+        )
+    }
+
+    /// Whether this kind closes a `(`, `[` or `{` group.
+    pub fn closes_group(self) -> bool {
+        matches!(
+            self,
+            TokenKind::CloseParen | TokenKind::CloseBracket | TokenKind::CloseBrace
+        )
+    }
+
+    /// Returns the one source spelling every token of this kind has, or `None` for kinds that
+    /// stand for a class of lexemes and so have no fixed spelling.
+    pub fn spelling(self) -> Option<&'static str> {
+        match self {
+            TokenKind::Eof
+            | TokenKind::IntLiteral
+            | TokenKind::FloatLiteral
+            | TokenKind::StrLiteral
+            | TokenKind::CharLiteral
+            | TokenKind::Identifier => None,
+            _ => Some(TokenKind::to_string(self)),
+        }
+    }
+
+    /// Whether this kind's spelling is made only of identifier characters, which is what makes
+    /// it a kind the lexer could also have produced a [`TokenKind::Identifier`] for.
+    pub fn is_word(self) -> bool {
+        self.spelling()
+            .is_some_and(|text| text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+    }
+
+    /// Returns this kind's name for use in a diagnostic message.
+    ///
+    /// A kind with a [`TokenKind::spelling`] is wrapped in backticks so it reads as source text
+    /// (`` `;` ``); one without is named by its [`TokenKind::to_string`] instead (`identifier`).
+    /// `diagnostics::parser::token_spelling` relies on the backticks to tell the two apart.
+    pub fn describe(self) -> String {
+        match self.spelling() {
+            Some(text) => format!("`{text}`"),
+            None => TokenKind::to_string(self).to_string(),
+        }
+    }
 }
 
 impl std::fmt::Display for TokenKind {
