@@ -1,7 +1,11 @@
+use crate::hir::Hir;
 use crate::mir::lower::Mir;
 use crate::mir::{Local, Place, Projection};
+use crate::typeck::tyctx::TyCtx;
 
+pub(crate) mod captures;
 pub(crate) mod definite_init;
+pub(crate) mod element_moves;
 pub(crate) mod exclusivity;
 pub(crate) mod lifetimes;
 
@@ -39,7 +43,18 @@ pub(crate) fn register_of(place: &Place) -> Register {
     }
 }
 
-pub fn check(mir: &Mir) {
+pub(crate) fn element_of_array(place: &Place) -> bool {
+    place.projections.iter().any(|projection| {
+        matches!(
+            projection,
+            Projection::Index(_) | Projection::ConstantIndex(_)
+        )
+    })
+}
+
+pub fn check(hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
     definite_init::check(mir);
     exclusivity::check(mir);
+    element_moves::check(tcx, mir);
+    captures::check(hir, tcx, mir);
 }
