@@ -2,7 +2,7 @@ use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionTy
 
 use super::ctx::CodegenCtx;
 use super::layout::{self, is_unsized};
-use crate::mir::{AdtDef, Body, Mir};
+use crate::mir::{Body, Mir};
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
@@ -19,7 +19,7 @@ pub fn abi_class(tcx: &TyCtx, ty: Ty) -> AbiClass {
     match tcx.kind(ty) {
         TyKind::Unit | TyKind::Never => AbiClass::Void,
         TyKind::Ref { base, .. } | TyKind::Iso(base) if is_unsized(tcx, *base) => AbiClass::Fat,
-        TyKind::Dyn { .. } | TyKind::Primitive(PrimTy::Str) => AbiClass::Fat,
+        TyKind::Dyn { .. } | TyKind::Primitive(PrimTy::Str) | TyKind::Fun { .. } => AbiClass::Fat,
         TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. } => AbiClass::Indirect,
         _ => AbiClass::Scalar,
     }
@@ -39,9 +39,8 @@ pub fn llvm_type<'ctx>(
         TyKind::Primitive(prim) => primitive_llvm_type(cx, prim),
         TyKind::Unit => cx.llvm.struct_type(&[], false).into(),
         TyKind::Ref { base, .. } | TyKind::Iso(base) if is_unsized(tcx, base) => two_word_type(cx),
-        TyKind::Ref { .. } | TyKind::Iso(_) | TyKind::Fun { .. } => {
-            cx.llvm.ptr_type(Default::default()).into()
-        }
+        TyKind::Ref { .. } | TyKind::Iso(_) => cx.llvm.ptr_type(Default::default()).into(),
+        TyKind::Fun { .. } => two_word_type(cx),
         TyKind::Tuple(elems) => struct_llvm_type(cx, tcx, mir, &elems),
         TyKind::Array {
             elem,
@@ -114,8 +113,8 @@ fn adt_llvm_type<'ctx>(
     args: &[Ty],
 ) -> BasicTypeEnum<'ctx> {
     let adt_ty = tcx_adt_ty(tcx, def, args);
-    match &mir.adts[&def] {
-        AdtDef::Enum { .. } => {
+    match tcx.enum_variant_count(def) {
+        Some(_) => {
             let layout = layout::layout_of(tcx, mir, adt_ty);
             let tag_ty = match layout
                 .tag_ty
@@ -135,7 +134,7 @@ fn adt_llvm_type<'ctx>(
             opaque.set_body(&[tag_ty.into(), pad.into(), payload.into()], false);
             opaque.into()
         }
-        AdtDef::Struct { .. } => {
+        None => {
             let layout = layout::layout_of(tcx, mir, adt_ty);
             let name = format!("struct.{}", def.index());
             let opaque = cx.llvm.opaque_struct_type(&name);
@@ -361,7 +360,6 @@ mod tests {
         assert_eq!(fn_ty.count_param_types(), 2);
         assert_eq!(fn_ty.get_return_type(), Some(llvm.i32_type().into()));
     }
-
 
     fn find_struct_def(hir: &crate::hir::Hir, name: &str) -> crate::hir::DefId {
         for def_id in hir.def_ids() {

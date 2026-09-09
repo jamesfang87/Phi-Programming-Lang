@@ -12,6 +12,8 @@ use crate::typeck::tyctx::TyCtx;
 
 const HEADER_SLOTS: usize = 3;
 
+pub(super) const DROP_SLOT: usize = 2;
+
 fn two_word_struct_type<'ctx>(cx: &CodegenCtx<'ctx>) -> inkwell::types::StructType<'ctx> {
     cx.llvm.struct_type(
         &[
@@ -37,10 +39,14 @@ pub fn vtable_for<'ctx>(
     let ptr_ty = cx.llvm.ptr_type(Default::default());
     let i64_ty = cx.llvm.i64_type();
 
+    let drop_glue = match super::drop::glue_pointer(cx, tcx, mir, concrete) {
+        Some(glue) => glue,
+        None => ptr_ty.const_null(),
+    };
     let mut fields: Vec<BasicValueEnum<'ctx>> = vec![
         i64_ty.const_int(layout.size, false).into(),
         i64_ty.const_int(layout.align, false).into(),
-        ptr_ty.const_null().into(),
+        drop_glue.into(),
     ];
 
     let info = mir.vtables.get(&(concrete, trait_)).unwrap_or_else(|| {
@@ -255,6 +261,30 @@ fun f() {}";
         assert!(
             ir.contains(&format!("@{greet_name}")),
             "expected the vtable to reference {greet_name:?}:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn vtable_of_a_type_that_owns_something_carries_its_drop_glue() {
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
+            "trait Greet { fun greet(&self) -> i32; }
+             struct Owner { h: iso i32 }
+             extend Owner with Greet { fun greet(&self) -> i32 { return 1; } }
+             fun f() {}",
+        );
+        let llvm = inkwell::context::Context::create();
+        let mut cx = CodegenCtx::new(&llvm, "t");
+        declare_all(&mut cx, &mut tcx, &mir, &instances);
+
+        let owner_def = find_struct_def(&hir, "Owner");
+        let trait_def = find_trait_def(&hir, "Greet");
+        let owner_ty = tcx.mk_adt(owner_def, Vec::new());
+        vtable_for(&mut cx, &mut tcx, &mir, owner_ty, trait_def);
+
+        let ir = cx.module.print_to_string().to_string();
+        assert!(
+            ir.contains(&format!("ptr @drop.glue.{}", owner_ty.index())),
+            "expected `Owner`'s own drop glue in the vtable's drop slot:\n{ir}"
         );
     }
 

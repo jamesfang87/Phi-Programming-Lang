@@ -14,9 +14,9 @@ use crate::hir::DefId;
 use crate::langitems::LangItem;
 use crate::mir::mangle::mangle;
 use crate::mir::{
-    AdtDef, AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, Instance, Local,
-    LocalDecl, Mir, Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator,
-    TerminatorKind, VariantIdx,
+    AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, Instance, Local, LocalDecl,
+    Mir, Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+    VariantIdx,
 };
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind};
@@ -265,9 +265,15 @@ fn lower_rvalue<'ctx>(
                 .build_struct_gep(enum_llvm_ty, ptr, 0, "tag")
                 .unwrap();
             let tag_llvm_ty = enum_llvm_ty.get_field_type_at_index(0).unwrap();
-            cx.builder
+            let tag = cx
+                .builder
                 .build_load(tag_llvm_ty, tag_ptr, "discr")
+                .unwrap();
+            let discr_llvm_ty = ty::llvm_type(cx, tcx, mir, dest_ty).into_int_type();
+            cx.builder
+                .build_int_z_extend_or_bit_cast(tag.into_int_value(), discr_llvm_ty, "discr.widen")
                 .unwrap()
+                .into()
         }
         Rvalue::Len(place_) => lower_len(cx, tcx, locals, local_decls, place_),
         Rvalue::New(operand) => lower_new(cx, tcx, mir, locals, local_decls, operand),
@@ -568,7 +574,17 @@ fn lower_aggregate<'ctx>(
             *variant,
             operands,
         ),
-        AggregateKind::Closure { .. } => todo!("closures: unspecified, deferred past this plan"),
+        AggregateKind::Closure { def, args } => {
+            let captures: Vec<(BasicValueEnum<'ctx>, Ty)> = operands
+                .iter()
+                .map(|operand| {
+                    let ty = operand_ty(tcx, local_decls, operand);
+                    let value = lower_operand(cx, tcx, mir, locals, local_decls, operand);
+                    (value, ty)
+                })
+                .collect();
+            super::closure::build_value(cx, tcx, mir, *def, args, &captures)
+        }
     }
 }
 
@@ -606,8 +622,8 @@ fn lower_adt_aggregate<'ctx>(
     variant: VariantIdx,
     operands: &[Operand],
 ) -> BasicValueEnum<'ctx> {
-    match &mir.adts[&def] {
-        AdtDef::Struct { .. } => {
+    match tcx.enum_variant_count(def) {
+        None => {
             let struct_llvm_ty = ty::llvm_type(cx, tcx, mir, dest_ty).into_struct_type();
             let mut agg = struct_llvm_ty.get_undef();
             for (i, operand) in operands.iter().enumerate() {
@@ -620,7 +636,7 @@ fn lower_adt_aggregate<'ctx>(
             }
             agg.into()
         }
-        AdtDef::Enum { .. } => {
+        Some(_) => {
             let enum_layout = layout::layout_of(tcx, mir, dest_ty);
             let tag_llvm_ty = match enum_layout
                 .tag_ty
@@ -1029,7 +1045,15 @@ fn lower_terminator<'ctx>(
         TerminatorKind::Drop { place, target } => {
             let (place_ptr, place_ty) =
                 place::lower_place(cx, tcx, mir, locals, local_decls, place);
-            super::drop::drop_glue(cx, tcx, place_ptr, place_ty);
+            super::drop::drop_glue(cx, tcx, mir, place_ptr, place_ty);
+            cx.builder
+                .build_unconditional_branch(blocks[target.index()])
+                .unwrap();
+        }
+        TerminatorKind::DropIso { place, target } => {
+            let (place_ptr, place_ty) =
+                place::lower_place(cx, tcx, mir, locals, local_decls, place);
+            super::drop::free_iso_shallow(cx, tcx, place_ptr, place_ty);
             cx.builder
                 .build_unconditional_branch(blocks[target.index()])
                 .unwrap();
@@ -1090,11 +1114,13 @@ fn lower_call<'ctx>(
             cx.builder.build_call(function, &arg_vals, "call").unwrap()
         }
     } else {
-        let fn_ptr = lower_operand(cx, tcx, mir, locals, local_decls, func).into_pointer_value();
+        let callee = lower_operand(cx, tcx, mir, locals, local_decls, func).into_struct_value();
+        let (code, env) = super::closure::unpack(cx, callee);
+        arg_vals.insert(usize::from(indirect_return), env.into());
         let func_ty = operand_ty(tcx, local_decls, func);
         let fn_type = indirect_fn_type(cx, tcx, mir, func_ty);
         cx.builder
-            .build_indirect_call(fn_type, fn_ptr, &arg_vals, "call")
+            .build_indirect_call(fn_type, code, &arg_vals, "call")
             .unwrap()
     };
 
@@ -1162,7 +1188,8 @@ fn indirect_fn_type<'ctx>(
     };
     let ret_ty = ret.unwrap_or_else(|| tcx.unit());
 
-    let mut param_llvm: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::new();
+    let mut param_llvm: Vec<BasicMetadataTypeEnum<'ctx>> =
+        vec![cx.llvm.ptr_type(Default::default()).into()];
     for &param in &params {
         push_call_param_type(cx, tcx, mir, param, &mut param_llvm);
     }
@@ -1444,8 +1471,18 @@ mod tests {
         let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
-        assert!(ir.contains("store ptr @crate_add"), "{ir}");
-        assert!(!ir.contains("inttoptr") && !ir.contains("bitcast"), "{ir}");
+        assert!(
+            ir.contains("{ ptr @fun.thunk.crate_add") && ir.contains(", i64 0 }"),
+            "expected `add` reified as a wrapper paired with a null environment:\n{ir}"
+        );
+        let thunk_body = ir
+            .split("define internal ")
+            .find(|chunk| chunk.starts_with("i32 @fun.thunk.crate_add"))
+            .expect("the wrapper is emitted alongside the function it wraps");
+        assert!(
+            thunk_body.contains("call i32 @crate_add"),
+            "the wrapper calls `add` itself, dropping the environment it was handed:\n{ir}"
+        );
     }
 
     #[test]
@@ -1491,6 +1528,22 @@ mod tests {
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("insertvalue"), "{ir}");
+    }
+
+    #[test]
+    fn reading_an_enums_discriminant_widens_the_tag_to_the_locals_own_width() {
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
+            "enum E { A, B }
+             fun f(e: E) -> i32 { match e { .A => { return 1; } .B => { return 2; } } }",
+        );
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(
+            ir.contains("zext i8") && ir.contains("switch i32"),
+            "expected the i8 tag to be widened before the i32 switch reads it:\n{ir}"
+        );
     }
 
     #[test]
@@ -1822,7 +1875,6 @@ mod tests {
         );
         assert!(value.is_struct_value());
     }
-
 
     fn instances_first_def(hir: &crate::hir::Hir) -> crate::hir::DefId {
         for def_id in hir.def_ids() {
