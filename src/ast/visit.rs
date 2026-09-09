@@ -344,14 +344,6 @@ pub fn walk_expr<'ast, V: Visitor<'ast>>(v: &mut V, expr: &'ast Expr) {
                 v.visit_expr(elem);
             }
         }
-        ExprKind::Range { lo, hi, .. } => {
-            if let Some(lo) = lo {
-                v.visit_expr(lo);
-            }
-            if let Some(hi) = hi {
-                v.visit_expr(hi);
-            }
-        }
         ExprKind::If {
             cond,
             then_block,
