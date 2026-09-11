@@ -167,7 +167,7 @@ pub fn tokenize(&mut self) -> Vec<Token>;
 Invalid input does not stop the lexer: an unexpected character or an unterminated literal is reported as a diagnostic, the lexer recovers, and scanning continues from the next token. Comments are skipped rather than lexed into tokens; nested block comments are supported.
 
 ## Parser
-The Phi parser is implemented with the `chumsky` parser combinator library. `Parser` is a lightweight struct. It stores nothing about the file which is being parsed. To parse a file, `Parser` exposes the following method:
+The Phi parser is implemented with the `chumsky` parser combinator library. `Parser` is a unit struct; it stores nothing about the file which is being parsed. To parse a single file, `Parser` exposes the following method:
 
 ```rust
 pub fn parse(&self, tokens: &[Token], file_offset: usize) -> ParsedSrcFile;
@@ -294,7 +294,6 @@ pub enum Res {
     Type(Type),
     Local(Local),
     Function(NodeId),
-    Module(NodeId),
     Err,
 }
 
