@@ -1,6 +1,8 @@
 use crate::nameres::PrimTy;
-use crate::typeck::unify::{is_float, is_integer};
 
+/// Width in bits of an integer primitive. `usize` is treated as 64-bit for casting purposes
+/// (see the codegen spec: "usize is assumed 64-bit"), which is why this stays next to the cast
+/// rules rather than on [`PrimTy`] itself: it is cast policy, not an intrinsic property.
 fn int_width(prim: PrimTy) -> Option<u32> {
     match prim {
         PrimTy::I8 | PrimTy::U8 => Some(8),
@@ -9,10 +11,6 @@ fn int_width(prim: PrimTy) -> Option<u32> {
         PrimTy::I64 | PrimTy::U64 | PrimTy::Usize => Some(64),
         _ => None,
     }
-}
-
-fn is_signed(prim: PrimTy) -> bool {
-    matches!(prim, PrimTy::I8 | PrimTy::I16 | PrimTy::I32 | PrimTy::I64)
 }
 
 /// Checks whether `from as to` is a lossless cast between two distinct primitive types.
@@ -30,16 +28,16 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
         return Err("`str` has no primitive-to-primitive cast; see `str as &[u8]`");
     }
 
-    if is_integer(from) && is_integer(to) {
+    if from.is_integer() && to.is_integer() {
         return int_to_int(from, to);
     }
 
     match (from, to) {
         // `f32`'s 24-bit mantissa holds every 16-bit integer exactly; `f64`'s 53 bits do the
         // same for every 32-bit integer. Wider than that, and some value would round.
-        (f, F32) if is_integer(f) && int_width(f) <= Some(16) => Ok(()),
-        (f, F64) if is_integer(f) && int_width(f) <= Some(32) => Ok(()),
-        (f, F32 | F64) if is_integer(f) => Err(
+        (f, F32) if f.is_integer() && int_width(f) <= Some(16) => Ok(()),
+        (f, F64) if f.is_integer() && int_width(f) <= Some(32) => Ok(()),
+        (f, F32 | F64) if f.is_integer() => Err(
             "this integer type is wider than the float type's mantissa, so a large enough \
                  value would round",
         ),
@@ -47,20 +45,20 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
         (F32, F64) => Ok(()),
         (F64, F32) => Err("narrows to a smaller float type, which can lose precision"),
 
-        (f, t) if is_float(f) && is_integer(t) => Err(
+        (f, t) if f.is_float() && t.is_integer() => Err(
             "would truncate any fractional part -- there is no truncating cast here, only \
                  lossless ones",
         ),
 
-        (Bool, t) if is_integer(t) || is_float(t) => Ok(()),
-        (f, Bool) if is_integer(f) || is_float(f) => {
+        (Bool, t) if t.is_integer() || t.is_float() => Ok(()),
+        (f, Bool) if f.is_integer() || f.is_float() => {
             Err("not every value of this type is `0` or `1`")
         }
 
         // A `char` is a Unicode scalar value, `0..=0x10FFFF`, which needs 21 bits: too wide for
         // an 8- or 16-bit integer, but always in range for a 32- or 64-bit one, signed or not.
         (Char, U32 | U64 | I32 | I64) => Ok(()),
-        (Char, t) if is_integer(t) => {
+        (Char, t) if t.is_integer() => {
             Err("a `char` can hold a codepoint as high as 0x10FFFF, wider than this type")
         }
 
@@ -68,7 +66,7 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
         // `0xD800..=0xDFFF` starts well above `u8::MAX`. No wider integer type has that
         // guarantee.
         (U8, Char) => Ok(()),
-        (f, Char) if is_integer(f) => {
+        (f, Char) if f.is_integer() => {
             Err("not every value of this type is a valid Unicode scalar value")
         }
 
@@ -83,26 +81,20 @@ pub(crate) fn cast_allowed(from: PrimTy, to: PrimTy) -> Result<(), &'static str>
     }
 }
 
-/// Whether narrowing between two integer types loses information. Same-signedness widening is
-/// always fine, and unsigned to a strictly wider signed type is too, since an equal-width
-/// signed type still cannot hold the unsigned type's top half.
 fn int_to_int(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     let (from_width, to_width) = (
         int_width(from).expect("caller checked `from` is an integer"),
         int_width(to).expect("caller checked `to` is an integer"),
     );
 
-    match (is_signed(from), is_signed(to)) {
+    match (from.is_signed(), to.is_signed()) {
         (true, true) | (false, false) if from_width <= to_width => Ok(()),
         (true, true) | (false, false) => {
-            Err("narrows to a smaller integer type, which can silently truncate the value")
+            Err("possible narrowing from this cast to a smaller integer type")
         }
-        // Unsigned to signed is safe only when the destination is strictly wider: an
-        // equal-width signed type still can't hold the unsigned type's top half.
         (false, true) if from_width < to_width => Ok(()),
-        (false, true) => Err("a large enough unsigned value would overflow this signed type"),
-        // A negative value has no unsigned equivalent, no matter how wide the destination is.
-        (true, false) => Err("a negative value has no meaningful unsigned equivalent"),
+        (false, true) => Err("possible overflow from this cast"),
+        (true, false) => Err("possible lossy conversion from signed to unsigned integer"),
     }
 }
 

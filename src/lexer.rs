@@ -1,12 +1,15 @@
 use crate::diagnostics::DiagCtx;
 use crate::driver::source::SrcSpan;
-use crate::lexer::token::{Token, TokenKind};
+use crate::lexer::literal::is_escape;
+use crate::lexer::token::{KEYWORDS, Token, TokenKind};
 
+pub mod describe;
+pub mod literal;
 pub mod token;
 
 pub struct Lexer<'a> {
-    /// [`Lexer::src`] is a &Vec<char> represent the raw source code.
-    src: &'a Vec<char>,
+    /// [`Lexer::src`] is a slice of the file's characters.
+    src: &'a [char],
 
     /// [`Lexer::file_offset`] allows the [`Lexer`] to produce global
     /// [`SrcSpan`]s for the [`Token`] stream it outputs.
@@ -18,12 +21,12 @@ pub struct Lexer<'a> {
     /// [`Lexer::lexeme_pos`] is position that the current lexeme (lexical unit)
     /// starts at in [`Lexer::src`].
     /// This is required for generating spans for multi-character tokens as
-    /// [`Lexer::cursor`] is not the start of the token anymore.
+    /// [`Lexer::cursor`] is not the start of the token.
     lexeme_pos: usize,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(src_text: &'a Vec<char>, file_offset: usize) -> Lexer<'a> {
+    pub fn new(src_text: &'a [char], file_offset: usize) -> Lexer<'a> {
         Lexer {
             src: src_text,
             file_offset,
@@ -43,7 +46,9 @@ impl<'a> Lexer<'a> {
             }
 
             self.lexeme_pos = self.cursor;
-            token_stream.push(self.scan());
+            if let Some(token) = self.scan() {
+                token_stream.push(token);
+            }
         }
 
         token_stream
@@ -51,212 +56,191 @@ impl<'a> Lexer<'a> {
 
     /// Scans and returns one token, starting at `self.cursor`.
     ///
-    /// Callers must call `skip_trivia` first. This method assumes the cursor sits at the start
-    /// of a real token, not at whitespace or a comment.
-    pub fn scan(&mut self) -> Token {
+    /// This MUST be called only after [`Lexer::skip_trivia`]
+    /// Returns `None` when the current character is invalid
+    fn scan(&mut self) -> Option<Token> {
         match self.eat() {
-            '(' => self.make_token(TokenKind::OpenParen),
-            ')' => self.make_token(TokenKind::CloseParen),
-            '{' => self.make_token(TokenKind::OpenBrace),
-            '}' => self.make_token(TokenKind::CloseBrace),
-            '[' => self.make_token(TokenKind::OpenBracket),
-            ']' => self.make_token(TokenKind::CloseBracket),
-            ',' => self.make_token(TokenKind::Comma),
-            ';' => self.make_token(TokenKind::Semicolon),
+            '(' => Some(self.make_token(TokenKind::OpenParen)),
+            ')' => Some(self.make_token(TokenKind::CloseParen)),
+            '{' => Some(self.make_token(TokenKind::OpenBrace)),
+            '}' => Some(self.make_token(TokenKind::CloseBrace)),
+            '[' => Some(self.make_token(TokenKind::OpenBracket)),
+            ']' => Some(self.make_token(TokenKind::CloseBracket)),
+            ',' => Some(self.make_token(TokenKind::Comma)),
+            ';' => Some(self.make_token(TokenKind::Semicolon)),
 
             '.' => {
-                if self.match_next_n(".=") {
-                    self.make_token(TokenKind::InclRange)
-                } else if self.match_next('.').is_some() {
-                    self.make_token(TokenKind::ExclRange)
+                if self.eat_if('.').is_some() {
+                    if self.eat_if('=').is_some() {
+                        Some(self.make_token(TokenKind::InclRange))
+                    } else {
+                        Some(self.make_token(TokenKind::ExclRange))
+                    }
                 } else {
-                    self.make_token(TokenKind::Period)
+                    Some(self.make_token(TokenKind::Period))
                 }
             }
             ':' => {
-                if self.match_next(':').is_some() {
-                    self.make_token(TokenKind::DoubleColon)
+                if self.eat_if(':').is_some() {
+                    Some(self.make_token(TokenKind::DoubleColon))
                 } else {
-                    self.make_token(TokenKind::Colon)
+                    Some(self.make_token(TokenKind::Colon))
                 }
             }
 
             '+' => {
-                if self.match_next('+').is_some() {
-                    self.make_token(TokenKind::DoublePlus)
-                } else if self.match_next('=').is_some() {
-                    self.make_token(TokenKind::PlusEquals)
+                if self.eat_if('=').is_some() {
+                    Some(self.make_token(TokenKind::PlusEquals))
                 } else {
-                    self.make_token(TokenKind::Plus)
+                    Some(self.make_token(TokenKind::Plus))
                 }
             }
             '-' => {
-                if self.match_next('>').is_some() {
-                    self.make_token(TokenKind::Arrow)
-                } else if self.match_next('-').is_some() {
-                    self.make_token(TokenKind::DoubleMinus)
-                } else if self.match_next('=').is_some() {
-                    self.make_token(TokenKind::SubEquals)
+                if self.eat_if('>').is_some() {
+                    Some(self.make_token(TokenKind::Arrow))
+                } else if self.eat_if('=').is_some() {
+                    Some(self.make_token(TokenKind::MinusEquals))
                 } else {
-                    self.make_token(TokenKind::Minus)
+                    Some(self.make_token(TokenKind::Minus))
                 }
             }
             '*' => {
-                let kind = if self.match_next('=').is_some() {
+                let kind = if self.eat_if('=').is_some() {
                     TokenKind::MulEquals
                 } else {
                     TokenKind::Star
                 };
-                self.make_token(kind)
+                Some(self.make_token(kind))
             }
             '/' => {
-                let kind = if self.match_next('=').is_some() {
+                let kind = if self.eat_if('=').is_some() {
                     TokenKind::DivEquals
                 } else {
                     TokenKind::Slash
                 };
-                self.make_token(kind)
+                Some(self.make_token(kind))
             }
             '%' => {
-                let kind = if self.match_next('=').is_some() {
+                let kind = if self.eat_if('=').is_some() {
                     TokenKind::ModEquals
                 } else {
                     TokenKind::Percent
                 };
-                self.make_token(kind)
+                Some(self.make_token(kind))
             }
             '!' => {
-                let kind = if self.match_next('=').is_some() {
+                let kind = if self.eat_if('=').is_some() {
                     TokenKind::BangEquals
                 } else {
                     TokenKind::Bang
                 };
-                self.make_token(kind)
+                Some(self.make_token(kind))
             }
             '=' => {
-                if self.match_next('>').is_some() {
-                    self.make_token(TokenKind::FatArrow)
-                } else if self.match_next('=').is_some() {
-                    self.make_token(TokenKind::DoubleEquals)
+                if self.eat_if('>').is_some() {
+                    Some(self.make_token(TokenKind::FatArrow))
+                } else if self.eat_if('=').is_some() {
+                    Some(self.make_token(TokenKind::DoubleEquals))
                 } else {
-                    self.make_token(TokenKind::Equals)
+                    Some(self.make_token(TokenKind::Equals))
                 }
             }
             '<' => {
-                let kind = if self.match_next('=').is_some() {
+                let kind = if self.eat_if('=').is_some() {
                     TokenKind::LessEqual
                 } else {
-                    TokenKind::OpenCaret
+                    TokenKind::OpenAngle
                 };
-                self.make_token(kind)
+                Some(self.make_token(kind))
             }
             '>' => {
-                let kind = if self.match_next('=').is_some() {
+                let kind = if self.eat_if('=').is_some() {
                     TokenKind::GreaterEqual
                 } else {
-                    TokenKind::CloseCaret
+                    TokenKind::CloseAngle
                 };
-                self.make_token(kind)
+                Some(self.make_token(kind))
             }
             '&' => {
-                if self.match_next('&').is_some() {
-                    self.make_token(TokenKind::DoubleAmp)
+                if self.eat_if('&').is_some() {
+                    Some(self.make_token(TokenKind::DoubleAmp))
                 } else {
-                    self.make_token(TokenKind::Amp)
+                    Some(self.make_token(TokenKind::Amp))
                 }
             }
             '|' => {
-                if self.match_next('|').is_some() {
-                    self.make_token(TokenKind::DoublePipe)
+                if self.eat_if('|').is_some() {
+                    Some(self.make_token(TokenKind::DoublePipe))
                 } else {
-                    self.make_token(TokenKind::Pipe)
+                    Some(self.make_token(TokenKind::Pipe))
                 }
             }
-            '?' => self.make_token(TokenKind::Try),
+            '?' => Some(self.make_token(TokenKind::Try)),
             '_' => {
                 // A lone `_` is the wildcard token, but `_foo` is an identifier. Thus we check
                 // the next character before deciding which one this is.
                 if self.peek().is_ascii_alphanumeric() || self.peek() == '_' {
-                    self.lex_identifier_or_kw()
+                    Some(self.lex_identifier_or_kw())
                 } else {
-                    self.make_token(TokenKind::Wildcard)
+                    Some(self.make_token(TokenKind::Wildcard))
                 }
             }
 
-            '"' => self.lex_string(),
-            '\'' => self.lex_char(),
+            '"' => Some(self.lex_string()),
+            '\'' => Some(self.lex_char()),
 
             c => {
                 if c.is_ascii_alphabetic() || c == '_' {
-                    self.lex_identifier_or_kw()
+                    Some(self.lex_identifier_or_kw())
                 } else if c.is_ascii_digit() {
-                    self.lex_number()
+                    Some(self.lex_number())
                 } else {
                     self.error(format!("unexpected character '{}'", c));
-                    // Skip the bad character and any trivia after it, then keep scanning. Thus a
-                    // single stray byte does not stop the whole file from being lexed.
-                    self.skip_trivia();
-                    self.lexeme_pos = self.cursor;
-                    if self.at_eof() {
-                        self.make_token(TokenKind::Eof)
-                    } else {
-                        self.scan()
-                    }
+                    // The bad character is already consumed; `tokenize` skips the trivia after
+                    // it and scans on, so a single stray byte does not stop the whole file
+                    // from being lexed.
+                    None
                 }
             }
         }
     }
 
     /// Returns the current character without consuming it. Returns `'\0'` at end of input.
-    pub fn peek(&self) -> char {
+    fn peek(&self) -> char {
         self.src.get(self.cursor).copied().unwrap_or('\0')
     }
 
     /// Returns the character after the current one, without consuming anything. Returns `'\0'`
     /// at or past end of input.
-    pub fn next(&self) -> char {
+    fn peek_next(&self) -> char {
         self.src.get(self.cursor + 1).copied().unwrap_or('\0')
     }
 
     /// Consumes and returns the current character.
-    pub fn eat(&mut self) -> char {
+    fn eat(&mut self) -> char {
         let temp = self.peek();
         self.cursor += 1;
         temp
     }
 
-    /// Consumes the current character if it equals `next`, and returns it. Returns `None`
+    /// Consumes the current character if it equals `expected`, and returns it. Returns `None`
     /// without consuming anything otherwise.
-    pub fn match_next(&mut self, next: char) -> Option<char> {
-        if self.at_eof() || self.peek() != next {
+    fn eat_if(&mut self, expected: char) -> Option<char> {
+        if self.at_eof() || self.peek() != expected {
             None
         } else {
             self.cursor += 1;
-            Some(next)
+            Some(expected)
         }
     }
 
-    /// Like [`Self::match_next`] but matches (and consumes) a multi-character lookahead.
-    pub fn match_next_n(&mut self, expected: &str) -> bool {
-        let expected: Vec<char> = expected.chars().collect();
-        if self.cursor + expected.len() > self.src.len() {
-            return false;
-        }
-        if self.src[self.cursor..self.cursor + expected.len()] == expected[..] {
-            self.cursor += expected.len();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn at_eof(&self) -> bool {
+    fn at_eof(&self) -> bool {
         self.cursor >= self.src.len()
     }
 
     /// Builds a token of `kind` whose span covers everything consumed since `lexeme_pos` was
     /// last set. Callers must set `lexeme_pos` to the cursor at the start of each lexeme.
-    pub fn make_token(&self, kind: TokenKind) -> Token {
+    fn make_token(&self, kind: TokenKind) -> Token {
         Token {
             kind,
             span: SrcSpan::new(
@@ -271,7 +255,7 @@ impl<'a> Lexer<'a> {
 
         // A `.` only starts a fractional part if a digit follows it. Thus `1.` lexes as an int
         // literal followed by a separate `.` token, rather than an incomplete float.
-        let is_float = if self.peek() == '.' && self.next().is_ascii_digit() {
+        let is_float = if self.peek() == '.' && self.peek_next().is_ascii_digit() {
             self.eat();
             self.eat_digit_run();
             true
@@ -279,7 +263,7 @@ impl<'a> Lexer<'a> {
             false
         };
 
-        if self.peek() == '_' && self.next().is_ascii_alphabetic() {
+        if self.peek() == '_' && self.peek_next().is_ascii_alphabetic() {
             self.eat();
             while self.peek().is_ascii_alphanumeric() {
                 self.eat();
@@ -293,11 +277,11 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    /// Consumes a run of ASCII digits, treating `_` as a separator when it sits between two
-    /// digits (`1_000_000`). A trailing `_` not followed by a digit is left alone, since it may
-    /// instead be starting a type suffix (`42_i64`) rather than separating digits.
+    /// Consumes a sequence of ASCII digits
     fn eat_digit_run(&mut self) {
-        while self.peek().is_ascii_digit() || (self.peek() == '_' && self.next().is_ascii_digit()) {
+        while self.peek().is_ascii_digit()
+            || (self.peek() == '_' && self.peek_next().is_ascii_digit())
+        {
             self.eat();
         }
     }
@@ -309,60 +293,10 @@ impl<'a> Lexer<'a> {
 
         let ident: String = self.src[self.lexeme_pos..self.cursor].iter().collect();
 
-        let kind = match ident.as_str() {
-            "any" => TokenKind::AnyKw,
-            "as" => TokenKind::AsKw,
-            "bool" => TokenKind::BoolKw,
-            "break" => TokenKind::BreakKw,
-            "concurrent" => TokenKind::ConcurrentKw,
-            "continue" => TokenKind::ContinueKw,
-            "defer" => TokenKind::DeferKw,
-            "dyn" => TokenKind::DynKw,
-            "else" => TokenKind::ElseKw,
-            "enum" => TokenKind::EnumKw,
-            "extend" => TokenKind::ExtendKw,
-            "false" => TokenKind::FalseKw,
-            "for" => TokenKind::ForKw,
-            "fun" => TokenKind::FunKw,
-            "if" => TokenKind::IfKw,
-            "import" => TokenKind::ImportKw,
-            "in" => TokenKind::InKw,
-            "iso" => TokenKind::IsoKw,
-            "let" => TokenKind::LetKw,
-            "match" => TokenKind::MatchKw,
-            "module" => TokenKind::ModuleKw,
-            "mut" => TokenKind::MutKw,
-            "new" => TokenKind::NewKw,
-            "public" => TokenKind::PublicKw,
-            "return" => TokenKind::ReturnKw,
-            "self" => TokenKind::LowerSelfKw,
-            "Self" => TokenKind::UpperSelfKw,
-            "spawn" => TokenKind::SpawnKw,
-            "struct" => TokenKind::StructKw,
-            "trait" => TokenKind::TraitKw,
-            "true" => TokenKind::TrueKw,
-            "use" => TokenKind::UseKw,
-            "while" => TokenKind::WhileKw,
-            "with" => TokenKind::WithKw,
-            "i8" => TokenKind::I8,
-            "i16" => TokenKind::I16,
-            "i32" => TokenKind::I32,
-            "i64" => TokenKind::I64,
-            "u8" => TokenKind::U8,
-            "u16" => TokenKind::U16,
-            "u32" => TokenKind::U32,
-            "u64" => TokenKind::U64,
-            "usize" => TokenKind::Usize,
-            "f32" => TokenKind::F32,
-            "f64" => TokenKind::F64,
-            "str" => TokenKind::Str,
-            "char" => TokenKind::Char,
-            "panic" => TokenKind::Panic,
-            "assert" => TokenKind::Assert,
-            "unreachable" => TokenKind::Unreachable,
-            "type_of" => TokenKind::TypeOf,
-            _ => TokenKind::Identifier,
-        };
+        let kind = KEYWORDS
+            .iter()
+            .find(|(spelling, _)| *spelling == ident.as_str())
+            .map_or(TokenKind::Identifier, |&(_, kind)| kind);
 
         self.make_token(kind)
     }
@@ -401,11 +335,12 @@ impl<'a> Lexer<'a> {
             return self.make_token(TokenKind::CharLiteral);
         }
 
+        let mut unknown_escape = false;
         if self.peek() != '\\' {
             self.eat();
         } else {
             self.eat();
-            self.lex_escape_seq();
+            unknown_escape = !self.lex_escape_seq();
         }
 
         if self.peek() == '\'' {
@@ -415,27 +350,30 @@ impl<'a> Lexer<'a> {
             self.error("unterminated character literal");
             self.make_token(TokenKind::CharLiteral)
         } else {
-            // More than one character is present. Consume up to the closing quote so lexing
-            // can recover and continue past this literal.
             while !self.at_eof() && self.peek() != '\'' {
                 self.eat();
             }
             if self.peek() == '\'' {
                 self.eat();
             }
-            self.error("character literal contains too many characters");
+            if !unknown_escape {
+                self.error("character literal contains too many characters");
+            }
             self.make_token(TokenKind::CharLiteral)
         }
     }
 
-    fn lex_escape_seq(&mut self) -> char {
+    fn lex_escape_seq(&mut self) -> bool {
         if self.at_eof() {
-            return '\0';
+            return true;
         }
 
-        self.eat()
-
-        //escape_char(self.eat())
+        let escaped = self.eat();
+        let known = is_escape(escaped);
+        if !known {
+            self.error(format!("unknown escape sequence `\\{escaped}`"));
+        }
+        known
     }
 
     /// Record a diagnostic pointing at the span of the lexeme currently being scanned.
@@ -448,9 +386,6 @@ impl<'a> Lexer<'a> {
     }
 
     /// Consumes whitespace and comments.
-    ///
-    /// `scan` calls this before each token. The error-recovery path in `scan` also calls this
-    /// after a bad character, so trivia is never re-lexed as a token by mistake.
     fn skip_trivia(&mut self) {
         loop {
             if self.peek().is_ascii_whitespace() {
@@ -459,7 +394,7 @@ impl<'a> Lexer<'a> {
             }
 
             // Line comment: `//...`
-            if self.peek() == '/' && self.next() == '/' {
+            if self.peek() == '/' && self.peek_next() == '/' {
                 self.eat();
                 self.eat();
                 while !self.at_eof() && self.peek() != '\n' {
@@ -469,7 +404,7 @@ impl<'a> Lexer<'a> {
             }
 
             // Block comment: `/* ... */`, which may nest.
-            if self.peek() == '/' && self.next() == '*' {
+            if self.peek() == '/' && self.peek_next() == '*' {
                 self.lexeme_pos = self.cursor;
                 self.eat();
                 self.eat();
@@ -480,14 +415,14 @@ impl<'a> Lexer<'a> {
                         break;
                     }
 
-                    if self.peek() == '/' && self.next() == '*' {
+                    if self.peek() == '/' && self.peek_next() == '*' {
                         self.eat();
                         self.eat();
                         depth += 1;
                         continue;
                     }
 
-                    if self.peek() == '*' && self.next() == '/' {
+                    if self.peek() == '*' && self.peek_next() == '/' {
                         self.eat();
                         self.eat();
                         depth -= 1;
@@ -510,6 +445,7 @@ impl<'a> Lexer<'a> {
 mod tests {
     use super::*;
     use crate::diagnostics::{DiagCtx, Diagnostic};
+    use crate::lexer::describe::Descriptor;
 
     fn lex(src: &str) -> (Vec<Token>, Vec<Diagnostic>) {
         DiagCtx::clear();
@@ -572,6 +508,59 @@ mod tests {
         assert_eq!(tokens[0].kind, TokenKind::IntLiteral);
     }
 
+    /// Reports the single diagnostic `src` raises, or panics otherwise.
+    fn only_diagnostic(src: &str) -> Diagnostic {
+        let (_, raised) = lex(src);
+        assert_eq!(raised.len(), 1, "expected exactly one diagnostic");
+        raised.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn reports_unknown_string_escape() {
+        // `"\q"` must not silently decode to `"aq"`; the escape has to be called out.
+        let diagnostic = only_diagnostic(r#""a\qb""#);
+        assert!(diagnostic.message.contains("unknown escape sequence `\\q`"));
+    }
+
+    #[test]
+    fn reports_unknown_char_escape() {
+        // `'\u{41}'` previously collapsed to `Char('u')` behind a misleading "too many
+        // characters" report; the unknown escape itself must be what gets named.
+        let diagnostic = only_diagnostic(r"'\u{41}'");
+        assert!(diagnostic.message.contains("unknown escape sequence `\\u`"));
+    }
+
+    #[test]
+    fn accepts_every_escape_the_ast_layer_decodes() {
+        // The spellings `lex_escape_seq` accepts must match what `escape` in
+        // `ast::expr_impls` decodes, so neither side can gain an escape the other drops.
+        for escaped in ['"', '\'', 'n', 't', 'r', '\\', '0'] {
+            let src = format!(r#""\{escaped}""#);
+            let (tokens, diagnostics) = lex(&src);
+            assert!(diagnostics.is_empty(), "for {escaped:?}: {diagnostics:?}");
+            assert_eq!(tokens.len(), 1);
+            assert_eq!(tokens[0].kind, TokenKind::StrLiteral);
+        }
+    }
+
+    #[test]
+    fn a_file_ending_in_a_bad_character_gains_no_phantom_token() {
+        // The stray byte is reported, but nothing is appended past the end of input.
+        let (tokens, diagnostics) = lex("fun main() {} @");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            tokens.iter().map(|t| &t.kind).collect::<Vec<_>>(),
+            vec![
+                &TokenKind::FunKw,
+                &TokenKind::Identifier,
+                &TokenKind::OpenParen,
+                &TokenKind::CloseParen,
+                &TokenKind::OpenBrace,
+                &TokenKind::CloseBrace,
+            ]
+        );
+    }
+
     fn kinds(src: &str) -> Vec<TokenKind> {
         let (tokens, diagnostics) = lex(src);
         assert!(
@@ -584,51 +573,13 @@ mod tests {
     // --- keywords -----------------------------------------------------
 
     #[test]
-    fn tokenizes_all_keywords() {
-        let pairs = [
-            ("as", TokenKind::AsKw),
-            ("bool", TokenKind::BoolKw),
-            ("break", TokenKind::BreakKw),
-            ("continue", TokenKind::ContinueKw),
-            ("defer", TokenKind::DeferKw),
-            ("else", TokenKind::ElseKw),
-            ("enum", TokenKind::EnumKw),
-            ("false", TokenKind::FalseKw),
-            ("for", TokenKind::ForKw),
-            ("fun", TokenKind::FunKw),
-            ("if", TokenKind::IfKw),
-            ("import", TokenKind::ImportKw),
-            ("in", TokenKind::InKw),
-            ("let", TokenKind::LetKw),
-            ("match", TokenKind::MatchKw),
-            ("module", TokenKind::ModuleKw),
-            ("mut", TokenKind::MutKw),
-            ("public", TokenKind::PublicKw),
-            ("return", TokenKind::ReturnKw),
-            ("Self", TokenKind::UpperSelfKw),
-            ("struct", TokenKind::StructKw),
-            ("true", TokenKind::TrueKw),
-            ("use", TokenKind::UseKw),
-            ("while", TokenKind::WhileKw),
-            ("panic", TokenKind::Panic),
-            ("assert", TokenKind::Assert),
-            ("unreachable", TokenKind::Unreachable),
-            ("type_of", TokenKind::TypeOf),
-            ("i8", TokenKind::I8),
-            ("i16", TokenKind::I16),
-            ("i32", TokenKind::I32),
-            ("i64", TokenKind::I64),
-            ("u8", TokenKind::U8),
-            ("u16", TokenKind::U16),
-            ("u32", TokenKind::U32),
-            ("u64", TokenKind::U64),
-            ("f32", TokenKind::F32),
-            ("f64", TokenKind::F64),
-            ("str", TokenKind::Str),
-            ("char", TokenKind::Char),
-        ];
-        for (src, expected) in pairs {
-            assert_eq!(kinds(src), vec![expected], "lexing {src:?}");
+    fn every_keyword_round_trips_through_its_own_token_kind() {
+        // Lexing a keyword's spelling must produce exactly the kind whose `to_string` is that
+        // spelling, so the [`KEYWORDS`] table the lexer looks spellings up in and the spellings
+        // diagnostics name cannot drift apart.
+        for (spelling, kind) in KEYWORDS {
+            assert_eq!(kinds(spelling), vec![*kind], "lexing {spelling:?}");
+            assert_eq!(Descriptor::of(*kind).name(), *spelling, "for {kind:?}");
         }
     }
 
@@ -769,8 +720,6 @@ mod tests {
             ("->", TokenKind::Arrow),
             ("=>", TokenKind::FatArrow),
             ("::", TokenKind::DoubleColon),
-            ("++", TokenKind::DoublePlus),
-            ("--", TokenKind::DoubleMinus),
             ("==", TokenKind::DoubleEquals),
             ("!=", TokenKind::BangEquals),
             ("&&", TokenKind::DoubleAmp),
@@ -778,7 +727,7 @@ mod tests {
             ("<=", TokenKind::LessEqual),
             (">=", TokenKind::GreaterEqual),
             ("+=", TokenKind::PlusEquals),
-            ("-=", TokenKind::SubEquals),
+            ("-=", TokenKind::MinusEquals),
             ("*=", TokenKind::MulEquals),
             ("/=", TokenKind::DivEquals),
             ("%=", TokenKind::ModEquals),
@@ -790,13 +739,37 @@ mod tests {
         }
     }
 
+    /// Phi has no increment/decrement operators, so `++` and `--` are not single tokens: they
+    /// lex as their separate characters and fail later, at the parser, with its own diagnostic.
+    #[test]
+    fn double_plus_and_double_minus_are_not_single_tokens() {
+        assert_eq!(
+            kinds("a++b"),
+            vec![
+                TokenKind::Identifier,
+                TokenKind::Plus,
+                TokenKind::Plus,
+                TokenKind::Identifier
+            ]
+        );
+        assert_eq!(
+            kinds("a--b"),
+            vec![
+                TokenKind::Identifier,
+                TokenKind::Minus,
+                TokenKind::Minus,
+                TokenKind::Identifier
+            ]
+        );
+    }
+
     #[test]
     fn tokenizes_single_char_operators_not_greedily_extended() {
         let pairs = [
             ("&", TokenKind::Amp),
             ("|", TokenKind::Pipe),
-            ("<", TokenKind::OpenCaret),
-            (">", TokenKind::CloseCaret),
+            ("<", TokenKind::OpenAngle),
+            (">", TokenKind::CloseAngle),
             ("=", TokenKind::Equals),
             (":", TokenKind::Colon),
             (".", TokenKind::Period),
@@ -813,7 +786,7 @@ mod tests {
     #[test]
     fn minus_arrow_is_not_confused_with_decrement() {
         assert_eq!(kinds("->"), vec![TokenKind::Arrow]);
-        assert_eq!(kinds("- >"), vec![TokenKind::Minus, TokenKind::CloseCaret]);
+        assert_eq!(kinds("- >"), vec![TokenKind::Minus, TokenKind::CloseAngle]);
     }
 
     #[test]

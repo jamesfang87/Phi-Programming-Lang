@@ -344,3 +344,42 @@ mod tests {
         );
     }
 }
+
+/// A bound written with trait arguments, `T: Conv<i32>`, holds only against an impl whose
+/// own trait arguments match, so `extend W with Conv<bool>` does not satisfy it.
+#[test]
+fn a_bound_with_arguments_must_match_the_impls_arguments() {
+    crate::testing::typeck_accepts(
+        "trait Conv<From> { fun conv(&self) -> From; }
+             struct W { v: i32 }
+             extend W with Conv<i32> { fun conv(&self) -> i32 { return self.v; } }
+             fun f<T: Conv<i32>>(x: &T) -> i32 { return x.conv(); }
+             fun g() { let w: W = W { v: 1 }; let n = f(&w); }",
+    );
+
+    let messages = crate::testing::typeck_src(
+        "trait Conv<From> { fun conv(&self) -> From; }
+             struct W { v: i32 }
+             extend W with Conv<bool> { fun conv(&self) -> bool { return true; } }
+             fun f<T: Conv<i32>>(x: &T) -> i32 { return x.conv(); }
+             fun g() { let w: W = W { v: 1 }; let n = f(&w); }",
+    );
+    assert_eq!(
+        messages,
+        ["the trait bound `W: Conv<i32>` is not satisfied"],
+        "{messages:?}"
+    );
+}
+
+/// A trait default dispatched through a bounded parameter resolves to the implementing
+/// type's own methods, with the trait's own arguments substituted from the bound.
+#[test]
+fn a_trait_default_through_a_bound_with_arguments_dispatches() {
+    crate::testing::typeck_accepts(
+            "trait Conv<From> { fun conv(&self) -> From; fun boxed(&self) -> From { return self.conv(); } }
+             struct W { v: i32 }
+             extend W with Conv<i32> { fun conv(&self) -> i32 { return self.v; } }
+             fun f<T: Conv<i32>>(x: &T) -> i32 { return x.boxed(); }
+             fun g() -> i32 { let w: W = W { v: 1 }; return f(&w); }",
+        );
+}

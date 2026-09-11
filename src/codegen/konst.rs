@@ -27,11 +27,12 @@ pub fn lower_constant<'ctx>(
         ConstKind::Bool(b) => cx.llvm.bool_type().const_int(*b as u64, false).into(),
         ConstKind::Char(c) => cx.llvm.i32_type().const_int(*c as u64, false).into(),
         ConstKind::Str(sym) => str_operand(cx, *sym),
-        ConstKind::FunDef(def, args, any_mode) => {
+        ConstKind::FunDef(def, args, any_mode, self_ty) => {
             let instance = Instance {
                 def: *def,
                 any_mode: *any_mode,
                 args: args.clone(),
+                self_ty: *self_ty,
             };
             let name = mangle(mir, tcx, &instance);
             let function = cx.functions[&name];

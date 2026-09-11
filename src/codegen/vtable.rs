@@ -67,6 +67,7 @@ pub fn vtable_for<'ctx>(
             def: impl_method,
             any_mode: None,
             args: Vec::new(),
+            self_ty: None,
         };
         let name = mangle(mir, tcx, &instance);
         let function = *cx.functions.get(&name).unwrap_or_else(|| {
@@ -130,7 +131,8 @@ pub fn call_dyn_method<'ctx>(
     dyn_value: BasicValueEnum<'ctx>,
     method_index: usize,
     fn_type: FunctionType<'ctx>,
-    rest_args: &[BasicMetadataValueEnum<'ctx>],
+    leading: &[BasicMetadataValueEnum<'ctx>],
+    rest: &[BasicMetadataValueEnum<'ctx>],
 ) -> CallSiteValue<'ctx> {
     let struct_val = dyn_value.into_struct_value();
     let data_ptr = cx
@@ -163,8 +165,9 @@ pub fn call_dyn_method<'ctx>(
         .unwrap()
         .into_pointer_value();
 
-    let mut args: Vec<BasicMetadataValueEnum<'ctx>> = vec![data_ptr.into()];
-    args.extend_from_slice(rest_args);
+    let mut args: Vec<BasicMetadataValueEnum<'ctx>> = leading.to_vec();
+    args.push(data_ptr.into());
+    args.extend_from_slice(rest);
     cx.builder
         .build_indirect_call(fn_type, method_ptr, &args, "dyn_call")
         .unwrap()
@@ -256,6 +259,7 @@ fun f() {}";
                 def: impl_method,
                 any_mode: None,
                 args: Vec::new(),
+                self_ty: None,
             },
         );
         assert!(
@@ -341,7 +345,7 @@ fun f() {}";
             .llvm
             .i32_type()
             .fn_type(&[cx.llvm.ptr_type(Default::default()).into()], false);
-        let call_site = call_dyn_method(&mut cx, dyn_value, 0, fn_type, &[]);
+        let call_site = call_dyn_method(&mut cx, dyn_value, 0, fn_type, &[], &[]);
         let ret_val = call_site.try_as_basic_value().unwrap_basic();
         cx.builder.build_return(Some(&ret_val)).unwrap();
 
@@ -405,6 +409,7 @@ fun f() {}",
                     def: impl_def,
                     any_mode: None,
                     args: Vec::new(),
+                    self_ty: None,
                 },
             )
         };

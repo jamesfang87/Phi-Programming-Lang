@@ -50,7 +50,11 @@ fn main_is_always_collected_as_a_root() {
         .keys()
         .filter(|instance| instance.def == main_def)
         .collect();
-    assert_eq!(mains.len(), 1, "expected exactly one `main` instance: {mains:?}");
+    assert_eq!(
+        mains.len(),
+        1,
+        "expected exactly one `main` instance: {mains:?}"
+    );
     assert!(
         mains[0].args.is_empty(),
         "`main` takes no type parameters, so it is never specialized: {:?}",
@@ -134,4 +138,122 @@ fn calling_through_a_reified_function_pointer_still_monomorphizes_the_callee() {
             })
     });
     assert!(reifies, "`double` used as a value is reified somewhere");
+}
+
+#[test]
+fn a_generic_extend_method_is_monomorphized_concretely() {
+    let (_hir, tcx, _types, _mir, instances) = lower_to_mir(
+        "struct Wrap<T> { public value: T }\n\
+         extend<T> Wrap<T> { fun get(self) -> T { return self.value; } }\n\
+         fun main() { let w: Wrap<i32> = Wrap { value: 1 }; let n = w.get(); }",
+    );
+    for (instance, body) in &instances {
+        for decl in &body.local_decls {
+            assert!(
+                !crate::mir::monomorphize::subst::mentions_generic(&tcx, decl.ty),
+                "instance {instance:?} kept an unsubstituted local"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_method_returning_self_is_monomorphized_concretely() {
+    let (_hir, tcx, _types, _mir, instances) = lower_to_mir(
+        "struct Wrap<T> { public value: T }\n\
+         extend<T> Wrap<T> { fun same(self) -> Self { return self; } }\n\
+         fun main() { let w: Wrap<i32> = Wrap { value: 1 }; let s = w.same(); }",
+    );
+    for (instance, body) in &instances {
+        for decl in &body.local_decls {
+            assert!(
+                !crate::mir::monomorphize::subst::mentions_generic(&tcx, decl.ty),
+                "instance {instance:?} kept an unsubstituted local"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_closure_parameter_takes_the_type_its_call_site_gives_it() {
+    let (_hir, tcx, _types, _mir, instances) = lower_to_mir(
+        "fun conv<A, B>(x: A, f: fun(A) -> B) -> B { return f(x); }\n\
+         fun main() { let n: i32 = conv(true, |x| 9); }",
+    );
+    for (instance, body) in &instances {
+        for decl in &body.local_decls {
+            assert!(
+                !matches!(tcx.kind(decl.ty), crate::typeck::ty::TyKind::Var(_)),
+                "instance {instance:?} kept an unresolved local {decl:?}"
+            );
+        }
+    }
+}
+
+const TRAIT_DEFAULTS_SRC: &str = "trait Cloner {\n\
+     fun clone_it(&self) -> Self;\n\
+     fun twice(&self) -> Self { return self.clone_it(); }\n\
+ }\n\
+ struct N { public value: i32 }\n\
+ struct M { public value: i32 }\n\
+ extend N with Cloner { fun clone_it(&self) -> Self { return N { value: self.value + 1 }; } }\n\
+ extend M with Cloner { fun clone_it(&self) -> Self { return M { value: self.value + 2 }; } }\n\
+ fun main() {\n\
+     let n: N = N { value: 1 };\n\
+     let m: M = M { value: 1 };\n\
+     let n2: N = n.twice();\n\
+     let m2: M = m.twice();\n\
+ }";
+
+#[test]
+fn a_trait_default_method_body_is_monomorphized_per_implementing_type() {
+    let (_hir, tcx, _types, _mir, instances) = lower_to_mir(TRAIT_DEFAULTS_SRC);
+    for (instance, body) in &instances {
+        for decl in &body.local_decls {
+            assert!(
+                !crate::mir::monomorphize::subst::mentions_generic(&tcx, decl.ty),
+                "instance {instance:?} kept an unsubstituted local {decl:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_trait_default_body_calls_the_implementing_types_own_method() {
+    let (hir, _tcx, _types, _mir, instances) = lower_to_mir(TRAIT_DEFAULTS_SRC);
+    for (instance, body) in &instances {
+        let _ = instance;
+        for block in &body.basic_blocks {
+            if let crate::mir::TerminatorKind::Call { func, .. } = &block.terminator.kind
+                && let crate::mir::Operand::Constant(constant) = func
+                && let crate::mir::ConstKind::FunDef(callee, ..) = &constant.kind
+            {
+                assert!(
+                    hir.function(*callee).block.is_some(),
+                    "{callee:?} is abstract; a default body must dispatch to an impl's method"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_generic_trait_default_body_substitutes_the_trait_arguments() {
+    let (_hir, tcx, _types, _mir, instances) = lower_to_mir(
+        "trait Sh<T> {\n\
+         fun sh(&self) -> T;\n\
+         fun go(&self) -> T { return self.sh(); }\n\
+         }\n\
+         struct W { public value: i32 }\n\
+         extend W with Sh<i32> { fun sh(&self) -> i32 { return self.value; } }\n\
+         fun main() { let w: W = W { value: 5 }; let n: i32 = w.go(); }",
+    );
+    for (instance, body) in &instances {
+        for decl in &body.local_decls {
+            assert!(
+                !crate::mir::monomorphize::subst::mentions_generic(&tcx, decl.ty),
+                "instance {instance:?} kept an unsubstituted local {decl:?}"
+            );
+        }
+    }
 }

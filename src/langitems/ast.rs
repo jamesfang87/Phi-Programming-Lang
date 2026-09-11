@@ -24,11 +24,7 @@ pub fn collect(symbol_tab: &SymbolTable<'_>, root: NodeId) -> LangItems {
 
     for &item in LangItem::ALL {
         let path = synth_path(item);
-        // Most lang items are types (structs, traits), found in the type namespace. A handful
-        // -- `write_bytes` so far -- name a function instead, which lives in the value
-        // namespace and so needs the other lookup. Trying the type lookup first costs nothing
-        // for a function path, since it can never resolve there.
-        match symbol_tab.lookup_type_path(root, &path) {
+        match symbol_tab.probe_type_path(root, &path) {
             Some(AstType::Def(def)) => {
                 items.insert(item, def.node_id());
             }

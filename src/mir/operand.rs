@@ -31,5 +31,5 @@ pub enum ConstKind {
     Bool(bool),
     Char(char),
     Str(Symbol),
-    FunDef(DefId, Vec<Ty>, Option<AnyMode>),
+    FunDef(DefId, Vec<Ty>, Option<AnyMode>, Option<Ty>),
 }

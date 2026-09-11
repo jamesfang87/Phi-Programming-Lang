@@ -16,8 +16,8 @@ impl<'hir> Typeck<'hir> {
         let hir = self.hir;
         for def in hir.def_ids() {
             for &generic in self.declared_generics(def) {
-                for path in &hir.generic(generic).bounds {
-                    Self::check_declared_bound(path);
+                for bound in &hir.generic(generic).bounds {
+                    Self::check_declared_bound(&bound.path);
                 }
             }
         }

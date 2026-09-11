@@ -274,6 +274,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Digit-separated numeric literals and float literal patterns have to survive the whole
+    /// pipeline: each once panicked in MIR lowering instead of compiling. `==` on `i32`/`f64`
+    /// comes from [`crate::testing::OPS_PREAMBLE`], whose `Eq` impls the lang item resolves
+    /// from the root module without any import.
+    #[test]
+    fn digit_separated_literals_and_float_patterns_build_and_run() {
+        let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
+            crate::testing::OPS_PREAMBLE,
+            "module app;
+             fun pick(x: f64) -> i32 { return match x { 3.14_15 => 1, _ => 0 }; }
+             public fun main() {
+                 assert(1_000_000_i32 == 1000000);
+                 assert(3.14_15_f64 == 3.1415);
+                 assert(pick(3.14_15) == 1);
+             }",
+        ]);
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
+            .expect("codegen succeeds");
+
+        let dir = tempdir_for_test("digit-separators");
+        let exe = emit(
+            &module,
+            &EmitOptions {
+                output_path: dir.join("separators"),
+                release: false,
+            },
+        )
+        .expect("emit succeeds");
+
+        let output = std::process::Command::new(&exe)
+            .output()
+            .expect("linked binary runs");
+        assert!(
+            output.status.success(),
+            "process exited: {:?}",
+            output.status
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn unreachable_aborts_with_its_own_default_message() {
         let (_hir, mut tcx, _types, mir, instances) =

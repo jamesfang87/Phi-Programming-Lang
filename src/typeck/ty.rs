@@ -26,32 +26,17 @@ pub enum TyVar {
 pub enum TyKind {
     Var(TyVar),
     Primitive(PrimTy),
-    Adt {
-        def: DefId,
-        args: Vec<Ty>,
-    },
+    Adt { def: DefId, args: Vec<Ty> },
     Generic(HirId),
     SelfTy(DefId),
-    Ref {
-        base: Ty,
-        mutability: Mutability,
-    },
+    Ref { base: Ty, mutability: Mutability },
     Any(Ty),
     Iso(Ty),
     Unit,
     Tuple(Vec<Ty>),
-    Array {
-        elem: Ty,
-        len: Option<u64>,
-    },
-    Fun {
-        params: Vec<Ty>,
-        ret: Option<Ty>,
-    },
-    Dyn {
-        trait_: DefId,
-        args: Vec<Ty>,
-    },
+    Array { elem: Ty, len: Option<u64> },
+    Fun { params: Vec<Ty>, ret: Option<Ty> },
+    Dyn { trait_: DefId, args: Vec<Ty> },
     Never,
     Error,
 }

@@ -1,6 +1,6 @@
-use crate::ast::{BinaryOp, Literal};
+use crate::ast::{BinaryOp, Literal, Mutability};
 use crate::driver::source::SrcSpan;
-use crate::hir::{HirId, PatKind, Payload};
+use crate::hir::{BindingMode, HirId, PatKind, Payload};
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{
     BasicBlock, ConstKind, Constant, Operand, Place, Projection, Rvalue, StatementKind,
@@ -152,6 +152,11 @@ impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn test_pat(&mut self, pat_id: HirId, place: Place, fail: BasicBlock) {
         let pat = self.hir.pat(pat_id);
         let span = pat.span;
+        let adjust = self.types.pat_adjust(pat_id);
+        let mut place = place;
+        for _ in 0..adjust.derefs {
+            place.projections.push(Projection::Deref);
+        }
         match &pat.kind {
             PatKind::Wildcard | PatKind::Binding { .. } => {}
             PatKind::Literal(lit) => {
@@ -256,13 +261,14 @@ impl<'a> BodyLowerCtx<'a> {
     /// Binds every name a pattern known to already match introduces. Used both for an
     /// irrefutable `let`/`with` pattern (called directly, with no preceding [`test_pat`]) and
     /// for a `match`/`if let` candidate that has already passed [`test_pat`].
-    pub(crate) fn bind_pat(
-        &mut self,
-        pat_id: HirId,
-        place: Place,
-    ) {
+    pub(crate) fn bind_pat(&mut self, pat_id: HirId, place: Place) {
         let pat = self.hir.pat(pat_id);
         let span = pat.span;
+        let adjust = self.types.pat_adjust(pat_id);
+        let mut place = place;
+        for _ in 0..adjust.derefs {
+            place.projections.push(Projection::Deref);
+        }
         match &pat.kind {
             PatKind::Wildcard => {}
             PatKind::Binding { name, .. } => {
@@ -270,8 +276,20 @@ impl<'a> BodyLowerCtx<'a> {
                 let ty = self.pat_ty(pat_id);
                 let local = self.new_local(ty, Some(name), span);
                 self.push_stmt(StatementKind::StorageLive(local), span);
-                let operand = self.operand_for_place(place, ty);
-                self.assign(Place::from_local(local), Rvalue::Use(operand), span);
+                let rvalue = match adjust.mode {
+                    BindingMode::Ref => Rvalue::Ref {
+                        mutability: Mutability::Immutable,
+                        place,
+                    },
+                    BindingMode::RefMut => Rvalue::Ref {
+                        mutability: Mutability::Mutable,
+                        place,
+                    },
+                    BindingMode::Value => {
+                        Rvalue::Use(self.operand_for_place(place, ty))
+                    }
+                };
+                self.assign(Place::from_local(local), rvalue, span);
                 self.bind_local(pat_id, local);
                 self.register_exit_obligation(ExitObligation::StorageDead(local));
             }
@@ -346,12 +364,14 @@ impl<'a> BodyLowerCtx<'a> {
                         panic!("mir::lower: integer pattern literal does not parse")
                     }),
             ),
-            Literal::Float { .. } => {
-                panic!("mir::lower: a float pattern literal is not yet implemented")
-            }
-            Literal::Str(_) => {
-                panic!("mir::lower: a string pattern literal is not yet implemented")
-            }
+            Literal::Float { value, .. } => ConstKind::Float(
+                crate::ast::interner::Interner::resolve(value)
+                    .parse()
+                    .unwrap_or_else(|_| panic!("mir::lower: float pattern literal does not parse")),
+            ),
+            // Typeck rejects a string literal pattern (no runtime string-equality lowering
+            // exists for `str`), so none reach here.
+            Literal::Str(_) => unreachable!("typeck rejects string literal patterns"),
             Literal::Bool(b) => ConstKind::Bool(b),
             Literal::Char(c) => ConstKind::Char(c),
         };

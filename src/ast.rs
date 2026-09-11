@@ -7,13 +7,15 @@ mod node_id;
 mod type_impls;
 pub mod visit;
 
-use std::collections::HashMap;
+use crate::ast::builder::AstBuilder;
+use crate::ast::interner::Interner;
+use crate::diagnostics::parser::report_duplicate_module;
+use crate::driver::source::SrcSpan;
+use crate::lexer::token::Token;
 
-use builder::AstBuilder;
 pub use interner::Symbol;
 pub use node_id::NodeId;
-
-use crate::driver::source::SrcSpan;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Ast {
@@ -55,6 +57,22 @@ pub struct Ident {
     pub span: SrcSpan,
 }
 
+impl Ident {
+    pub fn of_token(token: Token) -> Ident {
+        Ident {
+            text: Interner::intern(&token.text()),
+            span: token.span,
+        }
+    }
+
+    pub fn self_kw(span: SrcSpan) -> Ident {
+        Ident {
+            text: Interner::intern("Self"),
+            span,
+        }
+    }
+}
+
 /// A name that may be qualified with `::`, such as `math::Vector2D`.
 #[derive(Clone, Debug)]
 pub struct Path {
@@ -84,6 +102,12 @@ impl std::hash::Hash for Path {
     }
 }
 
+impl Path {
+    pub fn self_kw(span: SrcSpan) -> Path {
+        Path::from(Ident::self_kw(span))
+    }
+}
+
 // ===========================================================================
 // Items
 // ===========================================================================
@@ -98,11 +122,52 @@ pub struct ParsedSrcFile {
     pub span: SrcSpan,
 }
 
+impl ParsedSrcFile {
+    pub(crate) fn from_items(items: Vec<Item>, file_offset: usize) -> ParsedSrcFile {
+        let span = match (items.first(), items.last()) {
+            (Some(first), Some(last)) => first.span.merge(last.span),
+            _ => SrcSpan::new(file_offset, file_offset),
+        };
+
+        let mut module = None;
+        let mut imports = Vec::new();
+        let mut definitions = Vec::new();
+
+        for item in items {
+            match item.kind {
+                ItemKind::ModuleDecl(decl) => match module {
+                    None => module = Some(decl),
+                    Some(_) => report_duplicate_module(item.span),
+                },
+                ItemKind::Import(import) => imports.push(import),
+                _ => definitions.push(item),
+            }
+        }
+
+        ParsedSrcFile {
+            module,
+            imports,
+            items: definitions,
+            span,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Item {
     pub id: NodeId,
     pub kind: ItemKind,
     pub span: SrcSpan,
+}
+
+impl Item {
+    pub fn new(kind: ItemKind, span: SrcSpan) -> Item {
+        Item {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -151,7 +216,7 @@ pub struct Function {
 pub struct Struct {
     pub visibility: Visibility,
     pub name: Ident,
-    pub generics: Option<Vec<Generic>>,
+    pub generics: Vec<Generic>,
     pub fields: Vec<Field>,
     pub span: SrcSpan,
 }
@@ -160,7 +225,7 @@ pub struct Struct {
 pub struct Enum {
     pub visibility: Visibility,
     pub name: Ident,
-    pub generics: Option<Vec<Generic>>,
+    pub generics: Vec<Generic>,
     pub variants: Vec<Variant>,
     pub span: SrcSpan,
 }
@@ -169,7 +234,7 @@ pub struct Enum {
 pub struct Trait {
     pub visibility: Visibility,
     pub name: Ident,
-    pub generics: Option<Vec<Generic>>,
+    pub generics: Vec<Generic>,
     pub functions: Vec<Function>,
     pub span: SrcSpan,
 }
@@ -178,7 +243,7 @@ pub struct Trait {
 #[derive(Clone, Debug)]
 pub struct Extend {
     /// The type parameters the `extend` block itself introduces, from `extend<T>`.
-    pub extend_generics: Option<Vec<Generic>>,
+    pub extend_generics: Vec<Generic>,
     /// The extended type itself, from `Foo<T>` (or `(T, U)`, `&T`, `i32`, ...).
     pub self_ty: Ty,
     /// The optional `with`-clause trait's generic arguments, from `with Bar<T>`.
@@ -216,7 +281,14 @@ pub enum SelfMode {
 pub struct Generic {
     pub id: NodeId,
     pub name: Ident,
-    pub bounds: Option<Vec<Path>>,
+    pub bounds: Option<Vec<Bound>>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Bound {
+    pub path: Path,
+    pub args: Vec<Ty>,
     pub span: SrcSpan,
 }
 
@@ -274,12 +346,23 @@ pub struct Ty {
     pub span: SrcSpan,
 }
 
+impl Ty {
+    pub fn new(kind: TyKind, span: SrcSpan) -> Ty {
+        Ty {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum TyKind {
     Path {
         path: Path,
         args: Vec<Ty>,
     },
+    SelfTy,
     Ref {
         base: Box<Ty>,
         mutability: Mutability,
@@ -311,6 +394,16 @@ pub struct Stmt {
     pub id: NodeId,
     pub kind: StmtKind,
     pub span: SrcSpan,
+}
+
+impl Stmt {
+    pub fn new(kind: StmtKind, span: SrcSpan) -> Stmt {
+        Stmt {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -383,6 +476,7 @@ pub struct Expr {
 pub enum ExprKind {
     Literal(Literal),
     Path(Path),
+    SelfKw,
     Unary {
         op: UnaryOp,
         operand: Box<Expr>,
@@ -542,12 +636,19 @@ pub struct Block {
     pub span: SrcSpan,
 }
 
+impl Block {
+    pub fn new(stmts: Vec<Stmt>, span: SrcSpan) -> Block {
+        Block {
+            id: NodeId::next(),
+            stmts,
+            span,
+        }
+    }
+}
+
 impl ExprKind {
     /// Reports whether this expression already ends in a `}`, such as `if`, `match`, or a
     /// bare block.
-    ///
-    /// The parser uses this to decide whether an expression statement needs a trailing `;`:
-    /// block-bodied expressions don't.
     pub fn is_block_bodied(&self) -> bool {
         matches!(
             self,
@@ -573,13 +674,6 @@ pub enum Payload<T> {
     Record(Vec<PayloadField<T>>),
 }
 
-/// `AccessArgs` describes how an access was written.
-///
-/// As the grammar is ambiguous in this case, the parser can't yet tell a field access, a
-/// method call, and a payload-carrying variant construction apart. Two later passes settle it:
-/// name resolution decides whether `base` names a type or a value -- a base naming a type makes
-/// the access a variant reached through its enum, as in `Shape.circle(1.0)` -- and, for a base
-/// naming a value, typeck picks between a field and a method once that value's type is known.
 #[derive(Clone, Debug)]
 pub enum AccessArgs {
     /// `base.member`. This could be a field, a payload-less variant, or a method referenced as
@@ -624,6 +718,16 @@ pub struct Pat {
     pub span: SrcSpan,
 }
 
+impl Pat {
+    pub fn new(kind: PatKind, span: SrcSpan) -> Pat {
+        Pat {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum PatKind {
     Wildcard,
@@ -641,7 +745,7 @@ pub enum PatKind {
 
 impl Ast {
     /// Collects every parsed file of a build into one module tree.
-    pub fn new(files: Vec<ParsedSrcFile>) -> Ast {
+    pub fn from(files: Vec<ParsedSrcFile>) -> Ast {
         let mut builder = AstBuilder::new();
         for file in files {
             let module = match &file.module {

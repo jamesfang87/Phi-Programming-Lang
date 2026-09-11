@@ -1,7 +1,9 @@
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
-use crate::ast::{Expr, ExprKind, Ident, Literal, NodeId, Pat, PatKind, Payload, PayloadField};
+use crate::ast::{
+    Expr, ExprKind, Ident, NodeId, Pat, PatKind, Payload, PayloadField,
+};
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -15,41 +17,18 @@ impl Parser {
             |pattern: Recursive<dyn ChumskyParser<'a, &'a [Token], Pat, Extra<'a>>>| {
                 let wildcard = self
                     .kind(TokenKind::Wildcard)
-                    .map(|t: Token| Pat {
-                        id: NodeId::next(),
-                        kind: PatKind::Wildcard,
-                        span: t.span,
-                    })
+                    .map(|t: Token| Pat::new(PatKind::Wildcard, t.span))
                     .boxed();
 
-                let literal = choice((
-                    self.kind(TokenKind::IntLiteral).map(Expr::int),
-                    self.kind(TokenKind::FloatLiteral).map(Expr::float),
-                    self.kind(TokenKind::StrLiteral).map(Expr::string),
-                    self.kind(TokenKind::CharLiteral).map(Expr::char),
-                    self.kind(TokenKind::TrueKw).map(|t: Token| Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Literal(Literal::Bool(true)),
-                        span: t.span,
-                    }),
-                    self.kind(TokenKind::FalseKw).map(|t: Token| Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Literal(Literal::Bool(false)),
-                        span: t.span,
-                    }),
-                ))
-                .map(|e: Expr| {
-                    let lit = match e.kind {
-                        ExprKind::Literal(lit) => lit,
-                        _ => unreachable!("literal parsers only ever produce `ExprKind::Literal`"),
-                    };
-                    Pat {
-                        id: NodeId::next(),
-                        kind: PatKind::Literal(lit),
-                        span: e.span,
-                    }
-                })
-                .boxed();
+                let literal = self
+                    .literal_parser()
+                    .map(|e: Expr| {
+                        let ExprKind::Literal(lit) = e.kind else {
+                            unreachable!("`literal_parser` only ever produces `ExprKind::Literal`")
+                        };
+                        Pat::new(PatKind::Literal(lit), e.span)
+                    })
+                    .boxed();
 
                 let tuple = self
                     .kind(TokenKind::OpenParen)
@@ -61,17 +40,15 @@ impl Parser {
                             .collect::<Vec<_>>(),
                     )
                     .then(self.kind(TokenKind::CloseParen))
-                    .map(|((open_tok, pats), close_tok)| Pat {
-                        id: NodeId::next(),
-                        kind: PatKind::Tuple(pats),
-                        span: open_tok.span.merge(close_tok.span),
+                    .map(|((open_tok, pats), close_tok)| {
+                        Pat::new(PatKind::Tuple(pats), open_tok.span.merge(close_tok.span))
                     })
                     .boxed();
 
                 // `{ l }` binds the field to its own name
                 // `{ l: <pat> }` allows for further destructuring with a nested pattern
-                let payload_field = ident
-                    .clone()
+                let payload_field = self
+                    .ident_parser()
                     .then(
                         self.kind(TokenKind::Colon)
                             .ignore_then(pattern.clone())
@@ -79,7 +56,7 @@ impl Parser {
                     )
                     .map(|(name, value)| {
                         let span = match &value {
-                            Some(pat) => name.span.merge(pat.span),
+                            Some(value) => name.span.merge(value.span),
                             None => name.span,
                         };
                         PayloadField {
@@ -124,21 +101,13 @@ impl Parser {
                             }
                             None => (Payload::None, dot_tok.span.merge(variant.span)),
                         };
-                        Pat {
-                            id: NodeId::next(),
-                            kind: PatKind::Variant { variant, payload },
-                            span,
-                        }
+                        Pat::new(PatKind::Variant { variant, payload }, span)
                     })
                     .boxed();
 
                 let binding = ident
                     .clone()
-                    .map(|name: Ident| Pat {
-                        id: NodeId::next(),
-                        kind: PatKind::Binding(name),
-                        span: name.span,
-                    })
+                    .map(|name: Ident| Pat::new(PatKind::Binding(name), name.span))
                     .boxed();
 
                 choice((wildcard, literal, tuple, variant, binding)).labelled("a pattern")
@@ -152,6 +121,7 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::ast::interner::Interner;
+    use crate::ast::{Literal, PayloadField};
     use crate::testing::lex_src;
 
     /// The single pattern a `Payload::Single` holds, or a panic.

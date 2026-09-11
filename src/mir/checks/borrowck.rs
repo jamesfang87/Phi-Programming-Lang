@@ -1,4 +1,3 @@
-use crate::hir::Hir;
 use crate::mir::lower::Mir;
 use crate::mir::{Local, Place, Projection};
 use crate::typeck::tyctx::TyCtx;
@@ -52,9 +51,9 @@ pub(crate) fn element_of_array(place: &Place) -> bool {
     })
 }
 
-pub fn check(hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
+pub fn check(tcx: &mut TyCtx, mir: &Mir) {
     definite_init::check(mir);
     exclusivity::check(mir);
     element_moves::check(tcx, mir);
-    captures::check(hir, tcx, mir);
+    captures::check(tcx, mir);
 }

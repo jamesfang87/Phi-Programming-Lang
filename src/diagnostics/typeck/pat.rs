@@ -15,6 +15,14 @@ pub fn report_literal_pattern_mismatch(cx: DisplayCx<'_>, err: UnifyError, span:
     );
 }
 
+pub fn report_string_pattern_unsupported(span: SrcSpan) {
+    DiagCtx::emit(
+        Diagnostic::error("string literal patterns are not supported", span)
+            .with_label("a string cannot be matched by value")
+            .with_help("bind the value with a binding or variant pattern, then compare it"),
+    );
+}
+
 pub fn report_tuple_pattern_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
     DiagCtx::emit(
         Diagnostic::error(cx.show(err).to_string(), span)

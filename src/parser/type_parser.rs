@@ -2,12 +2,13 @@ use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
 use crate::ast::Mutability;
-use crate::ast::interner::Interner;
-use crate::ast::{Expr, Ident, NodeId, Path, Ty, TyKind};
+use crate::ast::{Expr, Path, Ty, TyKind};
 
 use crate::lexer::token::{Token, TokenKind};
 
 use super::{BoxedP, Extra, Parser};
+
+type TypeArgList = Option<(Vec<Ty>, Token)>;
 
 impl Parser {
     pub fn type_parser<'a>(&'a self) -> BoxedP<'a, Ty> {
@@ -45,7 +46,7 @@ impl Parser {
                 let path_ty = self
                     .path_parser()
                     .then(
-                        self.kind(TokenKind::OpenCaret)
+                        self.kind(TokenKind::OpenAngle)
                             .ignore_then(
                                 ty.clone()
                                     .separated_by(self.kind(TokenKind::Comma))
@@ -53,20 +54,16 @@ impl Parser {
                                     .at_least(1)
                                     .collect::<Vec<_>>(),
                             )
-                            .then(self.kind(TokenKind::CloseCaret))
+                            .then(self.kind(TokenKind::CloseAngle))
                             .or_not(),
                     )
-                    .map(|(p, args): (Path, Option<(Vec<Ty>, Token)>)| {
+                    .map(|(p, args): (Path, TypeArgList)| {
                         let (args, span) = match args {
                             Some((args, close_tok)) => (args, p.span.merge(close_tok.span)),
                             None => (Vec::new(), p.span),
                         };
 
-                        Ty {
-                            id: NodeId::next(),
-                            span,
-                            kind: TyKind::Path { path: p, args },
-                        }
+                        Ty::new(TyKind::Path { path: p, args }, span)
                     })
                     .boxed();
 
@@ -74,20 +71,7 @@ impl Parser {
                     .kind(TokenKind::UpperSelfKw)
                     .map(|self_tok| {
                         let span = self_tok.span;
-                        Ty {
-                            id: NodeId::next(),
-                            span,
-                            kind: TyKind::Path {
-                                path: Path {
-                                    segments: vec![Ident {
-                                        text: Interner::intern("Self"),
-                                        span,
-                                    }],
-                                    span,
-                                },
-                                args: Vec::new(),
-                            },
-                        }
+                        Ty::new(TyKind::SelfTy, span)
                     })
                     .boxed();
 
@@ -96,14 +80,16 @@ impl Parser {
                     .then(
                         ty.clone()
                             .separated_by(self.kind(TokenKind::Comma))
+                            .allow_trailing()
                             .at_least(1)
                             .collect::<Vec<_>>(),
                     )
                     .then(self.kind(TokenKind::CloseParen))
-                    .map(|((open_tok, inside_types), close_tok)| Ty {
-                        id: NodeId::next(),
-                        span: open_tok.span.merge(close_tok.span),
-                        kind: TyKind::Tuple(inside_types.into_iter().collect::<Vec<_>>()),
+                    .map(|((open_tok, inside_types), close_tok)| {
+                        Ty::new(
+                            TyKind::Tuple(inside_types.into_iter().collect::<Vec<_>>()),
+                            open_tok.span.merge(close_tok.span),
+                        )
                     })
                     .boxed();
 
@@ -116,13 +102,14 @@ impl Parser {
                             .or_not(),
                     )
                     .then(self.kind(TokenKind::CloseBracket))
-                    .map(|(((open_tok, elem_ty), len), close_tok)| Ty {
-                        id: NodeId::next(),
-                        span: open_tok.span.merge(close_tok.span),
-                        kind: TyKind::Array {
-                            elem: Box::new(elem_ty),
-                            len: len.map(Box::new),
-                        },
+                    .map(|(((open_tok, elem_ty), len), close_tok)| {
+                        Ty::new(
+                            TyKind::Array {
+                                elem: Box::new(elem_ty),
+                                len: len.map(Box::new),
+                            },
+                            open_tok.span.merge(close_tok.span),
+                        )
                     })
                     .boxed();
 
@@ -138,10 +125,9 @@ impl Parser {
                 let any_ty = self
                     .kind(TokenKind::AnyKw)
                     .then(any_target)
-                    .map(|(any_tok, inner_ty)| Ty {
-                        id: NodeId::next(),
-                        span: any_tok.span.merge(inner_ty.span),
-                        kind: TyKind::Any(Box::new(inner_ty)),
+                    .map(|(any_tok, inner_ty)| {
+                        let span = any_tok.span.merge(inner_ty.span);
+                        Ty::new(TyKind::Any(Box::new(inner_ty)), span)
                     })
                     .boxed();
 
@@ -149,7 +135,7 @@ impl Parser {
                     .kind(TokenKind::DynKw)
                     .then(self.path_parser())
                     .then(
-                        self.kind(TokenKind::OpenCaret)
+                        self.kind(TokenKind::OpenAngle)
                             .ignore_then(
                                 ty.clone()
                                     .separated_by(self.kind(TokenKind::Comma))
@@ -157,23 +143,17 @@ impl Parser {
                                     .at_least(1)
                                     .collect::<Vec<_>>(),
                             )
-                            .then(self.kind(TokenKind::CloseCaret))
+                            .then(self.kind(TokenKind::CloseAngle))
                             .or_not(),
                     )
-                    .map(
-                        |((dyn_tok, path), args): ((Token, Path), Option<(Vec<Ty>, Token)>)| {
-                            let (args, end) = match args {
-                                Some((args, close_tok)) => (args, close_tok.span),
-                                None => (Vec::new(), path.span),
-                            };
+                    .map(|((dyn_tok, path), args): ((Token, Path), TypeArgList)| {
+                        let (args, end) = match args {
+                            Some((args, close_tok)) => (args, close_tok.span),
+                            None => (Vec::new(), path.span),
+                        };
 
-                            Ty {
-                                id: NodeId::next(),
-                                span: dyn_tok.span.merge(end),
-                                kind: TyKind::Dyn { path, args },
-                            }
-                        },
-                    )
+                        Ty::new(TyKind::Dyn { path, args }, dyn_tok.span.merge(end))
+                    })
                     .boxed();
 
                 let fun_ty = self
@@ -192,20 +172,16 @@ impl Parser {
                             Some(ret) => ret.span,
                             None => close_tok.span,
                         };
-                        Ty {
-                            id: NodeId::next(),
-                            span: fun_tok.span.merge(end_span),
-                            kind: TyKind::Function {
+                        Ty::new(
+                            TyKind::Function {
                                 params: params.into_iter().collect(),
                                 ret: ret.map(Box::new),
                             },
-                        }
+                            fun_tok.span.merge(end_span),
+                        )
                     })
                     .boxed();
 
-                // `iso` is this language's owning pointer, the counterpart of Rust's `Box`, so
-                // it takes a `dyn Trait` target too: `iso dyn Trait` is `Box<dyn Trait>`, the
-                // usual way an unsized trait object is owned rather than borrowed.
                 let iso_target = choice((
                     self_ty.clone(),
                     primitive_ty.clone(),
@@ -219,19 +195,12 @@ impl Parser {
                 let iso_ty = self
                     .kind(TokenKind::IsoKw)
                     .then(iso_target)
-                    .map(|(iso_tok, inner_ty)| Ty {
-                        id: NodeId::next(),
-                        span: iso_tok.span.merge(inner_ty.span),
-                        kind: TyKind::Iso(Box::new(inner_ty)),
+                    .map(|(iso_tok, inner_ty)| {
+                        let span = iso_tok.span.merge(inner_ty.span);
+                        Ty::new(TyKind::Iso(Box::new(inner_ty)), span)
                     })
                     .boxed();
 
-                // A reference may wrap another reference (`&&T`, i.e. `TyKind::Ref { base: Ref {
-                // .. }, .. }`) -- `ref_target` recurses into `ref_ty` for that. It may not wrap
-                // `any` (`any` already composes the other way, as `&any T`, so `& &T` on top of
-                // `any` would only ever add a redundant indirection). Everything else -- `dyn`,
-                // `iso`, a function type, a primitive, a path, a tuple, or an array -- is a
-                // valid reference target.
                 let ref_ty = recursive(
                     |ref_ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Ty, Extra<'a>>>| {
                         let ref_target = choice((
@@ -258,21 +227,17 @@ impl Parser {
                                     Mutability::Immutable
                                 };
 
-                                Ty {
-                                    id: NodeId::next(),
-                                    span: amp_tok.span.merge(ty.span),
-                                    kind: TyKind::Ref {
+                                let span = amp_tok.span.merge(ty.span);
+                                Ty::new(
+                                    TyKind::Ref {
                                         base: Box::new(ty),
                                         mutability,
                                     },
-                                }
+                                    span,
+                                )
                             })
                             .boxed();
 
-                        // The lexer tokenizes `&&` as one `DoubleAmp` token (it doubles as the
-                        // logical-and operator in expression position), so `&&T` never reaches
-                        // `single_amp` above as two separate `Amp` tokens -- this branch splits
-                        // it back into the two reference layers `&&T` denotes.
                         let double_amp = self
                             .kind(TokenKind::DoubleAmp)
                             .then(self.kind(TokenKind::MutKw).or_not())
@@ -284,23 +249,23 @@ impl Parser {
                                     Mutability::Immutable
                                 };
 
-                                let inner = Ty {
-                                    id: NodeId::next(),
-                                    span: amp_tok.span.merge(ty.span),
-                                    kind: TyKind::Ref {
+                                let inner_span = amp_tok.span.merge(ty.span);
+                                let inner = Ty::new(
+                                    TyKind::Ref {
                                         base: Box::new(ty),
                                         mutability: inner_mutability,
                                     },
-                                };
+                                    inner_span,
+                                );
 
-                                Ty {
-                                    id: NodeId::next(),
-                                    span: amp_tok.span.merge(inner.span),
-                                    kind: TyKind::Ref {
+                                let outer_span = amp_tok.span.merge(inner.span);
+                                Ty::new(
+                                    TyKind::Ref {
                                         base: Box::new(inner),
                                         mutability: Mutability::Immutable,
                                     },
-                                }
+                                    outer_span,
+                                )
                             })
                             .boxed();
 
@@ -411,7 +376,7 @@ mod tests {
         }
     }
 
-    /// `>>` is two `CloseCaret` tokens rather than a shift, so a nested argument list needs no
+    /// `>>` is two `CloseAngle` tokens rather than a shift, so a nested argument list needs no
     /// special handling to close.
     #[test]
     fn parses_nested_generic_args() {
@@ -502,14 +467,9 @@ mod tests {
     }
 
     #[test]
-    fn self_type_parses_as_a_single_segment_path() {
+    fn self_type_parses_as_its_own_kind() {
         let ty = parse_ty("Self");
-        let TyKind::Path { path, args } = &ty.kind else {
-            panic!("expected `Self` to parse as a path, got {:?}", ty.kind);
-        };
-        assert_eq!(path.segments.len(), 1);
-        assert_eq!(Interner::resolve(path.segments[0].text), "Self");
-        assert!(args.is_empty());
+        assert!(matches!(ty.kind, TyKind::SelfTy));
     }
 
     #[test]
@@ -523,6 +483,23 @@ mod tests {
             }
             other => panic!("expected a tuple type, got {other:?}"),
         }
+    }
+
+    /// A one-element tuple type needs the trailing comma, mirroring the expression and
+    /// pattern grammars: `(T,)` is a tuple, `(T)` is just `T`.
+    #[test]
+    fn parses_one_element_tuple_type_with_trailing_comma() {
+        let ty = parse_ty("(i32,)");
+        match &ty.kind {
+            TyKind::Tuple(types) => assert_eq!(types.len(), 1),
+            other => panic!("expected a tuple type, got {other:?}"),
+        }
+    }
+
+    /// The trailing comma alone is not a type: parens around nothing are not a tuple here.
+    #[test]
+    fn rejects_empty_tuple_type() {
+        assert_eq!(diagnostic_count("()"), 1);
     }
 
     #[test]
@@ -713,14 +690,7 @@ mod tests {
     fn parses_any_self_type() {
         let ty = parse_ty("any Self");
         match &ty.kind {
-            TyKind::Any(inner) => match &inner.kind {
-                TyKind::Path { path, args } => {
-                    assert_eq!(path.segments.len(), 1);
-                    assert_eq!(Interner::resolve(path.segments[0].text), "Self");
-                    assert!(args.is_empty());
-                }
-                other => panic!("expected `Self` to parse as a path, got {other:?}"),
-            },
+            TyKind::Any(inner) => assert!(matches!(inner.kind, TyKind::SelfTy)),
             other => panic!("expected an any type, got {other:?}"),
         }
     }

@@ -9,7 +9,7 @@ use crate::nameres::res::Res;
 #[derive(Debug, Default)]
 pub struct NameResolutions {
     paths: HashMap<NodeId, SmallVec<[(Path, Res); 2]>>,
-    lang_items: LangItems,
+    pub lang_items: LangItems,
 }
 
 impl NameResolutions {
@@ -34,17 +34,7 @@ impl NameResolutions {
             .map(|(_, res)| *res)
     }
 
-    /// This returns every (Path, Res) pair for a NodeId `owner`.
-    /// If there are none, then this is empty
     pub fn entries(&self, owner: NodeId) -> &[(Path, Res)] {
         self.paths.get(&owner).map_or(&[], |v| v.as_slice())
-    }
-
-    pub fn record_lang_items(&mut self, lang_items: LangItems) {
-        self.lang_items = lang_items;
-    }
-
-    pub fn lang_items(&self) -> &LangItems {
-        &self.lang_items
     }
 }

@@ -5,40 +5,19 @@ use chumsky::recursive::Indirect;
 
 use crate::ast::{
     AccessArgs, Arm, BinaryOp, Block, ClosureParam, Expr, ExprKind, Ident, Literal, Mutability,
-    NodeId, Path, Payload, PayloadField, Stmt, StmtKind, UnaryOp, WithLend,
+    NodeId, Pat, Path, Payload, PayloadField, Stmt, StmtKind, Ty, UnaryOp, WithLend,
 };
 
 use crate::ast::interner::Interner;
-use crate::driver::source::{SrcMap, SrcSpan};
+use crate::driver::source::SrcSpan;
+use crate::lexer::literal::strip_digit_separators;
 use crate::lexer::token::{Token, TokenKind};
 
-use super::{BoxedP, Extra, Parser, Stop};
+use super::{
+    BoxedP, BraceForms, Extra, Parser, recovery::STATEMENT_RECOVERY, recovery::recover_by_skipping,
+};
 
-/// Builds the `.some(<bound>)` or `.none` variant expression for one optional range endpoint.
-/// `span` is the endpoint's own span when it's present, and the range's overall span when it was
-/// omitted (there is no real source location to point at for an implicit `.none`).
-fn range_bound_variant(bound: Option<Expr>, span: SrcSpan) -> Expr {
-    let (name, payload) = match bound {
-        Some(value) => ("some", Payload::Single(Box::new(value))),
-        None => ("none", Payload::None),
-    };
-    Expr {
-        id: NodeId::next(),
-        kind: ExprKind::Variant {
-            variant: Ident {
-                text: Interner::intern(name),
-                span,
-            },
-            payload,
-        },
-        span,
-    }
-}
-
-/// Desugars `lo..hi` (or, with `inclusive` set, `lo..=hi`) into the `std::range::Range { .. }`
-/// construction a user could have written directly, so nothing past parsing needs to know range
-/// syntax exists: nameres resolves `std::range::Range` the same way it would an explicit path,
-/// and typeck/MIR lowering see an ordinary struct literal.
+/// Desugars range literals (ex: `lo..hi`) into explict construction (ex: `std::range::Range { .. }`)
 fn desugar_range(lo: Option<Expr>, hi: Option<Expr>, inclusive: bool, span: SrcSpan) -> Expr {
     let field = |name: &str, value: Expr| PayloadField {
         id: NodeId::next(),
@@ -66,8 +45,8 @@ fn desugar_range(lo: Option<Expr>, hi: Option<Expr>, inclusive: bool, span: SrcS
         kind: ExprKind::Ctor {
             path: Some(path),
             payload: vec![
-                field("left", range_bound_variant(lo, lo_span)),
-                field("right", range_bound_variant(hi, hi_span)),
+                field("left", Expr::range_bound_variant(lo, lo_span)),
+                field("right", Expr::range_bound_variant(hi, hi_span)),
                 field(
                     "inclusive",
                     Expr {
@@ -82,1337 +61,1262 @@ fn desugar_range(lo: Option<Expr>, hi: Option<Expr>, inclusive: bool, span: SrcS
     }
 }
 
-/// Maps a token to where statement recovery stops, for the `stmt` parser below.
-///
-/// The keywords listed are the ones a statement can begin with. A `;` is consumed rather than
-/// left behind, since it terminates the statement being discarded and would otherwise be read as
-/// the start of the next one.
-fn statement_recovery_point(kind: TokenKind) -> Option<Stop> {
-    match kind {
-        TokenKind::Semicolon => Some(Stop::After),
-        TokenKind::LetKw
-        | TokenKind::ReturnKw
-        | TokenKind::WhileKw
-        | TokenKind::ForKw
-        | TokenKind::IfKw
-        | TokenKind::MatchKw
-        | TokenKind::BreakKw
-        | TokenKind::ContinueKw
-        | TokenKind::DeferKw
-        | TokenKind::WithKw => Some(Stop::Before),
-        _ => None,
-    }
-}
-
 type ExprRec<'a> = Recursive<Indirect<'a, 'a, &'a [Token], Expr, Extra<'a>>>;
 type BlockRec<'a> = Recursive<Indirect<'a, 'a, &'a [Token], Block, Extra<'a>>>;
-
-/// Whether a bare `{` after an expression may open a struct literal or record payload.
-///
-/// `Deny` is used for condition and scrutinee positions, where a `{` must instead start the
-/// following block (e.g. `if Foo { x }` treats `Foo` as a value, not a struct literal).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BraceForms {
-    Allow,
-    Deny,
-}
-
 impl Parser {
     /// Parses a single expression.
     pub fn expr_parser<'a>(&'a self) -> BoxedP<'a, Expr> {
         self.expr_and_block_parsers().0
     }
 
-    /// Builds the mutually recursive expression and block parsers together, returning
-    /// `(expr_parser, block_parser)`.
-    ///
-    /// They are required by chumsky to be built together since each recurses into the other.
+    pub(crate) fn literal_parser<'a>(&'a self) -> BoxedP<'a, Expr> {
+        choice((
+            self.kind(TokenKind::IntLiteral).map(Expr::int),
+            self.kind(TokenKind::FloatLiteral).map(Expr::float),
+            self.kind(TokenKind::StrLiteral).map(Expr::string),
+            self.kind(TokenKind::CharLiteral).map(Expr::char),
+            self.kind(TokenKind::TrueKw).map(Expr::bool_literal(true)),
+            self.kind(TokenKind::FalseKw).map(Expr::bool_literal(false)),
+        ))
+        .boxed()
+    }
+
+    fn self_expr_parser<'a>(&'a self) -> BoxedP<'a, Expr> {
+        self.kind(TokenKind::LowerSelfKw)
+            .map(|t: Token| {
+                let name = Ident::of_token(t);
+                Expr::new(
+                    ExprKind::Path(Path {
+                        segments: vec![name],
+                        span: t.span,
+                    }),
+                    t.span,
+                )
+            })
+            .boxed()
+    }
+
+    fn self_kw_parser<'a>(&'a self) -> BoxedP<'a, Expr> {
+        self.kind(TokenKind::UpperSelfKw)
+            .map(|t: Token| Expr::new(ExprKind::SelfKw, t.span))
+            .boxed()
+    }
+
     pub(crate) fn expr_and_block_parsers<'a>(&'a self) -> (BoxedP<'a, Expr>, BoxedP<'a, Block>) {
         let mut expr: ExprRec<'a> = Recursive::declare();
-        // `expr` with brace forms denied. Used for condition and scrutinee positions.
-        let mut expr_ns: ExprRec<'a> = Recursive::declare();
+        let mut expr_without_brace_forms: ExprRec<'a> = Recursive::declare();
         let mut block: BlockRec<'a> = Recursive::declare();
 
-        let path = self.path_parser();
-        let ident = self.ident_parser();
-        let pattern = self.pattern_parser();
+        let grammar = Grammar {
+            parser: self,
+            expr: expr.clone(),
+            expr_without_brace_forms: expr_without_brace_forms.clone(),
+            block: block.clone(),
+            path: self.path_parser(),
+            ident: self.ident_parser(),
+            pattern: self.pattern_parser(),
+        };
 
-        // The else branch is used for both statements (let-else) and exprs
-        // (if expr)
-        let else_expr = self
+        expr.define(
+            grammar
+                .expression_parser(BraceForms::Allow)
+                .labelled("an expression"),
+        );
+        expr_without_brace_forms.define(
+            grammar
+                .expression_parser(BraceForms::Deny)
+                .labelled("an expression"),
+        );
+        block.define(grammar.block_parser().labelled("a block"));
+
+        (expr.boxed(), block.boxed())
+    }
+}
+
+struct Grammar<'a> {
+    parser: &'a Parser,
+    expr: ExprRec<'a>,
+    expr_without_brace_forms: ExprRec<'a>,
+    block: BlockRec<'a>,
+    path: BoxedP<'a, Path>,
+    ident: BoxedP<'a, Ident>,
+    pattern: BoxedP<'a, Pat>,
+}
+
+enum Postfix {
+    Access(Ident, AccessArgs),
+    TupleFieldPair(Ident, Ident),
+    Index(Expr),
+    Try,
+}
+
+enum Prefix {
+    Unary(UnaryOp),
+    Borrow(Mutability),
+}
+
+impl<'a> Grammar<'a> {
+    /// Turns off one alternative of a `choice` without changing the choice's shape.
+    fn never<O: 'a>(&self) -> BoxedP<'a, O> {
+        any()
+            .filter(|_: &Token| false)
+            .map(|_| unreachable!("`never` matches nothing, so nothing is ever mapped"))
+            .boxed()
+    }
+
+    fn brace_gated<O: 'a>(&self, braces: BraceForms, parser: BoxedP<'a, O>) -> BoxedP<'a, O> {
+        match braces {
+            BraceForms::Allow => parser,
+            BraceForms::Deny => self.never(),
+        }
+    }
+
+    fn type_parser(&self) -> BoxedP<'a, Ty> {
+        self.parser.type_parser_with_expr(self.expr.clone().boxed())
+    }
+
+    fn else_expr(&self) -> BoxedP<'a, Option<Expr>> {
+        self.parser
             .kind(TokenKind::ElseKw)
             .ignore_then(choice((
-                block.clone().map(|b: Block| {
+                self.block.clone().map(|b: Block| {
                     let span = b.span;
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Block(b),
-                        span,
-                    }
+                    Expr::new(ExprKind::Block(b), span)
                 }),
-                expr.clone(),
+                self.expr.clone(),
             )))
             .or_not()
-            .boxed();
+            .boxed()
+    }
 
-        let expr_body = |braces: BraceForms| {
-            let expr = expr.clone();
-            let expr_ns = expr_ns.clone();
-            let block = block.clone();
-            let type_p = self.type_parser_with_expr(expr.clone().boxed());
-
-            let literal = choice((
-                self.kind(TokenKind::IntLiteral).map(Expr::int),
-                self.kind(TokenKind::FloatLiteral).map(Expr::float),
-                self.kind(TokenKind::StrLiteral).map(Expr::string),
-                self.kind(TokenKind::CharLiteral).map(Expr::char),
-                self.kind(TokenKind::TrueKw).map(|t: Token| Expr {
-                    id: NodeId::next(),
-                    kind: ExprKind::Literal(Literal::Bool(true)),
-                    span: t.span,
-                }),
-                self.kind(TokenKind::FalseKw).map(|t: Token| Expr {
-                    id: NodeId::next(),
-                    kind: ExprKind::Literal(Literal::Bool(false)),
-                    span: t.span,
-                }),
-            ))
-            .boxed();
-
-            // Uses `self` as a value, e.g. the `self` in `self.x` inside a method body.
-            let self_expr = self
-                .kind(TokenKind::LowerSelfKw)
-                .map(|t: Token| {
-                    let name = Ident {
-                        text: Interner::intern(
-                            &SrcMap::text_of(t.span)
-                                .expect("lexer token span should always resolve to a source file"),
-                        ),
-                        span: t.span,
-                    };
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Path(Path {
-                            segments: vec![name],
-                            span: t.span,
-                        }),
-                        span: t.span,
-                    }
-                })
-                .boxed();
-
-            // Uses `Self` as the name of a type, e.g. the `Self` in `Self.none` inside an
-            // `extend` block. It parses to the same single-segment path a written type name
-            // does, so name resolution is what tells the two apart.
-            let self_ty_expr = self
-                .kind(TokenKind::UpperSelfKw)
-                .map(|t: Token| {
-                    let name = Ident {
-                        text: Interner::intern(
-                            &SrcMap::text_of(t.span)
-                                .expect("lexer token span should always resolve to a source file"),
-                        ),
-                        span: t.span,
-                    };
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Path(Path {
-                            segments: vec![name],
-                            span: t.span,
-                        }),
-                        span: t.span,
-                    }
-                })
-                .boxed();
-
-            let call = path
-                .clone()
-                .then_ignore(self.kind(TokenKind::OpenParen))
-                .then(
-                    expr.clone()
-                        .separated_by(self.kind(TokenKind::Comma))
-                        .allow_trailing()
-                        .collect::<Vec<_>>(),
+    fn call_parser(&self) -> BoxedP<'a, Expr> {
+        self.path
+            .clone()
+            .then_ignore(self.parser.kind(TokenKind::OpenParen))
+            .then(
+                self.expr
+                    .clone()
+                    .separated_by(self.parser.kind(TokenKind::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>(),
+            )
+            .then(self.parser.kind(TokenKind::CloseParen))
+            .map(|((callee_path, args), close_tok)| {
+                let callee_span = callee_path.span;
+                let span = callee_span.merge(close_tok.span);
+                Expr::new(
+                    ExprKind::Call {
+                        callee: Box::new(Expr::new(ExprKind::Path(callee_path), callee_span)),
+                        args,
+                    },
+                    span,
                 )
-                .then(self.kind(TokenKind::CloseParen))
-                .map(|((callee_path, args), close_tok)| {
-                    let callee_span = callee_path.span;
-                    let span = callee_span.merge(close_tok.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Call {
-                            callee: Box::new(Expr {
-                                id: NodeId::next(),
-                                kind: ExprKind::Path(callee_path),
-                                span: callee_span,
-                            }),
-                            args,
-                        },
-                        span,
-                    }
-                })
-                .boxed();
+            })
+            .boxed()
+    }
 
-            let assert_expr = self
+    fn builtin_expr_parser(&self) -> BoxedP<'a, Expr> {
+        choice((
+            self.parser
                 .kind(TokenKind::Assert)
-                .then_ignore(self.kind(TokenKind::OpenParen))
-                .then(expr.clone())
+                .then_ignore(self.parser.kind(TokenKind::OpenParen))
+                .then(self.expr.clone())
                 .then(
-                    self.kind(TokenKind::Comma)
-                        .ignore_then(expr.clone())
+                    self.parser
+                        .kind(TokenKind::Comma)
+                        .ignore_then(self.expr.clone())
                         .or_not(),
                 )
-                .then(self.kind(TokenKind::CloseParen))
+                .then(self.parser.kind(TokenKind::CloseParen))
                 .map(|(((assert_tok, cond), msg), close_tok)| {
                     let span = assert_tok.span.merge(close_tok.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Assert {
+                    Expr::new(
+                        ExprKind::Assert {
                             cond: Box::new(cond),
                             msg: msg.map(Box::new),
                         },
                         span,
-                    }
-                })
-                .boxed();
-
-            let panic_expr = self
+                    )
+                }),
+            self.parser
                 .kind(TokenKind::Panic)
-                .then_ignore(self.kind(TokenKind::OpenParen))
-                .then(expr.clone().or_not())
-                .then(self.kind(TokenKind::CloseParen))
+                .then_ignore(self.parser.kind(TokenKind::OpenParen))
+                .then(self.expr.clone().or_not())
+                .then(self.parser.kind(TokenKind::CloseParen))
                 .map(|((panic_tok, msg), close_tok)| {
                     let span = panic_tok.span.merge(close_tok.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Panic {
+                    Expr::new(
+                        ExprKind::Panic {
                             msg: msg.map(Box::new),
                         },
                         span,
-                    }
-                })
-                .boxed();
-
-            let unreachable_expr = self
+                    )
+                }),
+            self.parser
                 .kind(TokenKind::Unreachable)
-                .then_ignore(self.kind(TokenKind::OpenParen))
-                .then(expr.clone().or_not())
-                .then(self.kind(TokenKind::CloseParen))
+                .then_ignore(self.parser.kind(TokenKind::OpenParen))
+                .then(self.expr.clone().or_not())
+                .then(self.parser.kind(TokenKind::CloseParen))
                 .map(|((unreachable_tok, msg), close_tok)| {
                     let span = unreachable_tok.span.merge(close_tok.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Unreachable {
+                    Expr::new(
+                        ExprKind::Unreachable {
                             msg: msg.map(Box::new),
                         },
                         span,
-                    }
-                })
-                .boxed();
+                    )
+                }),
+        ))
+        .boxed()
+    }
 
-            // This parses one field of a `Path { field: expr, ... }` struct literal, or
-            // `Path { field }` as shorthand for `Path { field: field }`.
-            let ctor_field = ident
-                .clone()
-                .then(
-                    self.kind(TokenKind::Colon)
-                        .ignore_then(expr.clone())
-                        .or_not(),
-                )
-                .map(|(name, value)| {
-                    let span = match &value {
-                        Some(e) => name.span.merge(e.span),
-                        None => name.span,
-                    };
-                    PayloadField {
-                        id: NodeId::next(),
-                        name,
-                        value,
-                        span,
-                    }
-                })
-                .boxed();
+    fn ctor_fields_parser(&self) -> BoxedP<'a, Vec<PayloadField<Expr>>> {
+        self.parser
+            .ident_parser()
+            .then(
+                self.parser
+                    .kind(TokenKind::Colon)
+                    .ignore_then(self.expr.clone())
+                    .or_not(),
+            )
+            .map(|(name, value)| {
+                let span = match &value {
+                    Some(value) => name.span.merge(value.span),
+                    None => name.span,
+                };
+                PayloadField {
+                    id: NodeId::next(),
+                    name,
+                    value,
+                    span,
+                }
+            })
+            .separated_by(self.parser.kind(TokenKind::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .boxed()
+    }
 
-            let ctor_fields = ctor_field
-                .clone()
-                .separated_by(self.kind(TokenKind::Comma))
-                .allow_trailing()
-                .collect::<Vec<_>>()
-                .boxed();
-
-            // This parses a struct literal, `Path { field: expr, ... }`, but only when
-            // `BraceForms::Allow`.
-            let ctor = match braces {
-                BraceForms::Allow => path
-                    .clone()
-                    .then_ignore(self.kind(TokenKind::OpenBrace))
-                    .then(ctor_fields.clone())
-                    .then(self.kind(TokenKind::CloseBrace))
-                    .map(|((ctor_path, payload), close_tok)| {
-                        let span = ctor_path.span.merge(close_tok.span);
-                        Expr {
+    fn record_payload_parser(&self) -> BoxedP<'a, (Vec<PayloadField<Expr>>, Token)> {
+        self.parser
+            .kind(TokenKind::OpenBrace)
+            .ignore_then(
+                self.parser
+                    .ident_parser()
+                    .then(
+                        self.parser
+                            .kind(TokenKind::Colon)
+                            .ignore_then(self.expr.clone())
+                            .or_not(),
+                    )
+                    .map(|(name, value)| {
+                        let span = match &value {
+                            Some(value) => name.span.merge(value.span),
+                            None => name.span,
+                        };
+                        PayloadField {
                             id: NodeId::next(),
-                            kind: ExprKind::Ctor {
-                                path: Some(ctor_path),
-                                payload,
-                            },
+                            name,
+                            value,
                             span,
                         }
                     })
-                    .boxed(),
-                BraceForms::Deny => self.never(),
-            };
+                    .separated_by(self.parser.kind(TokenKind::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>(),
+            )
+            .then(self.parser.kind(TokenKind::CloseBrace))
+            .boxed()
+    }
 
-            // This parses `.{ x: 1.0, y: 2.0 }`, a struct literal with the type elided.
-            let elided_ctor = self
-                .kind(TokenKind::Period)
-                .then_ignore(self.kind(TokenKind::OpenBrace))
-                .then(ctor_fields)
-                .then(self.kind(TokenKind::CloseBrace))
-                .map(|((dot_tok, payload), close_tok)| Expr {
-                    id: NodeId::next(),
-                    kind: ExprKind::Ctor {
+    fn ctor_parser(&self, braces: BraceForms) -> BoxedP<'a, Expr> {
+        self.brace_gated(
+            braces,
+            self.path
+                .clone()
+                .then_ignore(self.parser.kind(TokenKind::OpenBrace))
+                .then(self.ctor_fields_parser())
+                .then(self.parser.kind(TokenKind::CloseBrace))
+                .map(|((ctor_path, payload), close_tok)| {
+                    let span = ctor_path.span.merge(close_tok.span);
+                    Expr::new(
+                        ExprKind::Ctor {
+                            path: Some(ctor_path),
+                            payload,
+                        },
+                        span,
+                    )
+                })
+                .boxed(),
+        )
+    }
+
+    fn elided_ctor_parser(&self) -> BoxedP<'a, Expr> {
+        self.parser
+            .kind(TokenKind::Period)
+            .then_ignore(self.parser.kind(TokenKind::OpenBrace))
+            .then(self.ctor_fields_parser())
+            .then(self.parser.kind(TokenKind::CloseBrace))
+            .map(|((dot_tok, payload), close_tok)| {
+                Expr::new(
+                    ExprKind::Ctor {
                         path: None,
                         payload,
                     },
-                    span: dot_tok.span.merge(close_tok.span),
-                })
-                .boxed();
-
-            // A record payload's fields look like `{ l: 4.0 }`, or `{ l }` as shorthand for
-            // `{ l: l }`. This mirrors the pattern side.
-            let record_payload = self
-                .kind(TokenKind::OpenBrace)
-                .ignore_then(
-                    ident
-                        .clone()
-                        .then(
-                            self.kind(TokenKind::Colon)
-                                .ignore_then(expr.clone())
-                                .or_not(),
-                        )
-                        .map(|(name, value)| {
-                            let span = match &value {
-                                Some(e) => name.span.merge(e.span),
-                                None => name.span,
-                            };
-                            PayloadField {
-                                id: NodeId::next(),
-                                name,
-                                value,
-                                span,
-                            }
-                        })
-                        .separated_by(self.kind(TokenKind::Comma))
-                        .allow_trailing()
-                        .collect::<Vec<_>>(),
+                    dot_tok.span.merge(close_tok.span),
                 )
-                .then(self.kind(TokenKind::CloseBrace))
-                .boxed();
+            })
+            .boxed()
+    }
 
-            // This parses the record-shaped payload of a variant, e.g. the `{ l: 4.0 }` in
-            // `.square { l: 4.0 }`.
-            let record_variant_payload = match braces {
-                BraceForms::Allow => record_payload
+    fn variant_parser(&self, braces: BraceForms) -> BoxedP<'a, Expr> {
+        let record_variant_payload = self.brace_gated(
+            braces,
+            self.record_payload_parser()
+                .map(|(fields, close_tok)| (Payload::Record(fields), close_tok.span))
+                .boxed(),
+        );
+        let variant_payload = choice((
+            self.parser
+                .kind(TokenKind::OpenParen)
+                .ignore_then(self.expr.clone())
+                .then(self.parser.kind(TokenKind::CloseParen))
+                .map(|(value, close_tok)| (Payload::Single(Box::new(value)), close_tok.span)),
+            record_variant_payload,
+        ))
+        .boxed();
+
+        self.parser
+            .kind(TokenKind::Period)
+            .then(self.ident.clone())
+            .then(variant_payload.or_not())
+            .map(|((dot_tok, variant), payload)| {
+                let (payload, span) = match payload {
+                    Some((payload, close_span)) => (payload, dot_tok.span.merge(close_span)),
+                    None => (Payload::None, dot_tok.span.merge(variant.span)),
+                };
+                Expr::new(ExprKind::Variant { variant, payload }, span)
+            })
+            .boxed()
+    }
+
+    fn tuple_parser(&self) -> BoxedP<'a, Expr> {
+        let tuple_or_group = self
+            .parser
+            .kind(TokenKind::OpenParen)
+            .then(
+                self.expr
                     .clone()
-                    .map(|(fields, close_tok)| (Payload::Record(fields), close_tok.span))
-                    .boxed(),
-                BraceForms::Deny => self.never(),
-            };
-
-            let variant_payload = choice((
-                self.kind(TokenKind::OpenParen)
-                    .ignore_then(expr.clone())
-                    .then(self.kind(TokenKind::CloseParen))
-                    .map(|(value, close_tok)| (Payload::Single(Box::new(value)), close_tok.span)),
-                record_variant_payload,
-            ))
+                    .separated_by(self.parser.kind(TokenKind::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>(),
+            )
+            .then(self.parser.kind(TokenKind::CloseParen))
+            .map(|((open_tok, mut exprs), close_tok)| {
+                if exprs.len() == 1 {
+                    exprs.pop().expect("checked len == 1 above")
+                } else {
+                    Expr::new(ExprKind::Tuple(exprs), open_tok.span.merge(close_tok.span))
+                }
+            })
             .boxed();
 
-            let variant = self
-                .kind(TokenKind::Period)
-                .then(ident.clone())
-                .then(variant_payload.or_not())
-                .map(|((dot_tok, variant), payload)| {
-                    let (payload, span) = match payload {
-                        Some((payload, close_span)) => (payload, dot_tok.span.merge(close_span)),
-                        None => (Payload::None, dot_tok.span.merge(variant.span)),
-                    };
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Variant { variant, payload },
-                        span,
-                    }
-                })
-                .boxed();
+        let single_element_tuple = self
+            .parser
+            .kind(TokenKind::OpenParen)
+            .then(self.expr.clone())
+            .then_ignore(self.parser.kind(TokenKind::Comma))
+            .then(self.parser.kind(TokenKind::CloseParen))
+            .map(|((open_tok, value), close_tok)| {
+                Expr::new(
+                    ExprKind::Tuple(vec![value]),
+                    open_tok.span.merge(close_tok.span),
+                )
+            })
+            .boxed();
 
-            let decl_ref = path.clone().map(|p: Path| {
-                let span = p.span;
-                Expr {
+        choice((single_element_tuple, tuple_or_group)).boxed()
+    }
+
+    fn block_expr_parser(&self) -> BoxedP<'a, Expr> {
+        self.block
+            .clone()
+            .map(|b: Block| {
+                let span = b.span;
+                Expr::new(ExprKind::Block(b), span)
+            })
+            .boxed()
+    }
+
+    fn if_parser(&self) -> BoxedP<'a, Expr> {
+        let else_expr = self.else_expr();
+
+        let if_let_expr = self
+            .parser
+            .kind(TokenKind::IfKw)
+            .then_ignore(self.parser.kind(TokenKind::LetKw))
+            .then(self.pattern.clone())
+            .then_ignore(self.parser.kind(TokenKind::Equals))
+            .then(self.expr_without_brace_forms.clone())
+            .then(self.block.clone())
+            .then(else_expr.clone())
+            .map(|((((if_tok, pat), scrutinee), then_block), else_expr)| {
+                let span = match &else_expr {
+                    Some(e) => if_tok.span.merge(e.span),
+                    None => if_tok.span.merge(then_block.span),
+                };
+                Expr::new(
+                    ExprKind::IfLet {
+                        pat,
+                        scrutinee: Box::new(scrutinee),
+                        then_block,
+                        else_expr: else_expr.map(Box::new),
+                    },
+                    span,
+                )
+            })
+            .boxed();
+
+        let if_expr = self
+            .parser
+            .kind(TokenKind::IfKw)
+            .then(self.expr_without_brace_forms.clone())
+            .then(self.block.clone())
+            .then(else_expr.clone())
+            .map(|(((if_tok, cond), then_block), else_expr)| {
+                let span = match &else_expr {
+                    Some(e) => if_tok.span.merge(e.span),
+                    None => if_tok.span.merge(then_block.span),
+                };
+                Expr::new(
+                    ExprKind::If {
+                        cond: Box::new(cond),
+                        then_block,
+                        else_expr: else_expr.map(Box::new),
+                    },
+                    span,
+                )
+            })
+            .boxed();
+
+        choice((if_let_expr, if_expr)).boxed()
+    }
+
+    fn match_parser(&self) -> BoxedP<'a, Expr> {
+        let arm_body = choice((self.block_expr_parser(), self.expr.clone())).boxed();
+
+        let match_arm = self
+            .pattern
+            .clone()
+            .then(
+                self.parser
+                    .kind(TokenKind::IfKw)
+                    .ignore_then(self.expr.clone())
+                    .or_not(),
+            )
+            .then_ignore(self.parser.kind(TokenKind::FatArrow))
+            .then(arm_body)
+            .map(|((pat, guard), body)| {
+                let span = pat.span.merge(body.span);
+                Arm {
                     id: NodeId::next(),
-                    kind: ExprKind::Path(p),
+                    pat,
+                    guard: guard.map(Box::new),
+                    body: Box::new(body),
+                    span,
+                }
+            })
+            .boxed();
+
+        let parser = self.parser;
+        let match_arms = custom(move |inp: &mut InputRef<'a, '_, &'a [Token], Extra<'a>>| {
+            let mut arms = Vec::new();
+            loop {
+                match inp.peek() {
+                    Some(t) if t.kind == TokenKind::CloseBrace => break,
+                    None => break,
+                    _ => {}
+                }
+
+                let arm = inp.parse(match_arm.clone())?;
+                let comma_optional = matches!(arm.body.kind, ExprKind::Block(_));
+                arms.push(arm);
+
+                match inp.peek() {
+                    Some(t) if t.kind == TokenKind::CloseBrace => break,
+                    Some(t) if t.kind == TokenKind::Comma => inp.skip(),
+                    _ if comma_optional => {}
+                    _ => {
+                        inp.parse(parser.kind(TokenKind::Comma))?;
+                    }
+                }
+            }
+            Ok(arms)
+        })
+        .boxed();
+
+        self.parser
+            .kind(TokenKind::MatchKw)
+            .then(self.expr_without_brace_forms.clone())
+            .then_ignore(self.parser.kind(TokenKind::OpenBrace))
+            .then(match_arms)
+            .then(self.parser.kind(TokenKind::CloseBrace))
+            .map(|(((match_tok, scrutinee), arms), close_tok)| {
+                let span = match_tok.span.merge(close_tok.span);
+                Expr::new(
+                    ExprKind::Match {
+                        scrutinee: Box::new(scrutinee),
+                        arms,
+                    },
+                    span,
+                )
+            })
+            .boxed()
+    }
+
+    fn block_bodied_expr_parser(&self) -> BoxedP<'a, Expr> {
+        choice((
+            self.parser
+                .kind(TokenKind::SpawnKw)
+                .then(self.block.clone())
+                .map(|(spawn_tok, body)| {
+                    let span = spawn_tok.span.merge(body.span);
+                    Expr::new(ExprKind::Spawn(body), span)
+                })
+                .boxed(),
+            self.parser
+                .kind(TokenKind::ConcurrentKw)
+                .then(self.block.clone())
+                .map(|(concurrent_tok, body)| {
+                    let span = concurrent_tok.span.merge(body.span);
+                    Expr::new(ExprKind::Concurrent(body), span)
+                })
+                .boxed(),
+        ))
+        .boxed()
+    }
+
+    fn closure_parser(&self) -> BoxedP<'a, Expr> {
+        let type_p = self.type_parser();
+
+        let closure_param = self
+            .ident
+            .clone()
+            .then(
+                self.parser
+                    .kind(TokenKind::Colon)
+                    .ignore_then(type_p.clone())
+                    .or_not(),
+            )
+            .map(|(name, ty)| {
+                let span = match &ty {
+                    Some(ty) => name.span.merge(ty.span),
+                    None => name.span,
+                };
+                ClosureParam {
+                    id: NodeId::next(),
+                    name,
+                    ty,
                     span,
                 }
             });
 
-            // `(expr)` is a grouped expression. `(expr, expr, ...)` with zero or at least two
-            // elements is a tuple.
-            let tuple_or_group = self
-                .kind(TokenKind::OpenParen)
+        let closure_params = choice((
+            self.parser
+                .kind(TokenKind::DoublePipe)
+                .map(|t: Token| (Vec::new(), t.span)),
+            self.parser
+                .kind(TokenKind::Pipe)
                 .then(
-                    expr.clone()
-                        .separated_by(self.kind(TokenKind::Comma))
+                    closure_param
+                        .separated_by(self.parser.kind(TokenKind::Comma))
                         .allow_trailing()
                         .collect::<Vec<_>>(),
                 )
-                .then(self.kind(TokenKind::CloseParen))
-                .map(|((open_tok, mut exprs), close_tok)| {
-                    if exprs.len() == 1 {
-                        exprs.pop().expect("checked len == 1 above")
-                    } else {
-                        Expr {
-                            id: NodeId::next(),
-                            kind: ExprKind::Tuple(exprs),
-                            span: open_tok.span.merge(close_tok.span),
-                        }
-                    }
-                })
-                .boxed();
+                .then(self.parser.kind(TokenKind::Pipe))
+                .map(|((open_tok, params), close_tok)| {
+                    (params, open_tok.span.merge(close_tok.span))
+                }),
+        ));
 
-            // A bare `{ ... }` block can also stand alone as an expression.
-            let block_expr = block
-                .clone()
-                .map(|b: Block| {
-                    let span = b.span;
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Block(b),
-                        span,
-                    }
-                })
-                .boxed();
-
-            // Parses `if let pat = scrutinee { .. }`.
-            let if_let_expr = self
-                .kind(TokenKind::IfKw)
-                .then_ignore(self.kind(TokenKind::LetKw))
-                .then(pattern.clone())
-                .then_ignore(self.kind(TokenKind::Equals))
-                .then(expr_ns.clone())
-                .then(block.clone())
-                .then(else_expr.clone())
-                .map(|((((if_tok, pat), scrutinee), then_block), else_expr)| {
-                    let span = match &else_expr {
-                        Some(e) => if_tok.span.merge(e.span),
-                        None => if_tok.span.merge(then_block.span),
-                    };
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::IfLet {
-                            pat,
-                            scrutinee: Box::new(scrutinee),
-                            then_block,
-                            else_expr: else_expr.map(Box::new),
-                        },
-                        span,
-                    }
-                })
-                .boxed();
-
-            let if_expr = self
-                .kind(TokenKind::IfKw)
-                .then(expr_ns.clone())
-                .then(block.clone())
-                .then(else_expr.clone())
-                .map(|(((if_tok, cond), then_block), else_expr)| {
-                    let span = match &else_expr {
-                        Some(e) => if_tok.span.merge(e.span),
-                        None => if_tok.span.merge(then_block.span),
-                    };
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::If {
-                            cond: Box::new(cond),
-                            then_block,
-                            else_expr: else_expr.map(Box::new),
-                        },
-                        span,
-                    }
-                })
-                .boxed();
-
-            // An arm body that's a bare `{ .. }` block is tried before the general expression
-            // grammar, and without postfix chaining after it. Otherwise a body like
-            // `{ return 1; } .circle => ..` would parse the next arm's leading `.circle` as a
-            // field access on the block instead of as the start of the next arm, which would
-            // then defeat comma elision for block bodies entirely.
-            let arm_body = choice((block_expr.clone(), expr.clone())).boxed();
-
-            let match_arm = pattern
-                .clone()
-                .then(
-                    self.kind(TokenKind::IfKw)
-                        .ignore_then(expr.clone())
-                        .or_not(),
-                )
-                .then_ignore(self.kind(TokenKind::FatArrow))
-                .then(arm_body)
-                .map(|((pat, guard), body)| {
-                    let span = pat.span.merge(body.span);
-                    Arm {
-                        id: NodeId::next(),
-                        pat,
-                        guard: guard.map(Box::new),
-                        body: Box::new(body),
-                        span,
-                    }
-                })
-                .boxed();
-
-            // Arms whose body is a bare `{ ... }` block behave like Rust's block-like match
-            // arms: the comma after them is optional, since the closing brace already marks
-            // where the arm ends. Arms with any other body still require a separating comma,
-            // since there'd otherwise be no way to tell where one arm's expression ends and the
-            // next arm's pattern begins.
-            let match_arms = custom(move |inp: &mut InputRef<'a, '_, &'a [Token], Extra<'a>>| {
-                let mut arms = Vec::new();
-                loop {
-                    match inp.peek() {
-                        Some(t) if t.kind == TokenKind::CloseBrace => break,
-                        None => break,
-                        _ => {}
-                    }
-
-                    let arm = inp.parse(match_arm.clone())?;
-                    let comma_optional = matches!(arm.body.kind, ExprKind::Block(_));
-                    arms.push(arm);
-
-                    match inp.peek() {
-                        Some(t) if t.kind == TokenKind::CloseBrace => break,
-                        Some(t) if t.kind == TokenKind::Comma => inp.skip(),
-                        _ if comma_optional => {}
-                        _ => {
-                            inp.parse(self.kind(TokenKind::Comma))?;
-                        }
-                    }
-                }
-                Ok(arms)
-            })
-            .boxed();
-
-            let match_expr = self
-                .kind(TokenKind::MatchKw)
-                .then(expr_ns.clone())
-                .then_ignore(self.kind(TokenKind::OpenBrace))
-                .then(match_arms)
-                .then(self.kind(TokenKind::CloseBrace))
-                .map(|(((match_tok, scrutinee), arms), close_tok)| {
-                    let span = match_tok.span.merge(close_tok.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Match {
-                            scrutinee: Box::new(scrutinee),
-                            arms,
-                        },
-                        span,
-                    }
-                })
-                .boxed();
-
-            let spawn_expr = self
-                .kind(TokenKind::SpawnKw)
-                .then(block.clone())
-                .map(|(spawn_tok, body)| {
-                    let span = spawn_tok.span.merge(body.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Spawn(body),
-                        span,
-                    }
-                })
-                .boxed();
-
-            let concurrent_expr = self
-                .kind(TokenKind::ConcurrentKw)
-                .then(block.clone())
-                .map(|(concurrent_tok, body)| {
-                    let span = concurrent_tok.span.merge(body.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Concurrent(body),
-                        span,
-                    }
-                })
-                .boxed();
-
-            // Closures look like `|x: i32, y: i32| -> i32 { x + y }`, `|x| x + 1`, or `|| 42`.
-            // Parameter types and the return type are optional and get inferred later. The
-            // body is any expr, so a `{ ... }` block body works the same as a bare expression.
-            let closure_param = ident
-                .clone()
-                .then(
-                    self.kind(TokenKind::Colon)
-                        .ignore_then(type_p.clone())
-                        .or_not(),
-                )
-                .map(|(name, ty)| {
-                    let span = match &ty {
-                        Some(ty) => name.span.merge(ty.span),
-                        None => name.span,
-                    };
-                    ClosureParam {
-                        id: NodeId::next(),
-                        name,
-                        ty,
-                        span,
-                    }
-                });
-
-            // `||` lexes as a single `DoublePipe` token, so an empty parameter list can't be
-            // spelled as two `Pipe` tokens. It needs its own case.
-            let closure_params = choice((
-                self.kind(TokenKind::DoublePipe)
-                    .map(|t: Token| (Vec::new(), t.span)),
-                self.kind(TokenKind::Pipe)
-                    .then(
-                        closure_param
-                            .separated_by(self.kind(TokenKind::Comma))
-                            .allow_trailing()
-                            .collect::<Vec<_>>(),
-                    )
-                    .then(self.kind(TokenKind::Pipe))
-                    .map(|((open_tok, params), close_tok)| {
-                        (params, open_tok.span.merge(close_tok.span))
-                    }),
-            ));
-
-            let closure = closure_params
-                .then(
-                    self.kind(TokenKind::Arrow)
-                        .ignore_then(type_p.clone())
-                        .or_not(),
-                )
-                .then(expr.clone())
-                .map(|(((params, params_span), ret), body)| {
-                    let span = params_span.merge(body.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::Closure {
-                            params,
-                            ret,
-                            body: Box::new(body),
-                        },
-                        span,
-                    }
-                })
-                .boxed();
-
-            let atom = choice((
-                closure,
-                literal,
-                if_let_expr,
-                if_expr,
-                match_expr,
-                spawn_expr,
-                concurrent_expr,
-                assert_expr,
-                panic_expr,
-                unreachable_expr,
-                call,
-                ctor,
-                // `elided_ctor` and `variant` both start with `.`. Try `elided_ctor` first: it
-                // needs a `{` right after the `.`, while `variant` needs an identifier.
-                elided_ctor,
-                variant,
-                self_expr,
-                self_ty_expr,
-                decl_ref,
-                tuple_or_group,
-                block_expr,
-            ))
-            .boxed();
-
-            // Postfix operators (`.member`, `.member(args)`, `[index]`, `?`) bind tighter than
-            // any prefix operator, so `-x.y` parses as `-(x.y)`.
-            enum Postfix {
-                Access(Ident, AccessArgs),
-                TupleFieldPair(Ident, Ident),
-                Index(Expr),
-                Try,
-            }
-
-            let access_record = match braces {
-                BraceForms::Allow => record_payload
-                    .clone()
-                    .map(|(fields, close_tok)| (AccessArgs::Record(fields), close_tok.span))
-                    .boxed(),
-                BraceForms::Deny => self.never(),
-            };
-
-            let tuple_index = self.kind(TokenKind::IntLiteral).map(|t: Token| Ident {
-                text: Interner::intern(
-                    &SrcMap::text_of(t.span)
-                        .expect("lexer token span should always resolve to a source file"),
-                ),
-                span: t.span,
-            });
-
-            let access_single = self
-                .kind(TokenKind::Period)
-                .ignore_then(choice((ident.clone(), tuple_index)))
-                .then(
-                    choice((
-                        self.kind(TokenKind::OpenParen)
-                            .ignore_then(
-                                expr.clone()
-                                    .separated_by(self.kind(TokenKind::Comma))
-                                    .allow_trailing()
-                                    .collect::<Vec<_>>(),
-                            )
-                            .then(self.kind(TokenKind::CloseParen))
-                            .map(|(args, close_tok)| (AccessArgs::Call(args), close_tok.span)),
-                        access_record,
-                    ))
+        closure_params
+            .then(
+                self.parser
+                    .kind(TokenKind::Arrow)
+                    .ignore_then(type_p.clone())
                     .or_not(),
+            )
+            .then(self.expr.clone())
+            .map(|(((params, params_span), ret), body)| {
+                let span = params_span.merge(body.span);
+                Expr::new(
+                    ExprKind::Closure {
+                        params,
+                        ret,
+                        body: Box::new(body),
+                    },
+                    span,
                 )
-                .map(|(name, args)| match args {
-                    Some((args, close_span)) => (Postfix::Access(name, args), close_span),
-                    None => {
-                        let span = name.span;
-                        (Postfix::Access(name, AccessArgs::None), span)
-                    }
-                });
+            })
+            .boxed()
+    }
 
-            let tuple_index_pair = self.kind(TokenKind::FloatLiteral).map(|t: Token| {
-                let text = SrcMap::text_of(t.span)
-                    .expect("lexer token span should always resolve to a source file");
-                let dot = text
-                    .find('.')
-                    .expect("a `FloatLiteral` token's text always contains a '.'");
-                let begin = t.span.get_begin();
-                let first = Ident {
-                    text: Interner::intern(&text[..dot]),
-                    span: SrcSpan::new(begin, begin + dot),
-                };
-                let second = Ident {
-                    text: Interner::intern(&text[dot + 1..]),
-                    span: SrcSpan::new(begin + dot + 1, t.span.get_end()),
-                };
-                (first, second)
+    fn atom_parser(&self, braces: BraceForms) -> BoxedP<'a, Expr> {
+        let self_expr = self.parser.self_expr_parser();
+        let self_ty_expr = self.parser.self_kw_parser();
+        let decl_ref = self.path.clone().map(|p: Path| {
+            let span = p.span;
+            Expr::new(ExprKind::Path(p), span)
+        });
+
+        choice((
+            self.closure_parser(),
+            self.parser.literal_parser(),
+            self.if_parser(),
+            self.match_parser(),
+            self.block_bodied_expr_parser(),
+            self.builtin_expr_parser(),
+            self.call_parser(),
+            self.ctor_parser(braces),
+            self.elided_ctor_parser(),
+            self.variant_parser(braces),
+            self_expr,
+            self_ty_expr,
+            decl_ref,
+            self.tuple_parser(),
+            self.block_expr_parser(),
+        ))
+        .boxed()
+    }
+
+    fn postfix_parser(&self, braces: BraceForms, atom: BoxedP<'a, Expr>) -> BoxedP<'a, Expr> {
+        let access_record = self.brace_gated(
+            braces,
+            self.record_payload_parser()
+                .map(|(fields, close_tok)| (AccessArgs::Record(fields), close_tok.span))
+                .boxed(),
+        );
+
+        let tuple_index = self.parser.kind(TokenKind::IntLiteral).map(|t: Token| {
+            let text = t.text();
+            Ident {
+                text: Interner::intern(&strip_digit_separators(&text)),
+                span: t.span,
+            }
+        });
+
+        let access_single = self
+            .parser
+            .kind(TokenKind::Period)
+            .ignore_then(choice((self.ident.clone(), tuple_index)))
+            .then(
+                choice((
+                    self.parser
+                        .kind(TokenKind::OpenParen)
+                        .ignore_then(
+                            self.expr
+                                .clone()
+                                .separated_by(self.parser.kind(TokenKind::Comma))
+                                .allow_trailing()
+                                .collect::<Vec<_>>(),
+                        )
+                        .then(self.parser.kind(TokenKind::CloseParen))
+                        .map(|(args, close_tok)| (AccessArgs::Call(args), close_tok.span)),
+                    access_record,
+                ))
+                .or_not(),
+            )
+            .map(|(name, args)| match args {
+                Some((args, close_span)) => (Postfix::Access(name, args), close_span),
+                None => {
+                    let span = name.span;
+                    (Postfix::Access(name, AccessArgs::None), span)
+                }
             });
 
-            let access_pair = self
-                .kind(TokenKind::Period)
-                .ignore_then(tuple_index_pair)
-                .map(|(first, second)| {
-                    let span = second.span;
-                    (Postfix::TupleFieldPair(first, second), span)
-                });
+        let tuple_index_pair = self.parser.kind(TokenKind::FloatLiteral).map(|t: Token| {
+            let text = t.text();
+            let dot = text
+                .find('.')
+                .expect("a `FloatLiteral` token's text always contains a '.'");
+            let begin = t.span.get_begin();
+            let first = Ident {
+                text: Interner::intern(&strip_digit_separators(&text[..dot])),
+                span: SrcSpan::new(begin, begin + dot),
+            };
+            let second = Ident {
+                text: Interner::intern(&strip_digit_separators(&text[dot + 1..])),
+                span: SrcSpan::new(begin + dot + 1, t.span.get_end()),
+            };
+            (first, second)
+        });
 
-            let access_op = choice((access_pair, access_single));
+        let access_pair = self
+            .parser
+            .kind(TokenKind::Period)
+            .ignore_then(tuple_index_pair)
+            .map(|(first, second)| {
+                let span = second.span;
+                (Postfix::TupleFieldPair(first, second), span)
+            });
 
-            let index_op = self
-                .kind(TokenKind::OpenBracket)
-                .ignore_then(expr.clone())
-                .then(self.kind(TokenKind::CloseBracket))
-                .map(|(index, close_tok)| (Postfix::Index(index), close_tok.span));
+        let access_op = choice((access_pair, access_single));
 
-            let try_op = self
-                .kind(TokenKind::Try)
-                .map(|t: Token| (Postfix::Try, t.span));
+        let index_op = self
+            .parser
+            .kind(TokenKind::OpenBracket)
+            .ignore_then(self.expr.clone())
+            .then(self.parser.kind(TokenKind::CloseBracket))
+            .map(|(index, close_tok)| (Postfix::Index(index), close_tok.span));
 
-            let postfix_op = choice((access_op, index_op, try_op));
+        let try_op = self
+            .parser
+            .kind(TokenKind::Try)
+            .map(|t: Token| (Postfix::Try, t.span));
 
-            let postfix = atom
-                .foldl(postfix_op.repeated(), |receiver, (op, op_span)| {
-                    let span = receiver.span.merge(op_span);
-                    match op {
-                        Postfix::Access(member, args) => Expr {
-                            id: NodeId::next(),
-                            kind: ExprKind::Access {
-                                base: Box::new(receiver),
-                                member,
-                                args,
-                            },
-                            span,
+        let postfix_op = choice((access_op, index_op, try_op));
+
+        atom.foldl(postfix_op.repeated(), |receiver, (op, op_span)| {
+            let span = receiver.span.merge(op_span);
+            match op {
+                Postfix::Access(member, args) => Expr::new(
+                    ExprKind::Access {
+                        base: Box::new(receiver),
+                        member,
+                        args,
+                    },
+                    span,
+                ),
+                Postfix::TupleFieldPair(first, second) => {
+                    let inner_span = receiver.span.merge(first.span);
+                    let inner = Expr::new(
+                        ExprKind::Access {
+                            base: Box::new(receiver),
+                            member: first,
+                            args: AccessArgs::None,
                         },
-                        Postfix::TupleFieldPair(first, second) => {
-                            let inner_span = receiver.span.merge(first.span);
-                            let inner = Expr {
-                                id: NodeId::next(),
-                                kind: ExprKind::Access {
-                                    base: Box::new(receiver),
-                                    member: first,
-                                    args: AccessArgs::None,
-                                },
-                                span: inner_span,
-                            };
-                            Expr {
-                                id: NodeId::next(),
-                                kind: ExprKind::Access {
-                                    base: Box::new(inner),
-                                    member: second,
-                                    args: AccessArgs::None,
-                                },
-                                span,
-                            }
-                        }
-                        Postfix::Index(index) => Expr {
-                            id: NodeId::next(),
-                            kind: ExprKind::Index {
-                                base: Box::new(receiver),
-                                index: Box::new(index),
-                            },
-                            span,
+                        inner_span,
+                    );
+                    Expr::new(
+                        ExprKind::Access {
+                            base: Box::new(inner),
+                            member: second,
+                            args: AccessArgs::None,
                         },
-                        Postfix::Try => Expr {
-                            id: NodeId::next(),
-                            kind: ExprKind::Try(Box::new(receiver)),
-                            span,
-                        },
-                    }
-                })
-                .boxed();
-
-            enum Prefix {
-                Unary(UnaryOp),
-                Borrow(Mutability),
+                        span,
+                    )
+                }
+                Postfix::Index(index) => Expr::new(
+                    ExprKind::Index {
+                        base: Box::new(receiver),
+                        index: Box::new(index),
+                    },
+                    span,
+                ),
+                Postfix::Try => Expr::new(ExprKind::Try(Box::new(receiver)), span),
             }
+        })
+        .boxed()
+    }
 
-            let prefix_op = choice((
-                self.kind(TokenKind::Minus)
-                    .map(|t: Token| (Prefix::Unary(UnaryOp::Neg), t.span)),
-                self.kind(TokenKind::Bang)
-                    .map(|t: Token| (Prefix::Unary(UnaryOp::Not), t.span)),
-                self.kind(TokenKind::Star)
-                    .map(|t: Token| (Prefix::Unary(UnaryOp::Deref), t.span)),
-                self.kind(TokenKind::Amp)
-                    .then(self.kind(TokenKind::MutKw).or_not())
-                    .map(|(amp_tok, mut_tok)| {
-                        let mutability = if mut_tok.is_some() {
-                            Mutability::Mutable
-                        } else {
-                            Mutability::Immutable
-                        };
-                        (Prefix::Borrow(mutability), amp_tok.span)
-                    }),
-            ));
-            let unary = prefix_op
-                .repeated()
-                .foldr(postfix, |(op, op_span), operand| {
-                    let span = op_span.merge(operand.span);
-                    match op {
-                        Prefix::Unary(op) => Expr {
-                            id: NodeId::next(),
-                            kind: ExprKind::Unary {
-                                op,
-                                operand: Box::new(operand),
-                            },
-                            span,
-                        },
-                        Prefix::Borrow(mutability) => Expr {
-                            id: NodeId::next(),
-                            kind: ExprKind::Borrow {
-                                mutability,
-                                operand: Box::new(operand),
-                            },
-                            span,
-                        },
-                    }
-                })
-                .boxed();
+    fn unary_parser(&self, postfix: BoxedP<'a, Expr>) -> BoxedP<'a, Expr> {
+        let prefix_op = choice((
+            self.parser
+                .kind(TokenKind::Minus)
+                .map(|t: Token| (Prefix::Unary(UnaryOp::Neg), t.span)),
+            self.parser
+                .kind(TokenKind::Bang)
+                .map(|t: Token| (Prefix::Unary(UnaryOp::Not), t.span)),
+            self.parser
+                .kind(TokenKind::Star)
+                .map(|t: Token| (Prefix::Unary(UnaryOp::Deref), t.span)),
+            self.parser
+                .kind(TokenKind::Amp)
+                .then(self.parser.kind(TokenKind::MutKw).or_not())
+                .map(|(amp_tok, mut_tok)| {
+                    let mutability = if mut_tok.is_some() {
+                        Mutability::Mutable
+                    } else {
+                        Mutability::Immutable
+                    };
+                    (Prefix::Borrow(mutability), amp_tok.span)
+                }),
+        ));
 
-            // `new [elem; count]` is its own form -- there is no general array-repeat
-            // expression to reuse, since a bare `[elem; count]` value could never exist on its
-            // own once `count` is a runtime value (an unsized value cannot sit in an ordinary
-            // place; see the "Alternatives considered" discussion in Spec A1). `new e` is the
-            // general form, wrapping `unary` so `new` binds looser than a call or any other
-            // postfix/prefix operator but tighter than any binary operator: `new f(x)` allocates
-            // the result of `f(x)`.
-            let new_array = self
-                .kind(TokenKind::NewKw)
-                .then_ignore(self.kind(TokenKind::OpenBracket))
-                .then(expr.clone())
-                .then_ignore(self.kind(TokenKind::Semicolon))
-                .then(expr.clone())
-                .then(self.kind(TokenKind::CloseBracket))
-                .map(|(((new_tok, elem), count), close_tok)| Expr {
-                    id: NodeId::next(),
-                    span: new_tok.span.merge(close_tok.span),
-                    kind: ExprKind::NewArray {
+        prefix_op
+            .repeated()
+            .foldr(postfix, |(op, op_span), operand| {
+                let span = op_span.merge(operand.span);
+                match op {
+                    Prefix::Unary(op) => Expr::new(
+                        ExprKind::Unary {
+                            op,
+                            operand: Box::new(operand),
+                        },
+                        span,
+                    ),
+                    Prefix::Borrow(mutability) => Expr::new(
+                        ExprKind::Borrow {
+                            mutability,
+                            operand: Box::new(operand),
+                        },
+                        span,
+                    ),
+                }
+            })
+            .boxed()
+    }
+
+    fn new_parser(&self, unary: BoxedP<'a, Expr>) -> BoxedP<'a, Expr> {
+        let new_array = self
+            .parser
+            .kind(TokenKind::NewKw)
+            .then_ignore(self.parser.kind(TokenKind::OpenBracket))
+            .then(self.expr.clone())
+            .then_ignore(self.parser.kind(TokenKind::Semicolon))
+            .then(self.expr.clone())
+            .then(self.parser.kind(TokenKind::CloseBracket))
+            .map(|(((new_tok, elem), count), close_tok)| {
+                Expr::new(
+                    ExprKind::NewArray {
                         elem: Box::new(elem),
                         count: Box::new(count),
                     },
-                })
-                .boxed();
-
-            let new_value = self
-                .kind(TokenKind::NewKw)
-                .then(unary.clone())
-                .map(|(new_tok, operand)| {
-                    let span = new_tok.span.merge(operand.span);
-                    Expr {
-                        id: NodeId::next(),
-                        kind: ExprKind::New(Box::new(operand)),
-                        span,
-                    }
-                })
-                .boxed();
-
-            // The `expr` label above does not cover a missing binary operand: `product`, `sum`
-            // and the levels below take this parser, not `expr`, as their right-hand side.
-            let unary_or_new = choice((new_array, new_value, unary.clone()))
-                .labelled("an expression")
-                .boxed();
-
-            // `as` binds tighter than every binary operator but looser than unary prefix and
-            // postfix operators, exactly as in Rust: `-x as i64` is `(-x) as i64`, and
-            // `x as i64 + 1` is `(x as i64) + 1`. `.foldl` makes a chain like `x as i32 as i64`
-            // left-associative, casting `x` to `i32` and then that result to `i64`.
-            let cast = unary_or_new
-                .foldl(
-                    self.kind(TokenKind::AsKw)
-                        .ignore_then(type_p.clone())
-                        .repeated(),
-                    |operand, ty| {
-                        let span = operand.span.merge(ty.span);
-                        Expr {
-                            id: NodeId::next(),
-                            kind: ExprKind::Cast {
-                                expr: Box::new(operand),
-                                ty,
-                            },
-                            span,
-                        }
-                    },
+                    new_tok.span.merge(close_tok.span),
                 )
-                .boxed();
+            })
+            .boxed();
 
-            let bin_op =
-                |k: TokenKind, op: BinaryOp| self.kind(k).map(move |t: Token| (op, t.span));
+        let new_value = self
+            .parser
+            .kind(TokenKind::NewKw)
+            .then(unary.clone())
+            .map(|(new_tok, operand)| {
+                let span = new_tok.span.merge(operand.span);
+                Expr::new(ExprKind::New(Box::new(operand)), span)
+            })
+            .boxed();
 
-            let mul_op = choice((
-                bin_op(TokenKind::Star, BinaryOp::Mul),
-                bin_op(TokenKind::Slash, BinaryOp::Div),
-                bin_op(TokenKind::Percent, BinaryOp::Rem),
-            ));
+        choice((new_array, new_value)).boxed()
+    }
 
-            let product = cast
+    fn cast_parser(&self, unary_or_new: BoxedP<'a, Expr>) -> BoxedP<'a, Expr> {
+        unary_or_new
+            .foldl(
+                self.parser
+                    .kind(TokenKind::AsKw)
+                    .ignore_then(self.type_parser())
+                    .repeated(),
+                |operand, ty| {
+                    let span = operand.span.merge(ty.span);
+                    Expr::new(
+                        ExprKind::Cast {
+                            expr: Box::new(operand),
+                            ty,
+                        },
+                        span,
+                    )
+                },
+            )
+            .boxed()
+    }
+
+    fn logical_or_parser(&self, cast: BoxedP<'a, Expr>) -> BoxedP<'a, Expr> {
+        let bin_op =
+            |k: TokenKind, op: BinaryOp| self.parser.kind(k).map(move |t: Token| (op, t.span));
+
+        let mul_op = choice((
+            bin_op(TokenKind::Star, BinaryOp::Mul),
+            bin_op(TokenKind::Slash, BinaryOp::Div),
+            bin_op(TokenKind::Percent, BinaryOp::Rem),
+        ));
+        let product = cast
+            .clone()
+            .foldl(mul_op.then(cast.clone()).repeated(), Expr::binary)
+            .boxed();
+
+        let add_op = choice((
+            bin_op(TokenKind::Plus, BinaryOp::Add),
+            bin_op(TokenKind::Minus, BinaryOp::Sub),
+        ));
+        let sum = product
+            .clone()
+            .foldl(add_op.then(product.clone()).repeated(), Expr::binary)
+            .boxed();
+
+        let cmp_op = choice((
+            bin_op(TokenKind::DoubleEquals, BinaryOp::Eq),
+            bin_op(TokenKind::BangEquals, BinaryOp::Ne),
+            bin_op(TokenKind::LessEqual, BinaryOp::Le),
+            bin_op(TokenKind::GreaterEqual, BinaryOp::Ge),
+            bin_op(TokenKind::OpenAngle, BinaryOp::Lt),
+            bin_op(TokenKind::CloseAngle, BinaryOp::Gt),
+        ));
+        let comparison = sum
+            .clone()
+            .foldl(cmp_op.then(sum.clone()).repeated(), Expr::binary)
+            .boxed();
+
+        let and_op = bin_op(TokenKind::DoubleAmp, BinaryOp::And);
+        let logical_and = comparison
+            .clone()
+            .foldl(and_op.then(comparison.clone()).repeated(), Expr::binary)
+            .boxed();
+
+        let or_op = bin_op(TokenKind::DoublePipe, BinaryOp::Or);
+        logical_and
+            .clone()
+            .foldl(or_op.then(logical_and.clone()).repeated(), Expr::binary)
+            .boxed()
+    }
+
+    fn range_parser(&self, logical_or: BoxedP<'a, Expr>) -> BoxedP<'a, Expr> {
+        let range_op = choice((
+            self.parser
+                .kind(TokenKind::InclRange)
+                .map(|t: Token| (true, t.span)),
+            self.parser
+                .kind(TokenKind::ExclRange)
+                .map(|t: Token| (false, t.span)),
+        ));
+
+        let range_without_lo =
+            range_op
                 .clone()
-                .foldl(mul_op.then(cast.clone()).repeated(), Expr::binary)
-                .boxed();
-
-            let add_op = choice((
-                bin_op(TokenKind::Plus, BinaryOp::Add),
-                bin_op(TokenKind::Minus, BinaryOp::Sub),
-            ));
-            let sum = product
-                .clone()
-                .foldl(add_op.then(product.clone()).repeated(), Expr::binary)
-                .boxed();
-
-            let cmp_op = choice((
-                bin_op(TokenKind::DoubleEquals, BinaryOp::Eq),
-                bin_op(TokenKind::BangEquals, BinaryOp::Ne),
-                bin_op(TokenKind::LessEqual, BinaryOp::Le),
-                bin_op(TokenKind::GreaterEqual, BinaryOp::Ge),
-                bin_op(TokenKind::OpenCaret, BinaryOp::Lt),
-                bin_op(TokenKind::CloseCaret, BinaryOp::Gt),
-            ));
-            let comparison = sum
-                .clone()
-                .foldl(cmp_op.then(sum.clone()).repeated(), Expr::binary)
-                .boxed();
-
-            let and_op = bin_op(TokenKind::DoubleAmp, BinaryOp::And);
-            let logical_and = comparison
-                .clone()
-                .foldl(and_op.then(comparison.clone()).repeated(), Expr::binary)
-                .boxed();
-
-            let or_op = bin_op(TokenKind::DoublePipe, BinaryOp::Or);
-            let logical_or = logical_and
-                .clone()
-                .foldl(or_op.then(logical_and.clone()).repeated(), Expr::binary)
-                .boxed();
-
-            // A range can look like `a..b`, `a..=b`, `a..`, `..b`, `..=b`, or `..`; either bound
-            // is optional. There is no dedicated range expression past parsing: `desugar_range`
-            // turns it into the same `std::range::Range { .. }` construction a user could have
-            // written by hand, so nameres, typeck, and MIR lowering only ever see an ordinary
-            // struct literal.
-            let range_op = choice((
-                self.kind(TokenKind::InclRange)
-                    .map(|t: Token| (true, t.span)),
-                self.kind(TokenKind::ExclRange)
-                    .map(|t: Token| (false, t.span)),
-            ));
-
-            let range_without_lo = range_op.clone().then(logical_or.clone().or_not()).map(
-                |((inclusive, op_span), hi)| {
+                .then(logical_or.clone().or_not())
+                .map(|((inclusive, op_span), hi)| {
                     let span = match &hi {
                         Some(h) => op_span.merge(h.span),
                         None => op_span,
                     };
                     desugar_range(None, hi, inclusive, span)
-                },
-            );
-
-            let range_with_lo = logical_or
-                .clone()
-                .then(range_op.then(logical_or.clone().or_not()).or_not())
-                .map(|(lo, rest)| match rest {
-                    None => lo,
-                    Some(((inclusive, op_span), hi)) => {
-                        let lo_span = lo.span;
-                        let span = match &hi {
-                            Some(h) => lo_span.merge(h.span),
-                            None => lo_span.merge(op_span),
-                        };
-                        desugar_range(Some(lo), hi, inclusive, span)
-                    }
                 });
 
-            let range = choice((range_without_lo, range_with_lo)).boxed();
+        let range_with_lo = logical_or
+            .clone()
+            .then(range_op.then(logical_or.clone().or_not()).or_not())
+            .map(|(lo, rest)| match rest {
+                None => lo,
+                Some(((inclusive, op_span), hi)) => {
+                    let lo_span = lo.span;
+                    let span = match &hi {
+                        Some(h) => lo_span.merge(h.span),
+                        None => lo_span.merge(op_span),
+                    };
+                    desugar_range(Some(lo), hi, inclusive, span)
+                }
+            });
 
-            // Assignment (`place = value`, `place += value`, etc.) has the lowest precedence
-            // of all.
-            let assign_op = choice((
-                self.kind(TokenKind::Equals).map(|t: Token| (None, t.span)),
-                self.kind(TokenKind::PlusEquals)
-                    .map(|t: Token| (Some(BinaryOp::Add), t.span)),
-                self.kind(TokenKind::SubEquals)
-                    .map(|t: Token| (Some(BinaryOp::Sub), t.span)),
-                self.kind(TokenKind::MulEquals)
-                    .map(|t: Token| (Some(BinaryOp::Mul), t.span)),
-                self.kind(TokenKind::DivEquals)
-                    .map(|t: Token| (Some(BinaryOp::Div), t.span)),
-                self.kind(TokenKind::ModEquals)
-                    .map(|t: Token| (Some(BinaryOp::Rem), t.span)),
-            ));
+        choice((range_without_lo, range_with_lo)).boxed()
+    }
 
-            range
-                .clone()
-                .then(assign_op.then(expr.clone()).or_not())
-                .map(|(lhs, rest)| match rest {
-                    None => lhs,
-                    Some(((op, _op_span), rhs)) => {
-                        let span = lhs.span.merge(rhs.span);
-                        let kind = match op {
-                            None => ExprKind::Assign {
-                                lhs: Box::new(lhs),
-                                rhs: Box::new(rhs),
-                            },
-                            Some(op) => ExprKind::AssignOp {
-                                op,
-                                lhs: Box::new(lhs),
-                                rhs: Box::new(rhs),
-                            },
-                        };
-                        Expr {
-                            id: NodeId::next(),
-                            kind,
-                            span,
-                        }
-                    }
-                })
-                .boxed()
-        };
-        // `labelled` replaces the expected set of a failure at the parser's first token, so a
-        // failure there reports "an expression" rather than each of the ~20 tokens that can
-        // begin one. Failures further in keep their own expected sets.
-        let full = expr_body(BraceForms::Allow).labelled("an expression");
-        let restricted = expr_body(BraceForms::Deny).labelled("an expression");
-        expr.define(full);
-        expr_ns.define(restricted);
+    fn expression_parser(&self, braces: BraceForms) -> BoxedP<'a, Expr> {
+        let unary = self.unary_parser(self.postfix_parser(braces, self.atom_parser(braces)));
 
-        let block_body = {
-            let expr = expr.clone();
-            let expr_ns = expr_ns.clone();
-            let block = block.clone();
-            let type_p = self.type_parser_with_expr(expr.clone().boxed());
+        let unary_or_new = choice((self.new_parser(unary.clone()), unary.clone()))
+            .labelled("an expression")
+            .boxed();
 
-            // Parses `while let pat = scrutinee { .. }`.
-            let while_let_stmt = self
-                .kind(TokenKind::WhileKw)
-                .then_ignore(self.kind(TokenKind::LetKw))
-                .then(pattern.clone())
-                .then_ignore(self.kind(TokenKind::Equals))
-                .then(expr_ns.clone())
-                .then(block.clone())
-                .map(|(((while_tok, pat), scrutinee), block)| {
-                    let span = while_tok.span.merge(block.span);
-                    Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::WhileLet {
-                            pat,
-                            scrutinee,
-                            block,
+        let range = self.range_parser(self.logical_or_parser(self.cast_parser(unary_or_new)));
+
+        let assign_op = choice((
+            self.parser
+                .kind(TokenKind::Equals)
+                .map(|t: Token| (None, t.span)),
+            self.parser
+                .kind(TokenKind::PlusEquals)
+                .map(|t: Token| (Some(BinaryOp::Add), t.span)),
+            self.parser
+                .kind(TokenKind::MinusEquals)
+                .map(|t: Token| (Some(BinaryOp::Sub), t.span)),
+            self.parser
+                .kind(TokenKind::MulEquals)
+                .map(|t: Token| (Some(BinaryOp::Mul), t.span)),
+            self.parser
+                .kind(TokenKind::DivEquals)
+                .map(|t: Token| (Some(BinaryOp::Div), t.span)),
+            self.parser
+                .kind(TokenKind::ModEquals)
+                .map(|t: Token| (Some(BinaryOp::Rem), t.span)),
+        ));
+
+        range
+            .clone()
+            .then(assign_op.then(self.expr.clone()).or_not())
+            .map(|(lhs, rest)| match rest {
+                None => lhs,
+                Some(((op, _op_span), rhs)) => {
+                    let span = lhs.span.merge(rhs.span);
+                    let kind = match op {
+                        None => ExprKind::Assign {
+                            lhs: Box::new(lhs),
+                            rhs: Box::new(rhs),
                         },
-                        span,
-                    }
-                })
-                .boxed();
+                        Some(op) => ExprKind::AssignOp {
+                            op,
+                            lhs: Box::new(lhs),
+                            rhs: Box::new(rhs),
+                        },
+                    };
+                    Expr::new(kind, span)
+                }
+            })
+            .boxed()
+    }
 
-            let while_stmt = self
-                .kind(TokenKind::WhileKw)
-                .then(expr_ns.clone())
-                .then(block.clone())
-                .map(|((while_tok, cond), block)| {
-                    let span = while_tok.span.merge(block.span);
-                    Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::While { cond, block },
-                        span,
-                    }
-                })
-                .boxed();
-
-            let for_stmt = self
-                .kind(TokenKind::ForKw)
-                .then(pattern.clone())
-                .then_ignore(self.kind(TokenKind::InKw))
-                .then(expr_ns.clone())
-                .then(block.clone())
-                .map(|(((for_tok, pat), iter), block)| {
-                    let span = for_tok.span.merge(block.span);
-                    Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::For { pat, iter, block },
-                        span,
-                    }
-                })
-                .boxed();
-
-            let break_stmt = self
-                .kind(TokenKind::BreakKw)
-                .then(self.kind(TokenKind::Semicolon))
-                .map(|(break_tok, semi_tok)| {
-                    let span = break_tok.span.merge(semi_tok.span);
-                    Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::Break,
-                        span,
-                    }
-                });
-
-            let continue_stmt = self
-                .kind(TokenKind::ContinueKw)
-                .then(self.kind(TokenKind::Semicolon))
-                .map(|(continue_tok, semi_tok)| {
-                    let span = continue_tok.span.merge(semi_tok.span);
-                    Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::Continue,
-                        span,
-                    }
-                });
-
-            let return_stmt = self
-                .kind(TokenKind::ReturnKw)
-                .then(expr.clone().or_not())
-                .then(self.kind(TokenKind::Semicolon))
-                .map(|((ret_tok, value), semi_tok)| {
-                    let span = ret_tok.span.merge(semi_tok.span);
-                    Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::Return(value),
-                        span,
-                    }
-                })
-                .boxed();
-
-            let defer_stmt = self
-                .kind(TokenKind::DeferKw)
-                .then(expr.clone())
-                .then(self.kind(TokenKind::Semicolon))
-                .map(|((ret_tok, value), semi_tok)| {
-                    let span = ret_tok.span.merge(semi_tok.span);
-                    Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::Defer(value),
-                        span,
-                    }
-                })
-                .boxed();
-
-            let decl_stmt = self
-                .kind(TokenKind::LetKw)
-                .then(self.kind(TokenKind::MutKw).or_not())
-                .then(pattern.clone())
-                .then(
-                    self.kind(TokenKind::Colon)
-                        .ignore_then(type_p.clone())
-                        .or_not(),
-                )
-                .then_ignore(self.kind(TokenKind::Equals))
-                .then(expr.clone())
-                .then(
-                    self.kind(TokenKind::ElseKw)
-                        .ignore_then(block.clone())
-                        .or_not(),
-                )
-                .then(self.kind(TokenKind::Semicolon))
-                .map(
-                    |((((((let_tok, mut_tok), name), ty), value), else_block), semi_tok)| {
-                        let mutability = if mut_tok.is_some() {
-                            Mutability::Mutable
-                        } else {
-                            Mutability::Immutable
-                        };
-                        let span = let_tok.span.merge(semi_tok.span);
-                        Stmt {
-                            id: NodeId::next(),
-                            kind: StmtKind::Let {
-                                mutability,
-                                pat: name,
-                                ty,
-                                init: value,
-                                else_block,
-                            },
-                            span,
-                        }
-                    },
-                )
-                .boxed();
-
-            let lend_decl = pattern
-                .clone()
-                .then(
-                    self.kind(TokenKind::Colon)
-                        .ignore_then(type_p.clone())
-                        .or_not(),
-                )
-                .then_ignore(self.kind(TokenKind::Equals))
-                .then(expr.clone())
-                .map(|((pat, ty), value)| {
-                    let span = pat.span.merge(value.span);
-                    WithLend {
-                        id: NodeId::next(),
-                        pat,
-                        ty,
-                        init: value,
-                        span,
-                    }
-                })
-                .boxed();
-
-            let with_stmt = self
-                .kind(TokenKind::WithKw)
-                .then(
-                    lend_decl
-                        .separated_by(self.kind(TokenKind::Comma))
-                        .at_least(1)
-                        .collect::<Vec<_>>(),
-                )
-                .then(block.clone())
-                .map(|((with_tok, lends), block)| {
-                    let span = with_tok.span.merge(block.span);
-                    Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::With { lends, block },
-                        span,
-                    }
-                })
-                .boxed();
-
-            // A block-bodied expression ends at its `}`, so the `;` after it is optional; every
-            // other expression needs one to be a statement.
-            //
-            // The `;` is required through `Parser::kind` rather than by rejecting the parsed
-            // statement in a `try_map`. A `try_map` failure is a `Rich::custom` carrying the
-            // whole expression's span, which both mislocates the error and outranks the more
-            // precise failure the expression itself recorded further along.
-            let expr_stmt = {
-                let expr = expr.clone();
-                let semi = self.kind(TokenKind::Semicolon);
-                custom(move |inp: &mut InputRef<'a, '_, &'a [Token], Extra<'a>>| {
-                    let value = inp.parse(expr.clone())?;
-                    let semi_tok = if value.kind.is_block_bodied() {
-                        inp.parse(semi.clone().or_not())?
+    fn decl_stmt(&self) -> BoxedP<'a, Stmt> {
+        let type_p = self.type_parser();
+        self.parser
+            .kind(TokenKind::LetKw)
+            .then(self.parser.kind(TokenKind::MutKw).or_not())
+            .then(self.pattern.clone())
+            .then(
+                self.parser
+                    .kind(TokenKind::Colon)
+                    .ignore_then(type_p.clone())
+                    .or_not(),
+            )
+            .then_ignore(self.parser.kind(TokenKind::Equals))
+            .then(self.expr.clone())
+            .then(
+                self.parser
+                    .kind(TokenKind::ElseKw)
+                    .ignore_then(self.block.clone())
+                    .or_not(),
+            )
+            .then(self.parser.kind(TokenKind::Semicolon))
+            .map(
+                |((((((let_tok, mut_tok), name), ty), value), else_block), semi_tok)| {
+                    let mutability = if mut_tok.is_some() {
+                        Mutability::Mutable
                     } else {
-                        Some(inp.parse(semi.clone())?)
+                        Mutability::Immutable
                     };
-
-                    let span = match semi_tok {
-                        Some(semi_tok) => value.span.merge(semi_tok.span),
-                        None => value.span,
-                    };
-                    Ok(Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::Expr {
-                            expr: value,
-                            semi: semi_tok.is_some(),
+                    let span = let_tok.span.merge(semi_tok.span);
+                    Stmt::new(
+                        StmtKind::Let {
+                            mutability,
+                            pat: name,
+                            ty,
+                            init: value,
+                            else_block,
                         },
                         span,
-                    })
-                })
-            }
+                    )
+                },
+            )
+            .boxed()
+    }
+
+    fn with_stmt(&self) -> BoxedP<'a, Stmt> {
+        let type_p = self.type_parser();
+        let lend_decl = self
+            .pattern
+            .clone()
+            .then(
+                self.parser
+                    .kind(TokenKind::Colon)
+                    .ignore_then(type_p.clone())
+                    .or_not(),
+            )
+            .then_ignore(self.parser.kind(TokenKind::Equals))
+            .then(self.expr.clone())
+            .map(|((pat, ty), value)| {
+                let span = pat.span.merge(value.span);
+                WithLend {
+                    id: NodeId::next(),
+                    pat,
+                    ty,
+                    init: value,
+                    span,
+                }
+            })
             .boxed();
 
-            // Recovery must not fire once the block is really at its end (just the closing
-            // `}`, or a valid tail expression followed by `}`). Otherwise it would eat the
-            // `}` or the tail expression as if they were part of a broken statement.
-            let at_terminal_position = choice((
-                self.kind(TokenKind::CloseBrace).ignored(),
-                expr.clone()
-                    .then(self.kind(TokenKind::CloseBrace).ignored())
-                    .ignored(),
-            ))
-            .rewind();
+        self.parser
+            .kind(TokenKind::WithKw)
+            .then(
+                lend_decl
+                    .separated_by(self.parser.kind(TokenKind::Comma))
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then(self.block.clone())
+            .map(|((with_tok, lends), block)| {
+                let span = with_tok.span.merge(block.span);
+                Stmt::new(StmtKind::With { lends, block }, span)
+            })
+            .boxed()
+    }
 
-            let stmt_recovery = at_terminal_position
-                .not()
-                .ignore_then(
-                    self.recover_by_skipping(statement_recovery_point, |span| Stmt {
-                        id: NodeId::next(),
-                        kind: StmtKind::Error,
+    fn expr_stmt(&self) -> BoxedP<'a, Stmt> {
+        let expr = self.expr.clone();
+        let semi = self.parser.kind(TokenKind::Semicolon);
+        custom(move |inp: &mut InputRef<'a, '_, &'a [Token], Extra<'a>>| {
+            let value = inp.parse(expr.clone())?;
+            let semi_tok = if value.kind.is_block_bodied() {
+                inp.parse(semi.clone().or_not())?
+            } else {
+                Some(inp.parse(semi.clone())?)
+            };
+
+            let span = match semi_tok {
+                Some(semi_tok) => value.span.merge(semi_tok.span),
+                None => value.span,
+            };
+            Ok(Stmt::new(
+                StmtKind::Expr {
+                    expr: value,
+                    semi: semi_tok.is_some(),
+                },
+                span,
+            ))
+        })
+        .boxed()
+    }
+
+    fn stmt_parser(&self) -> BoxedP<'a, Stmt> {
+        let while_let_stmt = self
+            .parser
+            .kind(TokenKind::WhileKw)
+            .then_ignore(self.parser.kind(TokenKind::LetKw))
+            .then(self.pattern.clone())
+            .then_ignore(self.parser.kind(TokenKind::Equals))
+            .then(self.expr_without_brace_forms.clone())
+            .then(self.block.clone())
+            .map(|(((while_tok, pat), scrutinee), block)| {
+                let span = while_tok.span.merge(block.span);
+                Stmt::new(
+                    StmtKind::WhileLet {
+                        pat,
+                        scrutinee,
+                        block,
+                    },
+                    span,
+                )
+            })
+            .boxed();
+
+        let while_stmt = self
+            .parser
+            .kind(TokenKind::WhileKw)
+            .then(self.expr_without_brace_forms.clone())
+            .then(self.block.clone())
+            .map(|((while_tok, cond), block)| {
+                let span = while_tok.span.merge(block.span);
+                Stmt::new(StmtKind::While { cond, block }, span)
+            })
+            .boxed();
+
+        let for_stmt = self
+            .parser
+            .kind(TokenKind::ForKw)
+            .then(self.pattern.clone())
+            .then_ignore(self.parser.kind(TokenKind::InKw))
+            .then(self.expr_without_brace_forms.clone())
+            .then(self.block.clone())
+            .map(|(((for_tok, pat), iter), block)| {
+                let span = for_tok.span.merge(block.span);
+                Stmt::new(StmtKind::For { pat, iter, block }, span)
+            })
+            .boxed();
+
+        let break_stmt = self
+            .parser
+            .kind(TokenKind::BreakKw)
+            .then(self.parser.kind(TokenKind::Semicolon))
+            .map(|(break_tok, semi_tok)| {
+                let span = break_tok.span.merge(semi_tok.span);
+                Stmt::new(StmtKind::Break, span)
+            });
+
+        let continue_stmt = self
+            .parser
+            .kind(TokenKind::ContinueKw)
+            .then(self.parser.kind(TokenKind::Semicolon))
+            .map(|(continue_tok, semi_tok)| {
+                let span = continue_tok.span.merge(semi_tok.span);
+                Stmt::new(StmtKind::Continue, span)
+            });
+
+        let return_stmt = self
+            .parser
+            .kind(TokenKind::ReturnKw)
+            .then(self.expr.clone().or_not())
+            .then(self.parser.kind(TokenKind::Semicolon))
+            .map(|((ret_tok, value), semi_tok)| {
+                let span = ret_tok.span.merge(semi_tok.span);
+                Stmt::new(StmtKind::Return(value), span)
+            })
+            .boxed();
+
+        let defer_stmt = self
+            .parser
+            .kind(TokenKind::DeferKw)
+            .then(self.expr.clone())
+            .then(self.parser.kind(TokenKind::Semicolon))
+            .map(|((defer_tok, value), semi_tok)| {
+                let span = defer_tok.span.merge(semi_tok.span);
+                Stmt::new(StmtKind::Defer(value), span)
+            })
+            .boxed();
+
+        let decl_stmt = self.decl_stmt();
+        let with_stmt = self.with_stmt();
+        let expr_stmt = self.expr_stmt();
+
+        let at_terminal_position = choice((
+            self.parser.kind(TokenKind::CloseBrace).ignored(),
+            self.expr
+                .clone()
+                .then(self.parser.kind(TokenKind::CloseBrace).ignored())
+                .ignored(),
+        ))
+        .rewind();
+
+        let stmt_recovery = at_terminal_position
+            .not()
+            .ignore_then(recover_by_skipping(STATEMENT_RECOVERY, |span| {
+                Stmt::new(StmtKind::Error, span)
+            }));
+
+        choice((
+            while_let_stmt,
+            while_stmt,
+            for_stmt,
+            break_stmt,
+            continue_stmt,
+            return_stmt,
+            defer_stmt,
+            decl_stmt,
+            with_stmt,
+            expr_stmt,
+        ))
+        .recover_with(via_parser(stmt_recovery))
+        .boxed()
+    }
+
+    fn block_parser(&self) -> BoxedP<'a, Block> {
+        let stmt = self.stmt_parser();
+        self.parser
+            .kind(TokenKind::OpenBrace)
+            .then(stmt.repeated().collect::<Vec<_>>())
+            .then(self.expr.clone().or_not())
+            .then(self.parser.kind(TokenKind::CloseBrace))
+            .map(|(((open_tok, mut stmts), tail), close_tok)| {
+                if let Some(tail) = tail {
+                    let span = tail.span;
+                    stmts.push(Stmt::new(
+                        StmtKind::Expr {
+                            expr: tail,
+                            semi: false,
+                        },
                         span,
-                    }),
-                );
-
-            let stmt = choice((
-                while_let_stmt,
-                while_stmt,
-                for_stmt,
-                break_stmt,
-                continue_stmt,
-                return_stmt,
-                defer_stmt,
-                decl_stmt,
-                with_stmt,
-                expr_stmt,
-            ))
-            .recover_with(via_parser(stmt_recovery))
-            .boxed();
-
-            self.kind(TokenKind::OpenBrace)
-                .then(stmt.repeated().collect::<Vec<_>>())
-                .then(expr.clone().or_not())
-                .then(self.kind(TokenKind::CloseBrace))
-                .map(|(((open_tok, mut stmts), tail), close_tok)| {
-                    if let Some(tail) = tail {
-                        let span = tail.span;
-                        stmts.push(Stmt {
-                            id: NodeId::next(),
-                            kind: StmtKind::Expr {
-                                expr: tail,
-                                semi: false,
-                            },
-                            span,
-                        });
-                    }
-                    Block {
-                        id: NodeId::next(),
-                        stmts,
-                        span: open_tok.span.merge(close_tok.span),
-                    }
-                })
-                .boxed()
-        };
-        block.define(block_body.labelled("a block"));
-
-        (expr.boxed(), block.boxed())
+                    ));
+                }
+                Block::new(stmts, open_tok.span.merge(close_tok.span))
+            })
+            .boxed()
     }
 }
 
@@ -1585,6 +1489,19 @@ mod tests {
         }
     }
 
+    /// Digit separators in a tuple index are stripped the same way a numeric literal's digits
+    /// are: `t.1_0` names field 10, like `t.10` does.
+    #[test]
+    fn parses_tuple_index_with_digit_separators() {
+        let expr = parse_expr("t.1_0");
+        match &expr.kind {
+            ExprKind::Access { member, .. } => {
+                assert_eq!(Interner::resolve(member.text), "10");
+            }
+            other => panic!("expected an access expr, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parses_chained_tuple_index_access() {
         let expr = parse_expr("t.0.1");
@@ -1687,19 +1604,12 @@ mod tests {
         }
     }
 
-    /// `Self` parses in expression position as the same single-segment path a written type name
-    /// produces, so `Self.none` inside an `extend` block reaches a variant the way `Shape.none`
-    /// does. Name resolution, not the parser, is what maps the segment to the enclosing type.
     #[test]
-    fn parses_self_as_a_path_in_expression_position() {
+    fn parses_self_kw_in_expression_position() {
         let expr = parse_expr("Self.none");
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
-                let ExprKind::Path(path) = &base.kind else {
-                    panic!("expected the base to be a path, got {:?}", base.kind);
-                };
-                assert_eq!(path.segments.len(), 1);
-                assert_eq!(Interner::resolve(path.segments[0].text), "Self");
+                assert!(matches!(base.kind, ExprKind::SelfKw));
                 assert_eq!(Interner::resolve(member.text), "none");
                 assert!(matches!(args, AccessArgs::None));
             }
@@ -1992,6 +1902,18 @@ mod tests {
         let expr = parse_expr("(1, 2, 3)");
         match &expr.kind {
             ExprKind::Tuple(elems) => assert_eq!(elems.len(), 3),
+            other => panic!("expected a tuple expr, got {other:?}"),
+        }
+    }
+
+    /// `(expr,)` — with its trailing comma — is a one-element tuple. The comma is what
+    /// distinguishes it from the grouped expression `(expr)`, so a one-element tuple is
+    /// writable in the same way a one-element tuple pattern or type is.
+    #[test]
+    fn parses_one_element_tuple_expr_with_trailing_comma() {
+        let expr = parse_expr("(x,)");
+        match &expr.kind {
+            ExprKind::Tuple(elems) => assert_eq!(elems.len(), 1),
             other => panic!("expected a tuple expr, got {other:?}"),
         }
     }

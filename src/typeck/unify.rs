@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
-use crate::nameres::PrimTy;
 use crate::typeck::fold;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
@@ -18,8 +17,8 @@ pub enum UnifyError {
 #[derive(Default)]
 pub struct Unifier {
     parents: HashMap<Ty, Ty>,
-    /// Used only for the union-by-size heuristic in [`Unifier::merge`], to keep the parent
-    /// tree shallow. It has no other effect on unification's result.
+    /// Used only for the union-by-size heuristic in [`Unifier::merge`]
+    /// It has no other effect on unification's result.
     sizes: HashMap<Ty, u32>,
 }
 
@@ -173,14 +172,14 @@ impl Unifier {
 
             (TyKind::Var(TyVar::Int(_)), TyKind::Var(TyVar::Int(_))) => no_components,
             (TyKind::Var(TyVar::Int(_)), TyKind::Primitive(p)) => {
-                if is_integer(*p) {
+                if p.is_integer() {
                     no_components
                 } else {
                     Err(UnifyError::ExpectedInteger { var: t, found: u })
                 }
             }
             (TyKind::Primitive(p), TyKind::Var(TyVar::Int(_))) => {
-                if is_integer(*p) {
+                if p.is_integer() {
                     no_components
                 } else {
                     Err(UnifyError::ExpectedInteger { var: u, found: t })
@@ -189,14 +188,14 @@ impl Unifier {
 
             (TyKind::Var(TyVar::Float(_)), TyKind::Var(TyVar::Float(_))) => no_components,
             (TyKind::Var(TyVar::Float(_)), TyKind::Primitive(p)) => {
-                if is_float(*p) {
+                if p.is_float() {
                     no_components
                 } else {
                     Err(UnifyError::ExpectedFloat { var: t, found: u })
                 }
             }
             (TyKind::Primitive(p), TyKind::Var(TyVar::Float(_))) => {
-                if is_float(*p) {
+                if p.is_float() {
                     no_components
                 } else {
                     Err(UnifyError::ExpectedFloat { var: u, found: t })
@@ -234,25 +233,6 @@ fn constraint(tcx: &TyCtx, ty: Ty) -> Constraint {
 
 fn is_absorbing(tcx: &TyCtx, ty: Ty) -> bool {
     matches!(tcx.kind(ty), TyKind::Error | TyKind::Never)
-}
-
-pub(crate) fn is_integer(prim: PrimTy) -> bool {
-    matches!(
-        prim,
-        PrimTy::I8
-            | PrimTy::I16
-            | PrimTy::I32
-            | PrimTy::I64
-            | PrimTy::U8
-            | PrimTy::U16
-            | PrimTy::U32
-            | PrimTy::U64
-            | PrimTy::Usize
-    )
-}
-
-pub(crate) fn is_float(prim: PrimTy) -> bool {
-    matches!(prim, PrimTy::F32 | PrimTy::F64)
 }
 
 #[cfg(test)]

@@ -125,9 +125,9 @@ Meanwhile, `SrcMap` keeps track of all `SrcFile`s in the project and allows us t
 The first stage in the pipeline is lexing, which converts the raw text of a `SrcFile` into `Token`s. The `Lexer` works on UTF-8 source code, which is decoded into chars. The structure of the `lexer` module is the following:
 ```
 src/
-├── lexer.rs                 # Handles CLI parsing (clap/structopt)
+├── lexer.rs                 # The `Lexer` itself
 └── lexer/
-    └── token.rs            # The actual compiler stages (lexer -> parser -> ...)
+    └── token.rs             # `Token`, `TokenKind`, and the keyword table
 ```
 `token.rs` holds the `Token` struct which comprises of two things: a `TokenKind` enum storing the type of token it is and a `SrcSpan` storing the token's location.
 
@@ -138,12 +138,12 @@ pub struct Token {
 }
 ```
 
-`lexer.rs` holds the actual implementation for the `Lexer`. The `Lexer` is a lightweight struct which operates over reference to the contents of a file. It exposes two functions as a part of its public-facing interface: `new` (which creates a new `Lexer` for a file) and `tokenize` (which lexes the file to produce a `Token` stream). Since one instance of `Lexer` only operates for one file, a new instance must be created for each file.
+`lexer.rs` holds the actual implementation for the `Lexer`. The `Lexer` is a lightweight struct which operates over a slice of the contents of a file. It exposes two functions as a part of its public-facing interface: `new` (which creates a new `Lexer` for a file) and `tokenize` (which lexes the file to produce a `Token` stream). Since one instance of `Lexer` only operates for one file, a new instance must be created for each file.
 
 ```rust
 pub struct Lexer<'a> {
-    /// [`Lexer::src`] is a &Vec<char> represent the raw source code.
-    src: &'a Vec<char>,
+    /// [`Lexer::src`] is a slice of the file's characters.
+    src: &'a [char],
 
     /// [`Lexer::file_offset`] allows the [`Lexer`] to produce global
     /// [`SrcSpan`]s for the [`Token`] stream it outputs.
@@ -155,14 +155,16 @@ pub struct Lexer<'a> {
     /// [`Lexer::lexeme_pos`] is position that the current lexeme (lexical unit)
     /// starts at in [`Lexer::src`].
     /// This is required for generating spans for multi-character tokens as
-    /// [`Lexer::cursor`] is not the start of the token anymore.
+    /// [`Lexer::cursor`] is not the start of the token.
     lexeme_pos: usize,
 }
 
 /// Public facing methods
-pub fn new(src_text: &'a Vec<char>, file_offset: usize) -> Lexer<'a>;
+pub fn new(src_text: &'a [char], file_offset: usize) -> Lexer<'a>;
 pub fn tokenize(&mut self) -> Vec<Token>;
 ```
+
+Invalid input does not stop the lexer: an unexpected character or an unterminated literal is reported as a diagnostic, the lexer recovers, and scanning continues from the next token. Comments are skipped rather than lexed into tokens; nested block comments are supported.
 
 ## Parser
 The Phi parser is implemented with the `chumsky` parser combinator library. `Parser` is a lightweight struct. It stores nothing about the file which is being parsed. To parse a file, `Parser` exposes the following method:
@@ -177,15 +179,19 @@ pub fn parse_all(&self, streams: &[(Vec<Token>, usize)]) -> Ast {
 ```
 
 The structure of the parser module and its submodules is as follows:
-```src/
+```
+src/
 └── parser.rs
-    ├── block_parser.rs
-    ├── expr_parser.rs
-    ├── item_parser.rs
-    ├── pattern_parser.rs
-    └── type_parser.rs
+    ├── block_parser.rs      # Exposes the block parser on its own
+    ├── delimiters.rs        # Delimiter pairing, run ahead of the grammar
+    ├── expr_parser.rs       # Expressions and blocks (defined together; they recurse into each other)
+    ├── item_parser.rs       # `fun`/`struct`/`enum`/`trait`/`extend`/`module`/`import`
+    ├── pattern_parser.rs    # Patterns
+    └── type_parser.rs       # Types
 ```
 Each submodule produces a specific sub-grammar for group of language features. There is a sub-grammar for blocks/statements, for expressions, for patterns, etc. which can be used. However, this is slightly misleading as to what goes on under the hood. Since sub-grammars recurse into each other, the  library requires that we define "monolithic" grammars which is responsible for parsing all recursing sub-grammars. For example, types and expressions recurse into each other, requiring a single grammar for all expressions and types. We thus separate these grammars for a cleaner public-facing interface.
+
+Before the grammar runs, `delimiters::unmatched` pairs up `(`, `[` and `{` over the token stream. If any delimiter is left without a partner, its diagnostic (pointing at the opening delimiter) replaces the grammar's errors for that file, since an unclosed delimiter makes the grammar fail everywhere else. Parse failures that the grammar itself raises are recovered through `Parser::recover_by_skipping`, which discards the tokens of the broken construct, emits a placeholder `Error` node carrying the skipped span, and resumes at the next construct, so one bad statement does not hide the rest of the file.
 
 ## Abstract Syntax Tree (AST)
 The Abstract Syntax Tree is a tree representing the written program. The goal of the AST is convert the user's exact syntax into a tree form for semantic analysis. Nodes in the AST are heap-allocated, unlike the HIR later on. However, despite not being arena-allocated, nodes in the AST are still allocated a `NodeId` for identification during name resolution. To facilitate lookup using `NodeId`, there are plans to arena-allocate the AST in a similar fashion to the HIR. We note that this is current a low-priority refactor.

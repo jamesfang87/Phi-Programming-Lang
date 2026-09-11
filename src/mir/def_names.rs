@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
-use crate::hir::{DefId, Hir, OwnerNode};
+use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
 
 pub struct DefNames {
     leaf: HashMap<DefId, String>,
     ancestor_path: HashMap<DefId, Vec<String>>,
+    /// The definition's written name, before [`replace_non_alphanumeric_chars`] sanitizes it for
+    /// use in a symbol. Diagnostics print this one, so a type reads as `Vec<T>`, not `Vec_T`.
+    display: HashMap<DefId, String>,
+    /// Every generic parameter's declared name, keyed by the [`HirId`] the type interner uses to
+    /// name it. A type printed as `T` needs the same name the HIR gave it.
+    generics: HashMap<HirId, String>,
 }
 
 impl DefNames {
@@ -26,17 +32,37 @@ impl DefNames {
             )
         })
     }
+
+    /// The definition's written name, for printing in a diagnostic.
+    pub fn def_name(&self, def: DefId) -> &str {
+        self.display.get(&def).unwrap_or_else(|| {
+            panic!(
+                "DefNames::def_name: {def:?} was never collected -- collect_def_names walks every \
+                 hir.def_ids() entry, so this DefId belongs to a different Hir"
+            )
+        })
+    }
+
+    /// The written name of the generic parameter `id` names.
+    pub fn generic_name(&self, id: HirId) -> &str {
+        self.generics.get(&id).unwrap_or_else(|| {
+            panic!(
+                "DefNames::generic_name: {id:?} was never collected -- collect_generic_names walks \
+                 every arena node, so this HirId belongs to a different Hir"
+            )
+        })
+    }
 }
 
 pub(crate) fn collect_def_names(hir: &Hir) -> DefNames {
-    let leaf: HashMap<DefId, String> = hir
+    let display: HashMap<DefId, String> = hir
         .def_ids()
-        .map(|def_id| {
-            (
-                def_id,
-                replace_non_alphanumeric_chars(&def_name(hir, def_id)),
-            )
-        })
+        .map(|def_id| (def_id, def_name(hir, def_id)))
+        .collect();
+
+    let leaf: HashMap<DefId, String> = display
+        .iter()
+        .map(|(&def_id, name)| (def_id, replace_non_alphanumeric_chars(name)))
         .collect();
 
     let ancestor_path = hir
@@ -56,7 +82,22 @@ pub(crate) fn collect_def_names(hir: &Hir) -> DefNames {
     DefNames {
         leaf,
         ancestor_path,
+        display,
+        generics: collect_generic_names(hir),
     }
+}
+
+fn collect_generic_names(hir: &Hir) -> HashMap<HirId, String> {
+    hir.def_ids()
+        .flat_map(|def| hir.arena(def).nodes.iter())
+        .filter_map(|node| match node {
+            Node::Generic(generic) => Some((
+                node.hir_id(),
+                Interner::resolve(generic.name.text).to_string(),
+            )),
+            _ => None,
+        })
+        .collect()
 }
 
 fn def_name(hir: &Hir, def: DefId) -> String {
@@ -118,5 +159,15 @@ mod tests {
         let names = collect_def_names(&hir);
         let path = names.ancestor_path(def);
         assert_eq!(path.last().map(String::as_str), Some("f"));
+    }
+
+    #[test]
+    fn generic_name_is_collected_for_the_id_a_type_carries() {
+        let hir = crate::testing::lower_to_hir("fun id<T>(v: T) -> T { return v; }");
+        let names = collect_def_names(&hir);
+        let function = crate::testing::first_function(&hir);
+        let generics = &hir.function(function).generics;
+        assert_eq!(generics.len(), 1);
+        assert_eq!(names.generic_name(generics[0]), "T");
     }
 }

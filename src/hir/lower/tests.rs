@@ -84,7 +84,7 @@ fn a_forward_reference_resolves_to_an_already_allocated_def_id() {
 #[test]
 fn every_item_gets_a_def_id_before_lower_module_runs() {
     let unit = parse_src("fun f(x: Foo) {} struct Foo {} trait T { fun m(self) {} }");
-    let ast = Ast::new(vec![unit]);
+    let ast = Ast::from(vec![unit]);
     let surface_results = crate::nameres::resolve(&ast);
     let mut cx = LoweringCtx::new(&surface_results);
 
@@ -335,7 +335,7 @@ fn generic_params_carry_their_bounds() {
     let g = hir.generic(s.generics[0]);
     assert_eq!(text(g.name), "T");
     assert_eq!(g.bounds.len(), 1);
-    assert_eq!(text(g.bounds[0].segments[0]), "Clone");
+    assert_eq!(text(g.bounds[0].path.segments[0]), "Clone");
 }
 
 #[test]
@@ -355,7 +355,7 @@ fn import_glob_and_alias_are_lowered_into_the_module() {
 #[test]
 fn nested_module_declaration_synthesizes_ancestor_modules() {
     // The parser does not wire a file's `module` header into `ParsedSrcFile::module`,
-    // so this attaches the decl by hand to reach the module tree `Ast::new` builds from it.
+    // so this attaches the decl by hand to reach the module tree `Ast::from` builds from it.
     let mut unit = parse_src("fun helper() {}");
     let path_span = unit.span;
     unit.module = Some(ModuleDecl {
@@ -376,9 +376,9 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
         span: path_span,
     });
 
-    let ast = Ast::new(vec![unit]);
+    let ast = Ast::from(vec![unit]);
     let surface_results = crate::nameres::resolve(&ast);
-    let hir = lower_ast(&ast, &surface_results);
+    let hir = Hir::from(&ast, &surface_results);
     let root = hir.root();
     // The root's only item is the synthesized `math`, which in turn holds `math::vector`.
     assert_eq!(root.items.len(), 1);

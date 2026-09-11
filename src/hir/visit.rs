@@ -14,24 +14,31 @@ pub trait Visitor<'hir>: Sized {
     fn visit_module(&mut self, def_id: DefId) {
         walk_module(self, def_id);
     }
+
     fn visit_item(&mut self, def_id: DefId) {
         walk_item(self, def_id);
     }
+
     fn visit_function(&mut self, def_id: DefId) {
         walk_function(self, def_id);
     }
+
     fn visit_struct(&mut self, def_id: DefId) {
         walk_struct(self, def_id);
     }
+
     fn visit_enum(&mut self, def_id: DefId) {
         walk_enum(self, def_id);
     }
+
     fn visit_trait(&mut self, def_id: DefId) {
         walk_trait(self, def_id);
     }
+
     fn visit_extend(&mut self, def_id: DefId) {
         walk_extend(self, def_id);
     }
+
     fn visit_closure(&mut self, def_id: DefId) {
         walk_closure(self, def_id);
     }
@@ -39,21 +46,27 @@ pub trait Visitor<'hir>: Sized {
     fn visit_generic(&mut self, id: HirId) {
         walk_generic(self, id);
     }
+
     fn visit_self_param(&mut self, id: HirId) {
         let _ = id;
     }
+
     fn visit_import(&mut self, id: HirId) {
         let _ = id;
     }
+
     fn visit_param(&mut self, id: HirId) {
         walk_param(self, id);
     }
+
     fn visit_closure_param(&mut self, id: HirId) {
         walk_closure_param(self, id);
     }
+
     fn visit_field(&mut self, id: HirId) {
         walk_field(self, id);
     }
+
     fn visit_variant(&mut self, id: HirId) {
         walk_variant(self, id);
     }
@@ -61,18 +74,23 @@ pub trait Visitor<'hir>: Sized {
     fn visit_block(&mut self, id: HirId) {
         walk_block(self, id);
     }
+
     fn visit_stmt(&mut self, id: HirId) {
         walk_stmt(self, id);
     }
+
     fn visit_arm(&mut self, id: HirId) {
         walk_arm(self, id);
     }
+
     fn visit_expr(&mut self, id: HirId) {
         walk_expr(self, id);
     }
+
     fn visit_pat(&mut self, id: HirId) {
         walk_pat(self, id);
     }
+
     fn visit_ty(&mut self, id: HirId) {
         walk_ty(self, id);
     }
@@ -90,6 +108,7 @@ pub fn walk_module<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
     for &id in &module.imports {
         v.visit_import(id);
     }
+
     for &item in &module.items {
         v.visit_item(item);
     }
@@ -116,15 +135,19 @@ pub fn walk_function<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
     for &id in &function.generics {
         v.visit_generic(id);
     }
+
     if let Some(id) = function.self_param {
         v.visit_self_param(id);
     }
+
     for &id in &function.params {
         v.visit_param(id);
     }
+
     if let Some(id) = function.ret {
         v.visit_ty(id);
     }
+
     if let Some(id) = function.block {
         v.visit_block(id);
     }
@@ -138,6 +161,7 @@ pub fn walk_struct<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
     for &id in &struct_.generics {
         v.visit_generic(id);
     }
+
     for &id in &struct_.fields {
         v.visit_field(id);
     }
@@ -151,6 +175,7 @@ pub fn walk_enum<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
     for &id in &enum_.generics {
         v.visit_generic(id);
     }
+
     for &id in &enum_.variants {
         v.visit_variant(id);
     }
@@ -164,6 +189,7 @@ pub fn walk_trait<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
     for &id in &trait_.generics {
         v.visit_generic(id);
     }
+
     for &method in &trait_.functions {
         v.visit_nested_owner(method);
     }
@@ -174,17 +200,19 @@ pub fn walk_extend<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
         unreachable!("root of an Extend owner is always OwnerNode::Extend");
     };
 
-    // The first group declares parameters; the other two apply arguments.
     for &id in &extend.extend_generics {
         v.visit_generic(id);
     }
+
     v.visit_ty(extend.self_ty);
     for &id in &extend.trait_generics {
         v.visit_ty(id);
     }
+
     if let Some(path) = &extend.trait_path {
         v.visit_path(path);
     }
+
     for &method in &extend.methods {
         v.visit_nested_owner(method);
     }
@@ -210,7 +238,10 @@ pub fn walk_closure<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
 
 pub fn walk_generic<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     for bound in &v.hir().generic(id).bounds {
-        v.visit_path(bound);
+        v.visit_path(&bound.path);
+        for &arg in &bound.args {
+            v.visit_ty(arg);
+        }
     }
 }
 
@@ -449,7 +480,6 @@ pub fn walk_ty<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         }
         TyKind::Array { elem, len } => {
             v.visit_ty(*elem);
-            // An array's length is a constant *expression*, not a type.
             if let Some(len) = *len {
                 v.visit_expr(len);
             }
@@ -480,9 +510,6 @@ mod tests {
     use crate::hir::{Node, Res};
     use crate::testing::lower_to_hir;
 
-    /// Records the `HirId` of every node the walk reaches, every `DefId` it enters, and every
-    /// `Path` it passes to `visit_path`. Overrides `visit_nested_owner` to traverse nested owners,
-    /// so that the per-arena comparison below covers all the arenas rather than only the root's.
     struct Recorder<'hir> {
         hir: &'hir Hir,
         visited: Vec<HirId>,
@@ -502,9 +529,6 @@ mod tests {
             r
         }
 
-        /// Every node in every arena except slot zero of each, which contains the owner. An owner
-        /// is accessed by `DefId` through an owner hook, not by `HirId` through a child list, so
-        /// it never appears in `visited`.
         fn every_child_node(hir: &Hir) -> Vec<HirId> {
             hir.def_ids()
                 .flat_map(|def| hir.arena(def).nodes.iter().skip(1).map(Node::hir_id))
@@ -517,9 +541,6 @@ mod tests {
             self.hir
         }
 
-        /// Enters every nested owner, since the exhaustiveness check runs over all the arenas
-        /// and each one must be visited from some entry point. `walk_item` dispatches to the owner
-        /// hook below, which records it.
         fn visit_nested_owner(&mut self, def_id: DefId) {
             walk_item(self, def_id);
         }
@@ -609,9 +630,6 @@ mod tests {
         }
     }
 
-    /// Covers every `Node` variant and every child field the walk reads: both `if` branches, a
-    /// `let` with an annotation, a `with` lend, a `match`, a closure, a `defer`, an array length
-    /// expression, all three `Payload` shapes, and all three `VariantPayload` shapes.
     const EVERYTHING: &str = r#"
         struct Pair<T> { fst: T, snd: i32 }
 
@@ -650,9 +668,6 @@ mod tests {
         }
     "#;
 
-    /// Every `HirId` allocated in an arena is reached by the walk. A child field omitted from a
-    /// `walk_*` function results in test failure, catching a subtree that one pass would traverse
-    /// and another would skip.
     #[test]
     fn the_walk_reaches_every_node_in_every_arena() {
         let hir = lower_to_hir(EVERYTHING);
@@ -671,9 +686,6 @@ mod tests {
         assert!(missed.is_empty(), "walk never reached: {missed:?}");
     }
 
-    /// Every `DefId` is entered. Without this, the check above would pass vacuously for an arena
-    /// the walk never entered: `visited` would hold none of its nodes, but neither would the
-    /// comparison, since `Recorder` collects both from what it reached.
     #[test]
     fn the_walk_enters_every_owner() {
         let hir = lower_to_hir(EVERYTHING);
@@ -687,8 +699,6 @@ mod tests {
         assert!(missed.is_empty(), "walk never entered: {missed:?}");
     }
 
-    /// No `HirId` is visited twice. A node listed in two child fields would be checked twice by
-    /// `Typeck` and lowered twice by MIR lowering.
     #[test]
     fn the_walk_reaches_each_node_exactly_once() {
         let hir = lower_to_hir(EVERYTHING);
@@ -700,8 +710,6 @@ mod tests {
         assert!(duplicates.is_empty(), "visited twice: {duplicates:?}");
     }
 
-    /// `visit_path` fires for the path positions unreachable through `visit_expr`: a generic
-    /// parameter's bound and an `extend` header's `adt_path` and `trait_path`.
     #[test]
     fn visit_path_fires_for_paths_outside_expressions() {
         let hir = lower_to_hir(EVERYTHING);
@@ -719,8 +727,6 @@ mod tests {
             })
             .collect();
 
-        // `Draw` is written twice as something other than an expression: once as the bound on
-        // `T`, once as the trait of the `extend` header. Neither is reachable through `visit_expr`.
         assert!(
             named.iter().filter(|n| *n == "Draw").count() >= 2,
             "expected the generic bound and the extend header's trait path, got {named:?}"
@@ -729,8 +735,6 @@ mod tests {
         assert!(named.iter().any(|n| n == "Pair"), "got {named:?}");
     }
 
-    /// A `Visitor` that does not override `visit_nested_owner` sees the closure's `DefId`
-    /// but none of the nodes in the closure's arena.
     #[test]
     fn the_walk_stops_at_a_nested_owner_unless_the_pass_follows_it() {
         struct Shallow<'hir> {
@@ -760,15 +764,11 @@ mod tests {
         };
         v.visit_function(function);
 
-        // The function's own body, and not the closure's.
         assert_eq!(v.blocks, 1);
         assert_eq!(v.owners.len(), 1, "the closure is offered, not entered");
         assert!(matches!(hir.def(v.owners[0]), OwnerNode::Closure(_)));
     }
 
-    /// `ExprKind::If::else_block` is a `Node::Block`, so `walk_expr` must reach it with
-    /// `visit_block`. Calling `visit_expr` on it panics in `Hir::expr`, which is what the
-    /// pre-visitor name resolution did on every `if`/`else`.
     #[test]
     fn an_else_branch_is_walked_as_a_block() {
         let hir = lower_to_hir("fun f(c: bool) { if c { let a = 1; } else { let b = 2; } }");
@@ -779,12 +779,9 @@ mod tests {
             .iter()
             .filter(|&&id| matches!(hir.node(id), Node::Block(_)))
             .count();
-        // The function body, the `then` block, and the `else` block.
         assert_eq!(blocks, 3);
     }
 
-    /// `StmtKind::Let`'s `ty` and `else_block` are both optional fields that the pre-visitor
-    /// name resolution omitted from its walk entirely.
     #[test]
     fn a_let_annotation_and_else_block_are_walked() {
         let hir = lower_to_hir("fun f() { let x: i32 = 1 else { let y = 2; }; }");
@@ -802,12 +799,9 @@ mod tests {
             .iter()
             .filter(|&&id| matches!(hir.node(id), Node::Block(_)))
             .count();
-        // The function body and the `else` block.
         assert_eq!(blocks, 2, "the let-else block was never walked");
     }
 
-    /// `TyKind::Array::len` addresses a `Node::Expr`, not a `Node::Ty` -- the only edge from the
-    /// type walk back into the expression walk.
     #[test]
     fn an_array_length_is_walked_as_an_expression() {
         let hir = lower_to_hir("fun f(a: [i32; 4]) {}");
@@ -822,8 +816,6 @@ mod tests {
         );
     }
 
-    /// The `&'hir Path` handed to `visit_path` is the one stored in the arena, with `res`
-    /// intact, rather than a copy rebuilt from `segments`.
     #[test]
     fn visit_path_carries_the_resolution_lowering_attached() {
         let hir = lower_to_hir("fun f(n: i32) -> i32 { return n; }");

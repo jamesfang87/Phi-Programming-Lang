@@ -13,6 +13,7 @@ use crate::diagnostics::typeck::{
     report_return_mismatch, report_unknown_literal_suffix,
 };
 use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
+use crate::hir::BindingMode;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
     DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, PatKind, Res, StmtKind,
@@ -20,19 +21,21 @@ use crate::hir::{
 };
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
-use crate::nameres::symbol_table::prim_ty;
+use crate::nameres::symbol_table::is_prim_ty;
 use crate::typeck::expr::DerefContext;
-use crate::typeck::results::TypeResolutions;
+use crate::typeck::results::{ResolvedCall, TypeResolutions};
+use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::bounds::Obligation;
 use crate::typeck::traits::index::ExtendIndex;
 use crate::typeck::traits::method::PendingMethodCall;
 use crate::typeck::traits::solve::{Query, Solution};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::{Unifier, UnifyError, is_float, is_integer};
+use crate::typeck::unify::{Unifier, UnifyError};
 
 pub mod adt;
 pub mod cast;
+pub mod entry_point;
 pub mod expr;
 pub mod fold;
 pub mod lower_ty;
@@ -69,6 +72,11 @@ pub struct Typeck<'hir> {
     /// The definitions whose `Self` is being computed right now, which
     /// are used for cycle detection (such as extend Wrap<Self>)
     computing_self_tys: HashSet<DefId>,
+
+    /// Closures checked since the enclosing function began, so their recorded
+    /// types can be written back once every constraint the function places on
+    /// them has been made.
+    closures_in_flight: Vec<DefId>,
 }
 
 impl<'hir> Typeck<'hir> {
@@ -84,6 +92,7 @@ impl<'hir> Typeck<'hir> {
             settling_method_calls: false,
             self_tys: HashMap::new(),
             computing_self_tys: HashSet::new(),
+            closures_in_flight: Vec::new(),
         }
     }
 
@@ -312,29 +321,42 @@ impl<'hir> Typeck<'hir> {
             self.types.record(id, defaulted);
         }
 
-        let call_entries: Vec<(HirId, DefId, Vec<Ty>)> = self
+        let call_entries: Vec<(HirId, ResolvedCall)> = self
             .types
             .calls_iter()
             .filter(|(id, _)| id.owner == owner)
-            .map(|(id, call)| (id, call.def, call.args.clone()))
+            .map(|(id, call)| (id, call.clone()))
             .collect();
-        for (id, def, args) in call_entries {
-            let defaulted = args
+        for (id, call) in call_entries {
+            let args = call
+                .args
                 .iter()
-                .map(|&arg| {
-                    let resolved = self.unifier.find_deep(&mut self.tcx, arg);
-                    self.default_unconstrained_types(resolved)
-                })
+                .map(|&arg| self.resolve_and_default(arg))
                 .collect();
-            self.types.record_call(id, def, defaulted);
+            let extend_args = call
+                .extend_args
+                .iter()
+                .map(|&arg| self.resolve_and_default(arg))
+                .collect();
+            let self_ty = call.self_ty.map(|ty| self.resolve_and_default(ty));
+            self.types
+                .record_method_call(id, call.def, args, extend_args, self_ty);
         }
     }
 
-    /// Defaults every unconstrained `TyVar::Int`/`TyVar::Float` still inside `ty` to `i32`/`f64`.
+    fn resolve_and_default(&mut self, ty: Ty) -> Ty {
+        let resolved = self.unifier.find_deep(&mut self.tcx, ty);
+        self.default_unconstrained_types(resolved)
+    }
+
+    /// Defaults every unconstrained `TyVar::Int`/`TyVar::Float` still inside `ty` to `i32`/`f64`,
+    /// and every unconstrained `TyVar::Any` to `unit`, so no inference variable survives into a
+    /// recorded type.
     fn default_unconstrained_types(&mut self, ty: Ty) -> Ty {
         fold::fold_ty(&mut self.tcx, ty, &mut |tcx, ty| match *tcx.kind(ty) {
             TyKind::Var(TyVar::Int(_)) => Some(tcx.mk_prim(PrimTy::I32)),
             TyKind::Var(TyVar::Float(_)) => Some(tcx.mk_prim(PrimTy::F64)),
+            TyKind::Var(TyVar::Any(_)) => Some(tcx.unit()),
             _ => None,
         })
     }
@@ -347,6 +369,50 @@ impl<'hir> Typeck<'hir> {
             return self.unifier.unify(&self.tcx, inner, peeled);
         }
         self.unifier.unify(&self.tcx, expected, found)
+    }
+
+    /// The unsize coercion: a `&Concrete` (or `&mut Concrete`) whose type implements the trait
+    /// may coerce to `&dyn Trait<args>` (or `&mut dyn Trait<args>`). Records the coercion on
+    /// `expr_id` for lowering, which builds the fat pointer there, and answers whether it
+    /// applied.
+    fn coerce_unsize(&mut self, expected: Ty, found: Ty, expr_id: HirId) -> bool {
+        let TyKind::Ref {
+            base: expected_base,
+            mutability: expected_mut,
+        } = self.tcx.kind(expected).clone()
+        else {
+            return false;
+        };
+        let TyKind::Dyn { trait_, args } = self.tcx.kind(expected_base).clone() else {
+            return false;
+        };
+        let TyKind::Ref {
+            base: found_base,
+            mutability: found_mut,
+        } = self.tcx.kind(found).clone()
+        else {
+            return false;
+        };
+        if expected_mut != found_mut {
+            return false;
+        }
+        if self.mentions_infer_var(found_base) {
+            return false;
+        }
+        let goal = Query {
+            self_ty: found_base,
+            trait_: TraitRef {
+                def: trait_,
+                args: args.clone(),
+            },
+        };
+        let env = self.bounds_env(expr_id.owner);
+        if matches!(self.implements(&goal, &env), Solution::Holds) {
+            self.types.record_unsize(expr_id, expected);
+            true
+        } else {
+            false
+        }
     }
 
     #[must_use]
@@ -364,7 +430,7 @@ impl<'hir> Typeck<'hir> {
                 Res::Local(Local::SelfParam(self_param)) => self.ty_of(self_param),
                 Res::Function(def) => self.ty_of(def.owner_id()),
                 Res::Err => self.tcx.error(),
-                Res::Type(_) | Res::Module(_) | Res::SelfTy(_) => unreachable!(
+                Res::Type(_) | Res::SelfTy(_) => unreachable!(
                     "name resolution never resolves a value-position path to a type, a \
                          module, or Self"
                 ),
@@ -522,8 +588,8 @@ impl<'hir> Typeck<'hir> {
             Literal::Char(_) => self.tcx.mk_prim(PrimTy::Char),
             Literal::Int { suffix, .. } => match suffix {
                 None => self.tcx.next_int_var(),
-                Some(suffix) => match prim_ty(*suffix) {
-                    Some(prim) if is_integer(prim) || is_float(prim) => self.tcx.mk_prim(prim),
+                Some(suffix) => match is_prim_ty(*suffix) {
+                    Some(prim) if prim.is_integer() || prim.is_float() => self.tcx.mk_prim(prim),
                     _ => {
                         report_unknown_literal_suffix(*suffix, span);
                         self.tcx.error()
@@ -532,9 +598,9 @@ impl<'hir> Typeck<'hir> {
             },
             Literal::Float { suffix, .. } => match suffix {
                 None => self.tcx.next_float_var(),
-                Some(suffix) => match prim_ty(*suffix) {
-                    Some(prim) if is_float(prim) => self.tcx.mk_prim(prim),
-                    Some(prim) if is_integer(prim) => {
+                Some(suffix) => match is_prim_ty(*suffix) {
+                    Some(prim) if prim.is_float() => self.tcx.mk_prim(prim),
+                    Some(prim) if prim.is_integer() => {
                         report_int_suffix_on_float_literal(*suffix, span);
                         self.tcx.error()
                     }
@@ -591,7 +657,9 @@ impl<'hir> Typeck<'hir> {
                 let ret = self.return_ty(id.owner);
 
                 let expr_ty = self.ty_of_expecting(expr, Some(ret));
-                if let Err(err) = self.unify_allowing_any(ret, expr_ty) {
+                if let Err(err) = self.unify_allowing_any(ret, expr_ty)
+                    && !self.coerce_unsize(ret, expr_ty, expr)
+                {
                     report_return_mismatch(self.display_cx(), err, stmt.span);
                 }
             }
@@ -621,14 +689,16 @@ impl<'hir> Typeck<'hir> {
 
         let bound = match declared {
             Some(declared) => {
-                if let Err(err) = self.unifier.unify(&self.tcx, declared, init_ty) {
+                if let Err(err) = self.unifier.unify(&self.tcx, declared, init_ty)
+                    && !self.coerce_unsize(declared, init_ty, init)
+                {
                     report_binding_type_mismatch(self.display_cx(), err, span);
                 }
                 declared
             }
             None => init_ty,
         };
-        self.check_pat(pat, bound);
+        self.check_pat(pat, bound, BindingMode::Value);
     }
 
     fn pat_is_irrefutable(&mut self, pat_id: HirId) -> bool {
@@ -719,13 +789,18 @@ impl<'hir> Typeck<'hir> {
 
     pub fn check_function(&mut self, function: DefId) {
         let function_node = self.hir.function(function);
+        let closures_in_flight = self.closures_in_flight.len();
 
         match function_node.block {
             Some(block) => {
                 let ret = self.return_ty(function);
                 let body = self.check_block_expecting(block, Some(ret));
                 if let Err(err) = self.unify_allowing_any(ret, body) {
-                    report_body_return_mismatch(self.display_cx(), err, function_node.span);
+                    let tail = self.hir.block(block).expr;
+                    let coerced = tail.is_some_and(|tail| self.coerce_unsize(ret, body, tail));
+                    if !coerced {
+                        report_body_return_mismatch(self.display_cx(), err, function_node.span);
+                    }
                 }
             }
             None => self.check_bodiless_function(function, function_node.span),
@@ -735,6 +810,13 @@ impl<'hir> Typeck<'hir> {
         // receiver has already been made.
         self.settle_pending_method_calls();
         self.writeback(function);
+        let closures: Vec<DefId> = self
+            .closures_in_flight
+            .drain(closures_in_flight..)
+            .collect();
+        for closure in closures {
+            self.writeback(closure);
+        }
     }
 
     fn check_bodiless_function(&mut self, function: DefId, span: SrcSpan) {
@@ -2161,5 +2243,20 @@ mod tests {
     #[test]
     fn a_with_lends_pattern_is_never_checked_for_refutability() {
         accepts("fun f(x: i32) { with y = &x { let _ = y; } }");
+    }
+
+    #[test]
+    fn a_closure_parameter_constrained_by_its_call_site_does_not_stay_a_variable() {
+        let (hir, tcx, types) = crate::testing::typecheck_only(
+            "fun conv<A, B>(x: A, f: fun(A) -> B) -> B { return f(x); }\n\
+             fun main() { let n: i32 = conv(true, |x| 9); }",
+        );
+        let _ = hir;
+        for (id, ty) in types.tys_iter() {
+            assert!(
+                !matches!(tcx.kind(ty), TyKind::Var(_)),
+                "{id:?} kept an unresolved variable: {ty:?}"
+            );
+        }
     }
 }
