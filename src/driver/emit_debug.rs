@@ -420,10 +420,9 @@ fn fmt_ty_def(names: &Names, kind: &str, id: AstNodeId) -> String {
     fmt_named(kind, name.text, name.span)
 }
 
-fn fmt_res(names: &Names, ast: &Ast, res: NameResRes) -> String {
+fn fmt_res(names: &Names, _ast: &Ast, res: NameResRes) -> String {
     match res {
         NameResRes::Err => "Err".to_string(),
-        NameResRes::Module(id) => format!("Module `{}`", fmt_mod_path(ast.module(id))),
         NameResRes::Function(id) => {
             let item = names
                 .items

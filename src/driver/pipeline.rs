@@ -9,7 +9,6 @@ use crate::driver::cli::{BuildOptions, Config, Mode};
 use crate::driver::emit_debug;
 use crate::driver::source::{SrcCollector, SrcMap};
 use crate::hir::Hir;
-use crate::hir::lower::lower_ast;
 use crate::lexer::Lexer;
 use crate::lexer::token::Token;
 use crate::mir;
@@ -17,7 +16,6 @@ use crate::mir::{Body, Instance};
 use crate::nameres;
 use crate::parser::Parser;
 use crate::typeck;
-use crate::typeck::results::TypeResolutions;
 use crate::typeck::tyctx::TyCtx;
 
 /// Collects every `.phi` file under `src_dir`, and the core and standard libraries, into the
@@ -57,10 +55,12 @@ pub fn parse(token_streams: Vec<Vec<Token>>) -> Ast {
 /// Everything the front end (lex through monomorphize) produces, when it produces anything at
 /// all -- `codegen`'s inputs, kept alongside each other so `build`/`run` don't need to
 /// recompute what `check` already has.
+///
+/// Deliberately no `hir` or `types` here: from lowering onward the pipeline runs off `tcx` and the
+/// MIR, so keeping the pre-MIR representations around for `codegen` would invite reaching back
+/// into them. See `mir::def_infos` for the facts that crossing the boundary required snapshotting.
 struct FrontendOutput {
-    hir: Hir,
     tcx: TyCtx,
-    types: TypeResolutions,
     program: mir::Mir,
     instances: HashMap<Instance, Body>,
 }
@@ -87,7 +87,7 @@ fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<Fr
         emit_debug::print_nameres(&ast, &res);
     }
 
-    let hir = lower_ast(&ast, &res);
+    let hir = Hir::from(&ast, &res);
     if options.dumps.hir {
         emit_debug::print_hir(&hir, options.exclude_core_in_emit);
     }
@@ -101,10 +101,14 @@ fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<Fr
             options.exclude_core_in_emit,
         );
     }
+    // Signature rules for the entry point run before lowering: a malformed `main` should be
+    // reported, not turned into MIR first. `typeck::check` does not run this itself because
+    // having no `main` is only a warning, which would then appear in every type-inference test.
+    typeck::entry_point::check(&hir);
 
     let program = mir::lower::lower(&hir, &mut checked.tcx, &checked.types, config.mode);
-    mir::checks::run_checks(&hir, &mut checked.tcx, &program);
-    let instances = mir::monomorphize::monomorphize(&hir, &mut checked.tcx, &program);
+    mir::checks::run_checks(&mut checked.tcx, &program);
+    let instances = mir::monomorphize::monomorphize(&mut checked.tcx, &program);
     let instances = mir::drop_elaboration::elaborate_drops(&mut checked.tcx, instances);
 
     if options.dumps.mir {
@@ -126,9 +130,7 @@ fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<Fr
     }
 
     Ok(Some(FrontendOutput {
-        hir,
         tcx: checked.tcx,
-        types: checked.types,
         program,
         instances,
     }))

@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn a_file_without_a_header_lands_in_the_root() {
-        let ast = Ast::new(vec![parse_src("fun main() {}")]);
+        let ast = Ast::from(vec![parse_src("fun main() {}")]);
 
         assert_eq!(ast.mod_ids().count(), 1);
         assert_eq!(ast.root().items.len(), 1);
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn a_nested_header_synthesizes_its_ancestors() {
-        let ast = Ast::new(vec![with_header(
+        let ast = Ast::from(vec![with_header(
             parse_src("fun helper() {}"),
             &["math", "vector"],
         )]);
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn two_files_declaring_one_module_are_merged() {
         let file = parse_src("import a::b; fun first() {}");
-        let ast = Ast::new(vec![
+        let ast = Ast::from(vec![
             with_header(file.clone(), &["math"]),
             with_header(file, &["math"]),
         ]);
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn sibling_modules_share_one_synthesized_ancestor() {
         let file = parse_src("fun b() {}");
-        let ast = Ast::new(vec![
+        let ast = Ast::from(vec![
             with_header(file.clone(), &["math", "b"]),
             with_header(file, &["math", "c"]),
         ]);
@@ -170,11 +170,11 @@ mod tests {
     #[test]
     fn an_ancestor_declared_by_its_own_file_is_not_duplicated() {
         let file = parse_src("fun a() {}");
-        let declared_first = Ast::new(vec![
+        let declared_first = Ast::from(vec![
             with_header(file.clone(), &["math"]),
             with_header(file.clone(), &["math", "vector"]),
         ]);
-        let declared_second = Ast::new(vec![
+        let declared_second = Ast::from(vec![
             with_header(file.clone(), &["math", "vector"]),
             with_header(file, &["math"]),
         ]);

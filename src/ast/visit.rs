@@ -119,10 +119,8 @@ pub fn walk_function<'ast, V: Visitor<'ast>>(v: &mut V, f: &'ast Function) {
 }
 
 pub fn walk_struct<'ast, V: Visitor<'ast>>(v: &mut V, s: &'ast Struct) {
-    if let Some(generics) = &s.generics {
-        for g in generics {
-            v.visit_generic(g);
-        }
+    for g in &s.generics {
+        v.visit_generic(g);
     }
     for f in &s.fields {
         v.visit_field(f);
@@ -130,10 +128,8 @@ pub fn walk_struct<'ast, V: Visitor<'ast>>(v: &mut V, s: &'ast Struct) {
 }
 
 pub fn walk_enum<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Enum) {
-    if let Some(generics) = &e.generics {
-        for g in generics {
-            v.visit_generic(g);
-        }
+    for g in &e.generics {
+        v.visit_generic(g);
     }
     for variant in &e.variants {
         v.visit_variant(variant);
@@ -141,10 +137,8 @@ pub fn walk_enum<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Enum) {
 }
 
 pub fn walk_trait<'ast, V: Visitor<'ast>>(v: &mut V, t: &'ast Trait) {
-    if let Some(generics) = &t.generics {
-        for g in generics {
-            v.visit_generic(g);
-        }
+    for g in &t.generics {
+        v.visit_generic(g);
     }
     for f in &t.functions {
         v.visit_function(f);
@@ -152,10 +146,8 @@ pub fn walk_trait<'ast, V: Visitor<'ast>>(v: &mut V, t: &'ast Trait) {
 }
 
 pub fn walk_extend<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Extend) {
-    if let Some(generics) = &e.extend_generics {
-        for g in generics {
-            v.visit_generic(g);
-        }
+    for g in &e.extend_generics {
+        v.visit_generic(g);
     }
     v.visit_ty(&e.self_ty);
     if let Some(generics) = &e.trait_generics {
@@ -400,7 +392,7 @@ pub fn walk_expr<'ast, V: Visitor<'ast>>(v: &mut V, expr: &'ast Expr) {
                 v.visit_expr(msg);
             }
         }
-        ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::Error => {}
+        ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::SelfKw | ExprKind::Error => {}
     }
 }
 
@@ -449,7 +441,7 @@ pub fn walk_ty<'ast, V: Visitor<'ast>>(v: &mut V, ty: &'ast Ty) {
                 v.visit_ty(ret);
             }
         }
-        TyKind::Error => {}
+        TyKind::Error | TyKind::SelfTy => {}
     }
 }
 
@@ -482,7 +474,7 @@ mod tests {
     use crate::testing::parse_src;
 
     fn ast_from(src: &str) -> Ast {
-        Ast::new(vec![parse_src(src)])
+        Ast::from(vec![parse_src(src)])
     }
 
     #[derive(Default)]
