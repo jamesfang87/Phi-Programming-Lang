@@ -121,7 +121,15 @@ pub struct Closure {
 pub struct Generic {
     pub hir_id: HirId,
     pub name: Ident,
-    pub bounds: Vec<Path>,
+    pub bounds: Vec<Bound>,
+    pub span: SrcSpan,
+}
+
+/// A trait bound on a generic parameter, such as `T: Conv<i32>`
+#[derive(Debug)]
+pub struct Bound {
+    pub path: Path,
+    pub args: Vec<HirId>, // -> Node::Ty
     pub span: SrcSpan,
 }
 

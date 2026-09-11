@@ -1,18 +1,24 @@
-use crate::diagnostics::mir::entry_point::{
+//! The crate's entry point: finding it, and checking it can actually be one.
+//!
+//! A crate has at most one crate-root `main`, and if it has one it must be callable with no
+//! arguments and return nothing. Those are rules about a signature, so they are checked here,
+//! alongside every other signature rule, and *before* lowering -- a `main` that fails them is not
+//! something the MIR pipeline should be asked to represent.
+//!
+//! The driver calls this directly rather than folding it into [`typeck::check`](super::check)
+//! because having no `main` is only a warning. Folding it in would put that warning in front of
+//! every type-inference test, none of which declares an entry point.
+//!
+//! Having *no* `main` is a warning, not an error. Such a crate still compiles and links; codegen
+//! emits a `main` that returns without doing anything, so what comes out is a runnable executable
+//! with no entry point of its own rather than a build failure.
+
+use crate::diagnostics::typeck::entry_point::{
     report_ambiguous_main, report_main_is_generic, report_main_returns_a_value,
     report_main_takes_parameters, report_missing_main,
 };
-use crate::hir::{DefId, Hir};
-use crate::mir::lower::crate_root_main_candidates;
+use crate::hir::{DefId, Hir, OwnerNode};
 
-/// A crate has at most one crate-root `main`, and if it has one it must be callable with no
-/// arguments and return nothing: not generic, no parameters, no declared return type. Those are
-/// errors, since otherwise they surface far later as an LLVM verification failure (a
-/// zero-argument call into a parameterized `main`).
-///
-/// Having *no* `main` is only a warning. Such a crate still compiles and links; codegen emits a
-/// `main` that returns without doing anything, so what comes out is a runnable executable with
-/// no entry point of its own rather than a build failure.
 pub fn check(hir: &Hir) {
     let candidates = crate_root_main_candidates(hir);
     match candidates.as_slice() {
@@ -36,6 +42,40 @@ fn check_signature(hir: &Hir, def_id: DefId) {
     }
 }
 
+/// Every function named `main` at the crate root or in one of the root's direct child modules,
+/// in declaration order. A `main` nested any deeper is not a candidate: codegen would not call
+/// it, so it must not be mistaken for an entry point here.
+pub(crate) fn crate_root_main_candidates(hir: &Hir) -> Vec<DefId> {
+    let root = hir.root();
+    let mut candidates: Vec<DefId> = root
+        .items
+        .iter()
+        .copied()
+        .filter(|&def| is_named_main(hir, def))
+        .collect();
+
+    for &item in &root.items {
+        if let OwnerNode::Module(child) = hir.def(item) {
+            candidates.extend(
+                child
+                    .items
+                    .iter()
+                    .copied()
+                    .filter(|&def| is_named_main(hir, def)),
+            );
+        }
+    }
+
+    candidates
+}
+
+fn is_named_main(hir: &Hir, def: DefId) -> bool {
+    matches!(
+        hir.def(def),
+        OwnerNode::Function(f) if crate::ast::interner::Interner::resolve(f.name.text) == "main"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::check;
@@ -43,7 +83,7 @@ mod tests {
     use crate::testing;
 
     fn diagnose(sources: &[&str], needle: &str) -> Severity {
-        let (hir, _tcx, _types, _mir, _instances) = testing::lower_mir_src_files(sources);
+        let hir = testing::lower_to_hir_files(sources);
         DiagCtx::clear();
         check(&hir);
         let reported = DiagCtx::diagnostics();

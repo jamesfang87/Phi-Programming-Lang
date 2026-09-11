@@ -42,21 +42,28 @@ pub enum Projection {
 
 pub fn place_ty(tcx: &mut TyCtx, local_decls: &[LocalDecl], place: &Place) -> Ty {
     let mut ty = local_decls[place.local.index()].ty;
+    let mut variant: Option<usize> = None;
     for projection in &place.projections {
-        ty = match (projection, tcx.kind(ty).clone()) {
-            (Projection::Deref, TyKind::Ref { base, .. } | TyKind::Iso(base)) => base,
-            (Projection::Field(index), TyKind::Tuple(elems)) => elems[*index as usize],
+        let (next, next_variant) = match (projection, tcx.kind(ty).clone()) {
+            (Projection::Deref, TyKind::Ref { base, .. } | TyKind::Iso(base)) => (base, None),
+            (Projection::Field(index), TyKind::Tuple(elems)) => (elems[*index as usize], None),
             (Projection::Field(index), TyKind::Adt { def, args }) => {
-                tcx.struct_field_tys(def, &args)[*index as usize]
+                let field = match variant {
+                    Some(variant) => tcx.variant_field_tys(def, &args, variant)[*index as usize],
+                    None => tcx.struct_field_tys(def, &args)[*index as usize],
+                };
+                (field, None)
             }
             (Projection::Index(_) | Projection::ConstantIndex(_), TyKind::Array { elem, .. }) => {
-                elem
+                (elem, None)
             }
-            (Projection::Downcast(_), _) => ty,
+            (Projection::Downcast(downcast), _) => (ty, Some(downcast.index())),
             (projection, kind) => {
                 panic!("place_ty: {projection:?} does not apply to a value of type {kind:?}")
             }
         };
+        ty = next;
+        variant = next_variant;
     }
     ty
 }

@@ -52,7 +52,10 @@ impl<'a> BodyLowerCtx<'a> {
         let span = stmt.span;
         match stmt.kind {
             StmtKind::Let {
-                pat, init, else_block, ..
+                pat,
+                init,
+                else_block,
+                ..
             } => {
                 let ty = self.expr_ty(init);
                 let diverges = matches!(self.tcx.kind(ty), crate::typeck::ty::TyKind::Never);
@@ -112,17 +115,14 @@ impl<'a> BodyLowerCtx<'a> {
     /// out of. Every other shape keeps the general scrutinee-then-bind path: a `Tuple` pattern
     /// needs a stable place to project each element from, and an `else`'s own refutation test
     /// needs one to test against before any binding happens.
-    fn lower_let(
-        &mut self,
-        pat: HirId,
-        init: HirId,
-        else_block: Option<HirId>,
-        span: SrcSpan,
-    ) {
+    fn lower_let(&mut self, pat: HirId, init: HirId, else_block: Option<HirId>, span: SrcSpan) {
         if else_block.is_none()
             && let PatKind::Binding { name, .. } = self.hir.pat(pat).kind
         {
-            let init_ty = self.expr_ty(init);
+            let init_ty = self
+                .types
+                .unsize(init)
+                .unwrap_or_else(|| self.expr_ty(init));
             let local = self.new_local(init_ty, Some(name), span);
             self.push_stmt(StatementKind::StorageLive(local), span);
             self.lower_expr_into(init, Place::from_local(local));
@@ -131,7 +131,10 @@ impl<'a> BodyLowerCtx<'a> {
             return;
         }
 
-        let init_ty = self.expr_ty(init);
+        let init_ty = self
+            .types
+            .unsize(init)
+            .unwrap_or_else(|| self.expr_ty(init));
         let scrutinee = self.new_local(init_ty, None, span);
         self.push_stmt(StatementKind::StorageLive(scrutinee), span);
         self.lower_expr_into(init, Place::from_local(scrutinee));

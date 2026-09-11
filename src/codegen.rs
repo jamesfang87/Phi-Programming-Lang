@@ -69,7 +69,7 @@ fn emit_c_main_trampoline(
     instances: &HashMap<Instance, Body>,
 ) {
     // A `main` is emitted even for a crate that declares none, so the link still produces an
-    // executable -- one that returns 0 without doing anything. `mir::checks::entry_point` has
+    // executable -- one that returns 0 without doing anything. `typeck::entry_point` has
     // already warned about the missing entry point; it is not an error, because a crate built
     // for its definitions alone is a legitimate thing to compile.
     //
@@ -77,7 +77,7 @@ fn emit_c_main_trampoline(
     // it as the one instance with an empty argument list, seeded as a root because nothing calls
     // it. A declared `main` missing from `instances` is therefore an internal inconsistency
     // rather than a user mistake -- every way `main` can be written wrongly (parameters, a
-    // return type, generics, more than one of them) is an error from `mir::checks::entry_point`,
+    // return type, generics, more than one of them) is an error from `typeck::entry_point`,
     // and a bodiless one is rejected earlier still, so the build stops well before codegen.
     let phi_main = mir.main.map(|main_def| {
         let instance = instances

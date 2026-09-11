@@ -23,12 +23,14 @@ pub fn build_value<'ctx>(
     mir: &Mir,
     def: DefId,
     args: &[Ty],
+    self_ty: Option<Ty>,
     captures: &[(BasicValueEnum<'ctx>, Ty)],
 ) -> BasicValueEnum<'ctx> {
     let instance = Instance {
         def,
         any_mode: None,
         args: args.to_vec(),
+        self_ty,
     };
     let name = mangle(mir, tcx, &instance);
     let code = cx

@@ -3,7 +3,7 @@
 
 use crate::ast;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{BindingMode, HirId, PatKind, Payload, PayloadField};
+use crate::hir::{HirId, PatKind, Payload, PayloadField};
 
 impl OwnerLowerer<'_, '_> {
     pub(super) fn lower_pat(&mut self, p: &ast::Pat) -> HirId {
@@ -17,10 +17,7 @@ impl OwnerLowerer<'_, '_> {
     fn lower_pat_kind(&mut self, kind: &ast::PatKind) -> PatKind {
         match kind {
             ast::PatKind::Wildcard => PatKind::Wildcard,
-            ast::PatKind::Binding(name) => PatKind::Binding {
-                name: *name,
-                mode: BindingMode::Inferred,
-            },
+            ast::PatKind::Binding(name) => PatKind::Binding { name: *name },
             ast::PatKind::Literal(lit) => PatKind::Literal(*lit),
             ast::PatKind::Variant { variant, payload } => PatKind::Variant {
                 variant: *variant,
@@ -45,10 +42,8 @@ impl OwnerLowerer<'_, '_> {
                             Some(inner) => self.lower_pat(inner),
                             None => {
                                 let name = f.name;
-                                let hir_id = self.synth_pat(f.span, move |_, _| PatKind::Binding {
-                                    name,
-                                    mode: BindingMode::Inferred,
-                                });
+                                let hir_id =
+                                    self.synth_pat(f.span, move |_, _| PatKind::Binding { name });
                                 self.cx.record_hir_id(f.id, hir_id);
                                 hir_id
                             }

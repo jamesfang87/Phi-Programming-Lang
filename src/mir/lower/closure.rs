@@ -88,6 +88,7 @@ impl<'a> BodyLowerCtx<'a> {
                 Box::new(AggregateKind::Closure {
                     def: def_id,
                     args: Vec::new(),
+                    self_ty: None,
                 }),
                 operands,
             ),

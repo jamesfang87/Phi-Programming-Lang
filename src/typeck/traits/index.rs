@@ -165,7 +165,7 @@ impl<'hir> Typeck<'hir> {
                     None
                 }
                 Res::Err => None,
-                Res::SelfTy(_) | Res::Local(_) | Res::Function(_) | Res::Module(_) => unreachable!(
+                Res::SelfTy(_) | Res::Local(_) | Res::Function(_) => unreachable!(
                     "an extend block's own path cannot resolve to Self, a local, a function, or \
                      a module"
                 ),
@@ -347,7 +347,10 @@ mod tests {
         );
         let checker = indexed(&hir);
 
-        assert_eq!(DiagCtx::messages(), ["a generic type parameter cannot be extended"]);
+        assert_eq!(
+            DiagCtx::messages(),
+            ["a generic type parameter cannot be extended"]
+        );
         assert!(
             checker.extends.is_empty(),
             "a rejected extend must not reach the index"

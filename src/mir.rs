@@ -2,7 +2,8 @@
 
 mod body;
 pub mod checks;
-mod def_names;
+mod def_infos;
+pub(crate) mod def_names;
 pub mod drop_elaboration;
 mod ids;
 mod instance;
@@ -17,6 +18,7 @@ mod terminator;
 mod vtables;
 
 pub use body::{BasicBlockData, Body, LocalDecl};
+pub use def_infos::DefKind;
 pub use ids::{BasicBlock, Local, StatementId, VariantIdx};
 pub use instance::{AnyMode, Instance};
 pub use lower::Mir;

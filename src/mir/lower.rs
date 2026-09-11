@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use crate::driver::cli::Mode;
 use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
 use crate::langitems::hir::LangItems;
+use crate::mir::def_infos::{DefInfos, collect_def_infos};
 use crate::mir::def_names::{DefNames, collect_def_names};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::vtables::{VtableInfo, collect_vtables};
@@ -53,6 +54,9 @@ impl Task {
 pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
     pub vtables: HashMap<(Ty, DefId), VtableInfo>,
+    /// Definition-level facts the passes after lowering need: kind, parent, generics, vtable
+    /// slot. See [`DefInfos`] for why they are snapshotted rather than read from the HIR.
+    pub def_infos: DefInfos,
     pub def_names: DefNames,
     pub lang_items: LangItems,
     pub main: Option<DefId>,
@@ -123,50 +127,18 @@ pub fn lower(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) ->
     Mir {
         bodies,
         vtables: collect_vtables(hir, types),
+        def_infos: collect_def_infos(hir),
         def_names: collect_def_names(hir),
         lang_items: hir.lang_items().clone(),
         main: find_crate_root_main(hir),
     }
 }
 
-fn is_named_main(hir: &Hir, def: DefId) -> bool {
-    matches!(
-        hir.def(def),
-        OwnerNode::Function(f) if crate::ast::interner::Interner::resolve(f.name.text) == "main"
-    )
-}
-
 fn find_crate_root_main(hir: &Hir) -> Option<DefId> {
-    match crate_root_main_candidates(hir).as_slice() {
+    match crate::typeck::entry_point::crate_root_main_candidates(hir).as_slice() {
         [one] => Some(*one),
-        // No candidates: `checks::entry_point` reports the missing entry point. Several
+        // No candidates: `typeck::entry_point` reports the missing entry point. Several
         // candidates: it reports the ambiguity. Either way codegen gets no entry point.
         _ => None,
     }
-}
-
-/// Every function named `main` at the crate root or in one of the root's direct child modules,
-/// in declaration order.
-pub(crate) fn crate_root_main_candidates(hir: &Hir) -> Vec<DefId> {
-    let root = hir.root();
-    let mut candidates: Vec<DefId> = root
-        .items
-        .iter()
-        .copied()
-        .filter(|&def| is_named_main(hir, def))
-        .collect();
-
-    for &item in &root.items {
-        if let OwnerNode::Module(child) = hir.def(item) {
-            candidates.extend(
-                child
-                    .items
-                    .iter()
-                    .copied()
-                    .filter(|&def| is_named_main(hir, def)),
-            );
-        }
-    }
-
-    candidates
 }

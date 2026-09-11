@@ -10,36 +10,36 @@
 //!    recursive-but-not-unbounded generic, such as `fun f<T>() { f::<T>(); }`, from
 //!    re-processing forever). Otherwise substitute every `Ty` the matching generic `Body`
 //!    contains via [`subst::subst_ty`], discovering further instances along the way: a
-//!    `ConstKind::FnDef(def, args, mode)` names one, queued through the worklist since a
-//!    function's own declared generics can be zipped against a substituted `args` list; a
-//!    closure nested inside is handled eagerly instead, recursing immediately with the *same*
-//!    substitution map, since a closure declares no generics of its own to zip against at all --
-//!    every `TyKind::Generic` its body mentions names a parameter of the *enclosing* definition.
+//!    `ConstKind::FunDef(def, args, mode, self_ty)` names one, queued through the worklist
+//!    since a function's own declared generics can be zipped against a substituted `args`
+//!    list (and a `self_ty` is carried for a trait's own method, whose body is substituted
+//!    once per implementing type); a closure nested inside is handled eagerly instead,
+//!    recursing immediately with the *same* substitution map, since a closure declares no
+//!    generics of its own to zip against at all -- every `TyKind::Generic` its body mentions
+//!    names a parameter of the *enclosing* definition.
 //! 3. **Terminate**: the queue empties, or a depth guard reports a clear internal error instead
 //!    of hanging on a pathological, ever-growing instantiation chain.
 //!
-//! One limitation this version has, called out here rather than silently mishandled: a method
-//! declared inside a *generic* `extend<T> Foo<T> { .. }` block can reference the block's own
-//! `T`, not just the method's own generics, and `TypeResolutions::call`'s recorded arguments
-//! (see the prerequisite typeck change this pass relies on) only carry the method's own. Such a
-//! method's body is substituted using only its own generics, which is correct whenever it
-//! declares none of its own beyond `Self`'s already-concrete type, and wrong for one that mixes
-//! both -- a narrower, follow-up prerequisite (recording the impl-level substitution too) would
-//! close this, and is not attempted here.
+//! A call inside a trait's own default body names the trait's declaration of the method, which
+//! may be abstract or overridden. At substitution time the instance's concrete `self_ty` picks
+//! the implementing type's own method out of `Mir::vtables`, so the default body dispatches
+//! statically once per implementing type; a callee the implementing type does not provide keeps
+//! naming the trait's own (default) body.
 
-mod subst;
+pub(crate) mod subst;
 #[cfg(test)]
 mod tests;
 
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Hir, OwnerNode};
+use crate::hir::{DefId, HirId};
 use crate::mir::lower::Mir;
 use crate::mir::{
-    AggregateKind, AnyMode, AssertMessage, Body, ConstKind, Instance, Operand, Rvalue,
+    AggregateKind, AnyMode, AssertMessage, Body, ConstKind, DefKind, Instance, Operand, Rvalue,
     StatementKind, TerminatorKind,
 };
-use crate::typeck::ty::Ty;
+use crate::typeck::fold::Subst;
+use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
 /// A generous ceiling on the number of instances one `monomorphize` call will produce, past
@@ -52,7 +52,7 @@ const INSTANTIATION_LIMIT: usize = 4096;
 /// Runs monomorphization over every `Body` `mir::lower` produced, returning one concrete `Body`
 /// per instance actually used, keyed by the same [`Instance`] the spec's "Generic
 /// monomorphization" section describes.
-pub fn monomorphize(hir: &Hir, tcx: &mut TyCtx, program: &Mir) -> HashMap<Instance, Body> {
+pub fn monomorphize(tcx: &mut TyCtx, program: &Mir) -> HashMap<Instance, Body> {
     let mut output = HashMap::new();
     let mut worklist: Vec<Instance> = Vec::new();
 
@@ -61,12 +61,12 @@ pub fn monomorphize(hir: &Hir, tcx: &mut TyCtx, program: &Mir) -> HashMap<Instan
     // which this test is load-bearing are the ones nothing calls -- in practice `main`.
     //
     // `main` is therefore seeded on its own terms, not on the test's. It is checked to declare
-    // no generics (`mir::checks::entry_point`) and nothing calls it, so it is a root by
+    // no generics (`typeck::entry_point`) and nothing calls it, so it is a root by
     // definition, with an empty argument list. Leaving it to `body_mentions_generic` made it
     // hostage to every type in its body being concrete, and a lowering bug that put a stray
     // generic in one of its locals dropped the program's entry point silently.
     for (&(def, any_mode), body) in &program.bodies {
-        if matches!(hir.def(def), OwnerNode::Closure(_)) {
+        if program.def_infos.kind(def) == DefKind::Closure {
             continue;
         }
         if Some(def) == program.main || !body_mentions_generic(tcx, body) {
@@ -74,6 +74,7 @@ pub fn monomorphize(hir: &Hir, tcx: &mut TyCtx, program: &Mir) -> HashMap<Instan
                 def,
                 any_mode,
                 args: Vec::new(),
+                self_ty: None,
             });
         }
     }
@@ -94,7 +95,7 @@ pub fn monomorphize(hir: &Hir, tcx: &mut TyCtx, program: &Mir) -> HashMap<Instan
         let Some(generic_body) = program.bodies.get(&(instance.def, instance.any_mode)) else {
             continue;
         };
-        let subst = build_subst(hir, instance.def, &instance.args);
+        let subst = build_subst(program, instance.def, &instance.args, instance.self_ty);
         let mut discovered = Vec::new();
         let concrete = process_body(
             tcx,
@@ -112,13 +113,20 @@ pub fn monomorphize(hir: &Hir, tcx: &mut TyCtx, program: &Mir) -> HashMap<Instan
     output
 }
 
-fn build_subst(hir: &Hir, def: DefId, args: &[Ty]) -> HashMap<crate::hir::HirId, Ty> {
-    hir.function(def)
-        .generics
-        .iter()
-        .copied()
-        .zip(args.iter().copied())
-        .collect()
+fn build_subst(program: &Mir, def: DefId, args: &[Ty], self_ty: Option<Ty>) -> Subst {
+    let infos = &program.def_infos;
+    let mut params: Vec<HirId> = Vec::new();
+    if let Some(parent) = infos.parent(def) {
+        match infos.kind(parent) {
+            DefKind::Extend | DefKind::Trait => params.extend(infos.generics(parent)),
+            _ => {}
+        }
+    }
+    params.extend(infos.generics(def));
+    Subst {
+        generics: params.into_iter().zip(args.iter().copied()).collect(),
+        self_ty,
+    }
 }
 
 /// Whether any of `body`'s locals is typed with a generic still in it.
@@ -140,14 +148,14 @@ fn body_mentions_generic(tcx: &TyCtx, body: &Body) -> bool {
 /// Substitutes every `Ty` `generic_body` contains, discovering further instances along the way.
 /// A nested closure is substituted eagerly, right here, and inserted into `output` directly,
 /// since it shares `instance`'s own substitution rather than needing a worklist entry of its
-/// own; a nested `FnDef` call is pushed onto `discovered` instead, since it has its own declared
+/// own; a nested `FunDef` call is pushed onto `discovered` instead, since it has its own declared
 /// generics an argument list can be zipped against independently.
 #[allow(clippy::too_many_arguments)]
 fn process_body(
     tcx: &mut TyCtx,
     program: &Mir,
     generic_body: &Body,
-    subst: &HashMap<crate::hir::HirId, Ty>,
+    subst: &Subst,
     instance: &Instance,
     output: &mut HashMap<Instance, Body>,
     discovered: &mut Vec<Instance>,
@@ -189,6 +197,7 @@ fn process_body(
         let terminator = crate::mir::Terminator {
             kind: subst_terminator(
                 tcx,
+                program,
                 block.terminator.kind.clone(),
                 subst,
                 output,
@@ -210,7 +219,7 @@ fn subst_stmt(
     tcx: &mut TyCtx,
     program: &Mir,
     kind: StatementKind,
-    subst: &HashMap<crate::hir::HirId, Ty>,
+    subst: &Subst,
     instance: &Instance,
     output: &mut HashMap<Instance, Body>,
     discovered: &mut Vec<Instance>,
@@ -229,40 +238,45 @@ fn subst_rvalue(
     tcx: &mut TyCtx,
     program: &Mir,
     rvalue: Rvalue,
-    subst: &HashMap<crate::hir::HirId, Ty>,
+    subst: &Subst,
     instance: &Instance,
     output: &mut HashMap<Instance, Body>,
     discovered: &mut Vec<Instance>,
 ) -> Rvalue {
     match rvalue {
-        Rvalue::Use(operand) => Rvalue::Use(subst_operand(tcx, operand, subst, output, discovered)),
+        Rvalue::Use(operand) => Rvalue::Use(subst_operand(
+            tcx, program, operand, subst, output, discovered,
+        )),
         Rvalue::Ref { mutability, place } => Rvalue::Ref { mutability, place },
         Rvalue::BinaryOp(op, lhs, rhs) => Rvalue::BinaryOp(
             op,
-            subst_operand(tcx, lhs, subst, output, discovered),
-            subst_operand(tcx, rhs, subst, output, discovered),
+            subst_operand(tcx, program, lhs, subst, output, discovered),
+            subst_operand(tcx, program, rhs, subst, output, discovered),
         ),
         Rvalue::CheckedBinaryOp(op, lhs, rhs) => Rvalue::CheckedBinaryOp(
             op,
-            subst_operand(tcx, lhs, subst, output, discovered),
-            subst_operand(tcx, rhs, subst, output, discovered),
+            subst_operand(tcx, program, lhs, subst, output, discovered),
+            subst_operand(tcx, program, rhs, subst, output, discovered),
         ),
-        Rvalue::UnaryOp(op, operand) => {
-            Rvalue::UnaryOp(op, subst_operand(tcx, operand, subst, output, discovered))
-        }
+        Rvalue::UnaryOp(op, operand) => Rvalue::UnaryOp(
+            op,
+            subst_operand(tcx, program, operand, subst, output, discovered),
+        ),
         Rvalue::Cast { operand, ty, kind } => Rvalue::Cast {
-            operand: subst_operand(tcx, operand, subst, output, discovered),
+            operand: subst_operand(tcx, program, operand, subst, output, discovered),
             ty: subst::subst_ty(tcx, ty, subst),
             kind,
         },
         Rvalue::Aggregate(mut kind, operands) => {
-            if let AggregateKind::Closure { def, args } = &mut *kind {
+            if let AggregateKind::Closure { def, args, self_ty } = &mut *kind {
                 *args = instance.args.clone();
+                *self_ty = instance.self_ty.clone();
                 let def = *def;
                 let closure_instance = Instance {
                     def,
                     any_mode: None,
                     args: instance.args.clone(),
+                    self_ty: instance.self_ty.clone(),
                 };
                 if !output.contains_key(&closure_instance)
                     && let Some(closure_generic_body) = program.bodies.get(&(def, None))
@@ -281,24 +295,31 @@ fn subst_rvalue(
             }
             let operands = operands
                 .into_iter()
-                .map(|op| subst_operand(tcx, op, subst, output, discovered))
+                .map(|op| subst_operand(tcx, program, op, subst, output, discovered))
                 .collect();
             Rvalue::Aggregate(kind, operands)
         }
+        Rvalue::Unsize { operand, trait_ } => Rvalue::Unsize {
+            operand: subst_operand(tcx, program, operand, subst, output, discovered),
+            trait_,
+        },
         Rvalue::Discriminant(place) => Rvalue::Discriminant(place),
         Rvalue::Len(place) => Rvalue::Len(place),
-        Rvalue::New(operand) => Rvalue::New(subst_operand(tcx, operand, subst, output, discovered)),
+        Rvalue::New(operand) => Rvalue::New(subst_operand(
+            tcx, program, operand, subst, output, discovered,
+        )),
         Rvalue::NewArray { elem, count } => Rvalue::NewArray {
-            elem: subst_operand(tcx, elem, subst, output, discovered),
-            count: subst_operand(tcx, count, subst, output, discovered),
+            elem: subst_operand(tcx, program, elem, subst, output, discovered),
+            count: subst_operand(tcx, program, count, subst, output, discovered),
         },
     }
 }
 
 fn subst_operand(
     tcx: &mut TyCtx,
+    program: &Mir,
     operand: Operand,
-    subst: &HashMap<crate::hir::HirId, Ty>,
+    subst: &Subst,
     output: &mut HashMap<Instance, Body>,
     discovered: &mut Vec<Instance>,
 ) -> Operand {
@@ -307,23 +328,180 @@ fn subst_operand(
     };
     let ty = subst::subst_ty(tcx, constant.ty, subst);
     let kind = match constant.kind {
-        ConstKind::FunDef(def, args, mode) => {
+        ConstKind::FunDef(def, args, mode, self_ty) => {
             let args: Vec<Ty> = args
                 .iter()
                 .map(|&a| subst::subst_ty(tcx, a, subst))
                 .collect();
-            queue_fn_def(def, mode, args.clone(), output, discovered);
-            ConstKind::FunDef(def, args, mode)
+            let self_ty = self_ty.map(|ty| subst::subst_ty(tcx, ty, subst));
+            let dyn_dispatch = self_ty.is_some_and(|ty| matches!(tcx.kind(ty), TyKind::Dyn { .. }));
+            let (def, args, self_ty) = if dyn_dispatch {
+                (def, args, self_ty)
+            } else {
+                match redirect_trait_default(program, tcx, def, self_ty, &args) {
+                    Some((impl_method, impl_args)) => (impl_method, impl_args, None),
+                    None => (def, args, self_ty),
+                }
+            };
+            let self_ty = match program.def_infos.parent(def) {
+                Some(parent) if program.def_infos.kind(parent) == DefKind::Trait => self_ty,
+                _ => None,
+            };
+            let args = match trait_args_for(program, tcx, def, self_ty) {
+                Some(trait_args) => trait_args.into_iter().chain(args.into_iter()).collect(),
+                None => args,
+            };
+            if !dyn_dispatch {
+                queue_fn_def(def, mode, args.clone(), self_ty.clone(), output, discovered);
+            }
+            ConstKind::FunDef(def, args, mode, self_ty)
         }
         other => other,
     };
     Operand::Constant(crate::mir::Constant { ty, kind })
 }
 
+/// The implementing type's own method for a call made inside a trait's default body, with the
+/// argument list the impl's body needs: the block's own generic arguments first (picked out by
+/// matching the impl's written self type against the concrete `self_ty`), then the method's own.
+fn redirect_trait_default(
+    program: &Mir,
+    tcx: &mut TyCtx,
+    def: DefId,
+    self_ty: Option<Ty>,
+    args: &[Ty],
+) -> Option<(DefId, Vec<Ty>)> {
+    let self_ty = self_ty?;
+    let (trait_owner, index) = program.def_infos.trait_method(def)?;
+    let (info, binds) = matching_vtable(program, tcx, trait_owner, self_ty)?;
+    let impl_method = info.methods[index as usize]?;
+    let mut redirected: Vec<Ty> = info
+        .extend_generics
+        .iter()
+        .map(|generic| binds[generic])
+        .collect();
+    redirected.extend(args.iter().copied());
+    Some((impl_method, redirected))
+}
+
+/// The trait arguments the implementing type realizes, taken from the `extend .. with` block
+/// whose written self type matches `self_ty`, with the block's own generics substituted out.
+fn trait_args_for(
+    program: &Mir,
+    tcx: &mut TyCtx,
+    def: DefId,
+    self_ty: Option<Ty>,
+) -> Option<Vec<Ty>> {
+    let self_ty = self_ty?;
+    let (trait_owner, _) = program.def_infos.trait_method(def)?;
+    let (info, binds) = matching_vtable(program, tcx, trait_owner, self_ty)?;
+    let subst = Subst {
+        generics: binds,
+        self_ty: None,
+    };
+    Some(
+        info.trait_args
+            .iter()
+            .map(|&arg| subst::subst_ty(tcx, arg, &subst))
+            .collect(),
+    )
+}
+
+fn matching_vtable<'a>(
+    program: &'a Mir,
+    tcx: &mut TyCtx,
+    trait_owner: DefId,
+    self_ty: Ty,
+) -> Option<(&'a crate::mir::vtables::VtableInfo, HashMap<HirId, Ty>)> {
+    for ((pattern, trait_def), info) in &program.vtables {
+        if *trait_def != trait_owner {
+            continue;
+        }
+        let mut binds: HashMap<HirId, Ty> = HashMap::new();
+        if matches_impl_self(tcx, *pattern, self_ty, &mut binds) {
+            return Some((info, binds));
+        }
+    }
+    None
+}
+
+fn matches_impl_self(
+    tcx: &mut TyCtx,
+    pattern: Ty,
+    self_ty: Ty,
+    binds: &mut HashMap<HirId, Ty>,
+) -> bool {
+    match (tcx.kind(pattern).clone(), tcx.kind(self_ty).clone()) {
+        (TyKind::Generic(param), _) => match binds.get(&param) {
+            Some(bound) => *bound == self_ty,
+            None => {
+                binds.insert(param, self_ty);
+                true
+            }
+        },
+        (TyKind::Adt { def: a, args: x }, TyKind::Adt { def: b, args: y }) => {
+            a == b
+                && x.len() == y.len()
+                && x.iter()
+                    .zip(y.iter())
+                    .all(|(&p, &q)| matches_impl_self(tcx, p, q, binds))
+        }
+        (
+            TyKind::Ref {
+                base: a,
+                mutability: m,
+            },
+            TyKind::Ref {
+                base: b,
+                mutability: n,
+            },
+        ) => m == n && matches_impl_self(tcx, a, b, binds),
+        (TyKind::Iso(a), TyKind::Iso(b)) => matches_impl_self(tcx, a, b, binds),
+        (TyKind::Tuple(a), TyKind::Tuple(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b.iter())
+                    .all(|(&p, &q)| matches_impl_self(tcx, p, q, binds))
+        }
+        (
+            TyKind::Array {
+                elem: a,
+                len: len_a,
+            },
+            TyKind::Array {
+                elem: b,
+                len: len_b,
+            },
+        ) => len_a == len_b && matches_impl_self(tcx, a, b, binds),
+        (
+            TyKind::Fun {
+                params: a,
+                ret: r_a,
+            },
+            TyKind::Fun {
+                params: b,
+                ret: r_b,
+            },
+        ) => {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b.iter())
+                    .all(|(&p, &q)| matches_impl_self(tcx, p, q, binds))
+                && match (r_a, r_b) {
+                    (Some(r_a), Some(r_b)) => matches_impl_self(tcx, r_a, r_b, binds),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        _ => pattern == self_ty,
+    }
+}
+
 fn queue_fn_def(
     def: DefId,
     mode: Option<AnyMode>,
     args: Vec<Ty>,
+    self_ty: Option<Ty>,
     output: &HashMap<Instance, Body>,
     discovered: &mut Vec<Instance>,
 ) {
@@ -331,6 +509,7 @@ fn queue_fn_def(
         def,
         any_mode: mode,
         args,
+        self_ty,
     };
     if !output.contains_key(&instance) {
         discovered.push(instance);
@@ -343,8 +522,9 @@ fn queue_fn_def(
 /// statement's operands, not a version that skips it.
 fn subst_terminator(
     tcx: &mut TyCtx,
+    program: &Mir,
     kind: TerminatorKind,
-    subst: &HashMap<crate::hir::HirId, Ty>,
+    subst: &Subst,
     output: &mut HashMap<Instance, Body>,
     discovered: &mut Vec<Instance>,
 ) -> TerminatorKind {
@@ -355,10 +535,10 @@ fn subst_terminator(
             destination,
             target,
         } => TerminatorKind::Call {
-            func: subst_operand(tcx, func, subst, output, discovered),
+            func: subst_operand(tcx, program, func, subst, output, discovered),
             args: args
                 .into_iter()
-                .map(|a| subst_operand(tcx, a, subst, output, discovered))
+                .map(|a| subst_operand(tcx, program, a, subst, output, discovered))
                 .collect(),
             destination,
             target,
@@ -369,9 +549,9 @@ fn subst_terminator(
             msg,
             target,
         } => TerminatorKind::Assert {
-            cond: subst_operand(tcx, cond, subst, output, discovered),
+            cond: subst_operand(tcx, program, cond, subst, output, discovered),
             expected,
-            msg: subst_assert_message(tcx, msg, subst, output, discovered),
+            msg: subst_assert_message(tcx, program, msg, subst, output, discovered),
             target,
         },
         other => other,
@@ -380,20 +560,21 @@ fn subst_terminator(
 
 fn subst_assert_message(
     tcx: &mut TyCtx,
+    program: &Mir,
     msg: AssertMessage,
-    subst: &HashMap<crate::hir::HirId, Ty>,
+    subst: &Subst,
     output: &mut HashMap<Instance, Body>,
     discovered: &mut Vec<Instance>,
 ) -> AssertMessage {
     match msg {
-        AssertMessage::Assert(m) => {
-            AssertMessage::Assert(m.map(|op| subst_operand(tcx, op, subst, output, discovered)))
-        }
-        AssertMessage::Panic(m) => {
-            AssertMessage::Panic(m.map(|op| subst_operand(tcx, op, subst, output, discovered)))
-        }
+        AssertMessage::Assert(m) => AssertMessage::Assert(
+            m.map(|op| subst_operand(tcx, program, op, subst, output, discovered)),
+        ),
+        AssertMessage::Panic(m) => AssertMessage::Panic(
+            m.map(|op| subst_operand(tcx, program, op, subst, output, discovered)),
+        ),
         AssertMessage::Unreachable(m) => AssertMessage::Unreachable(
-            m.map(|op| subst_operand(tcx, op, subst, output, discovered)),
+            m.map(|op| subst_operand(tcx, program, op, subst, output, discovered)),
         ),
         other => other,
     }

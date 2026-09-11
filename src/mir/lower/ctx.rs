@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::Ident;
 use crate::driver::cli::Mode;
@@ -80,6 +80,11 @@ pub(crate) struct BodyLowerCtx<'a> {
     /// Closures and `any`-mode-specialized callees discovered while lowering this body, merged
     /// into the driver's worklist once this body finishes. See `mir::lower`'s module docs.
     pub(crate) discovered: Vec<Task>,
+
+    /// The unsize coercions this body has already lowered. An expression is lowered once, so
+    /// whoever reaches it first builds the fat pointer; the record itself lives in
+    /// `TypeResolutions` for the whole body and must not re-fire on re-entry.
+    pub(crate) coerced: HashSet<HirId>,
 }
 
 impl<'a> BodyLowerCtx<'a> {
@@ -106,6 +111,7 @@ impl<'a> BodyLowerCtx<'a> {
             loop_stack: Vec::new(),
             block_scopes: Vec::new(),
             discovered: Vec::new(),
+            coerced: HashSet::new(),
         };
         let entry = ctx.new_block();
         ctx.current = entry;
@@ -116,12 +122,7 @@ impl<'a> BodyLowerCtx<'a> {
     // Locals
     // -----------------------------------------------------------------
 
-    pub(crate) fn new_local(
-        &mut self,
-        ty: Ty,
-        name: Option<Ident>,
-        span: SrcSpan,
-    ) -> Local {
+    pub(crate) fn new_local(&mut self, ty: Ty, name: Option<Ident>, span: SrcSpan) -> Local {
         let local = Local::from_usize(self.local_decls.len());
         self.local_decls.push(LocalDecl { ty, name, span });
         local

@@ -1,4 +1,5 @@
 use crate::ast;
+use crate::ast::NodeId;
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{
     ClosureParam, Field, Generic, HirId, Import, Node, Param, SelfParam, Variant as HirVariant,
@@ -13,13 +14,10 @@ impl OwnerLowerer<'_, '_> {
     fn lower_generic(&mut self, g: &ast::Generic) -> HirId {
         let hir_id = self.reserve();
         self.cx.record_hir_id(g.id, hir_id);
-        let bounds = g
-            .bounds
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .map(|bound| self.cx.lower_path(g.id, bound))
-            .collect();
+        let mut bounds = Vec::new();
+        for bound in g.bounds.as_deref().unwrap_or(&[]) {
+            bounds.push(self.lower_bound(g.id, bound));
+        }
         self.fill(
             hir_id,
             Node::Generic(Generic {
@@ -30,6 +28,16 @@ impl OwnerLowerer<'_, '_> {
             }),
         );
         hir_id
+    }
+
+    fn lower_bound(&mut self, owner: NodeId, bound: &ast::Bound) -> crate::hir::Bound {
+        let path = self.cx.lower_path(owner, &bound.path);
+        let args = bound.args.iter().map(|ty| self.lower_ty(ty)).collect();
+        crate::hir::Bound {
+            path,
+            args,
+            span: bound.span,
+        }
     }
 
     pub(super) fn lower_self_param(&mut self, sp: &ast::SelfParam) -> HirId {

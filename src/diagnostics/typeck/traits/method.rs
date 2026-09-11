@@ -245,3 +245,46 @@ fn show_self_mode(mode: SelfMode) -> &'static str {
         SelfMode::Any => "`any self`",
     }
 }
+
+pub fn report_dyn_self_by_value(hir: &Hir, member: Ident, method: DefId) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "`{}` takes `self` by value, so it cannot be called through a `dyn` receiver",
+                Interner::resolve(member.text)
+            ),
+            member.span,
+        )
+        .with_label("this method consumes its receiver")
+        .with_secondary(
+            function_name_span(hir, method),
+            "declared here, taking `self` by value",
+        )
+        .with_help(
+            "a `dyn` value only carries a borrowed pointer to the concrete data, so a method \
+             reached through one must borrow its receiver",
+        ),
+    );
+}
+
+pub fn report_dyn_method_mentions_self(hir: &Hir, member: Ident, method: DefId) {
+    DiagCtx::emit(
+        Diagnostic::error(
+            format!(
+                "`{}` mentions `Self` outside its receiver, so it cannot be called through a \
+                 `dyn` receiver",
+                Interner::resolve(member.text)
+            ),
+            member.span,
+        )
+        .with_label("this method's signature depends on the concrete type")
+        .with_secondary(
+            function_name_span(hir, method),
+            "declared here, mentioning `Self` in a parameter or the return type",
+        )
+        .with_help(
+            "a call through a vtable must work for every implementing type alike, so the \
+             method's other parameters and its return type cannot be the concrete `Self`",
+        ),
+    );
+}

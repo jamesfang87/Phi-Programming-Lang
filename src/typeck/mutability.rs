@@ -3,7 +3,7 @@ use crate::diagnostics::typeck::mutability::report_not_mutable;
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
-    AccessArgs, ExprKind, Hir, HirId, Local, OwnerNode, Payload, PatKind, Res, StmtKind,
+    AccessArgs, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind,
 };
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;

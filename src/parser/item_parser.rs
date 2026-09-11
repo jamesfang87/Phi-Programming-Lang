@@ -5,16 +5,39 @@ use crate::ast::Ident;
 use crate::ast::Import;
 use crate::ast::ModuleDecl;
 use crate::ast::{
-    Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param, SelfMode, SelfParam,
-    Struct, Trait, TyKind, Variant, VariantPayload, Visibility,
+    Block, Bound, Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param, Path,
+    SelfMode, SelfParam, Struct, Trait, Ty, Variant, VariantPayload, Visibility,
 };
 
-use crate::driver::source::SrcSpan;
-use crate::lexer::token::TokenKind;
+use crate::lexer::token::{Token, TokenKind};
 
 use super::{BoxedP, Parser};
 
 impl Parser {
+    pub(crate) fn bound_parser<'a>(&'a self, ty: BoxedP<'a, Ty>) -> BoxedP<'a, Bound> {
+        self.path_parser()
+            .clone()
+            .then(
+                self.kind(TokenKind::OpenAngle)
+                    .ignore_then(
+                        ty.separated_by(self.kind(TokenKind::Comma))
+                            .allow_trailing()
+                            .at_least(1)
+                            .collect::<Vec<_>>(),
+                    )
+                    .then(self.kind(TokenKind::CloseAngle))
+                    .or_not(),
+            )
+            .map(|(path, args): (Path, Option<(Vec<Ty>, Token)>)| {
+                let (args, span) = match args {
+                    Some((args, close_tok)) => (args, path.span.merge(close_tok.span)),
+                    None => (Vec::new(), path.span),
+                };
+                Bound { path, args, span }
+            })
+            .boxed()
+    }
+
     pub fn item_parser<'a>(&'a self) -> BoxedP<'a, Item> {
         let ident = self.ident_parser();
         let type_p = self.type_parser();
@@ -23,12 +46,13 @@ impl Parser {
         let visibility = self
             .kind(TokenKind::PublicKw)
             .or_not()
-            .map(|opt| {
-                if opt.is_some() {
+            .map(|opt: Option<Token>| {
+                let visibility = if opt.is_some() {
                     Visibility::Public
                 } else {
                     Visibility::Private
-                }
+                };
+                (visibility, opt)
             })
             .boxed();
 
@@ -37,8 +61,7 @@ impl Parser {
             .then(
                 self.kind(TokenKind::Colon)
                     .ignore_then(
-                        self.path_parser()
-                            .clone()
+                        self.bound_parser(type_p.clone())
                             .separated_by(self.kind(TokenKind::Plus))
                             .at_least(1)
                             .collect::<Vec<_>>(),
@@ -46,17 +69,14 @@ impl Parser {
                     .or_not(),
             )
             .map(|(name, bounds)| {
-                let span = if bounds.is_none() {
-                    name.span
-                } else {
-                    name.span.merge(
+                let span = match &bounds {
+                    None => name.span,
+                    Some(bounds) => name.span.merge(
                         bounds
-                            .clone()
-                            .unwrap()
                             .last()
-                            .expect("there should at least one bound if bounds is not none")
+                            .expect("at least one bound when bounds are present")
                             .span,
-                    )
+                    ),
                 };
 
                 Generic {
@@ -125,52 +145,67 @@ impl Parser {
         ))
         .boxed();
 
+        let receiver_and_params = choice((
+            self_param
+                .clone()
+                .then_ignore(self.kind(TokenKind::Comma))
+                .then(params.clone())
+                .map(|(receiver, params)| (Some(receiver), params)),
+            self_param
+                .clone()
+                .map(|receiver| (Some(receiver), Vec::new())),
+            params.clone().map(|params| (None, params)),
+        ))
+        .boxed();
+
         let ret_ty = self
             .kind(TokenKind::Arrow)
             .ignore_then(type_p.clone())
             .or_not();
 
-        // This is shared by free functions, trait methods, and `extend` methods. `allow_no_impl`
-        // lets a trait method end in `;` instead of a body, declaring it without providing it.
         let function_decl = |allow_no_impl: bool| {
             visibility
                 .clone()
                 .then(self.kind(TokenKind::FunKw))
                 .then(ident.clone())
                 .then(
-                    self.kind(TokenKind::OpenCaret)
+                    self.kind(TokenKind::OpenAngle)
                         .ignore_then(generics.clone())
-                        .then_ignore(self.kind(TokenKind::CloseCaret))
+                        .then_ignore(self.kind(TokenKind::CloseAngle))
                         .or_not(),
                 )
                 .then_ignore(self.kind(TokenKind::OpenParen))
-                .then(
-                    self_param
-                        .clone()
-                        .then_ignore(self.kind(TokenKind::Comma).or_not())
-                        .or_not(),
-                )
-                .then(params.clone())
+                .then(receiver_and_params.clone())
                 .then_ignore(self.kind(TokenKind::CloseParen))
                 .then(ret_ty.clone())
                 .then(if allow_no_impl {
                     choice((
-                        block.clone().map(Some),
-                        self.kind(TokenKind::Semicolon).to(None),
+                        block.clone().map(|b: Block| (Some(b), None::<Token>)),
+                        self.kind(TokenKind::Semicolon)
+                            .map(|semi| (None, Some(semi))),
                     ))
                     .boxed()
                 } else {
-                    block.clone().map(Some).boxed()
+                    block
+                        .clone()
+                        .map(|b: Block| (Some(b), None::<Token>))
+                        .boxed()
                 })
                 .map(
-                    |(((((((vis, fun_tok), name), generics), self_param), params), ret), body)| {
-                        let span = match &body {
-                            Some(b) => fun_tok.span.merge(b.span),
-                            None => fun_tok.span.merge(name.span),
-                        };
+                    |(
+                        (((((vis, fun_tok), name), generics), (self_param, params)), ret),
+                        (body, semi),
+                    )| {
+                        let begin = vis.1.map_or(fun_tok.span, |pub_tok| pub_tok.span);
+                        let end = body
+                            .as_ref()
+                            .map(|b| b.span)
+                            .or_else(|| semi.as_ref().map(|t| t.span))
+                            .unwrap_or(name.span);
+                        let span = begin.merge(end);
 
                         Function {
-                            visibility: vis,
+                            visibility: vis.0,
                             name,
                             generics: generics.unwrap_or_default(),
                             self_param,
@@ -181,7 +216,7 @@ impl Parser {
                         }
                     },
                 )
-                .boxed() // Note: this produces a `Function`, not yet wrapped in an `Item`.
+                .boxed()
         };
 
         let field = self
@@ -191,7 +226,8 @@ impl Parser {
             .then_ignore(self.kind(TokenKind::Colon))
             .then(type_p.clone())
             .map(|((pub_tok, name), ty)| {
-                let span = name.span.merge(ty.span);
+                let begin = pub_tok.map_or(name.span, |pub_tok: Token| pub_tok.span);
+                let span = begin.merge(ty.span);
 
                 let visibility = if pub_tok.is_some() {
                     Visibility::Public
@@ -220,36 +256,30 @@ impl Parser {
             .then(self.kind(TokenKind::StructKw))
             .then(ident.clone())
             .then(
-                self.kind(TokenKind::OpenCaret)
+                self.kind(TokenKind::OpenAngle)
                     .ignore_then(generics.clone())
-                    .then_ignore(self.kind(TokenKind::CloseCaret))
+                    .then_ignore(self.kind(TokenKind::CloseAngle))
                     .or_not(),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
             .then(fields.clone())
-            .then_ignore(self.kind(TokenKind::CloseBrace))
-            .map(|((((visibility, struct_tok), name), generics), fields)| {
-                let end_span = if !fields.is_empty() {
-                    fields.last().unwrap().span
-                } else {
-                    name.span
-                };
-                let span = struct_tok.span.merge(end_span);
+            .then(self.kind(TokenKind::CloseBrace))
+            .map(
+                |(((((vis, struct_tok), name), generics), fields), close_tok)| {
+                    let begin = vis.1.map_or(struct_tok.span, |pub_tok| pub_tok.span);
+                    let span = begin.merge(close_tok.span);
 
-                let struct_ = Struct {
-                    visibility,
-                    name,
-                    generics,
-                    fields,
-                    span,
-                };
+                    let struct_ = Struct {
+                        visibility: vis.0,
+                        name,
+                        generics: generics.unwrap_or_default(),
+                        fields,
+                        span,
+                    };
 
-                Item {
-                    id: NodeId::next(),
-                    kind: ItemKind::Struct(struct_),
-                    span,
-                }
-            })
+                    Item::new(ItemKind::Struct(struct_), span)
+                },
+            )
             .boxed();
 
         let regular_payload = ident
@@ -334,36 +364,30 @@ impl Parser {
             .then(self.kind(TokenKind::EnumKw))
             .then(ident.clone())
             .then(
-                self.kind(TokenKind::OpenCaret)
+                self.kind(TokenKind::OpenAngle)
                     .ignore_then(generics.clone())
-                    .then_ignore(self.kind(TokenKind::CloseCaret))
+                    .then_ignore(self.kind(TokenKind::CloseAngle))
                     .or_not(),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
             .then(variant)
-            .then_ignore(self.kind(TokenKind::CloseBrace))
-            .map(|((((visibility, enum_tok), name), generics), variants)| {
-                let end_span = if !variants.is_empty() {
-                    variants.last().unwrap().span
-                } else {
-                    name.span
-                };
-                let span = enum_tok.span.merge(end_span);
+            .then(self.kind(TokenKind::CloseBrace))
+            .map(
+                |(((((vis, enum_tok), name), generics), variants), close_tok)| {
+                    let begin = vis.1.map_or(enum_tok.span, |pub_tok| pub_tok.span);
+                    let span = begin.merge(close_tok.span);
 
-                let enum_ = Enum {
-                    visibility,
-                    name,
-                    generics,
-                    variants,
-                    span,
-                };
+                    let enum_ = Enum {
+                        visibility: vis.0,
+                        name,
+                        generics: generics.unwrap_or_default(),
+                        variants,
+                        span,
+                    };
 
-                Item {
-                    id: NodeId::next(),
-                    kind: ItemKind::Enum(enum_),
-                    span,
-                }
-            })
+                    Item::new(ItemKind::Enum(enum_), span)
+                },
+            )
             .boxed();
 
         let trait_decl = visibility
@@ -371,46 +395,40 @@ impl Parser {
             .then(self.kind(TokenKind::TraitKw))
             .then(ident.clone())
             .then(
-                self.kind(TokenKind::OpenCaret)
+                self.kind(TokenKind::OpenAngle)
                     .ignore_then(generics.clone())
-                    .then_ignore(self.kind(TokenKind::CloseCaret))
+                    .then_ignore(self.kind(TokenKind::CloseAngle))
                     .or_not(),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
             .then(function_decl(true).repeated().collect::<Vec<_>>())
-            .then_ignore(self.kind(TokenKind::CloseBrace))
-            .map(|((((visibility, trait_tok), name), generics), functions)| {
-                let end_span = if !functions.is_empty() {
-                    functions.last().unwrap().span
-                } else {
-                    name.span
-                };
-                let span = trait_tok.span.merge(end_span);
+            .then(self.kind(TokenKind::CloseBrace))
+            .map(
+                |(((((vis, trait_tok), name), generics), functions), close_tok)| {
+                    let begin = vis.1.map_or(trait_tok.span, |pub_tok| pub_tok.span);
+                    let span = begin.merge(close_tok.span);
 
-                let trait_ = Trait {
-                    visibility,
-                    name,
-                    generics,
-                    functions,
-                    span,
-                };
+                    let trait_ = Trait {
+                        visibility: vis.0,
+                        name,
+                        generics: generics.unwrap_or_default(),
+                        functions,
+                        span,
+                    };
 
-                Item {
-                    id: NodeId::next(),
-                    kind: ItemKind::Trait(trait_),
-                    span,
-                }
-            });
+                    Item::new(ItemKind::Trait(trait_), span)
+                },
+            );
 
         let generic_params = self
-            .kind(TokenKind::OpenCaret)
+            .kind(TokenKind::OpenAngle)
             .ignore_then(generics.clone())
-            .then_ignore(self.kind(TokenKind::CloseCaret))
+            .then_ignore(self.kind(TokenKind::CloseAngle))
             .or_not()
             .boxed();
 
         let generic_args = self
-            .kind(TokenKind::OpenCaret)
+            .kind(TokenKind::OpenAngle)
             .ignore_then(
                 type_p
                     .clone()
@@ -419,7 +437,7 @@ impl Parser {
                     .at_least(1)
                     .collect::<Vec<_>>(),
             )
-            .then_ignore(self.kind(TokenKind::CloseCaret))
+            .then_ignore(self.kind(TokenKind::CloseAngle))
             .or_not()
             .boxed();
 
@@ -446,7 +464,7 @@ impl Parser {
                 )| {
                     let span = extend_tok.span.merge(close_tok.span);
                     let extend = Extend {
-                        extend_generics,
+                        extend_generics: extend_generics.unwrap_or_default(),
                         self_ty,
                         trait_generics,
                         trait_path,
@@ -454,11 +472,7 @@ impl Parser {
                         span,
                     };
 
-                    Item {
-                        id: NodeId::next(),
-                        kind: ItemKind::Extend(extend),
-                        span,
-                    }
+                    Item::new(ItemKind::Extend(extend), span)
                 },
             );
 
@@ -474,28 +488,23 @@ impl Parser {
                     span,
                 };
 
-                Item {
-                    id: NodeId::next(),
-                    kind: ItemKind::ModuleDecl(module),
-                    span,
-                }
+                Item::new(ItemKind::ModuleDecl(module), span)
             })
             .boxed();
 
         let glob_suffix = self
             .kind(TokenKind::DoubleColon)
-            .then(self.kind(TokenKind::Star))
-            .map(|(_colon_tok, star_tok)| star_tok.span);
+            .ignore_then(self.kind(TokenKind::Star));
 
         let alias_suffix = self.kind(TokenKind::AsKw).ignore_then(ident.clone());
 
         enum ImportSuffix {
-            Glob(SrcSpan),
+            Glob,
             Alias(Ident),
         }
 
         let suffix = choice((
-            glob_suffix.map(ImportSuffix::Glob),
+            glob_suffix.map(|_| ImportSuffix::Glob),
             alias_suffix.map(ImportSuffix::Alias),
         ))
         .or_not();
@@ -508,7 +517,7 @@ impl Parser {
             .map(|(((import_tok, path), suffix), semi_tok)| {
                 let span = import_tok.span.merge(semi_tok.span);
                 let (alias, glob) = match suffix {
-                    Some(ImportSuffix::Glob(_)) => (None, true),
+                    Some(ImportSuffix::Glob) => (None, true),
                     Some(ImportSuffix::Alias(name)) => (Some(name), false),
                     None => (None, false),
                 };
@@ -520,27 +529,14 @@ impl Parser {
                     span,
                 };
 
-                Item {
-                    id: NodeId::next(),
-                    kind: ItemKind::Import(import),
-                    span,
-                }
+                Item::new(ItemKind::Import(import), span)
             })
             .boxed();
 
         choice((
-            // `allow_no_impl: true` here is what lets a free function end in `;` instead of a
-            // body at all -- syntactically the same allowance a trait method declaration gets.
-            // Nothing at the grammar level restricts who may do this; the bodiless-intrinsic
-            // rule that actually restricts it is a typeck concern (`Typeck::check_function`),
-            // since deciding it needs the function's resolved `DefId` and the file it came from.
-            function_decl(true).map(|fun: Function| {
+            function_decl(/*allow_no_impl=*/ true).map(|fun: Function| {
                 let span = fun.span;
-                Item {
-                    id: NodeId::next(),
-                    kind: ItemKind::Function(fun),
-                    span,
-                }
+                Item::new(ItemKind::Function(fun), span)
             }),
             struct_decl,
             enum_decl,
@@ -557,7 +553,10 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::ast::SelfMode;
+    use crate::ast::TyKind;
     use crate::ast::interner::Interner;
+    use crate::lexer::describe::Descriptor;
+    use crate::lexer::token::ITEM_STARTERS;
     use crate::testing::lex_src;
 
     fn parse_item(src: &str) -> Item {
@@ -611,8 +610,35 @@ mod tests {
         assert_eq!(f.generics.len(), 1);
         assert_eq!(text(f.generics[0].name), "T");
         let bounds = f.generics[0].bounds.as_ref().expect("expected bounds");
-        assert_eq!(text(bounds[0].segments[0]), "Default");
+        assert_eq!(text(bounds[0].path.segments[0]), "Default");
         assert!(f.ret.is_some());
+    }
+
+    #[test]
+    fn parses_a_bound_with_trait_arguments() {
+        let item = parse_item("fun take<T: Conv<i32, bool>, U: Eq>(x: T, y: U) {}");
+        let f = as_function(&item);
+        let bounds = f.generics[0].bounds.as_ref().expect("expected bounds");
+        assert_eq!(text(bounds[0].path.segments[0]), "Conv");
+        assert_eq!(bounds[0].args.len(), 2);
+        assert!(
+            matches!(&bounds[0].args[0].kind, TyKind::Path { path, args }
+                 if text(path.segments[0]) == "i32" && args.is_empty()),
+            "expected an `i32` path argument, got {:?}",
+            bounds[0].args[0].kind
+        );
+        assert!(
+            matches!(&bounds[0].args[1].kind, TyKind::Path { path, .. }
+                 if text(path.segments[0]) == "bool"),
+            "expected a `bool` path argument, got {:?}",
+            bounds[0].args[1].kind
+        );
+        let other = f.generics[1].bounds.as_ref().expect("expected bounds");
+        assert_eq!(text(other[0].path.segments[0]), "Eq");
+        assert!(
+            other[0].args.is_empty(),
+            "a bare bound carries no arguments"
+        );
     }
 
     #[test]
@@ -648,6 +674,20 @@ mod tests {
         assert!(matches!(self_param.mode, SelfMode::Any));
     }
 
+    /// A receiver run directly into a named parameter is a mistake (`self x: i32` is missing
+    /// the comma, or the writer did not mean `self` at all), so it must not silently parse as
+    /// a receiver followed by a parameter.
+    #[test]
+    fn a_receiver_needs_a_comma_before_a_named_parameter() {
+        let (tokens, _) = lex_src("fun f(self x: i32) {}");
+        let parser = Parser::new();
+        let (_, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
+        assert!(
+            !errors.is_empty(),
+            "expected a parse error for a receiver run into a parameter"
+        );
+    }
+
     #[test]
     fn parses_function_with_self_and_params() {
         let item = parse_item("fun add(&mut self, x: i32, y: i32) {}");
@@ -667,7 +707,7 @@ mod tests {
         match &item.kind {
             ItemKind::Struct(s) => {
                 assert_eq!(text(s.name), "Point");
-                let generics = s.generics.as_ref().expect("expected generics");
+                let generics = &s.generics;
                 assert_eq!(generics.len(), 1);
                 assert_eq!(text(generics[0].name), "T");
                 assert_eq!(s.fields.len(), 2);
@@ -683,7 +723,7 @@ mod tests {
         let item = parse_item("struct Empty {}");
         match &item.kind {
             ItemKind::Struct(s) => {
-                assert!(s.generics.is_none());
+                assert!(s.generics.is_empty());
                 assert!(s.fields.is_empty());
             }
             other => panic!("expected a struct item, got {other:?}"),
@@ -733,7 +773,7 @@ mod tests {
         let item = parse_item("extend<T> Box<T> with Container<T> { fun get(&self) -> T {} }");
         match &item.kind {
             ItemKind::Extend(e) => {
-                assert!(e.extend_generics.is_some());
+                assert!(!e.extend_generics.is_empty());
                 let TyKind::Path { path, args } = &e.self_ty.kind else {
                     panic!(
                         "expected `Box<T>` to parse as a path type, got {:?}",
@@ -761,7 +801,7 @@ mod tests {
         );
         match &item.kind {
             ItemKind::Extend(e) => {
-                assert_eq!(e.extend_generics.as_deref().map(<[_]>::len), Some(2));
+                assert_eq!(e.extend_generics.len(), 2);
                 let TyKind::Path { args, .. } = &e.self_ty.kind else {
                     panic!(
                         "expected `Map<K, V>` to parse as a path type, got {:?}",
@@ -783,7 +823,7 @@ mod tests {
         let item = parse_item("extend Box<i32> { fun get(&self) {} }");
         match &item.kind {
             ItemKind::Extend(e) => {
-                assert!(e.extend_generics.is_none());
+                assert!(e.extend_generics.is_empty());
                 assert!(e.trait_path.is_none());
                 assert!(e.trait_generics.is_none());
                 assert_eq!(e.methods.len(), 1);
@@ -932,6 +972,42 @@ mod tests {
                 assert_eq!(text(alias), "mv");
             }
             other => panic!("expected an import item, got {other:?}"),
+        }
+    }
+
+    /// Every kind in [`ITEM_STARTERS`] must really open an item, so the recovery-point list
+    /// and the item grammar cannot drift apart: a kind that stops recovering without opening
+    /// an item would truncate every following item, and one that opens an item without
+    /// stopping recovery would swallow it.
+    #[test]
+    fn every_item_starter_opens_an_item() {
+        let fixtures = [
+            (TokenKind::PublicKw, "public fun f() {}"),
+            (TokenKind::FunKw, "fun f() {}"),
+            (TokenKind::StructKw, "struct S {}"),
+            (TokenKind::EnumKw, "enum E { V }"),
+            (TokenKind::TraitKw, "trait T { fun m(&self); }"),
+            (TokenKind::ExtendKw, "extend i32 { fun m(&self) {} }"),
+            (TokenKind::ModuleKw, "module m;"),
+            (TokenKind::ImportKw, "import m;"),
+        ];
+
+        let mut starters: Vec<TokenKind> = ITEM_STARTERS.to_vec();
+        starters.sort_by_key(|kind| Descriptor::of(*kind).name());
+        let mut fixture_kinds: Vec<TokenKind> = fixtures.iter().map(|(kind, _)| *kind).collect();
+        fixture_kinds.sort_by_key(|kind| Descriptor::of(*kind).name());
+        assert_eq!(starters, fixture_kinds, "fixture list is out of sync");
+
+        for (kind, src) in fixtures {
+            // Spans are global offsets into the `SrcMap`, so the declaration must cover
+            // exactly the file's span.
+            let (tokens, offset) = lex_src(src);
+            let parser = Parser::new();
+            let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
+            assert!(errors.is_empty(), "for {kind:?}: {errors:?}");
+            let item = output.expect("expected a successfully parsed item");
+            assert_eq!(item.span.as_tuple(), (offset, offset + src.chars().count()));
+            assert!(!matches!(item.kind, ItemKind::Error), "for {kind:?}");
         }
     }
 }

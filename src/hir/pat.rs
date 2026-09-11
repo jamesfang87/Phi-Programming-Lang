@@ -18,7 +18,6 @@ pub enum PatKind {
     /// `Circle(r)`.
     Binding {
         name: Ident,
-        mode: BindingMode,
     },
     Literal(Literal),
     /// An enum variant pattern, such as `.circle(r)`, `.square { l }`, or a bare `.none`. The
@@ -34,13 +33,11 @@ pub enum PatKind {
     Error,
 }
 
-/// Records whether a binding pattern takes its match by value, by immutable reference, or by
-/// mutable reference.
-///
-/// Lowering always produces `Inferred`.
+/// Records whether a binding takes its match by value, by immutable reference, or by mutable
+/// reference. Typeck computes this per pattern while peeling references off the scrutinee and
+/// records it in `PatAdjust`; MIR lowering reads it from there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BindingMode {
-    Inferred,
     Value,
     Ref,
     RefMut,

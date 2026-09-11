@@ -210,7 +210,7 @@ fn lower_rvalue<'ctx>(
     match rvalue {
         Rvalue::Use(operand) => lower_operand(cx, tcx, mir, locals, local_decls, operand),
         Rvalue::Ref { place: place_, .. } => {
-            let ref_place_ty = place_ty(tcx, local_decls, place_);
+            let ref_place_ty = crate::mir::place_ty(tcx, local_decls, place_);
             if layout::is_unsized(tcx, ref_place_ty) {
                 lower_fat_ref(cx, tcx, locals, local_decls, place_)
             } else {
@@ -256,6 +256,12 @@ fn lower_rvalue<'ctx>(
                     lower_primitive_cast(cx, tcx, mir, src_ty, *cast_ty, val)
                 }
             }
+        }
+        Rvalue::Unsize { operand, trait_ } => {
+            let val = lower_operand(cx, tcx, mir, locals, local_decls, operand);
+            let concrete = operand_ty(tcx, local_decls, operand);
+            let (concrete, _) = peel_refs(tcx, concrete);
+            super::vtable::unsize(cx, tcx, mir, val.into_pointer_value(), concrete, *trait_)
         }
         Rvalue::Discriminant(place_) => {
             let (ptr, place_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
@@ -350,6 +356,47 @@ fn lower_fat_place_addr<'ctx>(
             "lower_fat_place_addr: only a bare Deref of a fat reference/iso local is supported \
              in v1 codegen, got projections {other:?}"
         ),
+    }
+}
+
+fn peel_refs(tcx: &mut TyCtx, ty: Ty) -> (Ty, u32) {
+    let mut current = ty;
+    let mut count = 0;
+    while let TyKind::Ref { base, .. } = tcx.kind(current).clone() {
+        current = base;
+        count += 1;
+    }
+    (current, count)
+}
+
+/// The function type every vtable slot for a trait method shares: the receiver erased to one
+/// thin pointer, the remaining parameters at their own ABI, and the return at its own. The
+/// trait method's own signature is what every implementing type's method matches, modulo the
+/// receiver the vtable passes.
+fn dyn_method_fn_type<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    sig_ty: Ty,
+) -> inkwell::types::FunctionType<'ctx> {
+    let TyKind::Fun { params, ret } = tcx.kind(sig_ty).clone() else {
+        panic!("codegen: a dyn call operand's type {sig_ty:?} is not a function signature");
+    };
+    let ptr_ty = cx.llvm.ptr_type(Default::default());
+    let mut param_llvm: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::new();
+    param_llvm.push(ptr_ty.into());
+    for param in params.iter().skip(1) {
+        ty::push_param_types(cx, tcx, mir, *param, &mut param_llvm);
+    }
+    let ret_ty = ret.unwrap_or_else(|| tcx.unit());
+    match ty::abi_class(tcx, ret_ty) {
+        ty::AbiClass::Void => cx.llvm.void_type().fn_type(&param_llvm, false),
+        ty::AbiClass::Indirect => {
+            let mut params = vec![ptr_ty.into()];
+            params.extend(param_llvm);
+            cx.llvm.void_type().fn_type(&params, false)
+        }
+        _ => ty::llvm_type(cx, tcx, mir, ret_ty).fn_type(&param_llvm, false),
     }
 }
 
@@ -574,7 +621,7 @@ fn lower_aggregate<'ctx>(
             *variant,
             operands,
         ),
-        AggregateKind::Closure { def, args } => {
+        AggregateKind::Closure { def, args, self_ty } => {
             let captures: Vec<(BasicValueEnum<'ctx>, Ty)> = operands
                 .iter()
                 .map(|operand| {
@@ -583,7 +630,7 @@ fn lower_aggregate<'ctx>(
                     (value, ty)
                 })
                 .collect();
-            super::closure::build_value(cx, tcx, mir, *def, args, &captures)
+            super::closure::build_value(cx, tcx, mir, *def, args, *self_ty, &captures)
         }
     }
 }
@@ -811,19 +858,15 @@ fn build_fill_loop<'ctx>(
 }
 
 fn is_float(tcx: &TyCtx, ty: Ty) -> bool {
-    matches!(
-        tcx.kind(ty),
-        TyKind::Primitive(PrimTy::F32) | TyKind::Primitive(PrimTy::F64)
-    )
+    matches!(tcx.kind(ty), TyKind::Primitive(p) if p.is_float())
 }
 
 fn is_signed(tcx: &TyCtx, ty: Ty) -> bool {
     match tcx.kind(ty) {
-        TyKind::Primitive(prim) => match prim {
-            PrimTy::I8 | PrimTy::I16 | PrimTy::I32 | PrimTy::I64 => true,
-            PrimTy::U8 | PrimTy::U16 | PrimTy::U32 | PrimTy::U64 | PrimTy::Usize => false,
-            other => unreachable!("BinaryOp/UnaryOp operand has non-arithmetic type {other:?}"),
-        },
+        TyKind::Primitive(prim) if prim.is_integer() => prim.is_signed(),
+        TyKind::Primitive(other) => {
+            unreachable!("BinaryOp/UnaryOp operand has non-arithmetic type {other:?}")
+        }
         other => unreachable!("BinaryOp/UnaryOp operand has non-primitive type {other:?}"),
     }
 }
@@ -1080,7 +1123,16 @@ fn lower_call<'ctx>(
     if indirect_return {
         arg_vals.push(dest_ptr.into());
     }
-    for arg in args {
+    let dyn_dispatch = matches!(
+        func,
+        Operand::Constant(Constant {
+            kind: ConstKind::FunDef(_, _, _, Some(self_ty)),
+            ..
+        }) if matches!(tcx.kind(*self_ty).clone(), TyKind::Dyn { .. })
+    );
+    let dyn_receiver = dyn_dispatch
+        .then(|| lower_operand(cx, tcx, mir, locals, local_decls, &args[0]).into_struct_value());
+    for arg in if dyn_dispatch { &args[1..] } else { args } {
         let arg_ty = operand_ty(tcx, local_decls, arg);
         push_call_arg(
             cx,
@@ -1094,8 +1146,31 @@ fn lower_call<'ctx>(
         );
     }
 
-    let call_site = if let Operand::Constant(Constant {
-        kind: ConstKind::FunDef(def, targs, any_mode),
+    let call_site = if dyn_dispatch {
+        let Operand::Constant(Constant {
+            kind: ConstKind::FunDef(def, ..),
+            ty: sig_ty,
+            ..
+        }) = func
+        else {
+            unreachable!("dyn dispatch is only decided on a FunDef constant");
+        };
+        let receiver = dyn_receiver.expect("a dyn call carries its fat receiver");
+        let fn_type = dyn_method_fn_type(cx, tcx, mir, *sig_ty);
+        let index = mir.def_infos.vtable_slot(*def).unwrap_or_else(|| {
+            panic!("codegen: {def:?} is not a trait method with a vtable slot")
+        });
+        let (leading, rest) = arg_vals.split_at(usize::from(indirect_return));
+        super::vtable::call_dyn_method(
+            cx,
+            receiver.into(),
+            usize::try_from(index).expect("a vtable slot fits a usize"),
+            fn_type,
+            leading,
+            rest,
+        )
+    } else if let Operand::Constant(Constant {
+        kind: ConstKind::FunDef(def, targs, any_mode, self_ty),
         ..
     }) = func
     {
@@ -1108,6 +1183,7 @@ fn lower_call<'ctx>(
                 def: *def,
                 any_mode: *any_mode,
                 args: targs.clone(),
+                self_ty: *self_ty,
             };
             let name = mangle(mir, tcx, &instance);
             let function = cx.functions[&name];
@@ -1338,9 +1414,9 @@ mod tests {
                 crate::parser::Parser::new().parse(&tokens, offset)
             })
             .collect();
-        let ast = crate::ast::Ast::new(files);
+        let ast = crate::ast::Ast::from(files);
         let res = crate::nameres::resolve(&ast);
-        let hir = crate::hir::lower::lower_ast(&ast, &res);
+        let hir = crate::hir::Hir::from(&ast, &res);
         crate::diagnostics::DiagCtx::clear();
         let checked = crate::typeck::check(&hir);
         let diagnostics = crate::diagnostics::DiagCtx::diagnostics();
@@ -1351,7 +1427,7 @@ mod tests {
         let crate::typeck::TypeckOutput { mut tcx, types } = checked;
         let program =
             crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Release);
-        let instances = crate::mir::monomorphize::monomorphize(&hir, &mut tcx, &program);
+        let instances = crate::mir::monomorphize::monomorphize(&mut tcx, &program);
         (hir, tcx, types, program, instances)
     }
 

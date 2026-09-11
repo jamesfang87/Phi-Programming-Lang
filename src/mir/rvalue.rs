@@ -28,6 +28,12 @@ pub enum Rvalue {
         kind: CastKind,
     },
     Aggregate(Box<AggregateKind>, Vec<Operand>),
+    /// Turns a `&Concrete` operand into the `&dyn Trait` fat pointer a coercion was recorded
+    /// for: word 0 is the operand's own pointer, word 1 the implementing type's vtable.
+    Unsize {
+        operand: Operand,
+        trait_: DefId,
+    },
     /// `Discriminant` reads a place's enum discriminant as an integer
     Discriminant(Place),
     /// `Len` reads the length of an array or a slice-typed place.
@@ -51,7 +57,8 @@ impl Rvalue {
             Rvalue::Use(operand)
             | Rvalue::UnaryOp(_, operand)
             | Rvalue::Cast { operand, .. }
-            | Rvalue::New(operand) => vec![operand],
+            | Rvalue::New(operand)
+            | Rvalue::Unsize { operand, .. } => vec![operand],
             Rvalue::BinaryOp(_, lhs, rhs)
             | Rvalue::CheckedBinaryOp(_, lhs, rhs)
             | Rvalue::NewArray {
@@ -77,6 +84,13 @@ pub enum CastKind {
 pub enum AggregateKind {
     Tuple,
     Array,
-    Adt { def: DefId, variant: VariantIdx },
-    Closure { def: DefId, args: Vec<Ty> },
+    Adt {
+        def: DefId,
+        variant: VariantIdx,
+    },
+    Closure {
+        def: DefId,
+        args: Vec<Ty>,
+        self_ty: Option<Ty>,
+    },
 }

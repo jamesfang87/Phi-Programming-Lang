@@ -236,8 +236,14 @@ impl<'hir> Typeck<'hir> {
         hir.generic(generic)
             .bounds
             .iter()
-            .filter_map(|path| match path.res {
-                Res::Type(Type::Def(TyDef::Trait(def))) => Some(Query::new(self_ty, def)),
+            .filter_map(|bound| match bound.path.res {
+                Res::Type(Type::Def(TyDef::Trait(def))) => {
+                    let args = self.lower_tys(&bound.args);
+                    Some(Query {
+                        self_ty,
+                        trait_: TraitRef { def, args },
+                    })
+                }
                 _ => None,
             })
             .collect()
@@ -245,12 +251,16 @@ impl<'hir> Typeck<'hir> {
 
     /// Rebuilds `goal` with every parameter in `subst` replaced by what it is bound to.
     pub(crate) fn subst_query(&mut self, query: &Query, subst: &HashMap<HirId, Ty>) -> Query {
-        query.map(&mut |ty| fold::subst_ty(&mut self.tcx, ty, subst))
+        query.map(&mut |ty| self.subst_ty(ty, subst))
     }
 
     /// Rebuilds `ty` with every parameter in `subst` replaced by what it is bound to.
     pub fn subst_ty(&mut self, ty: Ty, subst: &HashMap<HirId, Ty>) -> Ty {
-        fold::subst_ty(&mut self.tcx, ty, subst)
+        let subst = fold::Subst {
+            generics: subst.clone(),
+            self_ty: None,
+        };
+        fold::subst_ty(&mut self.tcx, ty, &subst)
     }
 
     /// Rebuilds `query` with every inference variable in it replaced by whatever it has since
@@ -490,7 +500,10 @@ mod tests {
             checker.implements(&goal, &BoundsEnv::default()),
             Solution::Ambiguous
         );
-        assert!(DiagCtx::messages().is_empty(), "an ambiguity is not a diagnostic");
+        assert!(
+            DiagCtx::messages().is_empty(),
+            "an ambiguity is not a diagnostic"
+        );
     }
 
     #[test]

@@ -1,16 +1,19 @@
 use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
-use crate::ast::{Ident, Literal, Symbol};
+use crate::ast::{Ident, Literal, Mutability, Symbol};
 use crate::diagnostics::typeck::pat::{
     report_literal_pattern_mismatch, report_match_needs_wildcard, report_match_not_exhaustive,
     report_no_payload_field, report_no_variant, report_payload_shape,
-    report_tuple_pattern_mismatch, report_variant_type_unknown,
+    report_string_pattern_unsupported, report_tuple_pattern_mismatch, report_variant_type_unknown,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, Hir, HirId, OwnerNode, PatKind, Payload, PayloadField, VariantPayload};
+use crate::hir::{
+    BindingMode, DefId, Hir, HirId, OwnerNode, PatKind, Payload, PayloadField, VariantPayload,
+};
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
+use crate::typeck::results::PatAdjust;
 use crate::typeck::ty::{Ty, TyKind};
 
 pub(crate) struct VariantDef {
@@ -39,7 +42,7 @@ impl VariantTys {
 }
 
 impl<'hir> Typeck<'hir> {
-    pub(crate) fn check_pat(&mut self, id: HirId, expected: Ty) {
+    pub(crate) fn check_pat(&mut self, id: HirId, expected: Ty, mode: BindingMode) {
         let hir: &'hir Hir = self.hir;
         let pat = hir.pat(id);
         let span = pat.span;
@@ -47,20 +50,46 @@ impl<'hir> Typeck<'hir> {
         // Keep checking a pattern below a failed one
         if matches!(self.tcx.kind(expected), TyKind::Error) {
             self.types.record(id, expected);
+            self.types
+                .record_pat_adjust(id, PatAdjust { derefs: 0, mode });
             for child in self.pat_children(id) {
-                self.check_pat(child, expected);
+                self.check_pat(child, expected, mode);
             }
             return;
         }
 
+        let peels = matches!(
+            pat.kind,
+            PatKind::Variant { .. } | PatKind::Tuple(_) | PatKind::Literal(_)
+        );
+        let (expected, mode, derefs) = if peels {
+            self.peel_for_pattern(expected, mode)
+        } else {
+            (expected, mode, 0)
+        };
+        self.types.record_pat_adjust(id, PatAdjust { derefs, mode });
+
         let ty = match &pat.kind {
-            PatKind::Wildcard | PatKind::Binding { .. } => expected,
+            PatKind::Wildcard => expected,
+            PatKind::Binding { .. } => match mode {
+                BindingMode::Ref => self.tcx.mk_ref(expected, Mutability::Immutable),
+                BindingMode::RefMut => self.tcx.mk_ref(expected, Mutability::Mutable),
+                BindingMode::Value => expected,
+            },
             PatKind::Literal(lit) => {
-                let found = self.check_literal(lit, span);
-                if let Err(err) = self.unifier.unify(&self.tcx, expected, found) {
-                    report_literal_pattern_mismatch(self.display_cx(), err, span);
+                // `str` comparison has no lowering yet -- `str` is a `{ pointer, length }`
+                // pair whose equality would need a runtime helper -- so a string pattern is
+                // rejected here rather than left to ICE in MIR lowering.
+                if matches!(lit, Literal::Str(_)) {
+                    report_string_pattern_unsupported(span);
+                    self.tcx.error()
+                } else {
+                    let found = self.check_literal(lit, span);
+                    if let Err(err) = self.unifier.unify(&self.tcx, expected, found) {
+                        report_literal_pattern_mismatch(self.display_cx(), err, span);
+                    }
+                    expected
                 }
-                expected
             }
             PatKind::Tuple(elems) => {
                 let vars: Vec<Ty> = elems.iter().map(|_| self.tcx.next_ty_var()).collect();
@@ -69,18 +98,18 @@ impl<'hir> Typeck<'hir> {
                     report_tuple_pattern_mismatch(self.display_cx(), err, span);
                     for &elem in elems {
                         let error = self.tcx.error();
-                        self.check_pat(elem, error);
+                        self.check_pat(elem, error, mode);
                     }
                     self.tcx.error()
                 } else {
                     for (&elem, &var) in elems.iter().zip(vars.iter()) {
-                        self.check_pat(elem, var);
+                        self.check_pat(elem, var, mode);
                     }
                     expected
                 }
             }
             PatKind::Variant { variant, payload } => {
-                self.check_variant_pat(expected, *variant, payload, span)
+                self.check_variant_pat(expected, *variant, payload, span, mode)
             }
             // Already reported by the parser.
             PatKind::Error => self.tcx.error(),
@@ -89,27 +118,48 @@ impl<'hir> Typeck<'hir> {
         self.types.record(id, ty);
     }
 
+    pub(crate) fn peel_for_pattern(
+        &mut self,
+        expected: Ty,
+        mode: BindingMode,
+    ) -> (Ty, BindingMode, u32) {
+        let mut expected = self.unifier.find_deep(&mut self.tcx, expected);
+        let mut mode = mode;
+        let mut derefs = 0;
+        while let TyKind::Ref { base, mutability } = *self.tcx.kind(expected) {
+            expected = self.unifier.find_deep(&mut self.tcx, base);
+            derefs += 1;
+            mode = match (mode, mutability) {
+                (BindingMode::Ref, _) => BindingMode::Ref,
+                (_, Mutability::Mutable) => BindingMode::RefMut,
+                (_, Mutability::Immutable) => BindingMode::Ref,
+            };
+        }
+        (expected, mode, derefs)
+    }
+
     fn check_variant_pat(
         &mut self,
         expected: Ty,
         variant: Ident,
         payload: &'hir Payload,
         span: SrcSpan,
+        mode: BindingMode,
     ) -> Ty {
         let expected = self.unifier.find_deep(&mut self.tcx, expected);
         if matches!(self.tcx.kind(expected), TyKind::Var(_)) {
             report_variant_type_unknown(variant, span);
-            self.check_failed_payload(payload);
+            self.check_failed_payload(payload, mode);
             return self.tcx.error();
         }
 
         let Some(found) = self.variant_def(expected, variant.text) else {
             report_no_variant(self.display_cx(), variant, expected);
-            self.check_failed_payload(payload);
+            self.check_failed_payload(payload, mode);
             return self.tcx.error();
         };
 
-        self.check_payload_pats(&found, payload, variant, span);
+        self.check_payload_pats(&found, payload, variant, span, mode);
         expected
     }
 
@@ -120,18 +170,19 @@ impl<'hir> Typeck<'hir> {
         payload: &'hir Payload,
         variant: Ident,
         span: SrcSpan,
+        mode: BindingMode,
     ) {
         match (&found.payload, payload) {
             (VariantTys::Unit, Payload::None) => {}
             (VariantTys::Single(declared), Payload::Single(pat)) => {
-                self.check_pat(*pat, *declared);
+                self.check_pat(*pat, *declared, mode);
             }
             (VariantTys::Record(declared), Payload::Record(written)) => {
-                self.check_record_pats(declared, written, found.id);
+                self.check_record_pats(declared, written, found.id, mode);
             }
             _ => {
                 report_payload_shape(self.hir, variant, span, found);
-                self.check_failed_payload(payload);
+                self.check_failed_payload(payload, mode);
             }
         }
     }
@@ -142,15 +193,16 @@ impl<'hir> Typeck<'hir> {
         declared: &[(Ident, Ty)],
         written: &'hir [PayloadField],
         variant: HirId,
+        mode: BindingMode,
     ) {
         for field in written {
             let (name, pat) = (field.name, field.value);
             match declared.iter().find(|(field, _)| field.text == name.text) {
-                Some(&(_, ty)) => self.check_pat(pat, ty),
+                Some(&(_, ty)) => self.check_pat(pat, ty, mode),
                 None => {
                     report_no_payload_field(self.hir, name, variant);
                     let error = self.tcx.error();
-                    self.check_pat(pat, error);
+                    self.check_pat(pat, error, mode);
                 }
             }
         }
@@ -158,10 +210,10 @@ impl<'hir> Typeck<'hir> {
 
     /// Walks the sub-patterns of a failed payload (one that has an error) so
     /// that the names they bind still have types.
-    fn check_failed_payload(&mut self, payload: &'hir Payload) {
+    fn check_failed_payload(&mut self, payload: &'hir Payload, mode: BindingMode) {
         let error = self.tcx.error();
         for pat in payload_pats(payload) {
-            self.check_pat(pat, error);
+            self.check_pat(pat, error, mode);
         }
     }
 
@@ -348,6 +400,24 @@ mod tests {
         rejects(
             "fun f(n: i32) -> i32 { return match n { true => 1, _ => 2, }; }",
             "mismatched types",
+        );
+    }
+
+    /// A float literal pattern checks like its expression counterpart and lowers to an
+    /// ordinary float equality test.
+    #[test]
+    fn a_float_literal_pattern_matches_a_float_scrutinee() {
+        accepts("fun f(n: f64) -> i32 { return match n { 3.14 => 1, _ => 0 }; }");
+    }
+
+    /// `str` equality has no runtime lowering yet -- `str` is a `{ pointer, length }` pair, so
+    /// matching one by value would need a string-comparison helper that does not exist. The
+    /// pattern is rejected here rather than left to ICE in MIR lowering.
+    #[test]
+    fn a_string_literal_pattern_is_rejected() {
+        rejects(
+            "fun f(s: str) -> i32 { return match s { \"hi\" => 1, _ => 0 }; }",
+            "string literal patterns are not supported",
         );
     }
 
@@ -634,6 +704,92 @@ mod tests {
                  let pair = (s, 1);
                  let (.square { l }, n) = pair;
                  return l;
+             }",
+        );
+    }
+}
+
+#[cfg(test)]
+mod binding_mode_tests {
+    use crate::testing::{OPS_PREAMBLE, typeck_accepts, typeck_rejects, typeck_src_files};
+
+    fn accepts_with_ops(src: &str) {
+        let reported = typeck_src_files(&[OPS_PREAMBLE, src]);
+        assert!(
+            reported.is_empty(),
+            "expected {src:?} to check: {reported:?}"
+        );
+    }
+
+    #[test]
+    fn a_match_on_a_shared_reference_sees_the_variants() {
+        typeck_accepts(
+            "enum Opt<T> { some: T, none }\n\
+             extend<T> Opt<T> {\n\
+                 fun is_some(&self) -> bool {\n\
+                     return match self { .some(_) => true, .none => false, };\n\
+                 }\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn a_payload_bound_through_a_shared_reference_is_a_reference() {
+        accepts_with_ops(
+            "module app;\n\
+             enum Opt<T> { some: T, none }\n\
+             fun first(o: &Opt<i32>) -> i32 {\n\
+                 return match o { .some(v) => *v, .none => 0, };\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn a_payload_bound_through_a_reference_is_not_the_bare_type() {
+        typeck_rejects(
+            "enum Opt<T> { some: T, none }\n\
+             fun first(o: &Opt<i32>) -> i32 {\n\
+                 return match o { .some(v) => v, .none => 0, };\n\
+             }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_mutable_reference_binds_mutably() {
+        accepts_with_ops(
+            "module app;\n\
+             enum Opt<T> { some: T, none }\n\
+             fun take_mut(x: &mut i32) {}\n\
+             fun bump(o: &mut Opt<i32>) {\n\
+                 match o { .some(v) => { take_mut(v); }, .none => {}, }\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn immutability_is_sticky_through_nesting() {
+        let reported = typeck_src_files(&[
+            OPS_PREAMBLE,
+            "module app;\n\
+             enum Opt<T> { some: T, none }\n\
+             fun take_mut(x: &mut i32) {}\n\
+             fun bump(o: & &mut Opt<i32>) {\n\
+                 match o { .some(v) => { take_mut(v); }, .none => {}, }\n\
+             }",
+        ]);
+        assert!(
+            reported.iter().any(|d| d.contains("mismatched types")),
+            "a `&mut` behind a `&` binds as `&`, not `&mut`: {reported:?}"
+        );
+    }
+
+    #[test]
+    fn a_match_on_a_reference_is_still_exhaustive() {
+        typeck_accepts(
+            "enum Opt<T> { some: T, none }\n\
+             fun is_none(o: &Opt<i32>) -> bool {\n\
+                 return match o { .some(_) => false, .none => true, };\n\
              }",
         );
     }

@@ -1,14 +1,12 @@
 use chumsky::Parser as ChumskyParser;
 use chumsky::error::Rich;
 use chumsky::extra;
-use chumsky::input::InputRef;
 use chumsky::prelude::*;
 
-use crate::ast::interner::Interner;
-use crate::ast::{Ast, Ident, Item, ItemKind, NodeId, ParsedSrcFile, Path};
-use crate::diagnostics::DiagCtx;
-use crate::diagnostics::parser::{report_duplicate_module, report_errors};
-use crate::driver::source::{SrcMap, SrcSpan};
+use crate::ast::{Ast, Ident, Item, ItemKind, ParsedSrcFile, Path};
+use crate::diagnostics::parser::report_parse;
+use crate::driver::source::SrcSpan;
+use crate::lexer::describe::Descriptor;
 use crate::lexer::token::{Token, TokenKind};
 
 type Extra<'a> = extra::Err<Rich<'a, Token>>;
@@ -19,43 +17,25 @@ mod delimiters;
 mod expr_parser;
 mod item_parser;
 mod pattern_parser;
+mod recovery;
 mod type_parser;
 
-/// Whether [`Parser::recover_by_skipping`] leaves a token for the next parser or consumes it.
-#[derive(Clone, Copy)]
-enum Stop {
-    /// Leave the token unconsumed: it starts the next construct.
-    Before,
-    /// Consume the token: it belongs to the construct being skipped, as a `;` does to the
-    /// statement it terminates.
-    After,
+use recovery::{ITEM_RECOVERY, recover_by_skipping};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BraceForms {
+    Allow,
+    Deny,
 }
 
-/// Maps a token to where item recovery stops, for `Parser::grammar`.
-///
-/// The keywords listed are the ones `Parser::item_parser` accepts as an item's first token.
-fn item_recovery_point(kind: TokenKind) -> Option<Stop> {
-    matches!(
-        kind,
-        TokenKind::PublicKw
-            | TokenKind::FunKw
-            | TokenKind::StructKw
-            | TokenKind::EnumKw
-            | TokenKind::TraitKw
-            | TokenKind::ExtendKw
-            | TokenKind::ModuleKw
-            | TokenKind::ImportKw
-    )
-    .then_some(Stop::Before)
-}
-
-pub struct Parser {}
+pub struct Parser;
 
 impl Parser {
     pub fn new() -> Self {
-        Parser {}
+        Parser
     }
 
+    #[allow(dead_code)]
     pub fn parse(&self, tokens: &[Token], file_offset: usize) -> ParsedSrcFile {
         let grammar = self.grammar();
         Self::run(&grammar, tokens, file_offset)
@@ -67,7 +47,7 @@ impl Parser {
             .iter()
             .map(|(tokens, file_offset)| Self::run(&grammar, tokens, *file_offset))
             .collect();
-        Ast::new(files)
+        Ast::from(files)
     }
 
     fn run<'a>(
@@ -76,56 +56,21 @@ impl Parser {
         file_offset: usize,
     ) -> ParsedSrcFile {
         let (output, errors) = grammar.parse(tokens).into_output_errors();
-
-        // Every failure after an unmatched delimiter is a consequence of it, so the two reports
-        // are alternatives rather than both being emitted.
-        let unmatched = delimiters::unmatched(tokens);
-        if unmatched.is_empty() {
-            report_errors(&errors, tokens, file_offset);
-        } else {
-            unmatched.into_iter().for_each(DiagCtx::emit);
-        }
+        report_parse(
+            &errors,
+            tokens,
+            file_offset,
+            delimiters::find_unmatched_delimiter_errors(tokens),
+        );
 
         match output {
-            Some(items) => Self::assemble_file(items, file_offset),
+            Some(items) => ParsedSrcFile::from_items(items, file_offset),
             None => ParsedSrcFile {
                 module: None,
                 imports: Vec::new(),
                 items: Vec::new(),
                 span: SrcSpan::new(file_offset, file_offset),
             },
-        }
-    }
-
-    /// Splits a file's parsed items into its module header, imports, and definitions
-    /// as required by [`ParsedSrcFile`]
-    fn assemble_file(items: Vec<Item>, file_offset: usize) -> ParsedSrcFile {
-        let span = match (items.first(), items.last()) {
-            (Some(first), Some(last)) => first.span.merge(last.span),
-            _ => SrcSpan::new(file_offset, file_offset),
-        };
-
-        let mut module = None;
-        let mut imports = Vec::new();
-        let mut definitions = Vec::new();
-
-        for item in items {
-            match item.kind {
-                // Only the first `module` header counts. A file belongs to exactly one module.
-                ItemKind::ModuleDecl(decl) => match module {
-                    None => module = Some(decl),
-                    Some(_) => report_duplicate_module(item.span),
-                },
-                ItemKind::Import(import) => imports.push(import),
-                _ => definitions.push(item),
-            }
-        }
-
-        ParsedSrcFile {
-            module,
-            imports,
-            items: definitions,
-            span,
         }
     }
 
@@ -136,18 +81,12 @@ impl Parser {
     ) -> impl ChumskyParser<'a, &'a [Token], Token, Extra<'a>> + Clone {
         any()
             .filter(move |t: &Token| t.kind == k)
-            .labelled(k.describe())
+            .labelled(Descriptor::of(k).describe())
     }
 
     fn ident_parser<'a>(&'a self) -> BoxedP<'a, Ident> {
         self.kind(TokenKind::Identifier)
-            .map(|t: Token| Ident {
-                text: Interner::intern(
-                    &SrcMap::text_of(t.span)
-                        .expect("lexer token span should always resolve to a source file"),
-                ),
-                span: t.span,
-            })
+            .map(Ident::of_token)
             .boxed()
     }
 
@@ -163,83 +102,12 @@ impl Parser {
             .boxed()
     }
 
-    /// A parser that never matches.
-    ///
-    /// Use it to turn off one alternative of a `choice` without changing the choice's shape.
-    fn never<'a, O: 'a>(&'a self) -> BoxedP<'a, O> {
-        any()
-            .filter(|_: &Token| false)
-            .map(|_| unreachable!("`never` matches nothing, so nothing is ever mapped"))
-            .boxed()
-    }
-
-    /// Builds a parser for `recover_with(via_parser(..))` that discards the tokens of a construct
-    /// the grammar rejected and returns a placeholder node in its place.
-    ///
-    /// It consumes the token the grammar failed on and then every token up to the first one
-    /// `stop` accepts, passing the span of all of them to `build`. Consuming that first token
-    /// unconditionally is what lets the `repeated()` around a recovering parser advance.
-    ///
-    /// `(`, `[` and `{` groups are consumed whole, since a token `stop` accepts inside a nested
-    /// group belongs to that group rather than to the construct being discarded. Stopping there
-    /// would leave the group's closing delimiter behind, and the next parser would read it as
-    /// the end of an enclosing construct. For the same reason a closing delimiter at depth zero
-    /// always stops the skip, whatever `stop` says about it.
-    fn recover_by_skipping<'a, O: 'a>(
-        &'a self,
-        stop: impl Fn(TokenKind) -> Option<Stop> + Clone + 'a,
-        build: impl Fn(SrcSpan) -> O + Clone + 'a,
-    ) -> impl ChumskyParser<'a, &'a [Token], O, Extra<'a>> + Clone + 'a {
-        custom(move |inp: &mut InputRef<'a, '_, &'a [Token], Extra<'a>>| {
-            // There is nothing to discard at end of input. Failing here rather than returning a
-            // placeholder is what terminates the `repeated()` around a recovering parser.
-            let first: Token = inp.parse(any())?;
-
-            let mut skipped = first.span;
-            let mut depth = usize::from(first.kind.opens_group());
-
-            while let Some(token) = inp.peek() {
-                if depth == 0 {
-                    match stop(token.kind) {
-                        Some(Stop::Before) => break,
-                        Some(Stop::After) => {
-                            inp.skip();
-                            skipped = skipped.merge(token.span);
-                            break;
-                        }
-                        None if token.kind.closes_group() => break,
-                        None => {}
-                    }
-                }
-
-                if token.kind.opens_group() {
-                    depth += 1;
-                } else if token.kind.closes_group() {
-                    depth -= 1;
-                }
-                inp.skip();
-                skipped = skipped.merge(token.span);
-            }
-
-            Ok(build(skipped))
-        })
-    }
-
-    /// Builds the whole grammar for a single file: a sequence of items followed by end-of-input.
-    ///
-    /// The result is a flat list of items, including the file's `module` header and its imports.
-    /// [`Self::assemble_file`] sorts those into the parts of a [`ParsedSrcFile`] afterwards.
     fn grammar<'a>(&'a self) -> impl ChumskyParser<'a, &'a [Token], Vec<Item>, Extra<'a>> + Clone {
-        let item = self
-            .item_parser()
-            .recover_with(via_parser(self.recover_by_skipping(
-                item_recovery_point,
-                |span| Item {
-                    id: NodeId::next(),
-                    kind: ItemKind::Error,
-                    span,
-                },
-            )));
+        let item = self.item_parser().recover_with(via_parser(
+            recover_by_skipping(ITEM_RECOVERY, |span| {
+                Item::new(ItemKind::Error, span)
+            }),
+        ));
 
         item.repeated().collect::<Vec<_>>().then_ignore(end())
     }
@@ -248,6 +116,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::interner::Interner;
     use crate::ast::*;
     use crate::diagnostics::{DiagCtx, Diagnostic};
     use crate::driver::source::SrcMap;
@@ -671,6 +540,21 @@ mod tests {
         assert!(diagnostic.help.is_some());
     }
 
+    /// A name run directly into a number (`1e5` reads as `1` glued to a name) is a missing
+    /// operator or `;`, or an attempt at scientific notation, which Phi does not have. The
+    /// help must say that rather than suggest a missing `;` between unrelated statements.
+    #[test]
+    fn a_name_glued_to_a_number_says_what_is_missing() {
+        let diagnostic = only_diagnostic("fun main() { let x = 1e5; }");
+        assert_eq!(diagnostic.message, "expected `;`, found identifier");
+        assert_eq!(
+            diagnostic.help.as_deref(),
+            Some(
+                "a number cannot be followed directly by a name; an operator or `;` is missing here"
+            )
+        );
+    }
+
     /// The `labelled("an expression")` on `unary_or_new` replaces the ~20 tokens that can begin
     /// an operand, since the failure is at the operand's first token.
     #[test]
@@ -795,8 +679,8 @@ mod tests {
         assert!(matches!(body.stmts[2].kind, StmtKind::Let { .. }));
     }
 
-    /// `statement_recovery_point` returns `Stop::After` for `;`, so the skip consumes it and
-    /// the following `foo();` parses as its own statement.
+    /// `STATEMENT_RECOVERY` consumes the `;` that ends the broken statement, so the following
+    /// `foo();` parses as its own statement.
     #[test]
     fn recovery_stops_at_the_semicolon_that_ends_the_broken_statement() {
         let (unit, error_count) = parse_with_errors("fun main() { 1 +; foo(); }");

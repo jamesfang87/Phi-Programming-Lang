@@ -22,6 +22,9 @@ impl OwnerLowerer<'_, '_> {
         match kind {
             ast::ExprKind::Literal(lit) => ExprKind::Literal(*lit),
             ast::ExprKind::Path(path) => ExprKind::Path(self.cx.lower_path(node_id, path)),
+            ast::ExprKind::SelfKw => {
+                ExprKind::Path(self.cx.lower_path(node_id, &ast::Path::self_kw(span)))
+            }
             ast::ExprKind::Unary { op, operand } => ExprKind::Unary {
                 op: *op,
                 operand: self.lower_expr(operand),

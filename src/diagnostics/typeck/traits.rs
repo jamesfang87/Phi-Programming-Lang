@@ -16,8 +16,18 @@ pub fn get_name_of_trait(hir: &Hir, def: DefId) -> &'static str {
 }
 
 pub fn show_goal(hir: &Hir, cx: DisplayCx<'_>, goal: &Query) -> String {
+    let args = match &goal.trait_.args[..] {
+        [] => String::new(),
+        args => format!(
+            "<{}>",
+            args.iter()
+                .map(|arg| cx.show(*arg).to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
     format!(
-        "`{}: {}`",
+        "`{}: {}{args}`",
         cx.show(goal.self_ty),
         get_name_of_trait(hir, goal.trait_.def)
     )

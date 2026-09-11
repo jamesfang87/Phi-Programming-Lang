@@ -24,12 +24,9 @@ pub fn report_ambiguous_main(hir: &Hir, candidates: &[DefId]) {
     )
     .with_label("the entry point would be this `main`");
     for &other in &candidates[1..] {
-        diagnostic =
-            diagnostic.with_secondary(hir.function(other).name.span, "also named `main`");
+        diagnostic = diagnostic.with_secondary(hir.function(other).name.span, "also named `main`");
     }
-    DiagCtx::emit(
-        diagnostic.with_help("keep one `main` at the crate root and rename the others"),
-    );
+    DiagCtx::emit(diagnostic.with_help("keep one `main` at the crate root and rename the others"));
 }
 
 pub fn report_main_takes_parameters(span: SrcSpan, param_count: usize) {

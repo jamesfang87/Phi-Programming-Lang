@@ -10,8 +10,8 @@ use crate::typeck::ty::{Ty, TyKind, TyVar};
 pub struct TyCtx {
     tykinds: Vec<TyKind>,
     handles: HashMap<TyKind, Ty>,
-    /// The id the next inference variable is issued, incremented each time one is created.
-    next_var: u32,
+    next_var_id: u32,
+    // TODO: what is this used for?
     adts: HashMap<DefId, AdtDef>,
 }
 
@@ -39,10 +39,6 @@ impl TyCtx {
         self.tykinds
             .get(ty.index())
             .expect("a Ty handle from another TyCtx (or one built by hand)")
-    }
-
-    pub fn all_tys(&self) -> impl Iterator<Item = Ty> + '_ {
-        (0..self.tykinds.len()).map(Ty::from_usize)
     }
 
     pub fn error(&mut self) -> Ty {
@@ -155,8 +151,10 @@ impl TyCtx {
     }
 
     fn subst_declared_tys(&mut self, generics: &[HirId], declared: &[Ty], args: &[Ty]) -> Vec<Ty> {
-        let subst: HashMap<HirId, Ty> =
-            generics.iter().copied().zip(args.iter().copied()).collect();
+        let subst = crate::typeck::fold::Subst {
+            generics: generics.iter().copied().zip(args.iter().copied()).collect(),
+            self_ty: None,
+        };
         declared
             .iter()
             .map(|&ty| crate::typeck::fold::subst_ty(self, ty, &subst))
@@ -171,18 +169,9 @@ impl TyCtx {
         self.adts = adts;
     }
 
-    /// Returns whether `ty` stores a reference somewhere within it: directly, inside a tuple or
-    /// array element, or inside a struct/enum/trait object's own generic arguments (recursively,
-    /// so `Foo<Bar<&i32>>` counts too). A function type's parameters and return type are not
-    /// walked, since a function pointer holds no data of its own; it is a pointer to code, not
-    /// to a borrowed value.
     pub fn contains_ref(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Ref { .. } => true,
-            // `str` shares `&[u8]`'s representation and its standing under MVS: it is
-            // second-class, so it is treated as a reference everywhere `contains_ref` is
-            // consulted -- a field, a variant payload, and a generic argument may not hold one,
-            // while a parameter, a local, and a return type may.
             TyKind::Primitive(PrimTy::Str) => true,
             TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_ref(elem)),
             TyKind::Array { elem, .. } => self.contains_ref(*elem),
@@ -201,16 +190,6 @@ impl TyCtx {
         }
     }
 
-    /// Returns whether `ty` holds a `dyn Trait` somewhere that isn't sized: directly, inside a
-    /// tuple or array element, or inside a struct/enum's own generic arguments (recursively).
-    /// `dyn Trait` carries no size of its own, so the only two things that ever give it one are
-    /// `&`/`&mut` and `iso` -- each absorbs exactly the `dyn` immediately beneath it, but not
-    /// one nested any deeper (`&(dyn Trait, i32)` is still unsized: the tuple itself has no
-    /// size, so a reference to it can never have been formed). A function type's parameters and
-    /// return type are not walked, for the same reason `contains_ref` and `contains_any` do not
-    /// walk them -- a function pointer holds no data of its own -- but a function type's own
-    /// params and return type are checked directly where `lower_ty` lowers them, since that
-    /// *is* itself a sizedness position for each of those types.
     pub fn contains_bare_dyn(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Dyn { .. } => true,
@@ -274,8 +253,8 @@ impl TyCtx {
     }
 
     fn take_var_id(&mut self) -> u32 {
-        let id = self.next_var;
-        self.next_var += 1;
+        let id = self.next_var_id;
+        self.next_var_id += 1;
         id
     }
 }
@@ -283,17 +262,6 @@ impl TyCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn all_tys_yields_every_interned_handle_in_interning_order() {
-        let mut tcx = TyCtx::new();
-        let i32_ty = tcx.mk_prim(PrimTy::I32);
-        let bool_ty = tcx.mk_prim(PrimTy::Bool);
-        let ref_ty = tcx.mk_ref(i32_ty, Mutability::Immutable);
-
-        let all: Vec<Ty> = tcx.all_tys().collect();
-        assert_eq!(all, vec![i32_ty, bool_ty, ref_ty]);
-    }
 
     #[test]
     fn structurally_equal_types_intern_to_the_same_handle() {

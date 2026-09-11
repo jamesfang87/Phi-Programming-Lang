@@ -39,7 +39,16 @@ pub fn overlaps(tcx: &mut TyCtx, a: &ExtendHeader, b: &ExtendHeader) -> bool {
         return false;
     }
 
-    let (a_subst, b_subst) = (instantiate(tcx, &a.generics), instantiate(tcx, &b.generics));
+    let (a_subst, b_subst) = (
+        fold::Subst {
+            generics: instantiate(tcx, &a.generics),
+            self_ty: None,
+        },
+        fold::Subst {
+            generics: instantiate(tcx, &b.generics),
+            self_ty: None,
+        },
+    );
     let mut unifier = Unifier::new();
 
     let (x, y) = (

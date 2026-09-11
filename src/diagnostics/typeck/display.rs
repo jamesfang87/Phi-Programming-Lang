@@ -3,6 +3,7 @@ use std::fmt;
 use crate::ast::Mutability;
 use crate::ast::interner::Interner;
 use crate::hir::{DefId, Hir, HirId, OwnerNode};
+use crate::mir::def_names::DefNames;
 use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 use crate::typeck::tyctx::TyCtx;
@@ -10,13 +11,53 @@ use crate::typeck::unify::UnifyError;
 
 #[derive(Clone, Copy)]
 pub struct DisplayCx<'a> {
-    hir: &'a Hir,
     tcx: &'a TyCtx,
+    names: Names<'a>,
+}
+
+/// Where a [`DisplayCx`] reads definition and generic names from.
+#[derive(Clone, Copy)]
+enum Names<'a> {
+    /// The HIR itself. Every pass before lowering already has it, so reading a name straight out
+    /// of it costs no snapshot to keep in step.
+    Hir(&'a Hir),
+    /// The name table [`mir::lower`](crate::mir::lower) took into
+    /// [`Mir::def_names`](crate::mir::lower::Mir), for diagnostics raised *after* lowering, where
+    /// reaching back into the HIR would undo the lowering boundary this compiler keeps.
+    Mir(&'a DefNames),
+}
+
+impl<'a> Names<'a> {
+    fn def_name(self, def: DefId) -> &'a str {
+        match self {
+            Names::Hir(hir) => def_name(hir, def),
+            Names::Mir(names) => names.def_name(def),
+        }
+    }
+
+    fn generic_name(self, id: HirId) -> &'a str {
+        match self {
+            Names::Hir(hir) => Interner::resolve(hir.generic(id).name.text),
+            Names::Mir(names) => names.generic_name(id),
+        }
+    }
 }
 
 impl<'a> DisplayCx<'a> {
     pub fn new(hir: &'a Hir, tcx: &'a TyCtx) -> Self {
-        DisplayCx { hir, tcx }
+        DisplayCx {
+            tcx,
+            names: Names::Hir(hir),
+        }
+    }
+
+    /// A [`DisplayCx`] for diagnostics raised after lowering, reading names from the snapshot
+    /// [`mir::lower`](crate::mir::lower) built rather than from the HIR. See [`Names::Mir`].
+    pub fn for_mir(names: &'a DefNames, tcx: &'a TyCtx) -> Self {
+        DisplayCx {
+            tcx,
+            names: Names::Mir(names),
+        }
     }
 
     /// Wraps `value` so it can be printed: `format!("{}", cx.show(ty))`.
@@ -42,7 +83,7 @@ impl<T: Pretty> fmt::Display for Show<'_, T> {
 
 impl Pretty for Ty {
     fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>) -> fmt::Result {
-        let (hir, tcx) = (cx.hir, cx.tcx);
+        let tcx = cx.tcx;
         match tcx.kind(*self) {
             TyKind::Var(TyVar::Any(_)) => write!(f, "_"),
             TyKind::Var(TyVar::Int(_)) => write!(f, "{{integer}}"),
@@ -50,10 +91,10 @@ impl Pretty for Ty {
 
             TyKind::Primitive(prim) => write!(f, "{}", prim_name(*prim)),
             TyKind::Adt { def, args } => {
-                write!(f, "{}", def_name(hir, *def))?;
+                write!(f, "{}", cx.names.def_name(*def))?;
                 write_args(f, cx, args)
             }
-            TyKind::Generic(hir_id) => write!(f, "{}", generic_name(hir, *hir_id)),
+            TyKind::Generic(hir_id) => write!(f, "{}", cx.names.generic_name(*hir_id)),
             // Only appears inside a trait's body, where `Self` names no concrete type yet.
             TyKind::SelfTy(_) => write!(f, "Self"),
             TyKind::Ref { base, mutability } => {
@@ -107,7 +148,7 @@ impl Pretty for Ty {
                 Ok(())
             }
             TyKind::Dyn { trait_, args } => {
-                write!(f, "dyn {}", def_name(hir, *trait_))?;
+                write!(f, "dyn {}", cx.names.def_name(*trait_))?;
                 write_args(f, cx, args)
             }
             TyKind::Never => write!(f, "!"),
@@ -185,8 +226,4 @@ pub(crate) fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
         OwnerNode::Trait(t) => Interner::resolve(t.name.text),
         _ => unreachable!("only a struct, enum, or trait def can appear in an Adt or Dyn type"),
     }
-}
-
-fn generic_name(hir: &Hir, hir_id: HirId) -> &'static str {
-    Interner::resolve(hir.generic(hir_id).name.text)
 }

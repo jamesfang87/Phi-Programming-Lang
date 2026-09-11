@@ -112,7 +112,8 @@ fn apply_rvalue(unread: &mut UnreadLocals, rvalue: &Rvalue) {
         Rvalue::Use(operand)
         | Rvalue::UnaryOp(_, operand)
         | Rvalue::Cast { operand, .. }
-        | Rvalue::New(operand) => {
+        | Rvalue::New(operand)
+        | Rvalue::Unsize { operand, .. } => {
             apply_operand(unread, operand);
         }
         Rvalue::BinaryOp(_, lhs, rhs)
