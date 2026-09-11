@@ -6,16 +6,12 @@ Phi is a modern programming language inspired by Hylo and Rust, guaranteeing mem
 
 ## Building
 
-`phi` links against LLVM 20 through `inkwell`. Install it and point the build at it:
-
+To build `phi`, use the following command.
 ```bash
 brew install llvm@20
 export LLVM_SYS_201_PREFIX=/opt/homebrew/opt/llvm@20
 cargo build
 ```
-
-Without `LLVM_SYS_201_PREFIX` set to an LLVM 20 installation, `llvm-sys`'s build script fails
-looking for `llvm-config`.
 
 ---
 
