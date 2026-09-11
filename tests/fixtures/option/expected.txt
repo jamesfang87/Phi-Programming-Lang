@@ -18,29 +18,27 @@ Item {
                     end: 34,
                 },
             },
-            generics: Some(
-                [
-                    Generic {
-                        id: NodeId(
+            generics: [
+                Generic {
+                    id: NodeId(
+                        2,
+                    ),
+                    name: Ident {
+                        text: Symbol(
                             2,
                         ),
-                        name: Ident {
-                            text: Symbol(
-                                2,
-                            ),
-                            span: SrcSpan {
-                                begin: 35,
-                                end: 36,
-                            },
-                        },
-                        bounds: None,
                         span: SrcSpan {
                             begin: 35,
                             end: 36,
                         },
                     },
-                ],
-            ),
+                    bounds: None,
+                    span: SrcSpan {
+                        begin: 35,
+                        end: 36,
+                    },
+                },
+            ],
             variants: [
                 Variant {
                     id: NodeId(
@@ -112,14 +110,14 @@ Item {
                 },
             ],
             span: SrcSpan {
-                begin: 23,
-                end: 61,
+                begin: 16,
+                end: 64,
             },
         },
     ),
     span: SrcSpan {
-        begin: 23,
-        end: 61,
+        begin: 16,
+        end: 64,
     },
 }
 Item {
