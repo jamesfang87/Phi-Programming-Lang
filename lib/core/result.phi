@@ -1,6 +1,94 @@
 module core::result;
 
+import core::option::Option;
+
 public enum Result<T, E> {
     ok: T,
     err: E,
+}
+
+extend<T, E> Result<T, E> {
+    public fun is_ok(&self) -> bool {
+        return match self {
+            .ok(_) => true,
+            .err(_) => false,
+        };
+    }
+
+    public fun is_err(&self) -> bool {
+        return match self {
+            .ok(_) => false,
+            .err(_) => true,
+        };
+    }
+
+    public fun as_ref(&self) -> Result<&T, &E> {
+        return match self {
+            .ok(v) => .ok(v),
+            .err(e) => .err(e),
+        };
+    }
+
+    public fun unwrap(self) -> T {
+        return match self {
+            .ok(v) => v,
+            .err(_) => panic("called `unwrap` on an `err` Result"),
+        };
+    }
+
+    public fun expect(self, message: str) -> T {
+        return match self {
+            .ok(v) => v,
+            .err(_) => panic(message),
+        };
+    }
+
+    public fun unwrap_or(self, fallback: T) -> T {
+        return match self {
+            .ok(v) => v,
+            .err(_) => fallback,
+        };
+    }
+
+    public fun unwrap_or_else(self, fallback: fun(E) -> T) -> T {
+        return match self {
+            .ok(v) => v,
+            .err(e) => fallback(e),
+        };
+    }
+
+    public fun map<U>(self, f: fun(T) -> U) -> Result<U, E> {
+        return match self {
+            .ok(v) => .ok(f(v)),
+            .err(e) => .err(e),
+        };
+    }
+
+    public fun map_err<F>(self, f: fun(E) -> F) -> Result<T, F> {
+        return match self {
+            .ok(v) => .ok(v),
+            .err(e) => .err(f(e)),
+        };
+    }
+
+    public fun and_then<U>(self, f: fun(T) -> Result<U, E>) -> Result<U, E> {
+        return match self {
+            .ok(v) => f(v),
+            .err(e) => .err(e),
+        };
+    }
+
+    public fun ok(self) -> Option<T> {
+        return match self {
+            .ok(v) => .some(v),
+            .err(_) => .none,
+        };
+    }
+
+    public fun err(self) -> Option<E> {
+        return match self {
+            .ok(_) => .none,
+            .err(e) => .some(e),
+        };
+    }
 }
