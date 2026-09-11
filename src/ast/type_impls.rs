@@ -1,16 +1,17 @@
 use super::*;
-use crate::ast::interner::Interner;
 use crate::lexer::token::Token;
 
 impl Path {
     pub fn primitive(tok: Token) -> Path {
-        let ident = Ident {
-            text: Interner::intern(tok.kind.to_string()),
-            span: tok.span,
-        };
+        Path::from(Ident::of_token(tok))
+    }
+}
+
+impl From<Ident> for Path {
+    fn from(ident: Ident) -> Self {
         Path {
             segments: vec![ident],
-            span: tok.span,
+            span: ident.span,
         }
     }
 }
