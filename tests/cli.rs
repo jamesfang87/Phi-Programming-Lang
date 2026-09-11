@@ -685,3 +685,466 @@ fn double_deref_through_a_reference_to_a_reference_reads_the_original_value() {
     );
     assert_eq!(stdout(&output), "double-deref-ok");
 }
+
+#[test]
+fn a_generic_extend_method_builds_and_runs() {
+    let dir = scratch("generic_extend_method");
+    write_manifest(&dir, "generic_extend_method");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         struct Wrap<T> { public value: T }\n\
+         \n\
+         extend<T> Wrap<T> {\n\
+             public fun get(self) -> T { return self.value; }\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let w: Wrap<i32> = Wrap { value: 7 };\n\
+             let n = w.get();\n\
+             if n == 7 { core::io::write_bytes(1, \"ok\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "ok");
+}
+
+#[test]
+fn a_method_returning_self_builds_and_runs() {
+    let dir = scratch("method_returning_self");
+    write_manifest(&dir, "method_returning_self");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         struct Wrap<T> { public value: T }\n\
+         \n\
+         extend<T> Wrap<T> {\n\
+             public fun same(self) -> Self { return self; }\n\
+             public fun get(self) -> T { return self.value; }\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let w: Wrap<i32> = Wrap { value: 9 };\n\
+             let n = w.same().get();\n\
+             if n == 9 { core::io::write_bytes(1, \"ok\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "ok");
+}
+
+#[test]
+fn a_reference_match_builds_and_runs() {
+    let dir = scratch("reference_match");
+    write_manifest(&dir, "reference_match");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         enum Opt { some: i32, none }\n\
+         \n\
+         fun peek(o: &Opt) -> i32 {\n\
+             return match o { .some(v) => *v, .none => 0, };\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let a: Opt = .some(5);\n\
+             let b: Opt = .none;\n\
+             if peek(&a) == 5 { core::io::write_bytes(1, \"a\" as &[u8]); }\n\
+             if peek(&b) == 0 { core::io::write_bytes(1, \"b\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "ab");
+}
+
+#[test]
+fn a_reference_match_does_not_drop_what_it_borrows() {
+    let dir = scratch("reference_match_drops");
+    write_manifest(&dir, "reference_match_drops");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         enum Opt { some: i32, none }\n\
+         \n\
+         fun peek(o: &Opt) -> i32 {\n\
+             return match o { .some(v) => *v, .none => 0, };\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let a: Opt = .some(3);\n\
+             let first = peek(&a);\n\
+             let second = peek(&a);\n\
+             if first + second == 6 { core::io::write_bytes(1, \"ok\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "ok");
+}
+
+#[test]
+fn option_methods_build_and_run() {
+    let dir = scratch("option_methods");
+    write_manifest(&dir, "option_methods");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         fun main() {\n\
+             let a: Option<i32> = .some(4);\n\
+             let b: Option<i32> = .none;\n\
+             if a.is_some() { core::io::write_bytes(1, \"1\" as &[u8]); }\n\
+             if b.is_none() { core::io::write_bytes(1, \"2\" as &[u8]); }\n\
+             let doubled: Option<i32> = .some(4);\n\
+             if doubled.map(|x| x * 2).unwrap() == 8 { core::io::write_bytes(1, \"3\" as &[u8]); }\n\
+             let empty: Option<i32> = .none;\n\
+             if empty.unwrap_or(7) == 7 { core::io::write_bytes(1, \"4\" as &[u8]); }\n\
+             let c: Option<i32> = .some(1);\n\
+             let r: Result<i32, bool> = c.ok_or(false);\n\
+             if r.unwrap() == 1 { core::io::write_bytes(1, \"5\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "12345");
+}
+
+#[test]
+fn result_methods_build_and_run() {
+    let dir = scratch("result_methods");
+    write_manifest(&dir, "result_methods");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         fun main() {\n\
+             let a: Result<i32, bool> = .ok(4);\n\
+             let b: Result<i32, bool> = .err(true);\n\
+             if a.is_ok() { core::io::write_bytes(1, \"1\" as &[u8]); }\n\
+             if b.is_err() { core::io::write_bytes(1, \"2\" as &[u8]); }\n\
+             let c: Result<i32, bool> = .ok(4);\n\
+             if c.map(|x| x * 2).unwrap() == 8 { core::io::write_bytes(1, \"3\" as &[u8]); }\n\
+             let d: Result<i32, bool> = .err(true);\n\
+             if d.unwrap_or(7) == 7 { core::io::write_bytes(1, \"4\" as &[u8]); }\n\
+             let e: Result<i32, bool> = .ok(1);\n\
+             if e.ok().unwrap() == 1 { core::io::write_bytes(1, \"5\" as &[u8]); }\n\
+             let f: Result<i32, bool> = .err(true);\n\
+             if f.map_err(|x| if x { 9 } else { 8 }).unwrap_or(0) == 0 { core::io::write_bytes(1, \"6\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "123456");
+}
+
+#[test]
+fn a_closure_that_ignores_its_parameter_builds_and_runs() {
+    let dir = scratch("closure_ignores_parameter");
+    write_manifest(&dir, "closure_ignores_parameter");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         fun conv<A, B>(x: A, f: fun(A) -> B) -> B {\n\
+             return f(x);\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let n: i32 = conv(true, |x| 9);\n\
+             if n == 9 { core::io::write_bytes(1, \"a\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "a");
+}
+
+#[test]
+fn option_map_with_an_unused_closure_parameter_builds_and_runs() {
+    let dir = scratch("option_map_unused_parameter");
+    write_manifest(&dir, "option_map_unused_parameter");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         fun main() {\n\
+             let o: Option<bool> = .some(true);\n\
+             if o.map(|x| 9).unwrap_or(0) == 9 { core::io::write_bytes(1, \"9\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "9");
+}
+
+#[test]
+fn a_trait_default_method_dispatches_to_the_implementing_type() {
+    let dir = scratch("trait_default_dispatch");
+    write_manifest(&dir, "trait_default_dispatch");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         trait Cloner {\n\
+             fun clone_it(&self) -> Self;\n\
+             fun twice(&self) -> Self { return self.clone_it(); }\n\
+         }\n\
+         \n\
+         struct N { public value: i32 }\n\
+         struct M { public value: i32 }\n\
+         \n\
+         extend N with Cloner {\n\
+             fun clone_it(&self) -> Self { return N { value: self.value + 1 }; }\n\
+         }\n\
+         \n\
+         extend M with Cloner {\n\
+             fun clone_it(&self) -> Self { return M { value: self.value + 2 }; }\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let n: N = N { value: 1 };\n\
+             let m: M = M { value: 1 };\n\
+             let n2: N = n.twice();\n\
+             let m2: M = m.twice();\n\
+             if n2.value == 2 { core::io::write_bytes(1, \"1\" as &[u8]); }\n\
+             if m2.value == 3 { core::io::write_bytes(1, \"2\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "12");
+}
+
+#[test]
+fn a_generic_trait_default_method_substitutes_the_traits_arguments() {
+    let dir = scratch("generic_trait_default");
+    write_manifest(&dir, "generic_trait_default");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         trait Sh<T> {\n\
+             fun sh(&self) -> T;\n\
+             fun go(&self) -> T { return self.sh(); }\n\
+         }\n\
+         \n\
+         struct W { public value: i32 }\n\
+         \n\
+         extend W with Sh<i32> {\n\
+             fun sh(&self) -> i32 { return self.value; }\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let w: W = W { value: 5 };\n\
+             let n: i32 = w.go();\n\
+             if n == 5 { core::io::write_bytes(1, \"ok\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "ok");
+}
+
+#[test]
+fn a_bound_with_trait_arguments_dispatches_end_to_end() {
+    let dir = scratch("bound_with_arguments");
+    write_manifest(&dir, "bound_with_arguments");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         trait Conv<From> {\n\
+             fun conv(&self) -> From;\n\
+             fun boxed(&self) -> From { return self.conv(); }\n\
+         }\n\
+         \n\
+         struct W { public v: i32 }\n\
+         \n\
+         extend W with Conv<i32> {\n\
+             fun conv(&self) -> i32 { return self.v; }\n\
+         }\n\
+         \n\
+         fun call_boxed<T: Conv<i32>>(x: &T) -> i32 {\n\
+             return x.boxed();\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let w: W = W { v: 5 };\n\
+             let n: i32 = call_boxed(&w);\n\
+             if n == 5 { core::io::write_bytes(1, \"ok\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "ok");
+}
+
+#[test]
+fn dyn_dispatch_runs_each_implementing_type() {
+    let dir = scratch("dyn_dispatch");
+    write_manifest(&dir, "dyn_dispatch");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         trait Sh {\n\
+             fun sh(&self) -> i32;\n\
+         }\n\
+         \n\
+         struct W { public v: i32 }\n\
+         struct V { public v: i32 }\n\
+         \n\
+         extend W with Sh {\n\
+             fun sh(&self) -> i32 { return self.v; }\n\
+         }\n\
+         \n\
+         extend V with Sh {\n\
+             fun sh(&self) -> i32 { return self.v * 10; }\n\
+         }\n\
+         \n\
+         fun draw(s: &dyn Sh) -> i32 {\n\
+             return s.sh();\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let w: W = W { v: 7 };\n\
+             let v: V = V { v: 3 };\n\
+             let a: i32 = draw(&w);\n\
+             let b: i32 = draw(&v);\n\
+             let d: &dyn Sh = &w;\n\
+             let c: i32 = draw(d);\n\
+             if a == 7 { core::io::write_bytes(1, \"1\" as &[u8]); }\n\
+             if b == 30 { core::io::write_bytes(1, \"2\" as &[u8]); }\n\
+             if c == 7 { core::io::write_bytes(1, \"3\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "123");
+}
+
+#[test]
+fn a_dyn_return_and_a_mutable_dyn_dispatch() {
+    let dir = scratch("dyn_return_and_mut");
+    write_manifest(&dir, "dyn_return_and_mut");
+    write_main(
+        &dir,
+        "module app;\n\
+         \n\
+         trait Counter {\n\
+             fun count(&self) -> i32;\n\
+         }\n\
+         \n\
+         struct N { public n: i32 }\n\
+         \n\
+         extend N with Counter {\n\
+             fun count(&self) -> i32 { return self.n; }\n\
+         }\n\
+         \n\
+         fun pick(fresh: bool, n: &N) -> &dyn Counter {\n\
+             if fresh { return n; }\n\
+             return n;\n\
+         }\n\
+         \n\
+         fun bump(c: &mut dyn Counter) -> i32 {\n\
+             return c.count();\n\
+         }\n\
+         \n\
+         fun main() {\n\
+             let mut n: N = N { n: 42 };\n\
+             let c: &dyn Counter = pick(true, &n);\n\
+             let a: i32 = c.count();\n\
+             let b: i32 = bump(&mut n);\n\
+             if a == 42 { core::io::write_bytes(1, \"1\" as &[u8]); }\n\
+             if b == 42 { core::io::write_bytes(1, \"2\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "12");
+}
