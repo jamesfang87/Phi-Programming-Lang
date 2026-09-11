@@ -1,6 +1,80 @@
 module core::option;
 
+import core::result::Result;
+
 public enum Option<T> {
     some: T,
     none,
+}
+
+extend<T> Option<T> {
+    public fun is_some(&self) -> bool {
+        return match self {
+            .some(_) => true,
+            .none => false,
+        };
+    }
+
+    public fun is_none(&self) -> bool {
+        return match self {
+            .some(_) => false,
+            .none => true,
+        };
+    }
+
+    public fun as_ref(&self) -> Option<&T> {
+        return match self {
+            .some(v) => .some(v),
+            .none => .none,
+        };
+    }
+
+    public fun unwrap(self) -> T {
+        return match self {
+            .some(v) => v,
+            .none => panic("called `unwrap` on a `none` Option"),
+        };
+    }
+
+    public fun expect(self, message: str) -> T {
+        return match self {
+            .some(v) => v,
+            .none => panic(message),
+        };
+    }
+
+    public fun unwrap_or(self, fallback: T) -> T {
+        return match self {
+            .some(v) => v,
+            .none => fallback,
+        };
+    }
+
+    public fun unwrap_or_else(self, fallback: fun() -> T) -> T {
+        return match self {
+            .some(v) => v,
+            .none => fallback(),
+        };
+    }
+
+    public fun map<U>(self, f: fun(T) -> U) -> Option<U> {
+        return match self {
+            .some(v) => .some(f(v)),
+            .none => .none,
+        };
+    }
+
+    public fun and_then<U>(self, f: fun(T) -> Option<U>) -> Option<U> {
+        return match self {
+            .some(v) => f(v),
+            .none => .none,
+        };
+    }
+
+    public fun ok_or<E>(self, err: E) -> Result<T, E> {
+        return match self {
+            .some(v) => .ok(v),
+            .none => .err(err),
+        };
+    }
 }
