@@ -181,7 +181,7 @@ pub fn function_type<'ctx>(
     }
 }
 
-fn push_param_types<'ctx>(
+pub(super) fn push_param_types<'ctx>(
     cx: &CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
     mir: &Mir,

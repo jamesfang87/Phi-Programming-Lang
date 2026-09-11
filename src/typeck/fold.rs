@@ -62,9 +62,16 @@ pub fn fold_tys(
     tys.iter().map(|&ty| fold_ty(tcx, ty, leaf)).collect()
 }
 
-pub fn subst_ty(tcx: &mut TyCtx, ty: Ty, subst: &HashMap<HirId, Ty>) -> Ty {
+#[derive(Default)]
+pub struct Subst {
+    pub generics: HashMap<HirId, Ty>,
+    pub self_ty: Option<Ty>,
+}
+
+pub fn subst_ty(tcx: &mut TyCtx, ty: Ty, subst: &Subst) -> Ty {
     fold_ty(tcx, ty, &mut |tcx, ty| match *tcx.kind(ty) {
-        TyKind::Generic(param) => Some(subst.get(&param).copied().unwrap_or(ty)),
+        TyKind::Generic(param) => Some(subst.generics.get(&param).copied().unwrap_or(ty)),
+        TyKind::SelfTy(_) => subst.self_ty,
         _ => None,
     })
 }

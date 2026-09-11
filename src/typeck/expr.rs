@@ -23,6 +23,7 @@ use crate::diagnostics::typeck::expr::{
 use crate::diagnostics::typeck::lower_ty::report_trait_as_ty;
 use crate::diagnostics::typeck::report_any_outside_signature;
 use crate::driver::source::SrcSpan;
+use crate::hir::BindingMode;
 use crate::hir::{
     AccessArgs, DefId, ExprKind, Hir, HirId, OwnerNode, Path, Payload, PayloadField, Res, TyDef,
     Type,
@@ -35,7 +36,6 @@ use crate::typeck::pat::VariantTys;
 use crate::typeck::results::DerefMode;
 use crate::typeck::traits::solve::{Query, Solution};
 use crate::typeck::ty::{Ty, TyKind, TyVar};
-use crate::typeck::unify::{is_float, is_integer};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DerefContext {
@@ -50,14 +50,17 @@ pub(crate) enum DerefContext {
 /// shapes. Reducing both to this view is what lets [`Typeck::check_variant_of`] check them
 /// with one body instead of two that drift apart.
 #[derive(Clone, Copy)]
+// TODO: Bad name
 pub(crate) enum WrittenPayload<'hir> {
     None,
-    Single(HirId),
+    Single(HirId), // TODO: Why even have this? can't you just always use ArgList? Also I think there might be things that already represent this
     Record(&'hir [PayloadField]),
     /// A parenthesised list that is not one value, as in `Shape.circle()` or
     /// `Shape.circle(1.0, 2.0)`. No declared payload has this shape, so it always reports as a
     /// payload-shape mismatch; it exists only because [`AccessArgs::Call`] can hold any number
     /// of arguments while [`Payload::Single`] holds exactly one.
+    ///
+    /// TODO: I don't know, despite the above, I feel like this should be changed
     ArgList(&'hir [HirId]),
 }
 
@@ -482,7 +485,7 @@ impl<'hir> Typeck<'hir> {
                 self.tcx.error()
             }
             Res::SelfTy(_) => self.self_ty(base.owner, span),
-            Res::Local(_) | Res::Function(_) | Res::Module(_) | Res::Err => return None,
+            Res::Local(_) | Res::Function(_) | Res::Err => return None,
         };
         Some(ty)
     }
@@ -615,7 +618,7 @@ impl<'hir> Typeck<'hir> {
             let (pat, guard, block, arm_span) =
                 (arm_node.pat, arm_node.guard, arm_node.block, arm_node.span);
 
-            self.check_pat(pat, scrutinee_ty);
+            self.check_pat(pat, scrutinee_ty, BindingMode::Value);
             let pat_ty = self.types.ty(pat);
             pat_failed |= pat_ty.is_some_and(|ty| matches!(self.tcx.kind(ty), TyKind::Error));
 
@@ -634,7 +637,8 @@ impl<'hir> Typeck<'hir> {
         }
 
         if !pat_failed {
-            self.check_match_exhaustive(scrutinee_ty, arms, span);
+            let (peeled, _, _) = self.peel_for_pattern(scrutinee_ty, BindingMode::Value);
+            self.check_match_exhaustive(peeled, arms, span);
         }
 
         self.unifier.find_deep(&mut self.tcx, result)
@@ -738,8 +742,6 @@ impl<'hir> Typeck<'hir> {
     // Casting
     // -----------------------------------------------------------------
 
-    /// Checks `operand as ty`. See [`crate::typeck::cast`] for exactly which conversions this
-    /// allows.
     pub(crate) fn check_cast(&mut self, operand: HirId, ty: HirId, span: SrcSpan) -> Ty {
         let target_ty = self.lower_ty(ty);
         let operand_ty = self.ty_of(operand);
@@ -747,11 +749,6 @@ impl<'hir> Typeck<'hir> {
         let target_resolved = self.unifier.find_deep(&mut self.tcx, target_ty);
         let operand_resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
 
-        // `str as &[u8]` is the one cast that isn't primitive-to-primitive: both sides share a
-        // representation (`{ pointer, usize }`), so it costs nothing at runtime, but the target
-        // is a reference to a slice, not a primitive, so it has to be special-cased ahead of the
-        // "target must be primitive" check below. The reverse, `&[u8] as str`, is not accepted
-        // here or anywhere else: it would assert a UTF-8 property this compiler cannot check.
         if matches!(
             self.tcx.kind(operand_resolved),
             TyKind::Primitive(PrimTy::Str)
@@ -778,11 +775,11 @@ impl<'hir> Typeck<'hir> {
         let from = match operand_kind {
             TyKind::Primitive(prim) => prim,
             TyKind::Error => return target_ty,
-            TyKind::Var(TyVar::Int(_)) if is_integer(to) => {
+            TyKind::Var(TyVar::Int(_)) if to.is_integer() => {
                 let _ = self.unifier.unify(&self.tcx, operand_ty, target_ty);
                 return target_ty;
             }
-            TyKind::Var(TyVar::Float(_)) if is_float(to) => {
+            TyKind::Var(TyVar::Float(_)) if to.is_float() => {
                 let _ = self.unifier.unify(&self.tcx, operand_ty, target_ty);
                 return target_ty;
             }
@@ -803,8 +800,6 @@ impl<'hir> Typeck<'hir> {
         target_ty
     }
 
-    /// Whether `ty` is `&[u8]`: an immutable reference to an unsized array of `u8`. The one
-    /// shape `str` is ever allowed to cast to.
     fn is_byte_slice_ref(&self, ty: Ty) -> bool {
         let TyKind::Ref { base, mutability } = *self.tcx.kind(ty) else {
             return false;
@@ -863,6 +858,7 @@ impl<'hir> Typeck<'hir> {
     pub(crate) fn check_closure(&mut self, def: DefId, expected: Option<Ty>) -> Ty {
         let hir: &'hir Hir = self.hir;
         let closure = hir.closure(def);
+        self.closures_in_flight.push(def);
 
         // Only a function type of matching arity is a usable hint:
         let hint = expected.and_then(|expected| match self.tcx.kind(expected).clone() {
@@ -906,7 +902,6 @@ impl<'hir> Typeck<'hir> {
         let sig = self.tcx.mk_fun(param_tys, ret);
         self.types.record_def(def, sig);
 
-        self.writeback(def);
         sig
     }
 }
@@ -2392,11 +2387,88 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_unifies_with_any_expected_type() {
+    fn a_borrow_coerces_to_a_dyn_parameter() {
         accepts(
-            "fun f(x: bool) -> i32 {
-                 if x { return 1; } else { unreachable(); }
-             }",
+            "trait Sh { fun sh(&self) -> i32; }
+                 struct W { v: i32 }
+                 extend W with Sh { fun sh(&self) -> i32 { return self.v; } }
+                 fun draw(s: &dyn Sh) -> i32 { return s.sh(); }
+                 fun f() -> i32 { let w: W = W { v: 1 }; return draw(&w); }",
+        );
+    }
+
+    #[test]
+    fn a_borrow_coerces_to_dyn_for_a_let_binding_and_a_return() {
+        accepts(
+            "trait Sh { fun sh(&self) -> i32; }
+                 struct W { v: i32 }
+                 extend W with Sh { fun sh(&self) -> i32 { return self.v; } }
+                 fun f() -> &dyn Sh {
+                     let w: W = W { v: 1 };
+                     let d: &dyn Sh = &w;
+                     let g: &dyn Sh = d;
+                     return d;
+                 }",
+        );
+    }
+
+    #[test]
+    fn a_mutable_borrow_coerces_to_a_mutable_dyn() {
+        accepts(
+            "trait Sh { fun sh(&mut self) -> i32; }
+                 struct W { v: i32 }
+                 extend W with Sh { fun sh(&mut self) -> i32 { return self.v; } }
+                 fun f(w: &mut W) -> i32 { let d: &mut dyn Sh = w; return d.sh(); }",
+        );
+        rejects(
+            "trait Sh { fun sh(&self) -> i32; }
+                 struct W { v: i32 }
+                 extend W with Sh { fun sh(&self) -> i32 { return self.v; } }
+                 fun f(w: &mut W) -> i32 { let d: &mut dyn Sh = &w; return d.sh(); }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_type_without_the_trait_does_not_coerce_to_dyn() {
+        rejects(
+            "trait Sh { fun sh(&self) -> i32; }
+                 struct W { v: i32 }
+                 fun draw(s: &dyn Sh) -> i32 { return s.sh(); }
+                 fun f() -> i32 { let w: W = W { v: 1 }; return draw(&w); }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_dyn_receiver_cannot_call_a_method_taking_self_by_value() {
+        let reported = crate::testing::typeck_src(
+            "trait Sh { fun sh(self) -> i32; }
+                 struct W { v: i32 }
+                 extend W with Sh { fun sh(self) -> i32 { return self.v; } }
+                 fun draw(s: &dyn Sh) -> i32 { return s.sh(); }",
+        );
+        assert!(
+            reported
+                .iter()
+                .any(|message| message.contains("cannot be called through a `dyn` receiver")),
+            "expected the dyn-receiver diagnostic, got {reported:?}"
+        );
+    }
+
+    #[test]
+    fn a_dyn_receiver_cannot_call_a_method_returning_self() {
+        let reported = crate::testing::typeck_src(
+            "trait Sh { fun sh(&self) -> Self; }
+                 struct W { v: i32 }
+                 extend W with Sh { fun sh(&self) -> Self { return *self; } }
+                 fun draw(s: &dyn Sh) -> W { return s.sh(); }",
+        );
+        assert!(
+            reported
+                .iter()
+                .any(|message| message.contains("cannot be called through a `dyn` receiver")),
+            "expected the dyn-receiver diagnostic, got {reported:?}"
         );
     }
 }

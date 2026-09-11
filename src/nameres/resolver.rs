@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-
 use crate::ast::interner::Interner;
 use crate::ast::visit::{self, Visitor};
 use crate::ast::{
@@ -10,7 +7,6 @@ use crate::ast::{
 };
 use crate::diagnostics::nameres::{
     report_conflict, report_duplicate_bound, report_not_found, report_self_extend,
-    report_self_unavailable,
 };
 use crate::driver::source::SrcSpan;
 use crate::nameres::res::{Local, Res, TyDef, Type};
@@ -35,7 +31,7 @@ pub fn resolve(ast: &Ast) -> NameResolutions {
     }
 
     let lang_items = crate::langitems::ast::collect(&r.table, ast.root_id());
-    r.results.record_lang_items(lang_items);
+    r.results.lang_items = lang_items;
     r.results
 }
 
@@ -49,39 +45,6 @@ impl<'ast> Resolver<'ast> {
         }
     }
 
-    /// Resolves a path in type position, and the only place [`Res::SelfTy`] is produced.
-    ///
-    /// This should be used instead of a lookup_type_path due to the case of
-    /// `Self`, which can have multiple reasons of failing
-    pub(super) fn resolve_type_path(&self, path: &Path) -> Res {
-        let last = *path
-            .segments
-            .last()
-            .expect("a path always has at least one segment");
-
-        if path.segments.len() == 1 && last.text == Interner::intern("Self") {
-            return match self.table.current_self_entry() {
-                // `SelfTy`, not `Type`: that the name was written `Self` is decided here, where
-                // the path is in hand, and carried onwards rather than re-derived from the
-                // segment text by a later pass.
-                Some(Some(ty)) => Res::SelfTy(ty),
-                Some(None) => Res::Err,
-                None => {
-                    report_self_unavailable(last.span);
-                    Res::Err
-                }
-            };
-        }
-
-        match self.table.lookup_type_path(self.current_module, path) {
-            Some(ty) => Res::Type(ty),
-            None => {
-                report_not_found(last);
-                Res::Err
-            }
-        }
-    }
-
     fn resolve_module(&mut self, ast: &'ast Ast, module_id: NodeId) {
         for item in &ast.module(module_id).items {
             self.visit_item(item);
@@ -89,23 +52,21 @@ impl<'ast> Resolver<'ast> {
     }
 
     fn push_generics(&mut self, generics: &'ast [Generic]) {
-        let mut params = HashMap::new();
+        self.table.push_generics();
         for g in generics {
-            match params.entry(g.name.text) {
-                Entry::Occupied(_) => report_conflict(g.name),
-                Entry::Vacant(e) => {
-                    e.insert(Type::Generic(g.id));
-                }
+            if self
+                .table
+                .lookup_generic_in_outermost_scope(g.name.text)
+                .is_some()
+            {
+                report_conflict(g.name);
+                continue;
             }
+            self.table.insert_generic(g.name.text, Type::Generic(g.id));
         }
-        self.table.push_generics(params);
         for g in generics {
             self.resolve_bounds(g);
         }
-    }
-
-    fn push_generics_opt(&mut self, generics: &'ast Option<Vec<Generic>>) {
-        self.push_generics(generics.as_deref().unwrap_or(&[]));
     }
 
     fn resolve_bounds(&mut self, g: &'ast Generic) {
@@ -113,17 +74,23 @@ impl<'ast> Resolver<'ast> {
             return;
         };
         for bound in bounds {
-            if self.results.get(g.id, bound).is_some() {
+            if self.results.get(g.id, &bound.path).is_some() {
                 report_duplicate_bound(
                     *bound
+                        .path
                         .segments
                         .last()
                         .expect("a path always has at least one segment"),
                 );
                 continue;
             }
-            let res = self.resolve_type_path(bound);
-            self.results.record(g.id, bound.clone(), res);
+            let res = self
+                .table
+                .lookup_type_path(self.current_module, &bound.path);
+            self.results.record(g.id, bound.path.clone(), res);
+            for arg in &bound.args {
+                self.visit_ty(arg);
+            }
         }
     }
 
@@ -132,7 +99,7 @@ impl<'ast> Resolver<'ast> {
             match &field.value {
                 Some(value) => self.visit_expr(value),
                 None => {
-                    let path = single_segment_path(field.name);
+                    let path = Path::from(field.name);
                     let res = self
                         .table
                         .lookup_value_path(self.current_module, &path)
@@ -157,26 +124,21 @@ impl<'ast> Resolver<'ast> {
         }
     }
 
-    /// Resolves the base of a `.` access, which may name either a value (`point.x`) or a type
-    /// (`Shape.circle(1.0)`, a variant reached through its enum). Values and types live in
-    /// separate namespaces, so the value namespace is tried first: a local named `Shape` keeps
-    /// shadowing the type `Shape`, the same way it does in every other expression position.
-    ///
-    /// Only a path can name a type, so any other base is an ordinary expression.
     fn resolve_access_base(&mut self, base: &'ast Expr) {
-        let ExprKind::Path(path) = &base.kind else {
-            self.visit_expr(base);
-            return;
-        };
-
-        // `resolve_type_path` is the fallback rather than `lookup_type_path` because it also
-        // answers for `Self` and emits the one "cannot find" this base gets when neither
-        // namespace has the name.
-        let res = match self.table.lookup_value_path(self.current_module, path) {
-            Some(res) => res,
-            None => self.resolve_type_path(path),
-        };
-        self.results.record(base.id, path.clone(), res);
+        match &base.kind {
+            ExprKind::Path(path) => {
+                let res = match self.table.lookup_value_path(self.current_module, path) {
+                    Some(res) => res,
+                    None => self.table.lookup_type_path(self.current_module, path),
+                };
+                self.results.record(base.id, path.clone(), res);
+            }
+            ExprKind::SelfKw => {
+                let res = self.table.lookup_self_res(base.span);
+                self.results.record(base.id, Path::self_kw(base.span), res);
+            }
+            _ => self.visit_expr(base),
+        }
     }
 
     fn visit_expr_payload(&mut self, payload: &'ast Payload<Expr>) {
@@ -193,13 +155,6 @@ impl<'ast> Resolver<'ast> {
             Payload::Single(value) => self.visit_pat(value),
             Payload::Record(fields) => self.visit_record_pat_fields(fields),
         }
-    }
-}
-
-fn single_segment_path(ident: Ident) -> Path {
-    Path {
-        segments: vec![ident],
-        span: ident.span,
     }
 }
 
@@ -248,8 +203,8 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         let item_id = self
             .current_item
             .expect("visit_struct is reached only through visit_item, which sets current_item");
-        self.table.push_self(Type::Def(TyDef::Struct(item_id)));
-        self.push_generics_opt(&s.generics);
+        self.table.insert_self(Type::Def(TyDef::Struct(item_id)));
+        self.push_generics(&s.generics);
         visit::walk_struct(self, s);
         self.table.pop_generics();
         self.table.pop_self();
@@ -259,8 +214,8 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         let item_id = self
             .current_item
             .expect("visit_enum is reached only through visit_item, which sets current_item");
-        self.table.push_self(Type::Def(TyDef::Enum(item_id)));
-        self.push_generics_opt(&e.generics);
+        self.table.insert_self(Type::Def(TyDef::Enum(item_id)));
+        self.push_generics(&e.generics);
         visit::walk_enum(self, e);
         self.table.pop_generics();
         self.table.pop_self();
@@ -270,8 +225,8 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         let item_id = self
             .current_item
             .expect("visit_trait is reached only through visit_item, which sets current_item");
-        self.table.push_self(Type::Def(TyDef::Trait(item_id)));
-        self.push_generics_opt(&t.generics);
+        self.table.insert_self(Type::Def(TyDef::Trait(item_id)));
+        self.push_generics(&t.generics);
         visit::walk_trait(self, t);
         self.table.pop_generics();
         self.table.pop_self();
@@ -282,14 +237,14 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             .current_item
             .expect("visit_extend is reached only through visit_item, which sets current_item");
 
-        self.push_generics_opt(&e.extend_generics);
+        self.push_generics(&e.extend_generics);
 
         if let Some(trait_path) = &e.trait_path {
-            let self_path = match &e.self_ty.kind {
-                TyKind::Path { path, .. } => Some(path),
-                _ => None,
+            let self_ty_names_itself = match &e.self_ty.kind {
+                TyKind::Path { path, .. } => path == trait_path,
+                _ => false,
             };
-            if self_path == Some(trait_path) {
+            if self_ty_names_itself {
                 report_self_extend(
                     *trait_path
                         .segments
@@ -297,7 +252,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
                         .expect("a path always has at least one segment"),
                 );
             } else {
-                let trait_res = self.resolve_type_path(trait_path);
+                let trait_res = self.table.lookup_type_path(self.current_module, trait_path);
                 self.results.record(item_id, trait_path.clone(), trait_res);
             }
         }
@@ -305,20 +260,23 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         self.visit_ty(&e.self_ty);
         let self_res = match &e.self_ty.kind {
             TyKind::Path { path, .. } => self.results.get(e.self_ty.id, path),
+            TyKind::SelfTy { .. } => self
+                .results
+                .get(e.self_ty.id, &Path::self_kw(e.self_ty.span)),
             _ => None,
         };
 
         let pushed_self = match self_res {
             Some(Res::Type(ty @ (Type::Def(_) | Type::Prim(_)))) => {
-                self.table.push_self(ty);
+                self.table.insert_self(ty);
                 true
             }
             Some(Res::Err) => {
-                self.table.push_self_unresolved();
+                self.table.insert_self_unresolved();
                 true
             }
             None if !matches!(e.self_ty.kind, TyKind::Path { .. }) => {
-                self.table.push_self_unresolved();
+                self.table.insert_self_unresolved();
                 true
             }
             _ => false,
@@ -344,8 +302,12 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
     fn visit_ty(&mut self, ty: &'ast Ty) {
         match &ty.kind {
             TyKind::Path { path, .. } => {
-                let res = self.resolve_type_path(path);
+                let res = self.table.lookup_type_path(self.current_module, path);
                 self.results.record(ty.id, path.clone(), res);
+            }
+            TyKind::SelfTy => {
+                let res = self.table.lookup_self_res(ty.span);
+                self.results.record(ty.id, Path::self_kw(ty.span), res);
             }
             TyKind::Dyn { path, .. } => {
                 let res = self.table.lookup_dyn_path(self.current_module, path);
@@ -381,10 +343,15 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
                     });
                 self.results.record(expr.id, path.clone(), res);
             }
+            ExprKind::SelfKw => {
+                report_not_found(Ident::self_kw(expr.span));
+                self.results
+                    .record(expr.id, Path::self_kw(expr.span), Res::Err);
+            }
             ExprKind::Ctor { path, payload } => {
                 match path {
                     Some(path) => {
-                        let res = self.resolve_type_path(path);
+                        let res = self.table.lookup_type_path(self.current_module, path);
                         self.results.record(expr.id, path.clone(), res);
                     }
                     None => {

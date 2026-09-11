@@ -6,16 +6,17 @@ use crate::diagnostics::typeck::expr::report_variant_base_not_a_type;
 use crate::diagnostics::typeck::traits::get_name_of_trait;
 use crate::diagnostics::typeck::traits::method::{
     function_name_span, report_ambiguous_method, report_call_arg_count, report_call_arg_mismatch,
-    report_field_is_a_method, report_no_field, report_no_method, report_no_receiver,
-    report_not_callable, report_private_field, report_receiver_mode, report_receiver_not_a_place,
+    report_dyn_method_mentions_self, report_dyn_self_by_value, report_field_is_a_method,
+    report_no_field, report_no_method, report_no_receiver, report_not_callable,
+    report_private_field, report_receiver_mode, report_receiver_not_a_place,
     report_receiver_type_unknown,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprKind, HirId, OwnerNode, Res};
+use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
 use crate::typeck::expr::{DerefContext, WrittenPayload};
 use crate::typeck::fold;
-use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind, TyVar};
 
 /// A function that a method call could resolve to with the substitution mapping its
@@ -369,7 +370,7 @@ impl<'hir> Typeck<'hir> {
     }
 
     /// Whether `ty` still contains an inference variable once resolved.
-    fn mentions_infer_var(&mut self, ty: Ty) -> bool {
+    pub(crate) fn mentions_infer_var(&mut self, ty: Ty) -> bool {
         let resolved = self.unifier.find_deep(&mut self.tcx, ty);
         fold::contains(&self.tcx, resolved, &mut |ty| {
             matches!(self.tcx.kind(ty), TyKind::Var(_))
@@ -397,6 +398,10 @@ impl<'hir> Typeck<'hir> {
             None => report_no_receiver(self.hir, member, chosen.method),
         }
 
+        if let TyKind::Dyn { .. } = self.tcx.kind(chosen.self_ty) {
+            self.check_dyn_method_usable(chosen.method, mode, member);
+        }
+
         // A method's `self` counts as its first parameter (see
         // [`collect_function`](Typeck::collect_function)), and it was already checked above by
         // `check_receiver`, so the written arguments start at index one.
@@ -412,11 +417,23 @@ impl<'hir> Typeck<'hir> {
         // An `extend` block's own bounds condition the methods it offers: `extend<T: Show>
         // Wrap<T>` only gives its methods to a `Wrap<T>` whose `T` implements `Show`. Only the
         // picked candidate's block raises this bound, deferred like any other bound.
-        if let Some((block, args)) = chosen.extend_block_origin.clone() {
-            self.register_bound_obligations(block, &args, span, receiver.owner);
-        }
+        let extend_args = match &chosen.extend_block_origin {
+            Some((block, args)) => {
+                let block = *block;
+                let args = self.resolve_all(args);
+                self.register_bound_obligations(block, &args, span, receiver.owner);
+                args
+            }
+            None => Vec::new(),
+        };
 
-        self.types.record_call(id, chosen.method, resolved);
+        self.types.record_method_call(
+            id,
+            chosen.method,
+            resolved,
+            extend_args,
+            Some(chosen.self_ty),
+        );
 
         ret.unwrap_or_else(|| self.tcx.unit())
     }
@@ -662,6 +679,36 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
+    /// A method reached through a `dyn` receiver runs through a vtable, so it must work for
+    /// every implementing type alike: it has to borrow its receiver, and it cannot mention
+    /// `Self` in any other parameter or in its return type.
+    fn check_dyn_method_usable(&mut self, method: DefId, mode: Option<SelfMode>, member: Ident) {
+        match mode {
+            Some(SelfMode::Immutable | SelfMode::Mutable | SelfMode::Any) => {}
+            Some(SelfMode::Move) => report_dyn_self_by_value(self.hir, member, method),
+            None => {}
+        }
+
+        let function = self.hir.function(method);
+        let (params, ret) = self.signature(method).unwrap_or_default();
+        let self_param_takes = usize::from(function.self_param.is_some());
+        for param in params.iter().skip(self_param_takes) {
+            if self.ty_mentions_self(*param) {
+                report_dyn_method_mentions_self(self.hir, member, method);
+                return;
+            }
+        }
+        if ret.is_some_and(|ret| self.ty_mentions_self(ret)) {
+            report_dyn_method_mentions_self(self.hir, member, method);
+        }
+    }
+
+    fn ty_mentions_self(&self, ty: Ty) -> bool {
+        fold::contains(&self.tcx, ty, &mut |ty| {
+            matches!(self.tcx.kind(ty), TyKind::SelfTy(_))
+        })
+    }
+
     fn check_receiver(
         &mut self,
         mode: SelfMode,
@@ -709,8 +756,7 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Path(_)
             | ExprKind::Index { .. }
             | ExprKind::Unary {
-                op: UnaryOp::Deref,
-                ..
+                op: UnaryOp::Deref, ..
             } => true,
             // `point.x` reaches into a place, but `Shape.empty` builds a fresh value that lives
             // nowhere yet, so only a base naming a value makes this access a place.
@@ -811,7 +857,9 @@ impl<'hir> Typeck<'hir> {
         }
 
         for (index, (&want, &got)) in expected.iter().zip(found.iter()).enumerate() {
-            if let Err(err) = self.unify_allowing_any(want, got) {
+            if let Err(err) = self.unify_allowing_any(want, got)
+                && !self.coerce_unsize(want, got, args[index])
+            {
                 let span = self.hir.expr(args[index]).span;
                 report_call_arg_mismatch(self.display_cx(), err, span);
             }
@@ -2100,5 +2148,33 @@ mod tests {
             "extend (i32, i32) { fun first(&self) -> i32 { return 0; } }
              fun f(x: (i32, i32)) -> i32 { return x.first(); }",
         );
+    }
+}
+
+#[cfg(test)]
+mod impl_args_tests {
+    use crate::nameres::PrimTy;
+    use crate::testing::{first_extend_method, typecheck_only};
+    use crate::typeck::ty::TyKind;
+
+    #[test]
+    fn a_generic_extend_method_call_records_the_block_arguments() {
+        let (hir, tcx, types) = typecheck_only(
+            "struct Wrap<T> { public value: T }\n\
+             extend<T> Wrap<T> { fun get(self) -> T { return self.value; } }\n\
+             fun main() { let w: Wrap<i32> = Wrap { value: 1 }; let n = w.get(); }",
+        );
+        let method = first_extend_method(&hir);
+        let (_, call) = types
+            .calls_iter()
+            .find(|(_, call)| call.def == method)
+            .expect("the call to `get` resolves to the extend method");
+        assert_eq!(call.extend_args.len(), 1);
+        assert!(matches!(
+            tcx.kind(call.extend_args[0]),
+            TyKind::Primitive(PrimTy::I32)
+        ));
+        assert!(call.self_ty.is_some());
+        assert_eq!(call.all_args().len(), 1);
     }
 }

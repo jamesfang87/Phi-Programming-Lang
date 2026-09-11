@@ -197,13 +197,12 @@ impl<'hir> Typeck<'hir> {
                 self.lower_def(def, arity, args, span, id.owner)
             }
             Res::Type(Type::Def(TyDef::Trait(_))) => {
-                // A bare trait name is not a type; only `dyn Trait` or a bound position may
-                // name one.
+                // Traits can only appear with `dyn Trait` or as Bounds
                 report_trait_as_ty(span);
                 self.tcx.error()
             }
             Res::Err => self.tcx.error(),
-            Res::Local(_) | Res::Function(_) | Res::Module(_) => {
+            Res::Local(_) | Res::Function(_) => {
                 unreachable!(
                     "name resolution never resolves a type-position path to a local, a \
                      function, or a module"
@@ -232,12 +231,6 @@ impl<'hir> Typeck<'hir> {
         }
 
         let lowered_args = self.lower_tys(args);
-        // A reference generic argument is not rejected here: whether `T = &U` is fine depends
-        // on where the instantiated type ends up, not on the instantiation itself, so that is
-        // left to `check_not_a_reference` to catch once this type is actually put into a field
-        // or a variant payload -- the one place a reference may never be stored. A function's
-        // own parameter and return types are never checked that way, which is what leaves
-        // `fun f(x: Wrap<&i32>)` unrejected while `struct Outer { w: Wrap<&i32> }` still is.
         if !self.check_no_any_args(args, &lowered_args) {
             return self.tcx.error();
         }
@@ -248,12 +241,6 @@ impl<'hir> Typeck<'hir> {
         self.tcx.mk_adt(def, lowered_args)
     }
 
-    /// Rejects `hir_args`, the generic arguments an `extend` block applies to the struct or
-    /// enum it extends (already lowered into `args`, in the same order), if any of them stores
-    /// a reference anywhere within it. Unlike an ordinary instantiation such as a function
-    /// parameter's type, an `extend` block's arguments settle what `Self` -- and so every field
-    /// -- means throughout the block, so a reference substituted in here is exactly as
-    /// permanent as one written directly into a field, and is rejected the same way.
     fn check_no_reference_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
         for (&hir_id, &arg) in hir_args.iter().zip(args) {
             if self.tcx.contains_ref(arg) {
@@ -265,12 +252,6 @@ impl<'hir> Typeck<'hir> {
         true
     }
 
-    /// Rejects `hir_args`, the generic arguments a struct or enum type is being instantiated
-    /// with (already lowered into `args`, in the same order), if any of them carries `any`
-    /// anywhere within it. This is what keeps `any` confined to a function's own parameter and
-    /// return types even through a generic parameter: a field declared with an abstract type
-    /// can never end up holding `any` behind the scenes, because `any` can never be substituted
-    /// for that parameter in the first place.
     fn check_no_any_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
         for (&hir_id, &arg) in hir_args.iter().zip(args) {
             if self.tcx.contains_any(arg) {
@@ -282,12 +263,6 @@ impl<'hir> Typeck<'hir> {
         true
     }
 
-    /// Rejects `hir_args`, the generic arguments a struct or enum type is being instantiated
-    /// with (already lowered into `args`, in the same order), if any of them holds an unsized
-    /// `dyn Trait` that is not itself behind `&` or `iso`. This keeps a generic field from ever
-    /// being instantiated with something that has no size: a field declared with an abstract
-    /// type parameter can never end up holding a bare `dyn` behind the scenes, because a bare
-    /// `dyn` can never be substituted for that parameter in the first place.
     fn check_no_dyn_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
         for (&hir_id, &arg) in hir_args.iter().zip(args) {
             if self.tcx.contains_bare_dyn(arg) {
@@ -299,11 +274,6 @@ impl<'hir> Typeck<'hir> {
         true
     }
 
-    /// Rejects `ty` if it holds an unsized `dyn Trait` that is not itself behind `&` or `iso`.
-    /// Unlike `any`, which is welcome in a signature and confined everywhere else, `dyn`'s
-    /// restriction is not about position at all: a bare `dyn Trait` has no size in any
-    /// position, a function's own parameter and return types included, so this is called
-    /// everywhere a type is put to use, not only outside a signature.
     pub(crate) fn check_no_dyn(&mut self, ty: Ty, span: SrcSpan) {
         if self.tcx.contains_bare_dyn(ty) {
             report_unsized_dyn(self.display_cx(), ty, span);
@@ -701,6 +671,20 @@ mod tests {
         assert!(matches!(
             checked.kind(params[0]),
             TyKind::Array { len: Some(4), .. }
+        ));
+        assert_eq!(diagnostics(), Vec::<String>::new());
+    }
+
+    /// Digit separators are stripped from the length's literal value, the same as from any
+    /// other numeric literal, before the constant is folded.
+    #[test]
+    fn an_array_length_with_digit_separators_is_folded() {
+        let checked = check("fun f(a: [i32; 1_0]) {}");
+        let (params, _) = checked.sig(checked.def("f"));
+
+        assert!(matches!(
+            checked.kind(params[0]),
+            TyKind::Array { len: Some(10), .. }
         ));
         assert_eq!(diagnostics(), Vec::<String>::new());
     }

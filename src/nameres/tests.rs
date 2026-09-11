@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 
 use crate::ast::interner::Interner;
 use crate::ast::{
@@ -55,7 +54,7 @@ fn ast_from_files(sources: &[&str]) -> Ast {
         diagnostics.is_empty(),
         "unexpected diagnostics for {sources:?}: {diagnostics:?}"
     );
-    Ast::new(files)
+    Ast::from(files)
 }
 
 /// Walks `segments` from `ast`'s root module through `table`'s module namespace, resolving a
@@ -127,7 +126,7 @@ fn ast_with_core() -> Ast {
         diagnostics.is_empty(),
         "unexpected diagnostics loading the core library: {diagnostics:?}"
     );
-    Ast::new(files)
+    Ast::from(files)
 }
 
 /// Runs `f` against a freshly cleared `DiagCtx`, returning its result alongside every
@@ -450,7 +449,8 @@ fn a_generic_is_visible_inside_its_definition_and_not_outside() {
     let g = NodeId::next();
     let name = Interner::intern("T");
 
-    t.push_generics(HashMap::from([(name, Type::Generic(g))]));
+    t.push_generics();
+    t.insert_generic(name, Type::Generic(g));
     assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
     t.pop_generics();
     assert_eq!(t.lookup_generic(name), None);
@@ -464,8 +464,10 @@ fn an_inner_generic_scope_shadows_an_outer_one() {
     let inner = NodeId::next();
     let name = Interner::intern("T");
 
-    t.push_generics(HashMap::from([(name, Type::Generic(outer))]));
-    t.push_generics(HashMap::from([(name, Type::Generic(inner))]));
+    t.push_generics();
+    t.insert_generic(name, Type::Generic(outer));
+    t.push_generics();
+    t.insert_generic(name, Type::Generic(inner));
     assert_eq!(t.lookup_generic(name), Some(Type::Generic(inner)));
     t.pop_generics();
     assert_eq!(t.lookup_generic(name), Some(Type::Generic(outer)));
@@ -476,11 +478,11 @@ fn self_reads_the_innermost_scope_and_is_none_when_the_stack_is_empty() {
     let ast = ast_from("fun main() {}");
     let mut t = SymbolTable::new(&ast);
     let s = NodeId::next();
-    assert_eq!(t.current_self(), None);
-    t.push_self(Type::Def(TyDef::Struct(s)));
-    assert_eq!(t.current_self(), Some(Type::Def(TyDef::Struct(s))));
+    assert_eq!(t.lookup_self(), None);
+    t.insert_self(Type::Def(TyDef::Struct(s)));
+    assert_eq!(t.lookup_self(), Some(Type::Def(TyDef::Struct(s))));
     t.pop_self();
-    assert_eq!(t.current_self(), None);
+    assert_eq!(t.lookup_self(), None);
 }
 
 // -----------------------------------------------------------------
@@ -540,7 +542,7 @@ fn a_primitive_resolves_before_anything_else_in_type_position() {
     let table = SymbolTable::new(&ast);
     assert_eq!(
         table.lookup_type_path(ast.root_id(), &path(&["i32"])),
-        Some(Type::Prim(PrimTy::I32))
+        Res::Type(Type::Prim(PrimTy::I32))
     );
 }
 
@@ -550,15 +552,16 @@ fn a_generic_shadows_a_module_level_type() {
     let mut table = SymbolTable::new(&ast);
     let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     let g = NodeId::next();
-    table.push_generics(HashMap::from([(Interner::intern("T"), Type::Generic(g))]));
+    table.push_generics();
+    table.insert_generic(Interner::intern("T"), Type::Generic(g));
     assert_eq!(
         table.lookup_type_path(app, &path(&["T"])),
-        Some(Type::Generic(g))
+        Res::Type(Type::Generic(g))
     );
     table.pop_generics();
     assert!(matches!(
         table.lookup_type_path(app, &path(&["T"])),
-        Some(Type::Def(TyDef::Struct(_)))
+        Res::Type(Type::Def(TyDef::Struct(_)))
     ));
 }
 
@@ -586,7 +589,7 @@ fn a_multi_segment_path_walks_submodules_then_looks_up_the_last_segment() {
     let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     assert!(matches!(
         table.lookup_type_path(app, &path(&["inner", "S"])),
-        Some(Type::Def(TyDef::Struct(_)))
+        Res::Type(Type::Def(TyDef::Struct(_)))
     ));
 }
 
@@ -611,18 +614,19 @@ fn pushing_generics_leaves_locals_and_self_untouched() {
 
     t.push_scope();
     t.insert_local(ident("x"), Local::Variable(local));
-    t.push_self(self_def);
+    t.insert_self(self_def);
 
-    t.push_generics(HashMap::from([(
+    t.push_generics();
+    t.insert_generic(
         Interner::intern("T"),
         Type::Generic(NodeId::next()),
-    )]));
+    );
     assert_eq!(t.lookup_local(x), Some(Local::Variable(local)));
-    assert_eq!(t.current_self(), Some(self_def));
+    assert_eq!(t.lookup_self(), Some(self_def));
     t.pop_generics();
 
     assert_eq!(t.lookup_local(x), Some(Local::Variable(local)));
-    assert_eq!(t.current_self(), Some(self_def));
+    assert_eq!(t.lookup_self(), Some(self_def));
 }
 
 #[test]
@@ -632,14 +636,15 @@ fn pushing_a_local_scope_or_self_leaves_generics_untouched() {
     let name = Interner::intern("T");
     let g = NodeId::next();
 
-    t.push_generics(HashMap::from([(name, Type::Generic(g))]));
+    t.push_generics();
+    t.insert_generic(name, Type::Generic(g));
 
     t.push_scope();
     t.insert_local(ident("x"), Local::Variable(NodeId::next()));
     assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
     t.pop_scope();
 
-    t.push_self(Type::Def(TyDef::Struct(NodeId::next())));
+    t.insert_self(Type::Def(TyDef::Struct(NodeId::next())));
     assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
     t.pop_self();
 
@@ -659,7 +664,7 @@ fn a_bare_trait_path_in_type_position_resolves_to_a_trait() {
     let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
     let r = Resolver::new(table, app);
     assert!(matches!(
-        r.resolve_type_path(&path(&["Show"])),
+        r.table.lookup_type_path(app, &path(&["Show"])),
         Res::Type(Type::Def(TyDef::Trait(_)))
     ));
 }
@@ -696,11 +701,11 @@ fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
         TyDef::Enum(NodeId::next()),
         TyDef::Trait(NodeId::next()),
     ] {
-        r.table.push_self(Type::Def(def));
+        r.table.insert_self(Type::Def(def));
         // `SelfTy`, not `Type`: the spelling is recorded alongside the type it stands for, so
         // HIR lowering carries it across rather than re-deriving it from the segment text.
         assert_eq!(
-            r.resolve_type_path(&path(&["Self"])),
+            r.table.lookup_self_res(SrcSpan::new(0, 0)),
             Res::SelfTy(Type::Def(def))
         );
         r.table.pop_self();
@@ -708,7 +713,7 @@ fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
 }
 
 /// `Self` reaches HIR lowering as `Res::SelfTy` through a real resolve, not just through
-/// `resolve_type_path` in isolation -- including from an access base, where `Self.circle(1.0)`
+/// the table lookup in isolation -- including from an access base, where `Self.circle(1.0)`
 /// names a variant through the enum an `extend` block is on.
 #[test]
 fn self_as_an_access_base_records_self_ty() {
@@ -753,7 +758,7 @@ fn self_outside_a_definition_errors() {
     let ast = ast_from("fun main() {}");
     let table = SymbolTable::new(&ast);
     let r = Resolver::new(table, ast.root_id());
-    let (res, diags) = with_diags(|| r.resolve_type_path(&path(&["Self"])));
+    let (res, diags) = with_diags(|| r.table.lookup_self_res(SrcSpan::new(0, 0)));
     assert_eq!(res, Res::Err);
     assert_eq!(diags.len(), 1);
     assert!(diags[0].message.contains("`Self` is not available here"));
@@ -764,7 +769,7 @@ fn an_unresolvable_type_path_reports_not_found_and_records_err() {
     let ast = ast_from("fun main() {}");
     let table = SymbolTable::new(&ast);
     let r = Resolver::new(table, ast.root_id());
-    let (res, diags) = with_diags(|| r.resolve_type_path(&path(&["Nope"])));
+    let (res, diags) = with_diags(|| r.table.lookup_type_path(ast.root_id(), &path(&["Nope"])));
     assert_eq!(res, Res::Err);
     assert_eq!(diags.len(), 1);
     assert!(diags[0].message.contains("cannot find"));
@@ -1110,7 +1115,7 @@ fn dyn_on_a_non_trait_records_err() {
 }
 
 /// When `adt_path` fails to resolve at all, a suppressed `Self` scope is pushed
-/// (`SymbolTable::push_self_unresolved`), so a `Self` written inside the block records
+/// (`SymbolTable::insert_self_unresolved`), so a `Self` written inside the block records
 /// `Res::Err` without reporting its own diagnostic -- only the one explaining why `Nope` itself
 /// failed to resolve. Exactly one diagnostic, matching master's behavior for this case.
 #[test]

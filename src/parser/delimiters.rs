@@ -1,24 +1,17 @@
-//! Matches up `(`, `[` and `{` over a token stream, ahead of the grammar.
-//!
-//! An unclosed delimiter makes the grammar run to the end of the file before failing, so its
-//! error lands there rather than on the opening delimiter, and every construct in between fails
-//! as well. Pairing the delimiters separately gives `Parser::run` a diagnostic that carries the
-//! opening delimiter's span, and a reason to suppress the grammar's own errors for that file.
-//!
-//! `<` and `>` are not tracked. They are comparison operators as often as they are generic
-//! argument brackets, so they do not pair up even in source that parses.
+//! This code allows for the emission of errors relating to unmatchined `(`, `[` and `{`
+//! while preserving future errors.
 
 use crate::diagnostics::Diagnostic;
+use crate::diagnostics::parser::{mismatched_delimiter, unopened_delimiter, unclosed_delimiter};
 use crate::lexer::token::{Token, TokenKind};
 
-/// An opening delimiter whose closing partner has not been seen yet.
 struct OpenDelimiter {
     open: Token,
     close: TokenKind,
 }
 
 /// Returns the closing delimiter `kind` opens, or `None` if `kind` opens nothing.
-fn closer_of(kind: TokenKind) -> Option<TokenKind> {
+fn corresponding_closing_delimiter(kind: TokenKind) -> Option<TokenKind> {
     match kind {
         TokenKind::OpenParen => Some(TokenKind::CloseParen),
         TokenKind::OpenBracket => Some(TokenKind::CloseBracket),
@@ -27,18 +20,11 @@ fn closer_of(kind: TokenKind) -> Option<TokenKind> {
     }
 }
 
-/// Returns a diagnostic for each delimiter in `tokens` left without a partner, or an empty
-/// vector if every one of them pairs up.
-///
-/// A closing delimiter that does not match the innermost open one stops the scan: after it the
-/// stack no longer reflects the source, so any further pairing would be a guess. Delimiters left
-/// open at the end of `tokens` are all reported, since each is an independent missing `)`, `]`
-/// or `}`.
-pub fn unmatched(tokens: &[Token]) -> Vec<Diagnostic> {
+pub fn find_unmatched_delimiter_errors(tokens: &[Token]) -> Vec<Diagnostic> {
     let mut open: Vec<OpenDelimiter> = Vec::new();
 
     for token in tokens {
-        if let Some(close) = closer_of(token.kind) {
+        if let Some(close) = corresponding_closing_delimiter(token.kind) {
             open.push(OpenDelimiter {
                 open: *token,
                 close,
@@ -53,48 +39,16 @@ pub fn unmatched(tokens: &[Token]) -> Vec<Diagnostic> {
             Some(innermost) if innermost.close == token.kind => {
                 open.pop();
             }
-            Some(innermost) => return vec![mismatch_error(innermost, *token)],
-            None => return vec![unopened_error(*token)],
+            Some(innermost) => {
+                return vec![mismatched_delimiter(innermost.open, innermost.close, *token)]
+            }
+            None => return vec![unopened_delimiter(*token)],
         }
     }
 
-    open.iter().map(unclosed_error).collect()
-}
-
-fn unclosed_error(delimiter: &OpenDelimiter) -> Diagnostic {
-    let open = delimiter.open.kind;
-    let close = delimiter.close;
-    Diagnostic::error(format!("unclosed `{open}`"), delimiter.open.span)
-        .with_label(format!("this `{open}` has no matching `{close}`"))
-        .with_help(format!("add a `{close}` to close it"))
-}
-
-fn mismatch_error(innermost: &OpenDelimiter, found: Token) -> Diagnostic {
-    let open = innermost.open.kind;
-    let close = innermost.close;
-    Diagnostic::error(
-        format!("mismatched closing delimiter: expected `{close}`, found `{found}`"),
-        found.span,
-    )
-    .with_label(format!("expected `{close}` here"))
-    .with_secondary(innermost.open.span, format!("this `{open}` is still open"))
-}
-
-fn unopened_error(found: Token) -> Diagnostic {
-    Diagnostic::error(format!("unmatched `{found}`"), found.span).with_label(format!(
-        "there is no `{}` for this to close",
-        opener_of(found.kind)
-    ))
-}
-
-/// Returns the opening delimiter `kind` closes. Panics on any other kind.
-fn opener_of(kind: TokenKind) -> TokenKind {
-    match kind {
-        TokenKind::CloseParen => TokenKind::OpenParen,
-        TokenKind::CloseBracket => TokenKind::OpenBracket,
-        TokenKind::CloseBrace => TokenKind::OpenBrace,
-        other => unreachable!("{other} is not a closing delimiter"),
-    }
+    open.iter()
+        .map(|delimiter| unclosed_delimiter(delimiter.open, delimiter.close))
+        .collect()
 }
 
 #[cfg(test)]
@@ -107,7 +61,7 @@ mod tests {
     /// primary span covers.
     fn unmatched_in(src: &str) -> Vec<(String, String)> {
         let (tokens, _) = lex_src(src);
-        unmatched(&tokens)
+        find_unmatched_delimiter_errors(&tokens)
             .into_iter()
             .map(|diag| {
                 let span = diag

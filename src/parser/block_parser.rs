@@ -1,4 +1,4 @@
-//! Exposes the block parser on its own.
+//! Exposes the block parser.
 
 use crate::ast::Block;
 

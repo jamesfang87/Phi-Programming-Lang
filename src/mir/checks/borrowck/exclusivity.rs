@@ -151,7 +151,8 @@ fn check_assign_rvalue(
         Rvalue::Use(operand)
         | Rvalue::UnaryOp(_, operand)
         | Rvalue::Cast { operand, .. }
-        | Rvalue::New(operand) => {
+        | Rvalue::New(operand)
+        | Rvalue::Unsize { operand, .. } => {
             check_operand(body, aliases, live, operand, span);
         }
         Rvalue::BinaryOp(_, lhs, rhs)

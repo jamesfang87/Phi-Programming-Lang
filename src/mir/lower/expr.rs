@@ -9,7 +9,6 @@ use crate::mir::{
 use crate::nameres::PrimTy;
 use crate::typeck::results::DerefMode;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::unify::{is_float, is_integer};
 
 impl<'a> BodyLowerCtx<'a> {
     // -----------------------------------------------------------------
@@ -18,6 +17,53 @@ impl<'a> BodyLowerCtx<'a> {
 
     /// Lowers `expr_id` to an [`Operand`] without a redundant temporary when it is already one.
     pub(crate) fn lower_operand(&mut self, expr_id: HirId) -> Operand {
+        if let Some(target) = self.unsize_target_for(expr_id) {
+            return self.lower_coerced_operand(expr_id, target);
+        }
+        self.lower_operand_without_coercion(expr_id)
+    }
+
+    /// The unsize coercion recorded for `expr_id`, if it has not been lowered yet. Whoever
+    /// reaches the expression first claims the coercion; a claim is never revisited, because an
+    /// expression is lowered exactly once.
+    fn unsize_target_for(&mut self, expr_id: HirId) -> Option<Ty> {
+        if self.coerced.contains(&expr_id) {
+            return None;
+        }
+        let target = self.types.unsize(expr_id)?;
+        self.coerced.insert(expr_id);
+        Some(target)
+    }
+
+    /// Lowers a coercion-recorded expression as the fat `&dyn Trait` pointer it was checked to
+    /// coerce into: the inner expression is lowered as itself (its own thin pointer), and the
+    /// vtable word comes from the concrete type's impl at codegen time.
+    fn lower_coerced_operand(&mut self, expr_id: HirId, target: Ty) -> Operand {
+        let span = self.hir.expr(expr_id).span;
+        let TyKind::Ref { base, .. } = self.tcx.kind(target).clone() else {
+            unreachable!(
+                "mir::lower: a recorded unsize target is always a reference to a `dyn` type"
+            );
+        };
+        let TyKind::Dyn { trait_, .. } = self.tcx.kind(base).clone() else {
+            unreachable!(
+                "mir::lower: a recorded unsize target is always a reference to a `dyn` type"
+            );
+        };
+        let inner = self.lower_operand_without_coercion(expr_id);
+        let temp = self.new_temp(target, span);
+        self.assign(
+            Place::from_local(temp),
+            Rvalue::Unsize {
+                operand: inner,
+                trait_,
+            },
+            span,
+        );
+        Operand::Move(Place::from_local(temp))
+    }
+
+    fn lower_operand_without_coercion(&mut self, expr_id: HirId) -> Operand {
         let expr_kind_is_trivial = matches!(
             self.hir.expr(expr_id).kind,
             ExprKind::Literal(_) | ExprKind::Path(_)
@@ -143,6 +189,12 @@ impl<'a> BodyLowerCtx<'a> {
         let span = expr.span;
         let ty = self.expr_ty(expr_id);
 
+        if let Some(target) = self.unsize_target_for(expr_id) {
+            let operand = self.lower_coerced_operand(expr_id, target);
+            self.assign(dest, Rvalue::Use(operand), span);
+            return;
+        }
+
         match expr.kind.clone() {
             ExprKind::Literal(_) | ExprKind::Path(_) => {
                 let operand = self.lower_operand(expr_id);
@@ -205,8 +257,7 @@ impl<'a> BodyLowerCtx<'a> {
                     self.lower_call_like_into(operand, dest, mode, span);
                 } else {
                     let place = self.lower_place(operand);
-                    if mutability == Mutability::Mutable {
-                    }
+                    if mutability == Mutability::Mutable {}
                     self.assign(dest, Rvalue::Ref { mutability, place }, span);
                 }
             }
@@ -506,9 +557,9 @@ impl<'a> BodyLowerCtx<'a> {
                     self.hir.expr(index).kind.clone()
                 {
                     let text = literal_text(lit);
-                    let offset: u32 = text
-                        .parse()
-                        .unwrap_or_else(|_| panic!("mir::lower: array index {text:?} does not fit a u32"));
+                    let offset: u32 = text.parse().unwrap_or_else(|_| {
+                        panic!("mir::lower: array index {text:?} does not fit a u32")
+                    });
                     Projection::ConstantIndex(offset)
                 } else {
                     let index_operand = self.lower_operand(index);
@@ -532,9 +583,7 @@ impl<'a> BodyLowerCtx<'a> {
                         ty: index_ty,
                         kind: ConstKind::Int(offset as i128),
                     }),
-                    Projection::Index(index_local) => {
-                        Operand::Copy(Place::from_local(index_local))
-                    }
+                    Projection::Index(index_local) => Operand::Copy(Place::from_local(index_local)),
                     _ => unreachable!("projection is always ConstantIndex or Index here"),
                 };
                 let assert_target = self.new_block();
@@ -651,8 +700,8 @@ impl<'a> BodyLowerCtx<'a> {
         operand_ty: Ty,
         span: SrcSpan,
     ) {
-        let is_int = matches!(self.tcx.kind(operand_ty), TyKind::Primitive(p) if is_integer(*p));
-        let is_flt = matches!(self.tcx.kind(operand_ty), TyKind::Primitive(p) if is_float(*p));
+        let is_int = matches!(self.tcx.kind(operand_ty), TyKind::Primitive(p) if p.is_integer());
+        let is_flt = matches!(self.tcx.kind(operand_ty), TyKind::Primitive(p) if p.is_float());
 
         if is_int && matches!(op, BinaryOp::Div | BinaryOp::Rem) {
             let assert_msg = if op == BinaryOp::Div {

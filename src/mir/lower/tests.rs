@@ -4,7 +4,6 @@ use crate::ast::{Ast, ParsedSrcFile};
 use crate::diagnostics::DiagCtx;
 use crate::driver::cli::Mode;
 use crate::driver::source::{FileOrigin, SrcMap};
-use crate::hir::lower::lower_ast;
 use crate::hir::{DefId, Hir, OwnerNode};
 use crate::lexer::Lexer;
 use crate::mir::lower::Mir;
@@ -56,9 +55,9 @@ fn lower_mir_src_with_ref_copy(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) 
     DiagCtx::clear();
     Interner::clear();
     let files = vec![parse_file(REF_COPY_PREAMBLE), parse_file(src)];
-    let ast = Ast::new(files);
+    let ast = Ast::from(files);
     let res = nameres::resolve(&ast);
-    let hir = lower_ast(&ast, &res);
+    let hir = Hir::from(&ast, &res);
 
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
@@ -76,9 +75,9 @@ fn lower_mir_src_with_copy_and_drop(src: &str) -> (Hir, TyCtx, TypeResolutions, 
     DiagCtx::clear();
     Interner::clear();
     let files = vec![parse_file(COPY_DROP_PREAMBLE), parse_file(src)];
-    let ast = Ast::new(files);
+    let ast = Ast::from(files);
     let res = nameres::resolve(&ast);
-    let hir = lower_ast(&ast, &res);
+    let hir = Hir::from(&ast, &res);
 
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
@@ -96,9 +95,9 @@ fn lower_mir_src_with_ops_and_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeRe
     DiagCtx::clear();
     Interner::clear();
     let files = vec![parse_file(OPS_PREAMBLE), parse_file(src)];
-    let ast = Ast::new(files);
+    let ast = Ast::from(files);
     let res = nameres::resolve(&ast);
-    let hir = lower_ast(&ast, &res);
+    let hir = Hir::from(&ast, &res);
 
     DiagCtx::clear();
     let checked = crate::typeck::check(&hir);
@@ -1281,6 +1280,70 @@ fn a_tuple_patterns_elements_are_tested_independently() {
 }
 
 // -----------------------------------------------------------------
+// Literals and literal patterns
+// -----------------------------------------------------------------
+
+/// The lexer keeps `_` digit separators in a numeric literal's text, but a `Literal`'s value
+/// symbol is separator-free by construction, so lowering parses the plain digits. Before the
+/// value was normalized at AST construction, `1_000_000` panicked in `parse::<i128>` here.
+#[test]
+fn digit_separated_numeric_literals_lower_to_their_normalized_values() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src("fun f() { let _ = 1_000_000_i64; let _ = 3.14_15_f64; }");
+    let body = first_function_body(&program, &hir);
+
+    let mut ints = Vec::new();
+    let mut floats = Vec::new();
+    for block in &body.basic_blocks {
+        for statement in &block.statements {
+            if let StatementKind::Assign(_, Rvalue::Use(Operand::Constant(constant))) =
+                &statement.kind
+            {
+                match &constant.kind {
+                    ConstKind::Int(v) => ints.push(*v),
+                    ConstKind::Float(v) => floats.push(*v),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    assert_eq!(ints, vec![1_000_000]);
+    assert_eq!(floats, vec![3.1415]);
+}
+
+/// A float literal pattern tests the scrutinee with `BinaryOp::Eq` against a float constant,
+/// the same shape an integer literal pattern produces; float comparison is fully supported
+/// downstream.
+#[test]
+fn a_float_literal_pattern_lowers_to_an_equality_test_against_a_float_constant() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src("fun f(x: f64) -> i32 { return match x { 3.14_15 => 1, _ => 0 }; }");
+    let body = first_function_body(&program, &hir);
+
+    let found = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .find_map(|s| match &s.kind {
+            StatementKind::Assign(
+                _,
+                Rvalue::BinaryOp(
+                    BinaryOp::Eq,
+                    _,
+                    Operand::Constant(Constant {
+                        kind: ConstKind::Float(v),
+                        ..
+                    }),
+                ),
+            ) => Some(*v),
+            _ => None,
+        })
+        .expect("the float pattern tests the scrutinee against a float constant");
+    assert_eq!(found, 3.1415);
+}
+
+// -----------------------------------------------------------------
 // Aggregates: declared field order, not source order
 // -----------------------------------------------------------------
 
@@ -1655,4 +1718,44 @@ fn unreachable_lowers_to_an_always_failing_assert() {
     let (expected, msg) = assert_terminator(body);
     assert!(!expected, "`unreachable` traps unconditionally");
     assert!(matches!(msg, AssertMessage::Unreachable(None)));
+}
+
+#[test]
+fn a_reference_match_derefs_the_scrutinee_place() {
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
+        "enum Opt { some: i32, none }
+         fun is_some(o: &Opt) -> bool {
+             return match o { .some(_) => true, .none => false, };
+         }",
+    );
+    let body = first_function_body(&program, &hir);
+    assert!(
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| match &s.kind {
+                StatementKind::Assign(_, Rvalue::Discriminant(place)) =>
+                    place.projections.contains(&Projection::Deref),
+                _ => false,
+            }),
+        "the discriminant is read through a Deref projection"
+    );
+}
+
+#[test]
+fn a_payload_bound_through_a_reference_is_a_borrow() {
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
+        "enum Opt { some: i32, none }
+         fun peek(o: &Opt) -> i32 {
+             return match o { .some(v) => *v, .none => 0, };
+         }",
+    );
+    let body = first_function_body(&program, &hir);
+    assert!(
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(&s.kind, StatementKind::Assign(_, Rvalue::Ref { .. }))),
+        "the payload binding lowers to a Ref rvalue"
+    );
 }

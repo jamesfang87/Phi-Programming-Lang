@@ -131,7 +131,8 @@ fn apply_rvalue(dead: &mut DeadRegisters, rvalue: &Rvalue) {
         Rvalue::Use(operand)
         | Rvalue::UnaryOp(_, operand)
         | Rvalue::Cast { operand, .. }
-        | Rvalue::New(operand) => {
+        | Rvalue::New(operand)
+        | Rvalue::Unsize { operand, .. } => {
             apply_operand(dead, operand);
         }
         Rvalue::BinaryOp(_, lhs, rhs)
@@ -226,7 +227,8 @@ fn check_rvalue(dead: &mut DeadRegisters, body: &Body, rvalue: &Rvalue, span: Sr
         Rvalue::Use(operand)
         | Rvalue::UnaryOp(_, operand)
         | Rvalue::Cast { operand, .. }
-        | Rvalue::New(operand) => {
+        | Rvalue::New(operand)
+        | Rvalue::Unsize { operand, .. } => {
             check_operand(dead, body, operand, span);
         }
         Rvalue::BinaryOp(_, lhs, rhs)

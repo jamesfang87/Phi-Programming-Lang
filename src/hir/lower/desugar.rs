@@ -2,9 +2,7 @@ use crate::ast;
 use crate::ast::interner::Interner;
 use crate::ast::{Ident, Mutability};
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{
-    AccessArgs, BindingMode, ExprKind, HirId, LoopSource, PatKind, Payload, StmtKind,
-};
+use crate::hir::{AccessArgs, ExprKind, HirId, LoopSource, PatKind, Payload, StmtKind};
 
 impl OwnerLowerer<'_, '_> {
     /// `if let pat = scrutinee { then } else { else }` desugars to
@@ -140,10 +138,8 @@ impl OwnerLowerer<'_, '_> {
                 };
 
                 let iter_init = low.lower_expr(iter);
-                let iter_pat = low.synth_pat(span, move |_, _| PatKind::Binding {
-                    name: iter_ident,
-                    mode: BindingMode::Inferred,
-                });
+                let iter_pat =
+                    low.synth_pat(span, move |_, _| PatKind::Binding { name: iter_ident });
                 let let_stmt = low.synth_stmt(span, move |_, _| StmtKind::Let {
                     mutability: Mutability::Mutable,
                     pat: iter_pat,

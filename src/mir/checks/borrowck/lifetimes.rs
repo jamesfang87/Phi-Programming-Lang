@@ -370,7 +370,8 @@ fn mark_rvalue_aliases_used(
         Rvalue::Use(operand)
         | Rvalue::UnaryOp(_, operand)
         | Rvalue::Cast { operand, .. }
-        | Rvalue::New(operand) => {
+        | Rvalue::New(operand)
+        | Rvalue::Unsize { operand, .. } => {
             mark_operand_alias_used(aliases, held, operand, used);
         }
         Rvalue::BinaryOp(_, lhs, rhs)

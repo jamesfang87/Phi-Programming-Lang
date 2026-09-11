@@ -1,4 +1,5 @@
 pub mod display;
+pub mod entry_point;
 pub mod expr;
 pub mod lower_ty;
 pub mod mutability;

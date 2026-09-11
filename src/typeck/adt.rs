@@ -4,6 +4,7 @@ use crate::hir::{DefId, Hir, HirId, OwnerNode, VariantPayload};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::Ty;
 
+// TODO: what is this used for?
 #[derive(Debug)]
 pub enum AdtDef {
     Struct {

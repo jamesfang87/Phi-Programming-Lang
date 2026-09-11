@@ -11,6 +11,7 @@ pub mod mir;
 pub mod nameres;
 pub mod parser;
 pub mod typeck;
+pub(crate) mod wording;
 
 /// How serious a diagnostic is.
 ///

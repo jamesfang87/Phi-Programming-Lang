@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 
-use crate::hir::{DefId, Hir, OwnerNode, Res, TyDef, Type};
+use crate::hir::{DefId, Hir, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::Ty;
 
 pub struct VtableInfo {
     pub methods: Vec<Option<DefId>>,
+    pub block: DefId,
+    pub trait_args: Vec<Ty>,
+    /// The `extend .. with` block's own generic parameters. A call made through the trait's body
+    /// has to line its arguments up against these before the method's own, and keeping them here
+    /// lets monomorphization do that without reading the block back out of the HIR.
+    pub extend_generics: Vec<HirId>,
 }
 
 pub(crate) fn collect_vtables(
@@ -40,9 +46,18 @@ pub(crate) fn collect_vtables(
                     .find(|&method| hir.function(method).name.text == method_name)
             })
             .collect();
+        let trait_args: Option<Vec<Ty>> = extend
+            .trait_generics
+            .iter()
+            .map(|&id| types.ty(id))
+            .collect();
 
-        out.entry((self_ty, trait_def))
-            .or_insert(VtableInfo { methods });
+        out.entry((self_ty, trait_def)).or_insert(VtableInfo {
+            methods,
+            block: extend_def,
+            trait_args: trait_args.unwrap_or_default(),
+            extend_generics: extend.extend_generics.clone(),
+        });
     }
     out
 }

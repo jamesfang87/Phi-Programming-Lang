@@ -5,8 +5,9 @@ use crate::ast::interner::Interner;
 use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol, Visibility};
 use crate::diagnostics::nameres::{
     report_ambiguous_import, report_conflict, report_dyn_not_trait, report_not_found,
-    report_private_item,
+    report_private_item, report_self_unavailable,
 };
+use crate::driver::source::SrcSpan;
 use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
 
@@ -16,10 +17,9 @@ pub struct SymbolTable<'ast> {
     local_scopes: Vec<HashMap<Symbol, Local>>,
     generic_scopes: Vec<HashMap<Symbol, Type>>,
     self_scopes: Vec<Option<Type>>,
+    module_scopes: HashMap<NodeId, ModuleScope>,
 
-    modules: HashMap<NodeId, ModuleScope>,
-    items: HashMap<NodeId, &'ast Item>,
-
+    item_map: HashMap<NodeId, &'ast Item>,
     prelude: Option<NodeId>,
     ast: &'ast Ast,
 }
@@ -39,8 +39,6 @@ impl ModuleScope {
         }
     }
 
-    /// Inserts `name` into the function namespace, reporting a conflict (and keeping the
-    /// earlier binding) if `name` is already declared there.
     fn insert_function(&mut self, name: Ident, id: NodeId) {
         match self.functions.entry(name.text) {
             Entry::Occupied(_) => report_conflict(name),
@@ -50,7 +48,6 @@ impl ModuleScope {
         }
     }
 
-    /// Inserts `name` into the type namespace, reporting a conflict if already declared.
     fn insert_type(&mut self, name: Ident, def: TyDef) {
         match self.types.entry(name.text) {
             Entry::Occupied(_) => report_conflict(name),
@@ -60,7 +57,6 @@ impl ModuleScope {
         }
     }
 
-    /// Inserts `name` into the module namespace, reporting a conflict if already declared.
     fn insert_mod(&mut self, name: Ident, id: NodeId) {
         match self.mods.entry(name.text) {
             Entry::Occupied(_) => report_conflict(name),
@@ -71,9 +67,7 @@ impl ModuleScope {
     }
 }
 
-/// The primitive named by `name`, if any. Type lookup consults this first, which is sound
-/// because `insert_*` rejects any declaration that would shadow one.
-pub fn prim_ty(name: Symbol) -> Option<PrimTy> {
+pub fn is_prim_ty(name: Symbol) -> Option<PrimTy> {
     Some(match Interner::resolve(name) {
         "i8" => PrimTy::I8,
         "i16" => PrimTy::I16,
@@ -123,8 +117,8 @@ impl<'ast> SymbolTable<'ast> {
             local_scopes: Vec::new(),
             generic_scopes: Vec::new(),
             self_scopes: Vec::new(),
-            modules: HashMap::new(),
-            items: HashMap::new(),
+            module_scopes: HashMap::new(),
+            item_map: HashMap::new(),
             prelude: None,
             ast,
         };
@@ -137,7 +131,7 @@ impl<'ast> SymbolTable<'ast> {
 
         let mut scope = ModuleScope::new();
         for item in &module.items {
-            self.items.insert(item.id, item);
+            self.item_map.insert(item.id, item);
             match &item.kind {
                 ItemKind::Function(f) => scope.insert_function(f.name, item.id),
                 ItemKind::Struct(s) => scope.insert_type(s.name, TyDef::Struct(item.id)),
@@ -161,7 +155,7 @@ impl<'ast> SymbolTable<'ast> {
             scope.insert_mod(name, child_id);
         }
 
-        self.modules.insert(module_id, scope);
+        self.module_scopes.insert(module_id, scope);
 
         for &child_id in &children {
             self.collect_module(child_id);
@@ -240,17 +234,17 @@ impl<'ast> SymbolTable<'ast> {
 
         match (type_res, val_res, mod_res) {
             (Some(def), None, None) => self
-                .modules
+                .module_scopes
                 .get_mut(&importing_module)
                 .unwrap()
                 .insert_type(name, def),
             (None, Some(id), None) => self
-                .modules
+                .module_scopes
                 .get_mut(&importing_module)
                 .unwrap()
                 .insert_function(name, id),
             (None, None, Some(id)) => self
-                .modules
+                .module_scopes
                 .get_mut(&importing_module)
                 .unwrap()
                 .insert_mod(name, id),
@@ -262,7 +256,7 @@ impl<'ast> SymbolTable<'ast> {
     fn import_glob(&mut self, into: NodeId, source: NodeId, import: &Import) {
         let (functions, types, mods) = {
             let source = self
-                .modules
+                .module_scopes
                 .get(&source)
                 .expect("every module in the tree has a scope by the time imports resolve");
             (
@@ -272,14 +266,7 @@ impl<'ast> SymbolTable<'ast> {
             )
         };
 
-        // Every name brought in this way is given the `import ...::*;` statement's own span. A
-        // glob carries only the imported name's `Symbol` and `NodeId`, not the `Ident` that was
-        // written at the declaration, and there is no table mapping a `NodeId` back to its AST
-        // node to recover one from. That is the right span regardless: the only diagnostic these
-        // inserts raise is `report_conflict`, and what a glob-induced conflict needs to point at
-        // is the import that pulled the colliding name in, not the unrelated declaration it
-        // collided with.
-        let dest = self.modules.get_mut(&into).unwrap();
+        let dest = self.module_scopes.get_mut(&into).unwrap();
         for (text, id) in functions {
             dest.insert_function(
                 Ident {
@@ -352,6 +339,7 @@ impl<'ast> SymbolTable<'ast> {
 
     //-------------------------------------------------------------------------
 
+    // TODO: the behavior of these are slightly diff
     pub fn lookup_value_path(&self, from: NodeId, path: &Path) -> Option<Res> {
         let (last, prefix) = path.segments.split_last()?;
 
@@ -369,26 +357,17 @@ impl<'ast> SymbolTable<'ast> {
         })
     }
 
-    /// The raw type-namespace lookup, answering with what a name denotes.
-    ///
-    /// `Self` resolves here too, to the type it stands for -- `dyn Self` inside a trait needs
-    /// that. Callers wanting the spelling kept, so that a later pass can tell `Self` from the
-    /// type it names, want [`Resolver::resolve_type_path`] instead, which answers `Self` with
-    /// [`Res::SelfTy`] and reports the ways `Self` alone can fail.
-    ///
-    /// [`Resolver::resolve_type_path`]: crate::nameres::resolver::Resolver::resolve_type_path
-    pub fn lookup_type_path(&self, from: NodeId, path: &Path) -> Option<Type> {
+    /// Looks up [`path`] in the type namespace
+    /// Returns Res::Type if it is found, None otherwise
+    pub fn probe_type_path(&self, from: NodeId, path: &Path) -> Option<Type> {
         let (last, prefix) = path.segments.split_last()?;
 
         if prefix.is_empty() {
-            if let Some(prim) = prim_ty(last.text) {
+            if let Some(prim) = is_prim_ty(last.text) {
                 return Some(Type::Prim(prim));
             }
             if let Some(generic) = self.lookup_generic(last.text) {
                 return Some(generic);
-            }
-            if last.text == Interner::intern("Self") {
-                return self.current_self();
             }
         }
 
@@ -400,19 +379,16 @@ impl<'ast> SymbolTable<'ast> {
         })
     }
 
-    /// We special case this since the type for a `dyn T` must be a Trait
-    pub fn lookup_dyn_path(&self, from: NodeId, path: &Path) -> Res {
+    /// Looks up [`path`] in the type namespace
+    /// Returns Res::Type if it is found. Otherwise, a diagnostics is reported
+    pub fn lookup_type_path(&self, from: NodeId, path: &Path) -> Res {
         let last = *path
             .segments
             .last()
             .expect("a path always has at least one segment");
 
-        match self.lookup_type_path(from, path) {
-            Some(Type::Def(TyDef::Trait(id))) => Res::Type(Type::Def(TyDef::Trait(id))),
-            Some(_) => {
-                report_dyn_not_trait(path.span);
-                Res::Err
-            }
+        match self.probe_type_path(from, path) {
+            Some(ty) => Res::Type(ty),
             None => {
                 report_not_found(last);
                 Res::Err
@@ -420,32 +396,51 @@ impl<'ast> SymbolTable<'ast> {
         }
     }
 
-    pub fn lookup_mod_path(&self, from: NodeId, path: &Path) -> Option<NodeId> {
-        let (last, prefix) = path.segments.split_last()?;
-        self.in_module_chain(from, |base| {
-            let module = self.walk_modules(base, prefix)?;
-            self.lookup_mod(module, last.text)
-        })
+    pub fn lookup_self_res(&self, span: SrcSpan) -> Res {
+        match self.self_scopes.last().copied() {
+            Some(Some(ty)) => Res::SelfTy(ty),
+            Some(None) => Res::Err,
+            None => {
+                report_self_unavailable(span);
+                Res::Err
+            }
+        }
+    }
+
+    /// We special case this since the type for a `dyn T` must be a Trait
+    pub fn lookup_dyn_path(&self, from: NodeId, path: &Path) -> Res {
+        match self.lookup_type_path(from, path) {
+            Res::Type(ty @ Type::Def(TyDef::Trait(_))) => Res::Type(ty),
+            Res::Err => Res::Err,
+            _ => {
+                report_dyn_not_trait(path.span);
+                Res::Err
+            }
+        }
     }
 
     //-------------------------------------------------------------------------
 
     pub fn lookup_function(&self, module: NodeId, name: Symbol) -> Option<NodeId> {
-        self.modules.get(&module)?.functions.get(&name).copied()
+        self.module_scopes
+            .get(&module)?
+            .functions
+            .get(&name)
+            .copied()
     }
 
     pub fn lookup_type(&self, module: NodeId, name: Symbol) -> Option<TyDef> {
-        self.modules.get(&module)?.types.get(&name).copied()
+        self.module_scopes.get(&module)?.types.get(&name).copied()
     }
 
     pub fn lookup_mod(&self, module: NodeId, name: Symbol) -> Option<NodeId> {
-        self.modules.get(&module)?.mods.get(&name).copied()
+        self.module_scopes.get(&module)?.mods.get(&name).copied()
     }
 
     //-------------------------------------------------------------------------
 
     fn item(&self, id: NodeId) -> Option<&'ast Item> {
-        self.items.get(&id).copied()
+        self.item_map.get(&id).copied()
     }
 
     fn visibility(&self, id: NodeId) -> Visibility {
@@ -499,12 +494,19 @@ impl<'ast> SymbolTable<'ast> {
 
     //-------------------------------------------------------------------------
 
-    pub fn push_generics(&mut self, params: HashMap<Symbol, Type>) {
-        self.generic_scopes.push(params);
+    pub fn push_generics(&mut self) {
+        self.generic_scopes.push(HashMap::new());
     }
 
     pub fn pop_generics(&mut self) {
         self.generic_scopes.pop();
+    }
+
+    pub fn insert_generic(&mut self, name: Symbol, ty: Type) {
+        self.generic_scopes
+            .last_mut()
+            .expect("insert_generic requires an open generic scope")
+            .insert(name, ty);
     }
 
     pub fn lookup_generic(&self, name: Symbol) -> Option<Type> {
@@ -514,15 +516,19 @@ impl<'ast> SymbolTable<'ast> {
             .find_map(|s| s.get(&name).copied())
     }
 
+    pub fn lookup_generic_in_outermost_scope(&self, name: Symbol) -> Option<Type> {
+        self.generic_scopes.last()?.get(&name).copied()
+    }
+
     //-------------------------------------------------------------------------
 
-    pub fn push_self(&mut self, ty: Type) {
+    pub fn insert_self(&mut self, ty: Type) {
         self.self_scopes.push(Some(ty));
     }
 
     /// This is used for cases where due to a program error, a Self does not exist.
     /// For example, an `extend` block whose `adt_path` is unresolved
-    pub fn push_self_unresolved(&mut self) {
+    pub fn insert_self_unresolved(&mut self) {
         self.self_scopes.push(None);
     }
 
@@ -530,14 +536,13 @@ impl<'ast> SymbolTable<'ast> {
         self.self_scopes.pop();
     }
 
-    /// Returns the current self entry if present and None if not
-    pub fn current_self(&self) -> Option<Type> {
-        self.current_self_entry().flatten()
-    }
+    // TODO: is there a better way to do this?
+    // I'm not sure if I like that there is a public function just for tests
+    // Also, this should probably be the name of
+    // pub fn lookup_self_res(&self, span: SrcSpan) -> Res;
 
-    /// This allows for the disambiguation of `Self` not being available in the
-    /// context and cases where `Self` does not exist due to a program error.
-    pub fn current_self_entry(&self) -> Option<Option<Type>> {
-        self.self_scopes.last().copied()
+    /// Returns the current self entry if present and None if not
+    pub fn lookup_self(&self) -> Option<Type> {
+        self.self_scopes.last().copied().flatten()
     }
 }

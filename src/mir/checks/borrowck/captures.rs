@@ -3,23 +3,22 @@ use crate::diagnostics::mir::captures::{
 };
 use crate::diagnostics::typeck::display::DisplayCx;
 use crate::driver::source::SrcSpan;
-use crate::hir::{Hir, OwnerNode};
-use crate::mir::{Body, Local, Operand, StatementKind, lower::Mir};
+use crate::mir::{Body, DefKind, Local, Operand, StatementKind, lower::Mir};
 use crate::typeck::ty::TyKind;
 use crate::typeck::tyctx::TyCtx;
 
 const ENVIRONMENT: Local = Local::ENVIRONMENT;
 
-pub fn check(hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
+pub fn check(tcx: &mut TyCtx, mir: &Mir) {
     for (&(def, _), body) in &mir.bodies {
-        if matches!(hir.def(def), OwnerNode::Closure(_)) {
-            check_captured_types(hir, tcx, body);
+        if mir.def_infos.kind(def) == DefKind::Closure {
+            check_captured_types(tcx, mir, body);
             check_body(body);
         }
     }
 }
 
-fn check_captured_types(hir: &Hir, tcx: &TyCtx, body: &Body) {
+fn check_captured_types(tcx: &TyCtx, mir: &Mir, body: &Body) {
     let environment = body.local_decls[ENVIRONMENT.index()].ty;
     let TyKind::Ref { base, .. } = *tcx.kind(environment) else {
         panic!("a closure body's environment local is a reference to the environment it borrows");
@@ -29,7 +28,7 @@ fn check_captured_types(hir: &Hir, tcx: &TyCtx, body: &Body) {
     };
     for &capture in fields.iter().skip(1) {
         if tcx.contains_ref(capture) {
-            report_captured_reference(DisplayCx::new(hir, tcx), capture, body.span);
+            report_captured_reference(DisplayCx::for_mir(&mir.def_names, tcx), capture, body.span);
         }
     }
 }

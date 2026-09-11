@@ -940,3 +940,23 @@ fn calling_a_closure_does_not_consume_it() {
          afterwards: {body:?}"
     );
 }
+
+#[test]
+fn a_reference_match_does_not_drop_the_value_it_borrows() {
+    let (hir, _tcx, instances) = elaborated(
+        "struct Buf { public bytes: iso [u8] }\n\
+         enum Holder { full: Buf, empty }\n\
+         fun is_full(h: &Holder) -> bool {\n\
+             return match h { .full(_) => true, .empty => false, };\n\
+         }\n\
+         fun main() {}",
+    );
+    let body = body_for(&instances, &hir, "is_full");
+    assert!(
+        !body
+            .basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Drop { .. })),
+        "a match through a reference owns nothing, so it drops nothing: {body:?}"
+    );
+}

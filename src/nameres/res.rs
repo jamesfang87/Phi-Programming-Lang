@@ -19,22 +19,39 @@ pub enum PrimTy {
     Str,
 }
 
+impl PrimTy {
+    /// Whether this is one of the signed or unsigned integer types (`usize` included).
+    pub(crate) fn is_integer(self) -> bool {
+        matches!(
+            self,
+            PrimTy::I8
+                | PrimTy::I16
+                | PrimTy::I32
+                | PrimTy::I64
+                | PrimTy::U8
+                | PrimTy::U16
+                | PrimTy::U32
+                | PrimTy::U64
+                | PrimTy::Usize
+        )
+    }
+
+    /// Whether this is one of the IEEE-754 floating-point types.
+    pub(crate) fn is_float(self) -> bool {
+        matches!(self, PrimTy::F32 | PrimTy::F64)
+    }
+
+    /// Whether this is a signed integer type.
+    pub(crate) fn is_signed(self) -> bool {
+        matches!(self, PrimTy::I8 | PrimTy::I16 | PrimTy::I32 | PrimTy::I64)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Res {
     Type(Type),
     Local(Local),
     Function(NodeId),
-    Module(NodeId),
-    /// A path written as `Self`, carrying the type it stands for here.
-    ///
-    /// Kept apart from [`Res::Type`] holding that same type because typeck has to read a
-    /// signature's `Self` as the receiver type at each call site, not as the one type the
-    /// defining `extend` block is on. Only [`Resolver::resolve_type_path`] produces this;
-    /// [`SymbolTable::lookup_type_path`] answers with the bare [`Type`], since a caller such as
-    /// `dyn` resolution only wants what the name denotes.
-    ///
-    /// [`Resolver::resolve_type_path`]: crate::nameres::resolver::Resolver::resolve_type_path
-    /// [`SymbolTable::lookup_type_path`]: crate::nameres::symbol_table::SymbolTable::lookup_type_path
     SelfTy(Type),
     Err,
 }

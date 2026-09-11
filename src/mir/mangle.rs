@@ -70,7 +70,12 @@ fn join_args(head: &str, args: &[Ty], mir: &Mir, tcx: &TyCtx) -> String {
 }
 
 fn hash_instance(instance: &Instance) -> u64 {
-    fnv1a(format!("{instance:?}").as_bytes())
+    let mut bytes =
+        format!("{:?}", (&instance.def, &instance.any_mode, &instance.args)).into_bytes();
+    if let Some(self_ty) = instance.self_ty {
+        bytes.extend(format!("{self_ty:?}").into_bytes());
+    }
+    fnv1a(&bytes)
 }
 
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -87,7 +92,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{first_function, lower_to_mir, lower_to_hir};
+    use crate::testing::{first_function, lower_to_hir, lower_to_mir};
 
     fn mangled(src: &str) -> Vec<(Instance, String)> {
         let (_hir, tcx, _types, mir, instances) = lower_to_mir(src);
@@ -120,6 +125,7 @@ mod tests {
             def,
             any_mode: None,
             args: Vec::new(),
+            self_ty: None,
         };
         assert_eq!(mangle(&mir, &tcx, &instance), mangle(&mir, &tcx, &instance));
     }

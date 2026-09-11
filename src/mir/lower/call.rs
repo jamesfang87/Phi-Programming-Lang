@@ -42,46 +42,83 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) {
         let expr_kind = self.hir.expr(expr_id).kind.clone();
-        let (func, receiver, arg_exprs, def_for_args) = match expr_kind {
+        let (func, receiver, arg_exprs, def_for_args, dyn_dispatch) = match expr_kind {
             ExprKind::Call { callee, args } => {
                 let func = self.lower_callee(expr_id, callee, mode, span);
                 let def = self.call_target_def(expr_id);
-                (func, None, args, def)
+                (func, None, args, def, false)
             }
             ExprKind::Access {
                 base,
                 args: AccessArgs::Call(args),
                 ..
             } => {
-                self.check_not_dyn_dispatch(base, span);
                 let resolved = self
                     .types
                     .call(expr_id)
                     .unwrap_or_else(|| panic!("mir::lower: {expr_id:?} has no resolved call"))
                     .clone();
-                let func = self.resolved_fn_operand(resolved.def, resolved.args, mode, span);
-                (func, Some(base), args, Some(resolved.def))
+                if let Some(dyn_ty) = self.dyn_receiver_ty(base) {
+                    let func = self.dyn_fn_operand(resolved.def, resolved.all_args(), dyn_ty);
+                    (func, Some(base), args, Some(resolved.def), true)
+                } else {
+                    let func = self.resolved_fn_operand(
+                        resolved.def,
+                        resolved.all_args(),
+                        resolved.self_ty,
+                        mode,
+                        span,
+                    );
+                    (func, Some(base), args, Some(resolved.def), false)
+                }
             }
             ExprKind::Index { base, index } => {
-                self.check_not_dyn_dispatch(base, span);
                 let resolved = self
                     .types
                     .call(expr_id)
                     .unwrap_or_else(|| panic!("mir::lower: {expr_id:?} has no resolved call"))
                     .clone();
-                let func = self.resolved_fn_operand(resolved.def, resolved.args, mode, span);
-                (func, Some(base), vec![index], Some(resolved.def))
+                if let Some(dyn_ty) = self.dyn_receiver_ty(base) {
+                    let func = self.dyn_fn_operand(resolved.def, resolved.all_args(), dyn_ty);
+                    (func, Some(base), vec![index], Some(resolved.def), true)
+                } else {
+                    let func = self.resolved_fn_operand(
+                        resolved.def,
+                        resolved.all_args(),
+                        resolved.self_ty,
+                        mode,
+                        span,
+                    );
+                    (func, Some(base), vec![index], Some(resolved.def), false)
+                }
             }
             _ => unreachable!("lower_call_like_into is only called for Call/Access/Index"),
         };
 
         let any_mode = match def_for_args {
-            Some(def) if is_any_specialized(self.tcx, self.types, def) => Some(mode),
+            Some(def) if !dyn_dispatch && is_any_specialized(self.tcx, self.types, def) => {
+                Some(mode)
+            }
             _ => None,
         };
-        let args = match def_for_args {
-            Some(def) => self.lower_call_args(def, any_mode, receiver, &arg_exprs, span),
-            None => {
+        let args = match (dyn_dispatch, def_for_args, receiver) {
+            (true, Some(def), Some(recv)) => {
+                let function = self.hir.function(def);
+                let mut operands = vec![self.lower_operand(recv)];
+                for (i, &arg_expr) in arg_exprs.iter().enumerate() {
+                    let declared = function
+                        .params
+                        .get(i)
+                        .and_then(|&id| self.types.ty(id))
+                        .unwrap_or_else(|| self.tcx.error());
+                    operands.push(self.lower_arg_operand(arg_expr, declared, None, span));
+                }
+                operands
+            }
+            (_, Some(def), receiver) => {
+                self.lower_call_args(def, any_mode, receiver, &arg_exprs, span)
+            }
+            (_, None, _) => {
                 let mut operands = Vec::new();
                 if let Some(recv) = receiver {
                     operands.push(self.lower_operand(recv));
@@ -111,17 +148,44 @@ impl<'a> BodyLowerCtx<'a> {
         self.switch_to(fresh);
     }
 
-    fn check_not_dyn_dispatch(&mut self, receiver_expr: HirId, span: SrcSpan) {
+    /// The `dyn Trait` type a receiver's peeled type names, if it is one.
+    fn dyn_receiver_ty(&mut self, receiver_expr: HirId) -> Option<Ty> {
         let receiver_ty = self.expr_ty(receiver_expr);
         let (peeled, _) = self.peel_refs(receiver_ty);
         let (peeled, _) = self.peel_any(peeled);
-        if matches!(self.tcx.kind(peeled), TyKind::Dyn { .. }) {
-            let _ = span;
-            panic!(
-                "mir::lower: a `dyn Trait` call is not yet implemented (its vtable/fat-pointer \
-                 layout is a later pass, per the spec's own Status section)"
-            );
+        match self.tcx.kind(peeled).clone() {
+            TyKind::Dyn { .. } => Some(peeled),
+            _ => None,
         }
+    }
+
+    /// The call operand for a method reached through a `dyn` receiver: the trait's own
+    /// declaration, to be dispatched through the receiver's vtable at codegen time. The
+    /// constant's signature is the trait's, substituted with the `dyn` type's own arguments so
+    /// the erased vtable signature is concrete.
+    fn dyn_fn_operand(&mut self, def: DefId, args: Vec<Ty>, dyn_ty: Ty) -> Operand {
+        let TyKind::Dyn {
+            trait_,
+            args: trait_args,
+        } = self.tcx.kind(dyn_ty).clone()
+        else {
+            unreachable!("mir::lower: a dyn call operand is built from a `dyn` type");
+        };
+        let declared = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
+        let generics = self.hir.trait_(trait_).generics.clone();
+        let subst = crate::typeck::fold::Subst {
+            generics: generics
+                .iter()
+                .copied()
+                .zip(trait_args.iter().copied())
+                .collect(),
+            self_ty: Some(dyn_ty),
+        };
+        let sig = crate::typeck::fold::subst_ty(self.tcx, declared, &subst);
+        Operand::Constant(Constant {
+            ty: sig,
+            kind: ConstKind::FunDef(def, args, None, Some(dyn_ty)),
+        })
     }
 
     fn peel_any(&self, ty: Ty) -> (Ty, u32) {
@@ -151,7 +215,13 @@ impl<'a> BodyLowerCtx<'a> {
                 .call(call_expr_id)
                 .unwrap_or_else(|| panic!("mir::lower: {call_expr_id:?} has no resolved call"))
                 .clone();
-            self.resolved_fn_operand(resolved.def, resolved.args, mode, span)
+            self.resolved_fn_operand(
+                resolved.def,
+                resolved.all_args(),
+                resolved.self_ty,
+                mode,
+                span,
+            )
         } else {
             let place = self.lower_place(callee_id);
             Operand::Copy(place)
@@ -162,6 +232,7 @@ impl<'a> BodyLowerCtx<'a> {
         &mut self,
         def: DefId,
         args: Vec<Ty>,
+        self_ty: Option<Ty>,
         mode: AnyMode,
         _span: SrcSpan,
     ) -> Operand {
@@ -174,7 +245,7 @@ impl<'a> BodyLowerCtx<'a> {
         let fn_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
         Operand::Constant(Constant {
             ty: fn_ty,
-            kind: ConstKind::FunDef(def, args, any_mode),
+            kind: ConstKind::FunDef(def, args, any_mode, self_ty),
         })
     }
 
@@ -231,8 +302,7 @@ impl<'a> BodyLowerCtx<'a> {
             place.projections.push(Projection::Deref);
         }
 
-        if derefs == 0 && mutability == Mutability::Mutable {
-        }
+        if derefs == 0 && mutability == Mutability::Mutable {}
 
         // The temp is typed from the receiver, not from `declared_ty`. `declared_ty` is the
         // method's `&self` as written, so for a method in `extend<T> Wrap<T>` it is `&Wrap<T>` --
@@ -289,7 +359,7 @@ impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn call_type_args(&self, expr_id: HirId) -> Vec<Ty> {
         self.types
             .call(expr_id)
-            .map(|c| c.args.clone())
+            .map(|c| c.all_args())
             .unwrap_or_default()
     }
 
@@ -325,7 +395,7 @@ impl<'a> BodyLowerCtx<'a> {
         };
         let operand = Operand::Constant(Constant {
             ty: def_ty,
-            kind: ConstKind::FunDef(def, args, any_mode),
+            kind: ConstKind::FunDef(def, args, any_mode, None),
         });
         let temp = self.new_temp(fn_value_ty, span);
         self.assign(
