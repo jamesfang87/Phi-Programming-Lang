@@ -15,3 +15,5 @@ import core::ops::Comparable;
 import core::ops::Index;
 import core::ops::IndexSet;
 import core::ops::Drop;
+import core::io::print;
+import core::io::println;

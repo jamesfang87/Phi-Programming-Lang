@@ -7,8 +7,8 @@
 //! complemented by `tests/e2e_generated.rs`, which generates far larger programs whose
 //! expected values are computed independently in Rust.
 //!
-//! Programs use `core::io::write_bytes(1, ...)` as their observable output, since the
-//! language has no `print`/`println` yet.
+//! Programs write their observable output with `core::io::write_bytes(1, ...)`, or with the
+//! `print`/`println` wrappers, which take a `str` and write it to stdout.
 
 mod support;
 
@@ -1257,6 +1257,22 @@ fun main() {
     );
 }
 
+#[test]
+fn print_and_println_write_text() {
+    run(
+        "print_stdout",
+        r#"module app;
+fun emit(s: str) { println(s); }
+fun main() {
+    print("a");
+    println("b");
+    emit("c");
+}
+"#,
+        "ab\nc\n",
+    );
+}
+
 // ===========================================================================
 // Larger integration programs
 // ===========================================================================
@@ -1596,6 +1612,15 @@ fn reject_unknown_name() {
         "reject_unknown_name",
         "module app;\nfun main() { let x = nope; }\n",
         "E0201",
+    );
+}
+
+#[test]
+fn reject_println_on_a_non_str_argument() {
+    rejects(
+        "reject_println_non_str",
+        "module app;\nfun main() { let n: i32 = 5; println(n); }\n",
+        "E0301",
     );
 }
 

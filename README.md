@@ -25,7 +25,7 @@ fun main() {
 }
 ```
 
-`println` is a function that prints its argument, followed by a newline, to standard output. `print` behaves identically but omits the trailing newline.
+`println` is a function that prints its argument, followed by a newline, to standard output. `print` behaves identically but omits the trailing newline. Both currently accept a `str`; printing other types awaits a `Display` trait.
 
 ### Running a program
 
@@ -72,7 +72,7 @@ Identifiers begin with a letter or underscore and continue with letters, digits,
 1_000_000   // underscores may separate digits for readability
 true, false // bool
 'a'         // char
-"hello"     // &String
+"hello"     // str
 ```
 ---
 
