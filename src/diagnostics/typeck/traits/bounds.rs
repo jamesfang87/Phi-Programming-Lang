@@ -1,11 +1,12 @@
-use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::Diagnostic;
+use crate::diagnostics::codes;
+use crate::diagnostics::display::DisplayCtx;
 use crate::diagnostics::typeck::traits::show_goal;
-use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::hir::Hir;
-use crate::typeck::traits::bounds::Obligation;
+use crate::typeck::traits::solve::Obligation;
 
-pub fn report_unsatisfied_bound(hir: &Hir, cx: DisplayCx<'_>, obligation: &Obligation) {
-    DiagCtx::emit(
+pub fn report_unsatisfied_bound(hir: &Hir, cx: DisplayCtx<'_>, obligation: &Obligation) {
+    cx.emit(
         Diagnostic::error(
             format!(
                 "the trait bound {} is not satisfied",
@@ -13,6 +14,7 @@ pub fn report_unsatisfied_bound(hir: &Hir, cx: DisplayCx<'_>, obligation: &Oblig
             ),
             obligation.cause,
         )
+        .with_code(codes::UNSATISFIED_BOUND)
         .with_label("this instantiation does not meet the bound its declaration writes")
         .with_secondary(obligation.declared_at, "required by this bound")
         .with_help(
@@ -22,8 +24,8 @@ pub fn report_unsatisfied_bound(hir: &Hir, cx: DisplayCx<'_>, obligation: &Oblig
     );
 }
 
-pub fn report_annotations_needed(hir: &Hir, cx: DisplayCx<'_>, obligation: &Obligation) {
-    DiagCtx::emit(
+pub fn report_annotations_needed(hir: &Hir, cx: DisplayCtx<'_>, obligation: &Obligation) {
+    cx.emit(
         Diagnostic::error(
             format!(
                 "type annotations needed: cannot tell whether {} holds",
@@ -31,6 +33,7 @@ pub fn report_annotations_needed(hir: &Hir, cx: DisplayCx<'_>, obligation: &Obli
             ),
             obligation.cause,
         )
+        .with_code(codes::BOUNDS_ANNOTATIONS_NEEDED)
         .with_label("the type here is still unknown")
         .with_secondary(
             obligation.declared_at,

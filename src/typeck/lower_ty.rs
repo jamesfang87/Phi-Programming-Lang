@@ -1,23 +1,28 @@
-use crate::ast::interner::Interner;
 use crate::ast::{BinaryOp, Literal, UnaryOp};
+use crate::diagnostics::nameres::{report_dyn_not_trait, report_self_unavailable};
 use crate::diagnostics::typeck::lower_ty::{
     report_arg_count, report_array_len_division_by_zero, report_array_len_negative,
     report_array_len_not_constant, report_array_len_not_usize, report_array_len_overflow,
-    report_dyn_not_a_trait, report_reference_generic_arg, report_self_cycle,
-    report_self_outside_item, report_trait_as_ty, report_unexpected_generic_args,
-    report_unsized_dyn,
+    report_reference_generic_arg, report_self_cycle, report_trait_as_ty,
+    report_unexpected_generic_args, report_unsized_dyn,
 };
 use crate::diagnostics::typeck::report_any_outside_signature;
 use crate::driver::source::SrcSpan;
 use crate::hir::{
-    DefId, ExprKind as HirExprKind, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type,
+    DefId, ExprId, ExprKind as HirExprKind, HirId, OwnerNode, Res, TyDef, TyId,
+    TyKind as HirTyKind, Type,
 };
 use crate::nameres::PrimTy;
+use crate::session::Session;
 use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
 
+// TODO: there are many functions used for checks like "contains_any",
+// "contains_bare_dyn", "contains_ref". Is there any way to
+// concentrate the checking stage and like kinda separate it from
+// the lowering stage.
 impl<'hir> Typeck<'hir> {
-    pub fn lower_ty(&mut self, id: HirId) -> Ty {
+    pub fn lower_ty(&mut self, id: TyId) -> Ty {
         let ty = self.hir.ty(id);
         let span = ty.span;
 
@@ -28,8 +33,8 @@ impl<'hir> Typeck<'hir> {
             }
             HirTyKind::SelfTy(args) => {
                 let args = args.clone();
-                Self::check_no_args(&args, span, "`Self`");
-                self.self_ty(id.owner, span)
+                Self::check_no_args(self.session, &args, span, "`Self`");
+                self.self_ty(id.owner(), span)
             }
             HirTyKind::Ref { base, mutability } => {
                 let (base, mutability) = (*base, *mutability);
@@ -92,35 +97,35 @@ impl<'hir> Typeck<'hir> {
             HirTyKind::Error => self.tcx.error(),
         };
 
-        self.types.record(id, lowered);
+        self.types.record(id.into(), lowered);
         lowered
     }
 
-    pub fn lower_tys(&mut self, ids: &[HirId]) -> Vec<Ty> {
+    pub fn lower_tys(&mut self, ids: &[TyId]) -> Vec<Ty> {
         ids.iter().map(|&id| self.lower_ty(id)).collect()
     }
 
-    fn fold_array_len(&mut self, len_id: HirId) -> Option<u64> {
+    fn fold_array_len(&mut self, len_id: ExprId) -> Option<u64> {
         let value = self.fold_const_int(len_id)?;
         let span = self.hir.expr(len_id).span;
         match u64::try_from(value) {
             Ok(len) => Some(len),
             Err(_) => {
-                report_array_len_negative(span);
+                report_array_len_negative(self.session, span);
                 None
             }
         }
     }
 
-    fn fold_const_int(&mut self, id: HirId) -> Option<i128> {
+    fn fold_const_int(&mut self, id: ExprId) -> Option<i128> {
         let expr = self.hir.expr(id);
         let span = expr.span;
         match &expr.kind {
             HirExprKind::Literal(Literal::Int { value, .. }) => {
-                match Interner::resolve(*value).parse::<i128>() {
+                match self.session.resolve(*value).parse::<i128>() {
                     Ok(value) => Some(value),
                     Err(_) => {
-                        report_array_len_overflow(span);
+                        report_array_len_overflow(self.session, span);
                         None
                     }
                 }
@@ -132,7 +137,7 @@ impl<'hir> Typeck<'hir> {
                 let operand = *operand;
                 let value = self.fold_const_int(operand)?;
                 value.checked_neg().or_else(|| {
-                    report_array_len_overflow(span);
+                    report_array_len_overflow(self.session, span);
                     None
                 })
             }
@@ -144,7 +149,7 @@ impl<'hir> Typeck<'hir> {
                 self.fold_const_binary(op, lhs, rhs, span)
             }
             _ => {
-                report_array_len_not_constant(span);
+                report_array_len_not_constant(self.session, span);
                 None
             }
         }
@@ -158,7 +163,7 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) -> Option<i128> {
         if matches!(op, BinaryOp::Div | BinaryOp::Rem) && rhs == 0 {
-            report_array_len_division_by_zero(span);
+            report_array_len_division_by_zero(self.session, span);
             return None;
         }
         let folded = match op {
@@ -168,24 +173,24 @@ impl<'hir> Typeck<'hir> {
             BinaryOp::Div => lhs.checked_div(rhs),
             BinaryOp::Rem => lhs.checked_rem(rhs),
             _ => {
-                report_array_len_not_constant(span);
+                report_array_len_not_constant(self.session, span);
                 return None;
             }
         };
         folded.or_else(|| {
-            report_array_len_overflow(span);
+            report_array_len_overflow(self.session, span);
             None
         })
     }
 
-    fn lower_base(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
+    fn lower_base(&mut self, id: TyId, res: Res, args: &[TyId], span: SrcSpan) -> Ty {
         match res {
             Res::Type(Type::Prim(prim)) => {
-                Self::check_no_args(args, span, "a primitive type");
+                Self::check_no_args(self.session, args, span, "a primitive type");
                 self.tcx.mk_prim(prim)
             }
             Res::Type(Type::Generic(param)) => {
-                Self::check_no_args(args, span, "a generic type parameter");
+                Self::check_no_args(self.session, args, span, "a generic type parameter");
                 self.tcx.mk_generic(param)
             }
             Res::Type(Type::Def(TyDef::Struct(def) | TyDef::Enum(def))) => {
@@ -194,11 +199,11 @@ impl<'hir> Typeck<'hir> {
                     OwnerNode::Enum(enum_) => enum_.generics.len(),
                     _ => unreachable!("a TyDef::Struct/Enum always names a Struct/Enum owner"),
                 };
-                self.lower_def(def, arity, args, span, id.owner)
+                self.lower_def(def, arity, args, span, id.owner())
             }
             Res::Type(Type::Def(TyDef::Trait(_))) => {
                 // Traits can only appear with `dyn Trait` or as Bounds
-                report_trait_as_ty(span);
+                report_trait_as_ty(self.session, span);
                 self.tcx.error()
             }
             Res::Err => self.tcx.error(),
@@ -221,12 +226,12 @@ impl<'hir> Typeck<'hir> {
         &mut self,
         def: DefId,
         arity: usize,
-        args: &[HirId],
+        args: &[TyId],
         span: SrcSpan,
         owner: DefId,
     ) -> Ty {
         if args.len() != arity {
-            report_arg_count(span, arity, args.len());
+            report_arg_count(self.session, span, arity, args.len());
             return self.tcx.error();
         }
 
@@ -241,7 +246,7 @@ impl<'hir> Typeck<'hir> {
         self.tcx.mk_adt(def, lowered_args)
     }
 
-    fn check_no_reference_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
+    fn check_no_reference_args(&mut self, hir_args: &[TyId], args: &[Ty]) -> bool {
         for (&hir_id, &arg) in hir_args.iter().zip(args) {
             if self.tcx.contains_ref(arg) {
                 let span = self.hir.ty(hir_id).span;
@@ -252,7 +257,7 @@ impl<'hir> Typeck<'hir> {
         true
     }
 
-    fn check_no_any_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
+    fn check_no_any_args(&mut self, hir_args: &[TyId], args: &[Ty]) -> bool {
         for (&hir_id, &arg) in hir_args.iter().zip(args) {
             if self.tcx.contains_any(arg) {
                 let span = self.hir.ty(hir_id).span;
@@ -263,7 +268,7 @@ impl<'hir> Typeck<'hir> {
         true
     }
 
-    fn check_no_dyn_args(&mut self, hir_args: &[HirId], args: &[Ty]) -> bool {
+    fn check_no_dyn_args(&mut self, hir_args: &[TyId], args: &[Ty]) -> bool {
         for (&hir_id, &arg) in hir_args.iter().zip(args) {
             if self.tcx.contains_bare_dyn(arg) {
                 let span = self.hir.ty(hir_id).span;
@@ -280,19 +285,19 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    fn lower_dyn(&mut self, id: HirId, res: Res, args: &[HirId], span: SrcSpan) -> Ty {
+    fn lower_dyn(&mut self, id: TyId, res: Res, args: &[TyId], span: SrcSpan) -> Ty {
         match res {
             Res::Type(Type::Def(TyDef::Trait(trait_def))) => {
                 if !self.check_arg_count(trait_def, args.len(), span) {
                     return self.tcx.error();
                 }
                 let args = self.lower_tys(args);
-                self.register_bound_obligations(trait_def, &args, span, id.owner);
+                self.register_bound_obligations(trait_def, &args, span, id.owner());
                 self.tcx.mk_dyn(trait_def, args)
             }
             Res::Err => self.tcx.error(),
             _ => {
-                report_dyn_not_a_trait(span);
+                report_dyn_not_trait(self.session, span);
                 self.tcx.error()
             }
         }
@@ -313,7 +318,7 @@ impl<'hir> Typeck<'hir> {
             match self.hir.parent(introducer) {
                 Some(parent) => introducer = parent,
                 None => {
-                    report_self_outside_item(span);
+                    report_self_unavailable(self.session, span);
                     return self.tcx.error();
                 }
             }
@@ -324,7 +329,7 @@ impl<'hir> Typeck<'hir> {
         }
 
         if !self.computing_self_tys.insert(introducer) {
-            report_self_cycle(span);
+            report_self_cycle(self.session, span);
             return self.tcx.error();
         }
 
@@ -358,7 +363,12 @@ impl<'hir> Typeck<'hir> {
                                     self.tcx.mk_adt(tydef.def_id(), args)
                                 }
                                 Res::Type(Type::Prim(prim)) => {
-                                    Self::check_no_args(&hir_args, span, "a primitive type");
+                                    Self::check_no_args(
+                                        self.session,
+                                        &hir_args,
+                                        span,
+                                        "a primitive type",
+                                    );
                                     self.tcx.mk_prim(prim)
                                 }
                                 _ => self.tcx.error(),
@@ -381,9 +391,9 @@ impl<'hir> Typeck<'hir> {
         self.tcx.mk_adt(def, args)
     }
 
-    fn check_no_args(args: &[HirId], span: SrcSpan, kind: &str) {
+    fn check_no_args(session: &Session, args: &[TyId], span: SrcSpan, kind: &str) {
         if !args.is_empty() {
-            report_unexpected_generic_args(kind, span);
+            report_unexpected_generic_args(session, kind, span);
         }
     }
 }
@@ -391,8 +401,6 @@ impl<'hir> Typeck<'hir> {
 #[cfg(test)]
 mod tests {
     use crate::ast::Mutability;
-    use crate::ast::interner::Interner;
-    use crate::diagnostics::DiagCtx;
     use crate::hir::{DefId, Hir, HirId, OwnerNode};
     use crate::nameres::PrimTy;
     use crate::testing::lower_to_hir;
@@ -417,9 +425,9 @@ mod tests {
     /// alongside a two-line fixture would swamp what each test is about.
     fn check(src: &str) -> Checked {
         let hir = lower_to_hir(src);
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
 
-        let checked = crate::typeck::check(&hir);
+        let checked = crate::typeck::check(crate::testing::session(), &hir);
         Checked {
             hir,
             tcx: checked.tcx,
@@ -429,7 +437,7 @@ mod tests {
 
     /// The messages `collect` reported, in order.
     fn diagnostics() -> Vec<String> {
-        DiagCtx::diagnostics()
+        crate::testing::diagnostics()
             .into_iter()
             .map(|diagnostic| diagnostic.message)
             .collect()
@@ -450,7 +458,7 @@ mod tests {
                         OwnerNode::Trait(t) => t.name,
                         _ => return false,
                     };
-                    Interner::resolve(named.text) == name
+                    crate::testing::resolve(named.text) == name
                 })
                 .unwrap_or_else(|| panic!("no definition named {name:?}"))
         }
@@ -873,7 +881,7 @@ mod tests {
         };
         assert_eq!(checked.kind(*base), &TyKind::Error);
         assert_eq!(
-            DiagCtx::diagnostics()
+            crate::testing::diagnostics()
                 .into_iter()
                 .map(|diagnostic| diagnostic.message)
                 .collect::<Vec<_>>(),

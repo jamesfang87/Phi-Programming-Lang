@@ -7,14 +7,15 @@ use crate::diagnostics::typeck::traits::bounds::{
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId};
 use crate::typeck::Typeck;
-use crate::typeck::traits::solve::{Query, Solution};
 use crate::typeck::ty::Ty;
 
-/// A trait bound which must hold
+use super::{BoundsEnv, Goal, Solution};
+
+/// A trait bound which must hold.
 #[derive(Clone, Debug)]
 pub struct Obligation {
     /// The bound to prove, for example `Bare: Show`.
-    pub query: Query,
+    pub query: Goal,
     /// Where the instantiation that raised this obligation was written.
     pub cause: SrcSpan,
     /// Where the bound itself was declared, e.g. on `Sorted`'s own `<T: Show>`.
@@ -23,9 +24,12 @@ pub struct Obligation {
 
 impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
-    // Registration
+    // Recording
     // -----------------------------------------------------------------
 
+    /// Records what `def` applied to `args` requires of its own parameters. The bounds are
+    /// proved after the whole body is checked, not here, because the body may still settle the
+    /// types they mention.
     pub fn register_bound_obligations(
         &mut self,
         def: DefId,
@@ -33,48 +37,64 @@ impl<'hir> Typeck<'hir> {
         cause: SrcSpan,
         owner: DefId,
     ) {
+        let obligations = self.bound_obligations_of(def, args, cause);
+        self.trait_bound_obligations
+            .entry(owner)
+            .or_default()
+            .extend(obligations);
+    }
+
+    /// The obligations `def` applied to `args` raises for its own parameters. Empty when the
+    /// arguments do not line up with the parameters, since there is nothing to substitute.
+    fn bound_obligations_of(&mut self, def: DefId, args: &[Ty], cause: SrcSpan) -> Vec<Obligation> {
         let params = self.declared_generics(def);
         if params.len() != args.len() {
-            return;
+            return Vec::new();
         }
         let subst: HashMap<HirId, Ty> = params.iter().copied().zip(args.iter().copied()).collect();
 
+        let mut obligations = Vec::new();
         for &param in params {
             let declared_at = self.hir.generic(param).span;
             for bound in self.bounds_of(param) {
-                let goal = self.subst_query(&bound, &subst);
-                self.trait_bound_obligations
-                    .entry(owner)
-                    .or_default()
-                    .push(Obligation {
-                        query: goal,
-                        cause,
-                        declared_at,
-                    });
+                obligations.push(Obligation {
+                    query: self.subst_query(&bound, &subst),
+                    cause,
+                    declared_at,
+                });
             }
         }
+        obligations
     }
 
     // -----------------------------------------------------------------
-    // Draining
+    // Proving
     // -----------------------------------------------------------------
 
-    /// This runs at the very end of type checking to attempt to resolve ambiguous queries.
-    /// Each definition's obligations are proved together, against the one environment its own
-    /// declaration determines, and `DoesNotHold` and `Ambiguous` are reported.
-    pub fn select_obligations(&mut self) {
+    /// Proves every bound recorded during checking, now that all bodies are done, and reports
+    /// the ones that do not hold or never settled.
+    pub fn check_bound_obligations(&mut self) {
         for (owner, obligations) in mem::take(&mut self.trait_bound_obligations) {
-            let env = self.bounds_env(owner);
-            for obligation in obligations {
-                match self.implements(&obligation.query, &env) {
-                    Solution::Holds | Solution::Error => {}
-                    Solution::DoesNotHold => {
-                        report_unsatisfied_bound(self.hir, self.display_cx(), &obligation)
-                    }
-                    Solution::Ambiguous => {
-                        report_annotations_needed(self.hir, self.display_cx(), &obligation)
-                    }
-                }
+            self.check_obligations(owner, obligations);
+        }
+    }
+
+    /// Proves `obligations` against the one environment `owner`'s declaration determines.
+    fn check_obligations(&mut self, owner: DefId, obligations: Vec<Obligation>) {
+        let env = self.bounds_env(owner);
+        for obligation in obligations {
+            self.check_obligation(&obligation, &env);
+        }
+    }
+
+    fn check_obligation(&mut self, obligation: &Obligation, env: &BoundsEnv) {
+        match self.implements(&obligation.query, env) {
+            Solution::Holds | Solution::Error => {}
+            Solution::DoesNotHold => {
+                report_unsatisfied_bound(self.hir, self.display_cx(), obligation)
+            }
+            Solution::Ambiguous => {
+                report_annotations_needed(self.hir, self.display_cx(), obligation)
             }
         }
     }
@@ -83,35 +103,19 @@ impl<'hir> Typeck<'hir> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::{Stage, checker_through, lower_to_hir};
+    use crate::testing::{TypeckStage, checker_through, lower_to_hir};
 
-    // -----------------------------------------------------------------
-    // Source-level
-    // -----------------------------------------------------------------
-
-    /// Runs everything up to and including bound checking over `src`, and hands back everything
-    /// type checking reported.
-    ///
-    /// The clear comes *before* collection rather than after it, which is where `coherence`'s and
-    /// `members`'s helpers put theirs. One of the registration sites is in `lower_ty`, which runs
-    /// during collection, so clearing afterwards would hide exactly what that site says. What is
-    /// cleared is name resolution's own output: a fixture is resolved without the core library, so
-    /// every one of them reports the whole set of missing lang items first.
-    ///
-    /// Bodies are deliberately not checked, so that what is exercised here is the program-level
-    /// context on its own; a fixture that needs the per-body one instead goes through
-    /// [`crate::testing::typeck_rejects`], which runs the whole pipeline.
     fn bounds(hir: &Hir) -> Vec<String> {
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
 
-        let mut checker = checker_through(hir, Stage::Members);
-        checker.check_declared_bounds();
-        checker.check_extend_headers();
-        checker.select_obligations();
+        let mut checker = checker_through(hir, TypeckStage::Members);
+        checker.check_all_bounds_are_traits();
+        checker.check_extend_headers_arity();
+        checker.register_extend_header_bounds();
+        checker.check_bound_obligations();
 
-        DiagCtx::messages()
+        crate::testing::messages()
     }
 
     #[test]
@@ -129,9 +133,6 @@ mod tests {
         );
     }
 
-    /// The failure is at the instantiation, but it is only a failure because of the bound the
-    /// declaration writes, so the diagnostic points at both, and the bound's own span survives
-    /// being re-raised against the instantiation to get there.
     #[test]
     fn an_unmet_bound_points_at_the_declaration_that_requires_it() {
         let hir = lower_to_hir(
@@ -141,13 +142,13 @@ mod tests {
              fun f(x: Sorted<Bare>) {}",
         );
 
-        DiagCtx::clear();
-        let mut checker = Typeck::new(&hir);
+        crate::testing::clear_diagnostics();
+        let mut checker = Typeck::new(crate::testing::session(), &hir);
         checker.collect_module(hir.root_id());
-        checker.build_extend_index();
-        checker.select_obligations();
+        checker.collect_traits();
+        checker.check_bound_obligations();
 
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         let [unmet] = diagnostics.as_slice() else {
             panic!("expected exactly one diagnostic, got {diagnostics:?}");
         };
@@ -156,7 +157,6 @@ mod tests {
         };
         assert_eq!(bound.message, "required by this bound");
 
-        // The bound is written on `Sorted`'s declaration, above the use in `f` that failed it.
         let primary = unmet.span.expect("an unmet bound names a place");
         assert!(bound.span.get_begin() < primary.get_begin());
     }
@@ -174,8 +174,6 @@ mod tests {
         assert!(bounds(&hir).is_empty());
     }
 
-    /// The conditional block's own bound is proved recursively, so the whole chain either holds
-    /// or fails as one.
     #[test]
     fn a_bound_met_through_a_conditional_impl_is_accepted() {
         let hir = lower_to_hir(
@@ -208,8 +206,6 @@ mod tests {
         );
     }
 
-    /// The case the `BoundsEnv` exists for: nothing is known about `U` except what `f` declared,
-    /// which is sufficient to discharge the bound.
     #[test]
     fn a_bound_met_by_an_assumption_in_scope_is_accepted() {
         let hir = lower_to_hir(
@@ -232,8 +228,6 @@ mod tests {
         assert_eq!(bounds(&hir), ["the trait bound `U: Show` is not satisfied"]);
     }
 
-    /// An `extend` block instantiates the type it extends, so its arguments are checked like any
-    /// other.
     #[test]
     fn an_extend_blocks_arguments_have_to_satisfy_the_extended_types_bounds() {
         let hir = lower_to_hir(

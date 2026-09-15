@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::hir::{DefId, Hir, HirId, OwnerNode, VariantPayload};
 use crate::typeck::results::TypeResolutions;
-use crate::typeck::ty::Ty;
+use crate::typeck::ty::{Ty, TyKind};
 
 // TODO: what is this used for?
 #[derive(Debug)]
@@ -17,6 +17,7 @@ pub enum AdtDef {
     },
 }
 
+// TODO: THERES LITERALLY ANOTHER VARIANT DEF
 #[derive(Debug)]
 pub struct VariantDef {
     pub field_tys: Vec<Ty>,
@@ -67,6 +68,87 @@ pub(crate) fn collect_adt_defs(hir: &Hir, types: &TypeResolutions) -> HashMap<De
     out
 }
 
+/// The ADTs that cannot have a finite size: those that contain themselves by value, whether
+/// directly (`enum List { cons: { tail: List } }`) or through other value fields. A field of
+/// `iso T` is a heap indirection, so it breaks the cycle and is not traversed.
+pub(crate) fn infinitely_sized_adts(
+    tcx: &crate::typeck::tyctx::TyCtx,
+    adts: &HashMap<DefId, AdtDef>,
+) -> Vec<DefId> {
+    let mut graph: HashMap<DefId, Vec<DefId>> = HashMap::new();
+    for (&def, adt) in adts {
+        let mut edges = Vec::new();
+        match adt {
+            AdtDef::Struct { fields, .. } => {
+                for &field in fields {
+                    collect_adts(tcx, field, &mut edges);
+                }
+            }
+            AdtDef::Enum { variants, .. } => {
+                for variant in variants {
+                    for &field in &variant.field_tys {
+                        collect_adts(tcx, field, &mut edges);
+                    }
+                }
+            }
+        }
+        graph.insert(def, edges);
+    }
+
+    let reaches = |from: DefId, target: DefId| -> bool {
+        let mut stack = vec![from];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(node) = stack.pop() {
+            if node == target {
+                return true;
+            }
+            if !seen.insert(node) {
+                continue;
+            }
+            if let Some(next) = graph.get(&node) {
+                stack.extend(next.iter().copied());
+            }
+        }
+        false
+    };
+
+    // A node is on a cycle if one of its value fields can reach it again; a type is infinitely
+    // sized if it is on a cycle or reaches one (an `Outer` that owns a recursive `Inner` is
+    // itself infinite).
+    let cyclic: Vec<DefId> = graph
+        .keys()
+        .copied()
+        .filter(|&node| {
+            graph
+                .get(&node)
+                .into_iter()
+                .flatten()
+                .copied()
+                .any(|succ| reaches(succ, node))
+        })
+        .collect();
+    graph
+        .keys()
+        .copied()
+        .filter(|&node| cyclic.iter().any(|&cycle| reaches(node, cycle)))
+        .collect()
+}
+
+fn collect_adts(tcx: &crate::typeck::tyctx::TyCtx, ty: Ty, out: &mut Vec<DefId>) {
+    match tcx.kind(ty) {
+        TyKind::Adt { def, .. } => out.push(*def),
+        TyKind::Tuple(elems) => {
+            for &elem in elems {
+                collect_adts(tcx, elem, out);
+            }
+        }
+        TyKind::Array { elem, .. } => collect_adts(tcx, *elem, out),
+        // `iso T` is a heap indirection; references, functions, `dyn`, `any`, generics and
+        // primitives never place another ADT directly inside this one.
+        _ => {}
+    }
+}
+
 fn variant_def(hir: &Hir, types: &TypeResolutions, variant_id: HirId) -> VariantDef {
     let variant_node = hir.variant(variant_id);
     let field_tys = match &variant_node.payload {
@@ -102,7 +184,7 @@ mod tests {
     fn find_struct_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Struct(struct_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(struct_.name.text) == name
+                && crate::testing::resolve(struct_.name.text) == name
             {
                 return def_id;
             }
@@ -113,7 +195,7 @@ mod tests {
     fn find_enum_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Enum(enum_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(enum_.name.text) == name
+                && crate::testing::resolve(enum_.name.text) == name
             {
                 return def_id;
             }

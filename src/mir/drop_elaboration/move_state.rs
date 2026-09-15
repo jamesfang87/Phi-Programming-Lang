@@ -76,12 +76,18 @@ impl MoveState {
         })
     }
 
-    fn mark_moved(&mut self, register: Register) {
+    fn mark_moved(&mut self, droppable: &[bool], register: Register) {
+        if !droppable[register.owner.index()] {
+            return;
+        }
         self.may.insert(register.clone());
         self.must.insert(register);
     }
 
-    fn mark_initialized(&mut self, register: &Register) {
+    fn mark_initialized(&mut self, droppable: &[bool], register: &Register) {
+        if !droppable[register.owner.index()] {
+            return;
+        }
         for set in [&mut self.may, &mut self.must] {
             set.retain(|held| {
                 held.owner != register.owner || !held.subregister.starts_with(&register.subregister)
@@ -89,31 +95,31 @@ impl MoveState {
         }
     }
 
-    fn apply_operand(&mut self, operand: &Operand) {
+    fn apply_operand(&mut self, droppable: &[bool], operand: &Operand) {
         if let Operand::Move(place) = operand {
-            self.mark_moved(register_of(place));
+            self.mark_moved(droppable, register_of(place));
         }
     }
 
-    fn apply_rvalue(&mut self, rvalue: &Rvalue) {
+    fn apply_rvalue(&mut self, droppable: &[bool], rvalue: &Rvalue) {
         for operand in rvalue.operands() {
-            self.apply_operand(operand);
+            self.apply_operand(droppable, operand);
         }
     }
 
-    pub(super) fn apply_statement(&mut self, stmt: &Statement) {
+    pub(super) fn apply_statement(&mut self, droppable: &[bool], stmt: &Statement) {
         match &stmt.kind {
             StatementKind::StorageLive(local) | StatementKind::StorageDead(local) => {
                 let whole = Register {
                     owner: *local,
                     subregister: Vec::new(),
                 };
-                self.mark_initialized(&whole);
-                self.mark_moved(whole);
+                self.mark_initialized(droppable, &whole);
+                self.mark_moved(droppable, whole);
             }
             StatementKind::Assign(place, rvalue) => {
-                self.apply_rvalue(rvalue);
-                self.mark_initialized(&register_of(place));
+                self.apply_rvalue(droppable, rvalue);
+                self.mark_initialized(droppable, &register_of(place));
             }
             StatementKind::PlaceMention(_)
             | StatementKind::SetDiscriminant { .. }
@@ -121,55 +127,45 @@ impl MoveState {
         }
     }
 
-    pub(super) fn apply_terminator(&mut self, terminator: &Terminator) {
+    pub(super) fn apply_terminator(&mut self, droppable: &[bool], terminator: &Terminator) {
         for operand in terminator.kind.operands() {
-            self.apply_operand(operand);
+            self.apply_operand(droppable, operand);
         }
         match &terminator.kind {
             TerminatorKind::Call { destination, .. } => {
-                self.mark_initialized(&register_of(destination))
+                self.mark_initialized(droppable, &register_of(destination))
             }
             TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
-                self.mark_moved(register_of(place))
+                self.mark_moved(droppable, register_of(place))
             }
             _ => {}
         }
     }
 }
 
-pub(super) fn analyze(body: &Body) -> Vec<MoveState> {
-    let mut entries = vec![MoveState::default(); body.basic_blocks.len()];
-    let mut exits = vec![MoveState::default(); body.basic_blocks.len()];
-    let predecessors = body.predecessors();
-
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (index, block) in body.basic_blocks.iter().enumerate() {
-            let id = BasicBlock::from_usize(index);
-            let incoming: Vec<&MoveState> = predecessors
-                .of(id)
-                .iter()
-                .map(|&pred| &exits[pred.index()])
-                .collect();
-            let entry = MoveState::meet(&incoming);
-
-            let mut exit = entry.clone();
+pub(super) fn analyze(droppable: &[bool], body: &Body) -> Vec<MoveState> {
+    let lattice = crate::mir::checks::lattice::solve(
+        body,
+        MoveState::default(),
+        MoveState::default(),
+        |_current, pred_states| MoveState::meet(pred_states),
+        |entry, block| {
+            let mut state = entry.clone();
             for stmt in &block.statements {
-                exit.apply_statement(stmt);
+                state.apply_statement(droppable, stmt);
             }
-            exit.apply_terminator(&block.terminator);
+            state.apply_terminator(droppable, &block.terminator);
+            state
+        },
+    );
 
-            if entries[index] != entry {
-                entries[index] = entry;
-                changed = true;
-            }
-            if exits[index] != exit {
-                exits[index] = exit;
-                changed = true;
-            }
-        }
-    }
-
-    entries
+    (0..body.basic_blocks.len())
+        .map(BasicBlock::from_usize)
+        .map(|id| {
+            lattice
+                .entry(id)
+                .expect("every block's entry is seeded by the solver")
+                .clone()
+        })
+        .collect()
 }

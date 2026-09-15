@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::ast::interner::Interner;
 use crate::hir::Hir;
 use crate::mir::{
     BasicBlock, Body, ConstKind, Instance, Local, Operand, Place, Projection, Rvalue,
@@ -9,23 +8,18 @@ use crate::mir::{
 use crate::testing::{OPS_PREAMBLE, lower_mir_src_files, lower_to_mir, named_def};
 use crate::typeck::tyctx::TyCtx;
 
-/// Monomorphizes `src`, then runs drop elaboration over every resulting `Body`.
 fn elaborated(src: &str) -> (Hir, TyCtx, HashMap<Instance, Body>) {
     let (hir, mut tcx, _types, _mir, instances) = lower_to_mir(src);
     let instances = super::elaborate_drops(&mut tcx, instances);
     (hir, tcx, instances)
 }
 
-/// Like [`elaborated`], but with [`OPS_PREAMBLE`] compiled alongside `src` -- `while`'s condition
-/// desugars to `if !cond { break }`, which needs a real `Not` (and `Copy`) impl on `bool` to exist
-/// to type check at all, so any fixture using `while` needs this rather than plain [`elaborated`].
 fn elaborated_with_ops(src: &str) -> (Hir, TyCtx, HashMap<Instance, Body>) {
     let (hir, mut tcx, _types, _mir, instances) = lower_mir_src_files(&[OPS_PREAMBLE, src]);
     let instances = super::elaborate_drops(&mut tcx, instances);
     (hir, tcx, instances)
 }
 
-/// The `Body` of the (non-generic, non-`any`) instance of the top-level definition named `name`.
 fn body_for<'a>(instances: &'a HashMap<Instance, Body>, hir: &Hir, name: &str) -> &'a Body {
     let def = named_def(hir, name);
     instances
@@ -35,19 +29,17 @@ fn body_for<'a>(instances: &'a HashMap<Instance, Body>, hir: &Hir, name: &str) -
         .unwrap_or_else(|| panic!("no elaborated instance for {name:?}"))
 }
 
-/// `body`'s own local declared with source name `name`.
 fn named_local(body: &Body, name: &str) -> Local {
     body.local_decls
         .iter()
-        .position(|decl| decl.name.is_some_and(|n| Interner::resolve(n.text) == name))
+        .position(|decl| {
+            decl.name
+                .is_some_and(|n| crate::testing::resolve(n.text) == name)
+        })
         .map(Local::from_usize)
         .unwrap_or_else(|| panic!("no local named {name:?} in {body:?}"))
 }
 
-/// Every place a `TerminatorKind::Drop` names, visited by walking the CFG from the start block
-/// along each terminator's (assumed single, since these fixtures are all straight-line) successor
-/// -- not by `basic_blocks`' own vec order, which need not match execution order once blocks have
-/// been split.
 fn linear_drop_order(body: &Body) -> Vec<Local> {
     let mut order = Vec::new();
     let mut current = BasicBlock::START_BLOCK;
@@ -71,9 +63,6 @@ fn linear_drop_order(body: &Body) -> Vec<Local> {
     order
 }
 
-/// Whether `body` contains a `TerminatorKind::Drop` for `local` immediately followed (in its
-/// target block) by that same local's `StorageDead` as the first statement -- i.e. the drop was
-/// spliced in exactly at the local's existing end-of-scope point, not somewhere else.
 fn drops_right_before_storage_dead(body: &Body, local: Local) -> bool {
     body.basic_blocks.iter().any(|block| {
         let TerminatorKind::Drop { place, target } = &block.terminator.kind else {
@@ -188,42 +177,6 @@ fn drop_elaboration_preserves_the_set_of_instances_monomorphize_produced() {
     );
 }
 
-// -----------------------------------------------------------------
-// Conditional drops (drop flags) and recursive (struct/enum field) drops
-// -----------------------------------------------------------------
-//
-// The tests above only ever exercise a local that is either unconditionally moved out or
-// unconditionally still owned by the time its `StorageDead` runs -- there is exactly one path
-// through the body to check. The tests below exercise the two things that make drop elaboration
-// its own pass rather than "insert an unconditional Drop before every StorageDead":
-//
-// 1. A local can be moved out on *one* branch of a conditional and not the other. Since MIR has
-//    no phi nodes, there is no single static answer to "does this local still need dropping" at
-//    the point the branches rejoin -- it depends on which branch actually ran. This pass must
-//    thread a runtime drop flag (a synthesized `bool` local, set `true` where the value starts
-//    being owned and `false` at each point it is moved out) through the rejoined control flow, and
-//    replace the unconditional `Drop` with a `SwitchInt` on that flag: drop on one arm, skip on
-//    the other.
-// 2. A local's type can itself be a struct or enum that doesn't need dropping as a whole, but
-//    contains a field that does (e.g. a plain-by-value struct with an `iso` field, or an enum
-//    where only one variant owns something). Dropping such a local means recursing into its
-//    fields -- for a struct, an unconditional `Drop` on each field that needs it (with a `Place`
-//    projected through `Projection::Field`); for an enum, a runtime switch on the value's own
-//    discriminant (via `Rvalue::Discriminant`), dropping only the fields (through
-//    `Projection::Downcast` then `Projection::Field`) of whichever variant turns out to be active.
-
-/// Walks forward from `start` along whatever single successor each block's terminator has
-/// (`Goto`, a `Call` with a continuation, another local's own `Drop`, ...), until either:
-/// - a `Drop` terminator names `target_local` -- returns `Some` of that `Drop`'s own `Place`
-///   (which may be `target_local` itself, or `target_local` projected into a field), without
-///   continuing past it (a real elaboration only ever drops a given local once on any one path);
-/// - `resumes_at` says the current block is where the walk's caller considers the question
-///   settled without a drop having happened -- returns `None`.
-///
-/// Panics if a block along the way has anything other than exactly one successor (a branch, or a
-/// dead end) before either of those is reached, since every fixture below reaches its own resume
-/// point deterministically once the specific path being walked has already resolved which
-/// branches were taken.
 fn drop_place_before(
     body: &Body,
     mut current: BasicBlock,
@@ -253,8 +206,6 @@ fn drop_place_before(
     }
 }
 
-/// [`drop_place_before`], resuming at `target_local`'s own `StorageDead` -- i.e. was it still
-/// owned by the time its scope ended.
 fn drop_place_before_storage_dead(
     body: &Body,
     current: BasicBlock,
@@ -268,12 +219,6 @@ fn drop_place_before_storage_dead(
     })
 }
 
-/// [`drop_place_before`], resuming at a block whose first statement reassigns `target_local`
-/// itself (a plain `Assign` to it, no projection) -- i.e. was the *old* value it held still owned
-/// right before that assignment overwrites it. Unlike the `StorageDead` case, `target_local`'s own
-/// very first assignment (its `let` initializer) is never itself such a resume point from the
-/// walk's perspective; a fixture that starts the walk anywhere at or after that initializer will
-/// only ever reach a later, genuine reassignment this way.
 fn drop_place_before_reassignment(
     body: &Body,
     current: BasicBlock,
@@ -287,12 +232,6 @@ fn drop_place_before_reassignment(
     })
 }
 
-/// Whether `body` contains a `TerminatorKind::Drop` for `local` immediately followed (in its
-/// target block) by a plain reassignment of `local` as that block's first statement -- i.e. the
-/// old value `local` held was dropped right before being overwritten. Since `local`'s own `let`
-/// initializer is always the *first* `Assign` to it in program order, and nothing should ever
-/// precede that first assignment with a drop (there is no old value yet), any `Drop` this finds
-/// can only be guarding a genuine reassignment.
 fn drops_right_before_reassignment(body: &Body, local: Local) -> bool {
     body.basic_blocks.iter().any(|block| {
         let TerminatorKind::Drop { place, target } = &block.terminator.kind else {
@@ -309,11 +248,6 @@ fn drops_right_before_reassignment(body: &Body, local: Local) -> bool {
     })
 }
 
-/// A local this pass set directly from a literal `bool` constant somewhere in `body` -- the
-/// signature of a synthesized drop flag (initialized `true` where a value starts being owned, set
-/// `false` at each point it is moved out), as opposed to a local computed from a real comparison
-/// (`Rvalue::BinaryOp`), which is how every condition the *source* itself writes (an `if`'s own
-/// condition, a `while`'s own guard) gets its value instead.
 fn is_bool_constant_flag_candidate(body: &Body, local: Local) -> bool {
     body.basic_blocks
         .iter()
@@ -329,11 +263,6 @@ fn is_bool_constant_flag_candidate(body: &Body, local: Local) -> bool {
         })
 }
 
-/// The `SwitchInt` terminator in `body` whose `discr` reads a drop-flag candidate (per
-/// [`is_bool_constant_flag_candidate`]), plus that switch's own block -- i.e. the switch drop
-/// elaboration introduced itself to read a synthesized flag, distinct from any switch the
-/// source's own `if`/`while`/`match` already lowered to (whose discr is never set from a literal
-/// `bool` constant). `None` if the body needed no such flag at all.
 fn find_flag_switch(body: &Body) -> Option<(BasicBlock, &SwitchTargets)> {
     let mut found = None;
     for (index, block) in body.basic_blocks.iter().enumerate() {
@@ -355,18 +284,11 @@ fn find_flag_switch(body: &Body) -> Option<(BasicBlock, &SwitchTargets)> {
     found
 }
 
-/// [`find_flag_switch`], but panics rather than returning `None` -- for a fixture where the pass
-/// has no choice but to synthesize a flag.
 fn flag_switch(body: &Body) -> (BasicBlock, &SwitchTargets) {
     find_flag_switch(body)
         .unwrap_or_else(|| panic!("expected a synthesized drop-flag switch, found none: {body:?}"))
 }
 
-/// Every arm of `targets` (each explicit value's target, plus `otherwise`), each walked forward
-/// via [`drop_place_before_storage_dead`] for `target_local`. Returns the arms that *do* drop it
-/// (their own `Drop`'s `Place`) separately from the arms that reach `StorageDead` without
-/// dropping it, so a test can assert the split is exactly one drop-arm versus the rest skip-arms,
-/// without hard-coding which raw discriminant/flag value that drop-arm carries.
 fn partition_switch_arms(
     body: &Body,
     targets: &SwitchTargets,
@@ -388,8 +310,6 @@ fn partition_switch_arms(
     (dropped, skipped)
 }
 
-/// [`partition_switch_arms`], but for a flag switch guarding a pre-reassignment drop (via
-/// [`drop_place_before_reassignment`]) rather than one guarding an end-of-scope drop.
 fn partition_switch_arms_before_reassignment(
     body: &Body,
     targets: &SwitchTargets,
@@ -411,9 +331,6 @@ fn partition_switch_arms_before_reassignment(
     (dropped, skipped)
 }
 
-/// The `SwitchInt` terminator in `body` whose `discr` reads `discr_local` directly, plus its
-/// targets -- for finding the branch the *source*'s own `if`/`while` lowered to (as opposed to
-/// [`find_flag_switch`], which finds one drop elaboration introduced).
 fn find_switch_on(body: &Body, discr_local: Local) -> &SwitchTargets {
     body.basic_blocks
         .iter()
@@ -429,11 +346,6 @@ fn find_switch_on(body: &Body, discr_local: Local) -> &SwitchTargets {
 
 #[test]
 fn an_iso_local_moved_on_only_one_arm_of_a_plain_if_is_not_dropped_on_that_arm() {
-    // A plain `if` has exactly two, statically known predecessors feeding the point right after
-    // it -- a correct implementation can resolve "was `x` moved" here either by open-coding the
-    // drop separately into each of those two predecessors (no runtime state at all), or by
-    // threading a synthesized flag through a shared join, same as the loop case below. Both are
-    // valid; this test accepts either rather than pinning down which.
     let (hir, _tcx, instances) = elaborated(
         "fun consume(p: iso i32) { }
          fun f(cond: bool) {
@@ -486,12 +398,6 @@ fn an_iso_local_moved_on_only_one_arm_of_a_plain_if_is_not_dropped_on_that_arm()
 
 #[test]
 fn an_iso_local_conditionally_moved_inside_a_loop_needs_a_real_drop_flag() {
-    // Unlike the plain `if` above, whether `x` was moved by the time the loop exits depends on
-    // how many iterations ran -- there is no finite, statically enumerable set of predecessors to
-    // open-code the drop into (the loop header's own back-edge predecessor carries the same
-    // unresolved question recursively). This is exactly the case real drop elaboration (rustc's
-    // included) reaches for an actual runtime flag for, rather than duplicating code per
-    // predecessor: a value whose ownership state must survive across a loop's back edge.
     let (hir, _tcx, instances) = elaborated_with_ops(
         "fun consume(p: iso i32) { }
          fun f(n: i32) {
@@ -568,8 +474,6 @@ fn dropping_a_struct_with_two_owned_fields_drops_both() {
     let body = body_for(&instances, &hir, "f");
     let p = named_local(body, "p");
 
-    // Both fields need separate `Drop` terminators; walk the whole body collecting every `Drop`
-    // that projects into `p`, rather than assuming a fixed order between the two fields.
     let dropped_fields: std::collections::HashSet<u32> = body
         .basic_blocks
         .iter()
@@ -600,8 +504,6 @@ fn dropping_an_enum_only_drops_the_field_of_whichever_variant_is_actually_active
     let cond = named_local(body, "cond");
     let b = named_local(body, "b");
 
-    // The switch elaboration introduces must read `b`'s own discriminant, not a plain flag --
-    // find the temp an `Rvalue::Discriminant(b)` was assigned into, then the switch reading it.
     let discr_temp = body
         .basic_blocks
         .iter()
@@ -641,22 +543,6 @@ fn dropping_an_enum_only_drops_the_field_of_whichever_variant_is_actually_active
     );
 }
 
-// -----------------------------------------------------------------
-// Drops before reassignment
-// -----------------------------------------------------------------
-//
-// Every test above only ever drops a local once, at the end of its scope. But a place can also
-// lose its old value earlier, mid-scope, by being written over: `p = new_value;` for an already
-// (possibly conditionally) initialized `p` overwrites whatever pointer `p` held with no help from
-// `StorageDead` at all. If that old value still needed dropping and nothing runs its drop first,
-// the old value's own resources become unreachable with nothing left pointing at them -- a leak,
-// the mirror image of the double-free a *missing* moved-out check would cause. So a genuine
-// reassignment (not a local's own first, initializing assignment -- there is nothing to drop
-// there) needs a `Drop` spliced in immediately before it, gated on the exact same "was it moved by
-// now" analysis as the end-of-scope case: unconditionally dropped if definitely still owned,
-// skipped if definitely moved out already, and behind a synthesized flag if that disagrees across
-// the reassignment's own predecessors.
-
 #[test]
 fn reassigning_an_owned_iso_local_drops_the_old_value_first() {
     let (hir, _tcx, instances) = elaborated(
@@ -695,11 +581,6 @@ fn reassigning_after_an_unconditional_move_needs_no_drop() {
 
 #[test]
 fn reassigning_after_a_conditional_move_needs_a_drop_flag_at_the_reassignment_too() {
-    // Mirrors `reassigning_after_a_move_cures_it` in `borrowck/definite_init.rs` (which is only
-    // about permitting the later *use* of `p`) -- here the same conditional-move shape means the
-    // reassignment itself needs the same runtime flag machinery the end-of-scope case does,
-    // because whether `p` still owns its old value when `p = new 2` runs depends on which branch
-    // of the `if` ran.
     let (hir, _tcx, instances) = elaborated(
         "fun consume(p: iso i32) { }
          fun f(cond: bool) {

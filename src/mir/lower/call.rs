@@ -1,6 +1,6 @@
 use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
-use crate::hir::{AccessArgs, DefId, ExprKind, HirId, Res};
+use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::lower::{Task, is_any_specialized};
 use crate::mir::{
@@ -9,14 +9,16 @@ use crate::mir::{
 use crate::typeck::ty::{Ty, TyKind};
 
 impl<'a> BodyLowerCtx<'a> {
-    pub(crate) fn is_any_specialized_call(&self, expr_id: HirId) -> bool {
+    pub(crate) fn is_any_specialized_call(&self, expr_id: impl Into<HirId>) -> bool {
+        let expr_id = expr_id.into();
         let Some(def) = self.call_target_def(expr_id) else {
             return false;
         };
         is_any_specialized(self.tcx, self.types, def)
     }
 
-    fn call_target_def(&self, expr_id: HirId) -> Option<DefId> {
+    fn call_target_def(&self, expr_id: impl Into<HirId>) -> Option<DefId> {
+        let expr_id = expr_id.into();
         match &self.hir.expr(expr_id).kind {
             ExprKind::Call { callee, .. } => match &self.hir.expr(*callee).kind {
                 ExprKind::Path(path) => match path.res {
@@ -36,11 +38,12 @@ impl<'a> BodyLowerCtx<'a> {
 
     pub(crate) fn lower_call_like_into(
         &mut self,
-        expr_id: HirId,
+        expr_id: impl Into<HirId>,
         dest: Place,
         mode: AnyMode,
         span: SrcSpan,
     ) {
+        let expr_id = expr_id.into();
         let expr_kind = self.hir.expr(expr_id).kind.clone();
         let (func, receiver, arg_exprs, def_for_args, dyn_dispatch) = match expr_kind {
             ExprKind::Call { callee, args } => {
@@ -149,7 +152,8 @@ impl<'a> BodyLowerCtx<'a> {
     }
 
     /// The `dyn Trait` type a receiver's peeled type names, if it is one.
-    fn dyn_receiver_ty(&mut self, receiver_expr: HirId) -> Option<Ty> {
+    fn dyn_receiver_ty(&mut self, receiver_expr: impl Into<HirId>) -> Option<Ty> {
+        let receiver_expr = receiver_expr.into();
         let receiver_ty = self.expr_ty(receiver_expr);
         let (peeled, _) = self.peel_refs(receiver_ty);
         let (peeled, _) = self.peel_any(peeled);
@@ -173,7 +177,7 @@ impl<'a> BodyLowerCtx<'a> {
         };
         let declared = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
         let generics = self.hir.trait_(trait_).generics.clone();
-        let subst = crate::typeck::fold::Subst {
+        let subst = crate::typeck::visitor::Subst {
             generics: generics
                 .iter()
                 .copied()
@@ -181,7 +185,7 @@ impl<'a> BodyLowerCtx<'a> {
                 .collect(),
             self_ty: Some(dyn_ty),
         };
-        let sig = crate::typeck::fold::subst_ty(self.tcx, declared, &subst);
+        let sig = crate::typeck::visitor::subst_ty(self.tcx, declared, &subst);
         Operand::Constant(Constant {
             ty: sig,
             kind: ConstKind::FunDef(def, args, None, Some(dyn_ty)),
@@ -200,11 +204,12 @@ impl<'a> BodyLowerCtx<'a> {
 
     fn lower_callee(
         &mut self,
-        call_expr_id: HirId,
-        callee_id: HirId,
+        call_expr_id: impl Into<HirId>,
+        callee_id: impl Into<HirId>,
         mode: AnyMode,
         span: SrcSpan,
     ) -> Operand {
+        let (call_expr_id, callee_id) = (call_expr_id.into(), callee_id.into());
         let is_named_fn = matches!(
             &self.hir.expr(callee_id).kind,
             ExprKind::Path(path) if matches!(path.res, Res::Function(_))
@@ -253,10 +258,11 @@ impl<'a> BodyLowerCtx<'a> {
         &mut self,
         def: DefId,
         any_mode: Option<AnyMode>,
-        receiver: Option<HirId>,
-        arg_exprs: &[HirId],
+        receiver: Option<impl Into<HirId>>,
+        arg_exprs: &[ExprId],
         span: SrcSpan,
     ) -> Vec<Operand> {
+        let receiver: Option<HirId> = receiver.map(Into::into);
         let function = self.hir.function(def);
         let self_param = function.self_param;
         let params = function.params.clone();
@@ -290,6 +296,10 @@ impl<'a> BodyLowerCtx<'a> {
         };
 
         let recv_ty = self.expr_ty(expr_id);
+        // TODO: implement an `any T` receiver reaching a `&`/`&mut self` method (README
+        // section 7 lets `any self` abstract over borrow mode, but this panics, so generic
+        // projection-polymorphic method calls have no lowering and real `any`-based code
+        // cannot compile once monomorphized to a borrow).
         if matches!(self.tcx.kind(recv_ty), TyKind::Any(_)) {
             panic!(
                 "mir::lower: a receiver whose own type is `any T`, reaching a `&`/`&mut self` \
@@ -323,11 +333,12 @@ impl<'a> BodyLowerCtx<'a> {
 
     fn lower_arg_operand(
         &mut self,
-        expr_id: HirId,
+        expr_id: impl Into<HirId>,
         declared_ty: Ty,
         any_mode: Option<AnyMode>,
         span: SrcSpan,
     ) -> Operand {
+        let expr_id = expr_id.into();
         let (TyKind::Any(inner), Some(mode)) = (self.tcx.kind(declared_ty).clone(), any_mode)
         else {
             return self.lower_operand(expr_id);
@@ -356,7 +367,8 @@ impl<'a> BodyLowerCtx<'a> {
     /// The type arguments a value-position use of a named function was instantiated with, for
     /// `ReifyFnPointer` -- reusing the same resolved-call table a direct call already uses, since
     /// `callee_sig` records a non-generic function's call too (with an empty list).
-    pub(crate) fn call_type_args(&self, expr_id: HirId) -> Vec<Ty> {
+    pub(crate) fn call_type_args(&self, expr_id: impl Into<HirId>) -> Vec<Ty> {
+        let expr_id = expr_id.into();
         self.types
             .call(expr_id)
             .map(|c| c.all_args())

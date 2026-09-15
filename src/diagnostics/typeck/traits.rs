@@ -6,16 +6,16 @@ pub mod method;
 pub mod solve;
 pub mod validity;
 
-use crate::ast::interner::Interner;
-use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::display::DisplayCtx;
 use crate::hir::{DefId, Hir};
-use crate::typeck::traits::solve::Query;
+use crate::session::Session;
+use crate::typeck::traits::solve::Goal;
 
-pub fn get_name_of_trait(hir: &Hir, def: DefId) -> &'static str {
-    Interner::resolve(hir.trait_(def).name.text)
+pub fn get_name_of_trait(session: &Session, hir: &Hir, def: DefId) -> &'static str {
+    session.resolve(hir.trait_(def).name.text)
 }
 
-pub fn show_goal(hir: &Hir, cx: DisplayCx<'_>, goal: &Query) -> String {
+pub fn show_goal(hir: &Hir, cx: DisplayCtx<'_>, goal: &Goal) -> String {
     let args = match &goal.trait_.args[..] {
         [] => String::new(),
         args => format!(
@@ -29,6 +29,6 @@ pub fn show_goal(hir: &Hir, cx: DisplayCx<'_>, goal: &Query) -> String {
     format!(
         "`{}: {}{args}`",
         cx.show(goal.self_ty),
-        get_name_of_trait(hir, goal.trait_.def)
+        get_name_of_trait(cx.session(), hir, goal.trait_.def)
     )
 }

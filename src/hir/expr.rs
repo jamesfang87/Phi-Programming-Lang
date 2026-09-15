@@ -2,12 +2,12 @@
 
 use crate::ast::{BinaryOp, Ident, Literal, Mutability, UnaryOp};
 use crate::driver::source::SrcSpan;
-use crate::hir::ids::{DefId, HirId};
+use crate::hir::ids::{ArmId, BlockId, DefId, ExprId, HirId, TyId};
 use crate::hir::path::Path;
 
 #[derive(Debug)]
 pub struct Expr {
-    pub hir_id: HirId,
+    pub hir_id: ExprId,
     pub kind: ExprKind,
     pub span: SrcSpan,
 }
@@ -18,43 +18,43 @@ pub enum ExprKind {
     Path(Path),
     Unary {
         op: UnaryOp,
-        operand: HirId, // -> Node::Expr
+        operand: ExprId,
     },
     Binary {
         op: BinaryOp,
-        lhs: HirId, // -> Node::Expr
-        rhs: HirId, // -> Node::Expr
+        lhs: ExprId,
+        rhs: ExprId,
     },
     Assign {
-        lhs: HirId, // -> Node::Expr
-        rhs: HirId, // -> Node::Expr
+        lhs: ExprId,
+        rhs: ExprId,
     },
     /// `lhs += rhs`, `lhs -= rhs`, and so on. `op` is the underlying binary operator (`+`, `-`,
     /// ...).
     AssignOp {
         op: BinaryOp,
-        lhs: HirId, // -> Node::Expr
-        rhs: HirId, // -> Node::Expr
+        lhs: ExprId,
+        rhs: ExprId,
     },
     Borrow {
         mutability: Mutability,
-        operand: HirId, // -> Node::Expr
+        operand: ExprId,
     },
     Call {
-        callee: HirId,    // -> Node::Expr
-        args: Vec<HirId>, // -> Node::Expr
+        callee: ExprId,
+        args: Vec<ExprId>,
     },
     /// The `.` operator reaches a field, a method call, or an enum variant named through its
     /// enum. `base` naming a type rather than a value is what marks the last of the three; see
     /// [`crate::hir::Hir::names_a_type`].
     Access {
-        base: HirId, // -> Node::Expr
+        base: ExprId,
         member: Ident,
         args: AccessArgs,
     },
     Index {
-        base: HirId,  // -> Node::Expr
-        index: HirId, // -> Node::Expr
+        base: ExprId,
+        index: ExprId,
     },
     /// A struct literal. `path` is `None` for the elided `.{ ... }` form, whose type is
     /// recovered from the expected type during typeck.
@@ -67,58 +67,58 @@ pub enum ExprKind {
     /// only names the variant and leaves it unresolved.
     Variant {
         variant: Ident,
-        payload: Payload, // -> Node::Expr
+        payload: Payload,
     },
-    Tuple(Vec<HirId>), // -> Node::Expr
+    Tuple(Vec<ExprId>),
     /// `expr?`. Propagates an error result out of the enclosing function.
-    Try(HirId), // -> Node::Expr
+    Try(ExprId),
     /// Both branches are blocks. An `else if` chain lowers to `else { if .. }`, so a chain of
     /// any length is uniform rather than alternating between an `If` and a `Block`.
     If {
-        cond: HirId,               // -> Node::Expr
-        then_block: HirId,         // -> Node::Block
-        else_block: Option<HirId>, // -> Node::Block
+        cond: ExprId,
+        then_block: BlockId,
+        else_block: Option<BlockId>,
     },
     Match {
-        scrutinee: HirId, // -> Node::Expr
-        arms: Vec<HirId>, // -> Node::Arm
+        scrutinee: ExprId,
+        arms: Vec<ArmId>,
     },
     /// A loop. `source` records whether it came from `while`, `for`, or a bare `loop`, since all
     /// three converge to this one node during lowering.
     Loop {
         source: LoopSource,
-        block: HirId, // -> Node::Block
+        block: BlockId,
     },
     /// `spawn { ... }`. Runs the block as a new concurrent task.
-    Spawn(HirId), // -> Node::Block
+    Spawn(BlockId),
     /// `concurrent { ... }`. Runs the statements in the block concurrently with each other.
-    Concurrent(HirId), // -> Node::Block
-    Block(HirId), // -> Node::Block
+    Concurrent(BlockId),
+    Block(BlockId),
     /// A closure literal. `DefId` names the closure's own owner, which holds its params, block,
     /// and return type; see [`crate::hir::Closure`].
     Closure(DefId),
     /// `expr as ty`. See [`crate::typeck::cast`] for which primitive-to-primitive conversions
     /// this is allowed to mean.
     Cast {
-        expr: HirId, // -> Node::Expr
-        ty: HirId,   // -> Node::Ty
+        expr: ExprId,
+        ty: TyId,
     },
     /// `new <expr>`. See [`crate::ast::ExprKind::New`].
-    New(HirId), // -> Node::Expr
+    New(ExprId),
     /// `new [<elem>; <count>]`. See [`crate::ast::ExprKind::NewArray`].
     NewArray {
-        elem: HirId,  // -> Node::Expr
-        count: HirId, // -> Node::Expr
+        elem: ExprId,
+        count: ExprId,
     },
     Assert {
-        cond: HirId,        // -> Node::Expr
-        msg: Option<HirId>, // -> Node::Expr
+        cond: ExprId,
+        msg: Option<ExprId>,
     },
     Panic {
-        msg: Option<HirId>, // -> Node::Expr
+        msg: Option<ExprId>,
     },
     Unreachable {
-        msg: Option<HirId>, // -> Node::Expr
+        msg: Option<ExprId>,
     },
     Error,
 }
@@ -133,7 +133,7 @@ pub enum Payload {
 #[derive(Clone, Debug)]
 pub enum AccessArgs {
     None,
-    Call(Vec<HirId>), // -> Node::Expr
+    Call(Vec<ExprId>),
     Record(Vec<PayloadField>),
 }
 
@@ -148,5 +148,4 @@ pub struct PayloadField {
 pub enum LoopSource {
     While,
     For,
-    Loop,
 }

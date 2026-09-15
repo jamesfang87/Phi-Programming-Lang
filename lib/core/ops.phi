@@ -1,5 +1,9 @@
 module core::ops;
 
+// TODO: implement `Add` (and related ops) for `String`/`str` concatenation. README
+// sections 6/13 rely on `base + "!"` and `"..." + err.message()`, but only numeric
+// `Add` impls exist below, so real string-building programs have no operator to use.
+
 public trait Add {
     fun add(&self, other: &Self) -> Self;
 }

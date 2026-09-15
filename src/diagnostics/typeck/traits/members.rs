@@ -1,16 +1,18 @@
 use crate::ast::SelfMode;
-use crate::ast::interner::Interner;
-use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::Diagnostic;
+use crate::diagnostics::codes;
+use crate::diagnostics::display::DisplayCtx;
+use crate::diagnostics::typeck::show_optional_self_mode;
 use crate::diagnostics::typeck::traits::get_name_of_trait;
-use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Function, Hir, HirId};
+use crate::session::Session;
 use crate::typeck::traits::TraitRef;
 use crate::typeck::ty::Ty;
 
 pub fn report_missing_methods(
     hir: &Hir,
-    cx: DisplayCx<'_>,
+    cx: DisplayCtx<'_>,
     missing: &[DefId],
     trait_ref: &TraitRef,
     self_ty: Ty,
@@ -18,12 +20,7 @@ pub fn report_missing_methods(
 ) {
     let names: Vec<String> = missing
         .iter()
-        .map(|&declaration| {
-            format!(
-                "`{}`",
-                Interner::resolve(hir.function(declaration).name.text)
-            )
-        })
+        .map(|&declaration| format!("`{}`", cx.resolve(hir.function(declaration).name.text)))
         .collect();
     let (plural, these) = if missing.len() == 1 {
         ("", "this")
@@ -34,12 +31,13 @@ pub fn report_missing_methods(
     let mut diag = Diagnostic::error(
         format!(
             "missing method{plural} in the implementation of trait `{}` for `{}`: {}",
-            get_name_of_trait(hir, trait_ref.def),
+            get_name_of_trait(cx.session(), hir, trait_ref.def),
             cx.show(self_ty),
             names.join(", ")
         ),
         impl_span,
     )
+    .with_code(codes::MISSING_METHODS)
     .with_label(format!("{these} method{plural} not implemented"))
     .with_help(
         "every method a trait declares without a default body has to be written out by \
@@ -52,30 +50,31 @@ pub fn report_missing_methods(
             declaration.name.span,
             format!(
                 "`{}` is declared here, with no default body",
-                Interner::resolve(declaration.name.text)
+                cx.resolve(declaration.name.text)
             ),
         );
     }
 
-    DiagCtx::emit(diag);
+    cx.emit(diag);
 }
 
 pub fn report_not_a_member(
     hir: &Hir,
-    cx: DisplayCx<'_>,
+    cx: DisplayCtx<'_>,
     method: DefId,
     trait_ref: &TraitRef,
     self_ty: Ty,
 ) {
     let method = hir.function(method);
-    let name = Interner::resolve(method.name.text);
-    let declared_trait_name = get_name_of_trait(hir, trait_ref.def);
+    let name = cx.resolve(method.name.text);
+    let declared_trait_name = get_name_of_trait(cx.session(), hir, trait_ref.def);
 
-    DiagCtx::emit(
+    cx.emit(
         Diagnostic::error(
             format!("method `{name}` is not a member of trait `{declared_trait_name}`"),
             method.span,
         )
+        .with_code(codes::NOT_A_MEMBER)
         .with_label(format!("not declared by `{declared_trait_name}`"))
         .with_secondary(
             declared_trait_span(hir, trait_ref.def),
@@ -90,18 +89,19 @@ pub fn report_not_a_member(
     );
 }
 
-pub fn report_generic_count(found: &Function, expected: &Function) {
+pub fn report_generic_count(session: &Session, found: &Function, expected: &Function) {
     let (got, want) = (found.generics.len(), expected.generics.len());
     let plural = if want == 1 { "" } else { "s" };
 
-    DiagCtx::emit(
+    session.emit(
         Diagnostic::error(
             format!(
                 "method `{}` declares {got} type parameters where its declaration declares {want}",
-                Interner::resolve(found.name.text)
+                session.resolve(found.name.text)
             ),
             found.name.span,
         )
+        .with_code(codes::GENERIC_COUNT)
         .with_label(format!("expected {want} type parameter{plural}"))
         .with_secondary(
             expected.name.span,
@@ -115,26 +115,34 @@ pub fn report_generic_count(found: &Function, expected: &Function) {
 }
 
 pub fn report_self_mode(
+    session: &Session,
     hir: &Hir,
     found: &Function,
     expected: &Function,
     found_mode: Option<SelfMode>,
     expected_mode: Option<SelfMode>,
 ) {
-    DiagCtx::emit(
+    session.emit(
         Diagnostic::error(
             format!(
                 "method `{}` takes {} where its declaration takes {}",
-                Interner::resolve(found.name.text),
-                show_self_mode(found_mode),
-                show_self_mode(expected_mode)
+                session.resolve(found.name.text),
+                show_optional_self_mode(found_mode),
+                show_optional_self_mode(expected_mode)
             ),
             self_param_span(hir, found),
         )
-        .with_label(format!("expected {}", show_self_mode(expected_mode)))
+        .with_code(codes::SELF_MODE)
+        .with_label(format!(
+            "expected {}",
+            show_optional_self_mode(expected_mode)
+        ))
         .with_secondary(
             self_param_span(hir, expected),
-            format!("declared taking {} here", show_self_mode(expected_mode)),
+            format!(
+                "declared taking {} here",
+                show_optional_self_mode(expected_mode)
+            ),
         )
         .with_help(
             "how a method takes its receiver is part of its signature: a caller reaching it \
@@ -143,19 +151,26 @@ pub fn report_self_mode(
     );
 }
 
-pub fn report_param_count(found: &Function, expected: &Function, got: usize, want: usize) {
+pub fn report_param_count(
+    session: &Session,
+    found: &Function,
+    expected: &Function,
+    got: usize,
+    want: usize,
+) {
     let offset = usize::from(found.self_param.is_some());
     let (got, want) = (got - offset, want - offset);
     let plural = if want == 1 { "" } else { "s" };
 
-    DiagCtx::emit(
+    session.emit(
         Diagnostic::error(
             format!(
                 "method `{}` takes {got} parameters where its declaration takes {want}",
-                Interner::resolve(found.name.text)
+                session.resolve(found.name.text)
             ),
             found.name.span,
         )
+        .with_code(codes::PARAM_COUNT)
         .with_label(format!("expected {want} parameter{plural}"))
         .with_secondary(
             expected.name.span,
@@ -166,7 +181,7 @@ pub fn report_param_count(found: &Function, expected: &Function, got: usize, wan
 
 pub fn report_param_ty(
     hir: &Hir,
-    cx: DisplayCx<'_>,
+    cx: DisplayCtx<'_>,
     found: &Function,
     param: HirId,
     declared_param: HirId,
@@ -176,17 +191,18 @@ pub fn report_param_ty(
     let param = hir.param(param);
     let declared_param = hir.param(declared_param);
 
-    DiagCtx::emit(
+    cx.emit(
         Diagnostic::error(
             format!(
                 "parameter `{}` of method `{}` has type `{}` where its declaration has `{}`",
-                Interner::resolve(param.name.text),
-                Interner::resolve(found.name.text),
+                cx.resolve(param.name.text),
+                cx.resolve(found.name.text),
                 cx.show(got),
                 cx.show(want)
             ),
             param.span,
         )
+        .with_code(codes::PARAM_TY)
         .with_label(format!("expected `{}`", cx.show(want)))
         .with_secondary(
             declared_param.span,
@@ -202,22 +218,23 @@ pub fn report_param_ty(
 
 pub fn report_ret_ty(
     hir: &Hir,
-    cx: DisplayCx<'_>,
+    cx: DisplayCtx<'_>,
     found: &Function,
     expected: &Function,
     got: Option<Ty>,
     want: Option<Ty>,
 ) {
-    DiagCtx::emit(
+    cx.emit(
         Diagnostic::error(
             format!(
                 "method `{}` returns {} where its declaration returns {}",
-                Interner::resolve(found.name.text),
+                cx.resolve(found.name.text),
                 show_ret(cx, got),
                 show_ret(cx, want)
             ),
             ret_span(hir, found),
         )
+        .with_code(codes::RET_TY)
         .with_label(format!("expected {}", show_ret(cx, want)))
         .with_secondary(
             ret_span(hir, expected),
@@ -238,7 +255,7 @@ fn ret_span(hir: &Hir, function: &Function) -> SrcSpan {
         .map_or(function.name.span, |id| hir.ty(id).span)
 }
 
-fn show_ret(cx: DisplayCx<'_>, ret: Option<Ty>) -> String {
+fn show_ret(cx: DisplayCtx<'_>, ret: Option<Ty>) -> String {
     match ret {
         Some(ty) => format!("`{}`", cx.show(ty)),
         None => "nothing".to_string(),
@@ -247,14 +264,4 @@ fn show_ret(cx: DisplayCx<'_>, ret: Option<Ty>) -> String {
 
 fn declared_trait_span(hir: &Hir, def: DefId) -> SrcSpan {
     hir.trait_(def).name.span
-}
-
-fn show_self_mode(mode: Option<SelfMode>) -> &'static str {
-    match mode {
-        Some(SelfMode::Immutable) => "`&self`",
-        Some(SelfMode::Mutable) => "`&mut self`",
-        Some(SelfMode::Move) => "`self`",
-        Some(SelfMode::Any) => "`any self`",
-        None => "no receiver",
-    }
 }

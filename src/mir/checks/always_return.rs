@@ -1,5 +1,6 @@
 use crate::diagnostics::mir::always_return::report_not_all_paths_return;
 use crate::mir::{BasicBlock, Body, TerminatorKind, checks::lattice, lower::Mir};
+use crate::session::Session;
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -7,12 +8,10 @@ enum State {
     DoesNotReturn,
 }
 
-type Lattice = lattice::Lattice<BasicBlock, State>;
-
-pub fn check(mir: &Mir) {
+pub fn check(session: &Session, mir: &Mir) {
     for body in mir.bodies.values() {
         if !check_body(body) {
-            report_not_all_paths_return(body.span);
+            report_not_all_paths_return(session, body.span);
         }
     }
 }
@@ -32,55 +31,16 @@ fn meet(cur_entry: State, predecessor_states: &[&State]) -> State {
 }
 
 fn check_body(body: &Body) -> bool {
-    let mut lattice: Lattice = Default::default();
-    let preds = body.predecessors();
-
-    // We have a guess of `DoesReturn` for entry of all blocks
-    // and a guess of `DoesNotReturn` for exit of all blocks
-    for index in 0..body.basic_blocks.len() {
-        let id = BasicBlock::from_usize(index);
-        lattice.set_entry(id, State::DoesReturn);
-        lattice.set_exit(id, State::DoesNotReturn);
-    }
-
-    let mut changed = true;
-    while changed {
-        changed = false;
-
-        for (index, _basic_block) in body.basic_blocks.iter().enumerate() {
-            let id = BasicBlock::from_usize(index);
-
-            // First figure out the entry from the predecessors
-            let pred_states: Vec<&State> = preds
-                .of(id)
-                .iter()
-                .filter_map(|&pred| lattice.exit(pred))
-                .collect();
-            let old_entry = *lattice
-                .entry(id)
-                .expect("every block's entry is given above");
-            let new_entry = meet(old_entry, &pred_states);
-            lattice.set_entry(id, new_entry);
-
-            // Update `changed` flag if changed
-            if old_entry != new_entry {
-                changed = true;
-            }
-
-            // Now the transfer function from entry to exit for this block
-            let old_exit = *lattice.exit(id).expect("every block's exit is given above");
-            let new_exit = match _basic_block.terminator.kind {
-                TerminatorKind::Return | TerminatorKind::Assert { .. } => State::DoesReturn,
-                _ => new_entry,
-            };
-            lattice.set_exit(id, new_exit);
-
-            // Update `changed` flag if needed
-            if old_exit != new_exit {
-                changed = true;
-            }
-        }
-    }
+    let lattice = lattice::solve(
+        body,
+        State::DoesReturn,
+        State::DoesNotReturn,
+        |current, pred_states| meet(*current, pred_states),
+        |entry, block| match block.terminator.kind {
+            TerminatorKind::Return | TerminatorKind::Assert { .. } => State::DoesReturn,
+            _ => *entry,
+        },
+    );
 
     (0..body.basic_blocks.len())
         .map(BasicBlock::from_usize)

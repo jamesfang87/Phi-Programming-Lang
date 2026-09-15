@@ -1,11 +1,11 @@
 use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
-use crate::hir::ids::HirId;
+use crate::hir::ids::{ExprId, TyId};
 use crate::hir::path::Path;
 
 #[derive(Debug)]
 pub struct Ty {
-    pub hir_id: HirId,
+    pub hir_id: TyId,
     pub kind: TyKind,
     pub span: SrcSpan,
 }
@@ -14,27 +14,27 @@ pub struct Ty {
 pub enum TyKind {
     Path {
         path: Path,
-        args: Vec<HirId>, // -> Node::Ty
+        args: Vec<TyId>,
     },
-    SelfTy(Vec<HirId>), // -> Node::Ty
+    SelfTy(Vec<TyId>),
     Ref {
-        base: HirId, // -> Node::Ty
+        base: TyId,
         mutability: Mutability,
     },
-    Any(HirId),        // -> Node::Ty
-    Iso(HirId),        // -> Node::Ty
-    Tuple(Vec<HirId>), // -> Node::Ty
+    Any(TyId),
+    Iso(TyId),
+    Tuple(Vec<TyId>),
     Array {
-        elem: HirId,        // -> Node::Ty
-        len: Option<HirId>, // -> Node::Expr, the constant expression `N`
+        elem: TyId,
+        len: Option<ExprId>,
     },
     Function {
-        params: Vec<HirId>, // -> Node::Ty
-        ret: Option<HirId>, // -> Node::Ty
+        params: Vec<TyId>,
+        ret: Option<TyId>,
     },
     Dyn {
         path: Path,
-        args: Vec<HirId>, // -> Node::Ty
+        args: Vec<TyId>,
     },
     Error,
 }

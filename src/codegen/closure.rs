@@ -210,7 +210,15 @@ mod tests {
         let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(src);
         let instances = crate::mir::drop_elaboration::elaborate_drops(&mut tcx, instances);
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         module.print_to_string().to_string()
     }

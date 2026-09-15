@@ -10,9 +10,11 @@ use inkwell::values::{FunctionValue, PointerValue};
 use crate::ast::Symbol;
 use crate::codegen::intrinsic::{self, Libc};
 use crate::hir::DefId;
+use crate::session::Session;
 use crate::typeck::ty::Ty;
 
 pub struct CodegenCtx<'ctx> {
+    pub session: &'ctx Session,
     pub llvm: &'ctx Context,
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
@@ -26,10 +28,11 @@ pub struct CodegenCtx<'ctx> {
 }
 
 impl<'ctx> CodegenCtx<'ctx> {
-    pub fn new(llvm: &'ctx Context, module_name: &str) -> Self {
+    pub fn new(session: &'ctx Session, llvm: &'ctx Context, module_name: &str) -> Self {
         let module = llvm.create_module(module_name);
         let libc = intrinsic::declare_libc(llvm, &module);
         CodegenCtx {
+            session,
             llvm,
             module,
             builder: llvm.create_builder(),

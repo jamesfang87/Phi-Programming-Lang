@@ -3,50 +3,64 @@
 //! - Duplicate method names
 
 use crate::ast::Symbol;
-use crate::ast::interner::Interner;
 use crate::diagnostics::typeck::traits::coherence::{
     report_conflicting_extends, report_duplicate_method,
 };
 use crate::hir::DefId;
 use crate::typeck::Typeck;
-use crate::typeck::traits::overlap::overlaps;
+use crate::typeck::traits::collect::ExtendHeader;
 
 impl<'hir> Typeck<'hir> {
     pub fn check_coherence(&mut self) {
         for (first, second) in self.extends.pairs_per_type() {
-            self.check_pair(first, second);
+            self.check_overlapping_extends(first, second);
         }
     }
 
-    fn check_pair(&mut self, first: DefId, second: DefId) {
+    // Checks for two distinct extend blocks (1) implementing the same trait and (2)
+    // declaring the same methods
+    fn check_overlapping_extends(&mut self, first: DefId, second: DefId) {
         let (a, b) = (self.extend_header(first), self.extend_header(second));
-        if !overlaps(&mut self.tcx, &a, &b) {
+        if !self.overlaps(&a, &b) {
             return;
         }
 
-        // Check 1: no two extends of the same trait may overlap.
+        self.check_conflicting_extends(&a, &b);
+        self.check_duplicate_methods(first, second, &a, &b);
+    }
+
+    /// Reports two distinct blocks that implement the same trait.
+    fn check_conflicting_extends(&mut self, a: &ExtendHeader, b: &ExtendHeader) {
         if let (Some(trait_a), Some(trait_b)) = (&a.trait_, &b.trait_)
             && trait_a.def == trait_b.def
         {
-            report_conflicting_extends(self.hir, self.display_cx(), &a, &b);
-        }
-
-        // Check 2: no two overlapping blocks may offer the same method name
-        for name in self.shared_method_names(first, second) {
-            report_duplicate_method(self.hir, self.display_cx(), name, &a, &b);
+            report_conflicting_extends(self.hir, self.display_cx(), a, b);
         }
     }
 
-    /// The method names both blocks make available in sorted order.
+    /// Reports that there are no duplicate methods.
+    fn check_duplicate_methods(
+        &mut self,
+        first: DefId,
+        second: DefId,
+        a: &ExtendHeader,
+        b: &ExtendHeader,
+    ) {
+        for name in self.shared_method_names(first, second) {
+            report_duplicate_method(self.hir, self.display_cx(), name, a, b);
+        }
+    }
+
+    /// Returns a Vec of the methods present in both a and b's declared methods
     fn shared_method_names(&self, a: DefId, b: DefId) -> Vec<Symbol> {
         let (mut names, other) = (self.declared_methods(a), self.declared_methods(b));
         names.retain(|name| other.contains(name));
-        names.sort_by_key(|&name| Interner::resolve(name));
+        names.sort_by_key(|&name| self.session.resolve(name));
         names
     }
 
-    /// The declared methods which are extended to a type by an extend block.
-    /// For extend-with blocks, this also includes any defaulted methods.
+    /// Returns a Vec of the methods that this extend block declares.
+    /// This also includes default implementations from Traits
     fn declared_methods(&self, extend: DefId) -> Vec<Symbol> {
         let names = |methods: &[DefId]| {
             methods
@@ -64,19 +78,18 @@ impl<'hir> Typeck<'hir> {
 
 #[cfg(test)]
 mod tests {
-    use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
-    use crate::testing::{Stage, checker_through, lower_to_hir};
+    use crate::testing::{TypeckStage, checker_through, lower_to_hir};
 
     /// Runs everything up to and including coherence over `src`, and hands back what it reported.
     ///
     /// Diagnostics from name resolution are cleared first: a fixture is resolved without the core
     /// library, so every one of them reports the whole set of missing lang items.
     fn coherence(hir: &Hir) -> Vec<String> {
-        let mut checker = checker_through(hir, Stage::Index);
-        DiagCtx::clear();
+        let mut checker = checker_through(hir, TypeckStage::Index);
+        crate::testing::clear_diagnostics();
         checker.check_coherence();
-        DiagCtx::messages()
+        crate::testing::messages()
     }
 
     // -----------------------------------------------------------------
@@ -113,11 +126,11 @@ mod tests {
              extend Foo with Marker {}",
         );
 
-        let mut checker = checker_through(&hir, Stage::Index);
-        DiagCtx::clear();
+        let mut checker = checker_through(&hir, TypeckStage::Index);
+        crate::testing::clear_diagnostics();
         checker.check_coherence();
 
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         let [conflict] = diagnostics.as_slice() else {
             panic!("expected exactly one diagnostic, got {diagnostics:?}");
         };

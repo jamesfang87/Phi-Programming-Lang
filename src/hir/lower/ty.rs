@@ -3,10 +3,10 @@
 use crate::ast;
 use crate::driver::source::SrcSpan;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{HirId, TyKind};
+use crate::hir::{TyId, TyKind};
 
 impl OwnerLowerer<'_, '_> {
-    pub(super) fn lower_ty(&mut self, ty: &ast::Ty) -> HirId {
+    pub(super) fn lower_ty(&mut self, ty: &ast::Ty) -> TyId {
         self.lower_ty_kind(ty.id, &ty.kind, ty.span)
     }
 
@@ -15,7 +15,7 @@ impl OwnerLowerer<'_, '_> {
         node_id: ast::NodeId,
         kind: &ast::TyKind,
         span: SrcSpan,
-    ) -> HirId {
+    ) -> TyId {
         self.synth_ty(span, |low, _id| match kind {
             ast::TyKind::SelfTy => TyKind::SelfTy(Vec::new()),
             ast::TyKind::Path { path, args } => TyKind::Path {

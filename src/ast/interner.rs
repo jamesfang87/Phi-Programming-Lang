@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -14,47 +13,35 @@ impl Symbol {
     }
 }
 
-struct InternerData {
+/// A string interner: maps source text to compact [`Symbol`] handles and back.
+///
+/// Owned by [`Session`](crate::session::Session). Interned text is leaked so a resolved name is
+/// a `&'static str` that outlives the interner that produced it, which lets symbol resolution
+/// happen anywhere a [`Symbol`] is available without carrying an interner reference.
+#[derive(Default)]
+pub struct Interner {
     strings: Vec<&'static str>,
     lookup: HashMap<&'static str, Symbol>,
 }
 
-impl InternerData {
-    fn new() -> Self {
-        InternerData {
-            strings: Vec::new(),
-            lookup: HashMap::new(),
-        }
-    }
-}
-
-thread_local! {
-    static INTERNER: RefCell<InternerData> = RefCell::new(InternerData::new());
-}
-
-pub struct Interner;
-
 impl Interner {
-    pub fn intern(text: &str) -> Symbol {
-        INTERNER.with(|interner| {
-            let mut interner = interner.borrow_mut();
-            if let Some(&sym) = interner.lookup.get(text) {
-                return sym;
-            }
-            let text: &'static str = Box::leak(text.to_string().into_boxed_str());
-            let sym = Symbol::from_id(interner.strings.len() as u32);
-            interner.strings.push(text);
-            interner.lookup.insert(text, sym);
-            sym
-        })
+    pub fn new() -> Self {
+        Interner::default()
     }
 
-    pub fn resolve(sym: Symbol) -> &'static str {
-        INTERNER.with(|interner| interner.borrow().strings[sym.id() as usize])
+    pub fn intern(&mut self, text: &str) -> Symbol {
+        if let Some(&sym) = self.lookup.get(text) {
+            return sym;
+        }
+        let text: &'static str = Box::leak(text.to_string().into_boxed_str());
+        let sym = Symbol::from_id(self.strings.len() as u32);
+        self.strings.push(text);
+        self.lookup.insert(text, sym);
+        sym
     }
 
-    pub fn clear() {
-        INTERNER.with(|interner| *interner.borrow_mut() = InternerData::new());
+    pub fn resolve(&self, sym: Symbol) -> &'static str {
+        self.strings[sym.id() as usize]
     }
 }
 
@@ -64,24 +51,24 @@ mod tests {
 
     #[test]
     fn interning_same_text_returns_same_symbol() {
-        Interner::clear();
-        let a = Interner::intern("foo");
-        let b = Interner::intern("foo");
+        let mut interner = Interner::new();
+        let a = interner.intern("foo");
+        let b = interner.intern("foo");
         assert_eq!(a, b);
     }
 
     #[test]
     fn interning_different_text_returns_different_symbols() {
-        Interner::clear();
-        let a = Interner::intern("foo");
-        let b = Interner::intern("bar");
+        let mut interner = Interner::new();
+        let a = interner.intern("foo");
+        let b = interner.intern("bar");
         assert_ne!(a, b);
     }
 
     #[test]
     fn resolve_round_trips() {
-        Interner::clear();
-        let sym = Interner::intern("hello");
-        assert_eq!(Interner::resolve(sym), "hello");
+        let mut interner = Interner::new();
+        let sym = interner.intern("hello");
+        assert_eq!(interner.resolve(sym), "hello");
     }
 }

@@ -1,19 +1,21 @@
-use crate::diagnostics::typeck::display::DisplayCx;
-use crate::diagnostics::{DiagCtx, Diagnostic};
+use crate::diagnostics::Diagnostic;
+use crate::diagnostics::codes;
+use crate::diagnostics::display::DisplayCtx;
 use crate::driver::source::SrcSpan;
 use crate::typeck::ty::Ty;
 
 pub fn report_operator_trait_missing(
-    cx: DisplayCx<'_>,
+    cx: DisplayCtx<'_>,
     self_ty: Ty,
     trait_name: &str,
     span: SrcSpan,
 ) {
-    DiagCtx::emit(
+    cx.emit(
         Diagnostic::error(
             format!("`{}` does not implement `{trait_name}`", cx.show(self_ty)),
             span,
         )
+        .with_code(codes::OPERATOR_TRAIT_MISSING)
         .with_label(format!(
             "this operator needs an `extend .. with {trait_name}` block providing it"
         )),

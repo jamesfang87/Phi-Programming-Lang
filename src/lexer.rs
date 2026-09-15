@@ -1,13 +1,15 @@
-use crate::diagnostics::DiagCtx;
 use crate::driver::source::SrcSpan;
 use crate::lexer::literal::is_escape;
 use crate::lexer::token::{KEYWORDS, Token, TokenKind};
+use crate::session::Session;
 
 pub mod describe;
 pub mod literal;
 pub mod token;
 
 pub struct Lexer<'a> {
+    session: &'a Session,
+
     /// [`Lexer::src`] is a slice of the file's characters.
     src: &'a [char],
 
@@ -26,8 +28,9 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(src_text: &'a [char], file_offset: usize) -> Lexer<'a> {
+    pub fn new(session: &'a Session, src_text: &'a [char], file_offset: usize) -> Lexer<'a> {
         Lexer {
+            session,
             src: src_text,
             file_offset,
             cursor: 0,
@@ -190,7 +193,7 @@ impl<'a> Lexer<'a> {
             '\'' => Some(self.lex_char()),
 
             c => {
-                if c.is_ascii_alphabetic() || c == '_' {
+                if c.is_ascii_alphabetic() {
                     Some(self.lex_identifier_or_kw())
                 } else if c.is_ascii_digit() {
                     Some(self.lex_number())
@@ -218,7 +221,10 @@ impl<'a> Lexer<'a> {
 
     /// Consumes and returns the current character.
     fn eat(&mut self) -> char {
-        let temp = self.peek();
+        if self.at_eof() {
+            return '\0';
+        }
+        let temp = self.src[self.cursor];
         self.cursor += 1;
         temp
     }
@@ -250,6 +256,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    // TODO: `lex_number` handles only decimal digits (no float exponents like
+    // `1e6`/`1.5e-3`, which the parser even calls out as missing). Real programs need
+    // exponents for floats.
     fn lex_number(&mut self) -> Token {
         self.eat_digit_run();
 
@@ -365,7 +374,7 @@ impl<'a> Lexer<'a> {
 
     fn lex_escape_seq(&mut self) -> bool {
         if self.at_eof() {
-            return true;
+            return false;
         }
 
         let escaped = self.eat();
@@ -382,7 +391,7 @@ impl<'a> Lexer<'a> {
             self.file_offset + self.lexeme_pos,
             self.file_offset + self.cursor,
         );
-        DiagCtx::error(message, span);
+        self.session.error(message, span);
     }
 
     /// Consumes whitespace and comments.
@@ -444,14 +453,14 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostics::{DiagCtx, Diagnostic};
+    use crate::diagnostics::Diagnostic;
     use crate::lexer::describe::Descriptor;
 
     fn lex(src: &str) -> (Vec<Token>, Vec<Diagnostic>) {
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         let chars: Vec<char> = src.chars().collect();
-        let tokens = Lexer::new(&chars, 0).tokenize();
-        (tokens, DiagCtx::diagnostics())
+        let tokens = Lexer::new(crate::testing::session(), &chars, 0).tokenize();
+        (tokens, crate::testing::diagnostics())
     }
 
     #[test]
@@ -531,10 +540,8 @@ mod tests {
     }
 
     #[test]
-    fn accepts_every_escape_the_ast_layer_decodes() {
-        // The spellings `lex_escape_seq` accepts must match what `escape` in
-        // `ast::expr_impls` decodes, so neither side can gain an escape the other drops.
-        for escaped in ['"', '\'', 'n', 't', 'r', '\\', '0'] {
+    fn accepts_every_escape_the_literal_decoder_handles() {
+        for &(escaped, _) in crate::lexer::literal::ESCAPES {
             let src = format!(r#""\{escaped}""#);
             let (tokens, diagnostics) = lex(&src);
             assert!(diagnostics.is_empty(), "for {escaped:?}: {diagnostics:?}");
@@ -935,9 +942,9 @@ mod tests {
 
     #[test]
     fn file_offset_shifts_all_spans() {
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         let chars: Vec<char> = "foo".chars().collect();
-        let tokens = Lexer::new(&chars, 100).tokenize();
+        let tokens = Lexer::new(crate::testing::session(), &chars, 100).tokenize();
         assert_eq!(tokens[0].span.as_tuple(), (100, 103));
     }
 
@@ -1035,16 +1042,16 @@ mod tests {
     /// what `ariadne`'s rendered output actually looks like for a couple of these diagnostics.
     #[test]
     fn render_sample_report() {
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         let src = "let x = \"never closed\nlet y = '';\nlet z = @;\n";
         let chars: Vec<char> = src.chars().collect();
-        let offset = crate::driver::source::SrcMap::add_file(
+        let offset = crate::testing::add_file(
             "<test>".to_string(),
             chars.clone(),
             crate::driver::source::FileOrigin::User,
         );
 
-        Lexer::new(&chars, offset).tokenize();
-        DiagCtx::report();
+        Lexer::new(crate::testing::session(), &chars, offset).tokenize();
+        crate::testing::session().report();
     }
 }

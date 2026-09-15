@@ -3,11 +3,12 @@ use chumsky::error::Rich;
 use chumsky::extra;
 use chumsky::prelude::*;
 
-use crate::ast::{Ast, Ident, Item, ItemKind, ParsedSrcFile, Path};
+use crate::ast::{Ast, Ident, Item, ItemKind, ParsedItem, ParsedSrcFile, Path};
 use crate::diagnostics::parser::report_parse;
 use crate::driver::source::SrcSpan;
 use crate::lexer::describe::Descriptor;
 use crate::lexer::token::{Token, TokenKind};
+use crate::session::Session;
 
 type Extra<'a> = extra::Err<Rich<'a, Token>>;
 type BoxedP<'a, O> = Boxed<'a, 'a, &'a [Token], O, Extra<'a>>;
@@ -28,35 +29,39 @@ pub(crate) enum BraceForms {
     Deny,
 }
 
-pub struct Parser;
+pub struct Parser<'s> {
+    pub(crate) session: &'s Session,
+}
 
-impl Parser {
-    pub fn new() -> Self {
-        Parser
+impl<'s> Parser<'s> {
+    pub fn new(session: &'s Session) -> Self {
+        Parser { session }
     }
 
     #[allow(dead_code)]
     pub fn parse(&self, tokens: &[Token], file_offset: usize) -> ParsedSrcFile {
         let grammar = self.grammar();
-        Self::run(&grammar, tokens, file_offset)
+        Self::run(self.session, &grammar, tokens, file_offset)
     }
 
     pub fn parse_all(&self, streams: &[(Vec<Token>, usize)]) -> Ast {
         let grammar = self.grammar();
         let files = streams
             .iter()
-            .map(|(tokens, file_offset)| Self::run(&grammar, tokens, *file_offset))
+            .map(|(tokens, file_offset)| Self::run(self.session, &grammar, tokens, *file_offset))
             .collect();
         Ast::from(files)
     }
 
     fn run<'a>(
-        grammar: &impl ChumskyParser<'a, &'a [Token], Vec<Item>, Extra<'a>>,
+        session: &Session,
+        grammar: &impl ChumskyParser<'a, &'a [Token], Vec<ParsedItem>, Extra<'a>>,
         tokens: &'a [Token],
         file_offset: usize,
     ) -> ParsedSrcFile {
         let (output, errors) = grammar.parse(tokens).into_output_errors();
         report_parse(
+            session,
             &errors,
             tokens,
             file_offset,
@@ -64,7 +69,7 @@ impl Parser {
         );
 
         match output {
-            Some(items) => ParsedSrcFile::from_items(items, file_offset),
+            Some(items) => ParsedSrcFile::from_items(session, items, file_offset),
             None => ParsedSrcFile {
                 module: None,
                 imports: Vec::new(),
@@ -85,8 +90,9 @@ impl Parser {
     }
 
     fn ident_parser<'a>(&'a self) -> BoxedP<'a, Ident> {
+        let session = self.session;
         self.kind(TokenKind::Identifier)
-            .map(Ident::of_token)
+            .map(move |t: Token| Ident::of_token(session, t))
             .boxed()
     }
 
@@ -95,19 +101,21 @@ impl Parser {
             .separated_by(self.kind(TokenKind::DoubleColon))
             .at_least(1)
             .collect::<Vec<_>>()
-            .map(|segments: Vec<Ident>| {
-                let span = segments[0].span.merge(segments[segments.len() - 1].span);
-                Path { segments, span }
-            })
+            .map(|segments: Vec<Ident>| Path { segments })
             .boxed()
     }
 
-    fn grammar<'a>(&'a self) -> impl ChumskyParser<'a, &'a [Token], Vec<Item>, Extra<'a>> + Clone {
-        let item = self.item_parser().recover_with(via_parser(
-            recover_by_skipping(ITEM_RECOVERY, |span| {
-                Item::new(ItemKind::Error, span)
-            }),
-        ));
+    fn grammar<'a>(
+        &'a self,
+    ) -> impl ChumskyParser<'a, &'a [Token], Vec<ParsedItem>, Extra<'a>> + Clone
+    where
+        's: 'a,
+    {
+        let item = self
+            .item_parser()
+            .recover_with(via_parser(recover_by_skipping(ITEM_RECOVERY, |span| {
+                ParsedItem::Item(Item::new(ItemKind::Error, span))
+            })));
 
         item.repeated().collect::<Vec<_>>().then_ignore(end())
     }
@@ -116,18 +124,16 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::interner::Interner;
     use crate::ast::*;
-    use crate::diagnostics::{DiagCtx, Diagnostic};
-    use crate::driver::source::SrcMap;
+    use crate::diagnostics::Diagnostic;
     use crate::testing::{lex_src, parse_src};
 
-    /// Lexes and parses `src` and returns what [`DiagCtx`] collected. Unlike [`parse_src`] it
+    /// Lexes and parses `src` and returns what the test session collected. Unlike [`parse_src`] it
     /// asserts nothing about the result, so it can be called on source that fails to parse.
     fn diagnostics(src: &str) -> Vec<Diagnostic> {
         let (tokens, offset) = lex_src(src);
-        let _ = Parser::new().parse(&tokens, offset);
-        DiagCtx::diagnostics()
+        let _ = Parser::new(crate::testing::session()).parse(&tokens, offset);
+        crate::testing::diagnostics()
     }
 
     fn diagnostic_count(src: &str) -> usize {
@@ -146,19 +152,19 @@ mod tests {
         let span = diagnostic
             .span
             .expect("a parser diagnostic always carries a span");
-        SrcMap::text_of(span).expect("the span comes from a token the lexer produced")
+        crate::testing::text_of(span).expect("the span comes from a token the lexer produced")
     }
 
     /// Like [`diagnostic_count`], but also returns the (best-effort, possibly error-containing)
     /// parsed unit, for exercising recovery.
     fn parse_with_errors(src: &str) -> (ParsedSrcFile, usize) {
         let (tokens, offset) = lex_src(src);
-        let unit = Parser::new().parse(&tokens, offset);
-        (unit, DiagCtx::diagnostics().len())
+        let unit = Parser::new(crate::testing::session()).parse(&tokens, offset);
+        (unit, crate::testing::diagnostics().len())
     }
 
     fn text(ident: Ident) -> &'static str {
-        Interner::resolve(ident.text)
+        crate::testing::resolve(ident.text)
     }
 
     fn only_function(unit: &ParsedSrcFile) -> &Function {
@@ -272,7 +278,7 @@ mod tests {
                     assert_eq!(args.len(), 1);
                     match &args[0].kind {
                         ExprKind::Literal(Literal::Str(sym)) => {
-                            assert_eq!(Interner::resolve(*sym), "Hello, world!")
+                            assert_eq!(crate::testing::resolve(*sym), "Hello, world!")
                         }
                         other => panic!("expected a string literal, got {other:?}"),
                     }
@@ -307,7 +313,7 @@ mod tests {
                 }
                 match &init.kind {
                     ExprKind::Literal(Literal::Float { value, .. }) => {
-                        assert_eq!(Interner::resolve(*value), "1.618")
+                        assert_eq!(crate::testing::resolve(*value), "1.618")
                     }
                     other => panic!("expected a float literal, got {other:?}"),
                 }
@@ -478,7 +484,7 @@ mod tests {
         match &f.block.as_ref().unwrap().stmts[0].kind {
             StmtKind::Return(Some(expr)) => match &expr.kind {
                 ExprKind::Literal(Literal::Str(sym)) => {
-                    assert_eq!(Interner::resolve(*sym), "a\nb")
+                    assert_eq!(crate::testing::resolve(*sym), "a\nb")
                 }
                 other => panic!("expected a string literal, got {other:?}"),
             },
@@ -707,7 +713,7 @@ mod tests {
             .expect("a `fun` item with a `{}` body has a block");
         let span = body.stmts[0].span;
         assert_eq!(
-            SrcMap::text_of(span).expect("the span comes from a token the lexer produced"),
+            crate::testing::text_of(span).expect("the span comes from a token the lexer produced"),
             "1 +;"
         );
     }
@@ -718,7 +724,7 @@ mod tests {
         let span = unit.items[0].span;
         assert!(matches!(unit.items[0].kind, ItemKind::Error));
         assert_eq!(
-            SrcMap::text_of(span).expect("the span comes from a token the lexer produced"),
+            crate::testing::text_of(span).expect("the span comes from a token the lexer produced"),
             "let x = 1;"
         );
     }

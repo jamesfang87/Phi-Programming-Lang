@@ -5,26 +5,35 @@ use crate::hir::visit::{self, Visitor};
 use crate::hir::{
     AccessArgs, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind,
 };
+use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;
 use crate::typeck::tyctx::TyCtx;
 
-pub fn check(hir: &Hir, tcx: &TyCtx, types: &TypeResolutions) {
-    let mut pass = LetScopes { hir, tcx, types };
+// TODO: should probably move this out of typeck
+pub fn check(session: &Session, hir: &Hir, tcx: &TyCtx, types: &TypeResolutions) {
+    let mut pass = LetScopes {
+        session,
+        hir,
+        tcx,
+        types,
+    };
     for def_id in hir.def_ids() {
         match hir.def(def_id) {
             OwnerNode::Function(function) => {
                 if let Some(block) = function.block {
-                    pass.visit_block(block);
+                    pass.visit_block(block.into());
                 }
             }
-            OwnerNode::Closure(closure) => pass.visit_block(closure.block),
+            OwnerNode::Closure(closure) => pass.visit_block(closure.block.into()),
             _ => {}
         }
     }
 }
 
+// TODO: why is it called LetScopes?
 struct LetScopes<'hir, 'a> {
+    session: &'a Session,
     hir: &'hir Hir,
     tcx: &'a TyCtx,
     types: &'a TypeResolutions,
@@ -48,6 +57,7 @@ impl<'hir> Visitor<'hir> for LetScopes<'hir, '_> {
             };
             for_each_binding(self.hir, pat, &mut |binding, name| {
                 let mut scan = MutationScan {
+                    session: self.session,
                     hir: self.hir,
                     tcx: self.tcx,
                     types: self.types,
@@ -55,10 +65,10 @@ impl<'hir> Visitor<'hir> for LetScopes<'hir, '_> {
                     name,
                 };
                 for &later in &block.stmts[index + 1..] {
-                    scan.visit_stmt(later);
+                    scan.visit_stmt(later.into());
                 }
                 if let Some(tail) = block.expr {
-                    scan.visit_expr(tail);
+                    scan.visit_expr(tail.into());
                 }
             });
         }
@@ -66,7 +76,8 @@ impl<'hir> Visitor<'hir> for LetScopes<'hir, '_> {
     }
 }
 
-fn for_each_binding(hir: &Hir, pat: HirId, f: &mut impl FnMut(HirId, Ident)) {
+fn for_each_binding(hir: &Hir, pat: impl Into<HirId>, f: &mut impl FnMut(HirId, Ident)) {
+    let pat = pat.into();
     match &hir.pat(pat).kind {
         PatKind::Binding { name, .. } => f(pat, *name),
         PatKind::Tuple(elems) => {
@@ -88,6 +99,7 @@ fn for_each_binding(hir: &Hir, pat: HirId, f: &mut impl FnMut(HirId, Ident)) {
 }
 
 struct MutationScan<'hir, 'a> {
+    session: &'a Session,
     hir: &'hir Hir,
     tcx: &'a TyCtx,
     types: &'a TypeResolutions,
@@ -128,7 +140,8 @@ impl<'hir> Visitor<'hir> for MutationScan<'hir, '_> {
 }
 
 impl MutationScan<'_, '_> {
-    fn check_root(&self, expr: HirId, span: SrcSpan) {
+    fn check_root(&self, expr: impl Into<HirId>, span: SrcSpan) {
+        let expr = expr.into();
         if self.reaches_through_ref(expr) {
             return;
         }
@@ -137,7 +150,7 @@ impl MutationScan<'_, '_> {
                 if let Res::Local(Local::Variable(id)) = path.res
                     && id == self.binding
                 {
-                    report_not_mutable(self.name, span);
+                    report_not_mutable(self.session, self.name, span);
                 }
             }
             ExprKind::Access {
@@ -188,8 +201,6 @@ mod tests {
         );
     }
 
-    /// A field chain and an index are both checked against the root binding's own mutability,
-    /// but stop being checked once the chain crosses a reference.
     #[test]
     fn assignment_through_a_chain_of_fields_and_indices_stops_checking_at_a_reference() {
         let structs = "struct Inner { fst: i32 } struct Outer { inner: Inner }";

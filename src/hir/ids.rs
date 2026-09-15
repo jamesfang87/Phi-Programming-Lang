@@ -64,3 +64,40 @@ impl HirId {
         HirId { owner, local_id }
     }
 }
+
+macro_rules! typed_id {
+    ($name:ident) => {
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+        pub struct $name(HirId);
+
+        #[allow(dead_code)]
+        impl $name {
+            pub fn hir_id(self) -> HirId {
+                self.0
+            }
+
+            pub fn owner(self) -> DefId {
+                self.0.owner
+            }
+        }
+
+        impl From<HirId> for $name {
+            fn from(id: HirId) -> Self {
+                Self(id)
+            }
+        }
+
+        impl From<$name> for HirId {
+            fn from(id: $name) -> Self {
+                id.0
+            }
+        }
+    };
+}
+
+typed_id!(ExprId);
+typed_id!(TyId);
+typed_id!(PatId);
+typed_id!(BlockId);
+typed_id!(StmtId);
+typed_id!(ArmId);

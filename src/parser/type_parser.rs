@@ -10,7 +10,7 @@ use super::{BoxedP, Extra, Parser};
 
 type TypeArgList = Option<(Vec<Ty>, Token)>;
 
-impl Parser {
+impl<'s> Parser<'s> {
     pub fn type_parser<'a>(&'a self) -> BoxedP<'a, Ty> {
         self.type_parser_with_expr(self.expr_parser())
     }
@@ -40,7 +40,7 @@ impl Parser {
             |ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Ty, Extra<'a>>>| {
                 let primitive_ty = self
                     .primitive_token_parser()
-                    .map(|t: Token| Ty::primitive(t))
+                    .map(|t: Token| Ty::primitive(self.session, t))
                     .boxed();
 
                 let path_ty = self
@@ -59,8 +59,8 @@ impl Parser {
                     )
                     .map(|(p, args): (Path, TypeArgList)| {
                         let (args, span) = match args {
-                            Some((args, close_tok)) => (args, p.span.merge(close_tok.span)),
-                            None => (Vec::new(), p.span),
+                            Some((args, close_tok)) => (args, p.span().merge(close_tok.span)),
+                            None => (Vec::new(), p.span()),
                         };
 
                         Ty::new(TyKind::Path { path: p, args }, span)
@@ -75,7 +75,20 @@ impl Parser {
                     })
                     .boxed();
 
-                let tuple_ty = self
+                let single_element_tuple_ty = self
+                    .kind(TokenKind::OpenParen)
+                    .then(ty.clone())
+                    .then_ignore(self.kind(TokenKind::Comma))
+                    .then(self.kind(TokenKind::CloseParen))
+                    .map(|((open_tok, element), close_tok)| {
+                        Ty::new(
+                            TyKind::Tuple(vec![element]),
+                            open_tok.span.merge(close_tok.span),
+                        )
+                    })
+                    .boxed();
+
+                let tuple_or_group_ty = self
                     .kind(TokenKind::OpenParen)
                     .then(
                         ty.clone()
@@ -85,13 +98,19 @@ impl Parser {
                             .collect::<Vec<_>>(),
                     )
                     .then(self.kind(TokenKind::CloseParen))
-                    .map(|((open_tok, inside_types), close_tok)| {
-                        Ty::new(
-                            TyKind::Tuple(inside_types.into_iter().collect::<Vec<_>>()),
-                            open_tok.span.merge(close_tok.span),
-                        )
+                    .map(|((open_tok, mut inside_types), close_tok)| {
+                        if inside_types.len() == 1 {
+                            inside_types.pop().expect("checked len == 1 above")
+                        } else {
+                            Ty::new(
+                                TyKind::Tuple(inside_types),
+                                open_tok.span.merge(close_tok.span),
+                            )
+                        }
                     })
                     .boxed();
+
+                let tuple_ty = choice((single_element_tuple_ty, tuple_or_group_ty)).boxed();
 
                 let array_ty = self
                     .kind(TokenKind::OpenBracket)
@@ -149,7 +168,7 @@ impl Parser {
                     .map(|((dyn_tok, path), args): ((Token, Path), TypeArgList)| {
                         let (args, end) = match args {
                             Some((args, close_tok)) => (args, close_tok.span),
-                            None => (Vec::new(), path.span),
+                            None => (Vec::new(), path.span()),
                         };
 
                         Ty::new(TyKind::Dyn { path, args }, dyn_tok.span.merge(end))
@@ -297,15 +316,13 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::interner::Interner;
     use crate::ast::{ExprKind, Literal};
-    use crate::driver::source::SrcMap;
     use crate::lexer::Lexer;
     use crate::testing::lex_src;
 
     fn parse_ty(src: &str) -> Ty {
         let (tokens, _) = lex_src(src);
-        let parser = Parser::new();
+        let parser = Parser::new(crate::testing::session());
         let (output, errors) = parser.type_parser().parse(&tokens[..]).into_output_errors();
         assert!(
             errors.is_empty(),
@@ -318,13 +335,13 @@ mod tests {
     /// they're empty, unlike [`parse_ty`]).
     fn diagnostic_count(src: &str) -> usize {
         let chars: Vec<char> = src.chars().collect();
-        let offset = SrcMap::add_file(
+        let offset = crate::testing::add_file(
             "<test>".to_string(),
             chars.clone(),
             crate::driver::source::FileOrigin::User,
         );
-        let tokens = Lexer::new(&chars, offset).tokenize();
-        let parser = Parser::new();
+        let tokens = Lexer::new(crate::testing::session(), &chars, offset).tokenize();
+        let parser = Parser::new(crate::testing::session());
         let (_, errors) = parser
             .type_parser()
             .then(end())
@@ -335,7 +352,7 @@ mod tests {
 
     fn base_name(ty: &Ty) -> &'static str {
         match &ty.kind {
-            TyKind::Path { path, .. } => Interner::resolve(path.segments[0].text),
+            TyKind::Path { path, .. } => crate::testing::resolve(path.segments[0].text),
             other => panic!("expected a base type, got {other:?}"),
         }
     }
@@ -354,8 +371,8 @@ mod tests {
         match &ty.kind {
             TyKind::Path { path, args } => {
                 assert_eq!(path.segments.len(), 2);
-                assert_eq!(Interner::resolve(path.segments[0].text), "math");
-                assert_eq!(Interner::resolve(path.segments[1].text), "Vector2D");
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "math");
+                assert_eq!(crate::testing::resolve(path.segments[1].text), "Vector2D");
                 assert!(args.is_empty());
             }
             other => panic!("expected a base type, got {other:?}"),
@@ -367,7 +384,7 @@ mod tests {
         let ty = parse_ty("Result<T, E>");
         match &ty.kind {
             TyKind::Path { path, args } => {
-                assert_eq!(Interner::resolve(path.segments[0].text), "Result");
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "Result");
                 assert_eq!(args.len(), 2);
                 assert_eq!(base_name(&args[0]), "T");
                 assert_eq!(base_name(&args[1]), "E");
@@ -383,11 +400,11 @@ mod tests {
         let ty = parse_ty("Array<Option<i32>>");
         match &ty.kind {
             TyKind::Path { path, args } => {
-                assert_eq!(Interner::resolve(path.segments[0].text), "Array");
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "Array");
                 assert_eq!(args.len(), 1);
                 match &args[0].kind {
                     TyKind::Path { path, args } => {
-                        assert_eq!(Interner::resolve(path.segments[0].text), "Option");
+                        assert_eq!(crate::testing::resolve(path.segments[0].text), "Option");
                         assert_eq!(args.len(), 1);
                     }
                     other => panic!("expected a nested base type, got {other:?}"),
@@ -432,7 +449,7 @@ mod tests {
         let ty = parse_ty("dyn Shape");
         match &ty.kind {
             TyKind::Dyn { path, args } => {
-                assert_eq!(Interner::resolve(path.segments[0].text), "Shape");
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "Shape");
                 assert!(args.is_empty());
             }
             other => panic!("expected a dyn type, got {other:?}"),
@@ -445,7 +462,7 @@ mod tests {
         let ty = parse_ty("dyn Index<K, V>");
         match &ty.kind {
             TyKind::Dyn { path, args } => {
-                assert_eq!(Interner::resolve(path.segments[0].text), "Index");
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "Index");
                 assert_eq!(args.len(), 2);
             }
             other => panic!("expected a dyn type, got {other:?}"),
@@ -811,5 +828,19 @@ mod tests {
     #[test]
     fn rejects_any_wrapping_a_fn_type() {
         assert_eq!(diagnostic_count("any fun(i32) -> i32"), 1);
+    }
+
+    /// BUG: the tuple-type parser builds `TyKind::Tuple` unconditionally and never unwraps the
+    /// single-element case, so `(i32)` becomes `(i32,)`. The expression parser already unwraps
+    /// `(e)` to `e`, and the grammar's own tests and `display.rs` say only `(T,)` is a tuple.
+    ///
+    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
+    #[test]
+    fn parses_parenthesized_type_as_the_inner_type() {
+        let ty = parse_ty("(i32)");
+        assert!(
+            matches!(ty.kind, TyKind::Path { .. }),
+            "expected `(i32)` to parse as `i32`, got {ty:?}"
+        );
     }
 }

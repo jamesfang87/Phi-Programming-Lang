@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 
-use crate::ast::interner::Interner;
 use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol, Visibility};
 use crate::diagnostics::nameres::{
     report_ambiguous_import, report_conflict, report_dyn_not_trait, report_not_found,
@@ -10,13 +9,27 @@ use crate::diagnostics::nameres::{
 use crate::driver::source::SrcSpan;
 use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
+use crate::session::Session;
 
 const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
 
+enum SelfScope {
+    Defined(Type),
+    Unresolved,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Namespace {
+    Value,
+    Type,
+    Module,
+}
+
 pub struct SymbolTable<'ast> {
+    session: &'ast Session,
     local_scopes: Vec<HashMap<Symbol, Local>>,
     generic_scopes: Vec<HashMap<Symbol, Type>>,
-    self_scopes: Vec<Option<Type>>,
+    self_scopes: Vec<SelfScope>,
     module_scopes: HashMap<NodeId, ModuleScope>,
 
     item_map: HashMap<NodeId, &'ast Item>,
@@ -39,27 +52,27 @@ impl ModuleScope {
         }
     }
 
-    fn insert_function(&mut self, name: Ident, id: NodeId) {
+    fn insert_function(&mut self, session: &Session, name: Ident, id: NodeId) {
         match self.functions.entry(name.text) {
-            Entry::Occupied(_) => report_conflict(name),
+            Entry::Occupied(_) => report_conflict(session, name),
             Entry::Vacant(e) => {
                 e.insert(id);
             }
         }
     }
 
-    fn insert_type(&mut self, name: Ident, def: TyDef) {
+    fn insert_type(&mut self, session: &Session, name: Ident, def: TyDef) {
         match self.types.entry(name.text) {
-            Entry::Occupied(_) => report_conflict(name),
+            Entry::Occupied(_) => report_conflict(session, name),
             Entry::Vacant(e) => {
                 e.insert(def);
             }
         }
     }
 
-    fn insert_mod(&mut self, name: Ident, id: NodeId) {
+    fn insert_mod(&mut self, session: &Session, name: Ident, id: NodeId) {
         match self.mods.entry(name.text) {
-            Entry::Occupied(_) => report_conflict(name),
+            Entry::Occupied(_) => report_conflict(session, name),
             Entry::Vacant(e) => {
                 e.insert(id);
             }
@@ -67,8 +80,8 @@ impl ModuleScope {
     }
 }
 
-pub fn is_prim_ty(name: Symbol) -> Option<PrimTy> {
-    Some(match Interner::resolve(name) {
+pub fn is_prim_ty(session: &Session, name: Symbol) -> Option<PrimTy> {
+    Some(match session.resolve(name) {
         "i8" => PrimTy::I8,
         "i16" => PrimTy::I16,
         "i32" => PrimTy::I32,
@@ -88,8 +101,8 @@ pub fn is_prim_ty(name: Symbol) -> Option<PrimTy> {
 }
 
 impl<'ast> SymbolTable<'ast> {
-    pub fn new(ast: &'ast Ast) -> Self {
-        let mut table = Self::collect(ast);
+    pub fn new(session: &'ast Session, ast: &'ast Ast) -> Self {
+        let mut table = Self::collect(session, ast);
         table.resolve_imports();
         table.prelude = table.find_prelude();
         table
@@ -105,15 +118,16 @@ impl<'ast> SymbolTable<'ast> {
     fn find_prelude(&self) -> Option<NodeId> {
         let mut current = self.ast.root_id();
         for segment in PRELUDE_PATH {
-            current = self.lookup_mod(current, Interner::intern(segment))?;
+            current = self.lookup_mod(current, self.session.intern(segment))?;
         }
         Some(current)
     }
 
     //-------------------------------------------------------------------------
 
-    pub fn collect(ast: &'ast Ast) -> Self {
+    pub fn collect(session: &'ast Session, ast: &'ast Ast) -> Self {
         let mut table = Self {
+            session,
             local_scopes: Vec::new(),
             generic_scopes: Vec::new(),
             self_scopes: Vec::new(),
@@ -133,13 +147,17 @@ impl<'ast> SymbolTable<'ast> {
         for item in &module.items {
             self.item_map.insert(item.id, item);
             match &item.kind {
-                ItemKind::Function(f) => scope.insert_function(f.name, item.id),
-                ItemKind::Struct(s) => scope.insert_type(s.name, TyDef::Struct(item.id)),
-                ItemKind::Enum(e) => scope.insert_type(e.name, TyDef::Enum(item.id)),
-                ItemKind::Trait(t) => scope.insert_type(t.name, TyDef::Trait(item.id)),
+                ItemKind::Function(f) => scope.insert_function(self.session, f.name, item.id),
+                ItemKind::Struct(s) => {
+                    scope.insert_type(self.session, s.name, TyDef::Struct(item.id))
+                }
+                ItemKind::Enum(e) => scope.insert_type(self.session, e.name, TyDef::Enum(item.id)),
+                ItemKind::Trait(t) => {
+                    scope.insert_type(self.session, t.name, TyDef::Trait(item.id))
+                }
                 // `extend` blocks are unnamed, so neither namespace can hold them.
                 ItemKind::Extend(_) => {}
-                ItemKind::ModuleDecl(_) | ItemKind::Import(_) | ItemKind::Error => {}
+                ItemKind::Error => {}
             }
         }
 
@@ -152,7 +170,7 @@ impl<'ast> SymbolTable<'ast> {
                 .segments
                 .last()
                 .expect("a module's path always has at least one segment");
-            scope.insert_mod(name, child_id);
+            scope.insert_mod(self.session, name, child_id);
         }
 
         self.module_scopes.insert(module_id, scope);
@@ -165,32 +183,61 @@ impl<'ast> SymbolTable<'ast> {
     //-------------------------------------------------------------------------
 
     fn resolve_imports(&mut self) {
+        let mut named = Vec::new();
+        let mut globs = Vec::new();
         for module_id in self.ast.mod_ids() {
-            let module = self.ast.module(module_id);
-            for import in &module.imports {
-                self.resolve_import(module_id, import);
+            for import in &self.ast.module(module_id).imports {
+                if import.glob {
+                    globs.push((module_id, import.clone()));
+                } else {
+                    named.push((module_id, import.clone()));
+                }
+            }
+        }
+
+        for (module_id, import) in &named {
+            self.resolve_import(*module_id, import);
+        }
+
+        let root = self.ast.root_id();
+        let globs: Vec<(NodeId, Import, Option<NodeId>)> = globs
+            .into_iter()
+            .map(|(module_id, import)| {
+                let source = self.resolve_import_mod_path(root, &import.path);
+                if source.is_none() {
+                    report_not_found(
+                        self.session,
+                        *import
+                            .path
+                            .segments
+                            .last()
+                            .expect("a path always has at least one segment"),
+                    );
+                }
+                (module_id, import, source)
+            })
+            .collect();
+
+        let mut reported = HashSet::new();
+        loop {
+            let mut changed = false;
+            for (into, import, source) in &globs {
+                if let Some(source) = source {
+                    changed |= self.import_glob(*into, *source, import, &mut reported);
+                }
+            }
+            if !changed {
+                break;
             }
         }
     }
 
     fn resolve_import(&mut self, importing_module: NodeId, import: &Import) {
+        // TODO: imports are always module-private (`Import` carries no `Visibility`, and the
+        // parser accepts no `public import`), so re-exports are impossible. Real crates need
+        // `pub import` to re-export items and build a public API facade.
         // note that ALL imports start from the root, not the importing module
         let root = self.ast.root_id();
-
-        if import.glob {
-            let Some(source) = self.resolve_import_mod_path(root, &import.path) else {
-                report_not_found(
-                    *import
-                        .path
-                        .segments
-                        .last()
-                        .expect("a path always has at least one segment"),
-                );
-                return;
-            };
-            self.import_glob(importing_module, source, import);
-            return;
-        }
 
         let name = import.alias.unwrap_or(
             *import
@@ -228,7 +275,7 @@ impl<'ast> SymbolTable<'ast> {
         let mod_res = self.resolve_import_mod_path(root, &import.path);
 
         if type_res.is_none() && val_res.is_none() && mod_res.is_none() && private_hit {
-            report_private_item(name);
+            report_private_item(self.session, name);
             return;
         }
 
@@ -237,63 +284,114 @@ impl<'ast> SymbolTable<'ast> {
                 .module_scopes
                 .get_mut(&importing_module)
                 .unwrap()
-                .insert_type(name, def),
+                .insert_type(self.session, name, def),
             (None, Some(id), None) => self
                 .module_scopes
                 .get_mut(&importing_module)
                 .unwrap()
-                .insert_function(name, id),
+                .insert_function(self.session, name, id),
             (None, None, Some(id)) => self
                 .module_scopes
                 .get_mut(&importing_module)
                 .unwrap()
-                .insert_mod(name, id),
-            (None, None, None) => report_not_found(name),
-            _ => report_ambiguous_import(name),
+                .insert_mod(self.session, name, id),
+            (None, None, None) => report_not_found(self.session, name),
+            _ => report_ambiguous_import(self.session, name),
         }
     }
 
-    fn import_glob(&mut self, into: NodeId, source: NodeId, import: &Import) {
+    fn import_glob(
+        &mut self,
+        into: NodeId,
+        source: NodeId,
+        import: &Import,
+        reported: &mut HashSet<(NodeId, Symbol, Namespace)>,
+    ) -> bool {
         let (functions, types, mods) = {
-            let source = self
+            let source_scope = self
                 .module_scopes
                 .get(&source)
                 .expect("every module in the tree has a scope by the time imports resolve");
             (
-                source.functions.clone(),
-                source.types.clone(),
-                source.mods.clone(),
+                source_scope.functions.clone(),
+                source_scope.types.clone(),
+                source_scope.mods.clone(),
             )
         };
 
-        let dest = self.module_scopes.get_mut(&into).unwrap();
+        let functions: Vec<_> = functions
+            .into_iter()
+            .filter(|(_, id)| self.is_visible_from(into, source, self.visibility(*id)))
+            .collect();
+        let types: Vec<_> = types
+            .into_iter()
+            .filter(|(_, def)| self.is_visible_from(into, source, self.visibility(def.node_id())))
+            .collect();
+
+        let mut changed = false;
+        let ident = |text| Ident {
+            text,
+            span: import.span,
+        };
+
         for (text, id) in functions {
-            dest.insert_function(
-                Ident {
-                    text,
-                    span: import.span,
-                },
-                id,
-            );
+            match self.lookup_function(into, text) {
+                Some(existing) if existing == id => {}
+                Some(_) => {
+                    if reported.insert((into, text, Namespace::Value)) {
+                        report_conflict(self.session, ident(text));
+                    }
+                }
+                None => {
+                    self.module_scopes.get_mut(&into).unwrap().insert_function(
+                        self.session,
+                        ident(text),
+                        id,
+                    );
+                    changed = true;
+                }
+            }
         }
+
         for (text, def) in types {
-            dest.insert_type(
-                Ident {
-                    text,
-                    span: import.span,
-                },
-                def,
-            );
+            match self.lookup_type(into, text) {
+                Some(existing) if existing == def => {}
+                Some(_) => {
+                    if reported.insert((into, text, Namespace::Type)) {
+                        report_conflict(self.session, ident(text));
+                    }
+                }
+                None => {
+                    self.module_scopes.get_mut(&into).unwrap().insert_type(
+                        self.session,
+                        ident(text),
+                        def,
+                    );
+                    changed = true;
+                }
+            }
         }
+
         for (text, id) in mods {
-            dest.insert_mod(
-                Ident {
-                    text,
-                    span: import.span,
-                },
-                id,
-            );
+            match self.lookup_mod(into, text) {
+                Some(existing) if existing == id => {}
+                Some(_) => {
+                    if reported.insert((into, text, Namespace::Module)) {
+                        report_conflict(self.session, ident(text));
+                    }
+                }
+                None => {
+                    self.module_scopes.get_mut(&into).unwrap().insert_mod(
+                        self.session,
+                        ident(text),
+                        id,
+                    );
+                    changed = true;
+                }
+            }
         }
+
+        changed
     }
 
     fn resolve_import_value_path(&self, base: NodeId, path: &Path) -> Option<(NodeId, NodeId)> {
@@ -363,7 +461,7 @@ impl<'ast> SymbolTable<'ast> {
         let (last, prefix) = path.segments.split_last()?;
 
         if prefix.is_empty() {
-            if let Some(prim) = is_prim_ty(last.text) {
+            if let Some(prim) = is_prim_ty(self.session, last.text) {
                 return Some(Type::Prim(prim));
             }
             if let Some(generic) = self.lookup_generic(last.text) {
@@ -390,18 +488,18 @@ impl<'ast> SymbolTable<'ast> {
         match self.probe_type_path(from, path) {
             Some(ty) => Res::Type(ty),
             None => {
-                report_not_found(last);
+                report_not_found(self.session, last);
                 Res::Err
             }
         }
     }
 
     pub fn lookup_self_res(&self, span: SrcSpan) -> Res {
-        match self.self_scopes.last().copied() {
-            Some(Some(ty)) => Res::SelfTy(ty),
-            Some(None) => Res::Err,
+        match self.self_scopes.last() {
+            Some(SelfScope::Defined(ty)) => Res::SelfTy(*ty),
+            Some(SelfScope::Unresolved) => Res::Err,
             None => {
-                report_self_unavailable(span);
+                report_self_unavailable(self.session, span);
                 Res::Err
             }
         }
@@ -413,7 +511,7 @@ impl<'ast> SymbolTable<'ast> {
             Res::Type(ty @ Type::Def(TyDef::Trait(_))) => Res::Type(ty),
             Res::Err => Res::Err,
             _ => {
-                report_dyn_not_trait(path.span);
+                report_dyn_not_trait(self.session, path.span());
                 Res::Err
             }
         }
@@ -516,20 +614,20 @@ impl<'ast> SymbolTable<'ast> {
             .find_map(|s| s.get(&name).copied())
     }
 
-    pub fn lookup_generic_in_outermost_scope(&self, name: Symbol) -> Option<Type> {
+    pub fn lookup_generic_locally(&self, name: Symbol) -> Option<Type> {
         self.generic_scopes.last()?.get(&name).copied()
     }
 
     //-------------------------------------------------------------------------
 
     pub fn insert_self(&mut self, ty: Type) {
-        self.self_scopes.push(Some(ty));
+        self.self_scopes.push(SelfScope::Defined(ty));
     }
 
     /// This is used for cases where due to a program error, a Self does not exist.
     /// For example, an `extend` block whose `adt_path` is unresolved
     pub fn insert_self_unresolved(&mut self) {
-        self.self_scopes.push(None);
+        self.self_scopes.push(SelfScope::Unresolved);
     }
 
     pub fn pop_self(&mut self) {
@@ -543,6 +641,9 @@ impl<'ast> SymbolTable<'ast> {
 
     /// Returns the current self entry if present and None if not
     pub fn lookup_self(&self) -> Option<Type> {
-        self.self_scopes.last().copied().flatten()
+        match self.self_scopes.last() {
+            Some(SelfScope::Defined(ty)) => Some(*ty),
+            _ => None,
+        }
     }
 }

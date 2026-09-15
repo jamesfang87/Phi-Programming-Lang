@@ -2,7 +2,6 @@ use inkwell::values::BasicValueEnum;
 
 use super::ctx::CodegenCtx;
 use crate::ast::Symbol;
-use crate::ast::interner::Interner;
 use crate::mir::mangle::mangle;
 use crate::mir::{ConstKind, Constant, Instance, Mir};
 use crate::nameres::PrimTy;
@@ -17,13 +16,18 @@ pub fn lower_constant<'ctx>(
 ) -> BasicValueEnum<'ctx> {
     match &constant.kind {
         ConstKind::Int(v) => {
+            if matches!(
+                tcx.kind(constant.ty),
+                TyKind::Primitive(PrimTy::F32 | PrimTy::F64)
+            ) {
+                return float_llvm_type(cx, tcx, constant.ty)
+                    .const_float(*v as f64)
+                    .into();
+            }
             let (int_ty, is_signed) = int_llvm_type(cx, tcx, constant.ty);
             int_ty.const_int(*v as u64, is_signed).into()
         }
-        ConstKind::Float(v) => match tcx.kind(constant.ty) {
-            TyKind::Primitive(PrimTy::F32) => cx.llvm.f32_type().const_float(*v).into(),
-            _ => cx.llvm.f64_type().const_float(*v).into(),
-        },
+        ConstKind::Float(v) => float_llvm_type(cx, tcx, constant.ty).const_float(*v).into(),
         ConstKind::Bool(b) => cx.llvm.bool_type().const_int(*b as u64, false).into(),
         ConstKind::Char(c) => cx.llvm.i32_type().const_int(*c as u64, false).into(),
         ConstKind::Str(sym) => str_operand(cx, *sym),
@@ -66,8 +70,20 @@ fn int_llvm_type<'ctx>(
     (int_ty, is_signed)
 }
 
+fn float_llvm_type<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &TyCtx,
+    ty: crate::typeck::ty::Ty,
+) -> inkwell::types::FloatType<'ctx> {
+    if matches!(tcx.kind(ty), TyKind::Primitive(PrimTy::F32)) {
+        cx.llvm.f32_type()
+    } else {
+        cx.llvm.f64_type()
+    }
+}
+
 fn str_operand<'ctx>(cx: &mut CodegenCtx<'ctx>, sym: Symbol) -> BasicValueEnum<'ctx> {
-    let bytes = Interner::resolve(sym).as_bytes();
+    let bytes = cx.session.resolve(sym).as_bytes();
     let next_index = cx.strings.borrow().len();
     let ptr = *cx.strings.borrow_mut().entry(sym).or_insert_with(|| {
         let global = cx.module.add_global(
@@ -107,7 +123,7 @@ mod tests {
         );
 
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(&llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let locals = std::collections::HashMap::new();
         for operand in &string_constants {
             lower_operand(&mut cx, &mut tcx, &mir, &locals, &body.local_decls, operand);

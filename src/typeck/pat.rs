@@ -1,20 +1,24 @@
 use std::collections::HashMap;
 
-use crate::ast::interner::Interner;
 use crate::ast::{Ident, Literal, Mutability, Symbol};
 use crate::diagnostics::typeck::pat::{
     report_literal_pattern_mismatch, report_match_needs_wildcard, report_match_not_exhaustive,
-    report_no_payload_field, report_no_variant, report_payload_shape,
-    report_string_pattern_unsupported, report_tuple_pattern_mismatch, report_variant_type_unknown,
+    report_no_payload_field, report_payload_shape, report_string_pattern_unsupported,
+    report_tuple_pattern_mismatch, report_variant_type_unknown,
 };
+use crate::diagnostics::typeck::report_no_variant;
 use crate::driver::source::SrcSpan;
 use crate::hir::{
-    BindingMode, DefId, Hir, HirId, OwnerNode, PatKind, Payload, PayloadField, VariantPayload,
+    ArmId, BindingMode, DefId, Hir, HirId, OwnerNode, Pat, PatKind, Payload, PayloadField,
+    VariantPayload,
 };
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
 use crate::typeck::results::PatAdjust;
 use crate::typeck::ty::{Ty, TyKind};
+
+// TODO: what does this file do?
+// why is there VariantDef? Can't the Hir Variant work?
 
 pub(crate) struct VariantDef {
     pub id: HirId,
@@ -42,7 +46,8 @@ impl VariantTys {
 }
 
 impl<'hir> Typeck<'hir> {
-    pub(crate) fn check_pat(&mut self, id: HirId, expected: Ty, mode: BindingMode) {
+    pub(crate) fn check_pat(&mut self, id: impl Into<HirId>, expected: Ty, mode: BindingMode) {
+        let id = id.into();
         let hir: &'hir Hir = self.hir;
         let pat = hir.pat(id);
         let span = pat.span;
@@ -77,11 +82,11 @@ impl<'hir> Typeck<'hir> {
                 BindingMode::Value => expected,
             },
             PatKind::Literal(lit) => {
-                // `str` comparison has no lowering yet -- `str` is a `{ pointer, length }`
+                // TODO: `str` comparison has no lowering yet -- `str` is a `{ pointer, length }`
                 // pair whose equality would need a runtime helper -- so a string pattern is
                 // rejected here rather than left to ICE in MIR lowering.
                 if matches!(lit, Literal::Str(_)) {
-                    report_string_pattern_unsupported(span);
+                    report_string_pattern_unsupported(self.session, span);
                     self.tcx.error()
                 } else {
                     let found = self.check_literal(lit, span);
@@ -92,7 +97,7 @@ impl<'hir> Typeck<'hir> {
                 }
             }
             PatKind::Tuple(elems) => {
-                let vars: Vec<Ty> = elems.iter().map(|_| self.tcx.next_ty_var()).collect();
+                let vars: Vec<Ty> = elems.iter().map(|_| self.tcx.next_infer_var()).collect();
                 let tuple = self.tcx.mk_tuple(vars.clone());
                 if let Err(err) = self.unifier.unify(&self.tcx, expected, tuple) {
                     report_tuple_pattern_mismatch(self.display_cx(), err, span);
@@ -148,7 +153,7 @@ impl<'hir> Typeck<'hir> {
     ) -> Ty {
         let expected = self.unifier.find_deep(&mut self.tcx, expected);
         if matches!(self.tcx.kind(expected), TyKind::Var(_)) {
-            report_variant_type_unknown(variant, span);
+            report_variant_type_unknown(self.session, variant, span);
             self.check_failed_payload(payload, mode);
             return self.tcx.error();
         }
@@ -181,7 +186,7 @@ impl<'hir> Typeck<'hir> {
                 self.check_record_pats(declared, written, found.id, mode);
             }
             _ => {
-                report_payload_shape(self.hir, variant, span, found);
+                report_payload_shape(self.session, self.hir, variant, span, found);
                 self.check_failed_payload(payload, mode);
             }
         }
@@ -200,7 +205,7 @@ impl<'hir> Typeck<'hir> {
             match declared.iter().find(|(field, _)| field.text == name.text) {
                 Some(&(_, ty)) => self.check_pat(pat, ty, mode),
                 None => {
-                    report_no_payload_field(self.hir, name, variant);
+                    report_no_payload_field(self.session, self.hir, name, variant);
                     let error = self.tcx.error();
                     self.check_pat(pat, error, mode);
                 }
@@ -218,12 +223,13 @@ impl<'hir> Typeck<'hir> {
     }
 
     /// The sub-patterns directly inside `id`.
-    fn pat_children(&self, id: HirId) -> Vec<HirId> {
+    fn pat_children(&self, id: impl Into<HirId>) -> Vec<HirId> {
+        let id = id.into();
         match &self.hir.pat(id).kind {
             PatKind::Wildcard | PatKind::Binding { .. } | PatKind::Literal(_) | PatKind::Error => {
                 Vec::new()
             }
-            PatKind::Tuple(elems) => elems.clone(),
+            PatKind::Tuple(elems) => elems.iter().map(|p| (*p).into()).collect(),
             PatKind::Variant { payload, .. } => payload_pats(payload),
         }
     }
@@ -286,7 +292,7 @@ impl<'hir> Typeck<'hir> {
     pub(crate) fn check_match_exhaustive(
         &mut self,
         scrutinee_ty: Ty,
-        arms: &[HirId],
+        arms: &[ArmId],
         span: SrcSpan,
     ) {
         let ty = self.unifier.find_deep(&mut self.tcx, scrutinee_ty);
@@ -298,8 +304,8 @@ impl<'hir> Typeck<'hir> {
         }
 
         let hir = self.hir;
-        let pat_kind = |arm: HirId| &hir.pat(hir.arm(arm).pat).kind;
-        let unguarded = |arm: HirId| hir.arm(arm).guard.is_none();
+        let pat_kind = |arm: ArmId| &hir.pat(hir.arm(arm).pat).kind;
+        let unguarded = |arm: ArmId| hir.arm(arm).guard.is_none();
 
         if arms
             .iter()
@@ -325,12 +331,12 @@ impl<'hir> Typeck<'hir> {
                     .map(|(_, name)| name)
                     .collect();
                 if !missing.is_empty() {
-                    report_match_not_exhaustive(span, &missing);
+                    report_match_not_exhaustive(self.session, span, &missing);
                 }
             }
             TyKind::Adt { def, .. } => {
                 let OwnerNode::Enum(enum_) = hir.def(*def) else {
-                    report_match_needs_wildcard(span);
+                    report_match_needs_wildcard(self.session, span);
                     return;
                 };
                 let missing: Vec<String> = enum_
@@ -342,14 +348,117 @@ impl<'hir> Typeck<'hir> {
                             matches!(pat_kind(arm), PatKind::Variant { variant, .. } if variant.text == name.text)
                         })
                     })
-                    .map(|name| Interner::resolve(name.text).to_string())
+                    .map(|name| self.session.resolve(name.text).to_string())
                     .collect();
                 if !missing.is_empty() {
                     let missing: Vec<&str> = missing.iter().map(String::as_str).collect();
-                    report_match_not_exhaustive(span, &missing);
+                    report_match_not_exhaustive(self.session, span, &missing);
+                    return;
+                }
+                let unguarded_pats: Vec<&'hir Pat> = arms
+                    .iter()
+                    .filter(|&&arm| unguarded(arm))
+                    .map(|&arm| hir.pat(hir.arm(arm).pat))
+                    .collect();
+                if !self.pats_cover(ty, &unguarded_pats) {
+                    report_match_needs_wildcard(self.session, span);
                 }
             }
-            _ => report_match_needs_wildcard(span),
+            _ => report_match_needs_wildcard(self.session, span),
+        }
+    }
+
+    /// Whether `pats` covers every value of `ty`. Only `bool` and enums are enumerated; every
+    /// other type still needs an explicit wildcard, matching what `check_match_exhaustive`
+    /// reports for them.
+    fn pats_cover(&mut self, ty: Ty, pats: &[&'hir Pat]) -> bool {
+        if pats.iter().any(|pat| self.pat_is_irrefutable(pat.hir_id)) {
+            return true;
+        }
+
+        let hir: &'hir Hir = self.hir;
+        let ty = self.unifier.find_deep(&mut self.tcx, ty);
+        match self.tcx.kind(ty).clone() {
+            TyKind::Primitive(PrimTy::Bool) => {
+                let (mut has_true, mut has_false) = (false, false);
+                for pat in pats {
+                    match &pat.kind {
+                        PatKind::Literal(Literal::Bool(true)) => has_true = true,
+                        PatKind::Literal(Literal::Bool(false)) => has_false = true,
+                        _ => {}
+                    }
+                }
+                has_true && has_false
+            }
+            TyKind::Adt { def, .. } => {
+                let OwnerNode::Enum(enum_) = hir.def(def) else {
+                    return false;
+                };
+                for &variant in &enum_.variants {
+                    let name = hir.variant(variant).name;
+                    let matching: Vec<&'hir Pat> = pats
+                        .iter()
+                        .copied()
+                        .filter(|pat| {
+                            matches!(
+                                &pat.kind,
+                                PatKind::Variant { variant, .. } if variant.text == name.text
+                            )
+                        })
+                        .collect();
+                    if matching.is_empty() {
+                        return false;
+                    }
+                    let Some(found) = self.variant_def(ty, name.text) else {
+                        return false;
+                    };
+                    match &found.payload {
+                        VariantTys::Unit => {}
+                        VariantTys::Single(payload_ty) => {
+                            let subpats: Vec<&'hir Pat> = matching
+                                .iter()
+                                .filter_map(|pat| match &pat.kind {
+                                    PatKind::Variant {
+                                        payload: Payload::Single(inner),
+                                        ..
+                                    } => Some(hir.pat(*inner)),
+                                    _ => None,
+                                })
+                                .collect();
+                            if subpats.len() == matching.len()
+                                && !self.pats_cover(*payload_ty, &subpats)
+                            {
+                                return false;
+                            }
+                        }
+                        VariantTys::Record(fields) => {
+                            for (field_name, field_ty) in fields {
+                                let mut subpats = Vec::new();
+                                let mut omitted = false;
+                                for pat in &matching {
+                                    let PatKind::Variant {
+                                        payload: Payload::Record(written),
+                                        ..
+                                    } = &pat.kind
+                                    else {
+                                        omitted = true;
+                                        continue;
+                                    };
+                                    match written.iter().find(|f| f.name.text == field_name.text) {
+                                        Some(field) => subpats.push(hir.pat(field.value)),
+                                        None => omitted = true,
+                                    }
+                                }
+                                if !omitted && !self.pats_cover(*field_ty, &subpats) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+                true
+            }
+            _ => false,
         }
     }
 

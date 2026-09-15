@@ -120,7 +120,7 @@ mod tests {
                 matches!(
                     hir.def(instance.def),
                     crate::hir::OwnerNode::Function(f)
-                        if crate::ast::interner::Interner::resolve(f.name.text) == "main"
+                        if crate::testing::resolve(f.name.text) == "main"
                 )
             })
             .map(|instance| crate::mir::mangle::mangle(mir, tcx, instance))
@@ -152,8 +152,15 @@ mod tests {
             public fun main() { write_bytes(1, "hello" as &[u8]); }"#,
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
-            .expect("codegen succeeds");
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .expect("codegen succeeds");
         append_c_main_trampoline(&llvm, &module, &hir, &tcx, &mir, &instances);
 
         let dir = tempdir_for_test("hello-world");
@@ -184,8 +191,15 @@ mod tests {
         let (_hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir(r#"fun main() { panic("boom"); }"#);
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
-            .expect("codegen succeeds");
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .expect("codegen succeeds");
 
         let dir = tempdir_for_test("panic");
         let exe = emit(
@@ -218,8 +232,15 @@ mod tests {
         let (_hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun main() { assert(false); }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
-            .expect("codegen succeeds");
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .expect("codegen succeeds");
 
         let dir = tempdir_for_test("assert-false");
         let exe = emit(
@@ -249,8 +270,15 @@ mod tests {
         let (_hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun main() { assert(true); }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
-            .expect("codegen succeeds");
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .expect("codegen succeeds");
 
         let dir = tempdir_for_test("assert-true");
         let exe = emit(
@@ -291,8 +319,15 @@ mod tests {
              }",
         ]);
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
-            .expect("codegen succeeds");
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .expect("codegen succeeds");
 
         let dir = tempdir_for_test("digit-separators");
         let exe = emit(
@@ -321,8 +356,15 @@ mod tests {
         let (_hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun main() { unreachable(); }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
-            .expect("codegen succeeds");
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .expect("codegen succeeds");
 
         let dir = tempdir_for_test("unreachable");
         let exe = emit(

@@ -12,7 +12,9 @@ mod langitems;
 mod lexer;
 mod mir;
 mod nameres;
+mod options;
 mod parser;
+mod session;
 #[cfg(test)]
 mod testing;
 mod typeck;

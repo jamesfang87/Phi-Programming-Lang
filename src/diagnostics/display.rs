@@ -1,21 +1,25 @@
 use std::fmt;
 
 use crate::ast::Mutability;
-use crate::ast::interner::Interner;
+use crate::diagnostics::Diagnostic;
+use crate::diagnostics::codes;
+use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, OwnerNode};
 use crate::mir::def_names::DefNames;
 use crate::nameres::PrimTy;
-use crate::typeck::ty::{Ty, TyKind, TyVar};
+use crate::session::Session;
+use crate::typeck::ty::{InferVar, Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::UnifyError;
 
 #[derive(Clone, Copy)]
-pub struct DisplayCx<'a> {
+pub struct DisplayCtx<'a> {
     tcx: &'a TyCtx,
+    session: &'a Session,
     names: Names<'a>,
 }
 
-/// Where a [`DisplayCx`] reads definition and generic names from.
+/// Where a [`DisplayCtx`] reads definition and generic names from.
 #[derive(Clone, Copy)]
 enum Names<'a> {
     /// The HIR itself. Every pass before lowering already has it, so reading a name straight out
@@ -28,36 +32,61 @@ enum Names<'a> {
 }
 
 impl<'a> Names<'a> {
-    fn def_name(self, def: DefId) -> &'a str {
+    fn def_name(self, session: &Session, def: DefId) -> &'a str {
         match self {
-            Names::Hir(hir) => def_name(hir, def),
+            Names::Hir(hir) => def_name(session, hir, def),
             Names::Mir(names) => names.def_name(def),
         }
     }
 
-    fn generic_name(self, id: HirId) -> &'a str {
+    fn generic_name(self, session: &Session, id: HirId) -> &'a str {
         match self {
-            Names::Hir(hir) => Interner::resolve(hir.generic(id).name.text),
+            Names::Hir(hir) => session.resolve(hir.generic(id).name.text),
             Names::Mir(names) => names.generic_name(id),
         }
     }
 }
 
-impl<'a> DisplayCx<'a> {
-    pub fn new(hir: &'a Hir, tcx: &'a TyCtx) -> Self {
-        DisplayCx {
+impl<'a> DisplayCtx<'a> {
+    pub fn new(session: &'a Session, hir: &'a Hir, tcx: &'a TyCtx) -> Self {
+        DisplayCtx {
             tcx,
+            session,
             names: Names::Hir(hir),
         }
     }
 
-    /// A [`DisplayCx`] for diagnostics raised after lowering, reading names from the snapshot
+    /// A [`DisplayCtx`] for diagnostics raised after lowering, reading names from the snapshot
     /// [`mir::lower`](crate::mir::lower) built rather than from the HIR. See [`Names::Mir`].
-    pub fn for_mir(names: &'a DefNames, tcx: &'a TyCtx) -> Self {
-        DisplayCx {
+    pub fn for_mir(session: &'a Session, names: &'a DefNames, tcx: &'a TyCtx) -> Self {
+        DisplayCtx {
             tcx,
+            session,
             names: Names::Mir(names),
         }
+    }
+
+    /// Records `diagnostic` on the session this context was built from.
+    pub fn emit(&self, diagnostic: Diagnostic) {
+        self.session.emit(diagnostic);
+    }
+
+    /// Emits the diagnostic for a failed unification, labelled `label`.
+    pub fn emit_unify(&self, err: UnifyError, span: SrcSpan, label: impl Into<String>) {
+        let diagnostic = Diagnostic::error(self.show(err).to_string(), span)
+            .with_code(unify_code(&err))
+            .with_label(label);
+        self.emit(diagnostic);
+    }
+
+    /// Resolves an interned name through the session this context was built from.
+    pub fn resolve(&self, symbol: crate::ast::interner::Symbol) -> &'static str {
+        self.session.resolve(symbol)
+    }
+
+    /// The session this context was built from.
+    pub fn session(&self) -> &'a Session {
+        self.session
     }
 
     /// Wraps `value` so it can be printed: `format!("{}", cx.show(ty))`.
@@ -67,11 +96,11 @@ impl<'a> DisplayCx<'a> {
 }
 
 pub trait Pretty {
-    fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>) -> fmt::Result;
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCtx<'_>) -> fmt::Result;
 }
 
 pub struct Show<'a, T> {
-    cx: DisplayCx<'a>,
+    cx: DisplayCtx<'a>,
     value: T,
 }
 
@@ -82,19 +111,19 @@ impl<T: Pretty> fmt::Display for Show<'_, T> {
 }
 
 impl Pretty for Ty {
-    fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>) -> fmt::Result {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCtx<'_>) -> fmt::Result {
         let tcx = cx.tcx;
         match tcx.kind(*self) {
-            TyKind::Var(TyVar::Any(_)) => write!(f, "_"),
-            TyKind::Var(TyVar::Int(_)) => write!(f, "{{integer}}"),
-            TyKind::Var(TyVar::Float(_)) => write!(f, "{{float}}"),
+            TyKind::Var(InferVar::Any(_)) => write!(f, "_"),
+            TyKind::Var(InferVar::Int(_)) => write!(f, "{{integer}}"),
+            TyKind::Var(InferVar::Float(_)) => write!(f, "{{float}}"),
 
             TyKind::Primitive(prim) => write!(f, "{}", prim_name(*prim)),
             TyKind::Adt { def, args } => {
-                write!(f, "{}", cx.names.def_name(*def))?;
+                write!(f, "{}", cx.names.def_name(cx.session, *def))?;
                 write_args(f, cx, args)
             }
-            TyKind::Generic(hir_id) => write!(f, "{}", cx.names.generic_name(*hir_id)),
+            TyKind::Generic(hir_id) => write!(f, "{}", cx.names.generic_name(cx.session, *hir_id)),
             // Only appears inside a trait's body, where `Self` names no concrete type yet.
             TyKind::SelfTy(_) => write!(f, "Self"),
             TyKind::Ref { base, mutability } => {
@@ -148,7 +177,7 @@ impl Pretty for Ty {
                 Ok(())
             }
             TyKind::Dyn { trait_, args } => {
-                write!(f, "dyn {}", cx.names.def_name(*trait_))?;
+                write!(f, "dyn {}", cx.names.def_name(cx.session, *trait_))?;
                 write_args(f, cx, args)
             }
             TyKind::Never => write!(f, "!"),
@@ -158,7 +187,7 @@ impl Pretty for Ty {
 }
 
 impl Pretty for UnifyError {
-    fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>) -> fmt::Result {
+    fn pretty(&self, f: &mut fmt::Formatter<'_>, cx: &DisplayCtx<'_>) -> fmt::Result {
         match *self {
             UnifyError::Mismatch { expected, found } => write!(
                 f,
@@ -186,7 +215,16 @@ impl Pretty for UnifyError {
     }
 }
 
-fn write_args(f: &mut fmt::Formatter<'_>, cx: &DisplayCx<'_>, args: &[Ty]) -> fmt::Result {
+fn unify_code(err: &UnifyError) -> &'static str {
+    match err {
+        UnifyError::Mismatch { .. } => codes::MISMATCHED_TYPES,
+        UnifyError::ExpectedInteger { .. } => codes::EXPECTED_INTEGER,
+        UnifyError::ExpectedFloat { .. } => codes::EXPECTED_FLOAT,
+        UnifyError::Infinite { .. } => codes::INFINITE_TYPE,
+    }
+}
+
+fn write_args(f: &mut fmt::Formatter<'_>, cx: &DisplayCtx<'_>, args: &[Ty]) -> fmt::Result {
     if args.is_empty() {
         return Ok(());
     }
@@ -219,11 +257,11 @@ fn prim_name(prim: PrimTy) -> &'static str {
     }
 }
 
-pub(crate) fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
+pub(crate) fn def_name(session: &Session, hir: &Hir, def_id: DefId) -> &'static str {
     match hir.def(def_id) {
-        OwnerNode::Struct(s) => Interner::resolve(s.name.text),
-        OwnerNode::Enum(e) => Interner::resolve(e.name.text),
-        OwnerNode::Trait(t) => Interner::resolve(t.name.text),
+        OwnerNode::Struct(s) => session.resolve(s.name.text),
+        OwnerNode::Enum(e) => session.resolve(e.name.text),
+        OwnerNode::Trait(t) => session.resolve(t.name.text),
         _ => unreachable!("only a struct, enum, or trait def can appear in an Adt or Dyn type"),
     }
 }

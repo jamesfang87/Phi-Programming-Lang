@@ -89,8 +89,6 @@ pub fn walk_module<'ast, V: Visitor<'ast>>(v: &mut V, module: &'ast Module, ast:
 
 pub fn walk_item<'ast, V: Visitor<'ast>>(v: &mut V, item: &'ast Item) {
     match &item.kind {
-        ItemKind::ModuleDecl(_) => {}
-        ItemKind::Import(import) => v.visit_import(import),
         ItemKind::Function(f) => v.visit_function(f),
         ItemKind::Struct(s) => v.visit_struct(s),
         ItemKind::Enum(e) => v.visit_enum(e),

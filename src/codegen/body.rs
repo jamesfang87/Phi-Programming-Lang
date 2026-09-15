@@ -292,36 +292,10 @@ fn lower_rvalue<'ctx>(
 fn operand_ty(tcx: &mut TyCtx, local_decls: &[LocalDecl], operand: &Operand) -> Ty {
     match operand {
         Operand::Constant(constant) => constant.ty,
-        Operand::Copy(place_) | Operand::Move(place_) => place_ty(tcx, local_decls, place_),
-    }
-}
-
-fn place_ty(tcx: &mut TyCtx, local_decls: &[LocalDecl], place_: &crate::mir::Place) -> Ty {
-    let mut ty = local_decls[place_.local.index()].ty;
-    for proj in &place_.projections {
-        match proj {
-            crate::mir::Projection::Deref => {
-                ty = match tcx.kind(ty).clone() {
-                    TyKind::Ref { base, .. } | TyKind::Iso(base) => base,
-                    other => panic!("Deref projection on non-reference type {other:?}"),
-                };
-            }
-            crate::mir::Projection::Field(index) => {
-                ty = match tcx.kind(ty).clone() {
-                    TyKind::Tuple(elems) => elems[*index as usize],
-                    other => panic!(
-                        "Field projection on non-Tuple type {other:?} in a BinaryOp/UnaryOp \
-                         operand"
-                    ),
-                };
-            }
-            other => panic!(
-                "unexpected projection {other:?} on a BinaryOp/UnaryOp operand -- only Deref \
-                 and Tuple-Field are supported"
-            ),
+        Operand::Copy(place_) | Operand::Move(place_) => {
+            crate::mir::place_ty(tcx, local_decls, place_)
         }
     }
-    ty
 }
 
 fn two_word_struct_type<'ctx>(cx: &CodegenCtx<'ctx>) -> inkwell::types::StructType<'ctx> {
@@ -893,7 +867,7 @@ fn lower_binary_op<'ctx>(
                 .unwrap()
                 .into(),
             BinaryOp::Ne => b
-                .build_float_compare(FloatPredicate::ONE, l, r, "ne")
+                .build_float_compare(FloatPredicate::UNE, l, r, "ne")
                 .unwrap()
                 .into(),
             BinaryOp::Lt => b
@@ -1157,9 +1131,10 @@ fn lower_call<'ctx>(
         };
         let receiver = dyn_receiver.expect("a dyn call carries its fat receiver");
         let fn_type = dyn_method_fn_type(cx, tcx, mir, *sig_ty);
-        let index = mir.def_infos.vtable_slot(*def).unwrap_or_else(|| {
-            panic!("codegen: {def:?} is not a trait method with a vtable slot")
-        });
+        let index = mir
+            .def_infos
+            .vtable_slot(*def)
+            .unwrap_or_else(|| panic!("codegen: {def:?} is not a trait method with a vtable slot"));
         let (leading, rest) = arg_vals.split_at(usize::from(indirect_return));
         super::vtable::call_dyn_method(
             cx,
@@ -1369,7 +1344,15 @@ mod tests {
     fn empty_function_returns_unit_as_ret_void() {
         let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         assert!(
             module.verify().is_ok(),
             "{}",
@@ -1384,7 +1367,15 @@ mod tests {
         let (_hir, mut tcx, _types, mir, instances) =
             lower_mir_src_release("fun f(a: i32, b: i32) -> i32 { a + b }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("add i32"), "{ir}");
@@ -1399,34 +1390,40 @@ mod tests {
         crate::mir::Mir,
         std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
     ) {
-        crate::diagnostics::DiagCtx::clear();
-        crate::ast::interner::Interner::clear();
+        crate::testing::clear_diagnostics();
+        crate::testing::clear_interner();
         let files: Vec<crate::ast::ParsedSrcFile> = [crate::testing::OPS_PREAMBLE, src]
             .iter()
             .map(|src| {
                 let chars: Vec<char> = src.chars().collect();
-                let offset = crate::driver::source::SrcMap::add_file(
+                let offset = crate::testing::add_file(
                     "<test>".to_string(),
                     chars.clone(),
                     crate::driver::source::FileOrigin::User,
                 );
-                let tokens = crate::lexer::Lexer::new(&chars, offset).tokenize();
-                crate::parser::Parser::new().parse(&tokens, offset)
+                let tokens =
+                    crate::lexer::Lexer::new(crate::testing::session(), &chars, offset).tokenize();
+                crate::parser::Parser::new(crate::testing::session()).parse(&tokens, offset)
             })
             .collect();
         let ast = crate::ast::Ast::from(files);
-        let res = crate::nameres::resolve(&ast);
-        let hir = crate::hir::Hir::from(&ast, &res);
-        crate::diagnostics::DiagCtx::clear();
-        let checked = crate::typeck::check(&hir);
-        let diagnostics = crate::diagnostics::DiagCtx::diagnostics();
+        let res = crate::nameres::resolve(crate::testing::session(), &ast);
+        let hir = crate::hir::Hir::from(crate::testing::session(), &ast, &res);
+        crate::testing::clear_diagnostics();
+        let checked = crate::typeck::check(crate::testing::session(), &hir);
+        let diagnostics = crate::testing::diagnostics();
         assert!(
             diagnostics.is_empty(),
             "unexpected diagnostics for {src:?}: {diagnostics:?}"
         );
         let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-        let program =
-            crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Release);
+        let program = crate::mir::lower::lower(
+            crate::testing::session(),
+            &hir,
+            &mut tcx,
+            &types,
+            crate::options::Mode::Release,
+        );
         let instances = crate::mir::monomorphize::monomorphize(&mut tcx, &program);
         (hir, tcx, types, program, instances)
     }
@@ -1467,7 +1464,7 @@ mod tests {
         };
 
         let llvm = inkwell::context::Context::create();
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let fn_ty = cx.llvm.void_type().fn_type(&[], false);
         let function = cx.module.add_function("f", fn_ty, None);
         super::lower_body(&mut cx, &mir, &mut tcx, &body, function);
@@ -1489,7 +1486,15 @@ mod tests {
             "fun f(a: i32, b: i32) -> i32 { a + b }",
         ]);
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         assert!(
             module
@@ -1506,7 +1511,15 @@ mod tests {
              fun f(x: (i32, i32)) -> i32 { return x.first(); }",
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         assert!(
             module.verify().is_ok(),
             "{}",
@@ -1519,7 +1532,15 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f(x: bool) -> i32 { if x { 1 } else { 2 } }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         assert!(module.print_to_string().to_string().contains("switch"));
     }
@@ -1530,7 +1551,15 @@ mod tests {
             "fun f() -> i32 { return g(); }\nfun g() -> i32 { return 1; }",
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("call i32"), "{ir}");
@@ -1544,7 +1573,15 @@ mod tests {
              fun add(x: i32, y: i32) -> i32 { return x + y; }",
         ]);
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(
@@ -1568,7 +1605,15 @@ mod tests {
              fun f(a: i32, b: i32) -> Point { return Point { x: a, y: b }; }",
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("insertvalue"), "{ir}");
@@ -1584,7 +1629,15 @@ mod tests {
              }",
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         assert!(
             module.verify().is_ok(),
             "{}",
@@ -1600,7 +1653,15 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f(a: i32, b: i32) -> (i32, i32) { return (a, b); }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("insertvalue"), "{ir}");
@@ -1613,7 +1674,15 @@ mod tests {
              fun f(e: E) -> i32 { match e { .A => { return 1; } .B => { return 2; } } }",
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(
@@ -1627,7 +1696,15 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f() -> i64 { let x: i8 = 1; return x as i64; }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("sext"), "{ir}");
@@ -1638,7 +1715,15 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f() -> f64 { let x: i32 = 1; return x as f64; }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("sitofp"), "{ir}");
@@ -1649,7 +1734,15 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f(x: u8) -> i16 { return x as i16; }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("zext"), "{ir}");
@@ -1661,7 +1754,15 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f() -> iso i32 { return new 1; }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("call ptr @malloc"), "{ir}");
@@ -1672,7 +1773,15 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f(n: usize) -> iso [u8] { return new [0_u8; n]; }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("call ptr @malloc"), "{ir}");
@@ -1686,7 +1795,15 @@ mod tests {
              fun g() -> iso i32 { return new 2; }",
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert_eq!(
@@ -1703,7 +1820,15 @@ mod tests {
             "fun f(a: i32, b: i32) -> i32 { return a / b; }",
         ]);
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("call i64 @write"), "{ir}");
@@ -1721,7 +1846,15 @@ mod tests {
              }",
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         assert!(
             module.verify().is_ok(),
             "{}",
@@ -1749,7 +1882,15 @@ mod tests {
             "fun apply(f: fun(i32) -> i32, x: i32) -> i32 { return f(x); }",
         );
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t").unwrap();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
         module.verify().unwrap();
         let ir = module.print_to_string().to_string();
         assert!(ir.contains("call i32 %"), "{ir}");
@@ -1769,8 +1910,15 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f(n: i32, s: str) -> &[u8] { return s as &[u8]; }");
         let llvm = inkwell::context::Context::create();
-        let module = super::super::codegen(&llvm, &mut tcx, &mir, &instances, "t")
-            .expect("codegen succeeds");
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .expect("codegen succeeds");
         assert!(
             module.verify().is_ok(),
             "{}",
@@ -1836,7 +1984,7 @@ mod tests {
         };
 
         let llvm = inkwell::context::Context::create();
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let i32_llvm_ty = cx.llvm.i32_type();
         let fn_ty = cx.llvm.void_type().fn_type(&[i32_llvm_ty.into()], false);
         let function = cx.module.add_function("f", fn_ty, None);
@@ -1861,7 +2009,7 @@ mod tests {
         let dummy_span = crate::driver::source::SrcSpan::new(0, 0);
 
         let llvm = inkwell::context::Context::create();
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let fn_ty = cx.llvm.void_type().fn_type(&[], false);
         let function = cx.module.add_function("f", fn_ty, None);
         let entry = cx.llvm.append_basic_block(function, "entry");
@@ -1889,7 +2037,7 @@ mod tests {
     fn ref_over_a_fat_place_rebuilds_the_two_word_pair() {
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let fn_ty = cx.llvm.void_type().fn_type(&[], false);
         let function = cx.module.add_function("f", fn_ty, None);
         let entry = cx.llvm.append_basic_block(function, "entry");
@@ -1959,5 +2107,33 @@ mod tests {
             }
         }
         panic!("no function found");
+    }
+
+    /// BUG: floating-point `!=` is lowered to `fcmp one` (ordered-not-equal). `ONE` is false for
+    /// a NaN operand, so `nan != nan` evaluates to `false`, contradicting IEEE 754. The correct
+    /// predicate is `fcmp une` (unordered-not-equal). The `==` direction already uses `OEQ`, so
+    /// only this one is inconsistent.
+    ///
+    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
+    #[test]
+    fn float_not_equal_uses_the_unordered_predicate() {
+        let (_hir, mut tcx, _types, mir, instances) =
+            lower_mir_src_release("fun f(a: f64, b: f64) -> bool { a != b }");
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(
+            ir.contains("fcmp une"),
+            "`!=` on floats must use the unordered predicate so `nan != nan` is true:\n{ir}"
+        );
     }
 }

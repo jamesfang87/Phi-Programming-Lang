@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::ast::interner::Interner;
 use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
+use crate::session::Session;
 
 pub struct DefNames {
     leaf: HashMap<DefId, String>,
@@ -54,10 +54,10 @@ impl DefNames {
     }
 }
 
-pub(crate) fn collect_def_names(hir: &Hir) -> DefNames {
+pub(crate) fn collect_def_names(session: &Session, hir: &Hir) -> DefNames {
     let display: HashMap<DefId, String> = hir
         .def_ids()
-        .map(|def_id| (def_id, def_name(hir, def_id)))
+        .map(|def_id| (def_id, def_name(session, hir, def_id)))
         .collect();
 
     let leaf: HashMap<DefId, String> = display
@@ -83,35 +83,35 @@ pub(crate) fn collect_def_names(hir: &Hir) -> DefNames {
         leaf,
         ancestor_path,
         display,
-        generics: collect_generic_names(hir),
+        generics: collect_generic_names(session, hir),
     }
 }
 
-fn collect_generic_names(hir: &Hir) -> HashMap<HirId, String> {
+fn collect_generic_names(session: &Session, hir: &Hir) -> HashMap<HirId, String> {
     hir.def_ids()
         .flat_map(|def| hir.arena(def).nodes.iter())
         .filter_map(|node| match node {
             Node::Generic(generic) => Some((
                 node.hir_id(),
-                Interner::resolve(generic.name.text).to_string(),
+                session.resolve(generic.name.text).to_string(),
             )),
             _ => None,
         })
         .collect()
 }
 
-fn def_name(hir: &Hir, def: DefId) -> String {
+fn def_name(session: &Session, hir: &Hir, def: DefId) -> String {
     match hir.def(def) {
         OwnerNode::Module(m) => m
             .path
             .segments
             .last()
-            .map(|seg| Interner::resolve(seg.text).to_string())
+            .map(|seg| session.resolve(seg.text).to_string())
             .unwrap_or_else(|| "crate".to_string()),
-        OwnerNode::Function(f) => Interner::resolve(f.name.text).to_string(),
-        OwnerNode::Struct(s) => Interner::resolve(s.name.text).to_string(),
-        OwnerNode::Enum(e) => Interner::resolve(e.name.text).to_string(),
-        OwnerNode::Trait(t) => Interner::resolve(t.name.text).to_string(),
+        OwnerNode::Function(f) => session.resolve(f.name.text).to_string(),
+        OwnerNode::Struct(s) => session.resolve(s.name.text).to_string(),
+        OwnerNode::Enum(e) => session.resolve(e.name.text).to_string(),
+        OwnerNode::Trait(t) => session.resolve(t.name.text).to_string(),
         OwnerNode::Extend(_) => format!("extend{}", def.index()),
         OwnerNode::Closure(_) => format!("closure{}", def.index()),
     }
@@ -136,7 +136,7 @@ mod tests {
     fn find_struct_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Struct(struct_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(struct_.name.text) == name
+                && crate::testing::resolve(struct_.name.text) == name
             {
                 return def_id;
             }
@@ -148,7 +148,7 @@ mod tests {
     fn leaf_is_the_bare_sanitized_name() {
         let hir = crate::testing::lower_to_hir("struct Point { x: i32 }\nfun f() {}");
         let def = find_struct_def(&hir, "Point");
-        let names = collect_def_names(&hir);
+        let names = collect_def_names(crate::testing::session(), &hir);
         assert_eq!(names.leaf(def), "Point");
     }
 
@@ -156,7 +156,7 @@ mod tests {
     fn ancestor_path_is_the_root_to_def_chain() {
         let hir = crate::testing::lower_to_hir("fun f() {}");
         let def = crate::testing::first_function(&hir);
-        let names = collect_def_names(&hir);
+        let names = collect_def_names(crate::testing::session(), &hir);
         let path = names.ancestor_path(def);
         assert_eq!(path.last().map(String::as_str), Some("f"));
     }
@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn generic_name_is_collected_for_the_id_a_type_carries() {
         let hir = crate::testing::lower_to_hir("fun id<T>(v: T) -> T { return v; }");
-        let names = collect_def_names(&hir);
+        let names = collect_def_names(crate::testing::session(), &hir);
         let function = crate::testing::first_function(&hir);
         let generics = &hir.function(function).generics;
         assert_eq!(generics.len(), 1);

@@ -65,7 +65,7 @@ The overall driver architecture is the following:
 ```
 driver/
 ├── cli.rs                 # CLI and Phi.toml parsing, and dispatch
-├── source.rs              # SrcSpan, SrcFile, SrcMap, SrcCollector
+├── source.rs              # SrcSpan, SrcFile, SrcMap, and source-file collection
 ├── project.rs             # Project creation: `phi new` and `phi init`
 ├── pipeline.rs            # The compiler stages (lexer -> parser -> ...)
 └── emit_debug.rs          # Human-readable dumps of each stage's output
@@ -93,16 +93,16 @@ flowchart TD
     Build --> Check
     Run --> Build
 
-    Check --> ExitCode["exit code from DiagCtx::has_errors()"]
-    Build -.->|"prints a codegen note"| ExitCode
-    Run -.->|"always exits 1: no backend"| ExitCode
+    Check --> ExitCode["exit code from Session::report()"]
+    Build -.->|"emits and links; reports codegen errors"| ExitCode
+    Run -.->|"runs the built binary"| ExitCode
 ```
 
 The public API in `driver::project` and `driver::pipeline` mirrors the CLI. In `project.rs`, there is `pub fn init()` and `pub fn new(project_name: &str)`, which mirror the two commands in the CLI with the same name. In `pipeline.rs`, there is `pub fn check(config: &Config, options: &BuildOptions)`, `pub fn build(config: &Config, options: &BuildOptions)`, and `pub fn run(config: &Config)`. `Config` represents the manifest, which contains information about the project. Meanwhile, `BuildOptions` carries the flags the invocation of `build` or `check`.
 
-`build` and `check` accept the same flags and differ only in that `build` additionally prints a note that code generation is not implemented yet and that `build` currently only checks; `run` builds first, then reports that there is no backend to run and exits with status 1. `--mir` and `--llvm` are both accepted by `build` and `check`, but since neither stage exists yet, passing either just prints a note that the stage is not implemented and has no other effect. `--emit-debug` dumps every stage that is actually implemented, which includes the `NameResolutions` and `TypeResolutions` dumps even though those have no flag of their own to request them individually; `--no-emit-core` never affects compilation itself, only whether the core library's definitions show up in those dumps.
+`build` and `check` accept the same flags and differ only in that `build` additionally runs code generation, emits the artifact to `target/<name>`, and links it; `run` builds first and then executes that artifact. `--mir` dumps the MIR, and `--llvm` dumps the LLVM IR after verification. `--emit-debug` dumps every stage that has a dump, including `NameResolutions` and `TypeResolutions`; `--surface-nameres` requests only the name-resolution dump. `--no-emit-core` never affects compilation itself, only whether the core library's definitions show up in those dumps.
 
-The remaining module, `driver::source`, contains `SrcSpan`, `SrcFile`, `SrcMap`, and `SrcCollector`, which are used to track source files and source file contents, and to collect them from the project's `src/` directory.
+The remaining module, `driver::source`, contains `SrcSpan`, `SrcFile`, and `SrcMap`, which track source files and their contents, plus the free functions that collect files from the project's `src/` directory. The `SrcMap` is owned by `Session` (see `src/session.rs`), which is created once per build and threaded through every stage so no source map, interner, or diagnostic collection lives in process-wide state.
 
 `SrcSpan` represents a half-open span of character offsets in the source code. It is a pure data class and does essentially nothing else but hold these two indices. These offsets are global across all source files which removes the requirement to store a pointer/reference to the file inside `SrcSpan`. Meanwhile, `SrcFile` tracks the contents of a single file and some metadata about it. This is essentially the structure of `SrcFile`.
 
@@ -119,7 +119,7 @@ pub struct SrcFile {
 }
 ```
 
-Meanwhile, `SrcMap` keeps track of all `SrcFile`s in the project and allows us to query some information about the contents of each file. See the code implementation for what queries we can make. Files are added into `SrcMap` through the `SrcCollector` class which walks through the current repository searching for `.phi` files. 
+Meanwhile, `SrcMap` keeps track of all `SrcFile`s in the project and allows us to query some information about the contents of each file. See the code implementation for what queries we can make. Files are added to the map through `Session::collect` (which walks the project's `src/` directory for `.phi` files) and `Session::collect_core`/`Session::collect_std` (which register the compiled-in `core` and `std` files). 
 
 ## Lexer
 The first stage in the pipeline is lexing, which converts the raw text of a `SrcFile` into `Token`s. The `Lexer` works on UTF-8 source code, which is decoded into chars. The structure of the `lexer` module is the following:
@@ -167,7 +167,7 @@ pub fn tokenize(&mut self) -> Vec<Token>;
 Invalid input does not stop the lexer: an unexpected character or an unterminated literal is reported as a diagnostic, the lexer recovers, and scanning continues from the next token. Comments are skipped rather than lexed into tokens; nested block comments are supported.
 
 ## Parser
-The Phi parser is implemented with the `chumsky` parser combinator library. `Parser` is a unit struct; it stores nothing about the file which is being parsed. To parse a single file, `Parser` exposes the following method:
+The Phi parser is implemented with the `chumsky` parser combinator library. `Parser` is a lightweight struct. It stores nothing about the file which is being parsed. To parse a file, `Parser` exposes the following method:
 
 ```rust
 pub fn parse(&self, tokens: &[Token], file_offset: usize) -> ParsedSrcFile;
@@ -183,7 +183,7 @@ The structure of the parser module and its submodules is as follows:
 src/
 └── parser.rs
     ├── block_parser.rs      # Exposes the block parser on its own
-    ├── delimiters.rs        # Delimiter pairing, run ahead of the grammar
+    ├── delimiters.rs        # Delimiter pairing, reported in preference to the grammar's errors
     ├── expr_parser.rs       # Expressions and blocks (defined together; they recurse into each other)
     ├── item_parser.rs       # `fun`/`struct`/`enum`/`trait`/`extend`/`module`/`import`
     ├── pattern_parser.rs    # Patterns
@@ -191,7 +191,7 @@ src/
 ```
 Each submodule produces a specific sub-grammar for group of language features. There is a sub-grammar for blocks/statements, for expressions, for patterns, etc. which can be used. However, this is slightly misleading as to what goes on under the hood. Since sub-grammars recurse into each other, the  library requires that we define "monolithic" grammars which is responsible for parsing all recursing sub-grammars. For example, types and expressions recurse into each other, requiring a single grammar for all expressions and types. We thus separate these grammars for a cleaner public-facing interface.
 
-Before the grammar runs, `delimiters::unmatched` pairs up `(`, `[` and `{` over the token stream. If any delimiter is left without a partner, its diagnostic (pointing at the opening delimiter) replaces the grammar's errors for that file, since an unclosed delimiter makes the grammar fail everywhere else. Parse failures that the grammar itself raises are recovered through `Parser::recover_by_skipping`, which discards the tokens of the broken construct, emits a placeholder `Error` node carrying the skipped span, and resumes at the next construct, so one bad statement does not hide the rest of the file.
+`delimiters::find_unmatched_delimiter_errors` pairs up `(`, `[` and `{` over the token stream. If any delimiter is left without a partner, its diagnostic (pointing at the opening delimiter) replaces the grammar's errors for that file, since an unclosed delimiter makes the grammar fail everywhere else. Parse failures that the grammar itself raises are recovered through `Parser::recover_by_skipping`, which discards the tokens of the broken construct, emits a placeholder `Error` node carrying the skipped span, and resumes at the next construct, so one bad statement does not hide the rest of the file.
 
 ## Abstract Syntax Tree (AST)
 The Abstract Syntax Tree is a tree representing the written program. The goal of the AST is convert the user's exact syntax into a tree form for semantic analysis. Nodes in the AST are heap-allocated, unlike the HIR later on. However, despite not being arena-allocated, nodes in the AST are still allocated a `NodeId` for identification during name resolution. To facilitate lookup using `NodeId`, there are plans to arena-allocate the AST in a similar fashion to the HIR. We note that this is current a low-priority refactor.
@@ -255,12 +255,15 @@ pub enum TyKind {
         path: Path,
         args: Vec<Ty>,
     },
+    SelfTy,
     Ref {
         base: Box<Ty>,
         mutability: Mutability,
     },
     /// `any T`, which can only be used as a parameter or return type.
     Any(Box<Ty>),
+    /// `iso T`, an owned allocation that may be moved but not copied.
+    Iso(Box<Ty>),
     Tuple(Vec<Ty>),
     Array {
         elem: Box<Ty>,
@@ -294,6 +297,7 @@ pub enum Res {
     Type(Type),
     Local(Local),
     Function(NodeId),
+    Module(NodeId),
     Err,
 }
 

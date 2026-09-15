@@ -2,7 +2,7 @@
 //! while preserving future errors.
 
 use crate::diagnostics::Diagnostic;
-use crate::diagnostics::parser::{mismatched_delimiter, unopened_delimiter, unclosed_delimiter};
+use crate::diagnostics::parser::{mismatched_delimiter, unclosed_delimiter, unopened_delimiter};
 use crate::lexer::token::{Token, TokenKind};
 
 struct OpenDelimiter {
@@ -40,7 +40,11 @@ pub fn find_unmatched_delimiter_errors(tokens: &[Token]) -> Vec<Diagnostic> {
                 open.pop();
             }
             Some(innermost) => {
-                return vec![mismatched_delimiter(innermost.open, innermost.close, *token)]
+                return vec![mismatched_delimiter(
+                    innermost.open,
+                    innermost.close,
+                    *token,
+                )];
             }
             None => return vec![unopened_delimiter(*token)],
         }
@@ -54,7 +58,6 @@ pub fn find_unmatched_delimiter_errors(tokens: &[Token]) -> Vec<Diagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::source::SrcMap;
     use crate::testing::lex_src;
 
     /// Returns the message of each diagnostic `src` raises, paired with the source text its
@@ -67,8 +70,8 @@ mod tests {
                 let span = diag
                     .span
                     .expect("every delimiter diagnostic carries the span of a token");
-                let at =
-                    SrcMap::text_of(span).expect("the span comes from a token the lexer produced");
+                let at = crate::testing::text_of(span)
+                    .expect("the span comes from a token the lexer produced");
                 (diag.message, at)
             })
             .collect()

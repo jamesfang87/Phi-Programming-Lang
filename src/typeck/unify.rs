@@ -1,10 +1,11 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::ops::ControlFlow;
 
-use crate::typeck::fold;
-use crate::typeck::ty::{Ty, TyKind, TyVar};
+use crate::typeck::ty::{InferVar, Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
+use crate::typeck::visitor::{self, TypeVisitor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnifyError {
@@ -30,19 +31,13 @@ impl Unifier {
         }
     }
 
-    /// The resolved form of `ty`: every inference variable in it, at any depth, replaced by
-    /// whatever it is bound to. An unbound variable resolves to itself.
     pub fn find_deep(&mut self, tcx: &mut TyCtx, ty: Ty) -> Ty {
-        fold::fold_ty(tcx, ty, &mut |tcx, ty| {
+        visitor::fold_ty(tcx, ty, &mut |tcx, ty| {
             let root = self.find_shallow(ty);
-            // A variable bound to something is replaced by the resolved form of that, and a type
-            // standing for itself is left to the fold to walk into.
             (root != ty).then(|| self.find_deep(tcx, root))
         })
     }
 
-    /// The representative of `ty`'s equivalence class, registering `ty` as its
-    /// equivalence class if this is the first time it has been seen.
     fn find_shallow(&mut self, ty: Ty) -> Ty {
         if let Entry::Vacant(e) = self.parents.entry(ty) {
             e.insert(ty);
@@ -77,7 +72,6 @@ impl Unifier {
             return Ok(());
         }
 
-        // `Error` and `Never` match against anything, and nothing is recorded about the match.
         if is_absorbing(tcx, t) || is_absorbing(tcx, u) {
             return Ok(());
         }
@@ -98,16 +92,11 @@ impl Unifier {
         Ok(())
     }
 
-    /// Points one of `t`, `u` at the other, once the two are known to unify.
-    /// `t` and `u` must both be roots.
     fn merge(&mut self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<(), UnifyError> {
         let (root, child) = match constraint(tcx, t).cmp(&constraint(tcx, u)) {
             Ordering::Less => (u, t),
             Ordering::Greater => (t, u),
             Ordering::Equal if constraint(tcx, t) == Constraint::Concrete => return Ok(()),
-            // Two variables that constrain equally point the smaller class at the larger one
-            // (the union-by-size heuristic), which keeps the parent tree from growing
-            // needlessly deep.
             Ordering::Equal => {
                 if self.sizes[&t] < self.sizes[&u] {
                     (u, t)
@@ -117,8 +106,6 @@ impl Unifier {
             }
         };
 
-        // A variable may not be bound to something that already contains it, which would
-        // build a type of infinite size.
         if self.occurs(tcx, child, root) {
             return Err(UnifyError::Infinite {
                 var: child,
@@ -144,21 +131,14 @@ impl Unifier {
     }
 
     fn occurs(&mut self, tcx: &TyCtx, var: Ty, ty: Ty) -> bool {
-        let ty = self.find_shallow(ty);
-        ty == var
-            || fold::children(tcx, ty)
-                .into_iter()
-                .any(|child| self.occurs(tcx, var, child))
+        visitor::walk(&mut Occurs { unifier: self, var }, tcx, ty).is_break()
     }
 
-    /// Checks that `t` and `u` have the same immediate shape, and returns the component pairs
-    /// that must unify for the two to be the same type.
-    /// `t` and `u` must both be roots.
+    // TODO: THere exists something for this
     fn decompose(&self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<Vec<(Ty, Ty)>, UnifyError> {
         debug_assert_eq!(self.parents.get(&t), Some(&t));
         debug_assert_eq!(self.parents.get(&u), Some(&u));
 
-        // `Error` and `Never` are compatible with anything.
         if is_absorbing(tcx, t) || is_absorbing(tcx, u) {
             return Ok(Vec::new());
         }
@@ -166,19 +146,18 @@ impl Unifier {
         let no_components = Ok(Vec::new());
 
         match (tcx.kind(t), tcx.kind(u)) {
-            // An `Any` variable takes on the whole of the other type, whatever its shape, so
-            // there is nothing to recurse into: `merge` binds it below.
-            (TyKind::Var(TyVar::Any(_)), _) | (_, TyKind::Var(TyVar::Any(_))) => no_components,
-
-            (TyKind::Var(TyVar::Int(_)), TyKind::Var(TyVar::Int(_))) => no_components,
-            (TyKind::Var(TyVar::Int(_)), TyKind::Primitive(p)) => {
+            (TyKind::Var(InferVar::Any(_)), _) | (_, TyKind::Var(InferVar::Any(_))) => {
+                no_components
+            }
+            (TyKind::Var(InferVar::Int(_)), TyKind::Var(InferVar::Int(_))) => no_components,
+            (TyKind::Var(InferVar::Int(_)), TyKind::Primitive(p)) => {
                 if p.is_integer() {
                     no_components
                 } else {
                     Err(UnifyError::ExpectedInteger { var: t, found: u })
                 }
             }
-            (TyKind::Primitive(p), TyKind::Var(TyVar::Int(_))) => {
+            (TyKind::Primitive(p), TyKind::Var(InferVar::Int(_))) => {
                 if p.is_integer() {
                     no_components
                 } else {
@@ -186,15 +165,15 @@ impl Unifier {
                 }
             }
 
-            (TyKind::Var(TyVar::Float(_)), TyKind::Var(TyVar::Float(_))) => no_components,
-            (TyKind::Var(TyVar::Float(_)), TyKind::Primitive(p)) => {
+            (TyKind::Var(InferVar::Float(_)), TyKind::Var(InferVar::Float(_))) => no_components,
+            (TyKind::Var(InferVar::Float(_)), TyKind::Primitive(p)) => {
                 if p.is_float() {
                     no_components
                 } else {
                     Err(UnifyError::ExpectedFloat { var: t, found: u })
                 }
             }
-            (TyKind::Primitive(p), TyKind::Var(TyVar::Float(_))) => {
+            (TyKind::Primitive(p), TyKind::Var(InferVar::Float(_))) => {
                 if p.is_float() {
                     no_components
                 } else {
@@ -202,10 +181,7 @@ impl Unifier {
                 }
             }
 
-            // What is left is the same shape check `fold::decompose` performs for every other
-            // pair of types. A numeric variable against something outside its own family also
-            // lands here and fails it, sharing a shape with nothing.
-            _ => fold::decompose(tcx, t, u).ok_or(UnifyError::Mismatch {
+            _ => visitor::decompose(tcx, t, u).ok_or(UnifyError::Mismatch {
                 expected: t,
                 found: u,
             }),
@@ -213,20 +189,41 @@ impl Unifier {
     }
 }
 
+struct Occurs<'a> {
+    unifier: &'a mut Unifier,
+    var: Ty,
+}
+
+impl TypeVisitor for Occurs<'_> {
+    type Output = ();
+
+    fn visit(&mut self, _tcx: &TyCtx, ty: Ty) -> ControlFlow<()> {
+        if self.unifier.find_shallow(ty) == self.var {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+
+    fn children(&mut self, tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
+        visitor::children(tcx, self.unifier.find_shallow(ty))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Constraint {
     /// `_`: unifies with anything.
-    AnyVar,
-    /// `{integer}` or `{float}`: unifies only within its own family of primitives.
-    NumericVar,
-    /// Not a variable at all.
+    Any,
+    /// can only unify with either `{integer}` or `{float}`
+    Numeric,
+    /// Must only unify with itself
     Concrete,
 }
 
 fn constraint(tcx: &TyCtx, ty: Ty) -> Constraint {
     match tcx.kind(ty) {
-        TyKind::Var(TyVar::Any(_)) => Constraint::AnyVar,
-        TyKind::Var(TyVar::Int(_) | TyVar::Float(_)) => Constraint::NumericVar,
+        TyKind::Var(InferVar::Any(_)) => Constraint::Any,
+        TyKind::Var(InferVar::Int(_) | InferVar::Float(_)) => Constraint::Numeric,
         _ => Constraint::Concrete,
     }
 }
@@ -240,18 +237,12 @@ mod tests {
     use super::*;
     use crate::ast::Mutability;
     use crate::hir::{DefId, HirId};
+    use crate::typeck::PrimTy;
 
     fn hir_id(n: u32) -> HirId {
         DefId::from_usize(n as usize).owner_id()
     }
 
-    /// Runs `decompose` the way `unify` does: after driving both types to their union-find
-    /// representatives. `decompose` asserts that precondition, so calling it directly on two
-    /// freshly-interned types (as most cases below do) needs this instead.
-    ///
-    /// Only the immediate shape is answered here, which is all `decompose` decides. Anything
-    /// that depends on a *component*, such as whether `(i32,)` unifies with `(bool,)`, is a
-    /// question for `unify`, and the cases below that ask it go through `unify` directly.
     fn compatible(
         unifier: &mut Unifier,
         tcx: &TyCtx,
@@ -270,7 +261,7 @@ mod tests {
     #[test]
     fn find_deep_replaces_a_variable_nested_inside_a_type() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let open = tcx.mk_tuple(vec![var, i32_ty]);
         let closed = tcx.mk_tuple(vec![i32_ty, i32_ty]);
@@ -284,7 +275,7 @@ mod tests {
     #[test]
     fn find_deep_leaves_a_variable_nothing_has_unified_with_as_itself() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let open = tcx.mk_tuple(vec![var]);
         let mut unifier = Unifier::new();
 
@@ -295,7 +286,7 @@ mod tests {
     #[test]
     fn find_deep_resolves_through_every_layer_a_type_can_nest() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let open = {
             let inner = tcx.mk_ref(var, Mutability::Immutable);
@@ -371,7 +362,7 @@ mod tests {
     #[test]
     fn any_var_is_compatible_with_a_primitive() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let mut unifier = Unifier::new();
 
@@ -382,7 +373,7 @@ mod tests {
     #[test]
     fn any_var_is_compatible_with_an_adt() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let adt = tcx.mk_adt(DefId::from_usize(0), vec![]);
         let mut unifier = Unifier::new();
 
@@ -392,8 +383,8 @@ mod tests {
     #[test]
     fn any_var_is_compatible_with_another_any_var() {
         let mut tcx = TyCtx::new();
-        let a = tcx.next_ty_var();
-        let b = tcx.next_ty_var();
+        let a = tcx.next_infer_var();
+        let b = tcx.next_infer_var();
         let mut unifier = Unifier::new();
 
         assert_eq!(compatible(&mut unifier, &tcx, a, b), Ok(()));
@@ -402,7 +393,7 @@ mod tests {
     #[test]
     fn any_var_is_compatible_with_an_int_var() {
         let mut tcx = TyCtx::new();
-        let any = tcx.next_ty_var();
+        let any = tcx.next_infer_var();
         let int = tcx.next_int_var();
         let mut unifier = Unifier::new();
 
@@ -983,7 +974,7 @@ mod tests {
     #[test]
     fn successful_unify_merges_the_two_classes() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let mut unifier = Unifier::new();
 
@@ -994,8 +985,8 @@ mod tests {
     #[test]
     fn unify_is_transitive_across_three_types() {
         let mut tcx = TyCtx::new();
-        let a = tcx.next_ty_var();
-        let b = tcx.next_ty_var();
+        let a = tcx.next_infer_var();
+        let b = tcx.next_infer_var();
         let c = tcx.mk_prim(PrimTy::I32);
         let mut unifier = Unifier::new();
 
@@ -1014,7 +1005,7 @@ mod tests {
         const MEMBERS: usize = 50_000;
 
         let mut tcx = TyCtx::new();
-        let vars: Vec<Ty> = (0..MEMBERS).map(|_| tcx.next_ty_var()).collect();
+        let vars: Vec<Ty> = (0..MEMBERS).map(|_| tcx.next_infer_var()).collect();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let mut unifier = Unifier::new();
 
@@ -1036,7 +1027,7 @@ mod tests {
     #[test]
     fn unifying_a_var_with_a_concrete_type_makes_the_concrete_type_the_representative() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let mut unifier = Unifier::new();
 
@@ -1050,7 +1041,7 @@ mod tests {
         // shouldn't matter.
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let mut unifier = Unifier::new();
 
         assert_eq!(unifier.unify(&tcx, i32_ty, var), Ok(()));
@@ -1064,7 +1055,7 @@ mod tests {
         // concrete type and make a variable the representative instead.
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
-        let vars: Vec<Ty> = (0..8).map(|_| tcx.next_ty_var()).collect();
+        let vars: Vec<Ty> = (0..8).map(|_| tcx.next_infer_var()).collect();
         let mut unifier = Unifier::new();
 
         // Merge every variable into one class first, so its size heuristically dwarfs the
@@ -1082,8 +1073,8 @@ mod tests {
     #[test]
     fn a_var_merged_into_a_var_already_unified_with_a_concrete_type_resolves_to_it() {
         let mut tcx = TyCtx::new();
-        let a = tcx.next_ty_var();
-        let b = tcx.next_ty_var();
+        let a = tcx.next_infer_var();
+        let b = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let mut unifier = Unifier::new();
 
@@ -1097,7 +1088,7 @@ mod tests {
     #[test]
     fn a_numeric_var_outranks_an_unconstrained_var() {
         let mut tcx = TyCtx::new();
-        let any = tcx.next_ty_var();
+        let any = tcx.next_infer_var();
         let int = tcx.next_int_var();
         let mut unifier = Unifier::new();
 
@@ -1106,7 +1097,7 @@ mod tests {
 
         // Same in the other order: which side it was passed on must not decide this.
         let mut tcx = TyCtx::new();
-        let any = tcx.next_ty_var();
+        let any = tcx.next_infer_var();
         let float = tcx.next_float_var();
         let mut unifier = Unifier::new();
 
@@ -1121,7 +1112,7 @@ mod tests {
     #[test]
     fn a_var_that_absorbed_an_int_var_still_rejects_bool() {
         let mut tcx = TyCtx::new();
-        let result = tcx.next_ty_var();
+        let result = tcx.next_infer_var();
         let int = tcx.next_int_var();
         let bool_ty = tcx.mk_prim(PrimTy::Bool);
         let mut unifier = Unifier::new();
@@ -1141,9 +1132,9 @@ mod tests {
         // With no concrete type in play, the original size-based heuristic still governs
         // which variable becomes the representative: the larger class wins.
         let mut tcx = TyCtx::new();
-        let a = tcx.next_ty_var();
-        let b = tcx.next_ty_var();
-        let c = tcx.next_ty_var();
+        let a = tcx.next_infer_var();
+        let b = tcx.next_infer_var();
+        let c = tcx.next_infer_var();
         let mut unifier = Unifier::new();
 
         // `a` is folded into `b` first, so `b`'s class has size 2 by the time it meets `c`
@@ -1164,7 +1155,7 @@ mod tests {
     #[test]
     fn a_variable_cannot_be_bound_to_a_type_containing_it() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let tuple = tcx.mk_tuple(vec![var, i32_ty]);
         let mut unifier = Unifier::new();
@@ -1180,7 +1171,7 @@ mod tests {
     #[test]
     fn the_occurs_check_is_symmetric() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let tuple = tcx.mk_tuple(vec![var]);
         let mut unifier = Unifier::new();
 
@@ -1195,8 +1186,8 @@ mod tests {
     #[test]
     fn a_cycle_closed_through_another_variable_is_caught() {
         let mut tcx = TyCtx::new();
-        let a = tcx.next_ty_var();
-        let b = tcx.next_ty_var();
+        let a = tcx.next_infer_var();
+        let b = tcx.next_infer_var();
         let tuple_b = tcx.mk_tuple(vec![b]);
         let tuple_a = tcx.mk_tuple(vec![a]);
         let mut unifier = Unifier::new();
@@ -1214,8 +1205,8 @@ mod tests {
     #[test]
     fn a_variable_may_be_bound_to_a_type_containing_another_variable() {
         let mut tcx = TyCtx::new();
-        let a = tcx.next_ty_var();
-        let b = tcx.next_ty_var();
+        let a = tcx.next_infer_var();
+        let b = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let tuple = tcx.mk_tuple(vec![b, i32_ty]);
         let mut unifier = Unifier::new();
@@ -1246,7 +1237,7 @@ mod tests {
     #[test]
     fn unify_can_be_called_twice_on_the_same_pair() {
         let mut tcx = TyCtx::new();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let mut unifier = Unifier::new();
 
@@ -1259,7 +1250,7 @@ mod tests {
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let bool_ty = tcx.mk_prim(PrimTy::Bool);
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let mut unifier = Unifier::new();
 
         assert!(unifier.unify(&tcx, i32_ty, bool_ty).is_err());
@@ -1303,7 +1294,7 @@ mod tests {
 
         let composites: Vec<(&str, Ty, Ty, Ty)> = vec![
             {
-                let var = tcx.next_ty_var();
+                let var = tcx.next_infer_var();
                 (
                     "Adt",
                     tcx.mk_adt(def, vec![i32_ty]),
@@ -1312,7 +1303,7 @@ mod tests {
                 )
             },
             {
-                let var = tcx.next_ty_var();
+                let var = tcx.next_infer_var();
                 (
                     "Ref",
                     tcx.mk_ref(i32_ty, Mutability::Immutable),
@@ -1321,11 +1312,11 @@ mod tests {
                 )
             },
             {
-                let var = tcx.next_ty_var();
+                let var = tcx.next_infer_var();
                 ("Any", tcx.mk_any(i32_ty), tcx.mk_any(var), var)
             },
             {
-                let var = tcx.next_ty_var();
+                let var = tcx.next_infer_var();
                 (
                     "Tuple",
                     tcx.mk_tuple(vec![i32_ty]),
@@ -1334,7 +1325,7 @@ mod tests {
                 )
             },
             {
-                let var = tcx.next_ty_var();
+                let var = tcx.next_infer_var();
                 (
                     "Array",
                     tcx.mk_array(i32_ty, Some(len)),
@@ -1343,7 +1334,7 @@ mod tests {
                 )
             },
             {
-                let var = tcx.next_ty_var();
+                let var = tcx.next_infer_var();
                 (
                     "Fun params",
                     tcx.mk_fun(vec![i32_ty], None),
@@ -1352,7 +1343,7 @@ mod tests {
                 )
             },
             {
-                let var = tcx.next_ty_var();
+                let var = tcx.next_infer_var();
                 (
                     "Fun ret",
                     tcx.mk_fun(vec![], Some(i32_ty)),
@@ -1361,7 +1352,7 @@ mod tests {
                 )
             },
             {
-                let var = tcx.next_ty_var();
+                let var = tcx.next_infer_var();
                 (
                     "Dyn",
                     tcx.mk_dyn(def, vec![i32_ty]),
@@ -1386,7 +1377,7 @@ mod tests {
     fn unification_recurses_more_than_one_level_deep() {
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
 
         let inner_expected = tcx.mk_ref(i32_ty, Mutability::Immutable);
         let inner_found = tcx.mk_ref(var, Mutability::Immutable);
@@ -1522,7 +1513,7 @@ mod tests {
         // unified with it must therefore point at `Unit`, not the other way round.
         let mut tcx = TyCtx::new();
         let unit = tcx.unit();
-        let var = tcx.next_ty_var();
+        let var = tcx.next_infer_var();
         let mut unifier = Unifier::new();
 
         assert_eq!(unifier.unify(&tcx, unit, var), Ok(()));

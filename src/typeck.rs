@@ -1,35 +1,36 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::ast::{BinaryOp, Literal, Mutability, SelfMode, UnaryOp, Visibility};
-use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::display::DisplayCtx;
 use crate::diagnostics::typeck::pat::{
     report_irrefutable_let_with_else, report_refutable_let_without_else,
 };
 use crate::diagnostics::typeck::traits::solve::report_operator_trait_missing;
 use crate::diagnostics::typeck::{
     report_any_outside_signature, report_binary_operand_mismatch, report_binding_type_mismatch,
-    report_bodiless_function, report_body_return_mismatch, report_int_suffix_on_float_literal,
-    report_logic_op_needs_bool_operands, report_operand_has_unknown_type, report_reference_field,
+    report_bodiless_function, report_body_return_mismatch, report_duplicate_field,
+    report_int_suffix_on_float_literal, report_integer_literal_out_of_range,
+    report_logic_op_needs_bool_operands, report_negative_literal_for_unsigned_type,
+    report_operand_has_unknown_type, report_recursive_type, report_reference_field,
     report_return_mismatch, report_unknown_literal_suffix,
 };
-use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
+use crate::driver::source::{FileOrigin, SrcSpan};
 use crate::hir::BindingMode;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
-    DefId, ExprKind, Hir, HirId, Local, Node, OwnerNode, PatKind, Res, StmtKind,
+    DefId, ExprId, ExprKind, Hir, HirId, Local, Node, OwnerNode, PatKind, Payload, Res, StmtKind,
     TyKind as HirTyKind, VariantPayload,
 };
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
 use crate::nameres::symbol_table::is_prim_ty;
+use crate::session::Session;
 use crate::typeck::expr::DerefContext;
 use crate::typeck::results::{ResolvedCall, TypeResolutions};
 use crate::typeck::traits::TraitRef;
-use crate::typeck::traits::bounds::Obligation;
-use crate::typeck::traits::index::ExtendIndex;
-use crate::typeck::traits::method::PendingMethodCall;
-use crate::typeck::traits::solve::{Query, Solution};
-use crate::typeck::ty::{Ty, TyKind, TyVar};
+use crate::typeck::traits::collect::ExtendIndex;
+use crate::typeck::traits::solve::{Goal, Obligation, PendingMethodCall, Solution};
+use crate::typeck::ty::{InferVar, Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 use crate::typeck::unify::{Unifier, UnifyError};
 
@@ -37,7 +38,6 @@ pub mod adt;
 pub mod cast;
 pub mod entry_point;
 pub mod expr;
-pub mod fold;
 pub mod lower_ty;
 pub mod mutability;
 pub mod pat;
@@ -46,17 +46,21 @@ pub mod traits;
 pub mod ty;
 pub mod tyctx;
 pub mod unify;
+pub mod visitor;
 
 pub struct Typeck<'hir> {
+    session: &'hir Session,
     hir: &'hir Hir,
 
-    // Typeck
+    // Types and inference
     tcx: TyCtx,
     types: TypeResolutions,
     unifier: Unifier,
 
     // Trait solving
     extends: ExtendIndex,
+
+    // I feel like the following fields should be moved out of typeck
     trait_bound_obligations: BTreeMap<DefId, Vec<Obligation>>,
 
     /// Method calls put aside because the receiver's type was still open when they were
@@ -80,8 +84,9 @@ pub struct Typeck<'hir> {
 }
 
 impl<'hir> Typeck<'hir> {
-    pub fn new(hir: &'hir Hir) -> Self {
+    pub fn new(session: &'hir Session, hir: &'hir Hir) -> Self {
         Typeck {
+            session,
             hir,
             tcx: TyCtx::new(),
             types: TypeResolutions::new(),
@@ -97,7 +102,7 @@ impl<'hir> Typeck<'hir> {
     }
 
     pub fn collect_module(&mut self, module_id: DefId) {
-        Collect(self).visit_module(module_id);
+        SignatureCollector(self).visit_module(module_id);
     }
 
     pub fn collect_function(&mut self, function: DefId) {
@@ -137,7 +142,8 @@ impl<'hir> Typeck<'hir> {
         self.types.record_def(function, sig);
     }
 
-    fn collect_self_param(&mut self, id: HirId) -> Ty {
+    fn collect_self_param(&mut self, id: impl Into<HirId>) -> Ty {
+        let id = id.into();
         let self_param = self.hir.self_param(id);
         let (mode, span) = (self_param.mode, self_param.span);
 
@@ -236,9 +242,13 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn collect_fields(&mut self, fields: &[HirId]) {
+        let mut seen = HashSet::new();
         for &id in fields {
             let field = self.hir.field(id);
             let field_span = field.span;
+            if !seen.insert(field.name.text) {
+                report_duplicate_field(self.display_cx(), field.name);
+            }
 
             let ty = self.lower_ty(field.ty);
             self.types.record(id, ty);
@@ -263,14 +273,16 @@ impl<'hir> Typeck<'hir> {
     //-------------------------------------------------------------------------
 
     pub fn check_module(&mut self, module: DefId) {
-        Check(self).visit_module(module);
+        BodyChecker(self).visit_module(module);
     }
 
-    fn ty_of(&mut self, id: HirId) -> Ty {
+    fn ty_of(&mut self, id: impl Into<HirId>) -> Ty {
+        let id = id.into();
         self.ty_of_expecting(id, None)
     }
 
-    fn ty_of_expecting(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
+    fn ty_of_expecting(&mut self, id: impl Into<HirId>, expected: Option<Ty>) -> Ty {
+        let id = id.into();
         if let Some(ty) = self.types.ty(id) {
             return self.unifier.find_deep(&mut self.tcx, ty);
         }
@@ -286,11 +298,13 @@ impl<'hir> Typeck<'hir> {
         self.unifier.find_deep(&mut self.tcx, ty)
     }
 
-    fn ty_of_as_place(&mut self, id: HirId) -> Ty {
+    fn ty_of_as_place(&mut self, id: impl Into<HirId>) -> Ty {
+        let id = id.into();
         self.ty_of_as_place_expecting(id, None)
     }
 
-    fn ty_of_as_place_expecting(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
+    fn ty_of_as_place_expecting(&mut self, id: impl Into<HirId>, expected: Option<Ty>) -> Ty {
+        let id = id.into();
         if let Some(ty) = self.types.ty(id) {
             return self.unifier.find_deep(&mut self.tcx, ty);
         }
@@ -315,11 +329,13 @@ impl<'hir> Typeck<'hir> {
             .filter(|(id, _)| id.owner == owner)
             .collect();
 
-        for (id, ty) in entries {
+        for &(id, ty) in &entries {
             let resolved = self.unifier.find_deep(&mut self.tcx, ty);
             let defaulted = self.default_unconstrained_types(resolved);
             self.types.record(id, defaulted);
         }
+
+        self.check_integer_literals(owner);
 
         let call_entries: Vec<(HirId, ResolvedCall)> = self
             .types
@@ -349,14 +365,111 @@ impl<'hir> Typeck<'hir> {
         self.default_unconstrained_types(resolved)
     }
 
-    /// Defaults every unconstrained `TyVar::Int`/`TyVar::Float` still inside `ty` to `i32`/`f64`,
-    /// and every unconstrained `TyVar::Any` to `unit`, so no inference variable survives into a
-    /// recorded type.
+    fn check_integer_literals(&mut self, owner: DefId) {
+        let entries: Vec<(HirId, Ty)> = self
+            .types
+            .tys_iter()
+            .filter(|(id, _)| id.owner == owner)
+            .collect();
+
+        let negated: HashSet<HirId> = entries
+            .iter()
+            .filter_map(|&(id, _)| match self.hir.node(id) {
+                Node::Expr(expr) => match expr.kind {
+                    ExprKind::Unary {
+                        op: UnaryOp::Neg,
+                        operand,
+                    } => Some(operand.into()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+
+        let mut out_of_range: Vec<(String, Ty, SrcSpan)> = Vec::new();
+        let mut unsigned_negation: Vec<(Ty, SrcSpan)> = Vec::new();
+
+        let array_lengths = self.array_length_exprs(owner);
+
+        for &(id, ty) in &entries {
+            if array_lengths.contains(&id) {
+                continue;
+            }
+            let Node::Expr(expr) = self.hir.node(id) else {
+                continue;
+            };
+            let Some((min, max)) = integer_bounds(&self.tcx, ty) else {
+                continue;
+            };
+            match &expr.kind {
+                ExprKind::Literal(Literal::Int { value, .. }) => {
+                    if negated.contains(&id) {
+                        if min >= 0 {
+                            continue;
+                        }
+                        let literal = self.session.resolve(*value);
+                        if literal.parse::<i128>().map_or(true, |v| v > -min) {
+                            out_of_range.push((literal.to_string(), ty, expr.span));
+                        }
+                    } else {
+                        let literal = self.session.resolve(*value);
+                        if literal.parse::<i128>().map_or(true, |v| v < min || v > max) {
+                            out_of_range.push((literal.to_string(), ty, expr.span));
+                        }
+                    }
+                }
+                ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    operand,
+                } if matches!(
+                    self.hir.node((*operand).into()),
+                    Node::Expr(operand) if matches!(operand.kind, ExprKind::Literal(Literal::Int { .. }))
+                ) && min >= 0 =>
+                {
+                    unsigned_negation.push((ty, expr.span));
+                }
+                _ => {}
+            }
+        }
+
+        for (literal, ty, span) in out_of_range {
+            report_integer_literal_out_of_range(self.display_cx(), &literal, ty, span);
+        }
+        for (ty, span) in unsigned_negation {
+            report_negative_literal_for_unsigned_type(self.display_cx(), ty, span);
+        }
+    }
+
+    fn array_length_exprs(&self, owner: DefId) -> HashSet<HirId> {
+        let mut exprs = HashSet::new();
+        for (id, _) in self.types.tys_iter().filter(|(id, _)| id.owner == owner) {
+            let Node::Ty(ty) = self.hir.node(id) else {
+                continue;
+            };
+            if let HirTyKind::Array { len: Some(len), .. } = ty.kind {
+                self.collect_const_exprs(len, &mut exprs);
+            }
+        }
+        exprs
+    }
+
+    fn collect_const_exprs(&self, id: ExprId, out: &mut HashSet<HirId>) {
+        out.insert(id.into());
+        match &self.hir.expr(id).kind {
+            ExprKind::Unary { operand, .. } => self.collect_const_exprs(*operand, out),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.collect_const_exprs(*lhs, out);
+                self.collect_const_exprs(*rhs, out);
+            }
+            _ => {}
+        }
+    }
+
     fn default_unconstrained_types(&mut self, ty: Ty) -> Ty {
-        fold::fold_ty(&mut self.tcx, ty, &mut |tcx, ty| match *tcx.kind(ty) {
-            TyKind::Var(TyVar::Int(_)) => Some(tcx.mk_prim(PrimTy::I32)),
-            TyKind::Var(TyVar::Float(_)) => Some(tcx.mk_prim(PrimTy::F64)),
-            TyKind::Var(TyVar::Any(_)) => Some(tcx.unit()),
+        visitor::fold_ty(&mut self.tcx, ty, &mut |tcx, ty| match *tcx.kind(ty) {
+            TyKind::Var(InferVar::Int(_)) => Some(tcx.mk_prim(PrimTy::I32)),
+            TyKind::Var(InferVar::Float(_)) => Some(tcx.mk_prim(PrimTy::F64)),
+            TyKind::Var(InferVar::Any(_)) => Some(tcx.unit()),
             _ => None,
         })
     }
@@ -371,11 +484,9 @@ impl<'hir> Typeck<'hir> {
         self.unifier.unify(&self.tcx, expected, found)
     }
 
-    /// The unsize coercion: a `&Concrete` (or `&mut Concrete`) whose type implements the trait
-    /// may coerce to `&dyn Trait<args>` (or `&mut dyn Trait<args>`). Records the coercion on
-    /// `expr_id` for lowering, which builds the fat pointer there, and answers whether it
-    /// applied.
-    fn coerce_unsize(&mut self, expected: Ty, found: Ty, expr_id: HirId) -> bool {
+    /// Allows &T/&mut T to coerce into a Trait it implements.
+    fn coerce_unsize(&mut self, expected: Ty, found: Ty, expr_id: impl Into<HirId>) -> bool {
+        let expr_id = expr_id.into();
         let TyKind::Ref {
             base: expected_base,
             mutability: expected_mut,
@@ -399,7 +510,7 @@ impl<'hir> Typeck<'hir> {
         if self.mentions_infer_var(found_base) {
             return false;
         }
-        let goal = Query {
+        let goal = Goal {
             self_ty: found_base,
             trait_: TraitRef {
                 def: trait_,
@@ -416,7 +527,8 @@ impl<'hir> Typeck<'hir> {
     }
 
     #[must_use]
-    fn check_expr(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
+    fn check_expr(&mut self, id: impl Into<HirId>, expected: Option<Ty>) -> Ty {
+        let id = id.into();
         let expr = self.hir.expr(id);
 
         match &expr.kind {
@@ -546,20 +658,20 @@ impl<'hir> Typeck<'hir> {
         owner: DefId,
         span: SrcSpan,
     ) -> bool {
-        if matches!(self.tcx.kind(self_ty), TyKind::Var(TyVar::Any(_))) {
-            report_operand_has_unknown_type(span);
+        if matches!(self.tcx.kind(self_ty), TyKind::Var(InferVar::Any(_))) {
+            report_operand_has_unknown_type(self.session, span);
             return false;
         }
         let Some(def) = self.hir.lang_items().get(item) else {
             return false;
         };
 
-        let goal = Query::new(self_ty, def);
+        let goal = Goal::new(self_ty, def);
         let env = self.bounds_env(owner);
         match self.implements(&goal, &env) {
             Solution::Holds => true,
             Solution::DoesNotHold => {
-                let name = crate::diagnostics::typeck::display::def_name(self.hir, def);
+                let name = crate::diagnostics::display::def_name(self.session, self.hir, def);
                 report_operator_trait_missing(self.display_cx(), self_ty, name, span);
                 false
             }
@@ -570,7 +682,7 @@ impl<'hir> Typeck<'hir> {
     fn is_undefaulted_numeric_var(&self, ty: Ty) -> bool {
         matches!(
             self.tcx.kind(ty),
-            TyKind::Var(TyVar::Int(_) | TyVar::Float(_))
+            TyKind::Var(InferVar::Int(_) | InferVar::Float(_))
         )
     }
 
@@ -588,24 +700,24 @@ impl<'hir> Typeck<'hir> {
             Literal::Char(_) => self.tcx.mk_prim(PrimTy::Char),
             Literal::Int { suffix, .. } => match suffix {
                 None => self.tcx.next_int_var(),
-                Some(suffix) => match is_prim_ty(*suffix) {
+                Some(suffix) => match is_prim_ty(self.session, *suffix) {
                     Some(prim) if prim.is_integer() || prim.is_float() => self.tcx.mk_prim(prim),
                     _ => {
-                        report_unknown_literal_suffix(*suffix, span);
+                        report_unknown_literal_suffix(self.session, *suffix, span);
                         self.tcx.error()
                     }
                 },
             },
             Literal::Float { suffix, .. } => match suffix {
                 None => self.tcx.next_float_var(),
-                Some(suffix) => match is_prim_ty(*suffix) {
+                Some(suffix) => match is_prim_ty(self.session, *suffix) {
                     Some(prim) if prim.is_float() => self.tcx.mk_prim(prim),
                     Some(prim) if prim.is_integer() => {
-                        report_int_suffix_on_float_literal(*suffix, span);
+                        report_int_suffix_on_float_literal(self.session, *suffix, span);
                         self.tcx.error()
                     }
                     _ => {
-                        report_unknown_literal_suffix(*suffix, span);
+                        report_unknown_literal_suffix(self.session, *suffix, span);
                         self.tcx.error()
                     }
                 },
@@ -614,7 +726,8 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    pub fn check_stmt(&mut self, id: HirId) {
+    pub fn check_stmt(&mut self, id: impl Into<HirId>) {
+        let id = id.into();
         let stmt = self.hir.stmt(id);
 
         match &stmt.kind {
@@ -630,10 +743,10 @@ impl<'hir> Typeck<'hir> {
 
                 match (self.pat_is_irrefutable(pat), else_block) {
                     (false, None) => {
-                        report_refutable_let_without_else(self.hir.pat(pat).span);
+                        report_refutable_let_without_else(self.session, self.hir.pat(pat).span);
                     }
                     (true, Some(block)) => {
-                        report_irrefutable_let_with_else(self.hir.block(block).span);
+                        report_irrefutable_let_with_else(self.session, self.hir.block(block).span);
                     }
                     _ => {}
                 }
@@ -643,12 +756,8 @@ impl<'hir> Typeck<'hir> {
                 }
             }
             StmtKind::With { lends, block } => {
-                let lends: Vec<(HirId, Option<HirId>, HirId, SrcSpan)> = lends
-                    .iter()
-                    .map(|lend| (lend.pat, lend.ty, lend.init, lend.span))
-                    .collect();
-                for (pat, ty, init, span) in lends {
-                    self.check_binding(pat, ty, init, span);
+                for lend in lends {
+                    self.check_binding(lend.pat, lend.ty, lend.init, lend.span);
                 }
                 self.check_block(*block);
             }
@@ -677,9 +786,17 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    fn check_binding(&mut self, pat: HirId, ty: Option<HirId>, init: HirId, span: SrcSpan) {
+    fn check_binding(
+        &mut self,
+        pat: impl Into<HirId>,
+        ty: Option<impl Into<HirId>>,
+        init: impl Into<HirId>,
+        span: SrcSpan,
+    ) {
+        let (pat, init) = (pat.into(), init.into());
+        let ty = ty.map(Into::into);
         let declared = ty.map(|ty_id| {
-            let declared = self.lower_ty(ty_id);
+            let declared = self.lower_ty(ty_id.into());
             let span = self.hir.ty(ty_id).span;
             self.check_not_any(declared, span);
             self.check_no_dyn(declared, span);
@@ -701,12 +818,13 @@ impl<'hir> Typeck<'hir> {
         self.check_pat(pat, bound, BindingMode::Value);
     }
 
-    fn pat_is_irrefutable(&mut self, pat_id: HirId) -> bool {
+    fn pat_is_irrefutable(&mut self, pat_id: impl Into<HirId>) -> bool {
+        let pat_id = pat_id.into();
         let pat = self.hir.pat(pat_id);
         match &pat.kind {
             PatKind::Wildcard | PatKind::Binding { .. } => true,
             PatKind::Literal(_) => false,
-            PatKind::Variant { .. } => {
+            PatKind::Variant { payload, .. } => {
                 let ty = self
                     .types
                     .ty(pat_id)
@@ -715,7 +833,9 @@ impl<'hir> Typeck<'hir> {
                 match self.tcx.kind(ty) {
                     TyKind::Error | TyKind::Var(_) => true,
                     TyKind::Adt { def, .. } => match self.hir.def(*def) {
-                        OwnerNode::Enum(enum_) => enum_.variants.len() == 1,
+                        OwnerNode::Enum(enum_) if enum_.variants.len() == 1 => {
+                            self.payload_is_irrefutable(payload)
+                        }
                         _ => false,
                     },
                     _ => false,
@@ -723,6 +843,16 @@ impl<'hir> Typeck<'hir> {
             }
             PatKind::Tuple(elems) => elems.iter().all(|&elem| self.pat_is_irrefutable(elem)),
             PatKind::Error => true,
+        }
+    }
+
+    fn payload_is_irrefutable(&mut self, payload: &'hir Payload) -> bool {
+        match payload {
+            Payload::None => true,
+            Payload::Single(pat) => self.pat_is_irrefutable(*pat),
+            Payload::Record(fields) => fields
+                .iter()
+                .all(|field| self.pat_is_irrefutable(field.value)),
         }
     }
 
@@ -741,8 +871,8 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    fn display_cx(&self) -> DisplayCx<'_> {
-        DisplayCx::new(self.hir, &self.tcx)
+    fn display_cx(&self) -> DisplayCtx<'_> {
+        DisplayCtx::new(self.session, self.hir, &self.tcx)
     }
 
     fn is_visible_from(&self, owner_module: DefId, from: DefId, visibility: Visibility) -> bool {
@@ -761,11 +891,13 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    pub fn check_block(&mut self, id: HirId) -> Ty {
+    pub fn check_block(&mut self, id: impl Into<HirId>) -> Ty {
+        let id = id.into();
         self.check_block_expecting(id, None)
     }
 
-    fn check_block_expecting(&mut self, id: HirId, expected: Option<Ty>) -> Ty {
+    fn check_block_expecting(&mut self, id: impl Into<HirId>, expected: Option<Ty>) -> Ty {
+        let id = id.into();
         let block = self.hir.block(id);
         let tail = block.expr;
 
@@ -805,9 +937,6 @@ impl<'hir> Typeck<'hir> {
             }
             None => self.check_bodiless_function(function, function_node.span),
         }
-        // Before `writeback`, so a settled call's own types are written back with everything
-        // else, and after the body, so every constraint the body places on a deferred call's
-        // receiver has already been made.
         self.settle_pending_method_calls();
         self.writeback(function);
         let closures: Vec<DefId> = self
@@ -828,19 +957,38 @@ impl<'hir> Typeck<'hir> {
             return;
         }
 
-        let declared_in_core = SrcMap::file_containing(span.get_begin())
+        let declared_in_core = self
+            .session
+            .file_containing(span.get_begin())
             .is_some_and(|file| file.origin == FileOrigin::Core);
         let is_write_bytes = self.hir.lang_items().get(LangItem::WriteBytes) == Some(function);
 
         if !declared_in_core || !is_write_bytes {
-            report_bodiless_function(span);
+            report_bodiless_function(self.session, span);
         }
     }
 }
 
-struct Collect<'a, 'hir>(&'a mut Typeck<'hir>);
+fn integer_bounds(tcx: &TyCtx, ty: Ty) -> Option<(i128, i128)> {
+    let TyKind::Primitive(prim) = *tcx.kind(ty) else {
+        return None;
+    };
+    match prim {
+        PrimTy::I8 => Some((i8::MIN as i128, i8::MAX as i128)),
+        PrimTy::I16 => Some((i16::MIN as i128, i16::MAX as i128)),
+        PrimTy::I32 => Some((i32::MIN as i128, i32::MAX as i128)),
+        PrimTy::I64 => Some((i64::MIN as i128, i64::MAX as i128)),
+        PrimTy::U8 => Some((0, u8::MAX as i128)),
+        PrimTy::U16 => Some((0, u16::MAX as i128)),
+        PrimTy::U32 => Some((0, u32::MAX as i128)),
+        PrimTy::U64 | PrimTy::Usize => Some((0, u64::MAX as i128)),
+        _ => None,
+    }
+}
 
-impl<'hir> Visitor<'hir> for Collect<'_, 'hir> {
+struct SignatureCollector<'a, 'hir>(&'a mut Typeck<'hir>);
+
+impl<'hir> Visitor<'hir> for SignatureCollector<'_, 'hir> {
     fn hir(&self) -> &'hir Hir {
         self.0.hir
     }
@@ -876,9 +1024,9 @@ impl<'hir> Visitor<'hir> for Collect<'_, 'hir> {
     }
 }
 
-struct Check<'a, 'hir>(&'a mut Typeck<'hir>);
+struct BodyChecker<'a, 'hir>(&'a mut Typeck<'hir>);
 
-impl<'hir> Visitor<'hir> for Check<'_, 'hir> {
+impl<'hir> Visitor<'hir> for BodyChecker<'_, 'hir> {
     fn hir(&self) -> &'hir Hir {
         self.0.hir
     }
@@ -905,19 +1053,25 @@ pub struct TypeckOutput {
     pub types: TypeResolutions,
 }
 
-pub fn check(hir: &Hir) -> TypeckOutput {
-    let mut checker = Typeck::new(hir);
+pub fn check(session: &Session, hir: &Hir) -> TypeckOutput {
+    let mut checker = Typeck::new(session, hir);
     checker.collect_module(hir.root_id());
     let adts = adt::collect_adt_defs(hir, &checker.types);
+    for def in adt::infinitely_sized_adts(&checker.tcx, &adts) {
+        let name = match hir.def(def) {
+            OwnerNode::Struct(struct_) => struct_.name,
+            OwnerNode::Enum(enum_) => enum_.name,
+            _ => continue,
+        };
+        report_recursive_type(checker.display_cx(), name);
+    }
     checker.tcx.set_adts(adts);
-    checker.build_extend_index();
-    checker.check_coherence();
-    checker.check_trait_members();
-    checker.check_declared_bounds();
-    checker.check_extend_headers();
+    checker.collect_traits();
+    checker.check_traits();
+    checker.register_extend_header_bounds();
     checker.check_module(hir.root_id());
-    checker.select_obligations();
-    mutability::check(hir, &checker.tcx, &checker.types);
+    checker.check_bound_obligations();
+    mutability::check(session, hir, &checker.tcx, &checker.types);
     TypeckOutput {
         tcx: checker.tcx,
         types: checker.types,
@@ -927,17 +1081,17 @@ pub fn check(hir: &Hir) -> TypeckOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostics::{DiagCtx, Severity};
+    use crate::diagnostics::Severity;
     use crate::nameres::PrimTy;
     use crate::testing::{
-        Stage, checker_through, find_return, first_extend_method, first_function, first_struct,
-        first_trait, lower_to_hir, typeck_accepts as accepts, typeck_rejects as rejects,
-        typeck_src_as_core,
+        TypeckStage, checker_through, find_return, first_extend_method, first_function,
+        first_struct, first_trait, lower_to_hir, typeck_accepts as accepts,
+        typeck_rejects as rejects, typeck_src_as_core,
     };
     use crate::typeck::unify::UnifyError;
 
     fn checker_with_signatures_collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
-        checker_through(hir, Stage::Collect)
+        checker_through(hir, TypeckStage::Collect)
     }
 
     #[test]
@@ -948,9 +1102,9 @@ mod tests {
 
         let mut checker = checker_with_signatures_collected(&hir);
 
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         checker.check_stmt(stmt_id);
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
@@ -962,9 +1116,9 @@ mod tests {
 
         let mut checker = checker_with_signatures_collected(&hir);
 
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         checker.check_stmt(stmt_id);
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
@@ -977,9 +1131,9 @@ mod tests {
 
         let mut checker = checker_with_signatures_collected(&hir);
 
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         checker.check_stmt(stmt_id);
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
@@ -1002,9 +1156,9 @@ mod tests {
         );
         let mut checker = checker_with_signatures_collected(&hir);
 
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         checker.check_module(hir.root_id());
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
@@ -1038,7 +1192,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     fn checker_with_impls_built<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
-        checker_through(hir, Stage::Index)
+        checker_through(hir, TypeckStage::Index)
     }
 
     fn find_owner(hir: &Hir, from: DefId, pred: &impl Fn(&OwnerNode) -> bool) -> DefId {
@@ -1091,9 +1245,9 @@ mod tests {
         let (stmt_id, _expr_id) = find_return(&hir, f);
         let mut checker = checker_with_impls_built(&hir);
 
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         checker.check_stmt(stmt_id);
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
@@ -1120,9 +1274,9 @@ mod tests {
         let (stmt_id, _expr_id) = find_return(&hir, f);
         let mut checker = checker_with_impls_built(&hir);
 
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         checker.check_stmt(stmt_id);
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         assert!(diagnostics[0].message.contains("Add"), "{diagnostics:?}");
     }
@@ -1134,9 +1288,9 @@ mod tests {
         let (stmt_id, _expr_id) = find_return(&hir, def);
         let mut checker = checker_with_impls_built(&hir);
 
-        DiagCtx::clear();
+        crate::testing::clear_diagnostics();
         checker.check_stmt(stmt_id);
-        let diagnostics = DiagCtx::diagnostics();
+        let diagnostics = crate::testing::diagnostics();
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
@@ -1233,7 +1387,7 @@ mod tests {
 
         let ty = checker
             .types
-            .ty(init)
+            .ty(init.into())
             .expect("writeback records the initializer's type");
         assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::I32));
     }
@@ -1255,7 +1409,7 @@ mod tests {
 
         let ty = checker
             .types
-            .ty(init)
+            .ty(init.into())
             .expect("writeback records the initializer's type");
         assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::F64));
     }
@@ -1293,7 +1447,7 @@ mod tests {
         let ty = checker.ty_of(expr_id);
         assert!(matches!(
             checker.tcx.kind(ty),
-            TyKind::Var(crate::typeck::ty::TyVar::Int(_))
+            TyKind::Var(crate::typeck::ty::InferVar::Int(_))
         ));
     }
 
@@ -1307,7 +1461,7 @@ mod tests {
         let ty = checker.ty_of(expr_id);
         assert!(matches!(
             checker.tcx.kind(ty),
-            TyKind::Var(crate::typeck::ty::TyVar::Float(_))
+            TyKind::Var(crate::typeck::ty::InferVar::Float(_))
         ));
     }
 
@@ -1477,7 +1631,7 @@ mod tests {
     fn any_ty_var_displays_as_underscore() {
         let hir = lower_to_hir("fun f() {}");
         let mut checker = checker_with_signatures_collected(&hir);
-        let ty = checker.tcx.next_ty_var();
+        let ty = checker.tcx.next_infer_var();
         assert_eq!(checker.display_cx().show(ty).to_string(), "_");
     }
 
@@ -1683,7 +1837,7 @@ mod tests {
         let hir = lower_to_hir("fun f() {}");
         let mut tcx = TyCtx::new();
         let (expected, found) = (tcx.mk_prim(PrimTy::I32), tcx.mk_prim(PrimTy::Bool));
-        let cx = DisplayCx::new(&hir, &tcx);
+        let cx = DisplayCtx::new(crate::testing::session(), &hir, &tcx);
 
         assert_eq!(
             cx.show(UnifyError::Mismatch { expected, found })
@@ -1698,7 +1852,7 @@ mod tests {
         let mut tcx = TyCtx::new();
         let var = tcx.next_int_var();
         let found = tcx.mk_prim(PrimTy::Bool);
-        let cx = DisplayCx::new(&hir, &tcx);
+        let cx = DisplayCtx::new(crate::testing::session(), &hir, &tcx);
 
         assert_eq!(
             cx.show(UnifyError::ExpectedInteger { var, found })
@@ -2258,5 +2412,116 @@ mod tests {
                 "{id:?} kept an unresolved variable: {ty:?}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Bugs found by targeted testing, now regression tests for their fixes.
+    // -----------------------------------------------------------------
+
+    /// `check_literal` looks only at a literal's suffix, never its value, and the unifier happily
+    /// binds an unconstrained integer literal to any width. Codegen then truncates via
+    /// `const_int(value as u64)`, so an out-of-range literal silently wraps. A literal that does
+    /// not fit its type must be rejected.
+    #[test]
+    fn an_out_of_range_integer_literal_is_rejected() {
+        for src in [
+            "fun f() -> u8 { let x: u8 = 300; return x; }",
+            "fun f() -> i8 { let x: i8 = 200; return x; }",
+            "fun f() -> i32 { let x: i32 = 4294967296; return x; }",
+        ] {
+            let reported = crate::testing::typeck_src(src);
+            assert!(
+                !reported.is_empty(),
+                "expected a literal-out-of-range error for {src:?}, got {reported:?}"
+            );
+        }
+    }
+
+    /// Unary minus on an *undefaulted* numeric literal is accepted without checking that the
+    /// eventual type implements `Neg`. Since there is no `extend u8 with Neg`, `-1` as a `u8`
+    /// should be rejected; instead it is admitted and truncated to `255`.
+    #[test]
+    fn a_negative_literal_for_an_unsigned_type_is_rejected() {
+        let reported = crate::testing::typeck_src("fun f() -> u8 { let x: u8 = -1; return x; }");
+        assert!(
+            !reported.is_empty(),
+            "`-1` has type `u8` only by truncation; expected a rejection, got {reported:?}"
+        );
+    }
+
+    /// Exhaustiveness only checks that each top-level variant name appears in some arm; it never
+    /// inspects the arms' payload patterns. So a match that handles `.some(true)` but not
+    /// `.some(false)` is accepted, and the uncovered case becomes `unreachable` at runtime.
+    #[test]
+    fn a_match_missing_a_variant_payload_case_is_rejected() {
+        let reported = crate::testing::typeck_src(
+            "enum Opt { some: bool, none }\n\
+             fun f(o: Opt) -> i32 { return match o { .some(true) => 1, .none => 3, }; }",
+        );
+        assert!(
+            !reported.is_empty(),
+            "`.some(false)` is uncovered; expected a non-exhaustive error, got {reported:?}"
+        );
+    }
+
+    /// `pat_is_irrefutable` treats any single-variant enum pattern as irrefutable without
+    /// recursing into the payload, so a refutable `let .one(true) = o;` is accepted without an
+    /// `else` and its literal test is dropped during lowering.
+    #[test]
+    fn a_refutable_let_pattern_is_rejected() {
+        let reported = crate::testing::typeck_src(
+            "enum Only { one: bool }\n\
+             fun f(o: Only) { let .one(true) = o; }",
+        );
+        assert!(
+            !reported.is_empty(),
+            "`.one(true)` fails for `.one(false)`; expected a refutability error, got {reported:?}"
+        );
+    }
+
+    /// `is_place_expr` reports `base.member` as writable whenever `base` is not a type name,
+    /// even when `base` is a call result. Assigning to a field of a temporary should be rejected.
+    #[test]
+    fn assigning_to_a_temporary_is_rejected() {
+        let reported = crate::testing::typeck_src(
+            "struct P { x: i32 }\n\
+             fun make() -> P { return P { x: 1 }; }\n\
+             fun f() { make().x = 2; }",
+        );
+        assert!(
+            !reported.is_empty(),
+            "a call result is not an assignable place; expected a rejection, got {reported:?}"
+        );
+    }
+
+    /// The `SelfMode::Mutable` receiver check only inspects the outermost projection layer, so a
+    /// `&mut self` method can be called through a shared reference (`&mut &S`), which lowering
+    /// then actually performs.
+    #[test]
+    fn a_mutable_method_cannot_be_called_through_a_shared_reference() {
+        let reported = crate::testing::typeck_src(
+            "struct S { x: i32 }\n\
+             extend S { fun set(&mut self, v: i32) { self.x = v; } }\n\
+             fun f(r: &S) { let m: &mut &S = &mut r; m.set(1); }",
+        );
+        assert!(
+            !reported.is_empty(),
+            "reborrowing `**m` mutably through `&S` must be rejected, got {reported:?}"
+        );
+    }
+
+    /// `(T)` is a parenthesized `T`; only `(T,)` is a one-element tuple (see the parser tests and
+    /// the diagnostic renderer). The type parser builds a tuple unconditionally, so this is
+    /// currently typed as `(i32,)` and rejected.
+    #[test]
+    fn a_parenthesized_type_is_not_a_one_element_tuple() {
+        accepts("fun f(x: (i32)) -> i32 { return x; }");
+    }
+
+    /// `char` is a Unicode scalar value in `0..=0x10FFFF`, which always fits a 64-bit `usize`.
+    /// `char as u64` is allowed, but `cast_allowed` omits `usize` from the target list.
+    #[test]
+    fn a_char_can_be_cast_to_usize() {
+        accepts("fun f(c: char) -> usize { return c as usize; }");
     }
 }

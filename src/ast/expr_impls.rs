@@ -1,8 +1,8 @@
 use super::*;
-use crate::ast::interner::Interner;
 use crate::driver::source::SrcSpan;
 use crate::lexer::literal;
 use crate::lexer::token::Token;
+use crate::session::Session;
 
 impl Expr {
     pub fn new(kind: ExprKind, span: SrcSpan) -> Self {
@@ -13,61 +13,8 @@ impl Expr {
         }
     }
 
-    pub fn int(tok: Token) -> Expr {
-        let text = tok.text();
-        let (value, suffix) = literal::split_suffix(&text);
-        let value = literal::strip_digit_separators(value);
-
-        Expr::new(
-            ExprKind::Literal(Literal::Int {
-                value: Interner::intern(&value),
-                suffix: suffix.map(Interner::intern),
-            }),
-            tok.span,
-        )
-    }
-
-    pub fn float(tok: Token) -> Expr {
-        let text = tok.text();
-        let (value, suffix) = literal::split_suffix(&text);
-        let value = literal::strip_digit_separators(value);
-
-        Expr::new(
-            ExprKind::Literal(Literal::Float {
-                value: Interner::intern(&value),
-                suffix: suffix.map(Interner::intern),
-            }),
-            tok.span,
-        )
-    }
-
-    pub fn string(tok: Token) -> Expr {
-        let chars = tok.text();
-        let inner: Vec<char> = chars[1..chars.len() - 1].chars().collect();
-        Expr::new(
-            ExprKind::Literal(Literal::Str(Interner::intern(&literal::decode_escapes(
-                &inner,
-            )))),
-            tok.span,
-        )
-    }
-
-    pub fn char(tok: Token) -> Expr {
-        let chars = tok.text();
-        let inner: Vec<char> = chars[1..chars.len() - 1].chars().collect();
-        let ch = literal::decode_escapes(&inner)
-            .chars()
-            .next()
-            .unwrap_or('\0');
-        Expr::new(ExprKind::Literal(Literal::Char(ch)), tok.span)
-    }
-
-    pub fn bool_literal(value: bool) -> impl Fn(Token) -> Expr + Clone {
-        move |t: Token| Expr::new(ExprKind::Literal(Literal::Bool(value)), t.span)
-    }
-
     /// Builds the `Some(..)`/`None` variant expr for one bound of a desugared range.
-    pub fn range_bound_variant(bound: Option<Expr>, span: SrcSpan) -> Expr {
+    pub fn range_bound_variant(session: &Session, bound: Option<Expr>, span: SrcSpan) -> Expr {
         let (name, payload) = match bound {
             Some(value) => ("some", Payload::Single(Box::new(value))),
             None => ("none", Payload::None),
@@ -76,7 +23,7 @@ impl Expr {
             id: NodeId::next(),
             kind: ExprKind::Variant {
                 variant: Ident {
-                    text: Interner::intern(name),
+                    text: session.intern(name),
                     span,
                 },
                 payload,
@@ -96,4 +43,50 @@ impl Expr {
             span,
         )
     }
+}
+
+impl Literal {
+    pub fn int(session: &Session, tok: Token) -> Literal {
+        let text = tok.text(session);
+        let (value, suffix) = literal::split_suffix(&text);
+        let value = literal::strip_digit_separators(value);
+
+        Literal::Int {
+            value: session.intern(&value),
+            suffix: suffix.map(|s| session.intern(s)),
+        }
+    }
+
+    pub fn float(session: &Session, tok: Token) -> Literal {
+        let text = tok.text(session);
+        let (value, suffix) = literal::split_suffix(&text);
+        let value = literal::strip_digit_separators(value);
+
+        Literal::Float {
+            value: session.intern(&value),
+            suffix: suffix.map(|s| session.intern(s)),
+        }
+    }
+
+    pub fn string(session: &Session, tok: Token) -> Literal {
+        let inner = quoted_inner(&tok.text(session), '"');
+        Literal::Str(session.intern(&literal::decode_escapes(&inner)))
+    }
+
+    pub fn char(session: &Session, tok: Token) -> Literal {
+        let inner = quoted_inner(&tok.text(session), '\'');
+        let ch = literal::decode_escapes(&inner)
+            .chars()
+            .next()
+            .unwrap_or('\0');
+        Literal::Char(ch)
+    }
+}
+
+fn quoted_inner(text: &str, quote: char) -> Vec<char> {
+    text.strip_prefix(quote)
+        .map(|rest| rest.strip_suffix(quote).unwrap_or(rest))
+        .unwrap_or(text)
+        .chars()
+        .collect()
 }

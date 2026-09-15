@@ -1,88 +1,65 @@
 use std::collections::HashSet;
 
-use crate::ast::interner::Interner;
-use crate::diagnostics::mir::never_read::report_value_never_read;
+use crate::ast::Ident;
+use crate::diagnostics::mir::never_read::{report_parameter_never_read, report_value_never_read};
 use crate::driver::source::SrcSpan;
 use crate::mir::{
     BasicBlock, Body, Local, Operand, Place, Rvalue, Statement, StatementKind, Terminator,
     TerminatorKind, checks::lattice, lower::Mir,
 };
+use crate::session::Session;
 
 type UnreadLocals = HashSet<Local>;
 
 type Lattice = lattice::Lattice<BasicBlock, UnreadLocals>;
 
-pub fn check(mir: &Mir) {
+pub fn check(session: &Session, mir: &Mir) {
     for body in mir.bodies.values() {
-        check_body(body);
+        check_body(session, body);
     }
 }
 
-fn meet(predecessor_states: &[&UnreadLocals]) -> UnreadLocals {
+fn meet(current: &UnreadLocals, predecessor_states: &[&UnreadLocals]) -> UnreadLocals {
     match predecessor_states.split_first() {
-        None => UnreadLocals::new(),
+        None => current.clone(),
         Some((first, rest)) => rest.iter().fold((*first).clone(), |acc, state| {
             acc.intersection(state).cloned().collect()
         }),
     }
 }
 
-fn check_body(body: &Body) {
-    let lattice = fixed_point(body);
-    report_body(body, &lattice);
+fn check_body(session: &Session, body: &Body) {
+    let tracked: Vec<bool> = body
+        .local_decls
+        .iter()
+        .map(|decl| decl.name.is_some())
+        .collect();
+    let initial: UnreadLocals = (1..=body.param_count)
+        .map(Local::from_usize)
+        .filter(|local| tracked[local.index()])
+        .collect();
+    let lattice = fixed_point(body, &tracked, &initial);
+    report_body(session, body, &tracked, &lattice);
 }
 
-fn fixed_point(body: &Body) -> Lattice {
-    let mut lattice: Lattice = Default::default();
-    let preds = body.predecessors();
-
-    for index in 0..body.basic_blocks.len() {
-        let id = BasicBlock::from_usize(index);
-        lattice.set_entry(id, UnreadLocals::default());
-        lattice.set_exit(id, UnreadLocals::default());
-    }
-
-    let mut changed = true;
-    while changed {
-        changed = false;
-
-        for (index, block) in body.basic_blocks.iter().enumerate() {
-            let id = BasicBlock::from_usize(index);
-
-            let pred_states: Vec<&UnreadLocals> = preds
-                .of(id)
-                .iter()
-                .filter_map(|&pred| lattice.exit(pred))
-                .collect();
-            let old_entry = lattice
-                .entry(id)
-                .expect("every block's entry is given above")
-                .clone();
-            let new_entry = meet(&pred_states);
-            if old_entry != new_entry {
-                changed = true;
-            }
-            lattice.set_entry(id, new_entry.clone());
-
-            let mut new_exit = new_entry.clone();
+fn fixed_point(body: &Body, tracked: &[bool], initial: &UnreadLocals) -> Lattice {
+    lattice::solve(
+        body,
+        initial.clone(),
+        UnreadLocals::default(),
+        |current, pred_states| meet(current, pred_states),
+        |entry, block| {
+            let mut state = entry.clone();
             for stmt in &block.statements {
-                apply_statement(&mut new_exit, stmt);
+                apply_statement(&mut state, tracked, stmt);
             }
-            apply_terminator(&mut new_exit, &block.terminator);
-
-            let old_exit = lattice.exit(id).expect("every block's exit is given above");
-            if *old_exit != new_exit {
-                changed = true;
-            }
-
-            lattice.set_exit(id, new_exit);
-        }
-    }
-
-    lattice
+            apply_terminator(&mut state, tracked, &block.terminator);
+            state
+        },
+    )
 }
 
-fn report_body(body: &Body, lattice: &Lattice) {
+fn report_body(session: &Session, body: &Body, tracked: &[bool], lattice: &Lattice) {
     for (index, block) in body.basic_blocks.iter().enumerate() {
         let id = BasicBlock::from_usize(index);
         let mut state = lattice
@@ -90,10 +67,38 @@ fn report_body(body: &Body, lattice: &Lattice) {
             .expect("every block's entry is given above")
             .clone();
         for stmt in &block.statements {
-            check_statement(&mut state, body, stmt);
+            check_statement(session, &mut state, tracked, body, stmt);
         }
-        apply_terminator(&mut state, &block.terminator);
+        apply_terminator(&mut state, tracked, &block.terminator);
     }
+    if let Some(exit) = exit_state(body, lattice) {
+        for index in 0..body.local_decls.len() {
+            let local = Local::from_usize(index);
+            if exit.contains(&local)
+                && let Some(name) = reported_name(session, body, local)
+            {
+                let span = body.local_decls[index].span;
+                if index <= body.param_count {
+                    report_parameter_never_read(session, name, span);
+                } else {
+                    report_value_never_read(session, name, span);
+                }
+            }
+        }
+    }
+}
+
+fn exit_state(body: &Body, lattice: &Lattice) -> Option<UnreadLocals> {
+    (0..body.basic_blocks.len())
+        .map(BasicBlock::from_usize)
+        .filter(|&id| body.successors(id).next().is_none())
+        .filter_map(|id| lattice.exit(id).cloned())
+        .reduce(|acc, state| acc.intersection(&state).cloned().collect())
+}
+
+fn reported_name(session: &Session, body: &Body, local: Local) -> Option<Ident> {
+    let name = body.local_decls[local.index()].name?;
+    (!session.resolve(name.text).starts_with('_')).then_some(name)
 }
 
 fn apply_place(unread: &mut UnreadLocals, place: &Place) {
@@ -136,14 +141,16 @@ fn apply_rvalue(unread: &mut UnreadLocals, rvalue: &Rvalue) {
     }
 }
 
-fn apply_statement(unread: &mut UnreadLocals, stmt: &Statement) {
+fn apply_statement(unread: &mut UnreadLocals, tracked: &[bool], stmt: &Statement) {
     match &stmt.kind {
         StatementKind::StorageLive(local) | StatementKind::StorageDead(local) => {
             unread.remove(local);
         }
         StatementKind::Assign(place, rvalue) => {
             apply_rvalue(unread, rvalue);
-            unread.insert(place.local);
+            if tracked[place.local.index()] {
+                unread.insert(place.local);
+            }
         }
         StatementKind::PlaceMention(place) => {
             apply_place(unread, place);
@@ -152,7 +159,7 @@ fn apply_statement(unread: &mut UnreadLocals, stmt: &Statement) {
     }
 }
 
-fn apply_terminator(unread: &mut UnreadLocals, terminator: &Terminator) {
+fn apply_terminator(unread: &mut UnreadLocals, tracked: &[bool], terminator: &Terminator) {
     match &terminator.kind {
         TerminatorKind::SwitchInt { discr, .. } => apply_operand(unread, discr),
         TerminatorKind::Assert { cond, msg, .. } => {
@@ -171,7 +178,9 @@ fn apply_terminator(unread: &mut UnreadLocals, terminator: &Terminator) {
             for arg in args {
                 apply_operand(unread, arg);
             }
-            unread.insert(destination.local);
+            if tracked[destination.local.index()] {
+                unread.insert(destination.local);
+            }
         }
         TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
             apply_place(unread, place);
@@ -180,30 +189,43 @@ fn apply_terminator(unread: &mut UnreadLocals, terminator: &Terminator) {
     }
 }
 
-fn check_never_read(unread: &UnreadLocals, body: &Body, local: Local, span: SrcSpan) {
+fn check_never_read(
+    session: &Session,
+    unread: &UnreadLocals,
+    body: &Body,
+    local: Local,
+    span: SrcSpan,
+) {
     if unread.contains(&local)
-        && let Some(name) = body.local_decls[local.index()].name
-        && !Interner::resolve(name.text).starts_with('_')
+        && let Some(name) = reported_name(session, body, local)
     {
-        report_value_never_read(name, span);
+        report_value_never_read(session, name, span);
     }
 }
 
-fn check_statement(unread: &mut UnreadLocals, body: &Body, stmt: &Statement) {
+fn check_statement(
+    session: &Session,
+    unread: &mut UnreadLocals,
+    tracked: &[bool],
+    body: &Body,
+    stmt: &Statement,
+) {
     match &stmt.kind {
         StatementKind::StorageDead(local) => {
-            check_never_read(unread, body, *local, stmt.span);
-            apply_statement(unread, stmt);
+            check_never_read(session, unread, body, *local, stmt.span);
+            apply_statement(unread, tracked, stmt);
         }
         StatementKind::Assign(place, rvalue) => {
             apply_rvalue(unread, rvalue);
-            check_never_read(unread, body, place.local, stmt.span);
-            unread.insert(place.local);
+            check_never_read(session, unread, body, place.local, stmt.span);
+            if tracked[place.local.index()] {
+                unread.insert(place.local);
+            }
         }
         StatementKind::StorageLive(_)
         | StatementKind::PlaceMention(_)
         | StatementKind::SetDiscriminant { .. }
-        | StatementKind::WithLend(_) => apply_statement(unread, stmt),
+        | StatementKind::WithLend(_) => apply_statement(unread, tracked, stmt),
     }
 }
 
@@ -262,7 +284,7 @@ mod tests {
     #[test]
     fn moving_a_local_into_a_call_counts_as_reading_it() {
         rejects(
-            "fun take(x: i32) {}
+            "fun take(_x: i32) {}
              fun f() { let a = 1; take(a); let b = 2; }",
             "value assigned to `b` is never read",
         );
@@ -281,6 +303,47 @@ mod tests {
                  let p = P { x: 1, y: 2 };
                  let _ = p.x;
              }",
+        );
+    }
+
+    #[test]
+    fn a_parameter_read_nowhere_in_the_body_is_rejected() {
+        rejects("fun f(x: i32) {}", "parameter `x` is never read");
+    }
+
+    #[test]
+    fn a_parameter_that_is_read_is_fine() {
+        accepts("fun f(x: i32) { let _ = x; }");
+    }
+
+    #[test]
+    fn a_parameter_read_by_a_binary_op_is_fine() {
+        accepts("fun f(x: i32) { let _ = x + 1; }");
+    }
+
+    #[test]
+    fn a_parameter_read_on_only_one_branch_is_fine() {
+        accepts("fun f(x: i32, cond: bool) { if cond { let _ = x; } }");
+    }
+
+    #[test]
+    fn a_parameter_whose_name_starts_with_underscore_is_never_reported() {
+        accepts("fun f(_x: i32) {}");
+    }
+
+    #[test]
+    fn an_unused_self_parameter_is_never_reported() {
+        accepts(
+            "struct P { v: i32 }
+             extend P { fun get(&self) -> i32 { return 1; } }",
+        );
+    }
+
+    #[test]
+    fn only_the_unused_parameter_of_several_is_reported() {
+        rejects(
+            "fun f(a: i32, b: i32) { let _ = a; }",
+            "parameter `b` is never read",
         );
     }
 }

@@ -1,12 +1,12 @@
 use crate::ast;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{HirId, StmtKind, WithLend};
+use crate::hir::{BlockId, StmtId, StmtKind, WithLend};
 
 impl OwnerLowerer<'_, '_> {
     /// Lowers a block. If the last statement is a bare expression without a trailing semicolon,
     /// it becomes the block's tail value instead of an ordinary statement; every other statement
     /// lowers as-is.
-    pub(super) fn lower_block(&mut self, b: &ast::Block) -> HirId {
+    pub(super) fn lower_block(&mut self, b: &ast::Block) -> BlockId {
         self.synth_block(b.span, |low, _id| {
             let mut stmts = Vec::new();
             let mut tail = None;
@@ -23,7 +23,7 @@ impl OwnerLowerer<'_, '_> {
         })
     }
 
-    pub(super) fn lower_expr_as_block(&mut self, e: &ast::Expr) -> HirId {
+    pub(super) fn lower_expr_as_block(&mut self, e: &ast::Expr) -> BlockId {
         if let ast::ExprKind::Block(b) = &e.kind {
             return self.lower_block(b);
         }
@@ -34,7 +34,7 @@ impl OwnerLowerer<'_, '_> {
         })
     }
 
-    pub(super) fn lower_stmt(&mut self, s: &ast::Stmt) -> HirId {
+    pub(super) fn lower_stmt(&mut self, s: &ast::Stmt) -> StmtId {
         self.synth_stmt(s.span, |low, _id| match &s.kind {
             ast::StmtKind::While { cond, block } => {
                 let loop_expr = low.lower_while(cond, block);

@@ -8,21 +8,27 @@ use crate::ast::{
     NodeId, Pat, Path, Payload, PayloadField, Stmt, StmtKind, Ty, UnaryOp, WithLend,
 };
 
-use crate::ast::interner::Interner;
 use crate::driver::source::SrcSpan;
 use crate::lexer::literal::strip_digit_separators;
 use crate::lexer::token::{Token, TokenKind};
+use crate::session::Session;
 
 use super::{
     BoxedP, BraceForms, Extra, Parser, recovery::STATEMENT_RECOVERY, recovery::recover_by_skipping,
 };
 
 /// Desugars range literals (ex: `lo..hi`) into explict construction (ex: `std::range::Range { .. }`)
-fn desugar_range(lo: Option<Expr>, hi: Option<Expr>, inclusive: bool, span: SrcSpan) -> Expr {
+fn desugar_range(
+    session: &Session,
+    lo: Option<Expr>,
+    hi: Option<Expr>,
+    inclusive: bool,
+    span: SrcSpan,
+) -> Expr {
     let field = |name: &str, value: Expr| PayloadField {
         id: NodeId::next(),
         name: Ident {
-            text: Interner::intern(name),
+            text: session.intern(name),
             span,
         },
         span: span.merge(value.span),
@@ -34,19 +40,18 @@ fn desugar_range(lo: Option<Expr>, hi: Option<Expr>, inclusive: bool, span: SrcS
         segments: ["std", "range", "Range"]
             .into_iter()
             .map(|segment| Ident {
-                text: Interner::intern(segment),
+                text: session.intern(segment),
                 span,
             })
             .collect(),
-        span,
     };
     Expr {
         id: NodeId::next(),
         kind: ExprKind::Ctor {
             path: Some(path),
             payload: vec![
-                field("left", Expr::range_bound_variant(lo, lo_span)),
-                field("right", Expr::range_bound_variant(hi, hi_span)),
+                field("left", Expr::range_bound_variant(session, lo, lo_span)),
+                field("right", Expr::range_bound_variant(session, hi, hi_span)),
                 field(
                     "inclusive",
                     Expr {
@@ -63,20 +68,26 @@ fn desugar_range(lo: Option<Expr>, hi: Option<Expr>, inclusive: bool, span: SrcS
 
 type ExprRec<'a> = Recursive<Indirect<'a, 'a, &'a [Token], Expr, Extra<'a>>>;
 type BlockRec<'a> = Recursive<Indirect<'a, 'a, &'a [Token], Block, Extra<'a>>>;
-impl Parser {
+impl<'s> Parser<'s> {
     /// Parses a single expression.
     pub fn expr_parser<'a>(&'a self) -> BoxedP<'a, Expr> {
         self.expr_and_block_parsers().0
     }
 
-    pub(crate) fn literal_parser<'a>(&'a self) -> BoxedP<'a, Expr> {
+    pub(crate) fn literal_parser<'a>(&'a self) -> BoxedP<'a, (Literal, SrcSpan)> {
         choice((
-            self.kind(TokenKind::IntLiteral).map(Expr::int),
-            self.kind(TokenKind::FloatLiteral).map(Expr::float),
-            self.kind(TokenKind::StrLiteral).map(Expr::string),
-            self.kind(TokenKind::CharLiteral).map(Expr::char),
-            self.kind(TokenKind::TrueKw).map(Expr::bool_literal(true)),
-            self.kind(TokenKind::FalseKw).map(Expr::bool_literal(false)),
+            self.kind(TokenKind::IntLiteral)
+                .map(|t: Token| (Literal::int(self.session, t), t.span)),
+            self.kind(TokenKind::FloatLiteral)
+                .map(|t: Token| (Literal::float(self.session, t), t.span)),
+            self.kind(TokenKind::StrLiteral)
+                .map(|t: Token| (Literal::string(self.session, t), t.span)),
+            self.kind(TokenKind::CharLiteral)
+                .map(|t: Token| (Literal::char(self.session, t), t.span)),
+            self.kind(TokenKind::TrueKw)
+                .map(|t: Token| (Literal::Bool(true), t.span)),
+            self.kind(TokenKind::FalseKw)
+                .map(|t: Token| (Literal::Bool(false), t.span)),
         ))
         .boxed()
     }
@@ -84,11 +95,10 @@ impl Parser {
     fn self_expr_parser<'a>(&'a self) -> BoxedP<'a, Expr> {
         self.kind(TokenKind::LowerSelfKw)
             .map(|t: Token| {
-                let name = Ident::of_token(t);
+                let name = Ident::of_token(self.session, t);
                 Expr::new(
                     ExprKind::Path(Path {
                         segments: vec![name],
-                        span: t.span,
                     }),
                     t.span,
                 )
@@ -112,6 +122,7 @@ impl Parser {
             expr: expr.clone(),
             expr_without_brace_forms: expr_without_brace_forms.clone(),
             block: block.clone(),
+            ty: self.type_parser_with_expr(expr.clone().boxed()),
             path: self.path_parser(),
             ident: self.ident_parser(),
             pattern: self.pattern_parser(),
@@ -133,11 +144,12 @@ impl Parser {
     }
 }
 
-struct Grammar<'a> {
-    parser: &'a Parser,
+struct Grammar<'a, 's> {
+    parser: &'a Parser<'s>,
     expr: ExprRec<'a>,
     expr_without_brace_forms: ExprRec<'a>,
     block: BlockRec<'a>,
+    ty: BoxedP<'a, Ty>,
     path: BoxedP<'a, Path>,
     ident: BoxedP<'a, Ident>,
     pattern: BoxedP<'a, Pat>,
@@ -155,7 +167,7 @@ enum Prefix {
     Borrow(Mutability),
 }
 
-impl<'a> Grammar<'a> {
+impl<'a, 's> Grammar<'a, 's> {
     /// Turns off one alternative of a `choice` without changing the choice's shape.
     fn never<O: 'a>(&self) -> BoxedP<'a, O> {
         any()
@@ -172,7 +184,7 @@ impl<'a> Grammar<'a> {
     }
 
     fn type_parser(&self) -> BoxedP<'a, Ty> {
-        self.parser.type_parser_with_expr(self.expr.clone().boxed())
+        self.ty.clone()
     }
 
     fn else_expr(&self) -> BoxedP<'a, Option<Expr>> {
@@ -202,7 +214,7 @@ impl<'a> Grammar<'a> {
             )
             .then(self.parser.kind(TokenKind::CloseParen))
             .map(|((callee_path, args), close_tok)| {
-                let callee_span = callee_path.span;
+                let callee_span = callee_path.span();
                 let span = callee_span.merge(close_tok.span);
                 Expr::new(
                     ExprKind::Call {
@@ -270,7 +282,7 @@ impl<'a> Grammar<'a> {
         .boxed()
     }
 
-    fn ctor_fields_parser(&self) -> BoxedP<'a, Vec<PayloadField<Expr>>> {
+    fn payload_field_parser(&self) -> BoxedP<'a, PayloadField<Expr>> {
         self.parser
             .ident_parser()
             .then(
@@ -291,6 +303,11 @@ impl<'a> Grammar<'a> {
                     span,
                 }
             })
+            .boxed()
+    }
+
+    fn ctor_fields_parser(&self) -> BoxedP<'a, Vec<PayloadField<Expr>>> {
+        self.payload_field_parser()
             .separated_by(self.parser.kind(TokenKind::Comma))
             .allow_trailing()
             .collect::<Vec<_>>()
@@ -301,26 +318,7 @@ impl<'a> Grammar<'a> {
         self.parser
             .kind(TokenKind::OpenBrace)
             .ignore_then(
-                self.parser
-                    .ident_parser()
-                    .then(
-                        self.parser
-                            .kind(TokenKind::Colon)
-                            .ignore_then(self.expr.clone())
-                            .or_not(),
-                    )
-                    .map(|(name, value)| {
-                        let span = match &value {
-                            Some(value) => name.span.merge(value.span),
-                            None => name.span,
-                        };
-                        PayloadField {
-                            id: NodeId::next(),
-                            name,
-                            value,
-                            span,
-                        }
-                    })
+                self.payload_field_parser()
                     .separated_by(self.parser.kind(TokenKind::Comma))
                     .allow_trailing()
                     .collect::<Vec<_>>(),
@@ -338,7 +336,7 @@ impl<'a> Grammar<'a> {
                 .then(self.ctor_fields_parser())
                 .then(self.parser.kind(TokenKind::CloseBrace))
                 .map(|((ctor_path, payload), close_tok)| {
-                    let span = ctor_path.span.merge(close_tok.span);
+                    let span = ctor_path.span().merge(close_tok.span);
                     Expr::new(
                         ExprKind::Ctor {
                             path: Some(ctor_path),
@@ -596,6 +594,9 @@ impl<'a> Grammar<'a> {
         .boxed()
     }
 
+    // TODO: closures have no `move` form (`move |x| ...`), so captures cannot transfer
+    // ownership into the closure. Real MVS/concurrent code needs `move` closures (e.g. to
+    // send owned values into `spawn`ed tasks); every closure borrows today.
     fn closure_parser(&self) -> BoxedP<'a, Expr> {
         let type_p = self.type_parser();
 
@@ -665,13 +666,15 @@ impl<'a> Grammar<'a> {
         let self_expr = self.parser.self_expr_parser();
         let self_ty_expr = self.parser.self_kw_parser();
         let decl_ref = self.path.clone().map(|p: Path| {
-            let span = p.span;
+            let span = p.span();
             Expr::new(ExprKind::Path(p), span)
         });
 
         choice((
             self.closure_parser(),
-            self.parser.literal_parser(),
+            self.parser
+                .literal_parser()
+                .map(|(lit, span)| Expr::new(ExprKind::Literal(lit), span)),
             self.if_parser(),
             self.match_parser(),
             self.block_bodied_expr_parser(),
@@ -698,9 +701,9 @@ impl<'a> Grammar<'a> {
         );
 
         let tuple_index = self.parser.kind(TokenKind::IntLiteral).map(|t: Token| {
-            let text = t.text();
+            let text = t.text(self.parser.session);
             Ident {
-                text: Interner::intern(&strip_digit_separators(&text)),
+                text: self.parser.session.intern(&strip_digit_separators(&text)),
                 span: t.span,
             }
         });
@@ -735,17 +738,23 @@ impl<'a> Grammar<'a> {
             });
 
         let tuple_index_pair = self.parser.kind(TokenKind::FloatLiteral).map(|t: Token| {
-            let text = t.text();
+            let text = t.text(self.parser.session);
             let dot = text
                 .find('.')
                 .expect("a `FloatLiteral` token's text always contains a '.'");
             let begin = t.span.get_begin();
             let first = Ident {
-                text: Interner::intern(&strip_digit_separators(&text[..dot])),
+                text: self
+                    .parser
+                    .session
+                    .intern(&strip_digit_separators(&text[..dot])),
                 span: SrcSpan::new(begin, begin + dot),
             };
             let second = Ident {
-                text: Interner::intern(&strip_digit_separators(&text[dot + 1..])),
+                text: self
+                    .parser
+                    .session
+                    .intern(&strip_digit_separators(&text[dot + 1..])),
                 span: SrcSpan::new(begin + dot + 1, t.span.get_end()),
             };
             (first, second)
@@ -989,7 +998,7 @@ impl<'a> Grammar<'a> {
                         Some(h) => op_span.merge(h.span),
                         None => op_span,
                     };
-                    desugar_range(None, hi, inclusive, span)
+                    desugar_range(self.parser.session, None, hi, inclusive, span)
                 });
 
         let range_with_lo = logical_or
@@ -1003,7 +1012,7 @@ impl<'a> Grammar<'a> {
                         Some(h) => lo_span.merge(h.span),
                         None => lo_span.merge(op_span),
                     };
-                    desugar_range(Some(lo), hi, inclusive, span)
+                    desugar_range(self.parser.session, Some(lo), hi, inclusive, span)
                 }
             });
 
@@ -1221,6 +1230,9 @@ impl<'a> Grammar<'a> {
             })
             .boxed();
 
+        // TODO: `break`/`continue` parse only the bare `break;`/`continue;` forms -- no
+        // `'label` and no `break value`. Real nested loops need labeled break/continue (and
+        // ideally break-with-value); see `StmtKind::Break`/`Continue`.
         let break_stmt = self
             .parser
             .kind(TokenKind::BreakKw)
@@ -1324,12 +1336,11 @@ impl<'a> Grammar<'a> {
 mod tests {
     use super::*;
     use crate::ast::PatKind;
-    use crate::ast::interner::Interner;
     use crate::testing::lex_src;
 
     fn parse_expr(src: &str) -> Expr {
         let (tokens, _) = lex_src(src);
-        let parser = Parser::new();
+        let parser = Parser::new(crate::testing::session());
         let (output, errors) = parser.expr_parser().parse(&tokens[..]).into_output_errors();
         assert!(
             errors.is_empty(),
@@ -1457,7 +1468,7 @@ mod tests {
         let expr = parse_expr("self");
         match &expr.kind {
             ExprKind::Path(path) => {
-                assert_eq!(Interner::resolve(path.segments[0].text), "self")
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "self")
             }
             other => panic!("expected a decl-ref expr, got {other:?}"),
         }
@@ -1469,7 +1480,7 @@ mod tests {
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
                 assert!(matches!(base.kind, ExprKind::Path(_)));
-                assert_eq!(Interner::resolve(member.text), "x");
+                assert_eq!(crate::testing::resolve(member.text), "x");
                 assert!(matches!(args, AccessArgs::None));
             }
             other => panic!("expected an access expr, got {other:?}"),
@@ -1482,7 +1493,7 @@ mod tests {
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
                 assert!(matches!(base.kind, ExprKind::Path(_)));
-                assert_eq!(Interner::resolve(member.text), "0");
+                assert_eq!(crate::testing::resolve(member.text), "0");
                 assert!(matches!(args, AccessArgs::None));
             }
             other => panic!("expected an access expr, got {other:?}"),
@@ -1496,7 +1507,7 @@ mod tests {
         let expr = parse_expr("t.1_0");
         match &expr.kind {
             ExprKind::Access { member, .. } => {
-                assert_eq!(Interner::resolve(member.text), "10");
+                assert_eq!(crate::testing::resolve(member.text), "10");
             }
             other => panic!("expected an access expr, got {other:?}"),
         }
@@ -1507,12 +1518,12 @@ mod tests {
         let expr = parse_expr("t.0.1");
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
-                assert_eq!(Interner::resolve(member.text), "1");
+                assert_eq!(crate::testing::resolve(member.text), "1");
                 assert!(matches!(args, AccessArgs::None));
                 match &base.kind {
                     ExprKind::Access { base, member, args } => {
                         assert!(matches!(base.kind, ExprKind::Path(_)));
-                        assert_eq!(Interner::resolve(member.text), "0");
+                        assert_eq!(crate::testing::resolve(member.text), "0");
                         assert!(matches!(args, AccessArgs::None));
                     }
                     other => panic!("expected an access expr, got {other:?}"),
@@ -1527,16 +1538,16 @@ mod tests {
         let expr = parse_expr("t.0.1.2");
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
-                assert_eq!(Interner::resolve(member.text), "2");
+                assert_eq!(crate::testing::resolve(member.text), "2");
                 assert!(matches!(args, AccessArgs::None));
                 match &base.kind {
                     ExprKind::Access { base, member, args } => {
-                        assert_eq!(Interner::resolve(member.text), "1");
+                        assert_eq!(crate::testing::resolve(member.text), "1");
                         assert!(matches!(args, AccessArgs::None));
                         match &base.kind {
                             ExprKind::Access { base, member, args } => {
                                 assert!(matches!(base.kind, ExprKind::Path(_)));
-                                assert_eq!(Interner::resolve(member.text), "0");
+                                assert_eq!(crate::testing::resolve(member.text), "0");
                                 assert!(matches!(args, AccessArgs::None));
                             }
                             other => panic!("expected an access expr, got {other:?}"),
@@ -1555,7 +1566,7 @@ mod tests {
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
                 assert!(matches!(base.kind, ExprKind::Path(_)));
-                assert_eq!(Interner::resolve(member.text), "dot");
+                assert_eq!(crate::testing::resolve(member.text), "dot");
                 assert!(matches!(args, AccessArgs::Call(args) if args.len() == 1));
             }
             other => panic!("expected an access expr, got {other:?}"),
@@ -1568,11 +1579,11 @@ mod tests {
         let expr = parse_expr("a.b.c(1)");
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
-                assert_eq!(Interner::resolve(member.text), "c");
+                assert_eq!(crate::testing::resolve(member.text), "c");
                 assert!(matches!(args, AccessArgs::Call(args) if args.len() == 1));
                 match &base.kind {
                     ExprKind::Access { member, args, .. } => {
-                        assert_eq!(Interner::resolve(member.text), "b");
+                        assert_eq!(crate::testing::resolve(member.text), "b");
                         assert!(matches!(args, AccessArgs::None));
                     }
                     other => panic!("expected an access expr, got {other:?}"),
@@ -1591,11 +1602,11 @@ mod tests {
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
                 assert!(matches!(base.kind, ExprKind::Path(_)));
-                assert_eq!(Interner::resolve(member.text), "int");
+                assert_eq!(crate::testing::resolve(member.text), "int");
                 match args {
                     AccessArgs::Record(fields) => {
                         assert_eq!(fields.len(), 1);
-                        assert_eq!(Interner::resolve(fields[0].name.text), "value");
+                        assert_eq!(crate::testing::resolve(fields[0].name.text), "value");
                     }
                     other => panic!("expected a record payload, got {other:?}"),
                 }
@@ -1610,7 +1621,7 @@ mod tests {
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
                 assert!(matches!(base.kind, ExprKind::SelfKw));
-                assert_eq!(Interner::resolve(member.text), "none");
+                assert_eq!(crate::testing::resolve(member.text), "none");
                 assert!(matches!(args, AccessArgs::None));
             }
             other => panic!("expected an access expr, got {other:?}"),
@@ -1832,7 +1843,7 @@ mod tests {
 
     fn base_ty_name(ty: &crate::ast::Ty) -> &'static str {
         match &ty.kind {
-            crate::ast::TyKind::Path { path, .. } => Interner::resolve(path.segments[0].text),
+            crate::ast::TyKind::Path { path, .. } => crate::testing::resolve(path.segments[0].text),
             other => panic!("expected a base type, got {other:?}"),
         }
     }
@@ -1843,10 +1854,10 @@ mod tests {
         match &expr.kind {
             ExprKind::Ctor { path, payload } => {
                 let path = path.as_ref().expect("`Vector2D { .. }` names its type");
-                assert_eq!(Interner::resolve(path.segments[0].text), "Vector2D");
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "Vector2D");
                 assert_eq!(payload.len(), 2);
-                assert_eq!(Interner::resolve(payload[0].name.text), "x");
-                assert_eq!(Interner::resolve(payload[1].name.text), "y");
+                assert_eq!(crate::testing::resolve(payload[0].name.text), "x");
+                assert_eq!(crate::testing::resolve(payload[1].name.text), "y");
             }
             other => panic!("expected a ctor expr, got {other:?}"),
         }
@@ -1875,9 +1886,9 @@ mod tests {
         match &expr.kind {
             ExprKind::Ctor { payload, .. } => {
                 assert_eq!(payload.len(), 2);
-                assert_eq!(Interner::resolve(payload[0].name.text), "x");
+                assert_eq!(crate::testing::resolve(payload[0].name.text), "x");
                 assert!(payload[0].value.is_none());
-                assert_eq!(Interner::resolve(payload[1].name.text), "y");
+                assert_eq!(crate::testing::resolve(payload[1].name.text), "y");
                 assert!(payload[1].value.is_some());
             }
             other => panic!("expected a ctor expr, got {other:?}"),
@@ -1939,13 +1950,13 @@ mod tests {
                 assert_eq!(
                     path.segments
                         .iter()
-                        .map(|s| Interner::resolve(s.text))
+                        .map(|s| crate::testing::resolve(s.text))
                         .collect::<Vec<_>>(),
                     vec!["std", "range", "Range"]
                 );
                 payload
                     .iter()
-                    .find(|f| Interner::resolve(f.name.text) == name)
+                    .find(|f| crate::testing::resolve(f.name.text) == name)
                     .unwrap_or_else(|| panic!("expected a `{name}` field"))
                     .value
                     .as_ref()
@@ -1959,7 +1970,7 @@ mod tests {
     fn assert_range_bound(field: &Expr, expected: Option<()>) {
         match &field.kind {
             ExprKind::Variant { variant, payload } => {
-                let name = Interner::resolve(variant.text);
+                let name = crate::testing::resolve(variant.text);
                 match expected {
                     Some(()) => {
                         assert_eq!(name, "some");
@@ -2202,7 +2213,7 @@ mod tests {
     #[test]
     fn expr_bodied_match_arms_require_commas() {
         let (tokens, _) = lex_src("match s { .a => 1 .b => 2 }");
-        let parser = Parser::new();
+        let parser = Parser::new(crate::testing::session());
         let (output, errors) = parser.expr_parser().parse(&tokens[..]).into_output_errors();
         assert!(
             !errors.is_empty(),
@@ -2276,7 +2287,7 @@ mod tests {
         match &expr.kind {
             ExprKind::Closure { params, ret, body } => {
                 assert_eq!(params.len(), 2);
-                assert_eq!(Interner::resolve(params[0].name.text), "x");
+                assert_eq!(crate::testing::resolve(params[0].name.text), "x");
                 assert!(params[0].ty.is_none());
                 assert!(ret.is_none());
                 assert!(matches!(body.kind, ExprKind::Binary { .. }));

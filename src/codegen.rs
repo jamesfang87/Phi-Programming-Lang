@@ -26,6 +26,7 @@ use inkwell::module::Module;
 
 use crate::mir::mangle::mangle;
 use crate::mir::{Body, Instance, Mir};
+use crate::session::Session;
 use crate::typeck::tyctx::TyCtx;
 use ctx::CodegenCtx;
 
@@ -36,13 +37,14 @@ pub enum CodegenError {
 }
 
 pub fn codegen<'ctx>(
+    session: &'ctx Session,
     llvm: &'ctx Context,
     tcx: &mut TyCtx,
     mir: &Mir,
     instances: &HashMap<Instance, Body>,
     module_name: &str,
 ) -> Result<Module<'ctx>, CodegenError> {
-    let mut cx = CodegenCtx::new(llvm, module_name);
+    let mut cx = CodegenCtx::new(session, llvm, module_name);
 
     for (instance, body) in instances {
         let name = mangle(mir, tcx, instance);
@@ -126,7 +128,15 @@ mod tests {
         let (_hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f() {}\nfun g() { f(); }");
         let llvm = inkwell::context::Context::create();
-        let module = codegen(&llvm, &mut tcx, &mir, &instances, "test").expect("codegen succeeds");
+        let module = codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "test",
+        )
+        .expect("codegen succeeds");
         // The extras are the runtime declarations plus the C `main` trampoline, which is now
         // emitted for every crate -- this fixture declares no `main`, so that trampoline is the
         // do-nothing one.
@@ -174,7 +184,15 @@ mod tests {
             "module app::inner;\n\nfun main() { panic(\"the nested main ran\"); }\n",
         ]);
         let llvm = inkwell::context::Context::create();
-        let module = codegen(&llvm, &mut tcx, &mir, &instances, "t").expect("codegen succeeds");
+        let module = codegen(
+            crate::testing::session(),
+            &llvm,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .expect("codegen succeeds");
 
         let dir = tempdir_for_test("root-main");
         let exe = emit::emit(

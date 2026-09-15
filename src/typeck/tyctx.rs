@@ -1,15 +1,18 @@
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
 use crate::nameres::PrimTy;
 use crate::typeck::adt::AdtDef;
-use crate::typeck::ty::{Ty, TyKind, TyVar};
+use crate::typeck::ty::{InferVar, Ty, TyKind};
+use crate::typeck::visitor::{self, TypeVisitor};
 
 #[derive(Default)]
 pub struct TyCtx {
     tykinds: Vec<TyKind>,
     handles: HashMap<TyKind, Ty>,
+    // TODO: maybe this field should be moved out
     next_var_id: u32,
     // TODO: what is this used for?
     adts: HashMap<DefId, AdtDef>,
@@ -20,7 +23,7 @@ impl TyCtx {
         TyCtx::default()
     }
 
-    /// Returns the handle for `kind`, interning it if this is the first time it has been seen.
+    /// Returns the handle for `kind`; if [`kind`] does not exist, it is added to the table
     pub fn intern(&mut self, kind: TyKind) -> Ty {
         if let Some(&ty) = self.handles.get(&kind) {
             return ty;
@@ -32,9 +35,9 @@ impl TyCtx {
         ty
     }
 
-    /// Looks up what `ty` stands for.
+    /// Looks up [`TyKind`] which ty` refers to.
     ///
-    /// Panics if `ty` was interned by a different [`TyCtx`].
+    /// Panics if `ty` does not refer to any [`TyKind`]
     pub fn kind(&self, ty: Ty) -> &TyKind {
         self.tykinds
             .get(ty.index())
@@ -142,113 +145,85 @@ impl TyCtx {
     }
 
     fn adt(&self, def: DefId) -> &AdtDef {
-        self.adts.get(&def).unwrap_or_else(|| {
-            panic!(
-                "{def:?} names no ADT known to this TyCtx -- either it is not a struct or enum, \
-                 or `set_adts` has not run yet"
-            )
-        })
+        self.adts
+            .get(&def)
+            .unwrap_or_else(|| panic!("{def:?} does not name an ADT"))
     }
 
     fn subst_declared_tys(&mut self, generics: &[HirId], declared: &[Ty], args: &[Ty]) -> Vec<Ty> {
-        let subst = crate::typeck::fold::Subst {
+        let subst = crate::typeck::visitor::Subst {
             generics: generics.iter().copied().zip(args.iter().copied()).collect(),
             self_ty: None,
         };
         declared
             .iter()
-            .map(|&ty| crate::typeck::fold::subst_ty(self, ty, &subst))
+            .map(|&ty| crate::typeck::visitor::subst_ty(self, ty, &subst))
             .collect()
     }
 
     pub(crate) fn set_adts(&mut self, adts: HashMap<DefId, AdtDef>) {
         assert!(
             self.adts.is_empty(),
-            "a TyCtx's ADT definitions are collected once, before MIR lowering, and never revised"
+            "Attempt to recollect ADT definitions (which are only to be collected once)"
         );
         self.adts = adts;
     }
 
     pub fn contains_ref(&self, ty: Ty) -> bool {
-        match self.kind(ty) {
-            TyKind::Ref { .. } => true,
-            TyKind::Primitive(PrimTy::Str) => true,
-            TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_ref(elem)),
-            TyKind::Array { elem, .. } => self.contains_ref(*elem),
-            TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => {
-                args.iter().any(|&arg| self.contains_ref(arg))
-            }
-            TyKind::Any(base) | TyKind::Iso(base) => self.contains_ref(*base),
-            TyKind::Var(_)
-            | TyKind::Primitive(_)
-            | TyKind::Generic(_)
-            | TyKind::SelfTy(_)
-            | TyKind::Unit
-            | TyKind::Fun { .. }
-            | TyKind::Never
-            | TyKind::Error => false,
-        }
+        visitor::any_ty_outside_funs(self, ty, |tcx, ty| {
+            matches!(
+                tcx.kind(ty),
+                TyKind::Ref { .. } | TyKind::Primitive(PrimTy::Str)
+            )
+        })
     }
 
     pub fn contains_bare_dyn(&self, ty: Ty) -> bool {
-        match self.kind(ty) {
-            TyKind::Dyn { .. } => true,
-            TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_bare_dyn(elem)),
-            TyKind::Array { elem, .. } => self.contains_bare_dyn(*elem),
-            TyKind::Adt { args, .. } => args.iter().any(|&arg| self.contains_bare_dyn(arg)),
-            TyKind::Any(base) => self.contains_bare_dyn(*base),
-            TyKind::Ref { base, .. } | TyKind::Iso(base) => match self.kind(*base) {
-                TyKind::Dyn { .. } => false,
-                _ => self.contains_bare_dyn(*base),
-            },
-            TyKind::Var(_)
-            | TyKind::Primitive(_)
-            | TyKind::Generic(_)
-            | TyKind::SelfTy(_)
-            | TyKind::Unit
-            | TyKind::Fun { .. }
-            | TyKind::Never
-            | TyKind::Error => false,
-        }
-    }
+        struct BareDyn;
 
-    /// Returns whether `ty` carries `any` somewhere within it: directly, inside a tuple or
-    /// array element, or inside a struct/enum/trait object's own generic arguments
-    /// (recursively, so `Foo<Bar<any i32>>` counts too). A function type's parameters and
-    /// return type are not walked: `any` in that position belongs to that function's own
-    /// signature, which is exactly where `any` is allowed to be.
-    pub fn contains_any(&self, ty: Ty) -> bool {
-        match self.kind(ty) {
-            TyKind::Any(_) => true,
-            TyKind::Tuple(elems) => elems.iter().any(|&elem| self.contains_any(elem)),
-            TyKind::Array { elem, .. } => self.contains_any(*elem),
-            TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } => {
-                args.iter().any(|&arg| self.contains_any(arg))
+        impl TypeVisitor for BareDyn {
+            type Output = ();
+
+            fn visit(&mut self, tcx: &TyCtx, ty: Ty) -> ControlFlow<()> {
+                if matches!(tcx.kind(ty), TyKind::Dyn { .. }) {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
             }
-            TyKind::Ref { base, .. } | TyKind::Iso(base) => self.contains_any(*base),
-            TyKind::Var(_)
-            | TyKind::Primitive(_)
-            | TyKind::Generic(_)
-            | TyKind::SelfTy(_)
-            | TyKind::Unit
-            | TyKind::Fun { .. }
-            | TyKind::Never
-            | TyKind::Error => false,
+
+            fn children(&mut self, tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
+                match tcx.kind(ty) {
+                    TyKind::Fun { .. } => Vec::new(),
+                    TyKind::Ref { base, .. } | TyKind::Iso(base)
+                        if matches!(tcx.kind(*base), TyKind::Dyn { .. }) =>
+                    {
+                        Vec::new()
+                    }
+                    _ => visitor::children(tcx, ty),
+                }
+            }
         }
+
+        visitor::walk(&mut BareDyn, self, ty).is_break()
     }
 
-    pub fn next_ty_var(&mut self) -> Ty {
-        let var = TyVar::Any(self.take_var_id());
+    pub fn contains_any(&self, ty: Ty) -> bool {
+        visitor::any_ty_outside_funs(self, ty, |tcx, ty| matches!(tcx.kind(ty), TyKind::Any(_)))
+    }
+
+    pub fn next_infer_var(&mut self) -> Ty {
+        let var = InferVar::Any(self.take_var_id());
         self.intern(TyKind::Var(var))
     }
 
     pub fn next_int_var(&mut self) -> Ty {
-        let var = TyVar::Int(self.take_var_id());
+        let var = InferVar::Int(self.take_var_id());
         self.intern(TyKind::Var(var))
     }
 
     pub fn next_float_var(&mut self) -> Ty {
-        let var = TyVar::Float(self.take_var_id());
+        let var = InferVar::Float(self.take_var_id());
         self.intern(TyKind::Var(var))
     }
 
@@ -303,8 +278,8 @@ mod tests {
     fn every_inference_variable_is_distinct() {
         let mut tcx = TyCtx::new();
         let vars = [
-            tcx.next_ty_var(),
-            tcx.next_ty_var(),
+            tcx.next_infer_var(),
+            tcx.next_infer_var(),
             tcx.next_int_var(),
             tcx.next_float_var(),
         ];
@@ -320,6 +295,6 @@ mod tests {
     fn two_contexts_number_their_variables_independently() {
         let mut first = TyCtx::new();
         let mut second = TyCtx::new();
-        assert_eq!(first.next_ty_var(), second.next_ty_var());
+        assert_eq!(first.next_infer_var(), second.next_infer_var());
     }
 }

@@ -1,15 +1,13 @@
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
-use crate::ast::{
-    Expr, ExprKind, Ident, NodeId, Pat, PatKind, Payload, PayloadField,
-};
+use crate::ast::{Ident, NodeId, Pat, PatKind, Payload, PayloadField};
 
 use crate::lexer::token::{Token, TokenKind};
 
 use super::{BoxedP, Extra, Parser};
 
-impl Parser {
+impl<'s> Parser<'s> {
     pub fn pattern_parser<'a>(&'a self) -> BoxedP<'a, Pat> {
         let ident = self.ident_parser();
 
@@ -22,15 +20,23 @@ impl Parser {
 
                 let literal = self
                     .literal_parser()
-                    .map(|e: Expr| {
-                        let ExprKind::Literal(lit) = e.kind else {
-                            unreachable!("`literal_parser` only ever produces `ExprKind::Literal`")
-                        };
-                        Pat::new(PatKind::Literal(lit), e.span)
+                    .map(|(lit, span)| Pat::new(PatKind::Literal(lit), span))
+                    .boxed();
+
+                let single_element_tuple = self
+                    .kind(TokenKind::OpenParen)
+                    .then(pattern.clone())
+                    .then_ignore(self.kind(TokenKind::Comma))
+                    .then(self.kind(TokenKind::CloseParen))
+                    .map(|((open_tok, element), close_tok)| {
+                        Pat::new(
+                            PatKind::Tuple(vec![element]),
+                            open_tok.span.merge(close_tok.span),
+                        )
                     })
                     .boxed();
 
-                let tuple = self
+                let tuple_or_group = self
                     .kind(TokenKind::OpenParen)
                     .then(
                         pattern
@@ -40,10 +46,16 @@ impl Parser {
                             .collect::<Vec<_>>(),
                     )
                     .then(self.kind(TokenKind::CloseParen))
-                    .map(|((open_tok, pats), close_tok)| {
-                        Pat::new(PatKind::Tuple(pats), open_tok.span.merge(close_tok.span))
+                    .map(|((open_tok, mut pats), close_tok)| {
+                        if pats.len() == 1 {
+                            pats.pop().expect("checked len == 1 above")
+                        } else {
+                            Pat::new(PatKind::Tuple(pats), open_tok.span.merge(close_tok.span))
+                        }
                     })
                     .boxed();
+
+                let tuple = choice((single_element_tuple, tuple_or_group)).boxed();
 
                 // `{ l }` binds the field to its own name
                 // `{ l: <pat> }` allows for further destructuring with a nested pattern
@@ -110,6 +122,9 @@ impl Parser {
                     .map(|name: Ident| Pat::new(PatKind::Binding(name), name.span))
                     .boxed();
 
+                // TODO: only wildcard/literal/tuple/variant/binding are parsed -- struct patterns
+                // (`Point { x, y }`), `..` rest, and `|` or-patterns are missing, so
+                // real destructuring beyond tuples/enums is rejected here (see `PatKind`).
                 choice((wildcard, literal, tuple, variant, binding)).labelled("a pattern")
             },
         )
@@ -120,7 +135,6 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::interner::Interner;
     use crate::ast::{Literal, PayloadField};
     use crate::testing::lex_src;
 
@@ -141,7 +155,7 @@ mod tests {
 
     fn parse_pattern(src: &str) -> Pat {
         let (tokens, _) = lex_src(src);
-        let parser = Parser::new();
+        let parser = Parser::new(crate::testing::session());
         let (output, errors) = parser
             .pattern_parser()
             .parse(&tokens[..])
@@ -163,7 +177,7 @@ mod tests {
     fn parses_binding_pattern() {
         let pat = parse_pattern("x");
         match &pat.kind {
-            PatKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "x"),
+            PatKind::Binding(name) => assert_eq!(crate::testing::resolve(name.text), "x"),
             other => panic!("expected a binding pattern, got {other:?}"),
         }
     }
@@ -184,7 +198,7 @@ mod tests {
     fn parses_string_literal_pattern() {
         let pat = parse_pattern(r#""hi""#);
         match &pat.kind {
-            PatKind::Literal(Literal::Str(sym)) => assert_eq!(Interner::resolve(*sym), "hi"),
+            PatKind::Literal(Literal::Str(sym)) => assert_eq!(crate::testing::resolve(*sym), "hi"),
             other => panic!("expected a string literal pattern, got {other:?}"),
         }
     }
@@ -209,7 +223,7 @@ mod tests {
         let pat = parse_pattern(".rectangle");
         match &pat.kind {
             PatKind::Variant { variant, payload } => {
-                assert_eq!(Interner::resolve(variant.text), "rectangle");
+                assert_eq!(crate::testing::resolve(variant.text), "rectangle");
                 assert!(matches!(payload, Payload::None));
             }
             other => panic!("expected a variant pattern, got {other:?}"),
@@ -221,9 +235,9 @@ mod tests {
         let pat = parse_pattern(".circle(r)");
         match &pat.kind {
             PatKind::Variant { variant, payload } => {
-                assert_eq!(Interner::resolve(variant.text), "circle");
+                assert_eq!(crate::testing::resolve(variant.text), "circle");
                 match &single(payload).kind {
-                    PatKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "r"),
+                    PatKind::Binding(name) => assert_eq!(crate::testing::resolve(name.text), "r"),
                     other => panic!("expected a binding, got {other:?}"),
                 }
             }
@@ -238,7 +252,7 @@ mod tests {
         let pat = parse_pattern(".parallelogram((b, h))");
         match &pat.kind {
             PatKind::Variant { variant, payload } => {
-                assert_eq!(Interner::resolve(variant.text), "parallelogram");
+                assert_eq!(crate::testing::resolve(variant.text), "parallelogram");
                 match &single(payload).kind {
                     PatKind::Tuple(elems) => assert_eq!(elems.len(), 2),
                     other => panic!("expected a tuple pattern, got {other:?}"),
@@ -253,10 +267,10 @@ mod tests {
         let pat = parse_pattern(".some(.ok(x))");
         match &pat.kind {
             PatKind::Variant { variant, payload } => {
-                assert_eq!(Interner::resolve(variant.text), "some");
+                assert_eq!(crate::testing::resolve(variant.text), "some");
                 match &single(payload).kind {
                     PatKind::Variant { variant, .. } => {
-                        assert_eq!(Interner::resolve(variant.text), "ok")
+                        assert_eq!(crate::testing::resolve(variant.text), "ok")
                     }
                     other => panic!("expected a nested variant pattern, got {other:?}"),
                 }
@@ -270,16 +284,18 @@ mod tests {
         let pat = parse_pattern(".square { l: inner, w }");
         match &pat.kind {
             PatKind::Variant { variant, payload } => {
-                assert_eq!(Interner::resolve(variant.text), "square");
+                assert_eq!(crate::testing::resolve(variant.text), "square");
                 let fields = record(payload);
                 assert_eq!(fields.len(), 2);
-                assert_eq!(Interner::resolve(fields[0].name.text), "l");
+                assert_eq!(crate::testing::resolve(fields[0].name.text), "l");
                 match &fields[0].value.as_ref().expect("`l:` has a pattern").kind {
-                    PatKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "inner"),
+                    PatKind::Binding(name) => {
+                        assert_eq!(crate::testing::resolve(name.text), "inner")
+                    }
                     other => panic!("expected a binding, got {other:?}"),
                 }
                 // `w` is the field shorthand: no pattern of its own, it binds `w`.
-                assert_eq!(Interner::resolve(fields[1].name.text), "w");
+                assert_eq!(crate::testing::resolve(fields[1].name.text), "w");
                 assert!(fields[1].value.is_none());
             }
             other => panic!("expected a variant pattern, got {other:?}"),
@@ -291,7 +307,7 @@ mod tests {
     fn bare_pascal_case_identifier_is_a_binding() {
         let pat = parse_pattern("Rectangle");
         match &pat.kind {
-            PatKind::Binding(name) => assert_eq!(Interner::resolve(name.text), "Rectangle"),
+            PatKind::Binding(name) => assert_eq!(crate::testing::resolve(name.text), "Rectangle"),
             other => panic!("expected a binding pattern, got {other:?}"),
         }
     }
@@ -339,7 +355,7 @@ mod tests {
                 assert_eq!(pats.len(), 2);
                 match &pats[0].kind {
                     PatKind::Variant { variant, payload } => {
-                        assert_eq!(Interner::resolve(variant.text), "circle");
+                        assert_eq!(crate::testing::resolve(variant.text), "circle");
                         assert!(matches!(payload, Payload::Single(_)));
                     }
                     other => panic!("expected a variant pattern, got {other:?}"),
@@ -348,5 +364,20 @@ mod tests {
             }
             other => panic!("expected a tuple pattern, got {other:?}"),
         }
+    }
+
+    /// BUG: the tuple-pattern parser builds `PatKind::Tuple` unconditionally, so `(x)` becomes
+    /// the one-element tuple pattern `(x,)` instead of a parenthesized binding. The expression
+    /// parser unwraps `(e)` to `e`; the pattern grammar should do the same, reserving `(p,)` for
+    /// the one-element tuple.
+    ///
+    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
+    #[test]
+    fn parses_parenthesized_pattern_as_the_inner_pattern() {
+        let pat = parse_pattern("(x)");
+        assert!(
+            matches!(pat.kind, PatKind::Binding(_)),
+            "expected `(x)` to parse as a binding, got {pat:?}"
+        );
     }
 }

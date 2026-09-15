@@ -1,11 +1,12 @@
-use std::cell::RefCell;
 use std::io::IsTerminal;
 use std::ops::Range;
 
-use ariadne::{Color, Config, Fmt, Label, Report, ReportKind, sources};
+use ariadne::{Color, Config, Fmt, Label, Report, ReportKind};
 
 use crate::driver::source::{SrcMap, SrcSpan};
 
+pub mod codes;
+pub mod display;
 pub mod langitems;
 pub mod mir;
 pub mod nameres;
@@ -47,6 +48,9 @@ pub struct SecondaryLabel {
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
+    /// Stable identity for this kind of diagnostic, if one is assigned. Tests should target
+    /// this rather than the [`Diagnostic::message`], which may be reworded.
+    pub code: Option<&'static str>,
     pub message: String,
     pub span: Option<SrcSpan>,
     pub label: Option<String>,
@@ -66,6 +70,7 @@ impl Diagnostic {
     fn new(severity: Severity, message: impl Into<String>, span: Option<SrcSpan>) -> Self {
         Diagnostic {
             severity,
+            code: None,
             message: message.into(),
             span,
             label: None,
@@ -83,6 +88,12 @@ impl Diagnostic {
     /// A warning about the program as a whole, with no source span to point at.
     pub fn warning_global(message: impl Into<String>) -> Self {
         Self::new(Severity::Warning, message, None)
+    }
+
+    /// Attaches the stable code for this kind of diagnostic.
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
     }
 
     /// Sets the text shown right under the highlighted span, avoiding repetition of the
@@ -106,17 +117,20 @@ impl Diagnostic {
         self
     }
 
-    fn eprint(&self) {
+    pub fn eprint(&self, sources: &SrcMap) {
         let Some(span) = self.span else {
             return self.eprint_bare();
         };
-        let Some(primary) = Located::of(span) else {
+        let Some(primary) = Located::of(sources, span) else {
             return self.eprint_bare();
         };
 
         let mut report = Report::build(self.severity.report_kind(), primary.id())
             .with_config(Self::config())
             .with_message(&self.message);
+        if let Some(code) = self.code {
+            report = report.with_code(code);
+        }
 
         // `ariadne` starts a new source group, with its own file header, whenever a label sits
         // above the one before it. Adding the labels in source order keeps them in one group.
@@ -127,7 +141,7 @@ impl Diagnostic {
             self.severity.color(),
         )];
         for secondary in &self.secondary {
-            let Some(at) = Located::of(secondary.span) else {
+            let Some(at) = Located::of(sources, secondary.span) else {
                 continue;
             };
             labelled.push((
@@ -156,7 +170,7 @@ impl Diagnostic {
             }
         }
 
-        report.finish().eprint(sources(cache)).unwrap();
+        report.finish().eprint(ariadne::sources(cache)).unwrap();
     }
 
     /// Renders this diagnostic to stderr with no source snippet.
@@ -167,7 +181,11 @@ impl Diagnostic {
             Severity::Error => "Error",
             Severity::Warning => "Warning",
         };
-        eprintln!("{}: {}", kind.fg(color), self.message);
+        let header = match self.code {
+            Some(code) => format!("{kind}[{code}]"),
+            None => kind.to_string(),
+        };
+        eprintln!("{}: {}", header.as_str().fg(color), self.message);
         if let Some(help) = &self.help {
             eprintln!("  {}: {help}", "Help".fg(color));
         }
@@ -197,8 +215,8 @@ struct Located {
 }
 
 impl Located {
-    fn of(span: SrcSpan) -> Option<Self> {
-        let file = SrcMap::file_containing(span.get_begin())?;
+    fn of(sources: &SrcMap, span: SrcSpan) -> Option<Self> {
+        let file = sources.file_containing(span.get_begin())?;
         let (text, byte_offsets) = byte_source(&file.content);
 
         let last = byte_offsets.len() - 1;
@@ -229,76 +247,72 @@ fn byte_source(src: &[char]) -> (String, Vec<usize>) {
     (text, byte_offsets)
 }
 
-thread_local! {
-    /// Diagnostic storage for the [`DiagCtx`] singleton.
-    static DIAGNOSTICS: RefCell<Vec<Diagnostic>> = const { RefCell::new(Vec::new()) };
+/// The diagnostics collected during one build.
+///
+/// Owned by [`Session`](crate::session::Session), which forwards its own `emit`/`report` methods
+/// here. A build's diagnostics are ordinary state, not a process-wide singleton: a new build
+/// starts from an empty collection and the previous build's diagnostics cannot leak into it.
+#[derive(Default)]
+pub struct Diagnostics {
+    diagnostics: Vec<Diagnostic>,
 }
 
-pub struct DiagCtx;
-
-impl DiagCtx {
-    /// Records `diagnostic` on the current thread. It isn't rendered until [`DiagCtx::report`]
-    /// is called.
-    pub fn emit(diagnostic: Diagnostic) {
-        DIAGNOSTICS.with(|d| d.borrow_mut().push(diagnostic));
+impl Diagnostics {
+    pub fn new() -> Self {
+        Diagnostics::default()
     }
 
-    /// Records an error-severity diagnostic. See [`DiagCtx::emit`].
-    pub fn error(message: impl Into<String>, span: SrcSpan) {
-        Self::emit(Diagnostic::error(message, span));
+    /// Records `diagnostic`. It isn't rendered until [`Diagnostics::report`] is called.
+    pub fn emit(&mut self, diagnostic: Diagnostic) {
+        self.diagnostics.push(diagnostic);
     }
 
-    /// Records a warning-severity diagnostic. See [`DiagCtx::emit`].
-    pub fn warning(message: impl Into<String>, span: SrcSpan) {
-        Self::emit(Diagnostic::warning(message, span));
+    /// Records an error-severity diagnostic. See [`Diagnostics::emit`].
+    pub fn error(&mut self, message: impl Into<String>, span: SrcSpan) {
+        self.emit(Diagnostic::error(message, span));
     }
 
-    /// Returns every diagnostic recorded so far on this thread, in the order they were
-    /// recorded.
-    pub fn diagnostics() -> Vec<Diagnostic> {
-        DIAGNOSTICS.with(|d| d.borrow().clone())
+    /// Records a warning-severity diagnostic. See [`Diagnostics::emit`].
+    pub fn warning(&mut self, message: impl Into<String>, span: SrcSpan) {
+        self.emit(Diagnostic::warning(message, span));
     }
 
-    /// Returns just the message text of every diagnostic recorded so far on this thread, in the
-    /// order they were recorded. The spans and labels are what [`DiagCtx::report`] renders; a
-    /// caller comparing against expected output wants only the messages.
-    pub fn messages() -> Vec<String> {
-        DIAGNOSTICS.with(|d| d.borrow().iter().map(|diag| diag.message.clone()).collect())
+    /// Returns every diagnostic recorded so far, in the order it was recorded.
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        self.diagnostics.clone()
     }
 
-    /// Returns whether any diagnostic recorded so far on this thread is error-severity.
-    pub fn has_errors() -> bool {
-        DIAGNOSTICS.with(|d| {
-            d.borrow()
-                .iter()
-                .any(|diag| diag.severity == Severity::Error)
-        })
+    /// Returns just the message text of every diagnostic recorded so far, in the order they were
+    /// recorded. The spans and labels are what [`Diagnostics::report`] renders; a caller
+    /// comparing against expected output wants only the messages.
+    pub fn messages(&self) -> Vec<String> {
+        self.diagnostics
+            .iter()
+            .map(|diag| diag.message.clone())
+            .collect()
     }
 
-    /// Discards every diagnostic collected so far on this thread.
-    pub fn clear() {
-        DIAGNOSTICS.with(|d| d.borrow_mut().clear());
+    /// Discards every diagnostic collected so far.
+    pub fn clear(&mut self) {
+        self.diagnostics.clear();
     }
 
-    /// Renders every diagnostic collected so far to stderr in source order, and takes them out
-    /// of the collection.
-    ///
-    /// Draining is what lets a later stage report on its own: the driver reports once the
-    /// frontend has run and again after codegen, and a diagnostic must not print twice. It also
-    /// means [`DiagCtx::has_errors`] answers about the *unreported* diagnostics after a call
-    /// here, so a caller that gates on errors has to read it before reporting, not after.
-    pub fn report() {
-        let pending = DIAGNOSTICS.with(|d| std::mem::take(&mut *d.borrow_mut()));
-        for diag in Self::report_order(pending) {
-            diag.eprint();
+    /// Renders every diagnostic collected so far to stderr in source order, takes them out of the
+    /// collection, and returns whether any of them was error-severity.
+    pub fn report(&mut self, sources: &SrcMap) -> bool {
+        let pending = std::mem::take(&mut self.diagnostics);
+        let had_error = pending.iter().any(|diag| diag.severity == Severity::Error);
+        for diag in report_order(pending) {
+            diag.eprint(sources);
         }
+        had_error
     }
+}
 
-    /// Sorts diagnostics into the order [`DiagCtx::report`] prints them.
-    fn report_order(mut diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
-        diagnostics.sort_by_key(|diag| diag.span.map(|span| (span.get_begin(), span.get_end())));
-        diagnostics
-    }
+/// Sorts diagnostics into the order they are printed.
+pub(crate) fn report_order(mut diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    diagnostics.sort_by_key(|diag| diag.span.map(|span| (span.get_begin(), span.get_end())));
+    diagnostics
 }
 
 #[cfg(test)]
@@ -310,10 +324,19 @@ mod tests {
         diagnostics.into_iter().map(|d| d.message).collect()
     }
 
-    /// An offset far past the end of anything the rest of the test suite could have registered.
+    #[test]
+    fn a_diagnostic_can_carry_a_stable_code() {
+        let coded = Diagnostic::error("boom", SrcSpan::new(0, 1)).with_code("E0301");
+        assert_eq!(coded.code, Some("E0301"));
+
+        let uncoded = Diagnostic::error("boom", SrcSpan::new(0, 1));
+        assert_eq!(uncoded.code, None);
+    }
+
+    /// An offset far past the end of any file the tests below register.
     ///
-    /// `SrcMap` is process-wide and shared by every test, so an unmapped span must be selected
-    /// by using an absurdly large offset rather than clearing the map.
+    /// A local [`SrcMap`] is used rather than a session's, so an unmapped span is selected by an
+    /// absurdly large offset instead of relying on the map being empty.
     const UNMAPPED: usize = usize::MAX / 2;
 
     #[test]
@@ -329,26 +352,28 @@ mod tests {
     fn rendering_a_global_error_does_not_panic() {
         Diagnostic::error_global("missing lang item `core::ops::Add`")
             .with_help("the core library must declare this item")
-            .eprint();
+            .eprint(&SrcMap::new());
     }
 
     /// A span belonging to no registered file renders as location-less output instead of
     /// crashing the entire report.
     #[test]
     fn rendering_an_unmapped_span_does_not_panic() {
-        Diagnostic::error("span points nowhere", SrcSpan::new(UNMAPPED, UNMAPPED + 4)).eprint();
+        Diagnostic::error("span points nowhere", SrcSpan::new(UNMAPPED, UNMAPPED + 4))
+            .eprint(&SrcMap::new());
     }
 
     /// A span exceeding its file's end is clamped instead of causing an out-of-bounds panic.
     #[test]
     fn rendering_an_overlong_span_does_not_panic() {
         let chars: Vec<char> = "fun main() {}\n".chars().collect();
-        let offset = SrcMap::add_file("<overlong>".to_string(), chars.clone(), FileOrigin::User);
+        let mut sources = SrcMap::new();
+        let offset = sources.add_file("<overlong>".to_string(), chars.clone(), FileOrigin::User);
         Diagnostic::error(
             "span runs past the end of the file",
             SrcSpan::new(offset + 4, offset + chars.len() + 100),
         )
-        .eprint();
+        .eprint(&sources);
     }
 
     /// A secondary label pointing into a *different* file than the primary one. Both files have
@@ -356,9 +381,10 @@ mod tests {
     #[test]
     fn rendering_a_cross_file_secondary_does_not_panic() {
         let decl: Vec<char> = "trait Show { fun show(self); }\n".chars().collect();
-        let decl_at = SrcMap::add_file("<decl>".to_string(), decl.clone(), FileOrigin::User);
         let use_: Vec<char> = "extend Foo with Show {}\n".chars().collect();
-        let use_at = SrcMap::add_file("<use>".to_string(), use_.clone(), FileOrigin::User);
+        let mut sources = SrcMap::new();
+        let decl_at = sources.add_file("<decl>".to_string(), decl.clone(), FileOrigin::User);
+        let use_at = sources.add_file("<use>".to_string(), use_.clone(), FileOrigin::User);
 
         Diagnostic::error(
             "missing method `show`",
@@ -369,7 +395,7 @@ mod tests {
             SrcSpan::new(decl_at + 13, decl_at + 28),
             "declared here, with no default body",
         )
-        .eprint();
+        .eprint(&sources);
     }
 
     /// A secondary label that resolves to no file is dropped, not escalated: the error it
@@ -377,21 +403,23 @@ mod tests {
     #[test]
     fn an_unmapped_secondary_is_dropped_not_fatal() {
         let chars: Vec<char> = "fun main() {}\n".chars().collect();
-        let offset = SrcMap::add_file("<dropped-secondary>".to_string(), chars, FileOrigin::User);
+        let mut sources = SrcMap::new();
+        let offset = sources.add_file("<dropped-secondary>".to_string(), chars, FileOrigin::User);
         Diagnostic::error("something is wrong here", SrcSpan::new(offset, offset + 3))
             .with_secondary(SrcSpan::new(UNMAPPED, UNMAPPED + 4), "and because of this")
-            .eprint();
+            .eprint(&sources);
     }
 
     /// Two labels in one file give `ariadne` one source, not the same one twice.
     #[test]
     fn rendering_two_labels_in_one_file_does_not_panic() {
         let chars: Vec<char> = "fun main() { let x = 1; let x = 2; }\n".chars().collect();
-        let offset = SrcMap::add_file("<same-file>".to_string(), chars, FileOrigin::User);
+        let mut sources = SrcMap::new();
+        let offset = sources.add_file("<same-file>".to_string(), chars, FileOrigin::User);
         Diagnostic::error("`x` is bound twice", SrcSpan::new(offset + 28, offset + 29))
             .with_label("second binding")
             .with_secondary(SrcSpan::new(offset + 17, offset + 18), "first binding")
-            .eprint();
+            .eprint(&sources);
     }
 
     #[test]
@@ -408,7 +436,7 @@ mod tests {
     /// source-major order.
     #[test]
     fn report_orders_by_span_not_emission() {
-        let ordered = DiagCtx::report_order(vec![
+        let ordered = report_order(vec![
             // Pipeline emission: lexer diagnostic at file end, then parser diagnostic at start.
             Diagnostic::error("late", SrcSpan::new(90, 95)),
             Diagnostic::error("early", SrcSpan::new(10, 15)),
@@ -419,7 +447,7 @@ mod tests {
 
     #[test]
     fn location_less_diagnostics_sort_first() {
-        let ordered = DiagCtx::report_order(vec![
+        let ordered = report_order(vec![
             Diagnostic::error("in the source", SrcSpan::new(10, 15)),
             Diagnostic::error_global("about the build as a whole"),
         ]);
@@ -434,7 +462,7 @@ mod tests {
     #[test]
     fn equal_spans_keep_emission_order() {
         let span = SrcSpan::new(10, 15);
-        let ordered = DiagCtx::report_order(vec![
+        let ordered = report_order(vec![
             Diagnostic::error("first note", span),
             Diagnostic::error("second note", span),
             Diagnostic::error("earlier", SrcSpan::new(1, 2)),
@@ -446,10 +474,10 @@ mod tests {
     /// see emission order.
     #[test]
     fn diagnostics_are_stored_in_emission_order() {
-        DiagCtx::clear();
-        DiagCtx::error("late", SrcSpan::new(90, 95));
-        DiagCtx::error("early", SrcSpan::new(10, 15));
-        assert_eq!(messages(DiagCtx::diagnostics()), ["late", "early"]);
-        DiagCtx::clear();
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.error("late", SrcSpan::new(90, 95));
+        diagnostics.error("early", SrcSpan::new(10, 15));
+        assert_eq!(messages(diagnostics.diagnostics()), ["late", "early"]);
+        diagnostics.clear();
     }
 }

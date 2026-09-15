@@ -36,3 +36,19 @@ impl LangItems {
         LangItems { items }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::langitems::ast::LangItems as AstLangItems;
+
+    /// A lang item that resolved during name resolution but never got a `DefId` during lowering
+    /// is a bug in lowering, and the panic says which item it was.
+    #[test]
+    #[should_panic(expected = "lowering never gave a DefId")]
+    fn a_lang_item_whose_node_lowering_missed_is_a_lowering_bug() {
+        let ast_items = AstLangItems::with_item(LangItem::ALL[0], NodeId::next());
+
+        LangItems::from_ast(&ast_items, |_| None);
+    }
+}

@@ -8,26 +8,34 @@ use crate::hir::{
 
 impl OwnerLowerer<'_, '_> {
     pub(super) fn lower_generics(&mut self, generics: &[ast::Generic]) -> Vec<HirId> {
-        generics.iter().map(|g| self.lower_generic(g)).collect()
-    }
+        let ids: Vec<HirId> = generics
+            .iter()
+            .map(|g| {
+                let hir_id = self.reserve();
+                self.cx.record_hir_id(g.id, hir_id);
+                hir_id
+            })
+            .collect();
 
-    fn lower_generic(&mut self, g: &ast::Generic) -> HirId {
-        let hir_id = self.reserve();
-        self.cx.record_hir_id(g.id, hir_id);
-        let mut bounds = Vec::new();
-        for bound in g.bounds.as_deref().unwrap_or(&[]) {
-            bounds.push(self.lower_bound(g.id, bound));
-        }
-        self.fill(
-            hir_id,
-            Node::Generic(Generic {
+        for (g, &hir_id) in generics.iter().zip(&ids) {
+            let bounds = g
+                .bounds
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|bound| self.lower_bound(g.id, bound))
+                .collect();
+            self.fill(
                 hir_id,
-                name: g.name,
-                bounds,
-                span: g.span,
-            }),
-        );
-        hir_id
+                Node::Generic(Generic {
+                    hir_id,
+                    name: g.name,
+                    bounds,
+                    span: g.span,
+                }),
+            );
+        }
+        ids
     }
 
     fn lower_bound(&mut self, owner: NodeId, bound: &ast::Bound) -> crate::hir::Bound {

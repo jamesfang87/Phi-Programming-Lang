@@ -1,9 +1,6 @@
 use crate::ast::BinaryOp;
-use crate::ast::interner::Interner;
 use crate::ast::{Ast, ParsedSrcFile};
-use crate::diagnostics::DiagCtx;
-use crate::driver::cli::Mode;
-use crate::driver::source::{FileOrigin, SrcMap};
+use crate::driver::source::FileOrigin;
 use crate::hir::{DefId, Hir, OwnerNode};
 use crate::lexer::Lexer;
 use crate::mir::lower::Mir;
@@ -14,6 +11,7 @@ use crate::mir::{
 };
 use crate::nameres;
 use crate::nameres::PrimTy;
+use crate::options::Mode;
 use crate::parser::Parser;
 use crate::testing::{
     OPS_PREAMBLE, first_extend_method, first_function, first_struct, lower_to_hir,
@@ -30,9 +28,9 @@ fn lower_mir_src(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
 
 fn parse_file(src: &str) -> ParsedSrcFile {
     let chars: Vec<char> = src.chars().collect();
-    let offset = SrcMap::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
-    let tokens = Lexer::new(&chars, offset).tokenize();
-    Parser::new().parse(&tokens, offset)
+    let offset = crate::testing::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
+    let tokens = Lexer::new(crate::testing::session(), &chars, offset).tokenize();
+    Parser::new(crate::testing::session()).parse(&tokens, offset)
 }
 
 fn lower_mir_src_with_ops(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
@@ -52,76 +50,88 @@ const REF_COPY_PREAMBLE: &str = "module core::ops;
 /// generically, for `&T` -- needed to read through a reference to a reference (`&&T`) without
 /// moving out of either layer.
 fn lower_mir_src_with_ref_copy(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
-    DiagCtx::clear();
-    Interner::clear();
+    crate::testing::clear_diagnostics();
+    crate::testing::clear_interner();
     let files = vec![parse_file(REF_COPY_PREAMBLE), parse_file(src)];
     let ast = Ast::from(files);
-    let res = nameres::resolve(&ast);
-    let hir = Hir::from(&ast, &res);
+    let res = nameres::resolve(crate::testing::session(), &ast);
+    let hir = Hir::from(crate::testing::session(), &ast, &res);
 
-    DiagCtx::clear();
-    let checked = crate::typeck::check(&hir);
-    let diagnostics = DiagCtx::diagnostics();
+    crate::testing::clear_diagnostics();
+    let checked = crate::typeck::check(crate::testing::session(), &hir);
+    let diagnostics = crate::testing::diagnostics();
     assert!(
         diagnostics.is_empty(),
         "unexpected diagnostics for {src:?}: {diagnostics:?}"
     );
     let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-    let program = super::lower(&hir, &mut tcx, &types, Mode::Debug);
+    let program = super::lower(
+        crate::testing::session(),
+        &hir,
+        &mut tcx,
+        &types,
+        Mode::Debug,
+    );
     (hir, tcx, types, program)
 }
 
 fn lower_mir_src_with_copy_and_drop(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
-    DiagCtx::clear();
-    Interner::clear();
+    crate::testing::clear_diagnostics();
+    crate::testing::clear_interner();
     let files = vec![parse_file(COPY_DROP_PREAMBLE), parse_file(src)];
     let ast = Ast::from(files);
-    let res = nameres::resolve(&ast);
-    let hir = Hir::from(&ast, &res);
+    let res = nameres::resolve(crate::testing::session(), &ast);
+    let hir = Hir::from(crate::testing::session(), &ast, &res);
 
-    DiagCtx::clear();
-    let checked = crate::typeck::check(&hir);
-    let diagnostics = DiagCtx::diagnostics();
+    crate::testing::clear_diagnostics();
+    let checked = crate::typeck::check(crate::testing::session(), &hir);
+    let diagnostics = crate::testing::diagnostics();
     assert!(
         diagnostics.is_empty(),
         "unexpected diagnostics for {src:?}: {diagnostics:?}"
     );
     let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-    let program = super::lower(&hir, &mut tcx, &types, Mode::Debug);
+    let program = super::lower(
+        crate::testing::session(),
+        &hir,
+        &mut tcx,
+        &types,
+        Mode::Debug,
+    );
     (hir, tcx, types, program)
 }
 
 fn lower_mir_src_with_ops_and_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, Mir) {
-    DiagCtx::clear();
-    Interner::clear();
+    crate::testing::clear_diagnostics();
+    crate::testing::clear_interner();
     let files = vec![parse_file(OPS_PREAMBLE), parse_file(src)];
     let ast = Ast::from(files);
-    let res = nameres::resolve(&ast);
-    let hir = Hir::from(&ast, &res);
+    let res = nameres::resolve(crate::testing::session(), &ast);
+    let hir = Hir::from(crate::testing::session(), &ast, &res);
 
-    DiagCtx::clear();
-    let checked = crate::typeck::check(&hir);
-    let diagnostics = DiagCtx::diagnostics();
+    crate::testing::clear_diagnostics();
+    let checked = crate::typeck::check(crate::testing::session(), &hir);
+    let diagnostics = crate::testing::diagnostics();
     assert!(
         diagnostics.is_empty(),
         "unexpected diagnostics for {src:?}: {diagnostics:?}"
     );
     let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-    let program = super::lower(&hir, &mut tcx, &types, mode);
+    let program = super::lower(crate::testing::session(), &hir, &mut tcx, &types, mode);
     (hir, tcx, types, program)
 }
 
 fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolutions, Mir) {
     let hir = lower_to_hir(src);
-    crate::diagnostics::DiagCtx::clear();
-    let checked = crate::typeck::check(&hir);
-    let diagnostics = crate::diagnostics::DiagCtx::diagnostics();
+    crate::testing::clear_diagnostics();
+    let checked = crate::typeck::check(crate::testing::session(), &hir);
+    let diagnostics = crate::testing::diagnostics();
     assert!(
         diagnostics.is_empty(),
         "unexpected diagnostics for {src:?}: {diagnostics:?}"
     );
     let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-    let program = super::lower(&hir, &mut tcx, &types, mode);
+    let program = super::lower(crate::testing::session(), &hir, &mut tcx, &types, mode);
     (hir, tcx, types, program)
 }
 
@@ -382,7 +392,7 @@ fn find_function(hir: &Hir, name: &str) -> DefId {
         .iter()
         .copied()
         .find(|&id| {
-            matches!(hir.def(id), OwnerNode::Function(f) if Interner::resolve(f.name.text) == name)
+            matches!(hir.def(id), OwnerNode::Function(f) if crate::testing::resolve(f.name.text) == name)
         })
         .unwrap_or_else(|| panic!("no top-level function named {name:?}"))
 }
@@ -421,7 +431,10 @@ fn storage_dead_order(body: &Body) -> Vec<Local> {
 fn named_local(body: &Body, name: &str) -> Local {
     body.local_decls
         .iter()
-        .position(|decl| decl.name.is_some_and(|n| Interner::resolve(n.text) == name))
+        .position(|decl| {
+            decl.name
+                .is_some_and(|n| crate::testing::resolve(n.text) == name)
+        })
         .map(Local::from_usize)
         .unwrap_or_else(|| panic!("no local named {name:?} in {body:?}"))
 }
@@ -1176,7 +1189,15 @@ fn continue_target_only_returns_obligations_registered_since_the_loop_was_entere
     let unit_ty = tcx.unit();
     let span = hir.def(def_id).span();
 
-    let mut ctx = BodyLowerCtx::new(&hir, &mut tcx, &types, Mode::Debug, def_id, None);
+    let mut ctx = BodyLowerCtx::new(
+        crate::testing::session(),
+        &hir,
+        &mut tcx,
+        &types,
+        Mode::Debug,
+        def_id,
+        None,
+    );
     ctx.push_block_scope();
     // `new_temp` now registers its own `StorageDead` obligation, the same one a manual
     // `register_exit_obligation` call used to be needed for here -- see its own doc comment.
@@ -1565,7 +1586,7 @@ fn a_let_bound_local_carries_its_declared_name() {
     let name = x_decl
         .name
         .expect("a let-bound local carries its declared name");
-    assert_eq!(Interner::resolve(name.text), "x");
+    assert_eq!(crate::testing::resolve(name.text), "x");
 }
 
 /// `lower_with_lend` threads a lend's own pattern name through the same way.
@@ -1579,7 +1600,7 @@ fn a_with_lends_local_carries_its_declared_name() {
     let name = x_decl
         .name
         .expect("a with-bound local carries its declared name");
-    assert_eq!(Interner::resolve(name.text), "x");
+    assert_eq!(crate::testing::resolve(name.text), "x");
 }
 
 // -----------------------------------------------------------------
@@ -1757,5 +1778,544 @@ fn a_payload_bound_through_a_reference_is_a_borrow() {
             .flat_map(|b| &b.statements)
             .any(|s| matches!(&s.kind, StatementKind::Assign(_, Rvalue::Ref { .. }))),
         "the payload binding lowers to a Ref rvalue"
+    );
+}
+
+/// BUG: `lower_index_place` builds the bounds-check `Assert` with a condition that is the
+/// constant `true`, never `index < len`. The backend branches on that condition, so the failure
+/// block that aborts with "index out of bounds" is dead and out-of-bounds reads execute.
+///
+/// Run with `cargo test --bin phi -- --ignored` to reproduce.
+#[test]
+fn array_bounds_check_condition_is_not_a_hard_coded_true() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src("fun f(a: [i32; 4], i: i32) -> i32 { return a[i]; }");
+    let body = first_function_body(&program, &hir);
+    let has_always_true_assert = body.basic_blocks.iter().any(|b| {
+        matches!(
+            &b.terminator.kind,
+            TerminatorKind::Assert {
+                cond: Operand::Constant(Constant {
+                    kind: ConstKind::Bool(true),
+                    ..
+                }),
+                ..
+            }
+        )
+    });
+    assert!(
+        !has_always_true_assert,
+        "the bounds check must test `index < len`, not assert a constant `true`"
+    );
+}
+
+/// BUG: `lower_index_place` sizes the length temporary with `index_ty` (e.g. `i32` for a default
+/// integer index) even though `Rvalue::Len` is 64-bit and codegen's `Projection::Index`
+/// unconditionally loads/stores `i64`. The temporary should be `usize`/`i64` regardless of the
+/// index expression's own type.
+///
+/// Run with `cargo test --bin phi -- --ignored` to reproduce.
+#[test]
+fn array_bounds_length_local_is_wide_enough_for_rvalue_len() {
+    let (hir, tcx, _types, program) =
+        lower_mir_src("fun f(a: [i32; 4], i: i32) -> i32 { return a[i]; }");
+    let body = first_function_body(&program, &hir);
+    let len_local = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .find_map(|s| match &s.kind {
+            StatementKind::Assign(place, Rvalue::Len(_)) => Some(place.local),
+            _ => None,
+        })
+        .expect("indexing lowers a `Rvalue::Len`");
+    let ty = body.local_decls[len_local.index()].ty;
+    assert!(
+        matches!(
+            tcx.kind(ty),
+            TyKind::Primitive(PrimTy::Usize)
+                | TyKind::Primitive(PrimTy::U64)
+                | TyKind::Primitive(PrimTy::I64)
+        ),
+        "the local holding `Rvalue::Len` (loaded as i64 by codegen) is {ty:?}"
+    );
+}
+
+// -----------------------------------------------------------------
+// Expression forms in value position
+// -----------------------------------------------------------------
+
+/// The `Result` lang item `?` needs, as its own core file so the test source stays at the crate
+/// root where `first_function` can find it.
+const RESULT_PREAMBLE: &str = "module core::result;
+     public enum Result<T, E> { ok: T, err: E }";
+
+fn lower_mir_src_with_result(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
+    crate::testing::clear_diagnostics();
+    crate::testing::clear_interner();
+    let files = vec![parse_file(RESULT_PREAMBLE), parse_file(src)];
+    let ast = Ast::from(files);
+    let res = nameres::resolve(crate::testing::session(), &ast);
+    let hir = Hir::from(crate::testing::session(), &ast, &res);
+
+    crate::testing::clear_diagnostics();
+    let checked = crate::typeck::check(crate::testing::session(), &hir);
+    let diagnostics = crate::testing::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = super::lower(
+        crate::testing::session(),
+        &hir,
+        &mut tcx,
+        &types,
+        Mode::Debug,
+    );
+    (hir, tcx, types, program)
+}
+
+const OPTION_PREAMBLE: &str = "module core::option;
+     public enum Option<T> { some: T, none }";
+
+/// Like [`lower_mir_src_with_result`], but with the `Option` lang item defined too, for exercising
+/// `?` on an `Option`.
+fn lower_mir_src_with_option_result(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
+    crate::testing::clear_diagnostics();
+    crate::testing::clear_interner();
+    let files = vec![
+        parse_file(RESULT_PREAMBLE),
+        parse_file(OPTION_PREAMBLE),
+        parse_file(src),
+    ];
+    let ast = Ast::from(files);
+    let res = nameres::resolve(crate::testing::session(), &ast);
+    let hir = Hir::from(crate::testing::session(), &ast, &res);
+
+    crate::testing::clear_diagnostics();
+    let checked = crate::typeck::check(crate::testing::session(), &hir);
+    let diagnostics = crate::testing::diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics for {src:?}: {diagnostics:?}"
+    );
+    let crate::typeck::TypeckOutput { mut tcx, types } = checked;
+    let program = super::lower(
+        crate::testing::session(),
+        &hir,
+        &mut tcx,
+        &types,
+        Mode::Debug,
+    );
+    (hir, tcx, types, program)
+}
+
+/// `lower_expr_discarding`'s literal arm: a literal has no place to read or write, so it lowers
+/// to nothing at all rather than a `PlaceMention`.
+#[test]
+fn a_discarded_literal_statement_lowers_to_nothing() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f() { 1; }");
+    let body = first_function_body(&program, &hir);
+    assert!(
+        !body
+            .basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(s.kind, StatementKind::PlaceMention(_))),
+        "a literal has no place to mention"
+    );
+}
+
+/// An assignment used as a value (not a bare statement) still writes through its place and the
+/// expression's own value is unit.
+#[test]
+fn an_assignment_used_as_a_value_writes_through_and_yields_unit() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f() { let mut a = 0; let x = (a = 1); }");
+    let body = first_function_body(&program, &hir);
+    let a = named_local(body, "a");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(
+                &s.kind,
+                StatementKind::Assign(place, Rvalue::Use(Operand::Constant(Constant {
+                    kind: ConstKind::Int(1),
+                    ..
+                }))) if place.local == a
+            )),
+        "`a = 1` still writes 1 into `a` when the assignment is used as a value"
+    );
+}
+
+/// The `AssignOp` counterpart, whose result is computed and stored back before the unit value is
+/// produced into `dest`.
+#[test]
+fn a_compound_assignment_used_as_a_value_stores_back_and_yields_unit() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src_with_ops("fun f() { let mut a = 1; let x = (a += 1); }");
+    let body = first_function_body(&program, &hir);
+    let a = named_local(body, "a");
+    let stored_back = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| {
+            matches!(
+                &s.kind,
+                StatementKind::Assign(place, Rvalue::Use(Operand::Move(inner)))
+                    if place.local == a && inner.local != a
+            )
+        });
+    assert!(
+        stored_back,
+        "`a += 1` stores the summed result back into `a` and the expression is unit"
+    );
+}
+
+/// `?` switches on the `Result`'s discriminant and reads the `ok` payload through a
+/// `Downcast(ok).Field(0)` projection; the `err` path returns the enclosing function's own
+/// `Result::err` immediately.
+#[test]
+fn try_unwraps_the_ok_payload_and_returns_the_err() {
+    let (hir, _tcx, _types, program) = lower_mir_src_with_result(
+        "import core::result::Result;
+         fun f(r: Result<i32, bool>) -> Result<i32, bool> {
+             let v = r?;
+             return .ok(v);
+         }",
+    );
+    let body = first_function_body(&program, &hir);
+    let switches = body
+        .basic_blocks
+        .iter()
+        .filter(|b| matches!(b.terminator.kind, TerminatorKind::SwitchInt { .. }))
+        .count();
+    assert!(switches >= 1, "`?` switches on the Result's discriminant");
+    let downcasts = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                place
+                    .projections
+                    .iter()
+                    .any(|p| matches!(p, Projection::Downcast(_)))
+            }
+            _ => false,
+        });
+    assert!(
+        downcasts,
+        "`?` reads the payload through a Downcast projection"
+    );
+}
+
+/// A bare block expression reaches `lower_block`'s tail-value path, lowering the block's own
+/// bindings before assigning the tail into the destination.
+#[test]
+fn a_block_expression_lowers_its_inner_bindings_and_tail() {
+    let (hir, _tcx, _types, program) = lower_mir_src("fun f() -> i32 { return { let y = 2; y }; }");
+    let body = first_function_body(&program, &hir);
+    let _y = named_local(body, "y");
+}
+
+/// Indexing a reference to an array peels the reference first, so the place reads through a
+/// `Deref` projection before the element projection.
+#[test]
+fn indexing_through_a_reference_derefs_before_indexing() {
+    let (hir, _tcx, _types, program) =
+        lower_mir_src("fun f(a: &[i32; 4], i: i32) -> i32 { return a[i]; }");
+    let body = first_function_body(&program, &hir);
+    let deref_then_index = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                place.projections.first() == Some(&Projection::Deref)
+                    && matches!(
+                        place.projections.last(),
+                        Some(Projection::Index(_) | Projection::ConstantIndex(_))
+                    )
+            }
+            _ => false,
+        });
+    assert!(
+        deref_then_index,
+        "indexing `&[i32; 4]` derefs the reference before projecting the element"
+    );
+}
+
+/// The `Index` trait's `index` method resolved in value position (as opposed to a place) lowers
+/// to an ordinary method call through `lower_call_like_into`.
+#[test]
+fn an_overloaded_index_used_as_a_value_lowers_to_its_method_call() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "public trait Index<K, V> { fun index(&self, key: K) -> &V; }
+         struct Map { value: bool }
+         extend Map with Index<i32, bool> {
+             fun index(&self, key: i32) -> &bool { return &self.value; }
+         }
+         fun f(m: Map) -> &bool { return m[0]; }",
+    );
+    let body = first_function_body(&program, &hir);
+    assert!(
+        body.basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
+        "an overloaded index lowers to the `index` method call"
+    );
+}
+
+/// A qualified variant call, `Shape.circle(1.0)`, reads as an access but builds a value; its
+/// one call argument becomes the variant's single payload operand.
+#[test]
+fn a_qualified_variant_call_carries_its_single_argument() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "enum Shape { unit, circle: f64 }
+         fun f() -> Shape { return Shape.circle(1.0); }",
+    );
+    let body = first_function_body(&program, &hir);
+    let operand_count = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .find_map(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Aggregate(kind, operands))
+                if matches!(**kind, AggregateKind::Adt { .. }) =>
+            {
+                Some(operands.len())
+            }
+            _ => None,
+        });
+    assert_eq!(
+        operand_count,
+        Some(1),
+        "`Shape.circle(1.0)` builds the variant with its one float payload"
+    );
+}
+
+/// TODO: an overloaded `Index` used as a place (an assignment target) is not yet implemented and
+/// panics. Typeck accepts `m[0] = true` as a place, so this is reachable from a valid program;
+/// this test pins the current panic until place-position indexing is implemented.
+#[test]
+#[should_panic(
+    expected = "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"
+)]
+fn an_overloaded_index_used_as_a_place_panics_until_implemented() {
+    let _ = lower_mir_src(
+        "public trait Index<K, V> { fun index(&self, key: K) -> bool; }
+         struct Map { value: bool }
+         extend Map with Index<i32, bool> {
+             fun index(&self, key: i32) -> bool { return self.value; }
+         }
+         fun f(m: Map) { m[0] = true; }",
+    );
+}
+
+/// `spawn` type-checks as an ordinary block (see `typeck.rs`'s `ExprKind::Spawn` arm) but MIR
+/// lowering is not implemented and panics. Reachable from a program typeck accepts, so the panic
+/// is pinned here until the concurrency runtime lands.
+#[test]
+#[should_panic(
+    expected = "mir::lower: `spawn` is not yet implemented (the runtime nursery API is illustrative only)"
+)]
+fn spawn_panics_until_the_concurrency_runtime_is_implemented() {
+    let _ = lower_mir_src("fun f() { spawn { noop(); } } fun noop() {}");
+}
+
+/// The `concurrent` counterpart of [`spawn_panics_until_the_concurrency_runtime_is_implemented`].
+#[test]
+#[should_panic(
+    expected = "mir::lower: `concurrent` is not yet implemented (the runtime nursery API is illustrative only)"
+)]
+fn concurrent_panics_until_the_concurrency_runtime_is_implemented() {
+    let _ = lower_mir_src("fun f() { concurrent { noop(); } } fun noop() {}");
+}
+
+/// `?` on an `Option` type-checks (see `Typeck::check_try`), but `lower_try_into` only knows how
+/// to build the `Result`'s own `err` variant and panics when the operand's `Adt` does not carry
+/// two type arguments. Pins the current limitation.
+#[test]
+#[should_panic(expected = "mir::lower: `?`'s operand is not a two-argument Result")]
+fn try_on_an_option_panics_until_option_propagation_is_implemented() {
+    let (hir, _tcx, _types, program) = lower_mir_src_with_option_result(
+        "import core::option::Option;
+         fun f(o: Option<i32>) -> Option<i32> {
+             let v = o?;
+             return .some(v);
+         }",
+    );
+    let _ = first_function_body(&program, &hir);
+}
+
+/// A mutable borrow of an `any`-specialized overloaded index. `m[0]` is a place (its base `m` is
+/// a path), so typeck accepts `&mut m[0]`, and the borrow of the any-specialized call resolves
+/// under `AnyMode::RefMut` rather than `AnyMode::Ref`.
+#[test]
+fn a_mutably_borrowed_any_specialized_index_uses_ref_mut_mode() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "public trait Index<K, V> { fun index(&self, key: K) -> any V; }
+         struct Map { value: i32 }
+         extend Map with Index<i32, i32> {
+             fun index(&self, key: i32) -> any i32 { return self.value; }
+         }
+         fun f(m: &mut Map) { let r = &mut m[0]; }",
+    );
+    let body = first_function_body(&program, &hir);
+    assert!(
+        body.basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
+        "the mutably borrowed index still lowers to a method call"
+    );
+}
+
+// -----------------------------------------------------------------
+// `dyn` dispatch, indirect callees, and `any` argument modes
+// -----------------------------------------------------------------
+
+/// A method call through a `&dyn Trait` receiver dispatches through the trait's own declaration,
+/// so the receiver is passed first and the method's written parameters follow it.
+#[test]
+fn a_dyn_receiver_dispatches_through_the_traits_own_declaration() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "trait Show { fun add(&self, x: i32) -> i32; }
+         struct W { v: i32 }
+         extend W with Show { fun add(&self, x: i32) -> i32 { return x; } }
+         fun draw(s: &dyn Show, x: i32) -> i32 { return s.add(x); }",
+    );
+    let body = first_function_body(&program, &hir);
+    let call = body
+        .basic_blocks
+        .iter()
+        .find_map(|b| match &b.terminator.kind {
+            TerminatorKind::Call { args, target, .. } => Some((args.len(), target.is_some())),
+            _ => None,
+        })
+        .expect("`s.add(x)` lowers to a call");
+    assert_eq!(call, (2, true), "the dyn call passes `s` then `x`");
+}
+
+/// The `Index` operator on a `&dyn Index<K, V>` receiver is itself dyn-dispatched: the trait's
+/// own `index` declaration is the call target, not any concrete impl.
+#[test]
+fn a_dyn_index_receiver_dispatches_through_the_trait_declaration() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "public trait Index<K, V> { fun index(&self, key: K) -> &V; }
+         struct Map { value: bool }
+         extend Map with Index<i32, bool> {
+             fun index(&self, key: i32) -> &bool { return &self.value; }
+         }
+         fun f(x: &dyn Index<i32, bool>) -> &bool { return x[0]; }",
+    );
+    let body = first_function_body(&program, &hir);
+    assert!(
+        body.basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
+        "`x[0]` through a `&dyn Index` receiver lowers to the trait's `index` call"
+    );
+}
+
+/// A method reached through an `any T` receiver lowers the owned `any` position for each
+/// argument, since the receiver's own `any` has no borrow mode of its own to preserve.
+#[test]
+fn a_method_on_an_any_receiver_peels_the_any_wrapper() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "struct Foo {}
+         extend Foo { fun show(any self) {} }
+         fun f(d: any Foo) { d.show(); }",
+    );
+    let body = first_function_body(&program, &hir);
+    assert!(
+        body.basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
+        "`d.show()` on an `any Foo` receiver lowers to a call"
+    );
+}
+
+/// An `any T` parameter passed to a call whose result is used owned resolves to its plain `T`,
+/// rather than taking a reference to the argument.
+#[test]
+fn an_any_parameter_passed_owned_lowers_the_plain_value() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "fun min(x: any i32, y: any i32) -> any i32 { return x; }
+         fun f(a: i32, b: i32) { min(a, b); }",
+    );
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
+        "`min(a, b)` in owned position lowers to a call"
+    );
+    assert!(
+        !body
+            .basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(&s.kind, StatementKind::Assign(_, Rvalue::Ref { .. }))),
+        "under the owned mode an `any i32` argument is passed without taking a reference"
+    );
+}
+
+/// An `any T` parameter resolved under a mutable borrow takes a `&mut` reference to the
+/// argument, exercising the mutable arm of the argument lowering.
+#[test]
+fn an_any_parameter_resolved_mutably_takes_a_mutable_borrow() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "public trait Index<K, V> { fun index(&self, key: K) -> any V; }
+         struct Map { value: i32 }
+         extend Map with Index<any i32, i32> {
+             fun index(&self, key: any i32) -> any i32 { return self.value; }
+         }
+         fun f(m: &mut Map, k: i32) { let r = &mut m[k]; }",
+    );
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
+        "`&mut m[k]` discovers the RefMut-specialized body"
+    );
+}
+
+/// Reifying an `any`-specialized function as a value pins every `any` position to its plain `T`
+/// (`AnyMode::Owned`), since a bare reference has no call site to choose a mode from.
+#[test]
+fn an_any_specialized_function_reified_as_a_value_pins_its_any_positions() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "fun min(x: any i32, y: any i32) -> any i32 { return x; }
+         fun f() { let g = min; }",
+    );
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(
+                &s.kind,
+                StatementKind::Assign(
+                    _,
+                    Rvalue::Cast {
+                        kind: CastKind::ReifyFunPointer,
+                        ..
+                    }
+                )
+            )),
+        "naming `min` without calling it reifies it as a function-pointer value"
     );
 }

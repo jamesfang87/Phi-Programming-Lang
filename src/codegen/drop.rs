@@ -461,7 +461,7 @@ mod tests {
     fn drop_glue_on_iso_sized_calls_free() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
@@ -482,7 +482,7 @@ mod tests {
     fn drop_glue_on_iso_unsized_calls_free_on_the_data_pointer_only() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let u8_ty = tcx.mk_prim(crate::nameres::PrimTy::U8);
@@ -512,7 +512,7 @@ mod tests {
     fn drop_glue_on_non_iso_is_a_no_op() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
@@ -550,7 +550,7 @@ mod tests {
             "struct Handle { owned: iso i32, tag: i32 }
              fun f() {}",
         );
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let handle_ty = adt_named(&hir, &mut tcx, "Handle");
@@ -585,7 +585,7 @@ mod tests {
             "enum List { cons: iso List, nil }
              fun f() {}",
         );
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let list_ty = adt_named(&hir, &mut tcx, "List");
@@ -615,7 +615,7 @@ mod tests {
             "enum Box_ { present: iso i32, absent }
              fun f() {}",
         );
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let box_ty = adt_named(&hir, &mut tcx, "Box_");
@@ -640,7 +640,7 @@ mod tests {
     fn dropping_an_iso_slice_frees_every_element_before_the_array_itself() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
@@ -674,7 +674,7 @@ mod tests {
             "trait Greet { fun greet(&self) -> i32; }
              fun f() {}",
         );
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let trait_def = crate::testing::named_def(&hir, "Greet");
@@ -714,7 +714,7 @@ mod tests {
             "struct Point { x: i32, y: i32 }
              fun f() {}",
         );
-        let mut cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         scratch_function(&cx);
 
         let point_ty = adt_named(&hir, &mut tcx, "Point");
