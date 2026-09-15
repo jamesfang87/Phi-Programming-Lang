@@ -1,9 +1,12 @@
 module core::io;
 
-// TODO: provide `print`/`println` (README section 1 promises them and `phi new`'s
-// template calls `println`, but only the low-level `write_bytes` fd/buf intrinsic
-// exists, so every Hello-world program fails name resolution). A real language
-// needs a usable stdout text API, not just raw fd writes.
-
-// TODO: implement print/println
 public fun write_bytes(fd: i32, buf: &[u8]) -> i64;
+
+public fun print(s: str) {
+    write_bytes(1, s as &[u8]);
+}
+
+public fun println(s: str) {
+    print(s);
+    write_bytes(1, "\n" as &[u8]);
+}
