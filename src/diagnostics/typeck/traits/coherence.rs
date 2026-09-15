@@ -1,11 +1,11 @@
 use crate::ast::Symbol;
-use crate::ast::interner::Interner;
-use crate::diagnostics::typeck::display::DisplayCx;
+use crate::diagnostics::Diagnostic;
+use crate::diagnostics::codes;
+use crate::diagnostics::display::DisplayCtx;
 use crate::diagnostics::typeck::traits::get_name_of_trait;
-use crate::diagnostics::{DiagCtx, Diagnostic};
 use crate::driver::source::SrcSpan;
 use crate::hir::Hir;
-use crate::typeck::traits::overlap::ExtendHeader;
+use crate::typeck::traits::collect::ExtendHeader;
 
 fn extend_span(hir: &Hir, header: &ExtendHeader) -> SrcSpan {
     hir.extend(header.def).span
@@ -13,7 +13,7 @@ fn extend_span(hir: &Hir, header: &ExtendHeader) -> SrcSpan {
 
 pub fn report_conflicting_extends(
     hir: &Hir,
-    cx: DisplayCx<'_>,
+    cx: DisplayCtx<'_>,
     first: &ExtendHeader,
     second: &ExtendHeader,
 ) {
@@ -22,15 +22,16 @@ pub fn report_conflicting_extends(
         .as_ref()
         .expect("only two extend blocks are ever compared for a duplicate implementation");
 
-    DiagCtx::emit(
+    cx.emit(
         Diagnostic::error(
             format!(
                 "conflicting implementations of trait `{}` for type `{}`",
-                get_name_of_trait(hir, trait_ref.def),
+                get_name_of_trait(cx.session(), hir, trait_ref.def),
                 cx.show(second.self_ty)
             ),
             extend_span(hir, second),
         )
+        .with_code(codes::CONFLICTING_EXTENDS)
         .with_label("conflicting implementation")
         .with_secondary(
             extend_span(hir, first),
@@ -46,30 +47,28 @@ pub fn report_conflicting_extends(
 
 pub fn report_duplicate_method(
     hir: &Hir,
-    cx: DisplayCx<'_>,
+    cx: DisplayCtx<'_>,
     name: Symbol,
     first: &ExtendHeader,
     second: &ExtendHeader,
 ) {
-    DiagCtx::emit(
+    cx.emit(
         Diagnostic::error(
             format!(
                 "the method `{}` is defined more than once for type `{}`",
-                Interner::resolve(name),
+                cx.resolve(name),
                 cx.show(second.self_ty)
             ),
             extend_span(hir, second),
         )
-        .with_label(format!(
-            "duplicate definition of `{}`",
-            Interner::resolve(name)
-        ))
+        .with_code(codes::DUPLICATE_METHOD)
+        .with_label(format!("duplicate definition of `{}`", cx.resolve(name)))
         .with_secondary(
             extend_span(hir, first),
             format!(
                 "`{}` already gets a method named `{}` here",
                 cx.show(first.self_ty),
-                Interner::resolve(name)
+                cx.resolve(name)
             ),
         )
         .with_help(

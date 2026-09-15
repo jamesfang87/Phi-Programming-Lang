@@ -2,8 +2,12 @@
 
 use crate::ast::{Ident, Path as AstPath, SelfMode, Visibility};
 use crate::driver::source::SrcSpan;
-use crate::hir::ids::{DefId, HirId};
+use crate::hir::ids::{BlockId, DefId, HirId, TyId};
 use crate::hir::path::Path;
+
+// TODO: no `Const`/`Static`/`TypeAlias`/inline-`Module` owners exist here either (mirrors the
+// `ast::ItemKind` gap), so HIR has nowhere to hold global constants or type aliases even if
+// the parser learned them.
 
 #[derive(Debug)]
 pub struct Module {
@@ -31,8 +35,8 @@ pub struct Function {
     pub generics: Vec<HirId>,      // -> Node::Generic
     pub self_param: Option<HirId>, // -> Node::SelfParam
     pub params: Vec<HirId>,        // -> Node::Param
-    pub ret: Option<HirId>,        // -> Node::Ty
-    pub block: Option<HirId>,      // -> Node::Block
+    pub ret: Option<TyId>,
+    pub block: Option<BlockId>,
     pub span: SrcSpan,
 }
 
@@ -57,7 +61,7 @@ pub struct Struct {
 pub struct Field {
     pub hir_id: HirId,
     pub name: Ident,
-    pub ty: HirId, // -> Node::Ty
+    pub ty: TyId,
     pub visibility: Visibility,
     pub span: SrcSpan,
 }
@@ -83,7 +87,7 @@ pub struct Variant {
 #[derive(Debug)]
 pub enum VariantPayload {
     Unit,
-    Type(HirId),        // -> Node::Ty
+    Type(TyId),
     Record(Vec<HirId>), // -> Node::Field
 }
 
@@ -101,8 +105,8 @@ pub struct Trait {
 pub struct Extend {
     pub hir_id: HirId,
     pub extend_generics: Vec<HirId>, // -> Node::Generic
-    pub self_ty: HirId,              // -> Node::Ty
-    pub trait_generics: Vec<HirId>,  // -> Node::Ty
+    pub self_ty: TyId,
+    pub trait_generics: Vec<TyId>,
     pub trait_path: Option<Path>,
     pub methods: Vec<DefId>,
     pub span: SrcSpan,
@@ -112,8 +116,8 @@ pub struct Extend {
 pub struct Closure {
     pub hir_id: HirId,
     pub params: Vec<HirId>, // -> Node::ClosureParam
-    pub ret: Option<HirId>, // -> Node::Ty
-    pub block: HirId,       // -> Node::Block
+    pub ret: Option<TyId>,
+    pub block: BlockId,
     pub span: SrcSpan,
 }
 
@@ -129,7 +133,7 @@ pub struct Generic {
 #[derive(Debug)]
 pub struct Bound {
     pub path: Path,
-    pub args: Vec<HirId>, // -> Node::Ty
+    pub args: Vec<TyId>,
     pub span: SrcSpan,
 }
 
@@ -137,7 +141,7 @@ pub struct Bound {
 pub struct Param {
     pub hir_id: HirId,
     pub name: Ident,
-    pub ty: HirId, // -> Node::Ty
+    pub ty: TyId,
     pub span: SrcSpan,
 }
 
@@ -145,6 +149,6 @@ pub struct Param {
 pub struct ClosureParam {
     pub hir_id: HirId,
     pub name: Ident,
-    pub ty: Option<HirId>, // -> Node::Ty
+    pub ty: Option<TyId>,
     pub span: SrcSpan,
 }

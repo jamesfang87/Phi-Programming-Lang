@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::ast::interner::Interner;
 use crate::ast::visit::{self, Visitor as AstVisitor};
 use crate::ast::{
     Ast, Expr as AstExpr, Extend as AstExtend, Generic as AstGeneric, Ident as AstIdent,
@@ -8,39 +7,40 @@ use crate::ast::{
     Pat as AstPat, PatKind as AstPatKind, Path as AstPath, SelfParam as AstSelfParam, Symbol,
     Ty as AstTy,
 };
-use crate::driver::source::{FileOrigin, SrcMap, SrcSpan};
+use crate::driver::source::{FileOrigin, SrcSpan};
 use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
 use crate::mir::{Body, Instance};
 use crate::nameres::results::NameResolutions;
 use crate::nameres::{Local as NameResLocal, Res as NameResRes, TyDef, Type as NameResType};
+use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
-fn is_user_def(hir: &Hir, def_id: DefId) -> bool {
-    is_user_span(hir.def(def_id).span())
+fn is_user_def(session: &Session, hir: &Hir, def_id: DefId) -> bool {
+    is_user_span(session, hir.def(def_id).span())
 }
 
-fn def_name(hir: &Hir, def_id: DefId) -> &'static str {
+fn def_name(session: &Session, hir: &Hir, def_id: DefId) -> &'static str {
     match hir.def(def_id) {
         OwnerNode::Module(m) => m
             .path
             .segments
             .last()
-            .map(|seg| Interner::resolve(seg.text))
+            .map(|seg| session.resolve(seg.text))
             .unwrap_or("<root>"),
-        OwnerNode::Function(f) => Interner::resolve(f.name.text),
-        OwnerNode::Struct(s) => Interner::resolve(s.name.text),
-        OwnerNode::Enum(e) => Interner::resolve(e.name.text),
-        OwnerNode::Trait(t) => Interner::resolve(t.name.text),
+        OwnerNode::Function(f) => session.resolve(f.name.text),
+        OwnerNode::Struct(s) => session.resolve(s.name.text),
+        OwnerNode::Enum(e) => session.resolve(e.name.text),
+        OwnerNode::Trait(t) => session.resolve(t.name.text),
         OwnerNode::Extend(_) => "<extend>",
         OwnerNode::Closure(_) => "<closure>",
     }
 }
 
-fn fmt_def(hir: &Hir, def_id: DefId) -> String {
+fn fmt_def(session: &Session, hir: &Hir, def_id: DefId) -> String {
     let hir_id = def_id.owner_id();
-    format!("{} ({hir_id:?})", def_name(hir, def_id))
+    format!("{} ({hir_id:?})", def_name(session, hir, def_id))
 }
 
 fn node_kind(node: &Node) -> String {
@@ -79,18 +79,18 @@ fn snippet(text: &str) -> String {
     }
 }
 
-fn fmt_node_summary(hir: &Hir, hir_id: HirId) -> String {
+fn fmt_node_summary(session: &Session, hir: &Hir, hir_id: HirId) -> String {
     let node = hir.node(hir_id);
     let kind = node_kind(node);
     let span = node.span();
 
-    let Some(file) = SrcMap::file_containing(span.get_begin()) else {
+    let Some(file) = session.file_containing(span.get_begin()) else {
         return kind;
     };
     let (line, col) = file.line_col(span.get_begin());
     let location = format!("{}:{line}:{col}", file.name);
 
-    match SrcMap::text_of(span) {
+    match session.text_of(span) {
         Some(text) => format!("{kind} `{}` ({location})", snippet(&text)),
         None => format!("{kind} ({location})"),
     }
@@ -116,37 +116,37 @@ fn block(open: &str, close: &str, items: &[String], indent: usize) -> String {
     format!("{open}\n{body}{}{close}", pad(indent))
 }
 
-fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
+fn fmt_ty(session: &Session, hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
     match tcx.kind(ty) {
         TyKind::Var(var) => format!("{var:?}"),
         TyKind::Primitive(prim) => format!("{prim:?}"),
         TyKind::Adt { def, args } => {
-            let name = fmt_def(hir, *def);
+            let name = fmt_def(session, hir, *def);
             if args.is_empty() {
                 return name;
             }
             let args: Vec<_> = args
                 .iter()
-                .map(|a| fmt_ty(hir, tcx, *a, indent + 1))
+                .map(|a| fmt_ty(session, hir, tcx, *a, indent + 1))
                 .collect();
             format!("{name}{}", block("<", ">", &args, indent))
         }
         TyKind::Generic(id) => format!("Generic({id:?})"),
-        TyKind::SelfTy(def) => format!("SelfTy({})", fmt_def(hir, *def)),
+        TyKind::SelfTy(def) => format!("SelfTy({})", fmt_def(session, hir, *def)),
         TyKind::Ref { base, mutability } => {
             let inner = pad(indent + 1);
             format!(
                 "Ref {{\n{inner}base: {},\n{inner}mutability: {mutability:?},\n{}}}",
-                fmt_ty(hir, tcx, *base, indent + 1),
+                fmt_ty(session, hir, tcx, *base, indent + 1),
                 pad(indent)
             )
         }
-        TyKind::Any(base) => format!("Any({})", fmt_ty(hir, tcx, *base, indent)),
-        TyKind::Iso(base) => format!("Iso({})", fmt_ty(hir, tcx, *base, indent)),
+        TyKind::Any(base) => format!("Any({})", fmt_ty(session, hir, tcx, *base, indent)),
+        TyKind::Iso(base) => format!("Iso({})", fmt_ty(session, hir, tcx, *base, indent)),
         TyKind::Tuple(elems) => {
             let elems: Vec<_> = elems
                 .iter()
-                .map(|e| fmt_ty(hir, tcx, *e, indent + 1))
+                .map(|e| fmt_ty(session, hir, tcx, *e, indent + 1))
                 .collect();
             block("(", ")", &elems, indent)
         }
@@ -154,28 +154,28 @@ fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
             let inner = pad(indent + 1);
             format!(
                 "Array {{\n{inner}elem: {},\n{inner}len: {len:?},\n{}}}",
-                fmt_ty(hir, tcx, *elem, indent + 1),
+                fmt_ty(session, hir, tcx, *elem, indent + 1),
                 pad(indent)
             )
         }
         TyKind::Fun { params, ret } => {
             let params: Vec<_> = params
                 .iter()
-                .map(|p| fmt_ty(hir, tcx, *p, indent + 1))
+                .map(|p| fmt_ty(session, hir, tcx, *p, indent + 1))
                 .collect();
             let ret = ret
-                .map(|r| fmt_ty(hir, tcx, r, indent))
+                .map(|r| fmt_ty(session, hir, tcx, r, indent))
                 .unwrap_or_else(|| "()".to_string());
             format!("{} -> {ret}", block("fun(", ")", &params, indent))
         }
         TyKind::Dyn { trait_, args } => {
-            let name = format!("dyn {}", fmt_def(hir, *trait_));
+            let name = format!("dyn {}", fmt_def(session, hir, *trait_));
             if args.is_empty() {
                 return name;
             }
             let args: Vec<_> = args
                 .iter()
-                .map(|a| fmt_ty(hir, tcx, *a, indent + 1))
+                .map(|a| fmt_ty(session, hir, tcx, *a, indent + 1))
                 .collect();
             format!("{name}{}", block("<", ">", &args, indent))
         }
@@ -185,31 +185,33 @@ fn fmt_ty(hir: &Hir, tcx: &TyCtx, ty: Ty, indent: usize) -> String {
     }
 }
 
-fn is_user_span(span: SrcSpan) -> bool {
+fn is_user_span(session: &Session, span: SrcSpan) -> bool {
     matches!(
-        SrcMap::file_containing(span.get_begin()).map(|file| file.origin),
+        session
+            .file_containing(span.get_begin())
+            .map(|file| file.origin),
         Some(FileOrigin::User)
     )
 }
 
-pub fn print_ast(ast: &Ast) {
+pub fn print_ast(session: &Session, ast: &Ast) {
     for mod_id in ast.mod_ids() {
         let module = ast.module(mod_id);
         let imports: Vec<_> = module
             .imports
             .iter()
-            .filter(|import| is_user_span(import.span))
+            .filter(|import| is_user_span(session, import.span))
             .collect();
         let items: Vec<_> = module
             .items
             .iter()
-            .filter(|item| is_user_span(item.span))
+            .filter(|item| is_user_span(session, item.span))
             .collect();
         if imports.is_empty() && items.is_empty() {
             continue;
         }
 
-        println!("// module {}", fmt_mod_path(module));
+        println!("// module {}", fmt_mod_path(session, module));
         for import in imports {
             println!("{import:#?}");
         }
@@ -219,7 +221,7 @@ pub fn print_ast(ast: &Ast) {
     }
 }
 
-fn fmt_mod_path(module: &Module) -> String {
+fn fmt_mod_path(session: &Session, module: &Module) -> String {
     if module.path.segments.is_empty() {
         return "<root>".to_string();
     }
@@ -227,41 +229,48 @@ fn fmt_mod_path(module: &Module) -> String {
         .path
         .segments
         .iter()
-        .map(|seg| Interner::resolve(seg.text))
+        .map(|seg| session.resolve(seg.text))
         .collect::<Vec<_>>()
         .join("::")
 }
 
-pub fn print_hir(hir: &Hir, exclude_core_in_emit: bool) {
+pub fn print_hir(session: &Session, hir: &Hir, exclude_core_in_emit: bool) {
     if !exclude_core_in_emit {
         println!("{hir:#?}");
         return;
     }
 
     for def_id in hir.def_ids() {
-        if !is_user_def(hir, def_id) {
+        if !is_user_def(session, hir, def_id) {
             continue;
         }
-        println!("--- {} ---", fmt_def(hir, def_id));
+        println!("--- {} ---", fmt_def(session, hir, def_id));
         println!("{:#?}", hir.arena(def_id));
     }
 }
 
-pub fn print_typeck(hir: &Hir, tcx: &TyCtx, results: &TypeResolutions, exclude_core_in_emit: bool) {
-    let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(hir, def_id);
+pub fn print_typeck(
+    session: &Session,
+    hir: &Hir,
+    tcx: &TyCtx,
+    results: &TypeResolutions,
+    exclude_core_in_emit: bool,
+) {
+    let keep = |def_id: DefId| !exclude_core_in_emit || is_user_def(session, hir, def_id);
 
     println!("=== TypeCk results ===");
     for (hir_id, ty) in results.tys_iter().filter(|(id, _)| keep(id.owner)) {
         println!(
             "{hir_id:?} :: {} ->\n{}{}",
-            fmt_node_summary(hir, hir_id),
+            fmt_node_summary(session, hir, hir_id),
             pad(1),
-            fmt_ty(hir, tcx, ty, 1)
+            fmt_ty(session, hir, tcx, ty, 1)
         );
     }
 }
 
 pub fn print_mir(
+    session: &Session,
     hir: &Hir,
     tcx: &TyCtx,
     mir: &crate::mir::Mir,
@@ -272,7 +281,7 @@ pub fn print_mir(
 
     let mut sections: Vec<(String, &Instance, &Body)> = instances
         .iter()
-        .filter(|(instance, _)| !exclude_core_in_emit || is_user_def(hir, instance.def))
+        .filter(|(instance, _)| !exclude_core_in_emit || is_user_def(session, hir, instance.def))
         .map(|(instance, body)| {
             (
                 crate::mir::mangle::mangle(mir, tcx, instance),
@@ -292,7 +301,7 @@ pub fn print_mir(
             instance
                 .args
                 .iter()
-                .map(|&arg| fmt_ty(hir, tcx, arg, 0))
+                .map(|&arg| fmt_ty(session, hir, tcx, arg, 0))
                 .collect::<Vec<_>>()
                 .join(", "),
             body.param_count
@@ -300,12 +309,12 @@ pub fn print_mir(
         for (index, decl) in body.local_decls.iter().enumerate() {
             let name = decl
                 .name
-                .map(|ident| Interner::resolve(ident.text).to_string())
+                .map(|ident| session.resolve(ident.text).to_string())
                 .unwrap_or_else(|| "_".to_string());
             println!(
                 "{}_{index} ({name}): {}",
                 pad(1),
-                fmt_ty(hir, tcx, decl.ty, 1)
+                fmt_ty(session, hir, tcx, decl.ty, 1)
             );
         }
         for (index, block) in body.basic_blocks.iter().enumerate() {
@@ -386,8 +395,8 @@ impl<'ast> AstVisitor<'ast> for Names<'ast> {
     }
 }
 
-fn res_location(span: SrcSpan) -> String {
-    match SrcMap::file_containing(span.get_begin()) {
+fn res_location(session: &Session, span: SrcSpan) -> String {
+    match session.file_containing(span.get_begin()) {
         Some(file) => {
             let (line, col) = file.line_col(span.get_begin());
             format!("{}:{line}:{col}", file.name)
@@ -396,15 +405,15 @@ fn res_location(span: SrcSpan) -> String {
     }
 }
 
-fn fmt_named(kind: &str, name: Symbol, span: SrcSpan) -> String {
+fn fmt_named(session: &Session, kind: &str, name: Symbol, span: SrcSpan) -> String {
     format!(
         "{kind} `{}` ({})",
-        Interner::resolve(name),
-        res_location(span)
+        session.resolve(name),
+        res_location(session, span)
     )
 }
 
-fn fmt_ty_def(names: &Names, kind: &str, id: AstNodeId) -> String {
+fn fmt_ty_def(session: &Session, names: &Names, kind: &str, id: AstNodeId) -> String {
     let item =
         names.items.get(&id).copied().unwrap_or_else(|| {
             panic!("a `TyDef::{kind}` names an item the AST walk should collect")
@@ -417,10 +426,10 @@ fn fmt_ty_def(names: &Names, kind: &str, id: AstNodeId) -> String {
             panic!("a `TyDef::{kind}` should name a struct, enum, or trait item, got {other:?}")
         }
     };
-    fmt_named(kind, name.text, name.span)
+    fmt_named(session, kind, name.text, name.span)
 }
 
-fn fmt_res(names: &Names, _ast: &Ast, res: NameResRes) -> String {
+fn fmt_res(session: &Session, names: &Names, _ast: &Ast, res: NameResRes) -> String {
     match res {
         NameResRes::Err => "Err".to_string(),
         NameResRes::Function(id) => {
@@ -435,7 +444,7 @@ fn fmt_res(names: &Names, _ast: &Ast, res: NameResRes) -> String {
                     item.kind
                 );
             };
-            fmt_named("Function", f.name.text, f.name.span)
+            fmt_named(session, "Function", f.name.text, f.name.span)
         }
         NameResRes::Local(NameResLocal::Param(id)) => {
             let p = names
@@ -443,14 +452,14 @@ fn fmt_res(names: &Names, _ast: &Ast, res: NameResRes) -> String {
                 .get(&id)
                 .copied()
                 .expect("a `Local::Param` names a parameter the AST walk should collect");
-            fmt_named("Param", p.name.text, p.name.span)
+            fmt_named(session, "Param", p.name.text, p.name.span)
         }
         NameResRes::Local(NameResLocal::SelfParam(id)) => {
             let p =
                 names.self_params.get(&id).copied().expect(
                     "a `Local::SelfParam` names a self parameter the AST walk should collect",
                 );
-            format!("SelfParam `self` ({})", res_location(p.span))
+            format!("SelfParam `self` ({})", res_location(session, p.span))
         }
         NameResRes::Local(NameResLocal::Variable(id)) => {
             let name = names
@@ -458,16 +467,16 @@ fn fmt_res(names: &Names, _ast: &Ast, res: NameResRes) -> String {
                 .get(&id)
                 .copied()
                 .expect("a `Local::Variable` names a binding the AST walk should collect");
-            fmt_named("Variable", name.text, name.span)
+            fmt_named(session, "Variable", name.text, name.span)
         }
-        NameResRes::Type(ty) => fmt_res_type(names, ty),
+        NameResRes::Type(ty) => fmt_res_type(session, names, ty),
         // Rendered as the spelling plus what it stands for, since that pairing is the whole
         // reason `SelfTy` is a variant of its own rather than a `Type`.
-        NameResRes::SelfTy(ty) => format!("SelfTy `Self` -> {}", fmt_res_type(names, ty)),
+        NameResRes::SelfTy(ty) => format!("SelfTy `Self` -> {}", fmt_res_type(session, names, ty)),
     }
 }
 
-fn fmt_res_type(names: &Names, ty: NameResType) -> String {
+fn fmt_res_type(session: &Session, names: &Names, ty: NameResType) -> String {
     match ty {
         NameResType::Prim(prim) => format!("{prim:?}"),
         NameResType::Generic(id) => {
@@ -476,15 +485,15 @@ fn fmt_res_type(names: &Names, ty: NameResType) -> String {
                 .get(&id)
                 .copied()
                 .expect("a `Type::Generic` names a generic the AST walk should collect");
-            fmt_named("Generic", g.name.text, g.name.span)
+            fmt_named(session, "Generic", g.name.text, g.name.span)
         }
-        NameResType::Def(TyDef::Struct(id)) => fmt_ty_def(names, "Struct", id),
-        NameResType::Def(TyDef::Enum(id)) => fmt_ty_def(names, "Enum", id),
-        NameResType::Def(TyDef::Trait(id)) => fmt_ty_def(names, "Trait", id),
+        NameResType::Def(TyDef::Struct(id)) => fmt_ty_def(session, names, "Struct", id),
+        NameResType::Def(TyDef::Enum(id)) => fmt_ty_def(session, names, "Enum", id),
+        NameResType::Def(TyDef::Trait(id)) => fmt_ty_def(session, names, "Trait", id),
     }
 }
 
-pub fn nameres_to_string(ast: &Ast, results: &NameResolutions) -> String {
+pub fn nameres_to_string(session: &Session, ast: &Ast, results: &NameResolutions) -> String {
     let mut names = Names::new();
     names.visit_module(ast.module(ast.root_id()), ast);
 
@@ -495,7 +504,7 @@ pub fn nameres_to_string(ast: &Ast, results: &NameResolutions) -> String {
             results
                 .entries(owner)
                 .iter()
-                .map(|(path, res)| (path.span, path, *res))
+                .map(|(path, res)| (path.span(), path, *res))
         })
         .collect();
     entries.sort_by_key(|(span, _, _)| span.get_begin());
@@ -506,19 +515,19 @@ pub fn nameres_to_string(ast: &Ast, results: &NameResolutions) -> String {
         let path_text = path
             .segments
             .iter()
-            .map(|seg| Interner::resolve(seg.text))
+            .map(|seg| session.resolve(seg.text))
             .collect::<Vec<_>>()
             .join("::");
         out.push_str(&format!(
             "{path_text} ({}) ->\n{}{}\n",
-            res_location(span),
+            res_location(session, span),
             pad(1),
-            fmt_res(&names, ast, res)
+            fmt_res(session, &names, ast, res)
         ));
     }
     out
 }
 
-pub fn print_nameres(ast: &Ast, results: &NameResolutions) {
-    println!("{}", nameres_to_string(ast, results));
+pub fn print_nameres(session: &Session, ast: &Ast, results: &NameResolutions) {
+    println!("{}", nameres_to_string(session, ast, results));
 }

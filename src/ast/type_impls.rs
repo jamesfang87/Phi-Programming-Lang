@@ -1,9 +1,10 @@
 use super::*;
 use crate::lexer::token::Token;
+use crate::session::Session;
 
 impl Path {
-    pub fn primitive(tok: Token) -> Path {
-        Path::from(Ident::of_token(tok))
+    pub fn primitive(session: &Session, tok: Token) -> Path {
+        Path::from(Ident::of_token(session, tok))
     }
 }
 
@@ -11,17 +12,17 @@ impl From<Ident> for Path {
     fn from(ident: Ident) -> Self {
         Path {
             segments: vec![ident],
-            span: ident.span,
         }
     }
 }
 
 impl Ty {
-    pub fn primitive(tok: Token) -> Ty {
-        let path = Path::primitive(tok);
+    pub fn primitive(session: &Session, tok: Token) -> Ty {
+        let path = Path::primitive(session, tok);
+        let span = path.span();
         Ty {
             id: NodeId::next(),
-            span: path.span,
+            span,
             kind: TyKind::Path {
                 path,
                 args: Vec::new(),

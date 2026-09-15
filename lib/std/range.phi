@@ -1,5 +1,10 @@
 module std::range;
 
+// TODO: implement iteration over `Range<T>` (`extend Range<T> with Iterator<T>`, plus
+// any constructors/helpers). README section 8 promises `for i in 0..5`, which
+// desugars through the `Iterator` protocol, but `Range` is currently inert data
+// with no `next`, so numeric for-loops have nothing to drive them.
+
 public struct Range<T> {
     public left: Option<T>,
     public right: Option<T>,

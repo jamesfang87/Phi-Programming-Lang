@@ -1,70 +1,43 @@
-use std::fs;
+mod support;
+
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use support::Run;
 
-/// A fresh empty directory under `target/`, named after the calling test, so reruns are
-/// deterministic and tests don't interfere with each other.
+/// A fresh empty directory under `target/test-scratch/cli/<name>`, named after the calling
+/// test, so reruns are deterministic and tests don't interfere with each other.
 fn scratch(name: &str) -> PathBuf {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target/test-scratch/cli")
-        .join(name);
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("could not create the scratch directory");
-    dir
+    support::scratch("cli", name)
 }
 
-/// Writes a minimal manifest naming `project_name` into `dir`.
 fn write_manifest(dir: &Path, project_name: &str) {
-    fs::write(
-        dir.join("Phi.toml"),
-        format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n"),
-    )
-    .expect("could not write Phi.toml");
+    support::write_manifest(dir, project_name);
 }
 
-/// Writes a manifest naming `project_name` with `mode = "release"` into `dir`.
 fn write_release_manifest(dir: &Path, project_name: &str) {
-    fs::write(
-        dir.join("Phi.toml"),
-        format!(
-            "[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\
-             [profile]\nmode = \"release\"\n"
-        ),
-    )
-    .expect("could not write Phi.toml");
+    support::write_release_manifest(dir, project_name);
 }
 
-/// Writes `contents` to `dir/src/main.phi`, creating `src/` first.
 fn write_main(dir: &Path, contents: &str) {
-    let src_dir = dir.join("src");
-    fs::create_dir_all(&src_dir).expect("could not create src/");
-    fs::write(src_dir.join("main.phi"), contents).expect("could not write main.phi");
+    support::write_file(dir, "src/main.phi", contents);
 }
 
 const CLEAN_MAIN: &str = "module clean;\n\nfun main() {\n}\n";
 const TYPE_ERROR_MAIN: &str = "module broken;\n\nfun broken() -> bool {\n    return 1;\n}\n";
 
-fn run(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_phi"))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("failed to run the `phi` binary")
+fn run(dir: &Path, args: &[&str]) -> Run {
+    support::exec(dir, args)
 }
 
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
+fn stderr(run: &Run) -> String {
+    run.stderr.clone()
 }
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+fn stdout(run: &Run) -> String {
+    run.stdout.clone()
 }
 
-fn code(output: &Output) -> i32 {
-    output
-        .status
-        .code()
-        .expect("the process should exit normally")
+fn code(run: &Run) -> i32 {
+    run.code
 }
 
 #[test]

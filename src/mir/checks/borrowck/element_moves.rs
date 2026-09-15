@@ -1,31 +1,39 @@
 use crate::diagnostics::mir::definite_init::report_move_out_of_array;
 use crate::driver::source::SrcSpan;
-use crate::mir::checks::borrowck::element_of_array;
 use crate::mir::{Body, Operand, StatementKind, lower::Mir, place_ty};
+use crate::mir::{Place, Projection};
+use crate::session::Session;
 use crate::typeck::tyctx::TyCtx;
 
-pub fn check(tcx: &mut TyCtx, mir: &Mir) {
+// TODO: not exactly sure what this does or why its a separate module
+pub fn check(session: &Session, tcx: &mut TyCtx, mir: &Mir) {
     for body in mir.bodies.values() {
-        check_body(tcx, body);
+        check_body(session, tcx, body);
     }
 }
 
-fn check_body(tcx: &mut TyCtx, body: &Body) {
+fn check_body(session: &Session, tcx: &mut TyCtx, body: &Body) {
     for block in &body.basic_blocks {
         for statement in &block.statements {
             if let StatementKind::Assign(_, rvalue) = &statement.kind {
                 for operand in rvalue.operands() {
-                    check_operand(tcx, body, operand, statement.span);
+                    check_operand(session, tcx, body, operand, statement.span);
                 }
             }
         }
         for operand in block.terminator.kind.operands() {
-            check_operand(tcx, body, operand, block.terminator.span);
+            check_operand(session, tcx, body, operand, block.terminator.span);
         }
     }
 }
 
-fn check_operand(tcx: &mut TyCtx, body: &Body, operand: &Operand, span: SrcSpan) {
+fn check_operand(
+    session: &Session,
+    tcx: &mut TyCtx,
+    body: &Body,
+    operand: &Operand,
+    span: SrcSpan,
+) {
     let Operand::Move(place) = operand else {
         return;
     };
@@ -39,7 +47,17 @@ fn check_operand(tcx: &mut TyCtx, body: &Body, operand: &Operand, span: SrcSpan)
     let name = body.local_decls[place.local.index()]
         .name
         .unwrap_or_else(|| panic!("an indexed place always names a user-written local"));
-    report_move_out_of_array(name, span);
+    report_move_out_of_array(session, name, span);
+}
+
+// TODO: why is this pub(crate)?
+pub(crate) fn element_of_array(place: &Place) -> bool {
+    place.projections.iter().any(|projection| {
+        matches!(
+            projection,
+            Projection::Index(_) | Projection::ConstantIndex(_)
+        )
+    })
 }
 
 #[cfg(test)]

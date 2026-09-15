@@ -6,8 +6,16 @@ use crate::nameres::PrimTy;
 #[derive(Clone, Debug)]
 pub struct Path {
     pub segments: Vec<Ident>,
-    pub span: SrcSpan,
     pub res: Res,
+}
+
+impl Path {
+    pub fn span(&self) -> SrcSpan {
+        match (self.segments.first(), self.segments.last()) {
+            (Some(first), Some(last)) => first.span.merge(last.span),
+            _ => SrcSpan::new(0, 0),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

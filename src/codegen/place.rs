@@ -132,7 +132,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("struct Point { x: i32, y: i32 }\nfun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = CodegenCtx::new(&llvm, "t");
+        let cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         function_with_entry(&cx);
 
         let def = find_struct_def(&hir, "Point");
@@ -167,7 +167,7 @@ mod tests {
     fn deref_projection_loads_the_pointee_address() {
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = CodegenCtx::new(&llvm, "t");
+        let cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         function_with_entry(&cx);
 
         let i32_ty = tcx.mk_prim(PrimTy::I32);
@@ -202,7 +202,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("enum E { A, C: i64 }\nfun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = CodegenCtx::new(&llvm, "t");
+        let cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         function_with_entry(&cx);
 
         let def = find_enum_def(&hir, "E");
@@ -245,7 +245,7 @@ mod tests {
     fn find_struct_def(hir: &crate::hir::Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let crate::hir::OwnerNode::Struct(struct_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(struct_.name.text) == name
+                && crate::testing::resolve(struct_.name.text) == name
             {
                 return def_id;
             }
@@ -256,7 +256,7 @@ mod tests {
     fn find_enum_def(hir: &crate::hir::Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let crate::hir::OwnerNode::Enum(enum_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(enum_.name.text) == name
+                && crate::testing::resolve(enum_.name.text) == name
             {
                 return def_id;
             }

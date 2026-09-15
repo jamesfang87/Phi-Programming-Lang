@@ -1,16 +1,18 @@
-use crate::ast::interner::Interner;
-use crate::diagnostics::{DiagCtx, Diagnostic};
+use crate::diagnostics::Diagnostic;
+use crate::diagnostics::codes;
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, OwnerNode, Path};
+use crate::session::Session;
 
-pub fn report_bound_is_not_a_trait(path: &Path) {
+pub fn report_bound_is_not_a_trait(session: &Session, path: &Path) {
     let name = path
         .segments
         .last()
-        .map_or("this path", |segment| Interner::resolve(segment.text));
+        .map_or("this path", |segment| session.resolve(segment.text));
 
-    DiagCtx::emit(
-        Diagnostic::error(format!("`{name}` is not a trait"), path.span)
+    session.emit(
+        Diagnostic::error(format!("`{name}` is not a trait"), path.span())
+            .with_code(codes::BOUND_IS_NOT_A_TRAIT)
             .with_label("not a trait")
             .with_help(
                 "a bound says what a type parameter must implement, and only a trait can be \
@@ -21,6 +23,7 @@ pub fn report_bound_is_not_a_trait(path: &Path) {
 }
 
 pub fn report_arg_count_mismatch(
+    session: &Session,
     hir: &Hir,
     def: DefId,
     declared: usize,
@@ -28,21 +31,22 @@ pub fn report_arg_count_mismatch(
     span: SrcSpan,
 ) {
     let plural = if declared == 1 { "" } else { "s" };
-    DiagCtx::emit(
+    session.emit(
         Diagnostic::error(
             format!(
                 "`{}` takes {declared} generic argument{plural} but {found} {} supplied",
-                defined_name(hir, def),
+                defined_name(session, hir, def),
                 if found == 1 { "was" } else { "were" }
             ),
             span,
         )
+        .with_code(codes::ARG_COUNT_MISMATCH)
         .with_label(format!("expected {declared} argument{plural}"))
         .with_secondary(
             defined_span(hir, def),
             format!(
                 "`{}` declares {declared} type parameter{plural} here",
-                defined_name(hir, def)
+                defined_name(session, hir, def)
             ),
         )
         .with_help(
@@ -52,7 +56,7 @@ pub fn report_arg_count_mismatch(
     );
 }
 
-fn defined_name(hir: &Hir, def: DefId) -> &'static str {
+fn defined_name(session: &Session, hir: &Hir, def: DefId) -> &'static str {
     let name = match hir.def(def) {
         OwnerNode::Function(f) => f.name.text,
         OwnerNode::Struct(s) => s.name.text,
@@ -62,7 +66,7 @@ fn defined_name(hir: &Hir, def: DefId) -> &'static str {
             unreachable!("only a named definition is ever applied to generic arguments")
         }
     };
-    Interner::resolve(name)
+    session.resolve(name)
 }
 
 fn defined_span(hir: &Hir, def: DefId) -> SrcSpan {

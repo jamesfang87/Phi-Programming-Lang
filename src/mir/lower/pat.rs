@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, Literal, Mutability};
 use crate::driver::source::SrcSpan;
-use crate::hir::{BindingMode, HirId, PatKind, Payload};
+use crate::hir::{ArmId, BindingMode, HirId, PatKind, Payload};
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{
     BasicBlock, ConstKind, Constant, Operand, Place, Projection, Rvalue, StatementKind,
@@ -16,12 +16,14 @@ impl<'a> BodyLowerCtx<'a> {
 
     pub(crate) fn lower_if_into(
         &mut self,
-        cond: HirId,
-        then_block: HirId,
-        else_block: Option<HirId>,
+        cond: impl Into<HirId>,
+        then_block: impl Into<HirId>,
+        else_block: Option<impl Into<HirId>>,
         dest: Place,
         span: SrcSpan,
     ) {
+        let (cond, then_block) = (cond.into(), then_block.into());
+        let else_block = else_block.map(Into::into);
         let cond_operand = self.lower_operand(cond);
         let then_start = self.new_block();
         let else_start = self.new_block();
@@ -55,7 +57,8 @@ impl<'a> BodyLowerCtx<'a> {
     // `loop`
     // -----------------------------------------------------------------
 
-    pub(crate) fn lower_loop_into(&mut self, block: HirId, dest: Place, span: SrcSpan) {
+    pub(crate) fn lower_loop_into(&mut self, block: impl Into<HirId>, dest: Place, span: SrcSpan) {
+        let block = block.into();
         let body_start = self.new_block();
         let break_target = self.new_block();
 
@@ -78,7 +81,13 @@ impl<'a> BodyLowerCtx<'a> {
     // `match`
     // -----------------------------------------------------------------
 
-    pub(crate) fn lower_match_into(&mut self, scrutinee: HirId, arms: &[HirId], dest: Place) {
+    pub(crate) fn lower_match_into(
+        &mut self,
+        scrutinee: impl Into<HirId>,
+        arms: &[ArmId],
+        dest: Place,
+    ) {
+        let scrutinee = scrutinee.into();
         let span = self.hir.expr(scrutinee).span;
         let scrutinee_ty = self.expr_ty(scrutinee);
         let scrutinee_local = self.new_temp(scrutinee_ty, span);
@@ -149,7 +158,8 @@ impl<'a> BodyLowerCtx<'a> {
     /// Tests `pat`'s structure against `place`, falling through on a full match and jumping to
     /// `fail` on any refutation. Binds nothing -- see the module docs for why binding is a
     /// separate walk, run only by the caller once this returns having matched.
-    pub(crate) fn test_pat(&mut self, pat_id: HirId, place: Place, fail: BasicBlock) {
+    pub(crate) fn test_pat(&mut self, pat_id: impl Into<HirId>, place: Place, fail: BasicBlock) {
+        let pat_id = pat_id.into();
         let pat = self.hir.pat(pat_id);
         let span = pat.span;
         let adjust = self.types.pat_adjust(pat_id);
@@ -261,7 +271,8 @@ impl<'a> BodyLowerCtx<'a> {
     /// Binds every name a pattern known to already match introduces. Used both for an
     /// irrefutable `let`/`with` pattern (called directly, with no preceding [`test_pat`]) and
     /// for a `match`/`if let` candidate that has already passed [`test_pat`].
-    pub(crate) fn bind_pat(&mut self, pat_id: HirId, place: Place) {
+    pub(crate) fn bind_pat(&mut self, pat_id: impl Into<HirId>, place: Place) {
+        let pat_id = pat_id.into();
         let pat = self.hir.pat(pat_id);
         let span = pat.span;
         let adjust = self.types.pat_adjust(pat_id);
@@ -285,9 +296,7 @@ impl<'a> BodyLowerCtx<'a> {
                         mutability: Mutability::Mutable,
                         place,
                     },
-                    BindingMode::Value => {
-                        Rvalue::Use(self.operand_for_place(place, ty))
-                    }
+                    BindingMode::Value => Rvalue::Use(self.operand_for_place(place, ty)),
                 };
                 self.assign(Place::from_local(local), rvalue, span);
                 self.bind_local(pat_id, local);
@@ -347,7 +356,8 @@ impl<'a> BodyLowerCtx<'a> {
 
     /// `pat_id`'s recorded type, resolved through this body's own `any_mode` -- see
     /// [`BodyLowerCtx::expr_ty`], its expression-level counterpart.
-    pub(crate) fn pat_ty(&mut self, pat_id: HirId) -> Ty {
+    pub(crate) fn pat_ty(&mut self, pat_id: impl Into<HirId>) -> Ty {
+        let pat_id = pat_id.into();
         let ty = self
             .types
             .ty(pat_id)
@@ -357,15 +367,14 @@ impl<'a> BodyLowerCtx<'a> {
 
     fn lower_pat_literal(&mut self, lit: Literal, ty: Ty) -> Constant {
         let kind = match lit {
-            Literal::Int { value, .. } => ConstKind::Int(
-                crate::ast::interner::Interner::resolve(value)
-                    .parse()
-                    .unwrap_or_else(|_| {
-                        panic!("mir::lower: integer pattern literal does not parse")
-                    }),
-            ),
+            Literal::Int { value, .. } => {
+                ConstKind::Int(self.session.resolve(value).parse().unwrap_or_else(|_| {
+                    panic!("mir::lower: integer pattern literal does not parse")
+                }))
+            }
             Literal::Float { value, .. } => ConstKind::Float(
-                crate::ast::interner::Interner::resolve(value)
+                self.session
+                    .resolve(value)
                     .parse()
                     .unwrap_or_else(|_| panic!("mir::lower: float pattern literal does not parse")),
             ),

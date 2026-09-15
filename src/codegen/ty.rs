@@ -207,7 +207,7 @@ mod tests {
     fn primitive_ints_map_directly() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
         assert_eq!(
             llvm_type(&cx, &mut tcx, &mir, i32_ty),
@@ -219,7 +219,7 @@ mod tests {
     fn bool_is_i1_in_registers() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let bool_ty = tcx.mk_prim(crate::nameres::PrimTy::Bool);
         assert_eq!(
             llvm_type(&cx, &mut tcx, &mir, bool_ty),
@@ -231,7 +231,7 @@ mod tests {
     fn slice_reference_is_ptr_and_len() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let u8_ty = tcx.mk_prim(crate::nameres::PrimTy::U8);
         let arr = tcx.mk_array(u8_ty, None);
         let slice_ref = tcx.mk_ref(arr, crate::ast::Mutability::Immutable);
@@ -250,7 +250,7 @@ mod tests {
     fn unit_is_an_empty_struct() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let unit = tcx.unit();
         assert_eq!(
             llvm_type(&cx, &mut tcx, &mir, unit),
@@ -262,7 +262,7 @@ mod tests {
     fn tuple_is_a_struct_of_its_elements() {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
         let bool_ty = tcx.mk_prim(crate::nameres::PrimTy::Bool);
         let tuple = tcx.mk_tuple(vec![i32_ty, bool_ty]);
@@ -276,7 +276,7 @@ mod tests {
         let llvm = inkwell::context::Context::create();
         let (_hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("fun f(a: [i32; 4]) {}");
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
         let arr = tcx.mk_array(i32_ty, Some(4));
         let got = llvm_type(&cx, &mut tcx, &mir, arr);
@@ -288,7 +288,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("struct Point { x: i32, y: i32 }\nfun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let def = find_struct_def(&hir, "Point");
         let adt = tcx.mk_adt(def, Vec::new());
         let got = llvm_type(&cx, &mut tcx, &mir, adt);
@@ -311,7 +311,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("enum E { A, C: i64 }\nfun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let def = find_enum_def(&hir, "E");
         let adt = tcx.mk_adt(def, Vec::new());
         let got = llvm_type(&cx, &mut tcx, &mir, adt);
@@ -342,7 +342,7 @@ mod tests {
             "struct Pair { a: i32, b: i32 }\nfun make() -> Pair { return Pair { a: 1, b: 2 }; }",
         );
         let llvm = inkwell::context::Context::create();
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let body = find_body(&hir, &instances, "make");
         let fn_ty = function_type(&cx, &mut tcx, &mir, body);
         assert_eq!(fn_ty.get_return_type(), None, "indirect return is void");
@@ -354,7 +354,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun add(a: i32, b: i32) -> i32 { return a; }");
         let llvm = inkwell::context::Context::create();
-        let cx = super::super::ctx::CodegenCtx::new(&llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
         let body = find_body(&hir, &instances, "add");
         let fn_ty = function_type(&cx, &mut tcx, &mir, body);
         assert_eq!(fn_ty.count_param_types(), 2);
@@ -364,7 +364,7 @@ mod tests {
     fn find_struct_def(hir: &crate::hir::Hir, name: &str) -> crate::hir::DefId {
         for def_id in hir.def_ids() {
             if let crate::hir::OwnerNode::Struct(struct_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(struct_.name.text) == name
+                && crate::testing::resolve(struct_.name.text) == name
             {
                 return def_id;
             }
@@ -375,7 +375,7 @@ mod tests {
     fn find_enum_def(hir: &crate::hir::Hir, name: &str) -> crate::hir::DefId {
         for def_id in hir.def_ids() {
             if let crate::hir::OwnerNode::Enum(enum_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(enum_.name.text) == name
+                && crate::testing::resolve(enum_.name.text) == name
             {
                 return def_id;
             }
@@ -392,7 +392,7 @@ mod tests {
             .iter()
             .find(|(instance, _)| {
                 if let crate::hir::OwnerNode::Function(function) = hir.def(instance.def) {
-                    crate::ast::interner::Interner::resolve(function.name.text) == name
+                    crate::testing::resolve(function.name.text) == name
                 } else {
                     false
                 }

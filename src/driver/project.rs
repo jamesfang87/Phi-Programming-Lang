@@ -27,9 +27,16 @@ fn init_at(path: &Path) -> io::Result<()> {
         ));
     }
     let src_dir = path.join("src");
+    let main_phi = src_dir.join("main.phi");
+    let manifest_path = path.join("Phi.toml");
+    if manifest_path.exists() || main_phi.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("`{}` already contains a Phi project", path.display()),
+        ));
+    }
     fs::create_dir_all(&src_dir)?;
 
-    let main_phi = src_dir.join("main.phi");
     let template = b"// Hello, Phi!\nfun main() {\n    println(\"Hello, world!\");\n}\n";
     fs::write(&main_phi, template)?;
 
@@ -42,7 +49,7 @@ fn init_at(path: &Path) -> io::Result<()> {
         "[project]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
         manifest_name
     );
-    fs::write(path.join("Phi.toml"), manifest)?;
+    fs::write(manifest_path, manifest)?;
 
     println!("Created new Phi project at: {}", path.display());
     Ok(())
@@ -112,6 +119,37 @@ mod tests {
         fs::create_dir(&existing).expect("could create it");
 
         let err = new(existing.to_str().expect("utf-8 path")).expect_err("already exists");
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn new_creates_a_project() {
+        let dir = scratch("new_creates");
+        let target = dir.join("created");
+
+        let path = new(target.to_str().expect("utf-8 path")).expect("a fresh path is created");
+
+        assert_eq!(path, target);
+        assert!(path.join("Phi.toml").is_file());
+        assert!(path.join("src/main.phi").is_file());
+    }
+
+    #[test]
+    fn init_at_refuses_a_path_that_is_not_a_directory() {
+        let dir = scratch("init_not_dir");
+        let file = dir.join("main.phi");
+        fs::write(&file, "").expect("could write it");
+
+        let err = init_at(&file).expect_err("a file is not a directory");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn init_at_refuses_a_directory_that_already_has_a_project() {
+        let dir = scratch("init_twice");
+        init_at(&dir).expect("initializing an empty directory works");
+
+        let err = init_at(&dir).expect_err("a project is already there");
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     }
 }

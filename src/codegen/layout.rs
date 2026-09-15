@@ -187,7 +187,7 @@ mod tests {
     fn find_struct_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Struct(struct_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(struct_.name.text) == name
+                && crate::testing::resolve(struct_.name.text) == name
             {
                 return def_id;
             }
@@ -198,7 +198,7 @@ mod tests {
     fn find_enum_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Enum(enum_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(enum_.name.text) == name
+                && crate::testing::resolve(enum_.name.text) == name
             {
                 return def_id;
             }

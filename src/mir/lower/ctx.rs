@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::Ident;
-use crate::driver::cli::Mode;
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId};
 use crate::mir::lower::Task;
@@ -9,6 +8,8 @@ use crate::mir::{
     AnyMode, BasicBlock, BasicBlockData, Body, Local, LocalDecl, Place, Statement, StatementId,
     StatementKind, Terminator, TerminatorKind,
 };
+use crate::options::Mode;
+use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::Ty;
 use crate::typeck::tyctx::TyCtx;
@@ -42,6 +43,7 @@ struct BlockBuilder {
 }
 
 pub(crate) struct BodyLowerCtx<'a> {
+    pub(crate) session: &'a Session,
     pub(crate) hir: &'a Hir,
     pub(crate) tcx: &'a mut TyCtx,
     pub(crate) types: &'a TypeResolutions,
@@ -89,6 +91,7 @@ pub(crate) struct BodyLowerCtx<'a> {
 
 impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn new(
+        session: &'a Session,
         hir: &'a Hir,
         tcx: &'a mut TyCtx,
         types: &'a TypeResolutions,
@@ -97,6 +100,7 @@ impl<'a> BodyLowerCtx<'a> {
         any_mode: Option<AnyMode>,
     ) -> Self {
         let mut ctx = BodyLowerCtx {
+            session,
             hir,
             tcx,
             types,
@@ -150,20 +154,23 @@ impl<'a> BodyLowerCtx<'a> {
 
     /// Records that HIR node `id` (a parameter, a binding pattern) is addressed by `local`,
     /// with no projection, from here on.
-    pub(crate) fn bind_local(&mut self, id: HirId, local: Local) {
+    pub(crate) fn bind_local(&mut self, id: impl Into<HirId>, local: Local) {
+        let id = id.into();
         self.hir_locals.insert(id, Place::from_local(local));
     }
 
     /// Records that HIR node `id` is addressed by `place` from here on -- the general form
     /// [`BodyLowerCtx::bind_local`] is sugar for, used directly for a closure's captured
     /// variable, which projects into the environment local instead of naming a local of its own.
-    pub(crate) fn bind_place(&mut self, id: HirId, place: Place) {
+    pub(crate) fn bind_place(&mut self, id: impl Into<HirId>, place: Place) {
+        let id = id.into();
         self.hir_locals.insert(id, place);
     }
 
     /// The `Place` bound to HIR node `id` by an earlier [`BodyLowerCtx::bind_local`]/
     /// [`BodyLowerCtx::bind_place`].
-    pub(crate) fn place_for(&self, id: HirId) -> Place {
+    pub(crate) fn place_for(&self, id: impl Into<HirId>) -> Place {
+        let id = id.into();
         self.hir_locals
             .get(&id)
             .unwrap_or_else(|| panic!("mir::lower: no place bound for {id:?}"))

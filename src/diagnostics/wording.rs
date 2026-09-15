@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
-use crate::driver::source::SrcMap;
 use crate::lexer::describe::{Descriptor, is_word_spelling, quoted_spelling};
 use crate::lexer::token::{STATEMENT_STARTERS, Token, TokenKind};
+use crate::session::Session;
 
 const MAX_LISTED_ALTERNATIVES: usize = 4;
 
@@ -142,6 +142,7 @@ fn render_alternatives(expected: &[Expected]) -> Option<String> {
 }
 
 pub(crate) fn help_for(
+    session: &Session,
     expected: &[Expected],
     found: Option<Token>,
     preceding: Option<Token>,
@@ -151,7 +152,7 @@ pub(crate) fn help_for(
         return Some("the file ends in the middle of this construct".to_string());
     };
 
-    if let Some(keyword) = suggested_keyword(expected, found) {
+    if let Some(keyword) = suggested_keyword(session, expected, found) {
         return Some(format!("did you mean `{keyword}`?"));
     }
     if accepts(TokenKind::Identifier) && Descriptor::of(found.kind).is_word() {
@@ -187,14 +188,14 @@ pub(crate) fn help_for(
     None
 }
 
-fn suggested_keyword(expected: &[Expected], found: Token) -> Option<String> {
+fn suggested_keyword(session: &Session, expected: &[Expected], found: Token) -> Option<String> {
     let accepts_a_name = expected
         .iter()
         .any(|alternative| alternative.accepts(TokenKind::Identifier));
     if found.kind != TokenKind::Identifier || accepts_a_name {
         return None;
     }
-    let written = SrcMap::text_of(found.span)?;
+    let written = session.text_of(found.span)?;
 
     expected
         .iter()

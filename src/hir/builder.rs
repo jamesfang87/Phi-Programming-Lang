@@ -127,7 +127,7 @@ mod tests {
 
     fn block(id: HirId) -> Node {
         Node::Block(Block {
-            hir_id: id,
+            hir_id: id.into(),
             stmts: Vec::new(),
             expr: None,
             span: SrcSpan::new(0, 0),

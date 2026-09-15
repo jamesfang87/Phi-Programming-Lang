@@ -145,11 +145,11 @@ pub fn walk_function<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
     }
 
     if let Some(id) = function.ret {
-        v.visit_ty(id);
+        v.visit_ty(id.into());
     }
 
     if let Some(id) = function.block {
-        v.visit_block(id);
+        v.visit_block(id.into());
     }
 }
 
@@ -204,9 +204,9 @@ pub fn walk_extend<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
         v.visit_generic(id);
     }
 
-    v.visit_ty(extend.self_ty);
+    v.visit_ty(extend.self_ty.into());
     for &id in &extend.trait_generics {
-        v.visit_ty(id);
+        v.visit_ty(id.into());
     }
 
     if let Some(path) = &extend.trait_path {
@@ -227,9 +227,9 @@ pub fn walk_closure<'hir, V: Visitor<'hir>>(v: &mut V, def_id: DefId) {
         v.visit_closure_param(id);
     }
     if let Some(id) = closure.ret {
-        v.visit_ty(id);
+        v.visit_ty(id.into());
     }
-    v.visit_block(closure.block);
+    v.visit_block(closure.block.into());
 }
 
 // -----------------------------------------------------------------
@@ -240,29 +240,29 @@ pub fn walk_generic<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     for bound in &v.hir().generic(id).bounds {
         v.visit_path(&bound.path);
         for &arg in &bound.args {
-            v.visit_ty(arg);
+            v.visit_ty(arg.into());
         }
     }
 }
 
 pub fn walk_param<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
-    v.visit_ty(v.hir().param(id).ty);
+    v.visit_ty(v.hir().param(id).ty.into());
 }
 
 pub fn walk_closure_param<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     if let Some(ty) = v.hir().closure_param(id).ty {
-        v.visit_ty(ty);
+        v.visit_ty(ty.into());
     }
 }
 
 pub fn walk_field<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
-    v.visit_ty(v.hir().field(id).ty);
+    v.visit_ty(v.hir().field(id).ty.into());
 }
 
 pub fn walk_variant<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     match &v.hir().variant(id).payload {
         VariantPayload::Unit => {}
-        VariantPayload::Type(ty) => v.visit_ty(*ty),
+        VariantPayload::Type(ty) => v.visit_ty((*ty).into()),
         VariantPayload::Record(fields) => {
             for &id in fields {
                 v.visit_field(id);
@@ -279,10 +279,10 @@ pub fn walk_block<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     let block = v.hir().block(id);
 
     for &id in &block.stmts {
-        v.visit_stmt(id);
+        v.visit_stmt(id.into());
     }
     if let Some(id) = block.expr {
-        v.visit_expr(id);
+        v.visit_expr(id.into());
     }
 }
 
@@ -297,31 +297,31 @@ pub fn walk_stmt<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         } => {
             // The initializer is visited before the pattern binds, so that `let x = x;` reads the
             // outer `x` rather than the one being declared.
-            v.visit_expr(*init);
+            v.visit_expr((*init).into());
             if let Some(ty) = *ty {
-                v.visit_ty(ty);
+                v.visit_ty(ty.into());
             }
-            v.visit_pat(*pat);
+            v.visit_pat((*pat).into());
             if let Some(block) = *else_block {
-                v.visit_block(block);
+                v.visit_block(block.into());
             }
         }
         StmtKind::With { lends, block } => {
             for lend in lends {
-                v.visit_expr(lend.init);
+                v.visit_expr(lend.init.into());
                 if let Some(ty) = lend.ty {
-                    v.visit_ty(ty);
+                    v.visit_ty(ty.into());
                 }
-                v.visit_pat(lend.pat);
+                v.visit_pat(lend.pat.into());
             }
-            v.visit_block(*block);
+            v.visit_block((*block).into());
         }
         StmtKind::Return(expr) => {
             if let Some(expr) = *expr {
-                v.visit_expr(expr);
+                v.visit_expr(expr.into());
             }
         }
-        StmtKind::Defer(expr) | StmtKind::Expr(expr) => v.visit_expr(*expr),
+        StmtKind::Defer(expr) | StmtKind::Expr(expr) => v.visit_expr((*expr).into()),
         StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
     }
 }
@@ -329,11 +329,11 @@ pub fn walk_stmt<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
 pub fn walk_arm<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
     let arm = v.hir().arm(id);
 
-    v.visit_pat(arm.pat);
+    v.visit_pat(arm.pat.into());
     if let Some(guard) = arm.guard {
-        v.visit_expr(guard);
+        v.visit_expr(guard.into());
     }
-    v.visit_block(arm.block);
+    v.visit_block(arm.block.into());
 }
 
 // -----------------------------------------------------------------
@@ -345,26 +345,26 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         ExprKind::Path(path) => v.visit_path(path),
         ExprKind::Unary { operand, .. }
         | ExprKind::Borrow { operand, .. }
-        | ExprKind::Try(operand) => v.visit_expr(*operand),
+        | ExprKind::Try(operand) => v.visit_expr((*operand).into()),
         ExprKind::Binary { lhs, rhs, .. }
         | ExprKind::Assign { lhs, rhs }
         | ExprKind::AssignOp { lhs, rhs, .. } => {
-            v.visit_expr(*lhs);
-            v.visit_expr(*rhs);
+            v.visit_expr((*lhs).into());
+            v.visit_expr((*rhs).into());
         }
         ExprKind::Call { callee, args } => {
-            v.visit_expr(*callee);
+            v.visit_expr((*callee).into());
             for &arg in args {
-                v.visit_expr(arg);
+                v.visit_expr(arg.into());
             }
         }
         ExprKind::Access { base, args, .. } => {
-            v.visit_expr(*base);
+            v.visit_expr((*base).into());
             match args {
                 AccessArgs::None => {}
                 AccessArgs::Call(args) => {
                     for &arg in args {
-                        v.visit_expr(arg);
+                        v.visit_expr(arg.into());
                     }
                 }
                 AccessArgs::Record(fields) => {
@@ -375,8 +375,8 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
             }
         }
         ExprKind::Index { base, index } => {
-            v.visit_expr(*base);
-            v.visit_expr(*index);
+            v.visit_expr((*base).into());
+            v.visit_expr((*index).into());
         }
         ExprKind::Ctor { path, payload } => {
             // `None` for the elided `.{ .. }` form, whose type typeck infers from context.
@@ -394,7 +394,7 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         }
         ExprKind::Tuple(elems) => {
             for &elem in elems {
-                v.visit_expr(elem);
+                v.visit_expr(elem.into());
             }
         }
         ExprKind::If {
@@ -402,41 +402,41 @@ pub fn walk_expr<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
             then_block,
             else_block,
         } => {
-            v.visit_expr(*cond);
-            v.visit_block(*then_block);
+            v.visit_expr((*cond).into());
+            v.visit_block((*then_block).into());
             if let Some(else_block) = *else_block {
-                v.visit_block(else_block);
+                v.visit_block(else_block.into());
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            v.visit_expr(*scrutinee);
+            v.visit_expr((*scrutinee).into());
             for &arm in arms {
-                v.visit_arm(arm);
+                v.visit_arm(arm.into());
             }
         }
         ExprKind::Loop { block, .. }
         | ExprKind::Spawn(block)
         | ExprKind::Concurrent(block)
-        | ExprKind::Block(block) => v.visit_block(*block),
+        | ExprKind::Block(block) => v.visit_block((*block).into()),
         ExprKind::Closure(def_id) => v.visit_nested_owner(*def_id),
         ExprKind::Cast { expr, ty } => {
-            v.visit_expr(*expr);
-            v.visit_ty(*ty);
+            v.visit_expr((*expr).into());
+            v.visit_ty((*ty).into());
         }
-        ExprKind::New(operand) => v.visit_expr(*operand),
+        ExprKind::New(operand) => v.visit_expr((*operand).into()),
         ExprKind::NewArray { elem, count } => {
-            v.visit_expr(*elem);
-            v.visit_expr(*count);
+            v.visit_expr((*elem).into());
+            v.visit_expr((*count).into());
         }
         ExprKind::Assert { cond, msg } => {
-            v.visit_expr(*cond);
+            v.visit_expr((*cond).into());
             if let Some(msg) = msg {
-                v.visit_expr(*msg);
+                v.visit_expr((*msg).into());
             }
         }
         ExprKind::Panic { msg } | ExprKind::Unreachable { msg } => {
             if let Some(msg) = msg {
-                v.visit_expr(*msg);
+                v.visit_expr((*msg).into());
             }
         }
         ExprKind::Literal(_) | ExprKind::Error => {}
@@ -452,7 +452,7 @@ pub fn walk_pat<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         }
         PatKind::Tuple(elems) => {
             for &elem in elems {
-                v.visit_pat(elem);
+                v.visit_pat(elem.into());
             }
         }
         PatKind::Wildcard | PatKind::Binding { .. } | PatKind::Literal(_) | PatKind::Error => {}
@@ -464,32 +464,34 @@ pub fn walk_ty<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
         TyKind::Path { path, args } | TyKind::Dyn { path, args } => {
             v.visit_path(path);
             for &arg in args {
-                v.visit_ty(arg);
+                v.visit_ty(arg.into());
             }
         }
         TyKind::SelfTy(args) => {
             for &arg in args {
-                v.visit_ty(arg);
+                v.visit_ty(arg.into());
             }
         }
-        TyKind::Ref { base, .. } | TyKind::Any(base) | TyKind::Iso(base) => v.visit_ty(*base),
+        TyKind::Ref { base, .. } | TyKind::Any(base) | TyKind::Iso(base) => {
+            v.visit_ty((*base).into())
+        }
         TyKind::Tuple(elems) => {
             for &elem in elems {
-                v.visit_ty(elem);
+                v.visit_ty(elem.into());
             }
         }
         TyKind::Array { elem, len } => {
-            v.visit_ty(*elem);
+            v.visit_ty((*elem).into());
             if let Some(len) = *len {
-                v.visit_expr(len);
+                v.visit_expr(len.into());
             }
         }
         TyKind::Function { params, ret } => {
             for &param in params {
-                v.visit_ty(param);
+                v.visit_ty(param.into());
             }
             if let Some(ret) = *ret {
-                v.visit_ty(ret);
+                v.visit_ty(ret.into());
             }
         }
         TyKind::Error => {}
@@ -721,7 +723,7 @@ mod tests {
             .map(|p| {
                 p.segments
                     .iter()
-                    .map(|s| crate::ast::interner::Interner::resolve(s.text))
+                    .map(|s| crate::testing::resolve(s.text))
                     .collect::<Vec<_>>()
                     .join("::")
             })

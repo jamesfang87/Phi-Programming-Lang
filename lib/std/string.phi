@@ -1,5 +1,10 @@
 module std::string;
 
+// TODO: implement the stubbed `String` methods below (`from`, `as_bytes`, `as_str`,
+// `push_str`, `reserve` all abort with `unreachable("not yet implemented")`). Owned,
+// growable text is required by README sections 4-6 (`String`/`&String`, moves, `+`
+// concatenation), so real programs cannot build or mutate strings today.
+
 public struct String {
     buf: iso [u8],
     len: usize,
@@ -10,7 +15,7 @@ extend String {
         return String { buf: new [0_u8; 0], len: 0 };
     }
 
-    public fun from(s: str) -> String {
+    public fun from(_s: str) -> String {
         unreachable("not yet implemented");
     }
 
@@ -26,11 +31,11 @@ extend String {
         unreachable("not yet implemented");
     }
 
-    public fun push_str(&mut self, s: str) {
+    public fun push_str(&mut self, _s: str) {
         unreachable("not yet implemented");
     }
 
-    fun reserve(&mut self, extra: usize) {
+    fun reserve(&mut self, _extra: usize) {
         unreachable("not yet implemented");
     }
 }

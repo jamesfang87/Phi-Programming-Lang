@@ -1,24 +1,25 @@
+use crate::diagnostics::display::DisplayCtx;
 use crate::diagnostics::mir::captures::{
     report_captured_reference, report_move_out_of_environment,
 };
-use crate::diagnostics::typeck::display::DisplayCx;
 use crate::driver::source::SrcSpan;
 use crate::mir::{Body, DefKind, Local, Operand, StatementKind, lower::Mir};
+use crate::session::Session;
 use crate::typeck::ty::TyKind;
 use crate::typeck::tyctx::TyCtx;
 
 const ENVIRONMENT: Local = Local::ENVIRONMENT;
 
-pub fn check(tcx: &mut TyCtx, mir: &Mir) {
+pub fn check(session: &Session, tcx: &mut TyCtx, mir: &Mir) {
     for (&(def, _), body) in &mir.bodies {
         if mir.def_infos.kind(def) == DefKind::Closure {
-            check_captured_types(tcx, mir, body);
-            check_body(body);
+            check_captured_types(session, tcx, mir, body);
+            check_body(session, body);
         }
     }
 }
 
-fn check_captured_types(tcx: &TyCtx, mir: &Mir, body: &Body) {
+fn check_captured_types(session: &Session, tcx: &TyCtx, mir: &Mir, body: &Body) {
     let environment = body.local_decls[ENVIRONMENT.index()].ty;
     let TyKind::Ref { base, .. } = *tcx.kind(environment) else {
         panic!("a closure body's environment local is a reference to the environment it borrows");
@@ -28,31 +29,35 @@ fn check_captured_types(tcx: &TyCtx, mir: &Mir, body: &Body) {
     };
     for &capture in fields.iter().skip(1) {
         if tcx.contains_ref(capture) {
-            report_captured_reference(DisplayCx::for_mir(&mir.def_names, tcx), capture, body.span);
+            report_captured_reference(
+                DisplayCtx::for_mir(session, &mir.def_names, tcx),
+                capture,
+                body.span,
+            );
         }
     }
 }
 
-fn check_body(body: &Body) {
+fn check_body(session: &Session, body: &Body) {
     for block in &body.basic_blocks {
         for statement in &block.statements {
             if let StatementKind::Assign(_, rvalue) = &statement.kind {
                 for operand in rvalue.operands() {
-                    check_operand(operand, statement.span);
+                    check_operand(session, operand, statement.span);
                 }
             }
         }
         for operand in block.terminator.kind.operands() {
-            check_operand(operand, block.terminator.span);
+            check_operand(session, operand, block.terminator.span);
         }
     }
 }
 
-fn check_operand(operand: &Operand, span: SrcSpan) {
+fn check_operand(session: &Session, operand: &Operand, span: SrcSpan) {
     if let Operand::Move(place) = operand
         && place.local == ENVIRONMENT
     {
-        report_move_out_of_environment(span);
+        report_move_out_of_environment(session, span);
     }
 }
 

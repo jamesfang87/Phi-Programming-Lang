@@ -8,10 +8,10 @@ mod type_impls;
 pub mod visit;
 
 use crate::ast::builder::AstBuilder;
-use crate::ast::interner::Interner;
 use crate::diagnostics::parser::report_duplicate_module;
 use crate::driver::source::SrcSpan;
 use crate::lexer::token::Token;
+use crate::session::Session;
 
 pub use interner::Symbol;
 pub use node_id::NodeId;
@@ -21,7 +21,6 @@ use std::collections::HashMap;
 pub struct Ast {
     modules: Vec<Module>,
     module_positions: HashMap<NodeId, usize>,
-    parent_module: Vec<NodeId>,
     root: NodeId,
 }
 
@@ -31,6 +30,7 @@ pub struct Module {
     pub path: Path,
     pub imports: Vec<Import>,
     pub items: Vec<Item>,
+    pub parent: Option<NodeId>,
     pub children: Vec<NodeId>,
 }
 
@@ -58,16 +58,16 @@ pub struct Ident {
 }
 
 impl Ident {
-    pub fn of_token(token: Token) -> Ident {
+    pub fn of_token(session: &Session, token: Token) -> Ident {
         Ident {
-            text: Interner::intern(&token.text()),
+            text: session.intern(&token.text(session)),
             span: token.span,
         }
     }
 
-    pub fn self_kw(span: SrcSpan) -> Ident {
+    pub fn self_kw(session: &Session, span: SrcSpan) -> Ident {
         Ident {
-            text: Interner::intern("Self"),
+            text: session.intern("Self"),
             span,
         }
     }
@@ -77,7 +77,6 @@ impl Ident {
 #[derive(Clone, Debug)]
 pub struct Path {
     pub segments: Vec<Ident>,
-    pub span: SrcSpan,
 }
 
 impl PartialEq for Path {
@@ -103,8 +102,15 @@ impl std::hash::Hash for Path {
 }
 
 impl Path {
-    pub fn self_kw(span: SrcSpan) -> Path {
-        Path::from(Ident::self_kw(span))
+    pub fn self_kw(session: &Session, span: SrcSpan) -> Path {
+        Path::from(Ident::self_kw(session, span))
+    }
+
+    pub fn span(&self) -> SrcSpan {
+        match (self.segments.first(), self.segments.last()) {
+            (Some(first), Some(last)) => first.span.merge(last.span),
+            _ => SrcSpan::new(0, 0),
+        }
     }
 }
 
@@ -112,20 +118,47 @@ impl Path {
 // Items
 // ===========================================================================
 
+// TODO: Maybe we can move ModuleDecl out of the enum
 /// The parsed contents of one source file.
 #[derive(Clone, Debug)]
 pub struct ParsedSrcFile {
-    /// The file's `module math::vector;` declaration, if it has one.
-    pub module: Option<ModuleDecl>,
+    pub module: Option<ModuleHeader>,
     pub imports: Vec<Import>,
     pub items: Vec<Item>,
     pub span: SrcSpan,
 }
 
+/// One top-level construct a source file can contain, before [`ParsedSrcFile::from_items`]
+/// separates the module header and imports from the real items.
+///
+/// This is the parser's output shape. A module header and an import name module-level facets
+/// rather than definitions, so they are kept out of [`ItemKind`] and cannot outlive parsing
+/// as items.
+#[derive(Clone, Debug)]
+pub enum ParsedItem {
+    Module(ModuleHeader),
+    Import(Import),
+    Item(Item),
+}
+
+impl ParsedItem {
+    pub fn span(&self) -> SrcSpan {
+        match self {
+            ParsedItem::Module(decl) => decl.span,
+            ParsedItem::Import(import) => import.span,
+            ParsedItem::Item(item) => item.span,
+        }
+    }
+}
+
 impl ParsedSrcFile {
-    pub(crate) fn from_items(items: Vec<Item>, file_offset: usize) -> ParsedSrcFile {
+    pub(crate) fn from_items(
+        session: &Session,
+        items: Vec<ParsedItem>,
+        file_offset: usize,
+    ) -> ParsedSrcFile {
         let span = match (items.first(), items.last()) {
-            (Some(first), Some(last)) => first.span.merge(last.span),
+            (Some(first), Some(last)) => first.span().merge(last.span()),
             _ => SrcSpan::new(file_offset, file_offset),
         };
 
@@ -134,13 +167,13 @@ impl ParsedSrcFile {
         let mut definitions = Vec::new();
 
         for item in items {
-            match item.kind {
-                ItemKind::ModuleDecl(decl) => match module {
+            match item {
+                ParsedItem::Module(decl) => match module {
                     None => module = Some(decl),
-                    Some(_) => report_duplicate_module(item.span),
+                    Some(_) => report_duplicate_module(session, decl.span),
                 },
-                ItemKind::Import(import) => imports.push(import),
-                _ => definitions.push(item),
+                ParsedItem::Import(import) => imports.push(import),
+                ParsedItem::Item(item) => definitions.push(item),
             }
         }
 
@@ -172,8 +205,10 @@ impl Item {
 
 #[derive(Clone, Debug)]
 pub enum ItemKind {
-    ModuleDecl(ModuleDecl),
-    Import(Import),
+    // TODO: no `Const`, `Static`, `TypeAlias`, or inline `Module` items exist -- only
+    // `Function`/`Struct`/`Enum`/`Trait`/`Extend`. Real programs need global constants
+    // (`const MAX: i32 = 8;`), `type` aliases, and inline `mod foo { ... }` blocks instead
+    // of one-file-per-module.
     Function(Function),
     Struct(Struct),
     Enum(Enum),
@@ -184,7 +219,7 @@ pub enum ItemKind {
 
 /// A module declaration, such as `module math::vector;`.
 #[derive(Clone, Debug)]
-pub struct ModuleDecl {
+pub struct ModuleHeader {
     pub id: NodeId,
     pub path: Path,
     pub span: SrcSpan,
@@ -192,6 +227,9 @@ pub struct ModuleDecl {
 
 #[derive(Clone, Debug)]
 pub struct Import {
+    // TODO: `Import` carries no `Visibility`, so `public import foo::Bar;` re-exports are
+    // impossible and every import stays private to its module. Real multi-module programs
+    // need re-exports to build a public API surface.
     pub id: NodeId,
     pub path: Path,
     /// This is `true` when the import is a glob import, such as `import math::*;`.
@@ -424,6 +462,9 @@ pub enum StmtKind {
     },
     Break,
     Continue,
+    // TODO: `Break`/`Continue` carry no label and no value, so nested loops cannot
+    // `break 'outer` and a loop cannot `break value`. Real programs need labeled
+    // break/continue (and ideally break-with-value) for nested-loop control flow.
     /// `return expr;`, or a bare `return;` producing nothing (`None`).
     Return(Option<Expr>),
     /// `defer expr;`. The expression runs just before the enclosing scope exits.
@@ -730,6 +771,9 @@ impl Pat {
 
 #[derive(Clone, Debug)]
 pub enum PatKind {
+    // TODO: no struct patterns (`Point { x, y }`), `..` rest, `@` bindings, or `|`
+    // or-patterns exist -- only wildcard/binding/literal/variant/tuple. Real programs
+    // need at least struct destructuring in `let`/`match`.
     Wildcard,
     Binding(Ident),
     Literal(Literal),
@@ -772,8 +816,7 @@ impl Ast {
     }
 
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
-        let parent = self.parent_module[self.module_positions[&id]];
-        (parent != id).then_some(parent)
+        self.module(id).parent
     }
 
     /// Iterates every module, parents before children.
@@ -785,7 +828,6 @@ impl Ast {
 #[cfg(test)]
 mod path_eq_tests {
     use super::*;
-    use interner::Interner;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -795,11 +837,10 @@ mod path_eq_tests {
             segments: segments
                 .iter()
                 .map(|s| Ident {
-                    text: Interner::intern(s),
+                    text: crate::testing::intern(s),
                     span,
                 })
                 .collect(),
-            span,
         }
     }
 

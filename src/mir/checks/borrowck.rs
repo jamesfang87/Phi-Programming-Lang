@@ -1,5 +1,8 @@
+use crate::ast::Mutability;
 use crate::mir::lower::Mir;
 use crate::mir::{Local, Place, Projection};
+use crate::session::Session;
+use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
 
 pub(crate) mod captures;
@@ -42,18 +45,21 @@ pub(crate) fn register_of(place: &Place) -> Register {
     }
 }
 
-pub(crate) fn element_of_array(place: &Place) -> bool {
-    place.projections.iter().any(|projection| {
-        matches!(
-            projection,
-            Projection::Index(_) | Projection::ConstantIndex(_)
-        )
-    })
+// TODO: I feel like there is something else outward that has this
+pub(crate) fn trivially_copyable(tcx: &TyCtx, ty: Ty) -> bool {
+    matches!(
+        tcx.kind(ty),
+        TyKind::Primitive(_)
+            | TyKind::Ref {
+                mutability: Mutability::Immutable,
+                ..
+            }
+    )
 }
 
-pub fn check(tcx: &mut TyCtx, mir: &Mir) {
-    definite_init::check(mir);
-    exclusivity::check(mir);
-    element_moves::check(tcx, mir);
-    captures::check(tcx, mir);
+pub fn check(session: &Session, tcx: &mut TyCtx, mir: &Mir) {
+    definite_init::check(session, tcx, mir);
+    exclusivity::check(session, mir);
+    element_moves::check(session, tcx, mir);
+    captures::check(session, tcx, mir);
 }

@@ -1,22 +1,25 @@
-use crate::ast::interner::Interner;
 use crate::ast::{Ident, SelfMode};
-use crate::diagnostics::typeck::display::DisplayCx;
-use crate::diagnostics::{DiagCtx, Diagnostic};
+use crate::diagnostics::Diagnostic;
+use crate::diagnostics::codes;
+use crate::diagnostics::display::DisplayCtx;
+use crate::diagnostics::typeck::show_self_mode;
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir};
+use crate::session::Session;
 use crate::typeck::ty::Ty;
 use crate::typeck::unify::UnifyError;
 
-pub fn report_receiver_type_unknown(member: Ident, span: SrcSpan) {
-    DiagCtx::emit(
+pub fn report_receiver_type_unknown(session: &Session, member: Ident, span: SrcSpan) {
+    session.emit(
         Diagnostic::error(
             format!(
                 "type annotations needed: the type of the value `{}` is reached on is still \
                      unknown",
-                Interner::resolve(member.text)
+                session.resolve(member.text)
             ),
             span,
         )
+        .with_code(codes::RECEIVER_TYPE_UNKNOWN)
         .with_label("the type here is still unknown")
         .with_help(
             "which `.` this is depends on the type it is written on, and unlike a trait \
@@ -26,16 +29,17 @@ pub fn report_receiver_type_unknown(member: Ident, span: SrcSpan) {
     );
 }
 
-pub fn report_no_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
-    DiagCtx::emit(
+pub fn report_no_method(cx: DisplayCtx<'_>, member: Ident, base: Ty) {
+    cx.emit(
         Diagnostic::error(
             format!(
                 "no method `{}` on `{}`",
-                Interner::resolve(member.text),
+                cx.resolve(member.text),
                 cx.show(base)
             ),
             member.span,
         )
+        .with_code(codes::NO_METHOD)
         .with_label("not found")
         .with_help(
             "a method comes from an `extend` block for this type, or from a trait it \
@@ -44,7 +48,7 @@ pub fn report_no_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
     );
 }
 
-pub fn report_ambiguous_method(member: Ident, candidates: &[(&str, SrcSpan)]) {
+pub fn report_ambiguous_method(session: &Session, member: Ident, candidates: &[(&str, SrcSpan)]) {
     let traits: Vec<String> = candidates
         .iter()
         .map(|&(name, _)| format!("`{name}`"))
@@ -53,11 +57,12 @@ pub fn report_ambiguous_method(member: Ident, candidates: &[(&str, SrcSpan)]) {
     let mut diag = Diagnostic::error(
         format!(
             "ambiguous method call: `{}` is declared by more than one trait in scope: {}",
-            Interner::resolve(member.text),
+            session.resolve(member.text),
             traits.join(", ")
         ),
         member.span,
     )
+    .with_code(codes::AMBIGUOUS_METHOD)
     .with_label("cannot tell which one is meant")
     .with_help(
         "each of these traits declares a method of this name and the receiver reaches \
@@ -68,18 +73,19 @@ pub fn report_ambiguous_method(member: Ident, candidates: &[(&str, SrcSpan)]) {
         diag = diag.with_secondary(span, format!("`{name}` declares it here"));
     }
 
-    DiagCtx::emit(diag);
+    session.emit(diag);
 }
 
-pub fn report_no_receiver(hir: &Hir, member: Ident, method: DefId) {
-    DiagCtx::emit(
+pub fn report_no_receiver(session: &Session, hir: &Hir, member: Ident, method: DefId) {
+    session.emit(
         Diagnostic::error(
             format!(
                 "`{}` takes no receiver, so it cannot be called on a value",
-                Interner::resolve(member.text)
+                session.resolve(member.text)
             ),
             member.span,
         )
+        .with_code(codes::NO_RECEIVER)
         .with_label("declared without a `self` parameter")
         .with_secondary(
             function_name_span(hir, method),
@@ -93,21 +99,23 @@ pub fn report_no_receiver(hir: &Hir, member: Ident, method: DefId) {
 }
 
 pub fn report_receiver_mode(
+    session: &Session,
     hir: &Hir,
     member: Ident,
     mode: SelfMode,
     span: SrcSpan,
     method: DefId,
 ) {
-    DiagCtx::emit(
+    session.emit(
         Diagnostic::error(
             format!(
                 "`{}` takes {}, which this receiver cannot provide",
-                Interner::resolve(member.text),
+                session.resolve(member.text),
                 show_self_mode(mode)
             ),
             span,
         )
+        .with_code(codes::RECEIVER_MODE)
         .with_label(format!("expected {}", show_self_mode(mode)))
         .with_secondary(
             method_receiver_span(hir, method),
@@ -124,21 +132,23 @@ pub fn report_receiver_mode(
 }
 
 pub fn report_receiver_not_a_place(
+    session: &Session,
     hir: &Hir,
     member: Ident,
     mode: SelfMode,
     span: SrcSpan,
     method: DefId,
 ) {
-    DiagCtx::emit(
+    session.emit(
         Diagnostic::error(
             format!(
                 "`{}` takes {}, and this receiver is a temporary",
-                Interner::resolve(member.text),
+                session.resolve(member.text),
                 show_self_mode(mode)
             ),
             span,
         )
+        .with_code(codes::RECEIVER_NOT_A_PLACE)
         .with_label("nowhere to take a reference to")
         .with_secondary(
             method_receiver_span(hir, method),
@@ -151,34 +161,9 @@ pub fn report_receiver_not_a_place(
     );
 }
 
-pub fn report_no_field(cx: DisplayCx<'_>, member: Ident, base: Ty) {
-    DiagCtx::emit(
-        Diagnostic::error(
-            format!(
-                "no field `{}` on `{}`",
-                Interner::resolve(member.text),
-                cx.show(base)
-            ),
-            member.span,
-        )
-        .with_label("not a field of this type"),
-    );
-}
-
-pub fn report_private_field(member: Ident) {
-    DiagCtx::emit(
-        Diagnostic::error(
-            format!("field `{}` is private", Interner::resolve(member.text)),
-            member.span,
-        )
-        .with_label("not visible from here")
-        .with_help("mark the field `public` to use it outside its declaring module"),
-    );
-}
-
-pub fn report_field_is_a_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
-    let name = Interner::resolve(member.text);
-    DiagCtx::emit(
+pub fn report_field_is_a_method(cx: DisplayCtx<'_>, member: Ident, base: Ty) {
+    let name = cx.resolve(member.text);
+    cx.emit(
         Diagnostic::error(
             format!(
                 "no field `{name}` on `{}`; there is a method `{name}`",
@@ -186,6 +171,7 @@ pub fn report_field_is_a_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
             ),
             member.span,
         )
+        .with_code(codes::FIELD_IS_A_METHOD)
         .with_label("this is a method, not a field")
         .with_help(format!(
             "did you mean to call it, as `{name}(..)`? a method cannot be named without \
@@ -194,19 +180,26 @@ pub fn report_field_is_a_method(cx: DisplayCx<'_>, member: Ident, base: Ty) {
     );
 }
 
-pub fn report_not_callable(cx: DisplayCx<'_>, sig: Ty, span: SrcSpan) {
-    DiagCtx::emit(
+pub fn report_not_callable(cx: DisplayCtx<'_>, sig: Ty, span: SrcSpan) {
+    cx.emit(
         Diagnostic::error(
             format!("`{}` is not something that can be called", cx.show(sig)),
             span,
         )
+        .with_code(codes::NOT_CALLABLE)
         .with_label("not a function"),
     );
 }
 
-pub fn report_call_arg_count(name: &str, found: usize, expected: usize, span: SrcSpan) {
+pub fn report_call_arg_count(
+    session: &Session,
+    name: &str,
+    found: usize,
+    expected: usize,
+    span: SrcSpan,
+) {
     let plural = if expected == 1 { "" } else { "s" };
-    DiagCtx::emit(
+    session.emit(
         Diagnostic::error(
             format!(
                 "{name} takes {expected} argument{plural} but {found} {} supplied",
@@ -214,14 +207,16 @@ pub fn report_call_arg_count(name: &str, found: usize, expected: usize, span: Sr
             ),
             span,
         )
+        .with_code(codes::WRONG_ARG_COUNT)
         .with_label(format!("expected {expected} argument{plural}")),
     );
 }
 
-pub fn report_call_arg_mismatch(cx: DisplayCx<'_>, err: UnifyError, span: SrcSpan) {
-    DiagCtx::emit(
-        Diagnostic::error(cx.show(err).to_string(), span)
-            .with_label("this argument does not match the parameter it is passed to"),
+pub fn report_call_arg_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
+    cx.emit_unify(
+        err,
+        span,
+        "this argument does not match the parameter it is passed to",
     );
 }
 
@@ -237,24 +232,16 @@ pub fn method_receiver_span(hir: &Hir, method: DefId) -> SrcSpan {
     }
 }
 
-fn show_self_mode(mode: SelfMode) -> &'static str {
-    match mode {
-        SelfMode::Immutable => "`&self`",
-        SelfMode::Mutable => "`&mut self`",
-        SelfMode::Move => "`self`",
-        SelfMode::Any => "`any self`",
-    }
-}
-
-pub fn report_dyn_self_by_value(hir: &Hir, member: Ident, method: DefId) {
-    DiagCtx::emit(
+pub fn report_dyn_self_by_value(session: &Session, hir: &Hir, member: Ident, method: DefId) {
+    session.emit(
         Diagnostic::error(
             format!(
                 "`{}` takes `self` by value, so it cannot be called through a `dyn` receiver",
-                Interner::resolve(member.text)
+                session.resolve(member.text)
             ),
             member.span,
         )
+        .with_code(codes::DYN_SELF_BY_VALUE)
         .with_label("this method consumes its receiver")
         .with_secondary(
             function_name_span(hir, method),
@@ -267,16 +254,17 @@ pub fn report_dyn_self_by_value(hir: &Hir, member: Ident, method: DefId) {
     );
 }
 
-pub fn report_dyn_method_mentions_self(hir: &Hir, member: Ident, method: DefId) {
-    DiagCtx::emit(
+pub fn report_dyn_method_mentions_self(session: &Session, hir: &Hir, member: Ident, method: DefId) {
+    session.emit(
         Diagnostic::error(
             format!(
                 "`{}` mentions `Self` outside its receiver, so it cannot be called through a \
                  `dyn` receiver",
-                Interner::resolve(member.text)
+                session.resolve(member.text)
             ),
             member.span,
         )
+        .with_code(codes::DYN_METHOD_MENTIONS_SELF)
         .with_label("this method's signature depends on the concrete type")
         .with_secondary(
             function_name_span(hir, method),

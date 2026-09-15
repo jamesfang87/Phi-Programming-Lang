@@ -16,7 +16,7 @@ impl Ty {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum TyVar {
+pub enum InferVar {
     Any(u32),
     Int(u32),
     Float(u32),
@@ -24,7 +24,7 @@ pub enum TyVar {
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TyKind {
-    Var(TyVar),
+    Var(InferVar),
     Primitive(PrimTy),
     Adt { def: DefId, args: Vec<Ty> },
     Generic(HirId),

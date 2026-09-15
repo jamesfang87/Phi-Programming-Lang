@@ -4,10 +4,10 @@ use crate::ast;
 use crate::driver::source::SrcSpan;
 use crate::hir::ids::DefId;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{AccessArgs, Closure, ExprKind, HirId, OwnerNode, Payload, PayloadField};
+use crate::hir::{AccessArgs, ArmId, Closure, ExprId, ExprKind, OwnerNode, Payload, PayloadField};
 
 impl OwnerLowerer<'_, '_> {
-    pub(super) fn lower_expr(&mut self, e: &ast::Expr) -> HirId {
+    pub(super) fn lower_expr(&mut self, e: &ast::Expr) -> ExprId {
         let span = e.span;
         let node_id = e.id;
         self.synth_expr(span, |low, _id| low.lower_expr_kind(node_id, &e.kind, span))
@@ -22,9 +22,10 @@ impl OwnerLowerer<'_, '_> {
         match kind {
             ast::ExprKind::Literal(lit) => ExprKind::Literal(*lit),
             ast::ExprKind::Path(path) => ExprKind::Path(self.cx.lower_path(node_id, path)),
-            ast::ExprKind::SelfKw => {
-                ExprKind::Path(self.cx.lower_path(node_id, &ast::Path::self_kw(span)))
-            }
+            ast::ExprKind::SelfKw => ExprKind::Path(
+                self.cx
+                    .lower_path(node_id, &ast::Path::self_kw(self.cx.session, span)),
+            ),
             ast::ExprKind::Unary { op, operand } => ExprKind::Unary {
                 op: *op,
                 operand: self.lower_expr(operand),
@@ -134,7 +135,7 @@ impl OwnerLowerer<'_, '_> {
     fn lower_expr_payload(&mut self, payload: &ast::Payload<ast::Expr>) -> Payload {
         match payload {
             ast::Payload::None => Payload::None,
-            ast::Payload::Single(value) => Payload::Single(self.lower_expr(value)),
+            ast::Payload::Single(value) => Payload::Single(self.lower_expr(value).into()),
             ast::Payload::Record(fields) => Payload::Record(self.lower_record_fields(fields)),
         }
     }
@@ -153,7 +154,6 @@ impl OwnerLowerer<'_, '_> {
                         let name = f.name;
                         let path = ast::Path {
                             segments: vec![name],
-                            span: name.span,
                         };
                         let path = self.cx.lower_path(f.id, &path);
                         self.synth_expr(f.span, move |_, _| ExprKind::Path(path))
@@ -161,7 +161,7 @@ impl OwnerLowerer<'_, '_> {
                 };
                 PayloadField {
                     name: f.name,
-                    value,
+                    value: value.into(),
                 }
             })
             .collect()
@@ -176,7 +176,7 @@ impl OwnerLowerer<'_, '_> {
     ) -> DefId {
         let item_id = self.cx.def_id_allocator.alloc(Some(self.def_id()));
         let mut ow = OwnerLowerer::new(self.cx, item_id);
-        let root = ow.reserve_root();
+        let root = ow.root();
         let params = params.iter().map(|p| ow.lower_closure_param(p)).collect();
         let ret = ret.as_ref().map(|t| ow.lower_ty(t));
         let block = ow.lower_expr_as_block(body);
@@ -193,7 +193,7 @@ impl OwnerLowerer<'_, '_> {
         ow.finish()
     }
 
-    pub(super) fn lower_arm(&mut self, a: &ast::Arm) -> HirId {
+    pub(super) fn lower_arm(&mut self, a: &ast::Arm) -> ArmId {
         self.synth_arm(a.span, |low, _id| {
             let pat = low.lower_pat(&a.pat);
             let guard = a.guard.as_ref().map(|g| low.lower_expr(g));

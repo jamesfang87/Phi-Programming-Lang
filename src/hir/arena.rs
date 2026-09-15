@@ -60,7 +60,7 @@ macro_rules! node_dispatch {
             pub fn hir_id(&self) -> HirId {
                 match self {
                     $( $Enum::$Delegating(n) => n.hir_id(), )*
-                    $( $Enum::$Direct(n) => n.hir_id, )*
+                    $( $Enum::$Direct(n) => n.hir_id.into(), )*
                 }
             }
 
@@ -129,5 +129,25 @@ impl Arena {
             unreachable!("slot 0 of an arena is always Node::Owner");
         };
         owner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::lower_to_hir;
+
+    #[test]
+    fn a_node_reports_its_own_kind() {
+        let hir = lower_to_hir(
+            "struct Foo {}
+             fun f(x: i32) {}",
+        );
+        let owner = hir.root().items[0];
+        let function = hir.root().items[1];
+        let param = hir.function(function).params[0];
+
+        assert_eq!(hir.def(owner).kind_name(), "Struct");
+        assert_eq!(hir.node(owner.owner_id()).kind_name(), "Struct");
+        assert_eq!(hir.node(param).kind_name(), "Param");
     }
 }

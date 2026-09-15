@@ -1,24 +1,34 @@
+//! Solving trait goals and resolving `.` accesses: the trait API the rest of type checking
+//! calls. The index this reads is built by [`crate::typeck::traits::collect`]; the program-level
+//! well-formedness rules live in [`crate::typeck::traits::check`].
+
 use std::collections::HashMap;
 use std::iter::once;
 
 use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::Typeck;
-use crate::typeck::fold;
 use crate::typeck::traits::TraitRef;
-use crate::typeck::traits::index::TypeHead;
+use crate::typeck::traits::collect::TypeHead;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
+use crate::typeck::visitor;
+
+mod method;
+mod obligations;
+
+pub(crate) use method::PendingMethodCall;
+pub use obligations::Obligation;
 
 /// A goal: does `self_ty` implement `trait_`?
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Query {
+pub struct Goal {
     pub self_ty: Ty,
     pub trait_: TraitRef,
 }
 
-impl Query {
+impl Goal {
     pub fn new(self_ty: Ty, trait_def: DefId) -> Self {
-        Query {
+        Goal {
             self_ty,
             trait_: TraitRef {
                 def: trait_def,
@@ -27,9 +37,9 @@ impl Query {
         }
     }
 
-    /// Applies `f` to every type the query mentions.
-    fn map(&self, f: &mut impl FnMut(Ty) -> Ty) -> Query {
-        Query {
+    /// Applies `f` to every type the goal mentions.
+    fn map(&self, f: &mut impl FnMut(Ty) -> Ty) -> Goal {
+        Goal {
             self_ty: f(self.self_ty),
             trait_: TraitRef {
                 def: self.trait_.def,
@@ -42,15 +52,15 @@ impl Query {
 /// The trait bounds in scope.
 #[derive(Clone, Debug, Default)]
 pub struct BoundsEnv {
-    pub bounds: Vec<Query>,
+    pub bounds: Vec<Goal>,
 }
 
-/// The answer to a query.
+/// The answer to a goal.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Solution {
     Holds,
     DoesNotHold,
-    /// The query still contains inference variables, so it can be neither proved nor disproved
+    /// The goal still contains inference variables, so it can be neither proved nor disproved
     /// yet. Ask again once more of the body has been checked.
     Ambiguous,
     /// The goal contained [`TyKind::Error`]. A diagnostic for this already exists.
@@ -93,7 +103,7 @@ pub fn match_ty(
     }
 
     // Recurse into the components of the types.
-    fold::decompose(tcx, open, closed).is_some_and(|components| {
+    visitor::decompose(tcx, open, closed).is_some_and(|components| {
         components
             .into_iter()
             .all(|(x, y)| match_ty(tcx, generics, x, y, subst))
@@ -101,95 +111,110 @@ pub fn match_ty(
 }
 
 impl<'hir> Typeck<'hir> {
-    /// Whether `query` holds, given the bounds already in scope in `env`.
-    pub fn implements(&mut self, query: &Query, env: &BoundsEnv) -> Solution {
-        // Resolves any inference variables in the query before comparing it against anything.
-        let query = self.resolve_query(query);
+    /// Whether `goal` holds, given the bounds already in scope in `env`.
+    pub fn implements(&mut self, goal: &Goal, env: &BoundsEnv) -> Solution {
+        let goal = self.resolve_goal(goal);
 
-        if self.goal_mentions_error(&query) {
+        if self.goal_mentions_error(&goal) {
             return Solution::Error;
         }
-        if matches!(self.tcx.kind(query.self_ty), TyKind::Var(_)) {
+        if self.goal_is_unresolved(&goal) {
             return Solution::Ambiguous;
         }
-
-        // Already an assumption in scope, verbatim.
-        if env.bounds.contains(&query) {
+        if env.bounds.contains(&goal) {
             return Solution::Holds;
         }
-
-        // A `dyn Foo<T>` value satisfies exactly `Foo<T>`: the query holds only if it names the
-        // same trait, applied to the same arguments, that the `dyn` itself carries.
-        if let TyKind::Dyn { trait_, args } = self.tcx.kind(query.self_ty) {
-            let holds = *trait_ == query.trait_.def && *args == query.trait_.args;
-            return if holds {
-                Solution::Holds
-            } else {
-                Solution::DoesNotHold
-            };
+        if let Some(solution) = self.dyn_goal_solution(&goal) {
+            return solution;
         }
 
-        // A struct, an enum, a primitive, or (handled above) a `dyn` can implement a trait;
-        // anything else -- a reference, a generic parameter, a tuple, ... -- answers no.
-        let Some(head) = self.type_head(query.self_ty) else {
+        // Only a nominal type -- a struct, an enum, a primitive, or a tuple -- has an `extend`
+        // block to look in. Anything else answers no.
+        let Some(head) = self.type_head(goal.self_ty) else {
             return Solution::DoesNotHold;
         };
-
-        // Looks for an extend block in the index that proves the query.
-        let Some((block, subst)) = self.search_index(head, &query) else {
+        let Some((block, subst)) = self.find_proving_block(head, &goal) else {
             return Solution::DoesNotHold;
         };
+        self.prove_block_bounds(block, &subst, env)
+    }
 
-        // The block's own bounds have to hold: `extend<T: Show> Wrap<T> with Show` only
-        // proves the goal if `T` actually implements `Show`.
-        let obligations = self.bounds_env(block).bounds;
-        for obligation in obligations {
-            let sub_goal = self.subst_query(&obligation, &subst);
+    /// The answer for a `dyn Foo<T>` self type, which satisfies exactly the trait it names.
+    fn dyn_goal_solution(&self, goal: &Goal) -> Option<Solution> {
+        let TyKind::Dyn { trait_, args } = self.tcx.kind(goal.self_ty) else {
+            return None;
+        };
+        let names_the_trait = *trait_ == goal.trait_.def && *args == goal.trait_.args;
+        Some(if names_the_trait {
+            Solution::Holds
+        } else {
+            Solution::DoesNotHold
+        })
+    }
+
+    /// Whether the goal's self type is still an inference variable, so it can be neither proved
+    /// nor disproved yet.
+    fn goal_is_unresolved(&self, goal: &Goal) -> bool {
+        matches!(self.tcx.kind(goal.self_ty), TyKind::Var(_))
+    }
+
+    /// Proves the bounds that `block`'s own declaration requires -- `extend<T: Show> Wrap<T>
+    /// with Show` only proves the goal if `T` actually implements `Show` -- under the
+    /// substitution that made the block apply.
+    fn prove_block_bounds(
+        &mut self,
+        block: DefId,
+        subst: &HashMap<HirId, Ty>,
+        env: &BoundsEnv,
+    ) -> Solution {
+        for obligation in self.bounds_env(block).bounds {
+            let sub_goal = self.subst_query(&obligation, subst);
             match self.implements(&sub_goal, env) {
                 Solution::Holds => {}
-                // Propagate the error up
+                // Propagates `DoesNotHold`, `Ambiguous`, and `Error` up unchanged.
                 answer => return answer,
             }
         }
-
         Solution::Holds
     }
 
     /// The first block in the index that proves `goal`, and what its parameters had to be.
-    fn search_index(&self, head: TypeHead, goal: &Query) -> Option<(DefId, HashMap<HirId, Ty>)> {
+    fn find_proving_block(
+        &self,
+        head: TypeHead,
+        goal: &Goal,
+    ) -> Option<(DefId, HashMap<HirId, Ty>)> {
         self.extends
             .for_type(head)
             .iter()
-            .find_map(|&block| Some((block, self.header_proves(block, goal)?)))
+            .find_map(|&block| Some((block, self.block_proves_goal(block, goal)?)))
     }
 
-    fn header_proves(&self, block: DefId, goal: &Query) -> Option<HashMap<HirId, Ty>> {
-        // Whether the block implements a trait at all.
+    /// Whether `block` implements the goal's trait, and if so what its parameters had to be.
+    fn block_proves_goal(&self, block: DefId, goal: &Goal) -> Option<HashMap<HirId, Ty>> {
         let trait_ = self.extends.trait_of(block)?;
-
-        // Whether it is the trait being asked about, applied to as many arguments.
         if trait_.def != goal.trait_.def || trait_.args.len() != goal.trait_.args.len() {
             return None;
         }
 
-        // Whether the extended type and every trait argument match, under one substitution.
-        let extended = (self.adt_of_with_args(block), goal.self_ty);
+        // The extended type and every trait argument match under one substitution.
+        let extended = (self.extended_type(block), goal.self_ty);
         let args = trait_
             .args
             .iter()
             .copied()
             .zip(goal.trait_.args.iter().copied());
-        self.match_header(block, once(extended).chain(args))
+        self.match_block_header(block, once(extended).chain(args))
     }
 
     /// Whether `block`'s header applies to `self_ty`, used to search the index for a header
-    /// that can prove a query.
+    /// that can prove a goal.
     pub(crate) fn header_applies(&self, block: DefId, self_ty: Ty) -> Option<HashMap<HirId, Ty>> {
-        self.match_header(block, once((self.adt_of_with_args(block), self_ty)))
+        self.match_block_header(block, once((self.extended_type(block), self_ty)))
     }
 
     /// Matches each of `block`'s header types against the closed type beside it.
-    fn match_header(
+    fn match_block_header(
         &self,
         block: DefId,
         mut pairs: impl Iterator<Item = (Ty, Ty)>,
@@ -207,29 +232,39 @@ impl<'hir> Typeck<'hir> {
         let mut bounds = Vec::new();
         let mut current = Some(owner);
         while let Some(owner) = current {
-            let generics = self.declared_generics(owner);
-            for &generic in generics {
-                bounds.extend(self.bounds_of(generic));
-            }
-
-            // `Self` implements the trait it is declared inside.
-            if matches!(self.hir.def(owner), OwnerNode::Trait(_)) {
-                let self_ty = self.tcx.mk_self_param(owner);
-                let args = generics.iter().map(|&id| self.tcx.mk_generic(id)).collect();
-                bounds.push(Query {
-                    self_ty,
-                    trait_: TraitRef { def: owner, args },
-                });
-            }
-
+            self.collect_bounds_of(owner, &mut bounds);
             current = self.hir.parent(owner);
         }
 
         BoundsEnv { bounds }
     }
 
+    /// Adds the bounds one definition puts in scope for the definitions inside it: those its own
+    /// parameters declare, and, inside a trait, the implicit `Self: ThisTrait`.
+    fn collect_bounds_of(&mut self, owner: DefId, bounds: &mut Vec<Goal>) {
+        let generics = self.declared_generics(owner);
+        bounds.extend(generics.iter().flat_map(|&generic| self.bounds_of(generic)));
+
+        if matches!(self.hir.def(owner), OwnerNode::Trait(_)) {
+            bounds.push(self.self_trait_goal(owner, generics));
+        }
+    }
+
+    /// The implicit `Self: ThisTrait` bound that holds inside a trait's declaration.
+    fn self_trait_goal(&mut self, trait_def: DefId, generics: &[HirId]) -> Goal {
+        let self_ty = self.tcx.mk_self_param(trait_def);
+        let args = generics.iter().map(|&id| self.tcx.mk_generic(id)).collect();
+        Goal {
+            self_ty,
+            trait_: TraitRef {
+                def: trait_def,
+                args,
+            },
+        }
+    }
+
     /// The trait bounds declared on `generic`, e.g. `Show` for `T: Show`.
-    pub(crate) fn bounds_of(&mut self, generic: HirId) -> Vec<Query> {
+    pub(crate) fn bounds_of(&mut self, generic: HirId) -> Vec<Goal> {
         let hir: &'hir crate::hir::Hir = self.hir;
         let self_ty = self.tcx.mk_generic(generic);
 
@@ -239,7 +274,7 @@ impl<'hir> Typeck<'hir> {
             .filter_map(|bound| match bound.path.res {
                 Res::Type(Type::Def(TyDef::Trait(def))) => {
                     let args = self.lower_tys(&bound.args);
-                    Some(Query {
+                    Some(Goal {
                         self_ty,
                         trait_: TraitRef { def, args },
                     })
@@ -250,39 +285,29 @@ impl<'hir> Typeck<'hir> {
     }
 
     /// Rebuilds `goal` with every parameter in `subst` replaced by what it is bound to.
-    pub(crate) fn subst_query(&mut self, query: &Query, subst: &HashMap<HirId, Ty>) -> Query {
-        query.map(&mut |ty| self.subst_ty(ty, subst))
+    pub(crate) fn subst_query(&mut self, goal: &Goal, subst: &HashMap<HirId, Ty>) -> Goal {
+        goal.map(&mut |ty| self.subst_ty(ty, subst))
     }
 
-    /// Rebuilds `ty` with every parameter in `subst` replaced by what it is bound to.
-    pub fn subst_ty(&mut self, ty: Ty, subst: &HashMap<HirId, Ty>) -> Ty {
-        let subst = fold::Subst {
-            generics: subst.clone(),
-            self_ty: None,
-        };
-        fold::subst_ty(&mut self.tcx, ty, &subst)
-    }
-
-    /// Rebuilds `query` with every inference variable in it replaced by whatever it has since
+    /// Rebuilds `goal` with every inference variable in it replaced by whatever it has since
     /// resolved to.
-    fn resolve_query(&mut self, goal: &Query) -> Query {
+    fn resolve_goal(&mut self, goal: &Goal) -> Goal {
         goal.map(&mut |ty| self.unifier.find_deep(&mut self.tcx, ty))
     }
 
     /// Whether any part of the goal is [`TyKind::Error`].
-    fn goal_mentions_error(&self, goal: &Query) -> bool {
+    fn goal_mentions_error(&self, goal: &Goal) -> bool {
         let mut tys = std::iter::once(goal.self_ty).chain(goal.trait_.args.iter().copied());
-        tys.any(|ty| fold::mentions_error(&self.tcx, ty))
+        tys.any(|ty| visitor::mentions_error(&self.tcx, ty))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::nameres::PrimTy;
-    use crate::testing::{Stage, checker_through, lower_to_hir};
+    use crate::testing::{TypeckStage, checker_through, lower_to_hir};
 
     // -----------------------------------------------------------------
     // match_ty
@@ -444,8 +469,8 @@ mod tests {
 
     /// Collects `src` and builds the extend index, which is everything the query reads.
     fn solver<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
-        let checker = checker_through(hir, Stage::Index);
-        DiagCtx::clear();
+        let checker = checker_through(hir, TypeckStage::Index);
+        crate::testing::clear_diagnostics();
         checker
     }
 
@@ -466,7 +491,7 @@ mod tests {
         let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
 
-        let goal = Query::new(foo_ty, show);
+        let goal = Goal::new(foo_ty, show);
         assert_eq!(
             checker.implements(&goal, &BoundsEnv::default()),
             Solution::Holds
@@ -480,7 +505,7 @@ mod tests {
         let (bare, show) = (named(&checker, "Bare"), named(&checker, "Show"));
         let bare_ty = checker.tcx.mk_adt(bare, vec![]);
 
-        let goal = Query::new(bare_ty, show);
+        let goal = Goal::new(bare_ty, show);
         assert_eq!(
             checker.implements(&goal, &BoundsEnv::default()),
             Solution::DoesNotHold
@@ -493,15 +518,15 @@ mod tests {
         let hir = lower_to_hir(SRC);
         let mut checker = solver(&hir);
         let show = named(&checker, "Show");
-        let var = checker.tcx.next_ty_var();
+        let var = checker.tcx.next_infer_var();
 
-        let goal = Query::new(var, show);
+        let goal = Goal::new(var, show);
         assert_eq!(
             checker.implements(&goal, &BoundsEnv::default()),
             Solution::Ambiguous
         );
         assert!(
-            DiagCtx::messages().is_empty(),
+            crate::testing::messages().is_empty(),
             "an ambiguity is not a diagnostic"
         );
     }
@@ -513,13 +538,13 @@ mod tests {
         let show = named(&checker, "Show");
         let error = checker.tcx.error();
 
-        let goal = Query::new(error, show);
+        let goal = Goal::new(error, show);
         assert_eq!(
             checker.implements(&goal, &BoundsEnv::default()),
             Solution::Error
         );
         assert!(
-            DiagCtx::messages().is_empty(),
+            crate::testing::messages().is_empty(),
             "a diagnostic for the error type already exists"
         );
     }
@@ -536,7 +561,7 @@ mod tests {
         let foo_ty = checker.tcx.mk_adt(foo, vec![]);
         let ref_ty = checker.tcx.mk_ref(foo_ty, Mutability::Immutable);
 
-        let goal = Query::new(ref_ty, show);
+        let goal = Goal::new(ref_ty, show);
         assert_eq!(
             checker.implements(&goal, &BoundsEnv::default()),
             Solution::DoesNotHold
@@ -553,7 +578,7 @@ mod tests {
         let show = named(&checker, "Show");
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
 
-        let query = Query::new(i32_ty, show);
+        let query = Goal::new(i32_ty, show);
         assert_eq!(
             checker.implements(&query, &BoundsEnv::default()),
             Solution::Holds
@@ -571,7 +596,7 @@ mod tests {
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
         let tuple_ty = checker.tcx.mk_tuple(vec![i32_ty, i32_ty]);
 
-        let query = Query::new(tuple_ty, show);
+        let query = Goal::new(tuple_ty, show);
         assert_eq!(
             checker.implements(&query, &BoundsEnv::default()),
             Solution::Holds
@@ -588,13 +613,13 @@ mod tests {
         let (show, other) = (named(&checker, "Show"), named(&checker, "Other"));
         let dyn_show = checker.tcx.mk_dyn(show, vec![]);
 
-        let its_own = Query::new(dyn_show, show);
+        let its_own = Goal::new(dyn_show, show);
         assert_eq!(
             checker.implements(&its_own, &BoundsEnv::default()),
             Solution::Holds
         );
 
-        let another = Query::new(dyn_show, other);
+        let another = Goal::new(dyn_show, other);
         assert_eq!(
             checker.implements(&another, &BoundsEnv::default()),
             Solution::DoesNotHold
@@ -618,7 +643,7 @@ mod tests {
         let env = checker.bounds_env(f);
         assert_eq!(env.bounds.len(), 1, "`T: Show` is the only bound in scope");
 
-        let goal = Query::new(t, show);
+        let goal = Goal::new(t, show);
         assert_eq!(checker.implements(&goal, &env), Solution::Holds);
     }
 
@@ -634,7 +659,7 @@ mod tests {
         let t = checker.tcx.mk_generic(function.generics[0]);
 
         let env = checker.bounds_env(f);
-        let goal = Query::new(t, show);
+        let goal = Goal::new(t, show);
         assert_eq!(checker.implements(&goal, &env), Solution::DoesNotHold);
     }
 
@@ -647,7 +672,7 @@ mod tests {
         let self_ty = checker.tcx.mk_self_param(show);
 
         let env = checker.bounds_env(show);
-        let goal = Query::new(self_ty, show);
+        let goal = Goal::new(self_ty, show);
         assert_eq!(checker.implements(&goal, &env), Solution::Holds);
     }
 
@@ -691,14 +716,14 @@ mod tests {
         let wrap_foo = checker.tcx.mk_adt(wrap, vec![foo_ty]);
         let wrap_bare = checker.tcx.mk_adt(wrap, vec![bare_ty]);
 
-        let holds = Query::new(wrap_foo, show);
+        let holds = Goal::new(wrap_foo, show);
         assert_eq!(
             checker.implements(&holds, &BoundsEnv::default()),
             Solution::Holds
         );
 
         // `Bare: Show` fails, so `Wrap<Bare>: Show` fails with it.
-        let fails = Query::new(wrap_bare, show);
+        let fails = Goal::new(wrap_bare, show);
         assert_eq!(
             checker.implements(&fails, &BoundsEnv::default()),
             Solution::DoesNotHold

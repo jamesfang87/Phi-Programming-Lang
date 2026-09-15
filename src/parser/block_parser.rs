@@ -1,29 +1,21 @@
-//! Exposes the block parser.
-
-use crate::ast::Block;
-
-use super::{BoxedP, Parser};
-
-impl Parser {
-    pub fn block_parser<'a>(&'a self) -> BoxedP<'a, Block> {
-        self.expr_and_block_parsers().1
-    }
-}
+//! Exercises the block parser, which `expr_parser` owns.
 
 #[cfg(test)]
 mod tests {
     use chumsky::Parser as ChumskyParser;
 
-    use super::*;
-    use crate::ast::interner::Interner;
-    use crate::ast::{BinaryOp, Expr, ExprKind, Literal, Mutability, PatKind, Stmt, StmtKind};
+    use crate::ast::{
+        BinaryOp, Block, Expr, ExprKind, Literal, Mutability, PatKind, Stmt, StmtKind,
+    };
+    use crate::parser::Parser;
     use crate::testing::lex_src;
 
     fn parse_block(src: &str) -> Block {
         let (tokens, _) = lex_src(src);
-        let parser = Parser::new();
+        let parser = Parser::new(crate::testing::session());
         let (output, errors) = parser
-            .block_parser()
+            .expr_and_block_parsers()
+            .1
             .parse(&tokens[..])
             .into_output_errors();
         assert!(
@@ -36,9 +28,10 @@ mod tests {
     /// Like [`parse_block`], but doesn't assert the parse was clean, for exercising recovery.
     fn parse_block_with_errors(src: &str) -> (Block, usize) {
         let (tokens, _) = lex_src(src);
-        let parser = Parser::new();
+        let parser = Parser::new(crate::testing::session());
         let (output, errors) = parser
-            .block_parser()
+            .expr_and_block_parsers()
+            .1
             .parse(&tokens[..])
             .into_output_errors();
         (
@@ -336,7 +329,7 @@ mod tests {
         match &only_stmt(&block).kind {
             StmtKind::Let { init, .. } => match &init.kind {
                 ExprKind::Literal(Literal::Str(sym)) => {
-                    assert_eq!(Interner::resolve(*sym), "hi\n")
+                    assert_eq!(crate::testing::resolve(*sym), "hi\n")
                 }
                 other => panic!("expected a string literal, got {other:?}"),
             },

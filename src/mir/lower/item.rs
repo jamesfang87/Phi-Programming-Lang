@@ -38,10 +38,11 @@ impl<'a> BodyLowerCtx<'a> {
         &mut self,
         self_param: Option<HirId>,
         params: &[HirId],
-        block: HirId,
+        block: impl Into<HirId>,
         span: crate::driver::source::SrcSpan,
         any_mode: Option<AnyMode>,
     ) -> Body {
+        let block = block.into();
         let ret_ty = self.return_ty(any_mode);
         // Slot 0: the return place, by the convention every `Body` follows.
         self.new_local(ret_ty, None, span);
@@ -56,8 +57,8 @@ impl<'a> BodyLowerCtx<'a> {
         }
         for &param_id in params {
             let ty = self.resolve_any(self.types.ty(param_id).expect("param is typed"), any_mode);
-            let name = self.hir.param(param_id).name;
-            let local = self.new_local(ty, Some(name), span);
+            let param = self.hir.param(param_id);
+            let local = self.new_local(ty, Some(param.name), param.span);
             self.bind_local(param_id, local);
         }
         let arg_count = usize::from(self_param.is_some()) + params.len();
@@ -73,9 +74,10 @@ impl<'a> BodyLowerCtx<'a> {
     fn lower_closure_body(
         &mut self,
         params: &[HirId],
-        block: HirId,
+        block: impl Into<HirId>,
         span: crate::driver::source::SrcSpan,
     ) -> Body {
+        let block = block.into();
         let ret_ty = self.return_ty(None);
         self.new_local(ret_ty, None, span);
 
@@ -85,8 +87,8 @@ impl<'a> BodyLowerCtx<'a> {
 
         for &param_id in params {
             let ty = self.types.ty(param_id).expect("closure param is typed");
-            let name = self.hir.closure_param(param_id).name;
-            let local = self.new_local(ty, Some(name), span);
+            let param = self.hir.closure_param(param_id);
+            let local = self.new_local(ty, Some(param.name), param.span);
             self.bind_local(param_id, local);
         }
         let arg_count = 1 + params.len();

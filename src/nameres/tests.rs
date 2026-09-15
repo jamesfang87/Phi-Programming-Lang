@@ -1,12 +1,10 @@
-
-use crate::ast::interner::Interner;
 use crate::ast::{
     Ast, Expr, ExprKind, Function, Ident, Item, ItemKind, NodeId, ParsedSrcFile, Path, Payload,
     PayloadField, StmtKind, Symbol,
 };
-use crate::diagnostics::{DiagCtx, Diagnostic};
+use crate::diagnostics::Diagnostic;
 use crate::driver::emit_debug;
-use crate::driver::source::{FileOrigin, SrcCollector, SrcMap, SrcSpan};
+use crate::driver::source::{FileOrigin, SrcSpan};
 use crate::lexer::Lexer;
 use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
@@ -18,7 +16,7 @@ use crate::parser::Parser;
 
 fn ident(text: &str) -> Ident {
     Ident {
-        text: Interner::intern(text),
+        text: crate::testing::intern(text),
         span: SrcSpan::new(0, 1),
     }
 }
@@ -28,13 +26,13 @@ fn ident(text: &str) -> Ident {
 // -----------------------------------------------------------------
 
 /// Lexes and parses `src` into a [`ParsedSrcFile`], asserting no diagnostics were raised.
-/// `DiagCtx` and `Interner` are *not* cleared here -- callers building an `Ast` out of several
-/// files need each one parsed against the same interner and source map.
+/// The test session's diagnostics are *not* cleared here -- callers building an `Ast` out of
+/// several files need each one parsed against the same session's interner and source map.
 fn parse_one(src: &str) -> ParsedSrcFile {
     let chars: Vec<char> = src.chars().collect();
-    let offset = SrcMap::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
-    let tokens = Lexer::new(&chars, offset).tokenize();
-    Parser::new().parse(&tokens, offset)
+    let offset = crate::testing::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
+    let tokens = Lexer::new(crate::testing::session(), &chars, offset).tokenize();
+    Parser::new(crate::testing::session()).parse(&tokens, offset)
 }
 
 /// Lexes, parses, and assembles `src` as a single-file `Ast`, asserting no diagnostics were
@@ -46,10 +44,10 @@ fn ast_from(src: &str) -> Ast {
 /// Lexes, parses, and assembles `sources` into one `Ast` (built from multiple files, the way a
 /// real build combines them). Asserts no diagnostics were raised.
 fn ast_from_files(sources: &[&str]) -> Ast {
-    DiagCtx::clear();
-    Interner::clear();
+    crate::testing::clear_diagnostics();
+    crate::testing::clear_interner();
     let files: Vec<ParsedSrcFile> = sources.iter().map(|src| parse_one(src)).collect();
-    let diagnostics = DiagCtx::diagnostics();
+    let diagnostics = crate::testing::diagnostics();
     assert!(
         diagnostics.is_empty(),
         "unexpected diagnostics for {sources:?}: {diagnostics:?}"
@@ -70,9 +68,9 @@ fn module_by_path(ast: &Ast, table: &SymbolTable, segments: &[Symbol]) -> Option
 /// so nothing from that stage leaks in).
 fn collect_with_diags(src: &str) -> (SymbolTable<'_>, Vec<Diagnostic>) {
     fn inner(ast: &Ast) -> (SymbolTable<'_>, Vec<Diagnostic>) {
-        DiagCtx::clear();
-        let table = SymbolTable::collect(ast);
-        (table, DiagCtx::diagnostics())
+        crate::testing::clear_diagnostics();
+        let table = SymbolTable::collect(crate::testing::session(), ast);
+        (table, crate::testing::diagnostics())
     }
     // `ast_from` is not inlined because the returned `Ast` must outlive the `SymbolTable<'_>`
     // that borrows it. A local in `collect_with_diags`'s stack frame can't. So this leaks it,
@@ -88,9 +86,9 @@ fn collect_with_diags(src: &str) -> (SymbolTable<'_>, Vec<Diagnostic>) {
 /// Builds `ast`'s `SymbolTable` via [`SymbolTable::new`], returning it alongside every
 /// diagnostic construction raised.
 fn new_with_diags(ast: &Ast) -> (SymbolTable<'_>, Vec<Diagnostic>) {
-    DiagCtx::clear();
-    let table = SymbolTable::new(ast);
-    (table, DiagCtx::diagnostics())
+    crate::testing::clear_diagnostics();
+    let table = SymbolTable::new(crate::testing::session(), ast);
+    (table, crate::testing::diagnostics())
 }
 
 /// Builds a `SymbolTable` via [`SymbolTable::new`], but constructs the `Ast` from `sources`
@@ -101,27 +99,28 @@ fn new_with_diags_from(sources: &[&str]) -> (SymbolTable<'static>, Vec<Diagnosti
 }
 
 /// Builds an `Ast` containing the real core library (the way a full build does; see
-/// [`SrcCollector::collect_core`]) so a [`SymbolTable`] built over it has `core::prelude` to find.
+/// [`Session::collect_core`](crate::session::Session::collect_core)) so a [`SymbolTable`] built
+/// over it has `core::prelude` to find.
 ///
-/// Only the files this call itself registers are lexed and parsed, not the whole process-wide
-/// [`SrcMap`]. Other tests may register files before or concurrently. `SrcMap` sits behind a
-/// single process-wide lock (unlike thread-local `Interner` and `DiagCtx`), so a length
-/// snapshot would be racy under the default multi-threaded test runner. `collect_core`
-/// sidesteps this by returning exactly the [`SrcFile`]s it registered, identified by the files
-/// themselves (not a before/after count; see its doc comment). Re-parsing files beyond those
-/// five would raise diagnostics (duplicate declarations, mostly) that belong to other tests.
+/// Only the files this call itself registers are lexed and parsed, not every file the thread's
+/// test session has seen. Each test thread gets its own session, so files other tests register
+/// cannot leak in. `collect_core` returns exactly the [`SrcFile`]s it registered, identified by
+/// the files themselves (not a before/after count; see its doc comment). Re-parsing files beyond
+/// those five would raise diagnostics (duplicate declarations, mostly) that belong to this test's
+/// other fixtures.
 fn ast_with_core() -> Ast {
-    DiagCtx::clear();
-    Interner::clear();
-    let core_files = SrcCollector::collect_core();
+    crate::testing::clear_diagnostics();
+    crate::testing::clear_interner();
+    let core_files = crate::testing::collect_core();
     let files: Vec<ParsedSrcFile> = core_files
         .iter()
         .map(|file| {
-            let tokens = Lexer::new(&file.content, file.global_offset).tokenize();
-            Parser::new().parse(&tokens, file.global_offset)
+            let tokens =
+                Lexer::new(crate::testing::session(), &file.content, file.global_offset).tokenize();
+            Parser::new(crate::testing::session()).parse(&tokens, file.global_offset)
         })
         .collect();
-    let diagnostics = DiagCtx::diagnostics();
+    let diagnostics = crate::testing::diagnostics();
     assert!(
         diagnostics.is_empty(),
         "unexpected diagnostics loading the core library: {diagnostics:?}"
@@ -129,16 +128,16 @@ fn ast_with_core() -> Ast {
     Ast::from(files)
 }
 
-/// Runs `f` against a freshly cleared `DiagCtx`, returning its result alongside every
+/// Runs `f` against a freshly cleared diagnostic collection, returning its result alongside every
 /// diagnostic `f` raised.
 ///
 /// Mirrors [`new_with_diags`]'s clear-then-collect pattern, but for a single call rather than
 /// a whole `SymbolTable::new`, so a lookup entry point's own diagnostics can be checked in
 /// isolation.
 fn with_diags<T>(f: impl FnOnce() -> T) -> (T, Vec<Diagnostic>) {
-    DiagCtx::clear();
+    crate::testing::clear_diagnostics();
     let result = f();
-    (result, DiagCtx::diagnostics())
+    (result, crate::testing::diagnostics())
 }
 
 /// Filters out "missing lang item" diagnostics. `resolve` (unlike `SymbolTable::new` alone)
@@ -158,11 +157,10 @@ fn path(segments: &[&str]) -> Path {
         segments: segments
             .iter()
             .map(|s| Ident {
-                text: Interner::intern(s),
+                text: crate::testing::intern(s),
                 span,
             })
             .collect(),
-        span,
     }
 }
 
@@ -237,10 +235,10 @@ fn a_node_with_three_recorded_paths_retrieves_all_three() {
 #[test]
 fn collect_puts_a_function_in_the_value_namespace() {
     let ast = ast_from("fun f() {}");
-    let table = SymbolTable::collect(&ast);
+    let table = SymbolTable::collect(crate::testing::session(), &ast);
     assert!(
         table
-            .lookup_function(ast.root_id(), Interner::intern("f"))
+            .lookup_function(ast.root_id(), crate::testing::intern("f"))
             .is_some()
     );
 }
@@ -248,9 +246,9 @@ fn collect_puts_a_function_in_the_value_namespace() {
 #[test]
 fn collect_puts_a_struct_in_the_type_namespace() {
     let ast = ast_from("struct S {}");
-    let table = SymbolTable::collect(&ast);
+    let table = SymbolTable::collect(crate::testing::session(), &ast);
     assert!(matches!(
-        table.lookup_type(ast.root_id(), Interner::intern("S")),
+        table.lookup_type(ast.root_id(), crate::testing::intern("S")),
         Some(TyDef::Struct(_))
     ));
 }
@@ -258,13 +256,13 @@ fn collect_puts_a_struct_in_the_type_namespace() {
 #[test]
 fn collect_keeps_a_trait_and_an_enum_apart_by_tydef_kind() {
     let ast = ast_from("enum E { a } trait T {}");
-    let table = SymbolTable::collect(&ast);
+    let table = SymbolTable::collect(crate::testing::session(), &ast);
     assert!(matches!(
-        table.lookup_type(ast.root_id(), Interner::intern("E")),
+        table.lookup_type(ast.root_id(), crate::testing::intern("E")),
         Some(TyDef::Enum(_))
     ));
     assert!(matches!(
-        table.lookup_type(ast.root_id(), Interner::intern("T")),
+        table.lookup_type(ast.root_id(), crate::testing::intern("T")),
         Some(TyDef::Trait(_))
     ));
 }
@@ -279,11 +277,14 @@ fn two_declarations_of_one_name_in_one_namespace_conflict() {
 #[test]
 fn by_path_maps_a_canonical_path_to_its_module() {
     let ast = ast_from_files(&["module math::vector; fun dot() {}"]);
-    let table = SymbolTable::collect(&ast);
+    let table = SymbolTable::collect(crate::testing::session(), &ast);
     let id = module_by_path(
         &ast,
         &table,
-        &[Interner::intern("math"), Interner::intern("vector")],
+        &[
+            crate::testing::intern("math"),
+            crate::testing::intern("vector"),
+        ],
     );
     assert!(id.is_some());
 }
@@ -298,11 +299,11 @@ fn an_import_binds_into_the_importing_modules_own_scope() {
         "module math; public fun dot() {}",
         "module app; import math::dot;",
     ]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     assert!(
         table
-            .lookup_function(app, Interner::intern("dot"))
+            .lookup_function(app, crate::testing::intern("dot"))
             .is_some()
     );
 }
@@ -314,16 +315,19 @@ fn an_import_resolves_absolutely_from_the_root_not_relative_to_where_it_is_writt
         "module deep; public fun inner() {}",
         "module app::nested; import deep::inner;",
     ]);
-    let table = SymbolTable::new(&ast);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
     let nested = module_by_path(
         &ast,
         &table,
-        &[Interner::intern("app"), Interner::intern("nested")],
+        &[
+            crate::testing::intern("app"),
+            crate::testing::intern("nested"),
+        ],
     )
     .unwrap();
     assert!(
         table
-            .lookup_function(nested, Interner::intern("inner"))
+            .lookup_function(nested, crate::testing::intern("inner"))
             .is_some()
     );
 }
@@ -337,10 +341,10 @@ fn an_import_may_name_a_module_the_collect_pass_had_not_reached() {
     ]);
     let (table, diags) = new_with_diags(&ast);
     assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     assert!(
         table
-            .lookup_function(app, Interner::intern("thing"))
+            .lookup_function(app, crate::testing::intern("thing"))
             .is_some()
     );
 }
@@ -351,14 +355,18 @@ fn a_glob_import_copies_every_name_from_the_source_module() {
         "module math; public fun dot() {} public struct Vec2 {}",
         "module app; import math::*;",
     ]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     assert!(
         table
-            .lookup_function(app, Interner::intern("dot"))
+            .lookup_function(app, crate::testing::intern("dot"))
             .is_some()
     );
-    assert!(table.lookup_type(app, Interner::intern("Vec2")).is_some());
+    assert!(
+        table
+            .lookup_type(app, crate::testing::intern("Vec2"))
+            .is_some()
+    );
 }
 
 #[test]
@@ -390,14 +398,14 @@ fn an_import_naming_nothing_reports_not_found() {
 #[test]
 fn the_prelude_is_found_after_imports_resolve() {
     let ast = ast_with_core();
-    let table = SymbolTable::new(&ast);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
     assert!(table.prelude().is_some());
 }
 
 #[test]
 fn the_prelude_is_none_without_a_core_library() {
     let ast = ast_from("fun main() {}");
-    let table = SymbolTable::new(&ast);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
     assert!(table.prelude().is_none());
 }
 
@@ -408,10 +416,10 @@ fn the_prelude_is_none_without_a_core_library() {
 #[test]
 fn a_local_shadows_an_outer_one_and_the_outer_is_restored_on_pop() {
     let ast = ast_from("fun main() {}");
-    let mut t = SymbolTable::new(&ast);
+    let mut t = SymbolTable::new(crate::testing::session(), &ast);
     let outer = NodeId::next();
     let inner = NodeId::next();
-    let x = Interner::intern("x");
+    let x = crate::testing::intern("x");
 
     t.push_scope();
     t.insert_local(ident("x"), Local::Variable(outer));
@@ -430,14 +438,14 @@ fn a_local_shadows_an_outer_one_and_the_outer_is_restored_on_pop() {
 #[test]
 fn rebinding_in_one_scope_overwrites_rather_than_conflicting() {
     let ast = ast_from("fun main() {}");
-    let mut t = SymbolTable::new(&ast);
+    let mut t = SymbolTable::new(crate::testing::session(), &ast);
     let first = NodeId::next();
     let second = NodeId::next();
     t.push_scope();
     t.insert_local(ident("x"), Local::Variable(first));
     t.insert_local(ident("x"), Local::Variable(second));
     assert_eq!(
-        t.lookup_local(Interner::intern("x")),
+        t.lookup_local(crate::testing::intern("x")),
         Some(Local::Variable(second))
     );
 }
@@ -445,9 +453,9 @@ fn rebinding_in_one_scope_overwrites_rather_than_conflicting() {
 #[test]
 fn a_generic_is_visible_inside_its_definition_and_not_outside() {
     let ast = ast_from("fun main() {}");
-    let mut t = SymbolTable::new(&ast);
+    let mut t = SymbolTable::new(crate::testing::session(), &ast);
     let g = NodeId::next();
-    let name = Interner::intern("T");
+    let name = crate::testing::intern("T");
 
     t.push_generics();
     t.insert_generic(name, Type::Generic(g));
@@ -459,10 +467,10 @@ fn a_generic_is_visible_inside_its_definition_and_not_outside() {
 #[test]
 fn an_inner_generic_scope_shadows_an_outer_one() {
     let ast = ast_from("fun main() {}");
-    let mut t = SymbolTable::new(&ast);
+    let mut t = SymbolTable::new(crate::testing::session(), &ast);
     let outer = NodeId::next();
     let inner = NodeId::next();
-    let name = Interner::intern("T");
+    let name = crate::testing::intern("T");
 
     t.push_generics();
     t.insert_generic(name, Type::Generic(outer));
@@ -476,7 +484,7 @@ fn an_inner_generic_scope_shadows_an_outer_one() {
 #[test]
 fn self_reads_the_innermost_scope_and_is_none_when_the_stack_is_empty() {
     let ast = ast_from("fun main() {}");
-    let mut t = SymbolTable::new(&ast);
+    let mut t = SymbolTable::new(crate::testing::session(), &ast);
     let s = NodeId::next();
     assert_eq!(t.lookup_self(), None);
     t.insert_self(Type::Def(TyDef::Struct(s)));
@@ -492,8 +500,8 @@ fn self_reads_the_innermost_scope_and_is_none_when_the_stack_is_empty() {
 #[test]
 fn a_sibling_item_resolves_without_qualification() {
     let ast = ast_from_files(&["module app; fun helper() {} fun main() {}"]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     assert!(matches!(
         table.lookup_value_path(app, &path(&["helper"])),
         Some(Res::Function(_))
@@ -506,11 +514,14 @@ fn a_name_falls_back_to_an_ancestor_module() {
         "module app; public fun shared() {}",
         "module app::inner; fun main() {}",
     ]);
-    let table = SymbolTable::new(&ast);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
     let inner = module_by_path(
         &ast,
         &table,
-        &[Interner::intern("app"), Interner::intern("inner")],
+        &[
+            crate::testing::intern("app"),
+            crate::testing::intern("inner"),
+        ],
     )
     .unwrap();
     assert!(table.lookup_value_path(inner, &path(&["shared"])).is_some());
@@ -522,11 +533,14 @@ fn a_fully_qualified_path_resolves_from_anywhere() {
         "module math::vector; public fun dot() {}",
         "module app::deep; fun main() {}",
     ]);
-    let table = SymbolTable::new(&ast);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
     let deep = module_by_path(
         &ast,
         &table,
-        &[Interner::intern("app"), Interner::intern("deep")],
+        &[
+            crate::testing::intern("app"),
+            crate::testing::intern("deep"),
+        ],
     )
     .unwrap();
     assert!(
@@ -539,7 +553,7 @@ fn a_fully_qualified_path_resolves_from_anywhere() {
 #[test]
 fn a_primitive_resolves_before_anything_else_in_type_position() {
     let ast = ast_from("fun main() {}");
-    let table = SymbolTable::new(&ast);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
     assert_eq!(
         table.lookup_type_path(ast.root_id(), &path(&["i32"])),
         Res::Type(Type::Prim(PrimTy::I32))
@@ -549,11 +563,11 @@ fn a_primitive_resolves_before_anything_else_in_type_position() {
 #[test]
 fn a_generic_shadows_a_module_level_type() {
     let ast = ast_from_files(&["module app; struct T {}"]);
-    let mut table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let mut table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     let g = NodeId::next();
     table.push_generics();
-    table.insert_generic(Interner::intern("T"), Type::Generic(g));
+    table.insert_generic(crate::testing::intern("T"), Type::Generic(g));
     assert_eq!(
         table.lookup_type_path(app, &path(&["T"])),
         Res::Type(Type::Generic(g))
@@ -568,8 +582,8 @@ fn a_generic_shadows_a_module_level_type() {
 #[test]
 fn a_local_shadows_a_module_level_function_in_value_position() {
     let ast = ast_from_files(&["module app; fun x() {}"]);
-    let mut table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let mut table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     let local = NodeId::next();
     table.push_scope();
     table.insert_local(ident("x"), Local::Variable(local));
@@ -585,8 +599,8 @@ fn a_multi_segment_path_walks_submodules_then_looks_up_the_last_segment() {
         "module app; fun main() {}",
         "module app::inner; public struct S {}",
     ]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     assert!(matches!(
         table.lookup_type_path(app, &path(&["inner", "S"])),
         Res::Type(Type::Def(TyDef::Struct(_)))
@@ -596,7 +610,7 @@ fn a_multi_segment_path_walks_submodules_then_looks_up_the_last_segment() {
 #[test]
 fn an_unresolvable_path_is_none() {
     let ast = ast_from("fun main() {}");
-    let table = SymbolTable::new(&ast);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
     assert!(
         table
             .lookup_value_path(ast.root_id(), &path(&["nope"]))
@@ -607,20 +621,17 @@ fn an_unresolvable_path_is_none() {
 #[test]
 fn pushing_generics_leaves_locals_and_self_untouched() {
     let ast = ast_from("fun main() {}");
-    let mut t = SymbolTable::new(&ast);
+    let mut t = SymbolTable::new(crate::testing::session(), &ast);
     let local = NodeId::next();
     let self_def = Type::Def(TyDef::Struct(NodeId::next()));
-    let x = Interner::intern("x");
+    let x = crate::testing::intern("x");
 
     t.push_scope();
     t.insert_local(ident("x"), Local::Variable(local));
     t.insert_self(self_def);
 
     t.push_generics();
-    t.insert_generic(
-        Interner::intern("T"),
-        Type::Generic(NodeId::next()),
-    );
+    t.insert_generic(crate::testing::intern("T"), Type::Generic(NodeId::next()));
     assert_eq!(t.lookup_local(x), Some(Local::Variable(local)));
     assert_eq!(t.lookup_self(), Some(self_def));
     t.pop_generics();
@@ -632,8 +643,8 @@ fn pushing_generics_leaves_locals_and_self_untouched() {
 #[test]
 fn pushing_a_local_scope_or_self_leaves_generics_untouched() {
     let ast = ast_from("fun main() {}");
-    let mut t = SymbolTable::new(&ast);
-    let name = Interner::intern("T");
+    let mut t = SymbolTable::new(crate::testing::session(), &ast);
+    let name = crate::testing::intern("T");
     let g = NodeId::next();
 
     t.push_generics();
@@ -660,9 +671,9 @@ fn a_bare_trait_path_in_type_position_resolves_to_a_trait() {
     // Static dispatch: the function is monomorphized over the concrete type, as Rust's
     // `impl Trait` does. This is legal and is not an error.
     let ast = ast_from_files(&["module app; trait Show {}"]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
-    let r = Resolver::new(table, app);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
+    let r = Resolver::new(crate::testing::session(), table, app);
     assert!(matches!(
         r.table.lookup_type_path(app, &path(&["Show"])),
         Res::Type(Type::Def(TyDef::Trait(_)))
@@ -672,8 +683,8 @@ fn a_bare_trait_path_in_type_position_resolves_to_a_trait() {
 #[test]
 fn dyn_on_a_trait_resolves() {
     let ast = ast_from_files(&["module app; trait Show {}"]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     assert!(matches!(
         table.lookup_dyn_path(app, &path(&["Show"])),
         Res::Type(Type::Def(TyDef::Trait(_)))
@@ -683,8 +694,8 @@ fn dyn_on_a_trait_resolves() {
 #[test]
 fn dyn_on_a_struct_errors() {
     let ast = ast_from_files(&["module app; struct S {}"]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     let (res, diags) = with_diags(|| table.lookup_dyn_path(app, &path(&["S"])));
     assert_eq!(res, Res::Err);
     assert_eq!(diags.len(), 1);
@@ -694,8 +705,8 @@ fn dyn_on_a_struct_errors() {
 #[test]
 fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
     let ast = ast_from("fun main() {}");
-    let table = SymbolTable::new(&ast);
-    let mut r = Resolver::new(table, ast.root_id());
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let mut r = Resolver::new(crate::testing::session(), table, ast.root_id());
     for def in [
         TyDef::Struct(NodeId::next()),
         TyDef::Enum(NodeId::next()),
@@ -720,7 +731,7 @@ fn self_as_an_access_base_records_self_ty() {
     let ast = ast_from_files(&[
         "module app; enum Shape { unit } extend Shape { fun f() { let s = Self.unit; } }",
     ]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let base = access_base_of_first_let(&ast);
     assert!(matches!(
         r.get(base.id, &path(&["Self"])),
@@ -735,7 +746,7 @@ fn a_type_named_outright_is_not_recorded_as_self_ty() {
     let ast = ast_from_files(&[
         "module app; enum Shape { unit } extend Shape { fun f() { let s = Shape.unit; } }",
     ]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let base = access_base_of_first_let(&ast);
     assert!(matches!(
         r.get(base.id, &path(&["Shape"])),
@@ -746,7 +757,7 @@ fn a_type_named_outright_is_not_recorded_as_self_ty() {
 #[test]
 fn self_resolves_to_a_primitive_inside_a_primitive_extend_block() {
     let ast = ast_from("extend i32 { fun f(x: Self) {} }");
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         !diags.iter().any(|d| d.message.contains("`Self`")),
         "unexpected diagnostics: {diags:?}"
@@ -756,8 +767,8 @@ fn self_resolves_to_a_primitive_inside_a_primitive_extend_block() {
 #[test]
 fn self_outside_a_definition_errors() {
     let ast = ast_from("fun main() {}");
-    let table = SymbolTable::new(&ast);
-    let r = Resolver::new(table, ast.root_id());
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let r = Resolver::new(crate::testing::session(), table, ast.root_id());
     let (res, diags) = with_diags(|| r.table.lookup_self_res(SrcSpan::new(0, 0)));
     assert_eq!(res, Res::Err);
     assert_eq!(diags.len(), 1);
@@ -767,8 +778,8 @@ fn self_outside_a_definition_errors() {
 #[test]
 fn an_unresolvable_type_path_reports_not_found_and_records_err() {
     let ast = ast_from("fun main() {}");
-    let table = SymbolTable::new(&ast);
-    let r = Resolver::new(table, ast.root_id());
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let r = Resolver::new(crate::testing::session(), table, ast.root_id());
     let (res, diags) = with_diags(|| r.table.lookup_type_path(ast.root_id(), &path(&["Nope"])));
     assert_eq!(res, Res::Err);
     assert_eq!(diags.len(), 1);
@@ -867,7 +878,7 @@ fn x_use_and_binding(ast: &Ast) -> (NodeId, NodeId) {
 fn an_extend_blocks_two_paths_are_told_apart_by_what_they_name() {
     let ast =
         ast_from_files(&["module app; struct Vec2 {} trait Show {} extend Vec2 with Show {}"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let item = extend_item_id(&ast);
     let self_ty = extend_self_ty_id(&ast);
     assert!(matches!(
@@ -885,7 +896,7 @@ fn an_extend_blocks_two_identical_paths_conflict_and_only_the_adt_path_is_record
     let ast = ast_from_files(&["module app; struct Vec2 {} extend Vec2 with Vec2 {}"]);
     let item = extend_item_id(&ast);
     let self_ty = extend_self_ty_id(&ast);
-    let (r, diags) = with_diags(|| resolve(&ast));
+    let (r, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         diags.iter().any(|d| d
             .message
@@ -904,12 +915,12 @@ fn an_extend_blocks_two_identical_paths_conflict_and_only_the_adt_path_is_record
 #[test]
 fn a_generics_bounds_are_entries_on_the_generic_node_in_source_order() {
     let ast = ast_from_files(&["module app; trait A {} trait B {} fun f<T: A + B>() {}"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let g = first_generic_id(&ast);
     let names: Vec<_> = r
         .entries(g)
         .iter()
-        .map(|(p, _)| Interner::resolve(p.segments[0].text))
+        .map(|(p, _)| crate::testing::resolve(p.segments[0].text))
         .collect();
     assert_eq!(names, vec!["A", "B"]);
 }
@@ -918,7 +929,7 @@ fn a_generics_bounds_are_entries_on_the_generic_node_in_source_order() {
 fn a_duplicate_bound_conflicts_and_only_the_first_writing_is_recorded() {
     let ast = ast_from_files(&["module app; trait A {} fun f<T: A + A>() {}"]);
     let g = first_generic_id(&ast);
-    let (r, diags) = with_diags(|| resolve(&ast));
+    let (r, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         diags.iter().any(|d| d.message.contains("duplicate bound")),
         "expected a duplicate-bound diagnostic, got {diags:?}"
@@ -929,7 +940,7 @@ fn a_duplicate_bound_conflicts_and_only_the_first_writing_is_recorded() {
 #[test]
 fn a_block_scoped_binding_drops_at_the_closing_brace() {
     let ast = ast_from_files(&["module app; fun f() { { let x = 1; } let y = x; }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(diags.iter().any(|d| d.message.contains("cannot find `x`")));
 }
 
@@ -938,7 +949,7 @@ fn a_match_arm_binding_is_scoped_to_that_arm() {
     let ast = ast_from_files(&[
         "module app; enum E { a: i32 } fun f(e: E) { match e { .a(n) => n, } let y = n; }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(diags.iter().any(|d| d.message.contains("cannot find `n`")));
 }
 
@@ -949,7 +960,7 @@ fn a_match_arm_binding_is_visible_in_that_arms_guard() {
     let ast = ast_from_files(&[
         "module app; enum E { a: i32 } fun f(e: E) { match e { .a(n) if n > 0 => n, _ => 0 } }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -962,7 +973,7 @@ fn a_match_arm_guard_does_not_leak_its_own_scope() {
     let ast = ast_from_files(&[
         "module app; enum E { a: i32 } fun f(e: E) { match e { .a(n) if n > 0 => n, _ => 0, } let y = n; }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(diags.iter().any(|d| d.message.contains("cannot find `n`")));
 }
 
@@ -971,7 +982,7 @@ fn a_generic_is_visible_in_a_method_of_the_extend_block_that_declares_it() {
     let ast = ast_from_files(&[
         "module app; struct S {} extend<T> S { fun get(self) -> T { let x = 1; } }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -981,7 +992,7 @@ fn a_generic_is_visible_in_a_method_of_the_extend_block_that_declares_it() {
 #[test]
 fn an_unresolved_path_records_err_rather_than_leaving_the_entry_absent() {
     let ast = ast_from_files(&["module app; fun f(x: Nope) {}"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let ty = param_ty_id(&ast);
     assert_eq!(r.get(ty, &path(&["Nope"])), Some(Res::Err));
 }
@@ -989,7 +1000,7 @@ fn an_unresolved_path_records_err_rather_than_leaving_the_entry_absent() {
 #[test]
 fn a_path_expression_resolves_to_the_local_it_names() {
     let ast = ast_from_files(&["module app; fun f() { let x = 1; let y = x; }"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let (expr_id, pat_id) = x_use_and_binding(&ast);
     assert_eq!(
         r.get(expr_id, &path(&["x"])),
@@ -1016,7 +1027,7 @@ fn access_base_of_first_let(ast: &Ast) -> &Expr {
 #[test]
 fn an_access_base_falls_back_to_the_type_namespace() {
     let ast = ast_from_files(&["module app; enum Shape { unit } fun f() { let s = Shape.unit; }"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let base = access_base_of_first_let(&ast);
     assert!(matches!(
         r.get(base.id, &path(&["Shape"])),
@@ -1031,7 +1042,7 @@ fn a_local_shadows_a_type_of_the_same_name_as_an_access_base() {
     let ast = ast_from_files(&[
         "module app; enum Shape { unit } fun f(Shape: i32) { let s = Shape.unit; }",
     ]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let base = access_base_of_first_let(&ast);
     assert!(matches!(
         r.get(base.id, &path(&["Shape"])),
@@ -1043,7 +1054,7 @@ fn a_local_shadows_a_type_of_the_same_name_as_an_access_base() {
 #[test]
 fn an_access_base_in_neither_namespace_is_reported_once() {
     let ast = ast_from_files(&["module app; fun f() { let s = Nope.unit; }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     let reported = non_lang_item_diags(&diags);
     assert_eq!(reported.len(), 1, "{reported:?}");
     assert!(reported[0].message.contains("cannot find"), "{reported:?}");
@@ -1054,7 +1065,7 @@ fn a_let_rhs_sees_the_outer_x_not_the_one_it_declares() {
     // The classic bug: binding the pattern before walking the initializer would make `x` on the
     // right resolve to itself instead of the outer binding.
     let ast = ast_from_files(&["module app; fun f() { let x = 1; { let x = x; } }"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let f = only_function(&ast);
     let block = f.block.as_ref().unwrap();
     let StmtKind::Let { pat: outer_pat, .. } = &block.stmts[0].kind else {
@@ -1080,7 +1091,7 @@ fn a_closure_sees_its_enclosing_definitions_generic_and_self() {
     let ast = ast_from_files(&[
         "module app; struct S {} extend<T> S { fun get(self) -> T { let f = || -> T { self; }; } }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1090,7 +1101,7 @@ fn a_closure_sees_its_enclosing_definitions_generic_and_self() {
 #[test]
 fn self_outside_any_definition_records_err() {
     let ast = ast_from_files(&["module app; fun f() -> Self {}"]);
-    let (r, diags) = with_diags(|| resolve(&ast));
+    let (r, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         diags
             .iter()
@@ -1104,7 +1115,7 @@ fn self_outside_any_definition_records_err() {
 #[test]
 fn dyn_on_a_non_trait_records_err() {
     let ast = ast_from_files(&["module app; struct S {} fun f(x: dyn S) {}"]);
-    let (r, diags) = with_diags(|| resolve(&ast));
+    let (r, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         diags
             .iter()
@@ -1121,7 +1132,7 @@ fn dyn_on_a_non_trait_records_err() {
 #[test]
 fn an_extends_unresolved_adt_path_suppresses_the_self_diagnostic() {
     let ast = ast_from_files(&["module app; extend Nope { fun f(&self) -> Self {} }"]);
-    let (r, diags) = with_diags(|| resolve(&ast));
+    let (r, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     let diags = non_lang_item_diags(&diags);
     assert_eq!(
         diags.len(),
@@ -1138,7 +1149,7 @@ fn an_extends_unresolved_adt_path_suppresses_the_self_diagnostic() {
 }
 
 // Note: the parser itself rejects `extend i32 ...` (a primitive is a dedicated token, not an
-// `Identifier`, so it can never appear as `adt_path` -- see `typeck/traits/index.rs:224,433`),
+// `Identifier`, so it can never appear as `adt_path` -- see `typeck/traits/collect.rs`),
 // so the "adt_path resolved but not to a TyDef" branch above can't be exercised from source text.
 // It is exercised indirectly: every extend fixture elsewhere that resolves cleanly (e.g.
 // every `extend Foo` fixture that resolves cleanly) takes the `Res::Type(Type::Def(_))`
@@ -1156,8 +1167,8 @@ fn an_extends_unresolved_adt_path_suppresses_the_self_diagnostic() {
 #[test]
 fn the_dump_is_ordered_by_span_and_contains_no_node_ids() {
     let ast = ast_from_files(&["module app; struct A {} struct B {} fun f(x: B, y: A) {}"]);
-    let r = resolve(&ast);
-    let dump = emit_debug::nameres_to_string(&ast, &r);
+    let r = resolve(crate::testing::session(), &ast);
+    let dump = emit_debug::nameres_to_string(crate::testing::session(), &ast, &r);
 
     let b = dump.find('B').expect("B missing from dump");
     let a = dump.find('A').expect("A missing from dump");
@@ -1178,8 +1189,8 @@ fn three_entries_out_of_declaration_order_still_print_span_ordered() {
         "module app; struct Third {} struct Second {} struct First {} \
          fun f(a: First, b: Second, c: Third) {}",
     ]);
-    let r = resolve(&ast);
-    let dump = emit_debug::nameres_to_string(&ast, &r);
+    let r = resolve(crate::testing::session(), &ast);
+    let dump = emit_debug::nameres_to_string(crate::testing::session(), &ast, &r);
 
     let first = dump.find("First").expect("First missing from dump");
     let second = dump.find("Second").expect("Second missing from dump");
@@ -1206,12 +1217,12 @@ fn every_res_kind_renders_by_name_not_by_node_id() {
              local_var; \
          } \
          extend<T> AStruct { fun m(&self) -> T { self; } }"]);
-    let (r, diags) = with_diags(|| resolve(&ast));
+    let (r, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
     );
-    let dump = emit_debug::nameres_to_string(&ast, &r);
+    let dump = emit_debug::nameres_to_string(crate::testing::session(), &ast, &r);
 
     for expected in [
         "Struct `AStruct`",
@@ -1256,7 +1267,7 @@ fn first_let_init(ast: &Ast) -> &Expr {
 #[test]
 fn a_struct_literals_path_resolves_to_its_struct() {
     let ast = ast_from_files(&["module app; struct S { a: i32 } fun f() { let v = S { a: 1 }; }"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let init = first_let_init(&ast);
     assert!(
         matches!(init.kind, ExprKind::Ctor { path: Some(_), .. }),
@@ -1272,7 +1283,7 @@ fn a_struct_literals_path_resolves_to_its_struct() {
 fn the_elided_ctor_forms_type_comes_from_context_so_nothing_is_recorded() {
     let ast =
         ast_from_files(&["module app; struct S { a: i32 } fun f() { let v: S = .{ a: 1 }; }"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let init = first_let_init(&ast);
     assert!(
         matches!(init.kind, ExprKind::Ctor { path: None, .. }),
@@ -1287,7 +1298,7 @@ fn the_elided_ctor_forms_type_comes_from_context_so_nothing_is_recorded() {
 #[test]
 fn an_unresolved_struct_literal_path_records_err() {
     let ast = ast_from_files(&["module app; fun f() { let v = Nope { a: 1 }; }"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let init = first_let_init(&ast);
     assert_eq!(r.get(init.id, &path(&["Nope"])), Some(Res::Err));
 }
@@ -1316,7 +1327,7 @@ fn variant_record_fields(ast: &Ast) -> &[PayloadField<Expr>] {
 fn a_variant_record_payloads_shorthand_field_resolves_its_implicit_value() {
     let ast = ast_from_files(&["module app; enum Shape { rect: { w: i32, h: i32 } } \
          fun f() { let w = 1; let h = 2; let s = .rect { w, h }; }"]);
-    let r = resolve(&ast);
+    let r = resolve(crate::testing::session(), &ast);
     let fields = variant_record_fields(&ast);
     assert_eq!(fields.len(), 2);
     for field in fields {
@@ -1324,7 +1335,7 @@ fn a_variant_record_payloads_shorthand_field_resolves_its_implicit_value() {
             field.value.is_none(),
             "expected {field:?} to be the shorthand form"
         );
-        let name = Interner::resolve(field.name.text);
+        let name = crate::testing::resolve(field.name.text);
         assert!(
             matches!(
                 r.get(field.id, &path(&[name])),
@@ -1344,7 +1355,7 @@ fn a_variant_record_payloads_shorthand_field_resolves_its_implicit_value() {
 fn a_match_arms_record_payload_shorthand_binds_its_fields() {
     let ast = ast_from_files(&["module app; enum Shape { rect: { w: i32, h: i32 } } \
          fun f(s: Shape) { match s { .rect { w, h } => w, } let y = w; }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     let not_found_w: Vec<_> = non_lang_item_diags(&diags)
         .into_iter()
         .filter(|d| d.message.contains("cannot find `w`"))
@@ -1368,7 +1379,7 @@ fn a_match_arms_record_payload_shorthand_binds_its_fields() {
 #[test]
 fn a_function_and_a_struct_of_the_same_name_do_not_conflict() {
     let ast = ast_from_files(&["module app; fun Point() {} struct Point {}"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1382,7 +1393,7 @@ fn a_function_and_a_submodule_of_the_same_name_do_not_conflict() {
         "module app; fun helper() {}",
         "module app::helper; fun f() {}",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1394,7 +1405,7 @@ fn a_function_and_a_submodule_of_the_same_name_do_not_conflict() {
 #[test]
 fn two_unrelated_modules_may_each_declare_a_function_of_the_same_name() {
     let ast = ast_from_files(&["module a; fun helper() {}", "module b; fun helper() {}"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1412,11 +1423,44 @@ fn a_private_item_is_not_importable_from_an_unrelated_module() {
         "module math; fun secret() {}",
         "module app; import math::secret; fun f() { secret(); }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         !non_lang_item_diags(&diags).is_empty(),
         "`secret` is declared without `public` in `math`, so importing it into the unrelated \
          module `app` should be rejected: {diags:?}"
+    );
+}
+
+#[test]
+fn a_glob_import_does_not_copy_a_private_name() {
+    let ast = ast_from_files(&[
+        "module math; fun secret() {}",
+        "module app; import math::*;",
+    ]);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
+    assert!(
+        table
+            .lookup_function(app, crate::testing::intern("secret"))
+            .is_none(),
+        "a glob import must not leak a private function into the importing module"
+    );
+}
+
+#[test]
+fn a_glob_import_sees_names_a_later_glob_brings_in() {
+    let ast = ast_from_files(&[
+        "module a; import b::*;",
+        "module b; import c::*;",
+        "module c; public fun f() {}",
+    ]);
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let a = module_by_path(&ast, &table, &[crate::testing::intern("a")]).unwrap();
+    assert!(
+        table
+            .lookup_function(a, crate::testing::intern("f"))
+            .is_some(),
+        "a glob imported through another glob should still reach `f`"
     );
 }
 
@@ -1428,7 +1472,7 @@ fn a_parent_module_cannot_see_a_childs_declaration() {
         "module app; fun f() { helper(); }",
         "module app::inner; fun helper() {}",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags)
             .iter()
@@ -1445,7 +1489,7 @@ fn sibling_modules_do_not_see_each_other() {
         "module a; fun helper() {}",
         "module b; fun f() { helper(); }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags)
             .iter()
@@ -1463,7 +1507,7 @@ fn a_name_falls_back_through_three_levels_of_ancestry() {
         "module app::mid; fun unused() {}",
         "module app::mid::deep; fun f() { shared(); }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1475,7 +1519,7 @@ fn a_name_falls_back_through_three_levels_of_ancestry() {
 #[test]
 fn a_function_used_as_a_path_qualifier_does_not_resolve() {
     let ast = ast_from_files(&["module app; fun helper() {} fun f() { helper::thing(); }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags)
             .iter()
@@ -1492,7 +1536,7 @@ fn an_existing_modules_missing_member_reports_once() {
         "module math; public fun dot() {}",
         "module app; fun f() { math::cross(); }",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     let diags = non_lang_item_diags(&diags);
     assert_eq!(diags.len(), 1, "{diags:?}");
     assert!(diags[0].message.contains("cannot find `cross`"));
@@ -1509,16 +1553,16 @@ fn an_aliased_import_binds_under_the_alias_only() {
         "module math; public fun dot() {}",
         "module app; import math::dot as scalar_product;",
     ]);
-    let table = SymbolTable::new(&ast);
-    let app = module_by_path(&ast, &table, &[Interner::intern("app")]).unwrap();
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     assert!(
         table
-            .lookup_function(app, Interner::intern("scalar_product"))
+            .lookup_function(app, crate::testing::intern("scalar_product"))
             .is_some()
     );
     assert!(
         table
-            .lookup_function(app, Interner::intern("dot"))
+            .lookup_function(app, crate::testing::intern("dot"))
             .is_none()
     );
 }
@@ -1543,7 +1587,7 @@ fn an_imported_struct_is_usable_in_a_type_position() {
         "module shapes; public struct Circle { r: i32 }",
         "module app; import shapes::Circle; fun f(c: Circle) {}",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1557,7 +1601,7 @@ fn an_imported_trait_is_usable_as_a_bound() {
         "module traits; public trait Show { fun show(&self); }",
         "module app; import traits::Show; fun f<T: Show>(x: T) {}",
     ]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1576,7 +1620,7 @@ fn an_imported_trait_is_usable_as_a_bound() {
 #[test]
 fn a_with_lends_binding_outlives_its_own_written_block() {
     let ast = ast_from_files(&["module app; fun f() { with x = 1 { } let y = x; }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "expected `x` to still be in scope after the `with`'s block: {diags:?}"
@@ -1589,7 +1633,7 @@ fn a_with_lends_binding_outlives_its_own_written_block() {
 #[test]
 fn a_for_loops_pattern_binding_does_not_outlive_the_loop() {
     let ast = ast_from_files(&["module app; fun f(xs: i32) { for x in xs { } let y = x; }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags)
             .iter()
@@ -1603,7 +1647,7 @@ fn a_for_loops_pattern_binding_does_not_outlive_the_loop() {
 fn a_while_lets_pattern_binding_does_not_outlive_the_loop() {
     let ast =
         ast_from_files(&["module app; fun f(opt: bool) { while let x = opt { } let y = x; }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags)
             .iter()
@@ -1618,7 +1662,7 @@ fn a_while_lets_pattern_binding_does_not_outlive_the_loop() {
 fn a_closure_parameter_shadows_an_outer_local_of_the_same_name() {
     let ast =
         ast_from_files(&["module app; fun f() { let x = 1; let g = |x: i32| { x }; let y = x; }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1632,7 +1676,7 @@ fn a_closure_parameter_shadows_an_outer_local_of_the_same_name() {
 #[test]
 fn two_generic_parameters_of_the_same_name_conflict() {
     let ast = ast_from_files(&["module app; fun f<T, T>(x: T) {}"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags)
             .iter()
@@ -1650,7 +1694,7 @@ fn two_generic_parameters_of_the_same_name_conflict() {
 #[test]
 fn a_function_may_call_itself_recursively() {
     let ast = ast_from_files(&["module app; fun fact(n: i32) -> i32 { return fact(n); }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1662,7 +1706,7 @@ fn a_function_may_call_itself_recursively() {
 #[test]
 fn two_functions_may_call_each_other_regardless_of_declaration_order() {
     let ast = ast_from_files(&["module app; fun a() { b(); } fun b() { a(); }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1674,7 +1718,7 @@ fn two_functions_may_call_each_other_regardless_of_declaration_order() {
 #[test]
 fn a_struct_may_reference_itself_through_a_field_type() {
     let ast = ast_from_files(&["module app; struct Node { next: &Node }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1686,7 +1730,7 @@ fn a_struct_may_reference_itself_through_a_field_type() {
 #[test]
 fn two_structs_may_reference_each_other_regardless_of_declaration_order() {
     let ast = ast_from_files(&["module app; struct A { b: &B } struct B { a: &A }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"
@@ -1697,7 +1741,7 @@ fn two_structs_may_reference_each_other_regardless_of_declaration_order() {
 #[test]
 fn an_enum_variant_may_reference_its_own_enum_through_a_reference() {
     let ast = ast_from_files(&["module app; enum List { cons: &List, nil }"]);
-    let (_, diags) = with_diags(|| resolve(&ast));
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
     assert!(
         non_lang_item_diags(&diags).is_empty(),
         "unexpected diagnostics: {diags:?}"

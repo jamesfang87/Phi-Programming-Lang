@@ -10,7 +10,6 @@ mod tests;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::driver::cli::Mode;
 use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
 use crate::langitems::hir::LangItems;
 use crate::mir::def_infos::{DefInfos, collect_def_infos};
@@ -18,6 +17,8 @@ use crate::mir::def_names::{DefNames, collect_def_names};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::vtables::{VtableInfo, collect_vtables};
 use crate::mir::{AnyMode, Body};
+use crate::options::Mode;
+use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
@@ -89,7 +90,13 @@ fn item_has_errors(hir: &Hir, tcx: &TyCtx, types: &TypeResolutions, def_id: DefI
     })
 }
 
-pub fn lower(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) -> Mir {
+pub fn lower(
+    session: &Session,
+    hir: &Hir,
+    tcx: &mut TyCtx,
+    types: &TypeResolutions,
+    mode: Mode,
+) -> Mir {
     let erroneous: HashSet<DefId> = hir
         .def_ids()
         .filter(|&def_id| item_has_errors(hir, tcx, types, def_id))
@@ -118,7 +125,15 @@ pub fn lower(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) ->
         if bodies.contains_key(&key) || erroneous.contains(&task.def_id()) {
             continue;
         }
-        let mut ctx = BodyLowerCtx::new(hir, tcx, types, mode, task.def_id(), task.any_mode());
+        let mut ctx = BodyLowerCtx::new(
+            session,
+            hir,
+            tcx,
+            types,
+            mode,
+            task.def_id(),
+            task.any_mode(),
+        );
         let body = ctx.lower_item(task);
         worklist.append(&mut ctx.discovered);
         bodies.insert(key, body);
@@ -128,14 +143,14 @@ pub fn lower(hir: &Hir, tcx: &mut TyCtx, types: &TypeResolutions, mode: Mode) ->
         bodies,
         vtables: collect_vtables(hir, types),
         def_infos: collect_def_infos(hir),
-        def_names: collect_def_names(hir),
+        def_names: collect_def_names(session, hir),
         lang_items: hir.lang_items().clone(),
-        main: find_crate_root_main(hir),
+        main: find_crate_root_main(session, hir),
     }
 }
 
-fn find_crate_root_main(hir: &Hir) -> Option<DefId> {
-    match crate::typeck::entry_point::crate_root_main_candidates(hir).as_slice() {
+fn find_crate_root_main(session: &Session, hir: &Hir) -> Option<DefId> {
+    match crate::typeck::entry_point::crate_root_main_candidates(session, hir).as_slice() {
         [one] => Some(*one),
         // No candidates: `typeck::entry_point` reports the missing entry point. Several
         // candidates: it reports the ambiguity. Either way codegen gets no entry point.

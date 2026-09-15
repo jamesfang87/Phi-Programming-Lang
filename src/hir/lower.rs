@@ -12,11 +12,12 @@ mod ty;
 use crate::ast::Ast;
 use crate::hir::Hir;
 use crate::nameres::NameResolutions;
+use crate::session::Session;
 use ctx::LoweringCtx;
 
 impl Hir {
-    pub fn from(ast: &Ast, res: &NameResolutions) -> Hir {
-        let mut cx = LoweringCtx::new(res);
+    pub fn from(session: &Session, ast: &Ast, res: &NameResolutions) -> Hir {
+        let mut cx = LoweringCtx::new(session, res);
 
         for mod_id in ast.mod_ids() {
             let parent_def = ast.parent(mod_id).map(|id| cx.def_ids[&id]);

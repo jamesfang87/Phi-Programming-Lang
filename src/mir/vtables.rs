@@ -49,7 +49,7 @@ pub(crate) fn collect_vtables(
         let trait_args: Option<Vec<Ty>> = extend
             .trait_generics
             .iter()
-            .map(|&id| types.ty(id))
+            .map(|&id| types.ty(id.into()))
             .collect();
 
         out.entry((self_ty, trait_def)).or_insert(VtableInfo {
@@ -69,7 +69,7 @@ mod tests {
     fn find_struct_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Struct(struct_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(struct_.name.text) == name
+                && crate::testing::resolve(struct_.name.text) == name
             {
                 return def_id;
             }
@@ -80,7 +80,7 @@ mod tests {
     fn find_trait_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Trait(trait_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(trait_.name.text) == name
+                && crate::testing::resolve(trait_.name.text) == name
             {
                 return def_id;
             }

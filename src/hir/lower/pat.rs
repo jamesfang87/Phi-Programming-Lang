@@ -3,13 +3,13 @@
 
 use crate::ast;
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{HirId, PatKind, Payload, PayloadField};
+use crate::hir::{PatId, PatKind, Payload, PayloadField};
 
 impl OwnerLowerer<'_, '_> {
-    pub(super) fn lower_pat(&mut self, p: &ast::Pat) -> HirId {
+    pub(super) fn lower_pat(&mut self, p: &ast::Pat) -> PatId {
         let hir_id = self.synth_pat(p.span, |low, _id| low.lower_pat_kind(&p.kind));
         if matches!(p.kind, ast::PatKind::Binding(_)) {
-            self.cx.record_hir_id(p.id, hir_id);
+            self.cx.record_hir_id(p.id, hir_id.into());
         }
         hir_id
     }
@@ -33,7 +33,7 @@ impl OwnerLowerer<'_, '_> {
     fn lower_pat_payload(&mut self, payload: &ast::Payload<ast::Pat>) -> Payload {
         match payload {
             ast::Payload::None => Payload::None,
-            ast::Payload::Single(inner) => Payload::Single(self.lower_pat(inner)),
+            ast::Payload::Single(inner) => Payload::Single(self.lower_pat(inner).into()),
             ast::Payload::Record(fields) => Payload::Record(
                 fields
                     .iter()
@@ -44,13 +44,13 @@ impl OwnerLowerer<'_, '_> {
                                 let name = f.name;
                                 let hir_id =
                                     self.synth_pat(f.span, move |_, _| PatKind::Binding { name });
-                                self.cx.record_hir_id(f.id, hir_id);
+                                self.cx.record_hir_id(f.id, hir_id.into());
                                 hir_id
                             }
                         };
                         PayloadField {
                             name: f.name,
-                            value,
+                            value: value.into(),
                         }
                     })
                     .collect(),

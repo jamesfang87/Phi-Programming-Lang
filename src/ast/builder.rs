@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::ast::{Ast, Ident, Module, NodeId, Path, Symbol};
-use crate::driver::source::SrcSpan;
 
 pub(super) struct AstBuilder {
     pub(super) ast: Ast,
@@ -16,14 +15,13 @@ impl AstBuilder {
                 id: root,
                 path: Path {
                     segments: Vec::new(),
-                    span: SrcSpan::new(0, 0),
                 },
                 imports: Vec::new(),
                 items: Vec::new(),
+                parent: None,
                 children: Vec::new(),
             }],
             module_positions: HashMap::from([(root, 0)]),
-            parent_module: vec![root],
             root,
         };
 
@@ -43,22 +41,18 @@ impl AstBuilder {
                 continue;
             }
             let path_segments = segments[..=i].to_vec();
-            let span = path_segments[0]
-                .span
-                .merge(path_segments[path_segments.len() - 1].span);
             let id = NodeId::next();
             let position = self.ast.modules.len();
             self.ast.modules.push(Module {
                 id,
                 path: Path {
                     segments: path_segments,
-                    span,
                 },
                 imports: Vec::new(),
                 items: Vec::new(),
+                parent: Some(current),
                 children: Vec::new(),
             });
-            self.ast.parent_module.push(current);
             self.ast.module_positions.insert(id, position);
             let current_position = self.ast.module_positions[&current];
             self.ast.modules[current_position].children.push(id);
@@ -72,23 +66,21 @@ impl AstBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::interner::Interner;
-    use crate::ast::{ModuleDecl, NodeId, ParsedSrcFile};
+    use crate::ast::{ModuleHeader, NodeId, ParsedSrcFile};
     use crate::testing::parse_src;
 
     fn with_header(mut file: ParsedSrcFile, segments: &[&str]) -> ParsedSrcFile {
         let span = file.span;
-        file.module = Some(ModuleDecl {
+        file.module = Some(ModuleHeader {
             id: NodeId::next(),
             path: Path {
                 segments: segments
                     .iter()
                     .map(|s| Ident {
-                        text: Interner::intern(s),
+                        text: crate::testing::intern(s),
                         span,
                     })
                     .collect(),
-                span,
             },
             span,
         });
@@ -100,7 +92,7 @@ mod tests {
             .path
             .segments
             .iter()
-            .map(|seg| Interner::resolve(seg.text).to_string())
+            .map(|seg| crate::testing::resolve(seg.text).to_string())
             .collect()
     }
 

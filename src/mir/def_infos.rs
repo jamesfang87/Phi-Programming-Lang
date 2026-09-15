@@ -26,7 +26,8 @@ pub enum DefKind {
     Enum,
     Trait,
     Extend,
-    Closure,
+    Closure, // TODO: Closure is treated as a DefKind, but does the current code after lowering
+             // (like borrowck, typeck) do that?
 }
 
 /// Everything one definition contributes to the passes that run after it was lowered.
@@ -70,18 +71,14 @@ impl DefInfos {
         self.get(def).parent
     }
 
-    /// The def's own declared generics. Empty for anything that declares none, including a
-    /// closure, whose body mentions only its enclosing definition's parameters.
     pub fn generics(&self, def: DefId) -> &[HirId] {
         &self.get(def).generics
     }
 
-    /// The trait a method was declared by, and its slot in that trait's vtable.
     pub fn trait_method(&self, def: DefId) -> Option<(DefId, u32)> {
         self.get(def).trait_method
     }
 
-    /// The vtable slot of a trait method, `None` for anything else.
     pub fn vtable_slot(&self, def: DefId) -> Option<u32> {
         self.trait_method(def).map(|(_, slot)| slot)
     }
@@ -146,7 +143,7 @@ mod tests {
     use crate::mir::def_names::collect_def_names;
 
     fn named(hir: &Hir, name: &str) -> DefId {
-        let names = collect_def_names(hir);
+        let names = collect_def_names(crate::testing::session(), hir);
         hir.def_ids()
             .find(|&def| names.def_name(def) == name)
             .unwrap_or_else(|| panic!("fixture declares no definition named {name:?}"))

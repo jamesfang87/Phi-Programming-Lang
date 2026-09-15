@@ -9,6 +9,7 @@ use crate::mir::{
     BasicBlock, BasicBlockData, Body, Operand, Place, Rvalue, Statement, StatementKind, Terminator,
     TerminatorKind, lower::Mir,
 };
+use crate::session::Session;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AccessKind {
@@ -16,23 +17,30 @@ enum AccessKind {
     Write,
 }
 
-pub fn check(mir: &Mir) {
+pub fn check(session: &Session, mir: &Mir) {
     let lifetimes = lifetimes::compute(mir);
     for (key, body) in &mir.bodies {
         if let Some(body_lifetimes) = lifetimes.get(key) {
-            check_body(body, body_lifetimes);
+            check_body(session, body, body_lifetimes);
         }
     }
 }
 
-fn check_body(body: &Body, lifetimes: &Lifetimes) {
+fn check_body(session: &Session, body: &Body, lifetimes: &Lifetimes) {
     for (index, block) in body.basic_blocks.iter().enumerate() {
         let id = BasicBlock::from_usize(index);
         let live_at_point = live_aliases_by_point(id, block, lifetimes);
         for (stmt_index, stmt) in block.statements.iter().enumerate() {
-            check_statement(body, &lifetimes.aliases, &live_at_point[stmt_index], stmt);
+            check_statement(
+                session,
+                body,
+                &lifetimes.aliases,
+                &live_at_point[stmt_index],
+                stmt,
+            );
         }
         check_terminator(
+            session,
             body,
             &lifetimes.aliases,
             &live_at_point[block.statements.len()],
@@ -69,13 +77,14 @@ fn access_kind_for_borrow(mutability: Mutability) -> AccessKind {
     }
 }
 
-fn report_conflict(body: &Body, register: &Register, span: SrcSpan) {
+fn report_conflict(session: &Session, body: &Body, register: &Register, span: SrcSpan) {
     if let Some(name) = body.local_decls[register.owner.index()].name {
-        report_exclusivity_violation(name, span);
+        report_exclusivity_violation(session, name, span);
     }
 }
 
 fn check_register_access(
+    session: &Session,
     body: &Body,
     aliases: &HashMap<AliasId, Alias>,
     live: &HashSet<AliasId>,
@@ -87,7 +96,7 @@ fn check_register_access(
         let Some(alias) = aliases.get(alias_id) else {
             continue;
         };
-        if !registers_conflict(register, &alias.borrows) {
+        if !registers_conflict(register, &alias.register) {
             continue;
         }
         let conflicts = match kind {
@@ -95,13 +104,14 @@ fn check_register_access(
             AccessKind::Write => true,
         };
         if conflicts {
-            report_conflict(body, register, span);
+            report_conflict(session, body, register, span);
             return;
         }
     }
 }
 
 fn check_place_access(
+    session: &Session,
     body: &Body,
     aliases: &HashMap<AliasId, Alias>,
     live: &HashSet<AliasId>,
@@ -109,10 +119,19 @@ fn check_place_access(
     kind: AccessKind,
     span: SrcSpan,
 ) {
-    check_register_access(body, aliases, live, &register_of(place), kind, span);
+    check_register_access(
+        session,
+        body,
+        aliases,
+        live,
+        &register_of(place),
+        kind,
+        span,
+    );
 }
 
 fn check_operand(
+    session: &Session,
     body: &Body,
     aliases: &HashMap<AliasId, Alias>,
     live: &HashSet<AliasId>,
@@ -121,16 +140,17 @@ fn check_operand(
 ) {
     match operand {
         Operand::Copy(place) => {
-            check_place_access(body, aliases, live, place, AccessKind::Read, span)
+            check_place_access(session, body, aliases, live, place, AccessKind::Read, span)
         }
         Operand::Move(place) => {
-            check_place_access(body, aliases, live, place, AccessKind::Write, span)
+            check_place_access(session, body, aliases, live, place, AccessKind::Write, span)
         }
         Operand::Constant(_) => {}
     }
 }
 
 fn check_assign_rvalue(
+    session: &Session,
     body: &Body,
     aliases: &HashMap<AliasId, Alias>,
     live: &HashSet<AliasId>,
@@ -140,6 +160,7 @@ fn check_assign_rvalue(
     match rvalue {
         Rvalue::Ref { mutability, place } => {
             check_place_access(
+                session,
                 body,
                 aliases,
                 live,
@@ -153,7 +174,7 @@ fn check_assign_rvalue(
         | Rvalue::Cast { operand, .. }
         | Rvalue::New(operand)
         | Rvalue::Unsize { operand, .. } => {
-            check_operand(body, aliases, live, operand, span);
+            check_operand(session, body, aliases, live, operand, span);
         }
         Rvalue::BinaryOp(_, lhs, rhs)
         | Rvalue::CheckedBinaryOp(_, lhs, rhs)
@@ -161,21 +182,22 @@ fn check_assign_rvalue(
             elem: lhs,
             count: rhs,
         } => {
-            check_operand(body, aliases, live, lhs, span);
-            check_operand(body, aliases, live, rhs, span);
+            check_operand(session, body, aliases, live, lhs, span);
+            check_operand(session, body, aliases, live, rhs, span);
         }
         Rvalue::Aggregate(_, operands) => {
             for operand in operands {
-                check_operand(body, aliases, live, operand, span);
+                check_operand(session, body, aliases, live, operand, span);
             }
         }
         Rvalue::Discriminant(place) | Rvalue::Len(place) => {
-            check_place_access(body, aliases, live, place, AccessKind::Read, span);
+            check_place_access(session, body, aliases, live, place, AccessKind::Read, span);
         }
     }
 }
 
 fn check_statement(
+    session: &Session,
     body: &Body,
     aliases: &HashMap<AliasId, Alias>,
     live: &HashSet<AliasId>,
@@ -183,14 +205,38 @@ fn check_statement(
 ) {
     match &stmt.kind {
         StatementKind::Assign(place, rvalue) => {
-            check_assign_rvalue(body, aliases, live, rvalue, stmt.span);
-            check_place_access(body, aliases, live, place, AccessKind::Write, stmt.span);
+            check_assign_rvalue(session, body, aliases, live, rvalue, stmt.span);
+            check_place_access(
+                session,
+                body,
+                aliases,
+                live,
+                place,
+                AccessKind::Write,
+                stmt.span,
+            );
         }
         StatementKind::PlaceMention(place) => {
-            check_place_access(body, aliases, live, place, AccessKind::Read, stmt.span);
+            check_place_access(
+                session,
+                body,
+                aliases,
+                live,
+                place,
+                AccessKind::Read,
+                stmt.span,
+            );
         }
         StatementKind::SetDiscriminant { place, .. } => {
-            check_place_access(body, aliases, live, place, AccessKind::Write, stmt.span);
+            check_place_access(
+                session,
+                body,
+                aliases,
+                live,
+                place,
+                AccessKind::Write,
+                stmt.span,
+            );
         }
         StatementKind::StorageLive(_)
         | StatementKind::StorageDead(_)
@@ -199,6 +245,7 @@ fn check_statement(
 }
 
 fn check_terminator(
+    session: &Session,
     body: &Body,
     aliases: &HashMap<AliasId, Alias>,
     live: &HashSet<AliasId>,
@@ -206,12 +253,12 @@ fn check_terminator(
 ) {
     match &terminator.kind {
         TerminatorKind::SwitchInt { discr, .. } => {
-            check_operand(body, aliases, live, discr, terminator.span);
+            check_operand(session, body, aliases, live, discr, terminator.span);
         }
         TerminatorKind::Assert { cond, msg, .. } => {
-            check_operand(body, aliases, live, cond, terminator.span);
+            check_operand(session, body, aliases, live, cond, terminator.span);
             if let Some(msg) = msg.user_message() {
-                check_operand(body, aliases, live, msg, terminator.span);
+                check_operand(session, body, aliases, live, msg, terminator.span);
             }
         }
         TerminatorKind::Call {
@@ -220,11 +267,12 @@ fn check_terminator(
             destination,
             ..
         } => {
-            check_operand(body, aliases, live, func, terminator.span);
+            check_operand(session, body, aliases, live, func, terminator.span);
             for arg in args {
-                check_operand(body, aliases, live, arg, terminator.span);
+                check_operand(session, body, aliases, live, arg, terminator.span);
             }
             check_place_access(
+                session,
                 body,
                 aliases,
                 live,
@@ -235,6 +283,7 @@ fn check_terminator(
         }
         TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
             check_place_access(
+                session,
                 body,
                 aliases,
                 live,

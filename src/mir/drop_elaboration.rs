@@ -81,10 +81,23 @@ struct Insertion {
 }
 
 fn elaborate_body(tcx: &mut TyCtx, body: &mut Body) {
-    let entry_states = move_state::analyze(body);
+    // Only locals that can actually need a drop participate in the move analysis. A drop plan is
+    // only ever asked about a place whose type `needs_drop` (`tree::plan` returns `None`
+    // otherwise), and the analysis never lets two different owners interact, so a register for a
+    // non-droppable local -- the overwhelming majority of temporaries in ordinary code -- can
+    // never affect a droppable one's answered status. Excluding them keeps the state sets
+    // proportional to the droppable locals instead of to every local, which is what made this
+    // pass superlinear on scalar-heavy functions.
+    let droppable: Vec<bool> = body
+        .local_decls
+        .iter()
+        .map(|decl| tcx.needs_drop(decl.ty))
+        .collect();
+
+    let entry_states = move_state::analyze(&droppable, body);
     let bool_ty = tcx.mk_prim(PrimTy::Bool);
     let mut flags = FlagLocals::new(bool_ty, body);
-    let insertions = plan_insertions(tcx, body, &entry_states, &mut flags);
+    let insertions = plan_insertions(tcx, body, &entry_states, &droppable, &mut flags);
 
     if insertions.iter().all(|block| block.is_empty()) {
         return;
@@ -101,6 +114,7 @@ fn plan_insertions(
     tcx: &mut TyCtx,
     body: &Body,
     entry_states: &[MoveState],
+    droppable: &[bool],
     flags: &mut FlagLocals,
 ) -> Vec<Vec<Insertion>> {
     let reachable = reachable_blocks(body);
@@ -118,7 +132,7 @@ fn plan_insertions(
             if let Some(tree) = plan_at_statement(tcx, body, &state, flags, statement) {
                 block_insertions.push(Insertion { before, tree });
             }
-            state.apply_statement(statement);
+            state.apply_statement(droppable, statement);
         }
 
         if matches!(block.terminator.kind, TerminatorKind::Return)

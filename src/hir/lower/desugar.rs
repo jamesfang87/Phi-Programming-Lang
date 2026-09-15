@@ -1,8 +1,7 @@
 use crate::ast;
-use crate::ast::interner::Interner;
 use crate::ast::{Ident, Mutability};
 use crate::hir::lower::owner::OwnerLowerer;
-use crate::hir::{AccessArgs, ExprKind, HirId, LoopSource, PatKind, Payload, StmtKind};
+use crate::hir::{AccessArgs, ExprId, ExprKind, LoopSource, PatKind, Payload, StmtKind};
 
 impl OwnerLowerer<'_, '_> {
     /// `if let pat = scrutinee { then } else { else }` desugars to
@@ -45,7 +44,7 @@ impl OwnerLowerer<'_, '_> {
         pat: &ast::Pat,
         scrutinee: &ast::Expr,
         body: &ast::Block,
-    ) -> HirId {
+    ) -> ExprId {
         let span = scrutinee.span;
         self.synth_expr(span, |low, _loop_id| {
             let loop_body = low.synth_block(body.span, |low, _block_id| {
@@ -83,7 +82,7 @@ impl OwnerLowerer<'_, '_> {
     }
 
     /// `while cond { body }` desugars to `loop { if !cond { break }; body }`.
-    pub(super) fn lower_while(&mut self, cond: &ast::Expr, body: &ast::Block) -> HirId {
+    pub(super) fn lower_while(&mut self, cond: &ast::Expr, body: &ast::Block) -> ExprId {
         let span = cond.span;
         self.synth_expr(span, |low, _loop_id| {
             let loop_body = low.synth_block(body.span, |low, _block_id| {
@@ -128,12 +127,13 @@ impl OwnerLowerer<'_, '_> {
         pat: &ast::Pat,
         iter: &ast::Expr,
         body: &ast::Block,
-    ) -> HirId {
+    ) -> ExprId {
         let span = iter.span;
+        let session = self.cx.session;
         self.synth_expr(span, |low, _outer_id| {
             let inner_block = low.synth_block(span, |low, _block_id| {
                 let iter_ident = Ident {
-                    text: Interner::intern("__iter"),
+                    text: session.intern("__iter"),
                     span,
                 };
 
@@ -159,16 +159,15 @@ impl OwnerLowerer<'_, '_> {
                                 let receiver = low.synth_expr(span, move |_, _| {
                                     ExprKind::Path(crate::hir::Path {
                                         segments: vec![iter_ident],
-                                        span,
                                         res: crate::hir::Res::Local(crate::hir::Local::Variable(
-                                            iter_pat,
+                                            iter_pat.into(),
                                         )),
                                     })
                                 });
                                 ExprKind::Access {
                                     base: receiver,
                                     member: Ident {
-                                        text: Interner::intern("next"),
+                                        text: session.intern("next"),
                                         span,
                                     },
                                     args: AccessArgs::Call(Vec::new()),
@@ -180,10 +179,10 @@ impl OwnerLowerer<'_, '_> {
                                     let user_pat = low.lower_pat(pat);
                                     PatKind::Variant {
                                         variant: Ident {
-                                            text: Interner::intern("some"),
+                                            text: session.intern("some"),
                                             span,
                                         },
-                                        payload: Payload::Single(user_pat),
+                                        payload: Payload::Single(user_pat.into()),
                                     }
                                 });
                                 let some_block = low.lower_block(body);
@@ -193,7 +192,7 @@ impl OwnerLowerer<'_, '_> {
                             let none_arm = low.synth_arm(span, |low, _arm_id| {
                                 let none_pat = low.synth_pat(span, |_, _| PatKind::Variant {
                                     variant: Ident {
-                                        text: Interner::intern("none"),
+                                        text: session.intern("none"),
                                         span,
                                     },
                                     payload: Payload::None,

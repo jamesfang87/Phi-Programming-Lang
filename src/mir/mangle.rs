@@ -92,7 +92,8 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{first_function, lower_to_hir, lower_to_mir};
+    use crate::nameres::PrimTy;
+    use crate::testing::{first_function, lower_to_hir, lower_to_mir, named_def};
 
     fn mangled(src: &str) -> Vec<(Instance, String)> {
         let (_hir, tcx, _types, mir, instances) = lower_to_mir(src);
@@ -116,10 +117,16 @@ mod tests {
     #[test]
     fn mangling_the_same_instance_twice_is_stable() {
         let hir = lower_to_hir("fun f() {}");
-        crate::diagnostics::DiagCtx::clear();
-        let checked = crate::typeck::check(&hir);
+        crate::testing::clear_diagnostics();
+        let checked = crate::typeck::check(crate::testing::session(), &hir);
         let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-        let mir = crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+        let mir = crate::mir::lower::lower(
+            crate::testing::session(),
+            &hir,
+            &mut tcx,
+            &types,
+            crate::options::Mode::Debug,
+        );
         let def = first_function(&hir);
         let instance = Instance {
             def,
@@ -146,5 +153,79 @@ mod tests {
             names.len(),
             "every instance mangles to a distinct name: {names:?}"
         );
+    }
+
+    #[test]
+    fn every_type_kind_has_its_own_spelling() {
+        let (hir, mut tcx, _types, mir, _instances) = lower_to_mir(
+            "struct Foo { public a: i32 }
+             trait Marker {}
+             fun f() {}",
+        );
+        let foo = named_def(&hir, "Foo");
+        let marker = named_def(&hir, "Marker");
+
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let foo_ty = tcx.mk_adt(foo, vec![]);
+        let ref_i32 = tcx.mk_ref(i32_ty, Mutability::Immutable);
+        let refmut_i32 = tcx.mk_ref(i32_ty, Mutability::Mutable);
+        let any_i32 = tcx.mk_any(i32_ty);
+        let iso_i32 = tcx.mk_iso(i32_ty);
+        let tuple = tcx.mk_tuple(vec![i32_ty, foo_ty]);
+        let array = tcx.mk_array(i32_ty, Some(3));
+        let fun = tcx.mk_fun(vec![i32_ty], None);
+        let dyn_marker = tcx.mk_dyn(marker, vec![]);
+        let unit = tcx.unit();
+        let never = tcx.never();
+        let error = tcx.error();
+
+        assert_eq!(mangle_ty(&mir, &tcx, i32_ty), "I32");
+        assert_eq!(mangle_ty(&mir, &tcx, foo_ty), "Foo");
+        assert_eq!(mangle_ty(&mir, &tcx, ref_i32), "ref_I32");
+        assert_eq!(mangle_ty(&mir, &tcx, refmut_i32), "refmut_I32");
+        assert_eq!(mangle_ty(&mir, &tcx, any_i32), "any_I32");
+        assert_eq!(mangle_ty(&mir, &tcx, iso_i32), "iso_I32");
+        assert_eq!(mangle_ty(&mir, &tcx, tuple), "tuple_I32_Foo");
+        assert_eq!(mangle_ty(&mir, &tcx, array), "array_I32");
+        assert_eq!(mangle_ty(&mir, &tcx, fun), "fn_I32_unit");
+        assert_eq!(mangle_ty(&mir, &tcx, dyn_marker), "dyn_Marker");
+        assert_eq!(mangle_ty(&mir, &tcx, unit), "unit");
+        assert_eq!(mangle_ty(&mir, &tcx, never), "never");
+        assert_eq!(mangle_ty(&mir, &tcx, error), "error");
+    }
+
+    #[test]
+    fn an_any_mode_instance_carries_the_mode_in_its_name() {
+        let (hir, tcx, _types, mir, _instances) = lower_to_mir("fun f() {}");
+        let def = first_function(&hir);
+        let name = |any_mode| {
+            mangle(
+                &mir,
+                &tcx,
+                &Instance {
+                    def,
+                    any_mode,
+                    args: Vec::new(),
+                    self_ty: None,
+                },
+            )
+        };
+
+        let owned = name(Some(AnyMode::Owned));
+        let by_ref = name(Some(AnyMode::Ref));
+        let by_ref_mut = name(Some(AnyMode::RefMut));
+
+        assert!(owned.contains("_owned_"), "{owned}");
+        assert!(by_ref.contains("_ref_"), "{by_ref}");
+        assert!(by_ref_mut.contains("_refmut_"), "{by_ref_mut}");
+    }
+
+    #[test]
+    #[should_panic(expected = "is still unresolved")]
+    fn an_unresolved_type_cannot_be_mangled() {
+        let (_hir, mut tcx, _types, mir, _instances) = lower_to_mir("fun f() {}");
+        let generic = tcx.mk_generic(crate::hir::DefId::from_usize(0).owner_id());
+
+        mangle_ty(&mir, &tcx, generic);
     }
 }

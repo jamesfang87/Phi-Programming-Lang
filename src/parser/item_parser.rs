@@ -3,17 +3,17 @@ use chumsky::prelude::*;
 
 use crate::ast::Ident;
 use crate::ast::Import;
-use crate::ast::ModuleDecl;
+use crate::ast::ModuleHeader;
 use crate::ast::{
-    Block, Bound, Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param, Path,
-    SelfMode, SelfParam, Struct, Trait, Ty, Variant, VariantPayload, Visibility,
+    Block, Bound, Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param,
+    ParsedItem, Path, SelfMode, SelfParam, Struct, Trait, Ty, Variant, VariantPayload, Visibility,
 };
 
 use crate::lexer::token::{Token, TokenKind};
 
 use super::{BoxedP, Parser};
 
-impl Parser {
+impl<'s> Parser<'s> {
     pub(crate) fn bound_parser<'a>(&'a self, ty: BoxedP<'a, Ty>) -> BoxedP<'a, Bound> {
         self.path_parser()
             .clone()
@@ -30,18 +30,18 @@ impl Parser {
             )
             .map(|(path, args): (Path, Option<(Vec<Ty>, Token)>)| {
                 let (args, span) = match args {
-                    Some((args, close_tok)) => (args, path.span.merge(close_tok.span)),
-                    None => (Vec::new(), path.span),
+                    Some((args, close_tok)) => (args, path.span().merge(close_tok.span)),
+                    None => (Vec::new(), path.span()),
                 };
                 Bound { path, args, span }
             })
             .boxed()
     }
 
-    pub fn item_parser<'a>(&'a self) -> BoxedP<'a, Item> {
+    pub fn item_parser<'a>(&'a self) -> BoxedP<'a, ParsedItem> {
         let ident = self.ident_parser();
-        let type_p = self.type_parser();
-        let block = self.block_parser();
+        let (expr, block) = self.expr_and_block_parsers();
+        let type_p = self.type_parser_with_expr(expr);
 
         let visibility = self
             .kind(TokenKind::PublicKw)
@@ -482,13 +482,13 @@ impl Parser {
             .then(self.kind(TokenKind::Semicolon))
             .map(|((mod_tok, path), semi_tok)| {
                 let span = mod_tok.span.merge(semi_tok.span);
-                let module = ModuleDecl {
+                let module = ModuleHeader {
                     id: NodeId::next(),
                     path,
                     span,
                 };
 
-                Item::new(ItemKind::ModuleDecl(module), span)
+                ParsedItem::Module(module)
             })
             .boxed();
 
@@ -529,19 +529,24 @@ impl Parser {
                     span,
                 };
 
-                Item::new(ItemKind::Import(import), span)
+                ParsedItem::Import(import)
             })
             .boxed();
 
+        // TODO: only `fun`/`struct`/`enum`/`trait`/`extend`/`module`/`import` are parsed --
+        // there is no `const`, `static`, or `type` alias, so those programs are rejected
+        // here even though real code needs them (see `ItemKind`).
         choice((
-            function_decl(/*allow_no_impl=*/ true).map(|fun: Function| {
-                let span = fun.span;
-                Item::new(ItemKind::Function(fun), span)
-            }),
-            struct_decl,
-            enum_decl,
-            trait_decl,
-            extend,
+            function_decl(/*allow_no_impl=*/ true)
+                .map(|fun: Function| {
+                    let span = fun.span;
+                    Item::new(ItemKind::Function(fun), span)
+                })
+                .map(ParsedItem::Item),
+            struct_decl.map(ParsedItem::Item),
+            enum_decl.map(ParsedItem::Item),
+            trait_decl.map(ParsedItem::Item),
+            extend.map(ParsedItem::Item),
             module_decl,
             import,
         ))
@@ -554,14 +559,13 @@ mod tests {
     use super::*;
     use crate::ast::SelfMode;
     use crate::ast::TyKind;
-    use crate::ast::interner::Interner;
     use crate::lexer::describe::Descriptor;
     use crate::lexer::token::ITEM_STARTERS;
     use crate::testing::lex_src;
 
-    fn parse_item(src: &str) -> Item {
+    fn parse_parsed_item(src: &str) -> ParsedItem {
         let (tokens, _) = lex_src(src);
-        let parser = Parser::new();
+        let parser = Parser::new(crate::testing::session());
         let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
         assert!(
             errors.is_empty(),
@@ -570,8 +574,15 @@ mod tests {
         output.expect("expected a successfully parsed item")
     }
 
+    fn parse_item(src: &str) -> Item {
+        match parse_parsed_item(src) {
+            ParsedItem::Item(item) => item,
+            other => panic!("expected a definition item, got {other:?}"),
+        }
+    }
+
     fn text(ident: Ident) -> &'static str {
-        Interner::resolve(ident.text)
+        crate::testing::resolve(ident.text)
     }
 
     fn as_function(item: &Item) -> &Function {
@@ -680,7 +691,7 @@ mod tests {
     #[test]
     fn a_receiver_needs_a_comma_before_a_named_parameter() {
         let (tokens, _) = lex_src("fun f(self x: i32) {}");
-        let parser = Parser::new();
+        let parser = Parser::new(crate::testing::session());
         let (_, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
         assert!(
             !errors.is_empty(),
@@ -844,7 +855,7 @@ mod tests {
                     );
                 };
                 assert_eq!(path.segments.len(), 1);
-                assert_eq!(Interner::resolve(path.segments[0].text), "i32");
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "i32");
                 assert!(args.is_empty());
             }
             other => panic!("expected an extend item, got {other:?}"),
@@ -862,7 +873,7 @@ mod tests {
                         e.self_ty.kind
                     );
                 };
-                assert_eq!(Interner::resolve(path.segments[0].text), "bool");
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "bool");
                 assert!(e.trait_path.is_some());
             }
             other => panic!("expected an extend item, got {other:?}"),
@@ -926,9 +937,9 @@ mod tests {
 
     #[test]
     fn parses_module_decl() {
-        let item = parse_item("module math::vector;");
-        match &item.kind {
-            ItemKind::ModuleDecl(m) => {
+        let item = parse_parsed_item("module math::vector;");
+        match &item {
+            ParsedItem::Module(m) => {
                 assert_eq!(m.path.segments.len(), 2);
                 assert_eq!(text(m.path.segments[0]), "math");
                 assert_eq!(text(m.path.segments[1]), "vector");
@@ -939,9 +950,9 @@ mod tests {
 
     #[test]
     fn parses_plain_import() {
-        let item = parse_item("import math::vector;");
-        match &item.kind {
-            ItemKind::Import(i) => {
+        let item = parse_parsed_item("import math::vector;");
+        match &item {
+            ParsedItem::Import(i) => {
                 assert_eq!(i.path.segments.len(), 2);
                 assert!(!i.glob);
                 assert!(i.alias.is_none());
@@ -952,9 +963,9 @@ mod tests {
 
     #[test]
     fn parses_glob_import() {
-        let item = parse_item("import math::*;");
-        match &item.kind {
-            ItemKind::Import(i) => {
+        let item = parse_parsed_item("import math::*;");
+        match &item {
+            ParsedItem::Import(i) => {
                 assert!(i.glob);
                 assert!(i.alias.is_none());
             }
@@ -964,9 +975,9 @@ mod tests {
 
     #[test]
     fn parses_aliased_import() {
-        let item = parse_item("import math::vector as mv;");
-        match &item.kind {
-            ItemKind::Import(i) => {
+        let item = parse_parsed_item("import math::vector as mv;");
+        match &item {
+            ParsedItem::Import(i) => {
                 assert!(!i.glob);
                 let alias = i.alias.expect("expected an alias");
                 assert_eq!(text(alias), "mv");
@@ -1002,12 +1013,18 @@ mod tests {
             // Spans are global offsets into the `SrcMap`, so the declaration must cover
             // exactly the file's span.
             let (tokens, offset) = lex_src(src);
-            let parser = Parser::new();
+            let parser = Parser::new(crate::testing::session());
             let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
             assert!(errors.is_empty(), "for {kind:?}: {errors:?}");
             let item = output.expect("expected a successfully parsed item");
-            assert_eq!(item.span.as_tuple(), (offset, offset + src.chars().count()));
-            assert!(!matches!(item.kind, ItemKind::Error), "for {kind:?}");
+            assert_eq!(
+                item.span().as_tuple(),
+                (offset, offset + src.chars().count())
+            );
+            assert!(
+                !matches!(item, ParsedItem::Item(ref i) if matches!(i.kind, ItemKind::Error)),
+                "for {kind:?}"
+            );
         }
     }
 }

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::driver::{pipeline, project};
+use crate::options::Mode;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Dumps {
@@ -52,19 +53,12 @@ impl BuildOptions {
                 hir: debug || has("--hir"),
                 mir: debug || has("--mir"),
                 llvm: has("--llvm"),
-                nameres: debug,
+                nameres: debug || has("--surface-nameres"),
                 typeck: debug,
             },
             exclude_core_in_emit: has("--no-emit-core"),
         })
     }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    #[default]
-    Debug,
-    Release,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +77,9 @@ pub struct Config {
 struct Manifest {
     project: ManifestProject,
     profile: Option<ManifestProfile>,
+    // TODO: `Phi.toml` has no `[dependencies]` table, so a project cannot depend on
+    // other packages/versions. Real projects need dependency resolution (even if v1 only
+    // supports local path dependencies), otherwise every program is a single crate.
 }
 
 #[derive(Deserialize)]
@@ -137,6 +134,9 @@ impl Config {
 pub enum CliArgs {
     Build(BuildOptions),
     Check(BuildOptions),
+    // TODO: `run` accepts no arguments, so a compiled program can never receive argv
+    // (`phi run -- foo` is rejected). Real programs need command-line arguments, so `Run`
+    // must carry trailing args and `pipeline::run` must forward them to the child process.
     Run,
     New(String),
     Init,
@@ -266,8 +266,6 @@ mod tests {
         );
     }
 
-    /// `--emit-debug` implies every stage that exists, which is why each stage can ask a
-    /// single question. It leaves `mir` and `llvm` alone because those stages don't exist.
     #[test]
     fn emit_debug_dumps_every_implemented_stage() {
         let dumps = opts(&["--emit-debug"])
@@ -312,6 +310,20 @@ mod tests {
         let dumps = opts(&["--mir", "--llvm"]).expect("both are accepted").dumps;
         assert!(dumps.mir);
         assert!(dumps.llvm);
+    }
+
+    #[test]
+    fn surface_nameres_dumps_only_nameres() {
+        let dumps = opts(&["--surface-nameres"])
+            .expect("--surface-nameres is valid")
+            .dumps;
+        assert_eq!(
+            dumps,
+            Dumps {
+                nameres: true,
+                ..Dumps::default()
+            }
+        );
     }
 
     #[test]

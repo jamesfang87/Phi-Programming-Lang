@@ -1,9 +1,8 @@
-use crate::ast::interner::Interner;
 use crate::ast::visit::{self, Visitor};
 use crate::ast::{
-    AccessArgs, Arm, Ast, Block, ClosureParam, Enum, Expr, ExprKind, Extend, Function, Generic,
-    Ident, Item, NodeId, Pat, PatKind, Path, Payload, PayloadField, Stmt, StmtKind, Struct, Trait,
-    Ty, TyKind,
+    AccessArgs, Arm, Ast, Block, Bound, ClosureParam, Enum, Expr, ExprKind, Extend, Function,
+    Generic, Ident, Item, NodeId, Pat, PatKind, Path, Payload, PayloadField, Stmt, StmtKind,
+    Struct, Trait, Ty, TyKind,
 };
 use crate::diagnostics::nameres::{
     report_conflict, report_duplicate_bound, report_not_found, report_self_extend,
@@ -12,8 +11,10 @@ use crate::driver::source::SrcSpan;
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::nameres::results::NameResolutions;
 use crate::nameres::symbol_table::SymbolTable;
+use crate::session::Session;
 
 pub(super) struct Resolver<'ast> {
+    session: &'ast Session,
     pub(super) table: SymbolTable<'ast>,
     results: NameResolutions,
     /// This is used as `from` in lookups SymbolTable
@@ -22,22 +23,27 @@ pub(super) struct Resolver<'ast> {
     current_item: Option<NodeId>,
 }
 
-pub fn resolve(ast: &Ast) -> NameResolutions {
-    let mut r = Resolver::new(SymbolTable::new(ast), ast.root_id());
+pub fn resolve(session: &Session, ast: &Ast) -> NameResolutions {
+    let mut r = Resolver::new(session, SymbolTable::new(session, ast), ast.root_id());
 
     for mod_id in ast.mod_ids() {
         r.current_module = mod_id;
         r.resolve_module(ast, mod_id);
     }
 
-    let lang_items = crate::langitems::ast::collect(&r.table, ast.root_id());
+    let lang_items = crate::langitems::ast::collect(session, &r.table, ast.root_id());
     r.results.lang_items = lang_items;
     r.results
 }
 
 impl<'ast> Resolver<'ast> {
-    pub(super) fn new(table: SymbolTable<'ast>, current_module: NodeId) -> Self {
+    pub(super) fn new(
+        session: &'ast Session,
+        table: SymbolTable<'ast>,
+        current_module: NodeId,
+    ) -> Self {
         Resolver {
+            session,
             table,
             results: NameResolutions::new(),
             current_module,
@@ -54,17 +60,11 @@ impl<'ast> Resolver<'ast> {
     fn push_generics(&mut self, generics: &'ast [Generic]) {
         self.table.push_generics();
         for g in generics {
-            if self
-                .table
-                .lookup_generic_in_outermost_scope(g.name.text)
-                .is_some()
-            {
-                report_conflict(g.name);
+            if self.table.lookup_generic_locally(g.name.text).is_some() {
+                report_conflict(self.session, g.name);
                 continue;
             }
             self.table.insert_generic(g.name.text, Type::Generic(g.id));
-        }
-        for g in generics {
             self.resolve_bounds(g);
         }
     }
@@ -73,9 +73,14 @@ impl<'ast> Resolver<'ast> {
         let Some(bounds) = &g.bounds else {
             return;
         };
+        let mut seen: Vec<&'ast Bound> = Vec::new();
         for bound in bounds {
-            if self.results.get(g.id, &bound.path).is_some() {
+            let duplicate = seen
+                .iter()
+                .any(|other| other.path == bound.path && self.same_bound_args(other, bound));
+            if duplicate {
                 report_duplicate_bound(
+                    self.session,
                     *bound
                         .path
                         .segments
@@ -84,14 +89,25 @@ impl<'ast> Resolver<'ast> {
                 );
                 continue;
             }
-            let res = self
-                .table
-                .lookup_type_path(self.current_module, &bound.path);
-            self.results.record(g.id, bound.path.clone(), res);
+            seen.push(bound);
+            if self.results.get(g.id, &bound.path).is_none() {
+                let res = self
+                    .table
+                    .lookup_type_path(self.current_module, &bound.path);
+                self.results.record(g.id, bound.path.clone(), res);
+            }
             for arg in &bound.args {
                 self.visit_ty(arg);
             }
         }
+    }
+
+    fn same_bound_args(&self, a: &Bound, b: &Bound) -> bool {
+        a.args.len() == b.args.len()
+            && a.args
+                .iter()
+                .zip(&b.args)
+                .all(|(x, y)| self.session.text_of(x.span) == self.session.text_of(y.span))
     }
 
     fn visit_record_fields(&mut self, fields: &'ast [PayloadField<Expr>]) {
@@ -104,7 +120,7 @@ impl<'ast> Resolver<'ast> {
                         .table
                         .lookup_value_path(self.current_module, &path)
                         .unwrap_or_else(|| {
-                            report_not_found(field.name);
+                            report_not_found(self.session, field.name);
                             Res::Err
                         });
                     self.results.record(field.id, path, res);
@@ -135,7 +151,8 @@ impl<'ast> Resolver<'ast> {
             }
             ExprKind::SelfKw => {
                 let res = self.table.lookup_self_res(base.span);
-                self.results.record(base.id, Path::self_kw(base.span), res);
+                self.results
+                    .record(base.id, Path::self_kw(self.session, base.span), res);
             }
             _ => self.visit_expr(base),
         }
@@ -158,9 +175,9 @@ impl<'ast> Resolver<'ast> {
     }
 }
 
-fn ident_for_lowercase_self(span: SrcSpan) -> Ident {
+fn ident_for_lowercase_self(session: &Session, span: SrcSpan) -> Ident {
     Ident {
-        text: Interner::intern("self"),
+        text: session.intern("self"),
         span,
     }
 }
@@ -184,7 +201,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         self.table.push_scope();
         if let Some(self_param) = &f.self_param {
             self.table.insert_local(
-                ident_for_lowercase_self(self_param.span),
+                ident_for_lowercase_self(self.session, self_param.span),
                 Local::SelfParam(self_param.id),
             );
         }
@@ -246,6 +263,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             };
             if self_ty_names_itself {
                 report_self_extend(
+                    self.session,
                     *trait_path
                         .segments
                         .last()
@@ -262,7 +280,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             TyKind::Path { path, .. } => self.results.get(e.self_ty.id, path),
             TyKind::SelfTy { .. } => self
                 .results
-                .get(e.self_ty.id, &Path::self_kw(e.self_ty.span)),
+                .get(e.self_ty.id, &Path::self_kw(self.session, e.self_ty.span)),
             _ => None,
         };
 
@@ -307,7 +325,8 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             }
             TyKind::SelfTy => {
                 let res = self.table.lookup_self_res(ty.span);
-                self.results.record(ty.id, Path::self_kw(ty.span), res);
+                self.results
+                    .record(ty.id, Path::self_kw(self.session, ty.span), res);
             }
             TyKind::Dyn { path, .. } => {
                 let res = self.table.lookup_dyn_path(self.current_module, path);
@@ -334,6 +353,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
                     .lookup_value_path(self.current_module, path)
                     .unwrap_or_else(|| {
                         report_not_found(
+                            self.session,
                             *path
                                 .segments
                                 .last()
@@ -344,9 +364,9 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
                 self.results.record(expr.id, path.clone(), res);
             }
             ExprKind::SelfKw => {
-                report_not_found(Ident::self_kw(expr.span));
+                report_not_found(self.session, Ident::self_kw(self.session, expr.span));
                 self.results
-                    .record(expr.id, Path::self_kw(expr.span), Res::Err);
+                    .record(expr.id, Path::self_kw(self.session, expr.span), Res::Err);
             }
             ExprKind::Ctor { path, payload } => {
                 match path {
@@ -378,6 +398,12 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             ExprKind::Variant { payload, .. } => {
                 // We defer to after typeck
                 self.visit_expr_payload(payload);
+                return;
+            }
+            ExprKind::IfLet { .. } => {
+                self.table.push_scope();
+                visit::walk_expr(self, expr);
+                self.table.pop_scope();
                 return;
             }
             _ => {}

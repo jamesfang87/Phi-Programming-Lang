@@ -19,7 +19,8 @@ impl<'a> BodyLowerCtx<'a> {
     /// instance -- but it is what keeps a block ending in an explicit `return` (the overwhelming
     /// common case) from also trying to assign its own trailing value, of a possibly unrelated
     /// type, into `dest` on a path nothing ever actually reaches.
-    pub(crate) fn lower_block(&mut self, block_id: HirId, dest: Option<Place>) {
+    pub(crate) fn lower_block(&mut self, block_id: impl Into<HirId>, dest: Option<Place>) {
+        let block_id = block_id.into();
         let block = self.hir.block(block_id);
         let stmts = block.stmts.clone();
         let trailing = block.expr;
@@ -47,7 +48,8 @@ impl<'a> BodyLowerCtx<'a> {
 
     /// Lowers one statement, and reports whether it unconditionally diverges -- see
     /// [`BodyLowerCtx::lower_block`]'s docs for exactly what that does and does not detect.
-    fn lower_stmt(&mut self, stmt_id: HirId) -> bool {
+    fn lower_stmt(&mut self, stmt_id: impl Into<HirId>) -> bool {
+        let stmt_id = stmt_id.into();
         let stmt = self.hir.stmt(stmt_id);
         let span = stmt.span;
         match stmt.kind {
@@ -86,7 +88,7 @@ impl<'a> BodyLowerCtx<'a> {
                 true
             }
             StmtKind::Defer(expr) => {
-                self.register_exit_obligation(ExitObligation::RunDeferred(expr));
+                self.register_exit_obligation(ExitObligation::RunDeferred(expr.into()));
                 false
             }
             StmtKind::Expr(expr) => {
@@ -115,7 +117,15 @@ impl<'a> BodyLowerCtx<'a> {
     /// out of. Every other shape keeps the general scrutinee-then-bind path: a `Tuple` pattern
     /// needs a stable place to project each element from, and an `else`'s own refutation test
     /// needs one to test against before any binding happens.
-    fn lower_let(&mut self, pat: HirId, init: HirId, else_block: Option<HirId>, span: SrcSpan) {
+    fn lower_let(
+        &mut self,
+        pat: impl Into<HirId>,
+        init: impl Into<HirId>,
+        else_block: Option<impl Into<HirId>>,
+        span: SrcSpan,
+    ) {
+        let (pat, init) = (pat.into(), init.into());
+        let else_block = else_block.map(Into::into);
         if else_block.is_none()
             && let PatKind::Binding { name, .. } = self.hir.pat(pat).kind
         {
@@ -161,6 +171,10 @@ impl<'a> BodyLowerCtx<'a> {
     /// this lowers it exactly like a `let`'s initializer, and binds the lend's own pattern
     /// straight to that local rather than through [`BodyLowerCtx::bind_pat`]'s general
     /// scrutinee-projection walk, since a lend's pattern is always a plain name in practice.
+    // TODO: implement non-binding `with` lend patterns (destructuring a projection, e.g.
+    // `with (a, b) = ...`), which currently panics below. README section 7 presents `with`
+    // as the explicit-lifetime form of ordinary bindings, so it should accept the same
+    // patterns `let` does.
     fn lower_with_lend(&mut self, lend: &crate::hir::WithLend) {
         let span = lend.span;
         let ty = self.expr_ty(lend.init);
@@ -198,7 +212,8 @@ impl<'a> BodyLowerCtx<'a> {
         self.switch_to(fresh);
     }
 
-    fn lower_return(&mut self, value: Option<HirId>, span: SrcSpan) {
+    fn lower_return(&mut self, value: Option<impl Into<HirId>>, span: SrcSpan) {
+        let value = value.map(Into::into);
         let dest = Place::from_local(crate::mir::Local::RETURN_PLACE);
         match value {
             Some(expr_id) => self.lower_expr_into(expr_id, dest),

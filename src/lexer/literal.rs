@@ -1,18 +1,22 @@
+pub(crate) const ESCAPES: &[(char, char)] = &[
+    ('"', '"'),
+    ('\'', '\''),
+    ('n', '\n'),
+    ('t', '\t'),
+    ('r', '\r'),
+    ('\\', '\\'),
+    ('0', '\0'),
+];
+
 pub(crate) fn is_escape(c: char) -> bool {
-    matches!(c, '"' | '\'' | 'n' | 't' | 'r' | '\\' | '0')
+    ESCAPES.iter().any(|&(escaped, _)| escaped == c)
 }
 
 fn unescape(c: char) -> char {
-    match c {
-        '\'' => '\'',
-        '"' => '"',
-        'n' => '\n',
-        't' => '\t',
-        'r' => '\r',
-        '\\' => '\\',
-        '0' => '\0',
-        other => other,
-    }
+    ESCAPES
+        .iter()
+        .find_map(|&(escaped, decoded)| (escaped == c).then_some(decoded))
+        .unwrap_or(c)
 }
 
 pub(crate) fn decode_escapes(chars: &[char]) -> String {
@@ -50,8 +54,9 @@ mod tests {
 
     #[test]
     fn the_escape_set_accepted_by_the_lexer_is_exactly_what_decoding_handles() {
-        for escaped in ['"', '\'', 'n', 't', 'r', '\\', '0'] {
+        for &(escaped, decoded) in ESCAPES {
             assert!(is_escape(escaped), "{escaped:?}");
+            assert_eq!(unescape(escaped), decoded, "{escaped:?}");
         }
         let decoded = decode_escapes(&['\\', 'n', 'a']);
         assert_eq!(decoded, "\na");

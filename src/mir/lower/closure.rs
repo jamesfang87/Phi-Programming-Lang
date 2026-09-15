@@ -40,7 +40,7 @@ impl<'a> BodyLowerCtx<'a> {
             seen: HashSet::new(),
             found: Vec::new(),
         };
-        visitor.visit_block(closure.block);
+        visitor.visit_block(closure.block.into());
         visitor.found
     }
 
@@ -100,7 +100,8 @@ impl<'a> BodyLowerCtx<'a> {
     /// (not the closure's own body, which does not exist yet at this point): the same
     /// `Copy`/`Move` rule any other read of that place already gets, since a capture is exactly
     /// that, an ordinary read.
-    fn capture_operand(&mut self, hir_id: HirId) -> crate::mir::Operand {
+    fn capture_operand(&mut self, hir_id: impl Into<HirId>) -> crate::mir::Operand {
+        let hir_id = hir_id.into();
         let place = self.place_for(hir_id);
         let ty = self
             .types

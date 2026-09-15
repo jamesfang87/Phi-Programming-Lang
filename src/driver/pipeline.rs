@@ -4,52 +4,51 @@ use std::path::{Path, PathBuf};
 
 use crate::ast::Ast;
 use crate::codegen;
-use crate::diagnostics::DiagCtx;
-use crate::driver::cli::{BuildOptions, Config, Mode};
+use crate::driver::cli::{BuildOptions, Config};
 use crate::driver::emit_debug;
-use crate::driver::source::{SrcCollector, SrcMap};
 use crate::hir::Hir;
 use crate::lexer::Lexer;
 use crate::lexer::token::Token;
 use crate::mir;
 use crate::mir::{Body, Instance};
 use crate::nameres;
+use crate::options::Mode;
 use crate::parser::Parser;
+use crate::session::Session;
 use crate::typeck;
 use crate::typeck::tyctx::TyCtx;
 
 /// Collects every `.phi` file under `src_dir`, and the core and standard libraries, into the
-/// source map.
+/// session's source map.
 ///
 /// `core` and `std` are registered after the user's project, in that order, on purpose; see
-/// [`SrcCollector::collect_core`] and [`SrcCollector::collect_std`].
-fn collect_sources(src_dir: &Path) -> io::Result<()> {
+/// [`Session::collect_core`] and [`Session::collect_std`].
+fn collect_sources(session: &Session, src_dir: &Path) -> io::Result<()> {
     if !src_dir.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!("no `src` directory at `{}`", src_dir.display()),
         ));
     }
-    SrcCollector::collect(src_dir)?;
-    SrcCollector::collect_core();
-    SrcCollector::collect_std();
+    session.collect(src_dir)?;
+    session.collect_core();
+    session.collect_std();
     Ok(())
 }
 
-pub fn lex() -> Vec<Vec<Token>> {
-    SrcMap::files()
-        .iter()
-        .map(|file| Lexer::new(&file.content, file.global_offset).tokenize())
+pub fn lex(session: &Session) -> Vec<(Vec<Token>, usize)> {
+    session
+        .files()
+        .into_iter()
+        .map(|file| {
+            let tokens = Lexer::new(session, &file.content, file.global_offset).tokenize();
+            (tokens, file.global_offset)
+        })
         .collect()
 }
 
-pub fn parse(token_streams: Vec<Vec<Token>>) -> Ast {
-    let streams: Vec<(Vec<Token>, usize)> = token_streams
-        .into_iter()
-        .zip(SrcMap::files().iter())
-        .map(|(stream, file)| (stream, file.global_offset))
-        .collect();
-    Parser::new().parse_all(&streams)
+pub fn parse(session: &Session, streams: Vec<(Vec<Token>, usize)>) -> Ast {
+    Parser::new(session).parse_all(&streams)
 }
 
 /// Everything the front end (lex through monomorphize) produces, when it produces anything at
@@ -74,27 +73,32 @@ struct FrontendOutput {
 /// the front end only has one place to land, and so `check`'s externally-observed behavior
 /// (report diagnostics, then say pass/fail) stays exactly what it was before `build`/`run`
 /// grew a real code generation backend to run afterward.
-fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<FrontendOutput>> {
-    collect_sources(&config.src_dir)?;
-    let ast = parse(lex());
+fn run_frontend(
+    session: &Session,
+    config: &Config,
+    options: &BuildOptions,
+) -> io::Result<Option<FrontendOutput>> {
+    collect_sources(session, &config.src_dir)?;
+    let ast = parse(session, lex(session));
 
     if options.dumps.ast {
-        emit_debug::print_ast(&ast);
+        emit_debug::print_ast(session, &ast);
     }
 
-    let res = nameres::resolve(&ast);
+    let res = nameres::resolve(session, &ast);
     if options.dumps.nameres {
-        emit_debug::print_nameres(&ast, &res);
+        emit_debug::print_nameres(session, &ast, &res);
     }
 
-    let hir = Hir::from(&ast, &res);
+    let hir = Hir::from(session, &ast, &res);
     if options.dumps.hir {
-        emit_debug::print_hir(&hir, options.exclude_core_in_emit);
+        emit_debug::print_hir(session, &hir, options.exclude_core_in_emit);
     }
 
-    let mut checked = typeck::check(&hir);
+    let mut checked = typeck::check(session, &hir);
     if options.dumps.typeck {
         emit_debug::print_typeck(
+            session,
             &hir,
             &checked.tcx,
             &checked.types,
@@ -104,15 +108,16 @@ fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<Fr
     // Signature rules for the entry point run before lowering: a malformed `main` should be
     // reported, not turned into MIR first. `typeck::check` does not run this itself because
     // having no `main` is only a warning, which would then appear in every type-inference test.
-    typeck::entry_point::check(&hir);
+    typeck::entry_point::check(session, &hir);
 
-    let program = mir::lower::lower(&hir, &mut checked.tcx, &checked.types, config.mode);
-    mir::checks::run_checks(&mut checked.tcx, &program);
+    let program = mir::lower::lower(session, &hir, &mut checked.tcx, &checked.types, config.mode);
+    mir::checks::run_checks(session, &mut checked.tcx, &program);
     let instances = mir::monomorphize::monomorphize(&mut checked.tcx, &program);
     let instances = mir::drop_elaboration::elaborate_drops(&mut checked.tcx, instances);
 
     if options.dumps.mir {
         emit_debug::print_mir(
+            session,
             &hir,
             &checked.tcx,
             &program,
@@ -121,11 +126,7 @@ fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<Fr
         );
     }
 
-    // Read before reporting: `report` drains what it prints, so `has_errors` afterwards would
-    // answer about an empty collection.
-    let errored = DiagCtx::has_errors();
-    DiagCtx::report();
-    if errored {
+    if session.report() {
         return Ok(None);
     }
 
@@ -137,16 +138,19 @@ fn run_frontend(config: &Config, options: &BuildOptions) -> io::Result<Option<Fr
 }
 
 pub fn check(config: &Config, options: &BuildOptions) -> io::Result<bool> {
-    Ok(run_frontend(config, options)?.is_some())
+    let session = Session::new();
+    Ok(run_frontend(&session, config, options)?.is_some())
 }
 
 pub fn build(config: &Config, options: &BuildOptions) -> io::Result<bool> {
-    let Some(mut frontend) = run_frontend(config, options)? else {
+    let session = Session::new();
+    let Some(mut frontend) = run_frontend(&session, config, options)? else {
         return Ok(false);
     };
 
     let llvm = inkwell::context::Context::create();
     let module = match codegen::codegen(
+        &session,
         &llvm,
         &mut frontend.tcx,
         &frontend.program,
@@ -164,9 +168,7 @@ pub fn build(config: &Config, options: &BuildOptions) -> io::Result<bool> {
     // this the frontend's `report` would already have run, so those would sit unrendered in the
     // collection while the build carried on to link, turning a compiler error into whatever the
     // linker made of the missing symbol.
-    let errored = DiagCtx::has_errors();
-    DiagCtx::report();
-    if errored {
+    if session.report() {
         return Ok(false);
     }
 
@@ -190,10 +192,14 @@ pub fn build(config: &Config, options: &BuildOptions) -> io::Result<bool> {
         println!("{}", module.print_to_string().to_string());
     }
 
-    let target_dir = PathBuf::from("target");
-    std::fs::create_dir_all(&target_dir)?;
+    let artifact = artifact_path(config);
+    std::fs::create_dir_all(
+        artifact
+            .parent()
+            .expect("the artifact path always has a `target` parent"),
+    )?;
     let emit_options = codegen::emit::EmitOptions {
-        output_path: target_dir.join(&config.name),
+        output_path: artifact,
         release: config.mode == Mode::Release,
     };
     match codegen::emit::emit(&module, &emit_options) {
@@ -209,6 +215,10 @@ pub fn run(config: &Config) -> io::Result<bool> {
     if !build(config, &BuildOptions::default())? {
         return Ok(false);
     }
-    let status = std::process::Command::new(PathBuf::from("target").join(&config.name)).status()?;
+    let status = std::process::Command::new(artifact_path(config)).status()?;
     Ok(status.success())
+}
+
+fn artifact_path(config: &Config) -> PathBuf {
+    PathBuf::from("target").join(&config.name)
 }

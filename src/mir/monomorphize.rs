@@ -38,9 +38,9 @@ use crate::mir::{
     AggregateKind, AnyMode, AssertMessage, Body, ConstKind, DefKind, Instance, Operand, Rvalue,
     StatementKind, TerminatorKind,
 };
-use crate::typeck::fold::Subst;
 use crate::typeck::ty::{Ty, TyKind};
 use crate::typeck::tyctx::TyCtx;
+use crate::typeck::visitor::Subst;
 
 /// A generous ceiling on the number of instances one `monomorphize` call will produce, past
 /// which further instantiation is treated as a pathological, unbounded chain rather than a

@@ -1,3 +1,6 @@
+//! Type-checking tests for the trait solver: the bounds environment, which types implement which
+//! traits, and how matching differs from unification.
+
 use crate::testing::{typeck_accepts, typeck_rejects, typeck_src};
 
 const PRELUDE: &str = "trait Show { fun show(&self); }
@@ -247,13 +250,11 @@ fn a_bound_about_an_unresolvable_type_is_not_reported_twice() {
 /// explanation.
 #[test]
 fn an_unmet_bound_points_at_the_bound_that_requires_it() {
-    use crate::diagnostics::DiagCtx;
-
     let hir = crate::testing::lower_to_hir(&src("fun f(x: Sorted<Bare>) {}"));
-    DiagCtx::clear();
-    crate::typeck::check(&hir);
+    crate::testing::clear_diagnostics();
+    crate::typeck::check(crate::testing::session(), &hir);
 
-    let diagnostics = DiagCtx::diagnostics();
+    let diagnostics = crate::testing::diagnostics();
     let [unmet] = diagnostics.as_slice() else {
         panic!("expected exactly one diagnostic, got {diagnostics:?}");
     };

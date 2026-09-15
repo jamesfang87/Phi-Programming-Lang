@@ -1,7 +1,8 @@
 use super::ctx::LoweringCtx;
 use super::*;
-use crate::ast::interner::Interner;
-use crate::ast::{Ast, BinaryOp, Ident, ModuleDecl, Mutability, NodeId, Path, UnaryOp, Visibility};
+use crate::ast::{
+    Ast, BinaryOp, Ident, ModuleHeader, Mutability, NodeId, Path, UnaryOp, Visibility,
+};
 use crate::hir::ids::{DefId, HirId};
 use crate::hir::{
     AccessArgs, ExprKind, Function, Local, LoopSource, Module, OwnerNode, PatKind, Payload, Res,
@@ -14,7 +15,7 @@ use crate::testing::{lower_to_hir, parse_src};
 // -----------------------------------------------------------------
 
 fn text(ident: Ident) -> &'static str {
-    Interner::resolve(ident.text)
+    crate::testing::resolve(ident.text)
 }
 
 // -----------------------------------------------------------------
@@ -85,8 +86,8 @@ fn a_forward_reference_resolves_to_an_already_allocated_def_id() {
 fn every_item_gets_a_def_id_before_lower_module_runs() {
     let unit = parse_src("fun f(x: Foo) {} struct Foo {} trait T { fun m(self) {} }");
     let ast = Ast::from(vec![unit]);
-    let surface_results = crate::nameres::resolve(&ast);
-    let mut cx = LoweringCtx::new(&surface_results);
+    let surface_results = crate::nameres::resolve(crate::testing::session(), &ast);
+    let mut cx = LoweringCtx::new(crate::testing::session(), &surface_results);
 
     for mod_id in ast.mod_ids() {
         let parent_def = ast.parent(mod_id).map(|id| cx.def_ids[&id]);
@@ -358,27 +359,26 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
     // so this attaches the decl by hand to reach the module tree `Ast::from` builds from it.
     let mut unit = parse_src("fun helper() {}");
     let path_span = unit.span;
-    unit.module = Some(ModuleDecl {
+    unit.module = Some(ModuleHeader {
         id: NodeId::next(),
         path: Path {
             segments: vec![
                 Ident {
-                    text: Interner::intern("math"),
+                    text: crate::testing::intern("math"),
                     span: path_span,
                 },
                 Ident {
-                    text: Interner::intern("vector"),
+                    text: crate::testing::intern("vector"),
                     span: path_span,
                 },
             ],
-            span: path_span,
         },
         span: path_span,
     });
 
     let ast = Ast::from(vec![unit]);
-    let surface_results = crate::nameres::resolve(&ast);
-    let hir = Hir::from(&ast, &surface_results);
+    let surface_results = crate::nameres::resolve(crate::testing::session(), &ast);
+    let hir = Hir::from(crate::testing::session(), &ast, &surface_results);
     let root = hir.root();
     // The root's only item is the synthesized `math`, which in turn holds `math::vector`.
     assert_eq!(root.items.len(), 1);
@@ -649,7 +649,7 @@ fn only_init(hir: &Hir) -> HirId {
     let StmtKind::Let { init, .. } = &hir.stmt(body.stmts[0]).kind else {
         panic!("expected a let statement")
     };
-    *init
+    (*init).into()
 }
 
 #[test]

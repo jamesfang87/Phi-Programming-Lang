@@ -23,7 +23,7 @@ pub struct Alias {
     /// it can be greater than 1 due to copying.
     pub attached: HashSet<Register>,
     /// Register which owns the data Alias refers to
-    pub borrows: Register,
+    pub register: Register,
     /// The kind of borrow (&/&mut)
     pub kind: Mutability,
     /// Whether this alias was introduced in a with-stmt, which changes the
@@ -114,7 +114,7 @@ fn collect_alias_births(body: &Body) -> HashMap<AliasId, Alias> {
                     Alias {
                         id: stmt.id,
                         attached: HashSet::new(),
-                        borrows: register_of(borrowed),
+                        register: register_of(borrowed),
                         kind: *mutability,
                         with_lend: pending_with_lend.remove(&place.local),
                     },
@@ -336,7 +336,7 @@ fn mark_place_alias_used(
                     return;
                 };
                 used.insert(alias_id);
-                register = aliases[&alias_id].borrows.clone();
+                register = aliases[&alias_id].register.clone();
             }
         }
     }
@@ -609,8 +609,6 @@ fn compute_live_ranges(
 #[cfg(test)]
 mod tests {
     use crate::ast::Mutability;
-    use crate::ast::interner::Interner;
-    use crate::diagnostics::DiagCtx;
     use crate::hir::Hir;
     use crate::mir::BasicBlock;
     use crate::mir::checks::borrowck::lifetimes::compute_lifetimes;
@@ -619,16 +617,21 @@ mod tests {
 
     fn lower_mir_src(src: &str) -> (Hir, Mir) {
         let hir = lower_to_hir_with_ops(src);
-        DiagCtx::clear();
-        let checked = crate::typeck::check(&hir);
-        let diagnostics = DiagCtx::diagnostics();
+        crate::testing::clear_diagnostics();
+        let checked = crate::typeck::check(crate::testing::session(), &hir);
+        let diagnostics = crate::testing::diagnostics();
         assert!(
             diagnostics.is_empty(),
             "unexpected diagnostics for {src:?}: {diagnostics:?}"
         );
         let crate::typeck::TypeckOutput { mut tcx, types } = checked;
-        let program =
-            crate::mir::lower::lower(&hir, &mut tcx, &types, crate::driver::cli::Mode::Debug);
+        let program = crate::mir::lower::lower(
+            crate::testing::session(),
+            &hir,
+            &mut tcx,
+            &types,
+            crate::options::Mode::Debug,
+        );
         (hir, program)
     }
 
@@ -748,7 +751,7 @@ mod tests {
         let name_of = |register: &crate::mir::checks::borrowck::Register| {
             body.local_decls[register.owner.index()]
                 .name
-                .map(|name| Interner::resolve(name.text).to_string())
+                .map(|name| crate::testing::resolve(name.text).to_string())
         };
         let mut names: Vec<_> = alias.attached.iter().filter_map(name_of).collect();
         names.sort();
@@ -790,7 +793,7 @@ mod tests {
         );
         let alias = lifetimes.aliases.values().next().unwrap();
         assert!(
-            !alias.borrows.subregister.is_empty(),
+            !alias.register.subregister.is_empty(),
             "the alias remembers which field it borrows from, not just the owning local"
         );
     }
@@ -816,7 +819,7 @@ mod tests {
         let borrowed_registers: Vec<_> = lifetimes
             .aliases
             .values()
-            .map(|alias| alias.borrows.subregister.clone())
+            .map(|alias| alias.register.subregister.clone())
             .collect();
         assert_ne!(
             borrowed_registers[0], borrowed_registers[1],
@@ -841,7 +844,7 @@ mod tests {
         );
         let alias = lifetimes.aliases.values().next().unwrap();
         assert!(
-            alias.borrows.subregister.is_empty(),
+            alias.register.subregister.is_empty(),
             "a runtime index isn't representable as a SubRegisters entry, so the borrow \
              collapses to the whole array's register rather than a slot-precise one"
         );
@@ -867,7 +870,7 @@ mod tests {
         let borrowed_registers: Vec<_> = lifetimes
             .aliases
             .values()
-            .map(|alias| alias.borrows.clone())
+            .map(|alias| alias.register.clone())
             .collect();
         assert_eq!(
             borrowed_registers[0], borrowed_registers[1],
@@ -891,7 +894,7 @@ mod tests {
         let borrowed_registers: Vec<_> = lifetimes
             .aliases
             .values()
-            .map(|alias| alias.borrows.clone())
+            .map(|alias| alias.register.clone())
             .collect();
         assert_ne!(
             borrowed_registers[0], borrowed_registers[1],

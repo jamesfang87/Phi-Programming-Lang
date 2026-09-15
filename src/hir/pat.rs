@@ -1,17 +1,19 @@
 use crate::ast::{Ident, Literal};
 use crate::driver::source::SrcSpan;
 use crate::hir::expr::Payload;
-use crate::hir::ids::HirId;
+use crate::hir::ids::{ArmId, BlockId, ExprId, PatId};
 
 #[derive(Debug)]
 pub struct Pat {
-    pub hir_id: HirId,
+    pub hir_id: PatId,
     pub kind: PatKind,
     pub span: SrcSpan,
 }
 
 #[derive(Clone, Debug)]
 pub enum PatKind {
+    // TODO: no struct patterns (mirrors the `ast::PatKind` gap), so `let Point { x, y }`
+    // never survives lowering even if the parser learned it.
     /// `_`. Matches anything and binds nothing.
     Wildcard,
     /// A plain name. Binds whatever it matches, such as `x` in `let x = ..` or `r` in
@@ -28,7 +30,7 @@ pub enum PatKind {
         payload: Payload, // -> Node::Pat
     },
     /// `(a, b, ..)`. Destructures a tuple.
-    Tuple(Vec<HirId>), // -> Node::Pat
+    Tuple(Vec<PatId>),
     /// A pattern that failed to parse. Lowering carries it through rather than aborting.
     Error,
 }
@@ -46,9 +48,9 @@ pub enum BindingMode {
 /// One arm of a `match` expression, of the form `pat => body` or `pat if guard => body`.
 #[derive(Debug)]
 pub struct Arm {
-    pub hir_id: HirId,
-    pub pat: HirId,           // -> Node::Pat
-    pub guard: Option<HirId>, // -> Node::Expr
-    pub block: HirId,         // -> Node::Block
+    pub hir_id: ArmId,
+    pub pat: PatId,
+    pub guard: Option<ExprId>,
+    pub block: BlockId,
     pub span: SrcSpan,
 }

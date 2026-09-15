@@ -2,8 +2,9 @@
 //! it consists of two parts: a [`TokenKind`] that records what type of token
 //! it is and a [`SrcSpan`].
 
-use crate::driver::source::{SrcMap, SrcSpan};
+use crate::driver::source::SrcSpan;
 use crate::lexer::describe::Descriptor;
+use crate::session::Session;
 
 /// [`Token`] represents a single lexical token. It includes the type of token
 /// and its source span.
@@ -14,8 +15,10 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn text(&self) -> String {
-        SrcMap::text_of(self.span).expect("lexer token span should always resolve to a source file")
+    pub fn text(&self, session: &Session) -> String {
+        session
+            .text_of(self.span)
+            .expect("lexer token span should always resolve to a source file")
     }
 }
 
@@ -153,6 +156,8 @@ pub enum TokenKind {
 }
 
 pub(crate) const KEYWORDS: &[(&str, TokenKind)] = &[
+    // TODO: there is no `const`, `static`, or `type` keyword, yet real programs need
+    // global `const`/`static` items and `type` aliases. The lexer cannot even spell them.
     ("any", TokenKind::AnyKw),
     ("as", TokenKind::AsKw),
     ("bool", TokenKind::BoolKw),

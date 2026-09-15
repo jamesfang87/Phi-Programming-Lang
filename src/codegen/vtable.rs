@@ -190,7 +190,7 @@ mod tests {
     fn find_struct_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Struct(struct_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(struct_.name.text) == name
+                && crate::testing::resolve(struct_.name.text) == name
             {
                 return def_id;
             }
@@ -201,7 +201,7 @@ mod tests {
     fn find_trait_def(hir: &Hir, name: &str) -> DefId {
         for def_id in hir.def_ids() {
             if let OwnerNode::Trait(trait_) = hir.def(def_id)
-                && crate::ast::interner::Interner::resolve(trait_.name.text) == name
+                && crate::testing::resolve(trait_.name.text) == name
             {
                 return def_id;
             }
@@ -233,7 +233,7 @@ fun f() {}";
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(&llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
 
         let point_def = find_struct_def(&hir, "Point");
@@ -277,7 +277,7 @@ fun f() {}";
              fun f() {}",
         );
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(&llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
 
         let owner_def = find_struct_def(&hir, "Owner");
@@ -297,7 +297,7 @@ fun f() {}";
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(&llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
         scratch_function(&cx);
 
@@ -326,7 +326,7 @@ fun f() {}";
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(&llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
         let function =
             cx.module
@@ -372,7 +372,7 @@ extend Wrap<bool> with Show { fun show(&self) -> i32 { return 2; } }
 fun f() {}",
         );
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(&llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
 
         let wrap_def = find_struct_def(&hir, "Wrap");

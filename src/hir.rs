@@ -13,7 +13,7 @@ pub mod visit;
 pub use arena::{Arena, Node, OwnerNode};
 pub use block::{Block, Stmt, StmtKind, WithLend};
 pub use expr::{AccessArgs, Expr, ExprKind, LoopSource, Payload, PayloadField};
-pub use ids::{DefId, HirId};
+pub use ids::{ArmId, BlockId, DefId, ExprId, HirId, PatId, StmtId, TyId};
 pub use items::{
     Bound, Closure, ClosureParam, Enum, Extend, Field, Function, Generic, Import, Module, Param,
     SelfParam, Struct, Trait, Variant, VariantPayload,
@@ -130,7 +130,7 @@ impl Hir {
 /// explicit at the call site and report uniform diagnostic messages that name both the expected
 /// variant and what was actually found.
 macro_rules! typed_node_lookup {
-    ($($method:ident => $variant:ident -> $node_ty:ty),* $(,)?) => {
+    ($($method:ident($id_ty:ty) => $variant:ident -> $node_ty:ty),* $(,)?) => {
         impl Hir {
             $(
                 #[doc = concat!(
@@ -138,8 +138,9 @@ macro_rules! typed_node_lookup {
                     "Panics if `id` addresses any node other than a `Node::",
                     stringify!($variant), "`, naming what it found instead."
                 )]
-                pub fn $method(&self, id: HirId) -> &$node_ty {
-                    match self.node(id) {
+                pub fn $method(&self, id: impl Into<$id_ty>) -> &$node_ty {
+                    let id = id.into();
+                    match self.node(id.into()) {
                         Node::$variant(node) => node,
                         other => panic!(
                             "expected {id:?} to name a Node::{}, found a Node::{}",
@@ -154,19 +155,19 @@ macro_rules! typed_node_lookup {
 }
 
 typed_node_lookup! {
-    import => Import -> Import,
-    param => Param -> Param,
-    closure_param => ClosureParam -> ClosureParam,
-    self_param => SelfParam -> SelfParam,
-    field => Field -> Field,
-    variant => Variant -> Variant,
-    generic => Generic -> Generic,
-    arm => Arm -> Arm,
-    block => Block -> Block,
-    stmt => Stmt -> Stmt,
-    expr => Expr -> Expr,
-    pat => Pat -> Pat,
-    ty => Ty -> Ty,
+    import(HirId) => Import -> Import,
+    param(HirId) => Param -> Param,
+    closure_param(HirId) => ClosureParam -> ClosureParam,
+    self_param(HirId) => SelfParam -> SelfParam,
+    field(HirId) => Field -> Field,
+    variant(HirId) => Variant -> Variant,
+    generic(HirId) => Generic -> Generic,
+    arm(ArmId) => Arm -> Arm,
+    block(BlockId) => Block -> Block,
+    stmt(StmtId) => Stmt -> Stmt,
+    expr(ExprId) => Expr -> Expr,
+    pat(PatId) => Pat -> Pat,
+    ty(TyId) => Ty -> Ty,
 }
 
 /// Generates typed lookup methods on [`Hir`] that retrieve an [`OwnerNode`] by [`DefId`] and
