@@ -222,8 +222,9 @@ pub fn run_checks(category: &str, name: &str, items: &str, checks: &[String]) ->
     let run = run_src(category, name, &source);
     assert!(
         run.ok(),
-        "{name}: generated program failed to build\nexit: {}\nstderr: {}\nsource:\n{source}",
+        "{name}: generated program failed to build\nexit: {}\nstdout: {}\nstderr: {}\nsource:\n{source}",
         run.code,
+        run.stdout,
         run.stderr
     );
     assert!(

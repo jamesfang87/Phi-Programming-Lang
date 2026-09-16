@@ -60,4 +60,4 @@ jobs:
       - name: Report failing tests
         if: failure()
         run: |
-          awk '/panicked at/ { msg = $0; for (i = 0; i < 4 && (getline line) > 0; i++) msg = msg " " line; print "::error::" msg }' test-output.log | head -10
+          awk '/panicked at/ { msg = $0; for (i = 0; i < 6 && (getline line) > 0; i++) msg = msg " " line; print "::error::" msg }' test-output.log | head -10
