@@ -324,8 +324,6 @@ impl<'a> BodyLowerCtx<'a> {
             place.projections.push(Projection::Deref);
         }
 
-        if derefs == 0 && mutability == Mutability::Mutable {}
-
         // The temp is typed from the receiver, not from `declared_ty`. `declared_ty` is the
         // method's `&self` as written, so for a method in `extend<T> Wrap<T>` it is `&Wrap<T>` --
         // the block's generic parameter, with no call-site substitution applied. Using it here

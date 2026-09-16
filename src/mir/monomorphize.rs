@@ -272,13 +272,13 @@ fn subst_rvalue(
         Rvalue::Aggregate(mut kind, operands) => {
             if let AggregateKind::Closure { def, args, self_ty } = &mut *kind {
                 *args = instance.args.clone();
-                *self_ty = instance.self_ty.clone();
+                *self_ty = instance.self_ty;
                 let def = *def;
                 let closure_instance = Instance {
                     def,
                     any_mode: None,
                     args: instance.args.clone(),
-                    self_ty: instance.self_ty.clone(),
+                    self_ty: instance.self_ty,
                 };
                 if !output.contains_key(&closure_instance)
                     && let Some(closure_generic_body) = program.bodies.get(&(def, None))
@@ -358,7 +358,7 @@ fn subst_operand(
                 None
             };
             let args = match trait_args_for(program, tcx, trait_method, self_ty) {
-                Some(trait_args) => trait_args.into_iter().chain(args.into_iter()).collect(),
+                Some(trait_args) => trait_args.into_iter().chain(args).collect(),
                 None => args,
             };
             if !dyn_dispatch {

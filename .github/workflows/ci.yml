@@ -32,6 +32,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/install-llvm
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings -A dead-code
 
@@ -49,6 +50,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.os }}
+      - uses: ./.github/actions/install-llvm
       - name: Build
         run: cargo build --all-targets --verbose
       - name: Run tests

@@ -1308,6 +1308,7 @@ fn a_tuple_patterns_elements_are_tested_independently() {
 /// symbol is separator-free by construction, so lowering parses the plain digits. Before the
 /// value was normalized at AST construction, `1_000_000` panicked in `parse::<i128>` here.
 #[test]
+#[allow(clippy::approx_constant)]
 fn digit_separated_numeric_literals_lower_to_their_normalized_values() {
     let (hir, _tcx, _types, program) =
         lower_mir_src("fun f() { let _ = 1_000_000_i64; let _ = 3.14_15_f64; }");
@@ -1337,6 +1338,7 @@ fn digit_separated_numeric_literals_lower_to_their_normalized_values() {
 /// the same shape an integer literal pattern produces; float comparison is fully supported
 /// downstream.
 #[test]
+#[allow(clippy::approx_constant)]
 fn a_float_literal_pattern_lowers_to_an_equality_test_against_a_float_constant() {
     let (hir, _tcx, _types, program) =
         lower_mir_src("fun f(x: f64) -> i32 { return match x { 3.14_15 => 1, _ => 0 }; }");

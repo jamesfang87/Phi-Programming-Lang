@@ -278,7 +278,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
         self.visit_ty(&e.self_ty);
         let self_res = match &e.self_ty.kind {
             TyKind::Path { path, .. } => self.results.get(e.self_ty.id, path),
-            TyKind::SelfTy { .. } => self
+            TyKind::SelfTy => self
                 .results
                 .get(e.self_ty.id, &Path::self_kw(self.session, e.self_ty.span)),
             _ => None,

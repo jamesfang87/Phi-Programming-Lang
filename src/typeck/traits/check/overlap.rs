@@ -38,7 +38,7 @@ impl<'hir> Typeck<'hir> {
             visitor::subst_ty(&mut self.tcx, a.self_ty, a_subst),
             visitor::subst_ty(&mut self.tcx, b.self_ty, b_subst),
         );
-        unifier.unify(&mut self.tcx, x, y).is_ok()
+        unifier.unify(&self.tcx, x, y).is_ok()
     }
 
     /// Checks whether two headers implementing the same trait have overlapping type arguments.
@@ -63,7 +63,7 @@ impl<'hir> Typeck<'hir> {
                     visitor::subst_ty(&mut self.tcx, p, a_subst),
                     visitor::subst_ty(&mut self.tcx, q, b_subst),
                 );
-                unifier.unify(&mut self.tcx, p, q).is_ok()
+                unifier.unify(&self.tcx, p, q).is_ok()
             })
     }
 
