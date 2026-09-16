@@ -42,7 +42,7 @@ pub fn emit(module: &Module, options: &EmitOptions) -> Result<PathBuf, CodegenEr
             "generic",
             "",
             opt_level,
-            RelocMode::Default,
+            RelocMode::PIC,
             CodeModel::Default,
         )
         .ok_or_else(|| CodegenError::Verification("no target machine for host triple".into()))?;
@@ -69,14 +69,20 @@ fn link_with(
     output_path: &Path,
 ) -> Result<PathBuf, CodegenError> {
     for linker in linkers {
-        let status = std::process::Command::new(linker)
+        let output = std::process::Command::new(linker)
             .arg(object_path)
             .arg("-o")
             .arg(output_path)
-            .status();
-        match status {
-            Ok(s) if s.success() => return Ok(output_path.to_path_buf()),
-            Ok(s) => return Err(CodegenError::Link(format!("{linker} exited with {s}"))),
+            .output();
+        match output {
+            Ok(out) if out.status.success() => return Ok(output_path.to_path_buf()),
+            Ok(out) => {
+                return Err(CodegenError::Link(format!(
+                    "{linker} exited with {}: {}",
+                    out.status,
+                    String::from_utf8_lossy(&out.stderr).trim()
+                )));
+            }
             Err(_) => continue,
         }
     }
