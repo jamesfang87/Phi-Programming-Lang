@@ -1,0 +1,7 @@
+module core::iter;
+
+import core::option::Option;
+
+public trait Iterator<T> {
+    fun next(&mut self) -> Option<T>;
+}

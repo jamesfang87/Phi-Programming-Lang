@@ -1,0 +1,272 @@
+use std::fs;
+use std::io;
+use std::path::Path;
+
+/// [`SrcSpan`] is a half-open range of character (not byte) offsets into the
+/// compiler's source map.
+///
+/// Offsets stored in [`SrcSpan`] are global. Thus, the offsets of a span not
+/// only record information about a position in a file, but also which file.
+/// This removes the requirement to carry a separate file id, reducing the
+/// memory footprint of the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SrcSpan {
+    begin: usize,
+    end: usize,
+}
+
+#[allow(dead_code)]
+impl SrcSpan {
+    pub fn new(begin: usize, end: usize) -> SrcSpan {
+        SrcSpan { begin, end }
+    }
+
+    pub fn get_begin(&self) -> usize {
+        self.begin
+    }
+
+    pub fn get_end(&self) -> usize {
+        self.end
+    }
+
+    pub fn as_tuple(&self) -> (usize, usize) {
+        (self.begin, self.end)
+    }
+
+    /// Returns the smallest span that covers both `self` and `other`.
+    ///
+    /// Used to build a span for a larger syntax node out of its parts' spans, e.g. a whole
+    /// binary expression from its left and right operand spans.
+    pub fn merge(self, other: SrcSpan) -> SrcSpan {
+        SrcSpan::new(
+            self.begin.min(other.get_begin()),
+            self.end.max(other.get_end()),
+        )
+    }
+}
+
+/// Where a source file came from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FileOrigin {
+    /// A file the user wrote, found under the project root by [`collect`].
+    User,
+    /// A file of the core library, embedded in the compiler binary itself.
+    Core,
+}
+
+pub struct SrcFile {
+    pub name: String,
+    pub content: Vec<char>,
+    pub origin: FileOrigin,
+    /// The offset of this file's first char within the whole source map's global address space.
+    pub global_offset: usize,
+    /// The global offset at which each line of this file starts.
+    pub line_starts: Vec<usize>,
+}
+
+impl SrcFile {
+    pub fn new(name: String, content: Vec<char>, origin: FileOrigin, global_offset: usize) -> Self {
+        // Line 1 starts at the file's own global offset.
+        let mut line_starts = vec![global_offset];
+
+        // Scan the file once to find every newline.
+        for (i, &char) in content.iter().enumerate() {
+            if char == '\n' {
+                // The next line starts right after the newline, in global offset space.
+                line_starts.push(global_offset + i + 1);
+            }
+        }
+
+        SrcFile {
+            name,
+            content,
+            origin,
+            global_offset,
+            line_starts,
+        }
+    }
+
+    /// Converts a global offset that falls within this file into a 1-based (line, column).
+    pub fn line_col(&self, pos: usize) -> (usize, usize) {
+        // Binary search for the line this position falls on: the largest line start that is
+        // less than or equal to `pos`.
+        let line_idx = match self.line_starts.binary_search(&pos) {
+            // `pos` sits exactly at a line start.
+            Ok(idx) => idx,
+            // `pos` sits between two line starts, so the enclosing line is the one before it.
+            Err(idx) => idx - 1,
+        };
+
+        let col_char_offset = pos - self.line_starts[line_idx];
+
+        // Converts the 0-based indices into 1-based, user-facing line and column numbers.
+        (line_idx + 1, col_char_offset + 1)
+    }
+}
+
+/// The build's source files, keyed by the global offset space their contents occupy.
+///
+/// Owned by [`Session`](crate::session::Session); every file registered here is leaked, so a
+/// [`SrcFile`] borrowed from the map lives for the rest of the process. That keeps spans (plain
+/// global offsets) resolvable from anywhere without threading a map reference through span
+/// consumers, while the map itself is an ordinary value owned by the build that created it.
+#[derive(Default)]
+pub struct SrcMap {
+    files: Vec<&'static SrcFile>,
+    cur_offset: usize,
+}
+
+impl SrcMap {
+    pub fn new() -> Self {
+        SrcMap::default()
+    }
+
+    /// Returns every registered file, in the order it was added.
+    pub fn files(&self) -> Vec<&'static SrcFile> {
+        self.files.clone()
+    }
+
+    /// Returns the file whose global offset range contains `offset`.
+    ///
+    /// Returns `None` if no registered file covers that offset.
+    pub fn file_containing(&self, offset: usize) -> Option<&'static SrcFile> {
+        self.files
+            .iter()
+            .find(|f| offset >= f.global_offset && offset < f.global_offset + f.content.len())
+            .copied()
+    }
+
+    /// Returns the source text covered by `span` as an owned `String`.
+    ///
+    /// Returns `None` if `span` doesn't fall within any registered file.
+    pub fn text_of(&self, span: SrcSpan) -> Option<String> {
+        self.chars_of(span).map(|chars| chars.iter().collect())
+    }
+
+    /// Returns the chars covered by `span`, borrowed from the owning file's stored content.
+    ///
+    /// Returns `None` if `span` doesn't fall within any registered file.
+    pub fn chars_of(&self, span: SrcSpan) -> Option<&'static [char]> {
+        let file = self.file_containing(span.get_begin())?;
+        let begin = span.get_begin() - file.global_offset;
+        let end = span.get_end() - file.global_offset;
+        Some(&file.content[begin..end])
+    }
+
+    /// Registers a new source file, returning the global offset its content starts at.
+    pub fn add_file(&mut self, name: String, content: Vec<char>, origin: FileOrigin) -> usize {
+        let offset = self.cur_offset;
+        let len = content.len();
+        let file: &'static SrcFile =
+            Box::leak(Box::new(SrcFile::new(name, content, origin, offset)));
+        self.files.push(file);
+        self.cur_offset += len;
+        offset
+    }
+}
+
+/// Every file of the core library as `(name, source)`.
+const CORE_FILES: &[(&str, &str)] = &[
+    ("core/io.phi", include_str!("../../lib/core/io.phi")),
+    ("core/iter.phi", include_str!("../../lib/core/iter.phi")),
+    ("core/ops.phi", include_str!("../../lib/core/ops.phi")),
+    ("core/option.phi", include_str!("../../lib/core/option.phi")),
+    (
+        "core/prelude.phi",
+        include_str!("../../lib/core/prelude.phi"),
+    ),
+    ("core/result.phi", include_str!("../../lib/core/result.phi")),
+];
+
+/// Every file of the standard library as `(name, source)`.
+///
+/// Unlike `core`, `std` is never auto-imported through a prelude -- a project only pulls in
+/// what it names with `import std::...;`. Its files are registered unconditionally anyway
+/// (see [`collect_std`]), so name resolution can see and resolve those imports;
+/// `std`'s definitions simply sit unused in the module tree when nothing imports them.
+const STD_FILES: &[(&str, &str)] = &[
+    ("std/range.phi", include_str!("../../lib/std/range.phi")),
+    ("std/string.phi", include_str!("../../lib/std/string.phi")),
+    ("std/vector.phi", include_str!("../../lib/std/vector.phi")),
+];
+
+/// Recursively finds all `.phi` files under `root` and inserts them into `map`.
+pub fn collect(map: &mut SrcMap, root: &Path) -> io::Result<()> {
+    visit_dir(map, root)
+}
+
+/// Registers every core library file with `map`, in the order [`CORE_FILES`]
+/// lists them, and returns exactly the [`SrcFile`]s this call registered.
+///
+/// Phi has no notion of a separately compiled library yet, so `core` is compiled into the
+/// same unit as the user's own files, from source, on every build. Its files carry
+/// ordinary `module core::..;` declarations, so lowering assembles them into the module
+/// tree exactly as it does the user's -- nothing downstream needs to know `core` is
+/// special.
+///
+/// The one thing that is special is when they're registered: this runs after
+/// [`collect`] has walked the project, so `core` sits at the end of the
+/// offset space and editing it doesn't shift the span of every user file in the build.
+///
+/// Which items `core` is expected to declare is not recorded here but in
+/// [`crate::langitems`], which resolves each one to its `DefId` after name resolution has
+/// built `core`'s namespace.
+pub fn collect_core(map: &mut SrcMap) -> Vec<&'static SrcFile> {
+    CORE_FILES
+        .iter()
+        .map(|&(name, source)| {
+            let offset = map.add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
+            map.file_containing(offset)
+                .expect("the file this call just registered at `offset`")
+        })
+        .collect()
+}
+
+/// Registers every standard library file with `map`, in the order [`STD_FILES`]
+/// lists them, and returns exactly the [`SrcFile`]s this call registered.
+///
+/// This follows the same reasoning as [`collect_core`]: `std` is compiled
+/// into the build from source, unconditionally, every time, and its files carry ordinary
+/// `module std::..;` declarations so lowering assembles them into the module tree the same
+/// way it does `core`'s and the user's. Its `FileOrigin` is also [`FileOrigin::Core`] --
+/// `std` is compiled-in library code, not user code, so it's already excluded from
+/// `--no-emit-core` dumps the same way `core` is, without needing a separate flag.
+///
+/// Callers should register `std` after `core` (see [`collect_core`]'s note
+/// on why `core` is registered after the user's project), so that `std`'s files sit last
+/// in the offset space.
+pub fn collect_std(map: &mut SrcMap) -> Vec<&'static SrcFile> {
+    STD_FILES
+        .iter()
+        .map(|&(name, source)| {
+            let offset = map.add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
+            map.file_containing(offset)
+                .expect("the file this call just registered at `offset`")
+        })
+        .collect()
+}
+
+fn visit_dir(map: &mut SrcMap, dir: &Path) -> io::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+
+    // `read_dir`'s order is OS-dependent.
+    //
+    // Sort by file name so file collection, and therefore every downstream stage that
+    // depends on it, such as diagnostic output and `--ast` output, stays reproducible.
+    let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            visit_dir(map, &path)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("phi") {
+            let name = path.to_string_lossy().into_owned();
+            let content = fs::read_to_string(&path)?.chars().collect::<Vec<char>>();
+            map.add_file(name, content, FileOrigin::User);
+        }
+    }
+    Ok(())
+}

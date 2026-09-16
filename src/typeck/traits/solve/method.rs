@@ -1,0 +1,2221 @@
+use std::collections::{HashMap, HashSet};
+use std::ops::ControlFlow;
+
+use crate::ast::{Ident, Mutability, SelfMode, Symbol, UnaryOp};
+use crate::diagnostics::typeck::expr::report_variant_base_not_a_type;
+use crate::diagnostics::typeck::traits::get_name_of_trait;
+use crate::diagnostics::typeck::traits::method::{
+    function_name_span, report_ambiguous_method, report_call_arg_count, report_call_arg_mismatch,
+    report_dyn_method_mentions_self, report_dyn_self_by_value, report_field_is_a_method,
+    report_no_method, report_no_receiver, report_not_callable, report_receiver_mode,
+    report_receiver_not_a_place, report_receiver_type_unknown,
+};
+use crate::diagnostics::typeck::{report_no_field, report_private_field};
+use crate::driver::source::SrcSpan;
+use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, OwnerNode, PayloadField, Res};
+use crate::nameres::PrimTy;
+use crate::typeck::Typeck;
+use crate::typeck::expr::{DerefContext, PayloadExprs};
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::visitor::{self, TypeVisitor};
+use crate::typeck::ty::{InferVar, Ty, TyKind};
+
+/// A function that a method call could resolve to with the substitution mapping its
+/// generic parameters to the concrete types they stand for at this call site.
+#[derive(Clone, Debug)]
+pub(crate) struct Candidate {
+    /// The function this candidate calls if selected.
+    method: DefId,
+    source: CandidateSource,
+    /// What `Self` denotes in `method`'s signature, always the receiver type
+    /// [`peel_receiver`](Typeck::peel_receiver) produced.
+    self_ty: Ty,
+
+    /// Maps each generic parameter's `HirId` to the concrete type it stands for here: for
+    /// `extend<T> Wrap<T> { fun get(&self) -> T }` called on `Wrap<i32>`, `subst` maps `T`'s
+    /// `HirId` to `i32`. The method's own parameters go through [`Typeck::instantiate_method`].
+    subst: HashMap<HirId, Ty>,
+
+    /// The `extend` block this candidate came from and the arguments its own generic parameters
+    /// were matched to, in declared order. `None` when the candidate comes from a bound in scope
+    /// or from a `dyn` receiver, neither of which is backed by a block.
+    extend_block_origin: Option<(DefId, Vec<Ty>)>,
+}
+
+// `let p = Pair { first: 4, second: 6 }` gives `p` the type `Pair<{integer}, {integer}>`, and a
+// concrete `extend Pair<i32, i32>` cannot be matched against that: header matching is one-way and
+// never binds the caller's inference variables, so probing for a method does not decide the
+// receiver's type. The call is therefore parked until the body is done constraining `p`, by which
+// point the literals have either been pinned by something else or defaulted.
+/// A method call set aside because its receiver's type was still open when the call was reached.
+pub(crate) struct PendingMethodCall {
+    id: HirId,
+    receiver: HirId,
+    member: Ident,
+    args: Vec<ExprId>,
+    /// Stands in for the call's type until it is checked, so the expressions built around the
+    /// call can carry on being checked in the meantime.
+    result: Ty,
+}
+
+/// Where a candidate's method was declared.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CandidateSource {
+    /// An `extend Foo { .. }` block with no trait.
+    Inherent,
+    Trait(DefId),
+}
+
+/// An indirection [`Typeck::peel_receiver`] strips from a receiver type on the way to the type
+/// its methods are looked up on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Layer {
+    /// A reference, carrying its mutability.
+    Ref(Mutability),
+    /// The `any T` indirection.
+    Any,
+}
+
+/// What checking a chosen method call resolved to: the method, the types its generic parameters
+/// stand for, the `extend` block it came from with the types that block's parameters stand for,
+/// and the receiver type. Recorded once checking is done.
+struct ResolvedMethodCall {
+    method: DefId,
+    generics: Vec<Ty>,
+    extend: Option<(DefId, Vec<Ty>)>,
+    self_ty: Ty,
+}
+
+/// Collects every integer or float inference variable inside a type, so a deferred call can
+/// close them before a header is matched against the receiver rigidly.
+struct CollectNumericVars<'a>(&'a mut Vec<Ty>);
+
+impl TypeVisitor for CollectNumericVars<'_> {
+    type Output = ();
+
+    fn visit(&mut self, tcx: &TyCtx, ty: Ty) -> ControlFlow<()> {
+        if matches!(
+            tcx.kind(ty),
+            TyKind::Var(InferVar::Int(_) | InferVar::Float(_))
+        ) {
+            self.0.push(ty);
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+impl<'hir> Typeck<'hir> {
+    // -----------------------------------------------------------------
+    // The two expression forms
+    // -----------------------------------------------------------------
+
+    /// Checks a `.` access expression, dispatching to a variant reached through its enum, a
+    /// method call, or a plain field read.
+    pub(crate) fn check_access(
+        &mut self,
+        id: impl Into<HirId>,
+        base: impl Into<HirId>,
+        member: Ident,
+        args: &'hir AccessArgs,
+    ) -> Ty {
+        let (id, base) = (id.into(), base.into());
+        // A base naming a type rather than a value means `Shape.circle(1.0)`: a variant reached
+        // through its enum. This has to be split off first, because a type-position path has no
+        // type of its own and both the method and the field path start by asking for one.
+        if let Some(self_ty) = self.named_type_of_base(base) {
+            // Recorded so the base is not left as the one expression node in the body without a
+            // type. It is the enum the variant is being built on, which is also what the whole
+            // access produces.
+            self.types.record(base, self_ty);
+            let span = self.hir.expr(id).span;
+            return self.check_variant_of(
+                self_ty,
+                member,
+                PayloadExprs::from_access_args(args),
+                span,
+            );
+        }
+
+        match args {
+            AccessArgs::Call(args) => self.check_method_call(id, base, member, args),
+            AccessArgs::None => self.check_field(base, member),
+            // A brace payload is the one access form the grammar pins to a variant, so a base
+            // that names a value cannot be one -- there is no field or method spelled with
+            // braces to fall back to.
+            AccessArgs::Record(fields) => self.check_record_access(base, fields),
+        }
+    }
+
+    /// Checks an access written with braces, such as `Shape { .. }` or `value { .. }`. The
+    /// grammar pins this form to a variant, so a base that names a value is always reported.
+    fn check_record_access(&mut self, base: HirId, fields: &[PayloadField]) -> Ty {
+        let base_ty = self.ty_of(base);
+        if !matches!(self.tcx.kind(base_ty), TyKind::Error) {
+            report_variant_base_not_a_type(self.session, self.hir.expr(base).span);
+        }
+        for field in fields {
+            self.ty_of(field.value);
+        }
+        self.tcx.error()
+    }
+
+    /// Checks a call expression `callee(args)`.
+    pub(crate) fn check_call(
+        &mut self,
+        id: impl Into<HirId>,
+        callee: impl Into<HirId>,
+        args: &[ExprId],
+        span: SrcSpan,
+    ) -> Ty {
+        let (id, callee) = (id.into(), callee.into());
+        let (sig, instantiation) = self.callee_sig(callee);
+
+        let TyKind::Fun { params, ret } = self.tcx.kind(sig).clone() else {
+            // Every argument is still checked here, so a mistake inside one of them is reported
+            // alongside this diagnostic rather than only once the callee is fixed.
+            for &arg in args {
+                self.ty_of(arg);
+            }
+            if !matches!(self.tcx.kind(sig), TyKind::Error) {
+                report_not_callable(self.display_cx(), sig, span);
+            }
+            return self.tcx.error();
+        };
+
+        self.check_args(&params, args, "this call", span);
+        self.record_call_resolution(id, callee, instantiation, span);
+        ret.unwrap_or_else(|| self.tcx.unit())
+    }
+
+    /// Records what a checked call resolved to: the target the MIR addresses it by, and the
+    /// bounds its instantiation raises.
+    fn record_call_resolution(
+        &mut self,
+        id: HirId,
+        callee: HirId,
+        instantiation: Option<(DefId, Vec<Ty>)>,
+        span: SrcSpan,
+    ) {
+        if let Some((def, generic_args)) = instantiation {
+            let resolved = self.resolve_all(&generic_args);
+            self.register_bound_obligations(def, &resolved, span, callee.owner);
+            self.types.record_call(id, def, resolved);
+        } else if let ExprKind::Path(path) = &self.hir.expr(callee).kind
+            && let Res::Function(def) = path.res
+        {
+            // A named, non-generic function has nothing to instantiate, but MIR lowering still
+            // needs a resolved call target to address it by `DefId` directly.
+            self.types.record_call(id, def, Vec::new());
+        }
+    }
+
+    fn callee_sig(&mut self, callee: HirId) -> (Ty, Option<(DefId, Vec<Ty>)>) {
+        let Some((def, generics)) = self.generic_callee(callee) else {
+            // Anything else, a closure, a field holding a function, or a call to something with
+            // no parameters of its own, has nothing to instantiate, so its type is already the
+            // signature.
+            return (self.ty_of(callee), None);
+        };
+
+        let sig = self.ty_of(def.owner_id());
+        let args: Vec<Ty> = generics.iter().map(|_| self.tcx.next_infer_var()).collect();
+        let subst: HashMap<HirId, Ty> = generics.into_iter().zip(args.iter().copied()).collect();
+        let sig = self.subst_ty(sig, &subst);
+
+        // Recorded rather than left to `ty_of`, so the type the table holds for this node is the
+        // one the call was actually checked against.
+        self.types.record(callee, sig);
+        (sig, Some((def, args)))
+    }
+
+    fn generic_callee(&self, callee: HirId) -> Option<(DefId, Vec<HirId>)> {
+        let ExprKind::Path(path) = &self.hir.expr(callee).kind else {
+            return None;
+        };
+        let Res::Function(def) = path.res else {
+            return None;
+        };
+        let OwnerNode::Function(function) = self.hir.def(def) else {
+            return None;
+        };
+        (!function.generics.is_empty()).then(|| (def, function.generics.clone()))
+    }
+
+    /// Resolves every type in `tys` to what the unifier currently knows it stands for.
+    pub(crate) fn resolve_all(&mut self, tys: &[Ty]) -> Vec<Ty> {
+        tys.iter()
+            .map(|&ty| self.unifier.find_deep(&mut self.tcx, ty))
+            .collect()
+    }
+
+    // -----------------------------------------------------------------
+    // Method calls
+    // -----------------------------------------------------------------
+
+    /// Checks a method call `receiver.member(args)`, where `id` names the call expression
+    /// itself.
+    pub(crate) fn check_method_call(
+        &mut self,
+        id: impl Into<HirId>,
+        receiver: impl Into<HirId>,
+        member: Ident,
+        args: &[ExprId],
+    ) -> Ty {
+        let (id, receiver) = (id.into(), receiver.into());
+        let owner = receiver.owner;
+        let receiver_ty = self.ty_of_as_place(receiver);
+
+        // Step 1: the receiver's type must already be known. Resolution picks a candidate from
+        // what the receiver's type is, so unlike a trait bound it cannot be answered against a
+        // type that is still open.
+        if matches!(self.tcx.kind(receiver_ty), TyKind::Var(_)) {
+            // A receiver that is still a bare variable is usually the result of another call
+            // that has itself been parked -- the `a.me()` in `a.me().get()`. Parking this one
+            // too lets it be answered once that receiver has a type. No candidate could be found
+            // against a bare variable anyway, so nothing is lost by waiting.
+            if !self.checking_pending_method_calls {
+                return self.defer_method_call(id, receiver, member, args);
+            }
+            report_receiver_type_unknown(self.session, member, self.hir.expr(receiver).span);
+            return self.check_unresolved_call_args(args);
+        }
+        if matches!(self.tcx.kind(receiver_ty), TyKind::Error) {
+            return self.check_unresolved_call_args(args);
+        }
+
+        // Step 2: strip references and `any` indirections to reach the type methods are looked
+        // up on.
+        let (base, layers) = self.peel_receiver(receiver_ty);
+
+        // Step 3: collect every candidate `member` could name on `base`.
+        let candidates = self.method_candidates(base, member.text, owner);
+        if candidates.is_empty() {
+            // Finding nothing is only final once the receiver's type is. While it still holds
+            // inference variables, a concrete `extend` header could not have matched it whether
+            // or not the method exists, so this is not yet an answer -- park the call and ask
+            // again at the end of the body. See [`PendingMethodCall`].
+            if !self.checking_pending_method_calls && self.mentions_infer_var(receiver_ty) {
+                return self.defer_method_call(id, receiver, member, args);
+            }
+            report_no_method(self.display_cx(), member, base);
+            return self.check_unresolved_call_args(args);
+        }
+
+        // Step 4: choose exactly one candidate, or report why the call is ambiguous.
+        let Some(chosen) = self.select_candidate(&candidates, member) else {
+            return self.check_unresolved_call_args(args);
+        };
+
+        // Step 5: check the receiver and arguments against the chosen method's signature.
+        let (ret, resolved) =
+            self.check_chosen_method(id, &chosen, receiver, &layers, member, args);
+        self.record_resolved_method(id, receiver, resolved);
+        ret
+    }
+
+    // -----------------------------------------------------------------
+    // Deferred method calls
+    // -----------------------------------------------------------------
+
+    /// Parks a call whose receiver is not yet resolved enough to choose a candidate, handing
+    /// back a fresh variable to stand in for its type.
+    ///
+    /// The arguments are deliberately left unchecked. They are checked against the chosen
+    /// method's parameters once the call is resolved, which is what lets a literal argument take
+    /// its type from the parameter it is passed to rather than from nothing.
+    fn defer_method_call(
+        &mut self,
+        id: HirId,
+        receiver: HirId,
+        member: Ident,
+        args: &[ExprId],
+    ) -> Ty {
+        let result = self.tcx.next_infer_var();
+        self.pending_method_calls.push_back(PendingMethodCall {
+            id,
+            receiver,
+            member,
+            args: args.to_vec(),
+            result,
+        });
+        result
+    }
+
+    /// Re-checks every call [`Typeck::defer_method_call`] parked, now that the body has placed
+    /// every constraint it is going to on their receivers.
+    ///
+    /// A receiver still carrying unconstrained numeric variables at this point never will be
+    /// constrained, so those are bound to their defaults first -- `{integer}` to `i32` -- which
+    /// is what makes `Pair<{integer}, {integer}>` finally match `extend Pair<i32, i32>`.
+    pub(crate) fn check_pending_method_calls(&mut self) {
+        // A parked call's arguments are only checked once it is checked, so checking one can park
+        // another: in `a.twice(b.get())`, `b.get()` is first reached while `a.twice` is being
+        // checked. Checking therefore loops rather than making a single pass.
+        //
+        // `checking_pending_method_calls` bounds that loop. A call reaching here a second time has
+        // already had its receiver's defaults committed once, so parking it again could not make
+        // progress; with the flag set it reports instead, like any other call whose method
+        // cannot be found. That is what stops a receiver holding a variable no default applies
+        // to from cycling forever.
+        let mut checked_once: HashSet<HirId> = HashSet::new();
+        // Checked front to back: a call parked while checking an earlier one depends on that
+        // earlier one's result, so the order they were parked in is the order they can be
+        // answered in.
+        while let Some(pending) = self.pending_method_calls.pop_front() {
+            self.checking_pending_method_calls = !checked_once.insert(pending.id);
+            let receiver_ty = self.ty_of_as_place(pending.receiver);
+            self.commit_numeric_defaults(receiver_ty);
+
+            let found =
+                self.check_method_call(pending.id, pending.receiver, pending.member, &pending.args);
+
+            if matches!(self.tcx.kind(found), TyKind::Error) {
+                // `unify` treats `Error` as matching anything *and records nothing about the
+                // match*, so tying the placeholder to it would leave the placeholder unbound and
+                // this expression typed as a bare variable. `mir::lower` decides whether to skip
+                // a body by looking for a node typed `Error`, so it would then lower a call that
+                // type checking never resolved. Write the error onto the call itself instead.
+                self.types.record(pending.id, found);
+            } else {
+                // The placeholder handed out when the call was parked is already recorded as
+                // this expression's type and may have been unified into its surroundings, so the
+                // real result is tied back to it rather than replacing it. A mismatch is
+                // reported where the placeholder was used, so it is left to that unification.
+                let _ = self.unifier.unify(&self.tcx, pending.result, found);
+            }
+        }
+        self.checking_pending_method_calls = false;
+    }
+
+    /// Binds every still-unconstrained integer/float variable inside `ty` to its default type.
+    ///
+    /// [`writeback`](Typeck::writeback) applies the same defaults, but only to the types it
+    /// stores; the unifier itself keeps the variables open. A deferred call has to close them
+    /// for real, since the candidate's header is matched against the receiver rigidly.
+    pub(crate) fn commit_numeric_defaults(&mut self, ty: Ty) {
+        let resolved = self.unifier.find_deep(&mut self.tcx, ty);
+
+        let mut numeric_vars = Vec::new();
+        visitor::walk_all(
+            &mut CollectNumericVars(&mut numeric_vars),
+            &self.tcx,
+            resolved,
+        );
+
+        for var in numeric_vars {
+            let default = match *self.tcx.kind(var) {
+                TyKind::Var(InferVar::Int(_)) => self.tcx.mk_prim(PrimTy::I32),
+                TyKind::Var(InferVar::Float(_)) => self.tcx.mk_prim(PrimTy::F64),
+                _ => unreachable!("only numeric variables were collected"),
+            };
+            let _ = self.unifier.unify(&self.tcx, var, default);
+        }
+    }
+
+    /// Returns whether `ty` still contains an inference variable once resolved.
+    pub(crate) fn mentions_infer_var(&mut self, ty: Ty) -> bool {
+        let resolved = self.unifier.find_deep(&mut self.tcx, ty);
+        visitor::any_ty(&self.tcx, resolved, |tcx, ty| {
+            matches!(tcx.kind(ty), TyKind::Var(_))
+        })
+    }
+
+    /// Instantiates `chosen`'s signature at this call site, checks the receiver against its
+    /// self mode, and checks the argument list against its parameters. Returns the call's type
+    /// and what the call resolved to, for [`Typeck::record_resolved_method`] to record.
+    fn check_chosen_method(
+        &mut self,
+        id: HirId,
+        chosen: &Candidate,
+        receiver: HirId,
+        layers: &[Layer],
+        member: Ident,
+        args: &[ExprId],
+    ) -> (Ty, ResolvedMethodCall) {
+        let span = self.hir.expr(id).span;
+        let mode = self.receiver_mode(chosen.method);
+        let (params, ret, fresh) =
+            self.instantiate_method(chosen.method, &chosen.subst, chosen.self_ty);
+
+        match mode {
+            Some(mode) => self.check_receiver(mode, receiver, layers, member, chosen.method),
+            None => report_no_receiver(self.session, self.hir, member, chosen.method),
+        }
+
+        if let TyKind::Dyn { .. } = self.tcx.kind(chosen.self_ty) {
+            self.check_dyn_method_usable(chosen.method, mode, member);
+        }
+
+        // A method's `self` counts as its first parameter (see
+        // [`collect_function`](Typeck::collect_function)), and it was already checked above by
+        // `check_receiver`, so the written arguments start at index one.
+        let expected = &params[usize::from(mode.is_some())..];
+        let name = format!("`{}`", self.session.resolve(member.text));
+        self.check_args(expected, args, &name, span);
+
+        let resolved = ResolvedMethodCall {
+            method: chosen.method,
+            generics: self.resolve_all(&fresh),
+            extend: chosen
+                .extend_block_origin
+                .as_ref()
+                .map(|(block, args)| (*block, self.resolve_all(args))),
+            self_ty: chosen.self_ty,
+        };
+        (ret.unwrap_or_else(|| self.tcx.unit()), resolved)
+    }
+
+    /// Records a resolved method call and the bounds it raises. An `extend` block's own bounds
+    /// condition the methods it offers: `extend<T: Show> Wrap<T>` only gives its methods to a
+    /// `Wrap<T>` whose `T` implements `Show`.
+    fn record_resolved_method(&mut self, id: HirId, receiver: HirId, resolved: ResolvedMethodCall) {
+        let span = self.hir.expr(id).span;
+        self.register_bound_obligations(resolved.method, &resolved.generics, span, receiver.owner);
+
+        let extend_args = match resolved.extend {
+            Some((block, args)) => {
+                self.register_bound_obligations(block, &args, span, receiver.owner);
+                args
+            }
+            None => Vec::new(),
+        };
+
+        self.types.record_method_call(
+            id,
+            resolved.method,
+            resolved.generics,
+            extend_args,
+            Some(resolved.self_ty),
+        );
+    }
+
+    pub(crate) fn method_candidates(
+        &mut self,
+        base: Ty,
+        member: Symbol,
+        owner: DefId,
+    ) -> Vec<Candidate> {
+        let mut candidates = self.candidates_from_extend_blocks(base, member);
+        candidates.extend(self.candidates_from_dyn(base, member));
+        candidates.extend(self.candidates_from_bounds(base, member, owner));
+
+        Self::without_duplicates(candidates)
+    }
+
+    /// Returns candidates from the inherent and trait `extend` blocks keyed on the head of the
+    /// self type -- a struct, enum, primitive, tuple, array, reference, function type, or `iso`.
+    fn candidates_from_extend_blocks(&mut self, base: Ty, member: Symbol) -> Vec<Candidate> {
+        let Some(head) = self.type_head(base) else {
+            return Vec::new();
+        };
+        self.extends
+            .for_type(head)
+            .to_vec()
+            .into_iter()
+            .filter_map(|block| self.candidate_from_extend_block(block, base, member))
+            .collect()
+    }
+
+    /// Returns the candidate a `dyn Show` receiver offers: it implements exactly the trait it
+    /// names, so it offers exactly what that trait declares. There is no `extend` block behind
+    /// it, since `extend` blocks are nominal, so this is a rule here the same way it is a rule in
+    /// the query.
+    fn candidates_from_dyn(&mut self, base: Ty, member: Symbol) -> Vec<Candidate> {
+        let TyKind::Dyn { trait_, args } = self.tcx.kind(base).clone() else {
+            return Vec::new();
+        };
+        let Some(method) = self.trait_method(trait_, member) else {
+            return Vec::new();
+        };
+        vec![Candidate {
+            method,
+            source: CandidateSource::Trait(trait_),
+            self_ty: base,
+            subst: self.trait_subst(trait_, &args),
+            extend_block_origin: None,
+        }]
+    }
+
+    /// Returns candidates from the bounds in scope, the only step that can answer for a receiver
+    /// whose type is a bare parameter, since a parameter is not in the index at all.
+    fn candidates_from_bounds(&mut self, base: Ty, member: Symbol, owner: DefId) -> Vec<Candidate> {
+        self.bounds_env(owner)
+            .bounds
+            .into_iter()
+            .filter(|bound| bound.self_ty == base)
+            .filter_map(|bound| {
+                let method = self.trait_method(bound.trait_.def, member)?;
+                Some(Candidate {
+                    method,
+                    source: CandidateSource::Trait(bound.trait_.def),
+                    self_ty: base,
+                    subst: self.trait_subst(bound.trait_.def, &bound.trait_.args),
+                    extend_block_origin: None,
+                })
+            })
+            .collect()
+    }
+
+    /// Keeps the first candidate for each method, so a method reachable through several routes is
+    /// offered once.
+    fn without_duplicates(candidates: Vec<Candidate>) -> Vec<Candidate> {
+        let mut seen = HashSet::new();
+        candidates
+            .into_iter()
+            .filter(|candidate| seen.insert(candidate.method))
+            .collect()
+    }
+
+    fn candidate_from_extend_block(
+        &mut self,
+        block: DefId,
+        base: Ty,
+        member: Symbol,
+    ) -> Option<Candidate> {
+        let subst = self.header_applies(block, base)?;
+        let provided = self.get_method_in_block(block, member);
+
+        let generics = self.declared_generics(block);
+        let block_origin = Some((block, self.instantiated_generics(generics, &subst)));
+
+        let Some(trait_ref) = self.extends.trait_of(block).cloned() else {
+            return provided.map(|method| Candidate {
+                method,
+                source: CandidateSource::Inherent,
+                self_ty: base,
+                subst,
+                extend_block_origin: block_origin,
+            });
+        };
+
+        let declared = self.trait_method(trait_ref.def, member)?;
+        let source = CandidateSource::Trait(trait_ref.def);
+
+        match provided {
+            Some(method) => Some(Candidate {
+                method,
+                source,
+                self_ty: base,
+                subst,
+                extend_block_origin: block_origin,
+            }),
+            None => {
+                let args: Vec<Ty> = trait_ref
+                    .args
+                    .iter()
+                    .map(|&arg| self.subst_ty(arg, &subst))
+                    .collect();
+                let subst = self.trait_subst(trait_ref.def, &args);
+                Some(Candidate {
+                    method: declared,
+                    source,
+                    self_ty: base,
+                    subst,
+                    extend_block_origin: block_origin,
+                })
+            }
+        }
+    }
+
+    fn instantiated_generics(&mut self, generics: &[HirId], subst: &HashMap<HirId, Ty>) -> Vec<Ty> {
+        generics
+            .iter()
+            .map(|&param| {
+                subst
+                    .get(&param)
+                    .copied()
+                    .unwrap_or_else(|| self.tcx.mk_generic(param))
+            })
+            .collect()
+    }
+
+    fn select_candidate(&self, candidates: &[Candidate], member: Ident) -> Option<Candidate> {
+        if let Some(inherent) = candidates
+            .iter()
+            .find(|candidate| candidate.source == CandidateSource::Inherent)
+        {
+            return Some(inherent.clone());
+        }
+
+        match candidates {
+            [only] => Some(only.clone()),
+            [] => unreachable!("select_candidate is only asked about a non-empty candidate list"),
+            ambiguous_candidates => {
+                let candidates: Vec<(&str, SrcSpan)> = ambiguous_candidates
+                    .iter()
+                    .map(|candidate| {
+                        let CandidateSource::Trait(def) = candidate.source else {
+                            unreachable!(
+                                "an inherent candidate wins outright, so it is never ambiguous"
+                            );
+                        };
+                        (
+                            get_name_of_trait(self.session, self.hir, def),
+                            function_name_span(self.hir, candidate.method),
+                        )
+                    })
+                    .collect();
+                report_ambiguous_method(self.session, member, &candidates);
+                None
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Signatures
+    // -----------------------------------------------------------------
+
+    fn instantiate_method(
+        &mut self,
+        method: DefId,
+        subst: &HashMap<HirId, Ty>,
+        self_ty: Ty,
+    ) -> (Vec<Ty>, Option<Ty>, Vec<Ty>) {
+        let function = self.hir.function(method);
+        let generics = function.generics.clone();
+
+        let mut subst = subst.clone();
+        let mut fresh = Vec::with_capacity(generics.len());
+        for param in generics {
+            let var = self.tcx.next_infer_var();
+            subst.insert(param, var);
+            fresh.push(var);
+        }
+
+        let (params, ret) = self
+            .signature(method)
+            .expect("collect_function records every method's own signature");
+
+        let params = params
+            .into_iter()
+            .map(|ty| self.subst_sig_ty(ty, &subst, self_ty))
+            .collect();
+        let ret = ret.map(|ty| self.subst_sig_ty(ty, &subst, self_ty));
+        (params, ret, fresh)
+    }
+
+    // -----------------------------------------------------------------
+    // Receivers
+    // -----------------------------------------------------------------
+
+    /// Strips the `&`, `&mut`, and `any` layers off a receiver
+    pub(crate) fn peel_receiver(&self, ty: Ty) -> (Ty, Vec<Layer>) {
+        let mut layers = Vec::new();
+        let mut current = ty;
+        loop {
+            match *self.tcx.kind(current) {
+                TyKind::Ref { base, mutability } => {
+                    layers.push(Layer::Ref(mutability));
+                    current = base;
+                }
+                TyKind::Any(base) => {
+                    layers.push(Layer::Any);
+                    current = base;
+                }
+                _ => return (current, layers),
+            }
+        }
+    }
+
+    /// Checks that a method reached through a `dyn` receiver is usable: it must borrow its
+    /// receiver and must not mention `Self` in any other parameter or in its return type.
+    fn check_dyn_method_usable(&mut self, method: DefId, mode: Option<SelfMode>, member: Ident) {
+        self.check_dyn_receiver_mode(method, mode, member);
+        self.check_dyn_signature_mentions_self(method, member);
+    }
+
+    /// Checks that a `dyn` method borrows its receiver; running by value would move it out of the
+    /// vtable.
+    fn check_dyn_receiver_mode(&self, method: DefId, mode: Option<SelfMode>, member: Ident) {
+        if mode == Some(SelfMode::Move) {
+            report_dyn_self_by_value(self.session, self.hir, member, method);
+        }
+    }
+
+    /// Checks that a `dyn` method's signature does not mention `Self` outside its receiver.
+    fn check_dyn_signature_mentions_self(&mut self, method: DefId, member: Ident) {
+        let function = self.hir.function(method);
+        let (params, ret) = self.signature(method).unwrap_or_default();
+        let self_param_takes = usize::from(function.self_param.is_some());
+        for param in params.iter().skip(self_param_takes) {
+            if self.ty_mentions_self(*param) {
+                report_dyn_method_mentions_self(self.session, self.hir, member, method);
+                return;
+            }
+        }
+        if ret.is_some_and(|ret| self.ty_mentions_self(ret)) {
+            report_dyn_method_mentions_self(self.session, self.hir, member, method);
+        }
+    }
+
+    fn ty_mentions_self(&self, ty: Ty) -> bool {
+        visitor::any_ty(&self.tcx, ty, |tcx, ty| {
+            matches!(tcx.kind(ty), TyKind::SelfTy(_))
+        })
+    }
+
+    fn check_receiver(
+        &mut self,
+        mode: SelfMode,
+        receiver: HirId,
+        layers: &[Layer],
+        member: Ident,
+        method: DefId,
+    ) {
+        let span = self.hir.expr(receiver).span;
+        match mode {
+            // `any self` accepts every receiver shape. That is its entire purpose as a mode.
+            SelfMode::Any => {}
+            SelfMode::Move => {
+                if !layers.is_empty() {
+                    report_receiver_mode(self.session, self.hir, member, mode, span, method);
+                } else if let ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    operand,
+                } = self.hir.expr(receiver).kind
+                {
+                    self.check_deref_as(receiver, operand, span, DerefContext::Value);
+                }
+            }
+            SelfMode::Immutable => {
+                if layers.is_empty() && !self.is_place_expr(receiver) {
+                    report_receiver_not_a_place(self.session, self.hir, member, mode, span, method);
+                }
+            }
+            SelfMode::Mutable => {
+                if layers
+                    .iter()
+                    .any(|layer| matches!(layer, Layer::Ref(Mutability::Immutable)))
+                {
+                    report_receiver_mode(self.session, self.hir, member, mode, span, method);
+                } else if layers.is_empty() && !self.is_place_expr(receiver) {
+                    report_receiver_not_a_place(self.session, self.hir, member, mode, span, method);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn is_place_expr(&self, id: HirId) -> bool {
+        match &self.hir.expr(id).kind {
+            ExprKind::Path(_)
+            | ExprKind::Unary {
+                op: UnaryOp::Deref, ..
+            } => true,
+            ExprKind::Index { base, .. } => self.is_place_expr((*base).into()),
+            // `point.x` reaches into a place, but `Shape.empty` builds a fresh value that lives
+            // nowhere yet, and `make().x` reaches into a temporary, so only a base that is
+            // itself a place and names a value makes this access a place.
+            ExprKind::Access {
+                base,
+                args: AccessArgs::None,
+                ..
+            } => !self.hir.names_a_type((*base).into()) && self.is_place_expr((*base).into()),
+            _ => false,
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Fields
+    // -----------------------------------------------------------------
+
+    fn check_field(&mut self, base: HirId, member: Ident) -> Ty {
+        let owner = base.owner;
+        let base_ty = self.ty_of_as_place(base);
+
+        if matches!(self.tcx.kind(base_ty), TyKind::Var(_)) {
+            report_receiver_type_unknown(self.session, member, self.hir.expr(base).span);
+            return self.tcx.error();
+        }
+        if matches!(self.tcx.kind(base_ty), TyKind::Error) {
+            return self.tcx.error();
+        }
+
+        // A field is reached through references exactly as a method is.
+        let (base_ty, _adjustment) = self.peel_receiver(base_ty);
+
+        if let TyKind::Tuple(elems) = self.tcx.kind(base_ty).clone() {
+            return self.check_tuple_field(&elems, member, base_ty);
+        }
+
+        if let Some(ty) = self.field_ty(base_ty, owner, member) {
+            return ty;
+        }
+
+        if self
+            .method_candidates(base_ty, member.text, owner)
+            .is_empty()
+        {
+            report_no_field(self.display_cx(), member, base_ty);
+        } else {
+            report_field_is_a_method(self.display_cx(), member, base_ty);
+        }
+        self.tcx.error()
+    }
+
+    /// Checks a tuple index access, such as `t.0` on `t: (i32, bool)`. `member`'s text is the
+    /// digits written after the `.`, parsed here rather than at the call site so an
+    /// out-of-range or malformed index reports through the same diagnostic a named field would.
+    fn check_tuple_field(&mut self, elems: &[Ty], member: Ident, base_ty: Ty) -> Ty {
+        let index = self.session.resolve(member.text).parse::<usize>().ok();
+        match index.and_then(|index| elems.get(index)) {
+            Some(&ty) => ty,
+            None => {
+                report_no_field(self.display_cx(), member, base_ty);
+                self.tcx.error()
+            }
+        }
+    }
+
+    fn field_ty(&mut self, base: Ty, owner: DefId, member: Ident) -> Option<Ty> {
+        let (def, subst) = self.adt_and_generic_substs(base)?;
+        let OwnerNode::Struct(struct_) = self.hir.def(def) else {
+            return None;
+        };
+
+        let field = struct_
+            .fields
+            .clone()
+            .into_iter()
+            .find(|&id| self.hir.field(id).name.text == member.text)?;
+
+        let visibility = self.hir.field(field).visibility;
+        if !self.is_visible_from(self.hir.module_of(def), owner, visibility) {
+            report_private_field(self.session, member);
+        }
+
+        let declared = self
+            .types
+            .ty(field)
+            .expect("collect_fields records every field's declared type");
+        Some(self.subst_ty(declared, &subst))
+    }
+
+    // -----------------------------------------------------------------
+    // Argument lists
+    // -----------------------------------------------------------------
+
+    fn check_args(&mut self, expected: &[Ty], args: &[ExprId], name: &str, span: SrcSpan) {
+        let found: Vec<Ty> = args.iter().map(|&arg| self.ty_of(arg)).collect();
+
+        if found.len() != expected.len() {
+            report_call_arg_count(self.session, name, found.len(), expected.len(), span);
+        }
+
+        for (index, (&want, &got)) in expected.iter().zip(found.iter()).enumerate() {
+            if let Err(err) = self.unify_allowing_any(want, got)
+                && !self.coerce_unsize(want, got, args[index])
+            {
+                let span = self.hir.expr(args[index]).span;
+                report_call_arg_mismatch(self.display_cx(), err, span);
+            }
+        }
+    }
+
+    fn check_unresolved_call_args(&mut self, args: &[ExprId]) -> Ty {
+        for &arg in args {
+            self.ty_of(arg);
+        }
+        self.tcx.error()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::Hir;
+    use crate::testing::{
+        TypeckStage, checker_through, find_return, first_extend_method, lower_to_hir,
+        typeck_src as check,
+    };
+
+    /// Runs the checker through the point candidate collection reads, without checking function
+    /// bodies.
+    fn collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
+        let checker = checker_through(hir, TypeckStage::Index);
+        crate::testing::clear_diagnostics();
+        checker
+    }
+
+    /// Returns the `DefId` of the top-level definition named `name`.
+    fn named(checker: &Typeck<'_>, name: &str) -> DefId {
+        crate::testing::named_def(checker.hir, name)
+    }
+
+    fn trait_of(candidate: &Candidate) -> DefId {
+        match candidate.source {
+            CandidateSource::Trait(def) => def,
+            CandidateSource::Inherent => panic!("this candidate is inherent"),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Candidate collection
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn an_inherent_block_offers_the_methods_it_defines() {
+        let hir = lower_to_hir(
+            "struct Foo {}
+             extend Foo { fun show(&self) {} }",
+        );
+        let mut checker = collected(&hir);
+        let (foo, root) = (named(&checker, "Foo"), hir.root_id());
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        let candidates = checker.method_candidates(foo_ty, crate::testing::intern("show"), root);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source, CandidateSource::Inherent);
+
+        assert!(
+            checker
+                .method_candidates(foo_ty, crate::testing::intern("other"), root)
+                .is_empty(),
+            "a name the block does not define is not offered"
+        );
+    }
+
+    #[test]
+    fn a_trait_impl_offers_what_the_trait_declares() {
+        let hir = lower_to_hir(
+            "trait Show { fun show(&self); }
+             struct Foo {}
+             extend Foo with Show { fun show(&self) {} }",
+        );
+        let mut checker = collected(&hir);
+        let (foo, show, root) = (
+            named(&checker, "Foo"),
+            named(&checker, "Show"),
+            hir.root_id(),
+        );
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        let candidates = checker.method_candidates(foo_ty, crate::testing::intern("show"), root);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(trait_of(&candidates[0]), show);
+    }
+
+    /// A defaulted method is available without appearing in the block, so the candidate is the
+    /// trait's own declaration.
+    #[test]
+    fn a_defaulted_method_is_offered_by_an_impl_that_does_not_write_it() {
+        let hir = lower_to_hir(
+            "trait Show { fun show(&self) {} }
+             struct Foo {}
+             extend Foo with Show {}",
+        );
+        let mut checker = collected(&hir);
+        let (foo, show, root) = (
+            named(&checker, "Foo"),
+            named(&checker, "Show"),
+            hir.root_id(),
+        );
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+
+        let candidates = checker.method_candidates(foo_ty, crate::testing::intern("show"), root);
+        assert_eq!(candidates.len(), 1);
+        let declared = hir.trait_(show);
+        assert_eq!(candidates[0].method, declared.functions[0]);
+    }
+
+    /// The index has nothing to say about a bare parameter, so the environment is the only thing
+    /// that can answer.
+    #[test]
+    fn a_bound_in_scope_offers_its_traits_methods_on_a_parameter() {
+        let hir = lower_to_hir(
+            "trait Show { fun show(&self); }
+             fun f<T: Show>(x: T) {}",
+        );
+        let mut checker = collected(&hir);
+        let (f, show) = (named(&checker, "f"), named(&checker, "Show"));
+        let function = hir.function(f);
+        let t = checker.tcx.mk_generic(function.generics[0]);
+
+        let candidates = checker.method_candidates(t, crate::testing::intern("show"), f);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(trait_of(&candidates[0]), show);
+    }
+
+    /// A bound on some *other* parameter says nothing about this one.
+    #[test]
+    fn a_bound_on_another_parameter_is_not_offered() {
+        let hir = lower_to_hir(
+            "trait Show { fun show(&self); }
+             fun f<T, U: Show>(x: T) {}",
+        );
+        let mut checker = collected(&hir);
+        let f = named(&checker, "f");
+        let function = hir.function(f);
+        let t = checker.tcx.mk_generic(function.generics[0]);
+
+        assert!(
+            checker
+                .method_candidates(t, crate::testing::intern("show"), f)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_dyn_receiver_offers_exactly_its_traits_methods() {
+        let hir = lower_to_hir(
+            "trait Show { fun show(&self); }
+             trait Other { fun other(&self); }",
+        );
+        let mut checker = collected(&hir);
+        let (show, root) = (named(&checker, "Show"), hir.root_id());
+        let dyn_show = checker.tcx.mk_dyn(show, vec![]);
+
+        let candidates = checker.method_candidates(dyn_show, crate::testing::intern("show"), root);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(trait_of(&candidates[0]), show);
+
+        assert!(
+            checker
+                .method_candidates(dyn_show, crate::testing::intern("other"), root)
+                .is_empty(),
+            "a `dyn` offers the methods of the trait it names and no others"
+        );
+    }
+
+    /// An `extend` block whose header does not match this receiver is not a candidate, no
+    /// matter how well the method name lines up.
+    #[test]
+    fn an_impl_whose_header_does_not_match_is_not_a_candidate() {
+        let hir = lower_to_hir(
+            "struct Wrap<T> { inner: T }
+             struct Foo {}
+             struct Bar {}
+             extend Wrap<Foo> { fun show(&self) {} }",
+        );
+        let mut checker = collected(&hir);
+        let (wrap, foo, bar, root) = (
+            named(&checker, "Wrap"),
+            named(&checker, "Foo"),
+            named(&checker, "Bar"),
+            hir.root_id(),
+        );
+        let (foo_ty, bar_ty) = (
+            checker.tcx.mk_adt(foo, vec![]),
+            checker.tcx.mk_adt(bar, vec![]),
+        );
+        let (wrap_foo, wrap_bar) = (
+            checker.tcx.mk_adt(wrap, vec![foo_ty]),
+            checker.tcx.mk_adt(wrap, vec![bar_ty]),
+        );
+
+        assert_eq!(
+            checker
+                .method_candidates(wrap_foo, crate::testing::intern("show"), root)
+                .len(),
+            1
+        );
+        assert!(
+            checker
+                .method_candidates(wrap_bar, crate::testing::intern("show"), root)
+                .is_empty()
+        );
+    }
+
+    /// Two bounds naming the same trait are one candidate, not an ambiguity between a candidate
+    /// and itself.
+    #[test]
+    fn the_same_method_reached_twice_is_one_candidate() {
+        let hir = lower_to_hir(
+            "trait Show { fun show(&self); }
+             fun f<T: Show + Show>(x: T) {}",
+        );
+        let mut checker = collected(&hir);
+        let f = named(&checker, "f");
+        let function = hir.function(f);
+        let t = checker.tcx.mk_generic(function.generics[0]);
+
+        assert_eq!(
+            checker
+                .method_candidates(t, crate::testing::intern("show"), f)
+                .len(),
+            1
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Picking
+    // -----------------------------------------------------------------
+
+    /// Returns the function named `name` that `owner` (a trait or an `extend` block) declares.
+    fn method_of(checker: &Typeck<'_>, owner: DefId, name: &str) -> DefId {
+        checker
+            .hir
+            .def_ids()
+            .find(|&id| {
+                checker.hir.parent(id) == Some(owner)
+                    && matches!(
+                        checker.hir.def(id),
+                        OwnerNode::Function(f) if crate::testing::resolve(f.name.text) == name
+                    )
+            })
+            .unwrap_or_else(|| panic!("no method named {name:?}"))
+    }
+
+    /// Returns the function named `name` declared by the fixture's one `extend` block.
+    fn extend_method(checker: &Typeck<'_>, name: &str) -> DefId {
+        let block = crate::testing::first_extend(checker.hir);
+        method_of(checker, block, name)
+    }
+
+    /// Builds a candidate for testing [`Typeck::select_candidate`] alone, which reads nothing
+    /// but `source`. The block a real candidate came from matters only after one is picked.
+    fn fixture_candidate(source: CandidateSource, method: DefId, self_ty: Ty) -> Candidate {
+        Candidate {
+            method,
+            source,
+            self_ty,
+            subst: HashMap::new(),
+            extend_block_origin: None,
+        }
+    }
+
+    #[test]
+    fn an_inherent_candidate_wins_over_a_trait_one() {
+        let hir = lower_to_hir(
+            "trait Show { fun show(&self); }
+             struct Foo {}
+             extend Foo { fun show(&self) {} }",
+        );
+        let mut checker = collected(&hir);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let inherent = extend_method(&checker, "show");
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+        let member = Ident {
+            text: crate::testing::intern("show"),
+            span: SrcSpan::new(0, 0),
+        };
+
+        // Trait first, so that "the inherent one" is not merely "the first one".
+        let candidates = [
+            fixture_candidate(
+                CandidateSource::Trait(show),
+                method_of(&checker, show, "show"),
+                foo_ty,
+            ),
+            fixture_candidate(CandidateSource::Inherent, inherent, foo_ty),
+        ];
+        let picked = checker
+            .select_candidate(&candidates, member)
+            .expect("one candidate wins");
+        assert_eq!(picked.source, CandidateSource::Inherent);
+        assert!(crate::testing::diagnostics().is_empty());
+    }
+
+    #[test]
+    fn a_single_trait_candidate_is_picked() {
+        let hir = lower_to_hir(
+            "trait Show { fun show(&self); }
+             struct Foo {}",
+        );
+        let mut checker = collected(&hir);
+        let (foo, show) = (named(&checker, "Foo"), named(&checker, "Show"));
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+        let member = Ident {
+            text: crate::testing::intern("show"),
+            span: SrcSpan::new(0, 0),
+        };
+
+        let candidates = [fixture_candidate(
+            CandidateSource::Trait(show),
+            method_of(&checker, show, "show"),
+            foo_ty,
+        )];
+        assert!(checker.select_candidate(&candidates, member).is_some());
+        assert!(crate::testing::diagnostics().is_empty());
+    }
+
+    #[test]
+    fn two_trait_candidates_are_an_ambiguity_naming_both() {
+        let hir = lower_to_hir(
+            "trait A { fun size(&self); }
+             trait B { fun size(&self); }
+             struct Foo {}",
+        );
+        let mut checker = collected(&hir);
+        let (foo, a, b) = (
+            named(&checker, "Foo"),
+            named(&checker, "A"),
+            named(&checker, "B"),
+        );
+        let foo_ty = checker.tcx.mk_adt(foo, vec![]);
+        let member = Ident {
+            text: crate::testing::intern("size"),
+            span: SrcSpan::new(0, 0),
+        };
+
+        let candidates = [
+            fixture_candidate(
+                CandidateSource::Trait(a),
+                method_of(&checker, a, "size"),
+                foo_ty,
+            ),
+            fixture_candidate(
+                CandidateSource::Trait(b),
+                method_of(&checker, b, "size"),
+                foo_ty,
+            ),
+        ];
+        assert!(checker.select_candidate(&candidates, member).is_none());
+        assert_eq!(
+            crate::testing::diagnostics()
+                .into_iter()
+                .map(|diagnostic| diagnostic.message)
+                .collect::<Vec<_>>(),
+            ["ambiguous method call: `size` is declared by more than one trait in scope: `A`, `B`"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // The block's own bounds
+    //
+    // A block's header only says which types it *matches*. What it promises them is conditional
+    // on its own `<T: ..>` bounds, so picking a method out of one raises those bounds about the
+    // receiver, exactly as instantiating any other declaration raises the bounds it writes.
+    // -----------------------------------------------------------------
+
+    /// A fixture with both kinds of conditional block: one implementing a trait, one inherent.
+    const CONDITIONAL: &str = "trait Show { fun show(&self); }
+         struct Foo {}
+         struct Bare {}
+         struct Wrap<T> { inner: T }
+         extend Foo with Show { fun show(&self) {} }
+         extend<T: Show> Wrap<T> with Show { fun show(&self) {} }
+         extend<T: Show> Wrap<T> { fun get(&self) {} }";
+
+    #[test]
+    fn a_conditional_impls_method_is_available_when_the_bound_holds() {
+        assert!(
+            check(&format!(
+                "{CONDITIONAL} fun f(x: Wrap<Foo>) {{ x.show(); }}"
+            ))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_conditional_impls_method_is_not_available_when_the_bound_fails() {
+        assert_eq!(
+            check(&format!(
+                "{CONDITIONAL} fun f(x: Wrap<Bare>) {{ x.show(); }}"
+            )),
+            ["the trait bound `Bare: Show` is not satisfied"]
+        );
+    }
+
+    /// An inherent block is conditional in exactly the same way: `get` is offered to a `Wrap<T>`
+    /// whose `T` implements `Show`, and there is no trait involved in saying so.
+    #[test]
+    fn a_conditional_inherent_blocks_method_is_not_available_when_the_bound_fails() {
+        assert_eq!(
+            check(&format!(
+                "{CONDITIONAL} fun f(x: Wrap<Bare>) {{ x.get(); }}"
+            )),
+            ["the trait bound `Bare: Show` is not satisfied"]
+        );
+    }
+
+    /// The bound is raised about the receiver and discharged wherever any other bound would be,
+    /// which for a generic caller is its own environment.
+    #[test]
+    fn a_conditional_impls_bound_is_discharged_from_the_callers_own_bounds() {
+        assert!(
+            check(&format!(
+                "{CONDITIONAL} fun f<U: Show>(x: Wrap<U>) {{ x.show(); }}"
+            ))
+            .is_empty()
+        );
+        assert_eq!(
+            check(&format!(
+                "{CONDITIONAL} fun f<U>(x: Wrap<U>) {{ x.show(); }}"
+            )),
+            ["the trait bound `U: Show` is not satisfied"]
+        );
+    }
+
+    /// A method the block never wrote out is inherited from the trait's default body, and is as
+    /// conditional as one it did: the block is still what makes the trait apply to this type.
+    #[test]
+    fn a_method_inherited_through_a_conditional_impl_needs_the_blocks_bound_too() {
+        assert_eq!(
+            check(
+                "trait Show { fun show(&self) {} }
+                 struct Bare {}
+                 struct Wrap<T> { inner: T }
+                 extend<T: Show> Wrap<T> with Show {}
+                 fun f(x: Wrap<Bare>) { x.show(); }"
+            ),
+            ["the trait bound `Bare: Show` is not satisfied"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Source-level
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn an_inherent_method_call_checks() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(&self) {} }
+                 fun f(x: Foo) { x.show(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_trait_method_call_checks() {
+        assert!(
+            check(
+                "trait Show { fun show(&self); }
+                 struct Foo {}
+                 extend Foo with Show { fun show(&self) {} }
+                 fun f(x: Foo) { x.show(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    /// The case the environment exists for: nothing is known about `T` but the bound.
+    #[test]
+    fn a_method_reached_through_a_bound_checks() {
+        assert!(
+            check(
+                "trait Show { fun show(&self); }
+                 fun f<T: Show>(x: T) { x.show(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_method_on_a_parameter_with_no_bound_is_not_found() {
+        assert_eq!(
+            check(
+                "trait Show { fun show(&self); }
+                 fun f<T>(x: T) { x.show(); }"
+            ),
+            ["no method `show` on `T`"]
+        );
+    }
+
+    /// Inside a trait, `Self` implements that trait by definition, letting one default method
+    /// body call another method of the same trait.
+    #[test]
+    fn a_default_body_may_call_another_method_of_its_own_trait() {
+        assert!(
+            check("trait Show { fun show(&self); fun show_twice(&self) { self.show(); } }")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_method_on_a_dyn_receiver_checks() {
+        assert!(
+            check(
+                "trait Show { fun show(&self); }
+                 fun f(x: &dyn Show) { x.show(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    /// An inherent `extend Foo` block always wins for `Foo` specifically. Coherence separately
+    /// rejects two `extend` blocks that offer the same name for one type, so that diagnostic is
+    /// expected here; picking the trait's method instead would additionally mismatch the `return`.
+    #[test]
+    fn an_inherent_method_beats_a_trait_method_of_the_same_name() {
+        assert_eq!(
+            check(
+                "trait Show { fun show(&self) -> bool; }
+                 struct Foo {}
+                 extend Foo with Show { fun show(&self) -> bool { return true; } }
+                 extend Foo { fun show(&self) -> i32 { return 0; } }
+                 fun f(x: Foo) -> i32 { return x.show(); }"
+            ),
+            ["the method `show` is defined more than once for type `Foo`"]
+        );
+    }
+
+    /// Coherence cannot see this one: neither trait is implemented for anything in particular
+    /// here, so the collision only exists at the call site.
+    #[test]
+    fn a_method_declared_by_two_bounds_is_ambiguous() {
+        assert_eq!(
+            check(
+                "trait A { fun size(&self); }
+                 trait B { fun size(&self); }
+                 fun f<T: A + B>(x: T) { x.size(); }"
+            ),
+            ["ambiguous method call: `size` is declared by more than one trait in scope: `A`, `B`"]
+        );
+    }
+
+    #[test]
+    fn an_unknown_method_is_reported() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(&self) {} }
+                 fun f(x: Foo) { x.nope(); }"
+            ),
+            ["no method `nope` on `Foo`"]
+        );
+    }
+
+    #[test]
+    fn a_field_access_checks_to_the_fields_type() {
+        assert!(
+            check(
+                "struct Foo { count: i32 }
+                 fun f(x: Foo) -> i32 { return x.count; }"
+            )
+            .is_empty()
+        );
+    }
+
+    /// A field's declared type is read through the arguments the receiver applied.
+    #[test]
+    fn a_generic_structs_field_is_read_through_its_arguments() {
+        assert_eq!(
+            check(
+                "struct Wrap<T> { inner: T }
+                 fun f(x: Wrap<i32>) -> bool { return x.inner; }"
+            ),
+            ["mismatched types: expected `bool`, found `i32`"]
+        );
+    }
+
+    #[test]
+    fn a_tuple_index_access_checks_to_the_elements_type() {
+        assert_eq!(
+            check("fun f(t: (i32, bool)) -> bool { return t.0; }"),
+            ["mismatched types: expected `bool`, found `i32`"]
+        );
+        assert!(check("fun f(t: (i32, bool)) -> i32 { return t.0; }").is_empty());
+        assert!(check("fun f(t: (i32, bool)) -> bool { return t.1; }").is_empty());
+    }
+
+    #[test]
+    fn a_chained_tuple_index_access_checks() {
+        assert!(check("fun f(t: ((i32, bool), i32)) -> i32 { return t.0.0; }").is_empty());
+        assert!(check("fun f(t: ((i32, bool), i32)) -> bool { return t.0.1; }").is_empty());
+    }
+
+    #[test]
+    fn a_triple_chained_tuple_index_access_checks() {
+        assert!(check("fun f(t: (i32, (bool, (i32, i32)))) -> i32 { return t.1.1.0; }").is_empty());
+        assert_eq!(
+            check("fun f(t: (i32, (bool, (i32, i32)))) -> bool { return t.1.1.0; }"),
+            ["mismatched types: expected `bool`, found `i32`"]
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_tuple_index_is_reported() {
+        assert_eq!(
+            check("fun f(t: (i32, bool)) -> i32 { return t.2; }"),
+            ["no field `2` on `(i32, bool)`"]
+        );
+    }
+
+    #[test]
+    fn an_unknown_field_is_reported() {
+        assert_eq!(
+            check(
+                "struct Foo { count: i32 }
+                 fun f(x: Foo) -> i32 { return x.nope; }"
+            ),
+            ["no field `nope` on `Foo`"]
+        );
+    }
+
+    /// `x.show` without a call is an error, and the diagnostic says what to do about it rather
+    /// than only that no field of that name exists.
+    #[test]
+    fn naming_a_method_without_calling_it_says_so() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(&self) {} }
+                 fun f(x: Foo) { x.show; }"
+            ),
+            ["no field `show` on `Foo`; there is a method `show`"]
+        );
+    }
+
+    /// A field with no `public` is private by default, reachable only from its declaring module
+    /// and that module's descendants, the same rule `SymbolTable::is_visible` enforces for a
+    /// path lookup. This needs `typeck_src_files` to put the access in a different module.
+    #[test]
+    fn a_private_field_cannot_be_read_from_another_module() {
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32 }",
+                "module app;
+                 import math::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ]),
+            ["field `count` is private"]
+        );
+    }
+
+    #[test]
+    fn a_public_field_can_be_read_from_another_module() {
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { public count: i32 }",
+                "module app;
+                 import math::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ])
+            .is_empty()
+        );
+    }
+
+    /// Re-checks `SymbolTable::is_visible`'s full rule for a field instead of a path lookup:
+    /// `private` reaches the declaring module and every one of its descendants, however deep,
+    /// but neither a sibling module nor the declaring module's own parent.
+    #[test]
+    fn field_privacy_follows_the_declaring_modules_full_descendant_chain() {
+        // A grandchild of the struct's own module, not just a direct child, can still see its
+        // private field.
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32 }",
+                "module math::inner::deeper;
+                 import math::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ])
+            .is_empty(),
+            "a descendant module, however deep, should see the private field"
+        );
+
+        // A sibling module, neither an ancestor nor a descendant, cannot.
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32 }",
+                "module other;
+                 import math::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ]),
+            ["field `count` is private"],
+            "an unrelated sibling module should not see the private field"
+        );
+
+        // Nor can the declaring module's own parent see into it: visibility only ever reaches
+        // downward.
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math::inner; public struct Foo { count: i32 }",
+                "module math;
+                 import math::inner::Foo;
+                 fun f(x: Foo) -> i32 { return x.count; }",
+            ]),
+            ["field `count` is private"],
+            "a parent module should not see a descendant's private field"
+        );
+    }
+
+    /// Combines two things a plain privacy fixture would not: the field is reached through a
+    /// reference, using the same `peel_receiver` step a method call goes through, and the
+    /// struct is generic, so the field's type is substituted through the receiver's arguments.
+    #[test]
+    fn field_privacy_is_checked_through_autoderef_and_generic_substitution() {
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module lib; public struct Wrap<T> { inner: T, public tag: T }",
+                "module app;
+                 import lib::Wrap;
+                 fun f(x: &Wrap<i32>) -> i32 { return x.inner; }",
+            ]),
+            ["field `inner` is private"]
+        );
+        // The public field, reached the very same way, is not.
+        assert!(
+            crate::testing::typeck_src_files(&[
+                "module lib; public struct Wrap<T> { inner: T, public tag: T }",
+                "module app;
+                 import lib::Wrap;
+                 fun f(x: &Wrap<i32>) -> i32 { return x.tag; }",
+            ])
+            .is_empty()
+        );
+    }
+
+    /// `field_ty`'s `owner` is the definition an access sits inside, here an `extend` block's
+    /// own method rather than a free function. Privacy is judged by where the block itself was
+    /// written, not by where the type it extends was declared.
+    #[test]
+    fn an_extend_blocks_method_reads_a_private_field_only_from_the_declaring_module() {
+        // An `extend` block in the struct's own module: allowed, same as any in-module access.
+        assert!(
+            crate::testing::typeck_src_files(&["module math;
+                 public struct Foo { count: i32 }
+                 extend Foo { fun get(&self) -> i32 { return self.count; } }",])
+            .is_empty()
+        );
+
+        // An `extend` block for the same type, written in a *different* module: refused exactly
+        // as a free function in that module would be.
+        assert_eq!(
+            crate::testing::typeck_src_files(&[
+                "module math; public struct Foo { count: i32 }",
+                "module app;
+                 import math::Foo;
+                 extend Foo { fun get(&self) -> i32 { return self.count; } }",
+            ]),
+            ["field `count` is private"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Receivers
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_reference_receiver_reaches_a_ref_self_method() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(&self) {} }
+                 fun f(x: &Foo) { x.show(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    /// Autoref takes a reference automatically when the method wants one and the receiver is a
+    /// place.
+    #[test]
+    fn a_value_receiver_is_autoreffed_for_a_ref_self_method() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(&self) {} }
+                 fun f(x: Foo) { x.show(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_mut_ref_receiver_reaches_a_mut_self_method() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun bump(&mut self) {} }
+                 fun f(x: &mut Foo) { x.bump(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_shared_reference_cannot_reach_a_mut_self_method() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun bump(&mut self) {} }
+                 fun f(x: &Foo) { x.bump(); }"
+            ),
+            ["`bump` takes `&mut self`, which this receiver cannot provide"]
+        );
+    }
+
+    // Whether a `&mut self` call's autoreffed receiver may be written to is `mir::checks::constck`'s
+    // question, exercised by that module's own tests. `mir::lower::call` materializes this
+    // autoref as an `Rvalue::Ref`, checked the same way an explicit `&mut` borrow is.
+
+    #[test]
+    fn a_value_receiver_reaches_a_by_value_self_method() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun consume(self) {} }
+                 fun f(x: Foo) { x.consume(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_reference_cannot_reach_a_by_value_self_method() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun consume(self) {} }
+                 fun f(x: &Foo) { x.consume(); }"
+            ),
+            ["`consume` takes `self`, which this receiver cannot provide"]
+        );
+    }
+
+    /// `any self` accepts a receiver of any form: by value, by reference, or by `any`.
+    #[test]
+    fn an_any_self_method_accepts_every_receiver() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun peek(any self) {} }
+                 fun f(a: Foo, b: &Foo, c: &mut Foo) { a.peek(); b.peek(); c.peek(); }"
+            )
+            .is_empty()
+        );
+    }
+
+    /// A method reached on a value produced by another call has nothing to take a reference to.
+    #[test]
+    fn a_temporary_receiver_cannot_be_autoreffed() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(&self) {} fun make() -> Foo { return Foo {}; } }
+                 fun make() -> Foo { return Foo {}; }
+                 fun f() { make().show(); }"
+            ),
+            ["`show` takes `&self`, and this receiver is a temporary"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Arguments
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn too_many_arguments_are_reported() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun take(&self, n: i32) {} }
+                 fun f(x: Foo) { x.take(1, 2); }"
+            ),
+            ["`take` takes 1 argument but 2 were supplied"]
+        );
+    }
+
+    #[test]
+    fn an_argument_of_the_wrong_type_is_reported() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun take(&self, n: i32) {} }
+                 fun f(x: Foo) { x.take(true); }"
+            ),
+            ["mismatched types: expected `i32`, found `bool`"]
+        );
+    }
+
+    #[test]
+    fn a_methods_return_type_is_read_through_the_impls_arguments() {
+        assert_eq!(
+            check(
+                "struct Wrap<T> { inner: T }
+                 extend<T> Wrap<T> { fun get(&self) -> T { return self.inner; } }
+                 fun f(x: Wrap<i32>) -> bool { return x.get(); }"
+            ),
+            ["mismatched types: expected `bool`, found `i32`"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Calls
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_call_to_a_free_function_checks_its_arguments() {
+        assert_eq!(
+            check(
+                "fun g(n: i32) {}
+                 fun f() { g(true); }"
+            ),
+            ["mismatched types: expected `i32`, found `bool`"]
+        );
+    }
+
+    #[test]
+    fn a_call_with_the_wrong_number_of_arguments_is_reported() {
+        assert_eq!(
+            check(
+                "fun g(n: i32) {}
+                 fun f() { g(); }"
+            ),
+            ["this call takes 1 argument but 0 were supplied"]
+        );
+    }
+
+    /// Instantiating `g`'s parameter at `Bare` raises the obligation `Bare: Show`, which the
+    /// per-body drain then answers.
+    #[test]
+    fn a_call_to_a_generic_callee_checks_the_callees_bounds() {
+        assert_eq!(
+            check(
+                "trait Show { fun show(&self); }
+                 struct Bare {}
+                 fun g<T: Show>(x: T) {}
+                 fun f(y: Bare) { g(y); }"
+            ),
+            ["the trait bound `Bare: Show` is not satisfied"]
+        );
+    }
+
+    #[test]
+    fn a_call_to_a_generic_callee_whose_bound_holds_checks() {
+        assert!(
+            check(
+                "trait Show { fun show(&self); }
+                 struct Foo {}
+                 extend Foo with Show { fun show(&self) {} }
+                 fun g<T: Show>(x: T) {}
+                 fun f(y: Foo) { g(y); }"
+            )
+            .is_empty()
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Deferred method calls
+    // -----------------------------------------------------------------
+
+    /// The receiver's generic arguments come from integer literals, so at the call it is
+    /// `Pair<{integer}, {integer}>`, which a concrete `extend Pair<i32, i32>` header cannot be
+    /// matched against. The call is parked and answered once the literals have defaulted.
+    #[test]
+    fn a_concrete_extend_is_found_once_the_receivers_literals_default() {
+        assert_eq!(
+            check(
+                "struct Pair<A, B> { first: A, second: B }
+                 extend Pair<i32, i32> { fun sum(&self) -> i32 { return 1; } }
+                 fun f() { let p = Pair { first: 4, second: 6 }; let n = p.sum(); }"
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    /// Defaulting is the fallback, not the answer: something else in the body pinning the
+    /// literals is what the parked call is re-checked against.
+    #[test]
+    fn a_parked_call_uses_the_type_the_body_pins_the_receiver_to() {
+        // Pinned to `i32` after the call, which is the type the `extend` block is written for.
+        assert_eq!(
+            check(
+                "struct Pair<A, B> { first: A, second: B }
+                 extend Pair<i32, i32> { fun sum(&self) -> i32 { return 1; } }
+                 fun f() { let p = Pair { first: 4, second: 6 };
+                           let n = p.sum();
+                           let q: Pair<i32, i32> = p; }"
+            ),
+            Vec::<String>::new()
+        );
+        // Pinned to `i64` instead, so the method genuinely is not there -- and the diagnostic
+        // names the type the receiver resolved to, not the open one it had at the call.
+        assert_eq!(
+            check(
+                "struct Pair<A, B> { first: A, second: B }
+                 extend Pair<i32, i32> { fun sum(&self) -> i32 { return 1; } }
+                 fun f() { let p = Pair { first: 4, second: 6 };
+                           let n = p.sum();
+                           let q: Pair<i64, i64> = p; }"
+            ),
+            ["no method `sum` on `Pair<i64, i64>`"]
+        );
+    }
+
+    /// A parked call's arguments are checked only once its receiver is resolved, so resolving
+    /// one call can park another. Both still have to be answered.
+    #[test]
+    fn a_call_parked_while_checking_another_is_still_answered() {
+        assert_eq!(
+            check(
+                "struct Box<T> { v: T }
+                 extend Box<i32> {
+                     fun get(&self) -> i32 { return 1; }
+                     fun twice(&self, k: i32) -> i32 { return k; }
+                 }
+                 fun f() { let a = Box { v: 1 }; let b = Box { v: 2 };
+                           let n = a.twice(b.get()); }"
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A receiver that is itself a parked call's result is a bare variable at the time it is
+    /// reached, so it is parked too and answered after the call it depends on.
+    #[test]
+    fn a_receiver_that_is_a_parked_calls_result_is_answered_after_it() {
+        assert_eq!(
+            check(
+                "struct Box<T> { v: T }
+                 extend Box<i32> {
+                     fun me(&self) -> Box<i32> { return Box { v: 1 }; }
+                     fun get(&self) -> i32 { return self.v; }
+                 }
+                 fun f() { let a = Box { v: 1 }; let t = a.me(); let n = t.get(); }"
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A receiver whose type no default applies to is still unresolvable once the body has been
+    /// checked, and reports as such. An unannotated closure parameter is such a receiver: parking
+    /// the call buys nothing, because nothing later will give `x` a type.
+    #[test]
+    fn an_unresolved_receiver_is_reported() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(&self) {} }
+                 fun f() { let g = |x| { x.show(); }; }"
+            ),
+            [
+                "type annotations needed: the type of the value `show` is reached on is still \
+                 unknown"
+            ]
+        );
+    }
+
+    /// An integer literal receiver, by contrast, *is* answerable later: the call is parked, the
+    /// literal defaults to `i32` once the body is done constraining it, and the method is looked
+    /// up on the type it actually resolved to. Saying annotations are needed would have been
+    /// misleading, since no annotation makes `i32` grow a `show`.
+    #[test]
+    fn a_literal_receiver_is_answered_at_its_defaulted_type() {
+        assert_eq!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(&self) {} }
+                 fun f() { let x = 1; x.show(); }"
+            ),
+            ["no method `show` on `i32`"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `any self`, generic methods, and index-through-a-generic-trait
+    // -----------------------------------------------------------------
+
+    /// `any self` accepts every receiver shape: by value, by reference, and by `any`.
+    #[test]
+    fn any_self_accepts_every_receiver_shape() {
+        assert!(
+            check(
+                "struct Foo {}
+                 extend Foo { fun show(any self) {} }
+                 fun f(a: Foo, b: &Foo, c: &mut Foo, d: any Foo) {
+                     a.show();
+                     b.show();
+                     c.show();
+                     d.show();
+                 }"
+            )
+            .is_empty()
+        );
+    }
+
+    /// A method's own generic parameters are instantiated fresh per call, independent of the
+    /// receiver's type.
+    #[test]
+    fn a_methods_own_generic_parameter_is_inferred_from_its_argument() {
+        assert!(
+            check(
+                "struct Box_ {}
+                 extend Box_ { fun identity<T>(&self, x: T) -> T { return x; } }
+                 fun f(b: Box_, n: i32) -> i32 { return b.identity(n); }"
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            check(
+                "struct Box_ {}
+                 extend Box_ { fun identity<T>(&self, x: T) -> T { return x; } }
+                 fun f(b: Box_, n: i32) -> bool { return b.identity(n); }"
+            ),
+            ["mismatched types: expected `bool`, found `i32`"]
+        );
+    }
+
+    /// `Index<K, V>` read through a generic `extend` block: `V` is recovered from the receiver's
+    /// own type arguments, not left as the block's bare parameter.
+    #[test]
+    fn indexing_a_generic_type_reads_v_through_the_receivers_own_arguments() {
+        assert!(
+            check(
+                "module core::ops;
+
+                 public trait Index<K, V> { fun index(&self, key: K) -> &V; }
+
+                 struct Map<V> { value: V }
+
+                 extend<V> Map<V> with Index<i32, V> {
+                     fun index(&self, key: i32) -> &V { return &self.value; }
+                 }
+
+                 fun f(m: Map<bool>) -> &bool { return m[0]; }"
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            check(
+                "module core::ops;
+
+                 public trait Index<K, V> { fun index(&self, key: K) -> &V; }
+
+                 struct Map<V> { value: V }
+
+                 extend<V> Map<V> with Index<i32, V> {
+                     fun index(&self, key: i32) -> &V { return &self.value; }
+                 }
+
+                 fun f(m: Map<bool>) -> &i32 { return m[0]; }"
+            ),
+            ["mismatched types: expected `&i32`, found `&bool`"]
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Resolved-call recording
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_free_call_records_its_callee_and_instantiation() {
+        let hir = lower_to_hir(
+            "fun largest<T>(a: T, b: T) -> T { return a; }
+             fun main() -> i32 { return largest(1, 2); }",
+        );
+        crate::testing::clear_diagnostics();
+        let checked = crate::typeck::check(crate::testing::session(), &hir);
+
+        let largest = named(&collected(&hir), "largest");
+        let main = named(&collected(&hir), "main");
+        let (_, call_id) = find_return(&hir, main);
+
+        let resolved = checked
+            .types
+            .call(call_id)
+            .expect("a call to a resolved free function is recorded");
+        assert_eq!(resolved.def, largest);
+        assert_eq!(resolved.args.len(), 1);
+        assert!(matches!(
+            checked.tcx.kind(resolved.args[0]),
+            TyKind::Primitive(_)
+        ));
+    }
+
+    #[test]
+    fn a_method_call_records_its_callee() {
+        let hir = lower_to_hir(
+            "struct Foo {}
+             extend Foo { fun show(&self) -> i32 { return 0; } }
+             fun main() -> i32 { let f = Foo {}; return f.show(); }",
+        );
+        crate::testing::clear_diagnostics();
+        let checked = crate::typeck::check(crate::testing::session(), &hir);
+
+        let main = named(&collected(&hir), "main");
+        let show = first_extend_method(&hir);
+        let (_, call_id) = find_return(&hir, main);
+
+        let resolved = checked
+            .types
+            .call(call_id)
+            .expect("a method call is recorded");
+        assert_eq!(resolved.def, show);
+        assert!(resolved.args.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // `any`-coercion (README section 7)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn an_any_parameter_accepts_a_plain_owned_argument() {
+        use crate::testing::typeck_accepts;
+
+        typeck_accepts(
+            "fun min(x: any i32, y: any i32) -> any i32 {
+                 return if x < y { x } else { y };
+             }
+             fun f() {
+                 let a = 1;
+                 let b = 2;
+                 min(a, b);
+             }",
+        );
+    }
+
+    #[test]
+    fn an_any_return_accepts_a_plain_owned_return_expression() {
+        use crate::testing::typeck_accepts;
+
+        typeck_accepts("fun make(x: any i32) -> any i32 { return x; }");
+    }
+
+    #[test]
+    fn an_any_parameter_still_rejects_a_mismatched_base_type() {
+        use crate::testing::typeck_rejects;
+
+        typeck_rejects(
+            "fun min(x: any i32, y: any i32) -> any i32 {
+                 return if x < y { x } else { y };
+             }
+             fun f() {
+                 let b = 2;
+                 min(true, b);
+             }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_primitive_extend_blocks_method_is_callable_on_the_primitive() {
+        use crate::testing::typeck_accepts;
+
+        typeck_accepts(
+            "extend i32 { fun double(&self) -> i32 { return 0; } }
+             fun f(x: i32) -> i32 { return x.double(); }",
+        );
+    }
+
+    #[test]
+    fn a_tuple_extend_blocks_method_is_callable_on_the_tuple() {
+        use crate::testing::typeck_accepts;
+
+        typeck_accepts(
+            "extend (i32, i32) { fun first(&self) -> i32 { return 0; } }
+             fun f(x: (i32, i32)) -> i32 { return x.first(); }",
+        );
+    }
+}
+
+#[cfg(test)]
+mod impl_args_tests {
+    use crate::nameres::PrimTy;
+    use crate::testing::{first_extend_method, typecheck_only};
+    use crate::typeck::ty::TyKind;
+
+    #[test]
+    fn a_generic_extend_method_call_records_the_block_arguments() {
+        let (hir, tcx, types) = typecheck_only(
+            "struct Wrap<T> { public value: T }\n\
+             extend<T> Wrap<T> { fun get(self) -> T { return self.value; } }\n\
+             fun main() { let w: Wrap<i32> = Wrap { value: 1 }; let n = w.get(); }",
+        );
+        let method = first_extend_method(&hir);
+        let (_, call) = types
+            .calls_iter()
+            .find(|(_, call)| call.def == method)
+            .expect("the call to `get` resolves to the extend method");
+        assert_eq!(call.extend_args.len(), 1);
+        assert!(matches!(
+            tcx.kind(call.extend_args[0]),
+            TyKind::Primitive(PrimTy::I32)
+        ));
+        assert!(call.self_ty.is_some());
+        assert_eq!(call.all_args().len(), 1);
+    }
+}
