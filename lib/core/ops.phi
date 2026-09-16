@@ -1,0 +1,168 @@
+module core::ops;
+
+// TODO: implement `Add` (and related ops) for `String`/`str` concatenation. README
+// sections 6/13 rely on `base + "!"` and `"..." + err.message()`, but only numeric
+// `Add` impls exist below, so real string-building programs have no operator to use.
+
+public trait Add {
+    fun add(&self, other: &Self) -> Self;
+}
+
+public trait Sub {
+    fun sub(&self, other: &Self) -> Self;
+}
+
+public trait Mul {
+    fun mul(&self, other: &Self) -> Self;
+}
+
+public trait Div {
+    fun div(&self, other: &Self) -> Self;
+}
+
+public trait Rem {
+    fun rem(&self, other: &Self) -> Self;
+}
+
+public trait Neg {
+    fun neg(&self) -> Self;
+}
+
+public trait Not {
+    fun not(&self) -> Self;
+}
+
+public trait Eq {
+    fun eq(&self, other: &Self) -> bool;
+}
+
+public trait Comparable {
+    fun less_than(&self, other: &Self) -> bool;
+}
+
+public trait Index<K, V> {
+    fun index(&self, key: K) -> &V;
+}
+
+public trait IndexSet<K, V> {
+    fun index_set(&mut self, key: K, value: V);
+}
+
+public trait Drop {
+    fun drop(self);
+}
+
+public trait Copy {
+    fun copy(&self) -> Self;
+}
+
+extend i8 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend i16 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend i32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend i64 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend u8 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend u16 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend u32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend u64 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend usize with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend f32 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+extend f64 with Add { fun add(&self, other: &Self) -> Self { return *self + *other; } }
+
+extend i8 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend i16 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend i32 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend i64 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend u8 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend u16 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend u32 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend u64 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend usize with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend f32 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+extend f64 with Sub { fun sub(&self, other: &Self) -> Self { return *self - *other; } }
+
+extend i8 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend i16 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend i32 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend i64 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend u8 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend u16 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend u32 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend u64 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend usize with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend f32 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+extend f64 with Mul { fun mul(&self, other: &Self) -> Self { return *self * *other; } }
+
+extend i8 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend i16 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend i32 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend i64 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend u8 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend u16 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend u32 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend u64 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend usize with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend f32 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+extend f64 with Div { fun div(&self, other: &Self) -> Self { return *self / *other; } }
+
+extend i8 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend i16 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend i32 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend i64 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend u8 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend u16 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend u32 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend u64 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend usize with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend f32 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+extend f64 with Rem { fun rem(&self, other: &Self) -> Self { return *self % *other; } }
+
+extend i8 with Neg { fun neg(&self) -> Self { return -*self; } }
+extend i16 with Neg { fun neg(&self) -> Self { return -*self; } }
+extend i32 with Neg { fun neg(&self) -> Self { return -*self; } }
+extend i64 with Neg { fun neg(&self) -> Self { return -*self; } }
+extend f32 with Neg { fun neg(&self) -> Self { return -*self; } }
+extend f64 with Neg { fun neg(&self) -> Self { return -*self; } }
+
+extend bool with Not { fun not(&self) -> Self { return !*self; } }
+
+extend i8 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend i16 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend i32 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend i64 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend u8 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend u16 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend u32 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend u64 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend usize with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend f32 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+extend f64 with Eq { fun eq(&self, other: &Self) -> bool { return *self == *other; } }
+
+extend i8 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend i16 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend i32 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend i64 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend u8 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend u16 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend u32 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend u64 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend usize with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend f32 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+extend f64 with Comparable { fun less_than(&self, other: &Self) -> bool { return *self < *other; } }
+
+extend i8 with Copy { fun copy(&self) -> Self { return *self; } }
+extend i16 with Copy { fun copy(&self) -> Self { return *self; } }
+extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
+extend i64 with Copy { fun copy(&self) -> Self { return *self; } }
+extend u8 with Copy { fun copy(&self) -> Self { return *self; } }
+extend u16 with Copy { fun copy(&self) -> Self { return *self; } }
+extend u32 with Copy { fun copy(&self) -> Self { return *self; } }
+extend u64 with Copy { fun copy(&self) -> Self { return *self; } }
+extend usize with Copy { fun copy(&self) -> Self { return *self; } }
+extend f32 with Copy { fun copy(&self) -> Self { return *self; } }
+extend f64 with Copy { fun copy(&self) -> Self { return *self; } }
+extend bool with Copy { fun copy(&self) -> Self { return *self; } }
+extend char with Copy { fun copy(&self) -> Self { return *self; } }
+
+extend str with Copy { fun copy(&self) -> Self { return *self; } }
+
+extend<T> &T with Copy { fun copy(&self) -> Self { return *self; } }

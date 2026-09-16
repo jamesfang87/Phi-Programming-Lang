@@ -1,0 +1,369 @@
+use std::collections::HashMap;
+
+use crate::ast::{self, NodeId};
+use crate::hir::builder::DefIdAllocator;
+use crate::hir::ids::{DefId, HirId};
+use crate::hir::lower::owner::OwnerLowerer;
+use crate::hir::{
+    Arena, Enum, Extend, Function, Hir, Local, Module, OwnerNode, Res, Struct, Trait, TyDef, Type,
+};
+use crate::nameres::NameResolutions;
+use crate::nameres::{Local as SLocal, Res as SRes, TyDef as STyDef, Type as SType};
+use crate::session::Session;
+
+pub(super) struct LoweringCtx<'res> {
+    pub(super) session: &'res Session,
+    pub(super) def_id_allocator: DefIdAllocator,
+    pub(super) def_ids: HashMap<NodeId, DefId>,
+    pub(super) hir_ids: HashMap<NodeId, HirId>,
+    pub(super) method_defs: HashMap<NodeId, Vec<DefId>>,
+    pub(super) arenas: Vec<Option<Arena>>,
+    nameres: &'res NameResolutions,
+}
+
+impl<'res> LoweringCtx<'res> {
+    pub(super) fn new(session: &'res Session, nameres: &'res NameResolutions) -> Self {
+        LoweringCtx {
+            session,
+            def_id_allocator: DefIdAllocator::new(),
+            def_ids: HashMap::new(),
+            method_defs: HashMap::new(),
+            arenas: Vec::new(),
+            nameres,
+            hir_ids: HashMap::new(),
+        }
+    }
+
+    pub(super) fn record_hir_id(&mut self, node: NodeId, hir_id: HirId) {
+        self.hir_ids.insert(node, hir_id);
+    }
+
+    fn def_id_of(&self, node: NodeId, what: &str) -> DefId {
+        *self.def_ids.get(&node).unwrap_or_else(|| {
+            panic!("lowering bug: {node:?}, expected to already have a DefId as {what}, has none")
+        })
+    }
+
+    fn hir_id_of(&self, node: NodeId, what: &str) -> HirId {
+        *self.hir_ids.get(&node).unwrap_or_else(|| {
+            panic!("lowering bug: {node:?}, expected to already have a HirId as {what}, has none")
+        })
+    }
+
+    fn translate_res(&self, res: SRes) -> Res {
+        match res {
+            SRes::Err => Res::Err,
+            SRes::Function(node) => Res::Function(self.def_id_of(node, "a function item")),
+            SRes::Type(ty) => Res::Type(self.translate_type(ty)),
+            SRes::SelfTy(ty) => Res::SelfTy(self.translate_type(ty)),
+            SRes::Local(SLocal::Param(node)) => {
+                Res::Local(Local::Param(self.hir_id_of(node, "a parameter")))
+            }
+            SRes::Local(SLocal::SelfParam(node)) => {
+                Res::Local(Local::SelfParam(self.hir_id_of(node, "a self parameter")))
+            }
+            SRes::Local(SLocal::Variable(node)) => {
+                Res::Local(Local::Variable(self.hir_id_of(node, "a binding pattern")))
+            }
+        }
+    }
+
+    fn translate_type(&self, ty: SType) -> Type {
+        match ty {
+            SType::Prim(prim) => Type::Prim(prim),
+            SType::Generic(node) => Type::Generic(self.hir_id_of(node, "a generic parameter")),
+            SType::Def(STyDef::Struct(node)) => {
+                Type::Def(TyDef::Struct(self.def_id_of(node, "a struct item")))
+            }
+            SType::Def(STyDef::Enum(node)) => {
+                Type::Def(TyDef::Enum(self.def_id_of(node, "an enum item")))
+            }
+            SType::Def(STyDef::Trait(node)) => {
+                Type::Def(TyDef::Trait(self.def_id_of(node, "a trait item")))
+            }
+        }
+    }
+
+    pub(super) fn try_lower_path(
+        &self,
+        owner: NodeId,
+        path: &ast::Path,
+    ) -> Option<crate::hir::Path> {
+        let res = self.nameres.get(owner, path)?;
+        Some(crate::hir::Path {
+            segments: path.segments.clone(),
+            res: self.translate_res(res),
+        })
+    }
+
+    pub(super) fn lower_path(&self, owner: NodeId, path: &ast::Path) -> crate::hir::Path {
+        self.try_lower_path(owner, path).unwrap_or_else(|| {
+            panic!(
+                "lowering bug: {owner:?} owns no recorded resolution for the path `{}`.",
+                path.segments
+                    .iter()
+                    .map(|s| self.session.resolve(s.text))
+                    .collect::<Vec<_>>()
+                    .join("::")
+            )
+        })
+    }
+
+    fn take_method_defs(&mut self, item: NodeId) -> Vec<DefId> {
+        self.method_defs.remove(&item).unwrap_or_else(|| {
+            panic!("lowering bug: {item:?} was never preallocated a method list")
+        })
+    }
+
+    pub(super) fn prealloc_item(&mut self, module: DefId, item: &ast::Item) {
+        let def_id = match &item.kind {
+            ast::ItemKind::Function(_)
+            | ast::ItemKind::Struct(_)
+            | ast::ItemKind::Enum(_)
+            | ast::ItemKind::Trait(_)
+            | ast::ItemKind::Extend(_) => self.def_id_allocator.alloc(Some(module)),
+            ast::ItemKind::Error => {
+                return;
+            }
+        };
+        self.def_ids.insert(item.id, def_id);
+
+        match &item.kind {
+            ast::ItemKind::Trait(t) => {
+                let methods = t
+                    .functions
+                    .iter()
+                    .map(|_| self.def_id_allocator.alloc(Some(def_id)))
+                    .collect();
+                self.method_defs.insert(item.id, methods);
+            }
+            ast::ItemKind::Extend(e) => {
+                let methods = e
+                    .methods
+                    .iter()
+                    .map(|_| self.def_id_allocator.alloc(Some(def_id)))
+                    .collect();
+                self.method_defs.insert(item.id, methods);
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn lower_module(
+        &mut self,
+        def_id: DefId,
+        module: &ast::Module,
+        child_modules: Vec<DefId>,
+    ) {
+        let mut items = child_modules;
+        for item in &module.items {
+            if let Some(item_id) = self.lower_item(item) {
+                items.push(item_id);
+            }
+        }
+
+        let mut ow = OwnerLowerer::new(self, def_id);
+        let root = ow.root();
+        let imports = module
+            .imports
+            .iter()
+            .map(|imp| ow.lower_import(imp))
+            .collect();
+        ow.fill(
+            root,
+            OwnerNode::Module(Module {
+                hir_id: root,
+                items,
+                imports,
+                span: module.path.span(),
+                path: module.path.clone(),
+            }),
+        );
+        ow.finish();
+    }
+
+    fn lower_item(&mut self, item: &ast::Item) -> Option<DefId> {
+        match &item.kind {
+            ast::ItemKind::Function(f) => {
+                let item_id = self.def_ids[&item.id];
+                Some(self.lower_function(item_id, f))
+            }
+            ast::ItemKind::Struct(s) => {
+                let item_id = self.def_ids[&item.id];
+                Some(self.lower_struct(item_id, s))
+            }
+            ast::ItemKind::Enum(e) => {
+                let item_id = self.def_ids[&item.id];
+                Some(self.lower_enum(item_id, e))
+            }
+            ast::ItemKind::Trait(t) => {
+                let item_id = self.def_ids[&item.id];
+                let method_ids = self.take_method_defs(item.id);
+                Some(self.lower_trait(item_id, method_ids, t))
+            }
+            ast::ItemKind::Extend(e) => {
+                let item_id = self.def_ids[&item.id];
+                let method_ids = self.take_method_defs(item.id);
+                Some(self.lower_extend(item.id, item_id, method_ids, e))
+            }
+            ast::ItemKind::Error => None,
+        }
+    }
+
+    pub(super) fn lower_function(&mut self, item_id: DefId, f: &ast::Function) -> DefId {
+        let mut ow = OwnerLowerer::new(self, item_id);
+        let root = ow.root();
+        let generics = ow.lower_generics(&f.generics);
+        let self_param = f.self_param.as_ref().map(|sp| ow.lower_self_param(sp));
+        let params = f.params.iter().map(|p| ow.lower_param(p)).collect();
+        let ret = f.ret.as_ref().map(|t| ow.lower_ty(t));
+        let block = f.block.as_ref().map(|b| ow.lower_block(b));
+        ow.fill(
+            root,
+            OwnerNode::Function(Function {
+                hir_id: root,
+                visibility: f.visibility,
+                name: f.name,
+                generics,
+                self_param,
+                params,
+                ret,
+                block,
+                span: f.span,
+            }),
+        );
+        ow.finish()
+    }
+
+    fn lower_struct(&mut self, item_id: DefId, s: &ast::Struct) -> DefId {
+        let mut ow = OwnerLowerer::new(self, item_id);
+        let root = ow.root();
+        let generics = ow.lower_generics(&s.generics);
+        let fields = s.fields.iter().map(|f| ow.lower_field(f)).collect();
+        ow.fill(
+            root,
+            OwnerNode::Struct(Struct {
+                hir_id: root,
+                visibility: s.visibility,
+                name: s.name,
+                generics,
+                fields,
+                span: s.span,
+            }),
+        );
+        ow.finish()
+    }
+
+    fn lower_enum(&mut self, item_id: DefId, e: &ast::Enum) -> DefId {
+        let mut ow = OwnerLowerer::new(self, item_id);
+        let root = ow.root();
+        let generics = ow.lower_generics(&e.generics);
+        let variants = e.variants.iter().map(|v| ow.lower_variant(v)).collect();
+        ow.fill(
+            root,
+            OwnerNode::Enum(Enum {
+                hir_id: root,
+                visibility: e.visibility,
+                name: e.name,
+                generics,
+                variants,
+                span: e.span,
+            }),
+        );
+        ow.finish()
+    }
+
+    fn lower_trait(&mut self, item_id: DefId, method_ids: Vec<DefId>, t: &ast::Trait) -> DefId {
+        let mut ow = OwnerLowerer::new(self, item_id);
+        let root = ow.root();
+        let generics = ow.lower_generics(&t.generics);
+        ow.fill(
+            root,
+            OwnerNode::Trait(Trait {
+                hir_id: root,
+                visibility: t.visibility,
+                name: t.name,
+                generics,
+                functions: method_ids.clone(),
+                span: t.span,
+            }),
+        );
+        let trait_id = ow.finish();
+
+        debug_assert_eq!(method_ids.len(), t.functions.len());
+        for (f, id) in t.functions.iter().zip(method_ids) {
+            self.lower_function(id, f);
+        }
+        trait_id
+    }
+
+    fn lower_extend(
+        &mut self,
+        node_id: NodeId,
+        item_id: DefId,
+        method_ids: Vec<DefId>,
+        e: &ast::Extend,
+    ) -> DefId {
+        let mut ow = OwnerLowerer::new(self, item_id);
+        let root = ow.root();
+        let extend_generics = ow.lower_generics(&e.extend_generics);
+        let self_ty = ow.lower_ty(&e.self_ty);
+        let trait_generics = e
+            .trait_generics
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|t| ow.lower_ty(t))
+            .collect();
+        let trait_path = e
+            .trait_path
+            .as_ref()
+            .and_then(|p| ow.cx.try_lower_path(node_id, p));
+        ow.fill(
+            root,
+            OwnerNode::Extend(Extend {
+                hir_id: root,
+                extend_generics,
+                self_ty,
+                trait_generics,
+                trait_path,
+                methods: method_ids.clone(),
+                span: e.span,
+            }),
+        );
+        let extend_id = ow.finish();
+
+        debug_assert_eq!(method_ids.len(), e.methods.len());
+        for (f, id) in e.methods.iter().zip(method_ids) {
+            self.lower_function(id, f);
+        }
+        extend_id
+    }
+
+    pub(super) fn finish(self, root_module: DefId) -> Hir {
+        debug_assert_eq!(
+            self.arenas.len(),
+            self.def_id_allocator.len(),
+            "every allocated DefId owns exactly one arena"
+        );
+        let arenas: Vec<Arena> = self
+            .arenas
+            .into_iter()
+            .map(|arena| arena.expect("every allocated DefId owns exactly one arena"))
+            .collect();
+
+        let lang_items =
+            crate::langitems::hir::LangItems::from_ast(&self.nameres.lang_items, |node| {
+                self.def_ids.get(&node).copied()
+            });
+
+        let parent_of = self.def_id_allocator.finish();
+
+        Hir {
+            arenas,
+            parent_of,
+            root_module,
+            lang_items,
+        }
+    }
+}

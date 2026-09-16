@@ -1,0 +1,870 @@
+#![allow(dead_code)]
+
+mod builder;
+mod expr_impls;
+pub mod interner;
+mod node_id;
+mod type_impls;
+pub mod visit;
+
+use crate::ast::builder::AstBuilder;
+use crate::diagnostics::parser::report_duplicate_module;
+use crate::driver::source::SrcSpan;
+use crate::lexer::token::Token;
+use crate::session::Session;
+
+pub use interner::Symbol;
+pub use node_id::NodeId;
+use std::collections::HashMap;
+
+#[derive(Debug)]
+pub struct Ast {
+    modules: Vec<Module>,
+    module_positions: HashMap<NodeId, usize>,
+    root: NodeId,
+}
+
+#[derive(Debug)]
+pub struct Module {
+    pub id: NodeId,
+    pub path: Path,
+    pub imports: Vec<Import>,
+    pub items: Vec<Item>,
+    pub parent: Option<NodeId>,
+    pub children: Vec<NodeId>,
+}
+
+// ===========================================================================
+// Utils
+// ===========================================================================
+
+#[derive(Clone, Copy, Debug)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Mutability {
+    Immutable,
+    Mutable,
+}
+
+/// A single identifier token, such as a variable, function, or type name.
+#[derive(Clone, Copy, Debug)]
+pub struct Ident {
+    pub text: Symbol,
+    pub span: SrcSpan,
+}
+
+impl Ident {
+    pub fn of_token(session: &Session, token: Token) -> Ident {
+        Ident {
+            text: session.intern(&token.text(session)),
+            span: token.span,
+        }
+    }
+
+    pub fn self_kw(session: &Session, span: SrcSpan) -> Ident {
+        Ident {
+            text: session.intern("Self"),
+            span,
+        }
+    }
+}
+
+/// A name that may be qualified with `::`, such as `math::Vector2D`.
+#[derive(Clone, Debug)]
+pub struct Path {
+    pub segments: Vec<Ident>,
+}
+
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        self.segments.len() == other.segments.len()
+            && self
+                .segments
+                .iter()
+                .zip(&other.segments)
+                .all(|(a, b)| a.text == b.text)
+    }
+}
+
+impl Eq for Path {}
+
+impl std::hash::Hash for Path {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.segments.len().hash(state);
+        for segment in &self.segments {
+            segment.text.hash(state);
+        }
+    }
+}
+
+impl Path {
+    pub fn self_kw(session: &Session, span: SrcSpan) -> Path {
+        Path::from(Ident::self_kw(session, span))
+    }
+
+    pub fn span(&self) -> SrcSpan {
+        match (self.segments.first(), self.segments.last()) {
+            (Some(first), Some(last)) => first.span.merge(last.span),
+            _ => SrcSpan::new(0, 0),
+        }
+    }
+}
+
+// ===========================================================================
+// Items
+// ===========================================================================
+
+// TODO: Maybe we can move ModuleDecl out of the enum
+/// The parsed contents of one source file.
+#[derive(Clone, Debug)]
+pub struct ParsedSrcFile {
+    pub module: Option<ModuleHeader>,
+    pub imports: Vec<Import>,
+    pub items: Vec<Item>,
+    pub span: SrcSpan,
+}
+
+/// One top-level construct a source file can contain, before [`ParsedSrcFile::from_items`]
+/// separates the module header and imports from the real items.
+///
+/// This is the parser's output shape. A module header and an import name module-level facets
+/// rather than definitions, so they are kept out of [`ItemKind`] and cannot outlive parsing
+/// as items.
+#[derive(Clone, Debug)]
+pub enum ParsedItem {
+    Module(ModuleHeader),
+    Import(Import),
+    Item(Item),
+}
+
+impl ParsedItem {
+    pub fn span(&self) -> SrcSpan {
+        match self {
+            ParsedItem::Module(decl) => decl.span,
+            ParsedItem::Import(import) => import.span,
+            ParsedItem::Item(item) => item.span,
+        }
+    }
+}
+
+impl ParsedSrcFile {
+    pub(crate) fn from_items(
+        session: &Session,
+        items: Vec<ParsedItem>,
+        file_offset: usize,
+    ) -> ParsedSrcFile {
+        let span = match (items.first(), items.last()) {
+            (Some(first), Some(last)) => first.span().merge(last.span()),
+            _ => SrcSpan::new(file_offset, file_offset),
+        };
+
+        let mut module = None;
+        let mut imports = Vec::new();
+        let mut definitions = Vec::new();
+
+        for item in items {
+            match item {
+                ParsedItem::Module(decl) => match module {
+                    None => module = Some(decl),
+                    Some(_) => report_duplicate_module(session, decl.span),
+                },
+                ParsedItem::Import(import) => imports.push(import),
+                ParsedItem::Item(item) => definitions.push(item),
+            }
+        }
+
+        ParsedSrcFile {
+            module,
+            imports,
+            items: definitions,
+            span,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Item {
+    pub id: NodeId,
+    pub kind: ItemKind,
+    pub span: SrcSpan,
+}
+
+impl Item {
+    pub fn new(kind: ItemKind, span: SrcSpan) -> Item {
+        Item {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum ItemKind {
+    // TODO: no `Const`, `Static`, `TypeAlias`, or inline `Module` items exist -- only
+    // `Function`/`Struct`/`Enum`/`Trait`/`Extend`. Real programs need global constants
+    // (`const MAX: i32 = 8;`), `type` aliases, and inline `mod foo { ... }` blocks instead
+    // of one-file-per-module.
+    Function(Function),
+    Struct(Struct),
+    Enum(Enum),
+    Trait(Trait),
+    Extend(Extend),
+    Error,
+}
+
+/// A module declaration, such as `module math::vector;`.
+#[derive(Clone, Debug)]
+pub struct ModuleHeader {
+    pub id: NodeId,
+    pub path: Path,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Import {
+    // TODO: `Import` carries no `Visibility`, so `public import foo::Bar;` re-exports are
+    // impossible and every import stays private to its module. Real multi-module programs
+    // need re-exports to build a public API surface.
+    pub id: NodeId,
+    pub path: Path,
+    /// This is `true` when the import is a glob import, such as `import math::*;`.
+    pub glob: bool,
+    pub alias: Option<Ident>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Function {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub generics: Vec<Generic>,
+    pub self_param: Option<SelfParam>,
+    pub params: Vec<Param>,
+    pub ret: Option<Ty>,
+    pub block: Option<Block>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Struct {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub generics: Vec<Generic>,
+    pub fields: Vec<Field>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Enum {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub generics: Vec<Generic>,
+    pub variants: Vec<Variant>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Trait {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub generics: Vec<Generic>,
+    pub functions: Vec<Function>,
+    pub span: SrcSpan,
+}
+
+/// An `extend` block, such as `extend<T> Foo<T> with Bar<T> { ... }`.
+#[derive(Clone, Debug)]
+pub struct Extend {
+    /// The type parameters the `extend` block itself introduces, from `extend<T>`.
+    pub extend_generics: Vec<Generic>,
+    /// The extended type itself, from `Foo<T>` (or `(T, U)`, `&T`, `i32`, ...).
+    pub self_ty: Ty,
+    /// The optional `with`-clause trait's generic arguments, from `with Bar<T>`.
+    pub trait_generics: Option<Vec<Ty>>,
+    pub trait_path: Option<Path>,
+    pub methods: Vec<Function>,
+    pub span: SrcSpan,
+}
+
+// ===========================================================================
+// Locals
+// ===========================================================================
+
+#[derive(Clone, Debug)]
+pub struct SelfParam {
+    pub id: NodeId,
+    pub mode: SelfMode,
+    pub span: SrcSpan,
+}
+
+/// The way a method binds `self`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SelfMode {
+    /// `&self` borrows `self` immutably.
+    Immutable,
+    /// `&mut self` borrows `self` mutably.
+    Mutable,
+    /// Bare `self` takes ownership of it.
+    Move,
+    /// `any self` accepts `self` bound in any of the other three ways.
+    Any,
+}
+
+#[derive(Clone, Debug)]
+pub struct Generic {
+    pub id: NodeId,
+    pub name: Ident,
+    pub bounds: Option<Vec<Bound>>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Bound {
+    pub path: Path,
+    pub args: Vec<Ty>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Param {
+    pub id: NodeId,
+    pub name: Ident,
+    pub ty: Ty,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub id: NodeId,
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub ty: Ty,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Variant {
+    pub id: NodeId,
+    pub name: Ident,
+    pub payload: VariantPayload,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub enum VariantPayload {
+    /// The variant carries no payload, such as `.none`.
+    Unit,
+    /// The variant carries a single unnamed value, such as `.circle(f64)`.
+    Type(Ty),
+    /// The variant carries named fields, such as `.square { l: f64 }`.
+    Record(Vec<Field>),
+}
+
+#[derive(Clone, Debug)]
+pub struct ClosureParam {
+    pub id: NodeId,
+    pub name: Ident,
+    pub ty: Option<Ty>,
+    pub span: SrcSpan,
+}
+
+// ===========================================================================
+// Type
+// ===========================================================================
+
+#[derive(Clone, Debug)]
+pub struct Ty {
+    pub id: NodeId,
+    pub kind: TyKind,
+    pub span: SrcSpan,
+}
+
+impl Ty {
+    pub fn new(kind: TyKind, span: SrcSpan) -> Ty {
+        Ty {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum TyKind {
+    Path {
+        path: Path,
+        args: Vec<Ty>,
+    },
+    SelfTy,
+    Ref {
+        base: Box<Ty>,
+        mutability: Mutability,
+    },
+    Any(Box<Ty>),
+    Iso(Box<Ty>),
+    Tuple(Vec<Ty>),
+    Array {
+        elem: Box<Ty>,
+        len: Option<Box<Expr>>,
+    },
+    Function {
+        params: Vec<Ty>,
+        ret: Option<Box<Ty>>,
+    },
+    Dyn {
+        path: Path,
+        args: Vec<Ty>,
+    },
+    Error,
+}
+
+// ===========================================================================
+// Stmt
+// ===========================================================================
+
+#[derive(Clone, Debug)]
+pub struct Stmt {
+    pub id: NodeId,
+    pub kind: StmtKind,
+    pub span: SrcSpan,
+}
+
+impl Stmt {
+    pub fn new(kind: StmtKind, span: SrcSpan) -> Stmt {
+        Stmt {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum StmtKind {
+    While {
+        cond: Expr,
+        block: Block,
+    },
+    WhileLet {
+        pat: Pat,
+        scrutinee: Expr,
+        block: Block,
+    },
+    For {
+        pat: Pat,
+        iter: Expr,
+        block: Block,
+    },
+    Break,
+    Continue,
+    // TODO: `Break`/`Continue` carry no label and no value, so nested loops cannot
+    // `break 'outer` and a loop cannot `break value`. Real programs need labeled
+    // break/continue (and ideally break-with-value) for nested-loop control flow.
+    /// `return expr;`, or a bare `return;` producing nothing (`None`).
+    Return(Option<Expr>),
+    /// `defer expr;`. The expression runs just before the enclosing scope exits.
+    Defer(Expr),
+    /// A `let` binding, of the form `let [mut] pat[: ty] = init;`.
+    Let {
+        mutability: Mutability,
+        pat: Pat,
+        ty: Option<Ty>,
+        init: Expr,
+        else_block: Option<Block>,
+    },
+    /// A `with` block, such as `with px = &mut point.x, py = &mut point.y { ... }`.
+    ///
+    /// Each binding in `lends` is scoped to `block` and stops projecting its source at the
+    /// closing brace, regardless of where its last use inside the block falls.
+    With {
+        lends: Vec<WithLend>,
+        block: Block,
+    },
+    Expr {
+        expr: Expr,
+        semi: bool,
+    },
+    Error,
+}
+
+/// One binding in a `with` block, such as `px = &mut point.x`.
+#[derive(Clone, Debug)]
+pub struct WithLend {
+    pub id: NodeId,
+    pub pat: Pat,
+    pub ty: Option<Ty>,
+    pub init: Expr,
+    pub span: SrcSpan,
+}
+
+// ===========================================================================
+// Expr
+// ===========================================================================
+
+#[derive(Clone, Debug)]
+pub struct Expr {
+    pub id: NodeId,
+    pub kind: ExprKind,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub enum ExprKind {
+    Literal(Literal),
+    Path(Path),
+    SelfKw,
+    Unary {
+        op: UnaryOp,
+        operand: Box<Expr>,
+    },
+    Binary {
+        op: BinaryOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    /// `lhs = rhs`.
+    Assign {
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    /// A compound assignment, such as `lhs += rhs` or `lhs -= rhs`.
+    AssignOp {
+        op: BinaryOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+    Borrow {
+        mutability: Mutability,
+        operand: Box<Expr>,
+    },
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    /// A `.` access, such as `base.member` or `base.member(args)`.
+    /// `args` records how it was written; see [`AccessArgs`] for why that's needed.
+    Access {
+        base: Box<Expr>,
+        member: Ident,
+        args: AccessArgs,
+    },
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
+    /// A struct literal, such as `Foo { a: 1 }`.
+    ///
+    /// `path` is `None` for the elided form, `.{ a: 1 }`, which takes its type from context.
+    Ctor {
+        path: Option<Path>,
+        payload: Vec<PayloadField<Expr>>,
+    },
+    /// An enum variant construction, such as `.circle(1.24)` or `Shape.circle(1.24)`.
+    Variant {
+        variant: Ident,
+        payload: Payload<Expr>,
+    },
+    Tuple(Vec<Expr>),
+    /// The `?` operator: propagates an error result out of the enclosing function.
+    Try(Box<Expr>),
+    If {
+        cond: Box<Expr>,
+        then_block: Block,
+        else_expr: Option<Box<Expr>>,
+    },
+    IfLet {
+        pat: Pat,
+        scrutinee: Box<Expr>,
+        then_block: Block,
+        else_expr: Option<Box<Expr>>,
+    },
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<Arm>,
+    },
+    /// `spawn { ... }`. Launches the block as a concurrent task and evaluates to a handle for it.
+    Spawn(Block),
+    /// `concurrent { ... }`. Runs the block, then waits for every task it `spawn`ed before
+    /// producing a value.
+    Concurrent(Block),
+    Block(Block),
+    Closure {
+        params: Vec<ClosureParam>,
+        ret: Option<Ty>,
+        body: Box<Expr>,
+    },
+    /// `expr as Ty`, e.g. `x as i64`. Only ever a conversion between two primitive types; see
+    /// [`crate::typeck::cast`] for exactly which pairs are allowed and why.
+    Cast {
+        expr: Box<Expr>,
+        ty: Ty,
+    },
+    /// `new <expr>`: allocates storage for `expr`'s type, moves `expr` into it, and yields
+    /// `iso T`.
+    New(Box<Expr>),
+    /// `new [<elem>; <count>]`: allocates storage for `count` elements, each initialized to
+    /// `elem`, and yields `iso [T]`. Unlike `[T; N]`'s `N`, `count` need not be a constant.
+    NewArray {
+        elem: Box<Expr>,
+        count: Box<Expr>,
+    },
+    Assert {
+        cond: Box<Expr>,
+        msg: Option<Box<Expr>>,
+    },
+    Panic {
+        msg: Option<Box<Expr>>,
+    },
+    Unreachable {
+        msg: Option<Box<Expr>>,
+    },
+    Error,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Literal {
+    /// `suffix` is the type named after the `_` in `42_i64`
+    Int {
+        value: Symbol,
+        suffix: Option<Symbol>,
+    },
+    /// `suffix` is the type named after the `_` in `3.14_f32`
+    Float {
+        value: Symbol,
+        suffix: Option<Symbol>,
+    },
+    Str(Symbol),
+    Bool(bool),
+    Char(char),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UnaryOp {
+    /// Numeric negation, `-x`.
+    Neg,
+    /// Logical negation, `!x`.
+    Not,
+    /// Dereference, `*x`.
+    Deref,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+}
+
+#[derive(Clone, Debug)]
+pub struct Block {
+    pub id: NodeId,
+    pub stmts: Vec<Stmt>,
+    pub span: SrcSpan,
+}
+
+impl Block {
+    pub fn new(stmts: Vec<Stmt>, span: SrcSpan) -> Block {
+        Block {
+            id: NodeId::next(),
+            stmts,
+            span,
+        }
+    }
+}
+
+impl ExprKind {
+    /// Reports whether this expression already ends in a `}`, such as `if`, `match`, or a
+    /// bare block.
+    pub fn is_block_bodied(&self) -> bool {
+        matches!(
+            self,
+            ExprKind::If { .. }
+                | ExprKind::IfLet { .. }
+                | ExprKind::Match { .. }
+                | ExprKind::Spawn(_)
+                | ExprKind::Concurrent(_)
+                | ExprKind::Block(_)
+        )
+    }
+}
+
+/// The payload an enum variant carries
+#[derive(Clone, Debug)]
+pub enum Payload<T> {
+    /// The variant has no payload at all, such as bare `.none`.
+    None,
+    /// The variant has one unnamed value, such as `.circle(1.24)`.
+    Single(Box<T>),
+    /// The variant has named fields, declared inline as `{ l: f64 }` and written as
+    /// `.square { l: 4.0 }`.
+    Record(Vec<PayloadField<T>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum AccessArgs {
+    /// `base.member`. This could be a field, a payload-less variant, or a method referenced as
+    /// a value.
+    None,
+    /// `base.member(a, b)`. This could be a method call, or a variant whose single payload is
+    /// `a`.
+    Call(Vec<Expr>),
+    /// `base.member { f: v }`. This can only be a variant with a record payload, so `base` has
+    /// to name the enum rather than a value of it.
+    Record(Vec<PayloadField<Expr>>),
+}
+
+/// This can represent either a field initalizer in
+/// ([`ExprKind::Ctor`]), or one field of a variant's record payload
+#[derive(Clone, Debug)]
+pub struct PayloadField<T> {
+    pub id: NodeId,
+    pub name: Ident,
+    pub value: Option<T>,
+    pub span: SrcSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct Arm {
+    pub id: NodeId,
+    pub pat: Pat,
+    /// The `if cond` in `pat if cond => body`
+    pub guard: Option<Box<Expr>>,
+    pub body: Box<Expr>,
+    pub span: SrcSpan,
+}
+
+// ===========================================================================
+// Pattern
+// ===========================================================================
+
+#[derive(Clone, Debug)]
+pub struct Pat {
+    pub id: NodeId,
+    pub kind: PatKind,
+    pub span: SrcSpan,
+}
+
+impl Pat {
+    pub fn new(kind: PatKind, span: SrcSpan) -> Pat {
+        Pat {
+            id: NodeId::next(),
+            kind,
+            span,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum PatKind {
+    // TODO: no struct patterns (`Point { x, y }`), `..` rest, `@` bindings, or `|`
+    // or-patterns exist -- only wildcard/binding/literal/variant/tuple. Real programs
+    // need at least struct destructuring in `let`/`match`.
+    Wildcard,
+    Binding(Ident),
+    Literal(Literal),
+    /// An enum variant pattern, such as `.circle(r)`, `.square { l }`, or `.none`.
+    Variant {
+        variant: Ident,
+        payload: Payload<Pat>,
+    },
+    /// A tuple pattern, such as the `(x, y)` in `let (x, y) = point;`.
+    Tuple(Vec<Pat>),
+    Error,
+}
+
+impl Ast {
+    /// Collects every parsed file of a build into one module tree.
+    pub fn from(files: Vec<ParsedSrcFile>) -> Ast {
+        let mut builder = AstBuilder::new();
+        for file in files {
+            let module = match &file.module {
+                Some(decl) => builder.module_for_path(&decl.path.segments),
+                None => builder.ast.root,
+            };
+            let position = builder.ast.module_positions[&module];
+            let target = &mut builder.ast.modules[position];
+            target.imports.extend(file.imports);
+            target.items.extend(file.items);
+        }
+        builder.ast
+    }
+    pub fn root(&self) -> &Module {
+        self.module(self.root)
+    }
+
+    pub fn root_id(&self) -> NodeId {
+        self.root
+    }
+
+    pub fn module(&self, id: NodeId) -> &Module {
+        &self.modules[self.module_positions[&id]]
+    }
+
+    pub fn parent(&self, id: NodeId) -> Option<NodeId> {
+        self.module(id).parent
+    }
+
+    /// Iterates every module, parents before children.
+    pub fn mod_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.modules.iter().map(|module| module.id)
+    }
+}
+
+#[cfg(test)]
+mod path_eq_tests {
+    use super::*;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    fn path(segments: &[&str], start: usize) -> Path {
+        let span = SrcSpan::new(start, start + 1);
+        Path {
+            segments: segments
+                .iter()
+                .map(|s| Ident {
+                    text: crate::testing::intern(s),
+                    span,
+                })
+                .collect(),
+        }
+    }
+
+    fn hash_of(p: &Path) -> u64 {
+        let mut h = DefaultHasher::new();
+        p.hash(&mut h);
+        h.finish()
+    }
+
+    #[test]
+    fn paths_with_the_same_segments_but_different_spans_are_equal() {
+        let a = path(&["math", "vector"], 0);
+        let b = path(&["math", "vector"], 500);
+        assert_eq!(a, b);
+        assert_eq!(hash_of(&a), hash_of(&b));
+    }
+
+    #[test]
+    fn paths_with_different_segments_are_not_equal() {
+        assert_ne!(path(&["math"], 0), path(&["vector"], 0));
+    }
+
+    #[test]
+    fn paths_of_different_lengths_are_not_equal() {
+        assert_ne!(path(&["math"], 0), path(&["math", "vector"], 0));
+    }
+}

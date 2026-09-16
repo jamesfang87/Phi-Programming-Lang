@@ -1,0 +1,162 @@
+=== status ===
+0
+=== stdout ===
+// module option
+Item {
+    id: NodeId(
+        5,
+    ),
+    kind: Enum(
+        Enum {
+            visibility: Public,
+            name: Ident {
+                text: Symbol(
+                    1,
+                ),
+                span: SrcSpan {
+                    begin: 28,
+                    end: 34,
+                },
+            },
+            generics: [
+                Generic {
+                    id: NodeId(
+                        1,
+                    ),
+                    name: Ident {
+                        text: Symbol(
+                            2,
+                        ),
+                        span: SrcSpan {
+                            begin: 35,
+                            end: 36,
+                        },
+                    },
+                    bounds: None,
+                    span: SrcSpan {
+                        begin: 35,
+                        end: 36,
+                    },
+                },
+            ],
+            variants: [
+                Variant {
+                    id: NodeId(
+                        3,
+                    ),
+                    name: Ident {
+                        text: Symbol(
+                            3,
+                        ),
+                        span: SrcSpan {
+                            begin: 44,
+                            end: 48,
+                        },
+                    },
+                    payload: Type(
+                        Ty {
+                            id: NodeId(
+                                2,
+                            ),
+                            kind: Path {
+                                path: Path {
+                                    segments: [
+                                        Ident {
+                                            text: Symbol(
+                                                2,
+                                            ),
+                                            span: SrcSpan {
+                                                begin: 50,
+                                                end: 51,
+                                            },
+                                        },
+                                    ],
+                                },
+                                args: [],
+                            },
+                            span: SrcSpan {
+                                begin: 50,
+                                end: 51,
+                            },
+                        },
+                    ),
+                    span: SrcSpan {
+                        begin: 44,
+                        end: 51,
+                    },
+                },
+                Variant {
+                    id: NodeId(
+                        4,
+                    ),
+                    name: Ident {
+                        text: Symbol(
+                            4,
+                        ),
+                        span: SrcSpan {
+                            begin: 57,
+                            end: 61,
+                        },
+                    },
+                    payload: Unit,
+                    span: SrcSpan {
+                        begin: 57,
+                        end: 61,
+                    },
+                },
+            ],
+            span: SrcSpan {
+                begin: 16,
+                end: 64,
+            },
+        },
+    ),
+    span: SrcSpan {
+        begin: 16,
+        end: 64,
+    },
+}
+Item {
+    id: NodeId(
+        7,
+    ),
+    kind: Function(
+        Function {
+            visibility: Private,
+            name: Ident {
+                text: Symbol(
+                    5,
+                ),
+                span: SrcSpan {
+                    begin: 70,
+                    end: 74,
+                },
+            },
+            generics: [],
+            self_param: None,
+            params: [],
+            ret: None,
+            block: Some(
+                Block {
+                    id: NodeId(
+                        6,
+                    ),
+                    stmts: [],
+                    span: SrcSpan {
+                        begin: 77,
+                        end: 80,
+                    },
+                },
+            ),
+            span: SrcSpan {
+                begin: 66,
+                end: 80,
+            },
+        },
+    ),
+    span: SrcSpan {
+        begin: 66,
+        end: 80,
+    },
+}
+=== stderr ===

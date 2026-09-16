@@ -1,0 +1,5 @@
+module std::vector;
+
+// TODO: implement `Vector<T>` (growable array with push/pop/len/indexing). The file
+// currently declares only the module, leaving real programs with no standard
+// dynamic array despite README sections 4/12 relying on `Array<T>`/indexing.

@@ -1,0 +1,1030 @@
+use chumsky::Parser as ChumskyParser;
+use chumsky::prelude::*;
+
+use crate::ast::Ident;
+use crate::ast::Import;
+use crate::ast::ModuleHeader;
+use crate::ast::{
+    Block, Bound, Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param,
+    ParsedItem, Path, SelfMode, SelfParam, Struct, Trait, Ty, Variant, VariantPayload, Visibility,
+};
+
+use crate::lexer::token::{Token, TokenKind};
+
+use super::{BoxedP, Parser};
+
+impl<'s> Parser<'s> {
+    pub(crate) fn bound_parser<'a>(&'a self, ty: BoxedP<'a, Ty>) -> BoxedP<'a, Bound> {
+        self.path_parser()
+            .clone()
+            .then(
+                self.kind(TokenKind::OpenAngle)
+                    .ignore_then(
+                        ty.separated_by(self.kind(TokenKind::Comma))
+                            .allow_trailing()
+                            .at_least(1)
+                            .collect::<Vec<_>>(),
+                    )
+                    .then(self.kind(TokenKind::CloseAngle))
+                    .or_not(),
+            )
+            .map(|(path, args): (Path, Option<(Vec<Ty>, Token)>)| {
+                let (args, span) = match args {
+                    Some((args, close_tok)) => (args, path.span().merge(close_tok.span)),
+                    None => (Vec::new(), path.span()),
+                };
+                Bound { path, args, span }
+            })
+            .boxed()
+    }
+
+    pub fn item_parser<'a>(&'a self) -> BoxedP<'a, ParsedItem> {
+        let ident = self.ident_parser();
+        let (expr, block) = self.expr_and_block_parsers();
+        let type_p = self.type_parser_with_expr(expr);
+
+        let visibility = self
+            .kind(TokenKind::PublicKw)
+            .or_not()
+            .map(|opt: Option<Token>| {
+                let visibility = if opt.is_some() {
+                    Visibility::Public
+                } else {
+                    Visibility::Private
+                };
+                (visibility, opt)
+            })
+            .boxed();
+
+        let generic = ident
+            .clone()
+            .then(
+                self.kind(TokenKind::Colon)
+                    .ignore_then(
+                        self.bound_parser(type_p.clone())
+                            .separated_by(self.kind(TokenKind::Plus))
+                            .at_least(1)
+                            .collect::<Vec<_>>(),
+                    )
+                    .or_not(),
+            )
+            .map(|(name, bounds)| {
+                let span = match &bounds {
+                    None => name.span,
+                    Some(bounds) => name.span.merge(
+                        bounds
+                            .last()
+                            .expect("at least one bound when bounds are present")
+                            .span,
+                    ),
+                };
+
+                Generic {
+                    id: NodeId::next(),
+                    name,
+                    bounds,
+                    span,
+                }
+            })
+            .boxed();
+
+        let generics = generic
+            .separated_by(self.kind(TokenKind::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>();
+
+        let param = ident
+            .clone()
+            .then_ignore(self.kind(TokenKind::Colon))
+            .then(type_p.clone())
+            .map(|(name, ty)| {
+                let span = name.span.merge(ty.span);
+                Param {
+                    id: NodeId::next(),
+                    name,
+                    ty,
+                    span,
+                }
+            })
+            .boxed();
+
+        let params = param
+            .separated_by(self.kind(TokenKind::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>();
+
+        // The receiver parameter takes four forms: `self`, `&self`, `&mut self`, or `any self`.
+        let self_param = choice((
+            self.kind(TokenKind::Amp)
+                .then(self.kind(TokenKind::MutKw))
+                .then(self.kind(TokenKind::LowerSelfKw))
+                .map(|((amp_tok, _mut_tok), self_tok)| SelfParam {
+                    id: NodeId::next(),
+                    mode: SelfMode::Mutable,
+                    span: amp_tok.span.merge(self_tok.span),
+                }),
+            self.kind(TokenKind::Amp)
+                .then(self.kind(TokenKind::LowerSelfKw))
+                .map(|(amp_tok, self_tok)| SelfParam {
+                    id: NodeId::next(),
+                    mode: SelfMode::Immutable,
+                    span: amp_tok.span.merge(self_tok.span),
+                }),
+            self.kind(TokenKind::AnyKw)
+                .then(self.kind(TokenKind::LowerSelfKw))
+                .map(|(any_tok, self_tok)| SelfParam {
+                    id: NodeId::next(),
+                    mode: SelfMode::Any,
+                    span: any_tok.span.merge(self_tok.span),
+                }),
+            self.kind(TokenKind::LowerSelfKw).map(|self_tok| SelfParam {
+                id: NodeId::next(),
+                mode: SelfMode::Move,
+                span: self_tok.span,
+            }),
+        ))
+        .boxed();
+
+        let receiver_and_params = choice((
+            self_param
+                .clone()
+                .then_ignore(self.kind(TokenKind::Comma))
+                .then(params.clone())
+                .map(|(receiver, params)| (Some(receiver), params)),
+            self_param
+                .clone()
+                .map(|receiver| (Some(receiver), Vec::new())),
+            params.clone().map(|params| (None, params)),
+        ))
+        .boxed();
+
+        let ret_ty = self
+            .kind(TokenKind::Arrow)
+            .ignore_then(type_p.clone())
+            .or_not();
+
+        let function_decl = |allow_no_impl: bool| {
+            visibility
+                .clone()
+                .then(self.kind(TokenKind::FunKw))
+                .then(ident.clone())
+                .then(
+                    self.kind(TokenKind::OpenAngle)
+                        .ignore_then(generics.clone())
+                        .then_ignore(self.kind(TokenKind::CloseAngle))
+                        .or_not(),
+                )
+                .then_ignore(self.kind(TokenKind::OpenParen))
+                .then(receiver_and_params.clone())
+                .then_ignore(self.kind(TokenKind::CloseParen))
+                .then(ret_ty.clone())
+                .then(if allow_no_impl {
+                    choice((
+                        block.clone().map(|b: Block| (Some(b), None::<Token>)),
+                        self.kind(TokenKind::Semicolon)
+                            .map(|semi| (None, Some(semi))),
+                    ))
+                    .boxed()
+                } else {
+                    block
+                        .clone()
+                        .map(|b: Block| (Some(b), None::<Token>))
+                        .boxed()
+                })
+                .map(
+                    |(
+                        (((((vis, fun_tok), name), generics), (self_param, params)), ret),
+                        (body, semi),
+                    )| {
+                        let begin = vis.1.map_or(fun_tok.span, |pub_tok| pub_tok.span);
+                        let end = body
+                            .as_ref()
+                            .map(|b| b.span)
+                            .or_else(|| semi.as_ref().map(|t| t.span))
+                            .unwrap_or(name.span);
+                        let span = begin.merge(end);
+
+                        Function {
+                            visibility: vis.0,
+                            name,
+                            generics: generics.unwrap_or_default(),
+                            self_param,
+                            params,
+                            ret,
+                            block: body,
+                            span,
+                        }
+                    },
+                )
+                .boxed()
+        };
+
+        let field = self
+            .kind(TokenKind::PublicKw)
+            .or_not()
+            .then(ident.clone())
+            .then_ignore(self.kind(TokenKind::Colon))
+            .then(type_p.clone())
+            .map(|((pub_tok, name), ty)| {
+                let begin = pub_tok.map_or(name.span, |pub_tok: Token| pub_tok.span);
+                let span = begin.merge(ty.span);
+
+                let visibility = if pub_tok.is_some() {
+                    Visibility::Public
+                } else {
+                    Visibility::Private
+                };
+
+                Field {
+                    id: NodeId::next(),
+                    visibility,
+                    name,
+                    ty,
+                    span,
+                }
+            })
+            .boxed();
+
+        let fields = field
+            .clone()
+            .separated_by(self.kind(TokenKind::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>();
+
+        let struct_decl = visibility
+            .clone()
+            .then(self.kind(TokenKind::StructKw))
+            .then(ident.clone())
+            .then(
+                self.kind(TokenKind::OpenAngle)
+                    .ignore_then(generics.clone())
+                    .then_ignore(self.kind(TokenKind::CloseAngle))
+                    .or_not(),
+            )
+            .then_ignore(self.kind(TokenKind::OpenBrace))
+            .then(fields.clone())
+            .then(self.kind(TokenKind::CloseBrace))
+            .map(
+                |(((((vis, struct_tok), name), generics), fields), close_tok)| {
+                    let begin = vis.1.map_or(struct_tok.span, |pub_tok| pub_tok.span);
+                    let span = begin.merge(close_tok.span);
+
+                    let struct_ = Struct {
+                        visibility: vis.0,
+                        name,
+                        generics: generics.unwrap_or_default(),
+                        fields,
+                        span,
+                    };
+
+                    Item::new(ItemKind::Struct(struct_), span)
+                },
+            )
+            .boxed();
+
+        let regular_payload = ident
+            .clone()
+            .then(
+                self.kind(TokenKind::Colon)
+                    .ignore_then(type_p.clone())
+                    .or_not(),
+            )
+            .map(|(name, ty)| {
+                if ty.is_none() {
+                    return Variant {
+                        id: NodeId::next(),
+                        name,
+                        payload: VariantPayload::Unit,
+                        span: name.span,
+                    };
+                }
+
+                let span = name.span.merge(ty.clone().unwrap().span);
+                Variant {
+                    id: NodeId::next(),
+                    name,
+                    payload: VariantPayload::Type(ty.unwrap()),
+                    span,
+                }
+            })
+            .boxed();
+
+        let record_field = ident
+            .clone()
+            .then_ignore(self.kind(TokenKind::Colon))
+            .then(type_p.clone())
+            .map(|(name, ty)| {
+                let span = name.span.merge(ty.span);
+
+                Field {
+                    id: NodeId::next(),
+                    visibility: Visibility::Public,
+                    name,
+                    ty,
+                    span,
+                }
+            })
+            .boxed();
+
+        let record_payload = ident
+            .clone()
+            .then_ignore(self.kind(TokenKind::Colon))
+            .then_ignore(self.kind(TokenKind::OpenBrace))
+            .then(
+                record_field
+                    .separated_by(self.kind(TokenKind::Comma))
+                    .allow_trailing()
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then_ignore(self.kind(TokenKind::CloseBrace))
+            .map(|(name, fields)| {
+                let span = name.span.merge(
+                    fields
+                        .last()
+                        .expect("must have at least one field in a record payload")
+                        .span,
+                );
+                Variant {
+                    id: NodeId::next(),
+                    name,
+                    payload: VariantPayload::Record(fields),
+                    span,
+                }
+            })
+            .boxed();
+
+        let variant = choice((record_payload, regular_payload))
+            .separated_by(self.kind(TokenKind::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>();
+
+        let enum_decl = visibility
+            .clone()
+            .then(self.kind(TokenKind::EnumKw))
+            .then(ident.clone())
+            .then(
+                self.kind(TokenKind::OpenAngle)
+                    .ignore_then(generics.clone())
+                    .then_ignore(self.kind(TokenKind::CloseAngle))
+                    .or_not(),
+            )
+            .then_ignore(self.kind(TokenKind::OpenBrace))
+            .then(variant)
+            .then(self.kind(TokenKind::CloseBrace))
+            .map(
+                |(((((vis, enum_tok), name), generics), variants), close_tok)| {
+                    let begin = vis.1.map_or(enum_tok.span, |pub_tok| pub_tok.span);
+                    let span = begin.merge(close_tok.span);
+
+                    let enum_ = Enum {
+                        visibility: vis.0,
+                        name,
+                        generics: generics.unwrap_or_default(),
+                        variants,
+                        span,
+                    };
+
+                    Item::new(ItemKind::Enum(enum_), span)
+                },
+            )
+            .boxed();
+
+        let trait_decl = visibility
+            .clone()
+            .then(self.kind(TokenKind::TraitKw))
+            .then(ident.clone())
+            .then(
+                self.kind(TokenKind::OpenAngle)
+                    .ignore_then(generics.clone())
+                    .then_ignore(self.kind(TokenKind::CloseAngle))
+                    .or_not(),
+            )
+            .then_ignore(self.kind(TokenKind::OpenBrace))
+            .then(function_decl(true).repeated().collect::<Vec<_>>())
+            .then(self.kind(TokenKind::CloseBrace))
+            .map(
+                |(((((vis, trait_tok), name), generics), functions), close_tok)| {
+                    let begin = vis.1.map_or(trait_tok.span, |pub_tok| pub_tok.span);
+                    let span = begin.merge(close_tok.span);
+
+                    let trait_ = Trait {
+                        visibility: vis.0,
+                        name,
+                        generics: generics.unwrap_or_default(),
+                        functions,
+                        span,
+                    };
+
+                    Item::new(ItemKind::Trait(trait_), span)
+                },
+            );
+
+        let generic_params = self
+            .kind(TokenKind::OpenAngle)
+            .ignore_then(generics.clone())
+            .then_ignore(self.kind(TokenKind::CloseAngle))
+            .or_not()
+            .boxed();
+
+        let generic_args = self
+            .kind(TokenKind::OpenAngle)
+            .ignore_then(
+                type_p
+                    .clone()
+                    .separated_by(self.kind(TokenKind::Comma))
+                    .allow_trailing()
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then_ignore(self.kind(TokenKind::CloseAngle))
+            .or_not()
+            .boxed();
+
+        let extend = self
+            .kind(TokenKind::ExtendKw)
+            .then(generic_params)
+            .then(self.type_parser())
+            .then(
+                self.kind(TokenKind::WithKw)
+                    .ignore_then(self.path_parser())
+                    .or_not()
+                    .then(generic_args.clone()),
+            )
+            .then_ignore(self.kind(TokenKind::OpenBrace))
+            .then(function_decl(false).repeated().collect())
+            .then(self.kind(TokenKind::CloseBrace))
+            .map(
+                |(
+                    (
+                        (((extend_tok, extend_generics), self_ty), (trait_path, trait_generics)),
+                        methods,
+                    ),
+                    close_tok,
+                )| {
+                    let span = extend_tok.span.merge(close_tok.span);
+                    let extend = Extend {
+                        extend_generics: extend_generics.unwrap_or_default(),
+                        self_ty,
+                        trait_generics,
+                        trait_path,
+                        methods,
+                        span,
+                    };
+
+                    Item::new(ItemKind::Extend(extend), span)
+                },
+            );
+
+        let module_decl = self
+            .kind(TokenKind::ModuleKw)
+            .then(self.path_parser().clone())
+            .then(self.kind(TokenKind::Semicolon))
+            .map(|((mod_tok, path), semi_tok)| {
+                let span = mod_tok.span.merge(semi_tok.span);
+                let module = ModuleHeader {
+                    id: NodeId::next(),
+                    path,
+                    span,
+                };
+
+                ParsedItem::Module(module)
+            })
+            .boxed();
+
+        let glob_suffix = self
+            .kind(TokenKind::DoubleColon)
+            .ignore_then(self.kind(TokenKind::Star));
+
+        let alias_suffix = self.kind(TokenKind::AsKw).ignore_then(ident.clone());
+
+        enum ImportSuffix {
+            Glob,
+            Alias(Ident),
+        }
+
+        let suffix = choice((
+            glob_suffix.map(|_| ImportSuffix::Glob),
+            alias_suffix.map(ImportSuffix::Alias),
+        ))
+        .or_not();
+
+        let import = self
+            .kind(TokenKind::ImportKw)
+            .then(self.path_parser().clone())
+            .then(suffix)
+            .then(self.kind(TokenKind::Semicolon))
+            .map(|(((import_tok, path), suffix), semi_tok)| {
+                let span = import_tok.span.merge(semi_tok.span);
+                let (alias, glob) = match suffix {
+                    Some(ImportSuffix::Glob) => (None, true),
+                    Some(ImportSuffix::Alias(name)) => (Some(name), false),
+                    None => (None, false),
+                };
+                let import = Import {
+                    id: NodeId::next(),
+                    path,
+                    alias,
+                    glob,
+                    span,
+                };
+
+                ParsedItem::Import(import)
+            })
+            .boxed();
+
+        // TODO: only `fun`/`struct`/`enum`/`trait`/`extend`/`module`/`import` are parsed --
+        // there is no `const`, `static`, or `type` alias, so those programs are rejected
+        // here even though real code needs them (see `ItemKind`).
+        choice((
+            function_decl(/*allow_no_impl=*/ true)
+                .map(|fun: Function| {
+                    let span = fun.span;
+                    Item::new(ItemKind::Function(fun), span)
+                })
+                .map(ParsedItem::Item),
+            struct_decl.map(ParsedItem::Item),
+            enum_decl.map(ParsedItem::Item),
+            trait_decl.map(ParsedItem::Item),
+            extend.map(ParsedItem::Item),
+            module_decl,
+            import,
+        ))
+        .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::SelfMode;
+    use crate::ast::TyKind;
+    use crate::lexer::describe::Descriptor;
+    use crate::lexer::token::ITEM_STARTERS;
+    use crate::testing::lex_src;
+
+    fn parse_parsed_item(src: &str) -> ParsedItem {
+        let (tokens, _) = lex_src(src);
+        let parser = Parser::new(crate::testing::session());
+        let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
+        assert!(
+            errors.is_empty(),
+            "unexpected parse errors for {src:?}: {errors:?}"
+        );
+        output.expect("expected a successfully parsed item")
+    }
+
+    fn parse_item(src: &str) -> Item {
+        match parse_parsed_item(src) {
+            ParsedItem::Item(item) => item,
+            other => panic!("expected a definition item, got {other:?}"),
+        }
+    }
+
+    fn text(ident: Ident) -> &'static str {
+        crate::testing::resolve(ident.text)
+    }
+
+    fn as_function(item: &Item) -> &Function {
+        match &item.kind {
+            ItemKind::Function(f) => f,
+            other => panic!("expected a function item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_plain_function() {
+        let item = parse_item("fun foo() {}");
+        let f = as_function(&item);
+        assert_eq!(text(f.name), "foo");
+        assert!(f.generics.is_empty());
+        assert!(f.self_param.is_none());
+        assert!(f.params.is_empty());
+        assert!(f.ret.is_none());
+    }
+
+    /// A free function may end in `;` instead of a body, the same allowance a trait method
+    /// declaration gets. The grammar admits this for every free function; the bodiless-intrinsic
+    /// rule restricting who may actually do it is a typeck concern, not a parser one.
+    #[test]
+    fn parses_bodiless_free_function() {
+        let item = parse_item("fun write_bytes(fd: i32) -> i64;");
+        let f = as_function(&item);
+        assert_eq!(text(f.name), "write_bytes");
+        assert!(f.block.is_none());
+    }
+
+    #[test]
+    fn parses_function_with_generics_and_return_type() {
+        let item = parse_item("fun make<T: Default>() -> T {}");
+        let f = as_function(&item);
+        assert_eq!(f.generics.len(), 1);
+        assert_eq!(text(f.generics[0].name), "T");
+        let bounds = f.generics[0].bounds.as_ref().expect("expected bounds");
+        assert_eq!(text(bounds[0].path.segments[0]), "Default");
+        assert!(f.ret.is_some());
+    }
+
+    #[test]
+    fn parses_a_bound_with_trait_arguments() {
+        let item = parse_item("fun take<T: Conv<i32, bool>, U: Eq>(x: T, y: U) {}");
+        let f = as_function(&item);
+        let bounds = f.generics[0].bounds.as_ref().expect("expected bounds");
+        assert_eq!(text(bounds[0].path.segments[0]), "Conv");
+        assert_eq!(bounds[0].args.len(), 2);
+        assert!(
+            matches!(&bounds[0].args[0].kind, TyKind::Path { path, args }
+                 if text(path.segments[0]) == "i32" && args.is_empty()),
+            "expected an `i32` path argument, got {:?}",
+            bounds[0].args[0].kind
+        );
+        assert!(
+            matches!(&bounds[0].args[1].kind, TyKind::Path { path, .. }
+                 if text(path.segments[0]) == "bool"),
+            "expected a `bool` path argument, got {:?}",
+            bounds[0].args[1].kind
+        );
+        let other = f.generics[1].bounds.as_ref().expect("expected bounds");
+        assert_eq!(text(other[0].path.segments[0]), "Eq");
+        assert!(
+            other[0].args.is_empty(),
+            "a bare bound carries no arguments"
+        );
+    }
+
+    #[test]
+    fn parses_function_with_move_self() {
+        let item = parse_item("fun consume(self) {}");
+        let f = as_function(&item);
+        let self_param = f.self_param.as_ref().expect("expected a self param");
+        assert!(matches!(self_param.mode, SelfMode::Move));
+        assert!(f.params.is_empty());
+    }
+
+    #[test]
+    fn parses_function_with_immutable_ref_self() {
+        let item = parse_item("fun get(&self) {}");
+        let f = as_function(&item);
+        let self_param = f.self_param.as_ref().expect("expected a self param");
+        assert!(matches!(self_param.mode, SelfMode::Immutable));
+    }
+
+    #[test]
+    fn parses_function_with_mutable_ref_self() {
+        let item = parse_item("fun set(&mut self) {}");
+        let f = as_function(&item);
+        let self_param = f.self_param.as_ref().expect("expected a self param");
+        assert!(matches!(self_param.mode, SelfMode::Mutable));
+    }
+
+    #[test]
+    fn parses_function_with_any_self() {
+        let item = parse_item("fun run(any self) {}");
+        let f = as_function(&item);
+        let self_param = f.self_param.as_ref().expect("expected a self param");
+        assert!(matches!(self_param.mode, SelfMode::Any));
+    }
+
+    /// A receiver run directly into a named parameter is a mistake (`self x: i32` is missing
+    /// the comma, or the writer did not mean `self` at all), so it must not silently parse as
+    /// a receiver followed by a parameter.
+    #[test]
+    fn a_receiver_needs_a_comma_before_a_named_parameter() {
+        let (tokens, _) = lex_src("fun f(self x: i32) {}");
+        let parser = Parser::new(crate::testing::session());
+        let (_, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
+        assert!(
+            !errors.is_empty(),
+            "expected a parse error for a receiver run into a parameter"
+        );
+    }
+
+    #[test]
+    fn parses_function_with_self_and_params() {
+        let item = parse_item("fun add(&mut self, x: i32, y: i32) {}");
+        let f = as_function(&item);
+        assert!(matches!(
+            f.self_param.as_ref().unwrap().mode,
+            SelfMode::Mutable
+        ));
+        assert_eq!(f.params.len(), 2);
+        assert_eq!(text(f.params[0].name), "x");
+        assert_eq!(text(f.params[1].name), "y");
+    }
+
+    #[test]
+    fn parses_struct_with_generics_and_mixed_visibility_fields() {
+        let item = parse_item("struct Point<T: Bounded> { x: T, public y: T }");
+        match &item.kind {
+            ItemKind::Struct(s) => {
+                assert_eq!(text(s.name), "Point");
+                let generics = &s.generics;
+                assert_eq!(generics.len(), 1);
+                assert_eq!(text(generics[0].name), "T");
+                assert_eq!(s.fields.len(), 2);
+                assert!(matches!(s.fields[0].visibility, Visibility::Private));
+                assert!(matches!(s.fields[1].visibility, Visibility::Public));
+            }
+            other => panic!("expected a struct item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_struct_without_generics() {
+        let item = parse_item("struct Empty {}");
+        match &item.kind {
+            ItemKind::Struct(s) => {
+                assert!(s.generics.is_empty());
+                assert!(s.fields.is_empty());
+            }
+            other => panic!("expected a struct item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_enum_with_unit_type_and_record_variants() {
+        let item = parse_item("enum Shape { Empty, Circle: f64, Rect: { w: f64, h: f64 } }");
+        match &item.kind {
+            ItemKind::Enum(e) => {
+                assert_eq!(text(e.name), "Shape");
+                assert_eq!(e.variants.len(), 3);
+
+                assert_eq!(text(e.variants[0].name), "Empty");
+                assert!(matches!(e.variants[0].payload, VariantPayload::Unit));
+
+                assert_eq!(text(e.variants[1].name), "Circle");
+                assert!(matches!(e.variants[1].payload, VariantPayload::Type(_)));
+
+                assert_eq!(text(e.variants[2].name), "Rect");
+                match &e.variants[2].payload {
+                    VariantPayload::Record(fields) => assert_eq!(fields.len(), 2),
+                    other => panic!("expected a record payload, got {other:?}"),
+                }
+            }
+            other => panic!("expected an enum item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_trait_with_abstract_and_provided_methods() {
+        let item = parse_item("trait Greet { fun hello(&self); fun bye(&self) {} }");
+        match &item.kind {
+            ItemKind::Trait(t) => {
+                assert_eq!(text(t.name), "Greet");
+                assert_eq!(t.functions.len(), 2);
+                assert!(t.functions[0].block.is_none());
+                assert!(t.functions[1].block.is_some());
+            }
+            other => panic!("expected a trait item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_with_trait_and_generics() {
+        let item = parse_item("extend<T> Box<T> with Container<T> { fun get(&self) -> T {} }");
+        match &item.kind {
+            ItemKind::Extend(e) => {
+                assert!(!e.extend_generics.is_empty());
+                let TyKind::Path { path, args } = &e.self_ty.kind else {
+                    panic!(
+                        "expected `Box<T>` to parse as a path type, got {:?}",
+                        e.self_ty.kind
+                    );
+                };
+                assert_eq!(text(path.segments[0]), "Box");
+                assert!(!args.is_empty());
+                let trait_path = e.trait_path.as_ref().expect("expected a trait path");
+                assert_eq!(text(trait_path.segments[0]), "Container");
+                assert!(e.trait_generics.is_some());
+                assert_eq!(e.methods.len(), 1);
+                assert!(e.methods[0].block.is_some());
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    /// Each of the three angle-bracket groups takes more than one argument, comma-separated,
+    /// which is what implementing a trait like `Index<K, V>` needs.
+    #[test]
+    fn parses_extend_with_multiple_generic_args() {
+        let item = parse_item(
+            "extend<K, V> Map<K, V> with Index<K, V> { fun index(&self, key: K) -> &V {} }",
+        );
+        match &item.kind {
+            ItemKind::Extend(e) => {
+                assert_eq!(e.extend_generics.len(), 2);
+                let TyKind::Path { args, .. } = &e.self_ty.kind else {
+                    panic!(
+                        "expected `Map<K, V>` to parse as a path type, got {:?}",
+                        e.self_ty.kind
+                    );
+                };
+                assert_eq!(args.len(), 2);
+                assert_eq!(e.trait_generics.as_deref().map(<[_]>::len), Some(2));
+
+                let trait_path = e.trait_path.as_ref().expect("expected a trait path");
+                assert_eq!(text(trait_path.segments[0]), "Index");
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_without_trait() {
+        let item = parse_item("extend Box<i32> { fun get(&self) {} }");
+        match &item.kind {
+            ItemKind::Extend(e) => {
+                assert!(e.extend_generics.is_empty());
+                assert!(e.trait_path.is_none());
+                assert!(e.trait_generics.is_none());
+                assert_eq!(e.methods.len(), 1);
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_primitive() {
+        let item = parse_item("extend i32 { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                let TyKind::Path { path, args } = &e.self_ty.kind else {
+                    panic!(
+                        "expected `i32` to parse as a path type, got {:?}",
+                        e.self_ty.kind
+                    );
+                };
+                assert_eq!(path.segments.len(), 1);
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "i32");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_primitive_with_a_trait() {
+        let item = parse_item("extend bool with Show { fun show(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                let TyKind::Path { path, .. } = &e.self_ty.kind else {
+                    panic!(
+                        "expected `bool` to parse as a path type, got {:?}",
+                        e.self_ty.kind
+                    );
+                };
+                assert_eq!(crate::testing::resolve(path.segments[0].text), "bool");
+                assert!(e.trait_path.is_some());
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_tuple() {
+        let item = parse_item("extend (i32, i32) { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Tuple(_)));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_an_array() {
+        let item = parse_item("extend [i32; 4] { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Array { .. }));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_reference() {
+        let item = parse_item("extend &i32 { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Ref { .. }));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_a_function_type() {
+        let item = parse_item("extend fun(i32) -> i32 { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Function { .. }));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_extend_on_an_iso() {
+        let item = parse_item("extend iso i32 { fun get(&self) {} }");
+        match item.kind {
+            ItemKind::Extend(e) => {
+                assert!(matches!(e.self_ty.kind, TyKind::Iso(_)));
+            }
+            other => panic!("expected an extend item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_module_decl() {
+        let item = parse_parsed_item("module math::vector;");
+        match &item {
+            ParsedItem::Module(m) => {
+                assert_eq!(m.path.segments.len(), 2);
+                assert_eq!(text(m.path.segments[0]), "math");
+                assert_eq!(text(m.path.segments[1]), "vector");
+            }
+            other => panic!("expected a module item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_plain_import() {
+        let item = parse_parsed_item("import math::vector;");
+        match &item {
+            ParsedItem::Import(i) => {
+                assert_eq!(i.path.segments.len(), 2);
+                assert!(!i.glob);
+                assert!(i.alias.is_none());
+            }
+            other => panic!("expected an import item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_glob_import() {
+        let item = parse_parsed_item("import math::*;");
+        match &item {
+            ParsedItem::Import(i) => {
+                assert!(i.glob);
+                assert!(i.alias.is_none());
+            }
+            other => panic!("expected an import item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_aliased_import() {
+        let item = parse_parsed_item("import math::vector as mv;");
+        match &item {
+            ParsedItem::Import(i) => {
+                assert!(!i.glob);
+                let alias = i.alias.expect("expected an alias");
+                assert_eq!(text(alias), "mv");
+            }
+            other => panic!("expected an import item, got {other:?}"),
+        }
+    }
+
+    /// Every kind in [`ITEM_STARTERS`] must really open an item, so the recovery-point list
+    /// and the item grammar cannot drift apart: a kind that stops recovering without opening
+    /// an item would truncate every following item, and one that opens an item without
+    /// stopping recovery would swallow it.
+    #[test]
+    fn every_item_starter_opens_an_item() {
+        let fixtures = [
+            (TokenKind::PublicKw, "public fun f() {}"),
+            (TokenKind::FunKw, "fun f() {}"),
+            (TokenKind::StructKw, "struct S {}"),
+            (TokenKind::EnumKw, "enum E { V }"),
+            (TokenKind::TraitKw, "trait T { fun m(&self); }"),
+            (TokenKind::ExtendKw, "extend i32 { fun m(&self) {} }"),
+            (TokenKind::ModuleKw, "module m;"),
+            (TokenKind::ImportKw, "import m;"),
+        ];
+
+        let mut starters: Vec<TokenKind> = ITEM_STARTERS.to_vec();
+        starters.sort_by_key(|kind| Descriptor::of(*kind).name());
+        let mut fixture_kinds: Vec<TokenKind> = fixtures.iter().map(|(kind, _)| *kind).collect();
+        fixture_kinds.sort_by_key(|kind| Descriptor::of(*kind).name());
+        assert_eq!(starters, fixture_kinds, "fixture list is out of sync");
+
+        for (kind, src) in fixtures {
+            // Spans are global offsets into the `SrcMap`, so the declaration must cover
+            // exactly the file's span.
+            let (tokens, offset) = lex_src(src);
+            let parser = Parser::new(crate::testing::session());
+            let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();
+            assert!(errors.is_empty(), "for {kind:?}: {errors:?}");
+            let item = output.expect("expected a successfully parsed item");
+            assert_eq!(
+                item.span().as_tuple(),
+                (offset, offset + src.chars().count())
+            );
+            assert!(
+                !matches!(item, ParsedItem::Item(ref i) if matches!(i.kind, ItemKind::Error)),
+                "for {kind:?}"
+            );
+        }
+    }
+}

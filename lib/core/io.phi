@@ -1,0 +1,12 @@
+module core::io;
+
+public fun write_bytes(fd: i32, buf: &[u8]) -> i64;
+
+public fun print(s: str) {
+    write_bytes(1, s as &[u8]);
+}
+
+public fun println(s: str) {
+    print(s);
+    write_bytes(1, "\n" as &[u8]);
+}

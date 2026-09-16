@@ -1,45 +1,7 @@
-# Build directories
-build/
-cmake-build-*/
+/target
 
-# Compiled Object files
-*.o
-*.obj
+target/
 
-# LLVM files
-*.ll
-
-# Executables
-*.exe
-*.out
-phi
-
-# CMake files
-CMakeCache.txt
-CMakeFiles/
-Makefile
-cmake_install.cmake
-install_manifest.txt
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS generated files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+*/.DS_Store
 
-.cache/*
-
-.clang-format
-.clangd
-compile_commands.json
-CMakeLists.txt

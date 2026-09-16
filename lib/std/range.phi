@@ -1,0 +1,91 @@
+module std::range;
+
+import core::iter::Iterator;
+import core::ops::Comparable;
+import core::ops::Copy;
+import core::option::Option;
+
+public struct Range<T> {
+    public left: Option<T>,
+    public right: Option<T>,
+    public inclusive: bool,
+}
+
+public trait Step {
+    fun succ(&self) -> Self;
+}
+
+extend i8 with Step { fun succ(&self) -> Self { return *self + 1; } }
+extend i16 with Step { fun succ(&self) -> Self { return *self + 1; } }
+extend i32 with Step { fun succ(&self) -> Self { return *self + 1; } }
+extend i64 with Step { fun succ(&self) -> Self { return *self + 1; } }
+extend u8 with Step { fun succ(&self) -> Self { return *self + 1; } }
+extend u16 with Step { fun succ(&self) -> Self { return *self + 1; } }
+extend u32 with Step { fun succ(&self) -> Self { return *self + 1; } }
+extend u64 with Step { fun succ(&self) -> Self { return *self + 1; } }
+extend usize with Step { fun succ(&self) -> Self { return *self + 1; } }
+
+extend<T: Comparable> Range<T> {
+    public fun contains(&self, value: &T) -> bool {
+        let at_or_above_left = match &self.left {
+            .some(left) => !value.less_than(left),
+            .none => true,
+        };
+        if !at_or_above_left {
+            return false;
+        }
+        return match &self.right {
+            .some(right) => {
+                if self.inclusive {
+                    !right.less_than(value)
+                } else {
+                    value.less_than(right)
+                }
+            }
+            .none => true,
+        };
+    }
+
+    public fun is_empty(&self) -> bool {
+        let left = match &self.left {
+            .some(left) => left,
+            .none => { return false; }
+        };
+        return match &self.right {
+            .some(right) => {
+                if self.inclusive {
+                    right.less_than(left)
+                } else {
+                    !left.less_than(right)
+                }
+            }
+            .none => false,
+        };
+    }
+}
+
+extend<T: Step + Comparable + Copy> Range<T> with Iterator<T> {
+    fun next(&mut self) -> Option<T> {
+        let current = match &self.left {
+            .some(value) => *value,
+            .none => { return .none; }
+        };
+        let finished = match &self.right {
+            .some(right) => {
+                if self.inclusive {
+                    right.less_than(&current)
+                } else {
+                    !current.less_than(right)
+                }
+            }
+            .none => false,
+        };
+        if finished {
+            self.left = .none;
+            return .none;
+        }
+        let next = current.succ();
+        self.left = .some(next);
+        return .some(current);
+    }
+}
