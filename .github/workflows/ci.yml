@@ -64,7 +64,7 @@ jobs:
       - name: Diagnose generated-test failures
         if: failure()
         run: |
-          for d in target/test-scratch/arith/arith_i8_rem target/test-scratch/arith/arith_i16_rem; do
+          for d in target/test-scratch/gen_arith/arith_i8_rem target/test-scratch/gen_arith/arith_i16_rem; do
             [ -d "$d" ] || continue
             bin="$d/target/$(basename "$d")"
             if [ -x "$bin" ]; then
