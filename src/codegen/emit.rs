@@ -73,6 +73,7 @@ fn link_with(
             .arg(object_path)
             .arg("-o")
             .arg(output_path)
+            .arg("-lm")
             .output();
         match output {
             Ok(out) if out.status.success() => return Ok(output_path.to_path_buf()),
