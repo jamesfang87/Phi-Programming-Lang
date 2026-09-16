@@ -18,16 +18,35 @@ use support::check;
 // Integer arithmetic and comparison batteries
 // ---------------------------------------------------------------------------
 
-fn bounds(ty: &str) -> (i128, i128) {
+/// Returns `a <op> b` computed at `ty`'s width, or `None` when the operation overflows `ty`
+/// or divides by zero.
+fn checked_arith(ty: &str, op: char, a: i128, b: i128) -> Option<i128> {
+    // `i128::checked_rem` reports `MIN % -1` as `0`; at the target width that quotient
+    // overflows and traps, so the arithmetic has to be done in the target type.
+    macro_rules! at_width {
+        ($t:ty) => {{
+            let (a, b) = (a as $t, b as $t);
+            match op {
+                '+' => a.checked_add(b),
+                '-' => a.checked_sub(b),
+                '*' => a.checked_mul(b),
+                '/' => a.checked_div(b),
+                '%' => a.checked_rem(b),
+                other => panic!("unknown operator {other}"),
+            }
+            .map(i128::from)
+        }};
+    }
+
     match ty {
-        "i8" => (i8::MIN as i128, i8::MAX as i128),
-        "i16" => (i16::MIN as i128, i16::MAX as i128),
-        "i32" => (i32::MIN as i128, i32::MAX as i128),
-        "i64" => (i64::MIN as i128, i64::MAX as i128),
-        "u8" => (0, u8::MAX as i128),
-        "u16" => (0, u16::MAX as i128),
-        "u32" => (0, u32::MAX as i128),
-        "u64" => (0, u64::MAX as i128),
+        "i8" => at_width!(i8),
+        "i16" => at_width!(i16),
+        "i32" => at_width!(i32),
+        "i64" => at_width!(i64),
+        "u8" => at_width!(u8),
+        "u16" => at_width!(u16),
+        "u32" => at_width!(u32),
+        "u64" => at_width!(u64),
         other => panic!("unknown integer type {other}"),
     }
 }
@@ -62,40 +81,16 @@ fn sample_values(ty: &str) -> Vec<i128> {
     }
 }
 
-/// Emits one check per operand pair for `op`, skipping pairs whose mathematical result
-/// would overflow the type (which must abort, and is covered separately).
+/// Emits one check per operand pair for `op`, skipping pairs whose result overflows the type
+/// (which must abort, and is covered separately).
 fn arith_checks(ty: &str, op: char) -> Vec<String> {
-    let (min, max) = bounds(ty);
     let mut out = Vec::new();
     let mut idx = 0;
     for a in sample_values(ty) {
         for b in sample_values(ty) {
-            let result = match op {
-                '+' => a.checked_add(b),
-                '-' => a.checked_sub(b),
-                '*' => a.checked_mul(b),
-                '/' => {
-                    if b == 0 {
-                        None
-                    } else {
-                        a.checked_div(b)
-                    }
-                }
-                '%' => {
-                    // `i128::checked_rem` reports `MIN % -1` as `0`, but in the target type
-                    // that quotient overflows and traps on x86-64, so it has to be skipped here.
-                    if b == 0 || (a == min && b == -1) {
-                        None
-                    } else {
-                        a.checked_rem(b)
-                    }
-                }
-                other => panic!("unknown operator {other}"),
-            };
-            let Some(r) = result else { continue };
-            if r < min || r > max {
+            let Some(r) = checked_arith(ty, op, a, b) else {
                 continue;
-            }
+            };
             out.push(check(
                 idx,
                 &format!("(({a}_{ty}) {op} ({b}_{ty})) == ({r}_{ty})"),
