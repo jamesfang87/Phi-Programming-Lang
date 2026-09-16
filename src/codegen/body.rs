@@ -557,6 +557,7 @@ fn lower_checked_binary_op<'ctx>(
     call.try_as_basic_value().unwrap_basic()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_aggregate<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     mir: &Mir,
@@ -631,6 +632,7 @@ fn insert_aggregate_field<'ctx>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_adt_aggregate<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     mir: &Mir,
@@ -973,6 +975,7 @@ fn lower_unary_op<'ctx>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_terminator<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     mir: &Mir,
@@ -1077,6 +1080,7 @@ fn lower_terminator<'ctx>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_call<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     mir: &Mir,
@@ -1195,6 +1199,7 @@ fn lower_call<'ctx>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_call_arg<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     mir: &Mir,

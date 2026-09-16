@@ -1,0 +1,20 @@
+name: Install LLVM 20
+description: Installs LLVM 20 and exports LLVM_SYS_201_PREFIX for llvm-sys.
+
+runs:
+  using: composite
+  steps:
+    - name: Install LLVM 20 (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 20
+        sudo apt-get install -y llvm-20-dev libpolly-20-dev zlib1g-dev
+        echo "LLVM_SYS_201_PREFIX=/usr/lib/llvm-20" >> "$GITHUB_ENV"
+
+    - name: Install LLVM 20 (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install llvm@20
+        echo "LLVM_SYS_201_PREFIX=$(brew --prefix llvm@20)" >> "$GITHUB_ENV"

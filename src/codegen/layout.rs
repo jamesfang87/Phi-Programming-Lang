@@ -176,7 +176,7 @@ pub(super) fn is_unsized(tcx: &TyCtx, ty: Ty) -> bool {
 }
 
 fn round_up(offset: u64, align: u64) -> u64 {
-    (offset + align - 1) / align * align
+    offset.div_ceil(align) * align
 }
 
 #[cfg(test)]

@@ -297,7 +297,6 @@ impl<'a> BodyLowerCtx<'a> {
                     self.lower_call_like_into(operand, dest, mode, span);
                 } else {
                     let place = self.lower_place(operand);
-                    if mutability == Mutability::Mutable {}
                     self.assign(dest, Rvalue::Ref { mutability, place }, span);
                 }
             }
