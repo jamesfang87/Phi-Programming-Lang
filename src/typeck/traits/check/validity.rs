@@ -65,44 +65,6 @@ impl<'hir> Typeck<'hir> {
         self.check_arg_count(trait_ref.def, trait_ref.args.len(), span);
     }
 
-    // TODO: this should probably be a separate stage and be put elsewhere (not in this module)
-
-    /// Records the bounds that every `extend` block's header arguments have to satisfy.
-    pub fn register_extend_header_bounds(&mut self) {
-        for block in self.extends.all() {
-            self.register_extended_type_bounds(block);
-            self.register_implemented_trait_bounds(block);
-        }
-    }
-
-    /// Records the bounds the extended type's declaration requires of the arguments it was
-    /// applied to. Only an ADT has such a declaration.
-    fn register_extended_type_bounds(&mut self, block: DefId) {
-        let self_ty = self.extended_type(block);
-        let span = self.hir.ty(self.hir.extend(block).self_ty).span;
-        if let TyKind::Adt { def, args } = self.tcx.kind(self_ty).clone() {
-            self.register_bound_obligations(def, &args, span, block);
-        }
-    }
-
-    /// Records the bounds the `with`-clause trait's declaration requires of the arguments it was
-    /// applied to.
-    fn register_implemented_trait_bounds(&mut self, block: DefId) {
-        let Some(trait_ref) = self.extends.trait_of(block).cloned() else {
-            return;
-        };
-        let span = self.trait_path_span(block);
-        self.register_bound_obligations(trait_ref.def, &trait_ref.args, span, block);
-    }
-
-    /// The span of the `with`-clause's trait path, or the whole block when it has none.
-    fn trait_path_span(&self, block: DefId) -> SrcSpan {
-        let node = self.hir.extend(block);
-        node.trait_path
-            .as_ref()
-            .map_or(node.span, |path| path.span())
-    }
-
     /// Checks that the number of supplied arguments matches the declared arity of the def
     /// If it does not match, a diagnostic is emitted
     pub fn check_arg_count(&self, def: DefId, found: usize, span: SrcSpan) -> bool {

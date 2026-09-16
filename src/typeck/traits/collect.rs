@@ -8,6 +8,7 @@ use crate::diagnostics::typeck::traits::index::{
     report_attempt_to_extend_with_non_trait, report_extend_any, report_extend_bare_self,
     report_extend_dyn, report_extend_generic, report_extend_trait, report_extend_unsized,
 };
+use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
@@ -27,7 +28,7 @@ pub(crate) enum TypeHead {
     Iso,
 }
 
-/// A stable order for iterating type heads, so checks that walk them report deterministically.
+/// Returns a stable order for iterating type heads.
 fn sort_key(head: &TypeHead) -> (u8, usize) {
     match *head {
         TypeHead::Adt(def) => (0, def.index()),
@@ -74,14 +75,14 @@ impl ExtendIndex {
         self.by_type.get(&head).map_or(&[], Vec::as_slice)
     }
 
-    /// Every type head that has at least one block, in a stable order.
+    /// Returns every type head that has at least one block, in a stable order.
     pub fn extended_types(&self) -> Vec<TypeHead> {
         let mut heads: Vec<TypeHead> = self.by_type.keys().copied().collect();
         heads.sort_unstable_by_key(sort_key);
         heads
     }
 
-    /// Every block, in the order its type head sorts.
+    /// Returns every block, in the order its type head sorts.
     pub fn all(&self) -> Vec<DefId> {
         self.extended_types()
             .into_iter()
@@ -89,7 +90,7 @@ impl ExtendIndex {
             .collect()
     }
 
-    /// Every pair of blocks that extend the same type head. Only these pairs can overlap.
+    /// Returns every pair of blocks that extend the same type head. Only these pairs can overlap.
     pub fn pairs_per_type(&self) -> Vec<(DefId, DefId)> {
         let mut pairs = Vec::new();
         for head in self.extended_types() {
@@ -152,7 +153,7 @@ impl<'hir> Typeck<'hir> {
         self.extends.insert(head, block, trait_);
     }
 
-    /// Every `extend` block in the program.
+    /// Returns every `extend` block in the program.
     fn extend_blocks(&self) -> impl Iterator<Item = DefId> + '_ {
         let hir = self.hir;
         hir.def_ids()
@@ -173,14 +174,23 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The type `block` extends, with its arguments provided in the header.
+    /// Returns the type `block` extends, with its arguments provided in the header.
     pub(crate) fn extended_type(&self, block: DefId) -> Ty {
         self.types
             .ty_of_def(block)
             .expect("collect_extend records every extend block's self type")
     }
 
-    /// The type head `ty` is keyed on, or `None` for a type no `extend` block can name.
+    /// Returns the span of `block`'s `with`-clause trait path, or the whole block when it has
+    /// none.
+    pub(crate) fn trait_path_span(&self, block: DefId) -> SrcSpan {
+        let node = self.hir.extend(block);
+        node.trait_path
+            .as_ref()
+            .map_or(node.span, |path| path.span())
+    }
+
+    /// Returns the type head `ty` is keyed on, or `None` for a type no `extend` block can name.
     pub(crate) fn type_head(&self, ty: Ty) -> Option<TypeHead> {
         match *self.tcx.kind(ty) {
             TyKind::Adt { def, .. } => Some(TypeHead::Adt(def)),
@@ -194,7 +204,7 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The generic parameters `def` declares.
+    /// Returns the generic parameters `def` declares.
     pub(crate) fn declared_generics(&self, def: DefId) -> &'hir [HirId] {
         let hir: &'hir Hir = self.hir;
         match hir.def(def) {
@@ -211,7 +221,7 @@ impl<'hir> Typeck<'hir> {
     // Reading a trait and its members
     // -----------------------------------------------------------------
 
-    /// The declaration of `name` inside `trait_def`, if it declares one.
+    /// Returns the declaration of `name` inside `trait_def`, if it declares one.
     pub(crate) fn trait_method(&self, trait_def: DefId, name: Symbol) -> Option<DefId> {
         self.hir
             .trait_(trait_def)
@@ -232,13 +242,13 @@ impl<'hir> Typeck<'hir> {
             .collect()
     }
 
-    /// The receiver mode `method` was declared with, or `None` for a free function.
+    /// Returns the receiver mode `method` was declared with, or `None` for a free function.
     pub(crate) fn receiver_mode(&self, method: DefId) -> Option<SelfMode> {
         let function = self.hir.function(method);
         Some(self.hir.self_param(function.self_param?).mode)
     }
 
-    /// The method named `name` that `block` provides, if any.
+    /// Returns the method named `name` that `block` provides, if any.
     pub(crate) fn get_method_in_block(&self, block: DefId, method_name: Symbol) -> Option<DefId> {
         self.hir
             .extend(block)
@@ -252,7 +262,7 @@ impl<'hir> Typeck<'hir> {
     // Reading a header's parts
     // -----------------------------------------------------------------
 
-    /// The index head `block`'s extended type maps to, reporting and rejecting the forms an
+    /// Returns the index head `block`'s extended type maps to, reporting and rejecting the forms an
     /// `extend` block is not allowed to name.
     fn extend_head(&self, block: DefId) -> Option<TypeHead> {
         let node = self.hir.extend(block);
@@ -301,8 +311,8 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The trait `block` implements through its `with` clause, reporting a `with` that does not
-    /// name a trait.
+    /// Returns the trait `block` implements through its `with` clause, reporting a `with` that
+    /// does not name a trait.
     fn implemented_trait(&self, block: DefId) -> Option<TraitRef> {
         let node = self.hir.extend(block);
 

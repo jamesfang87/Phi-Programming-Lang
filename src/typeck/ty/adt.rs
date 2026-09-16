@@ -4,7 +4,11 @@ use crate::hir::{DefId, Hir, HirId, OwnerNode, VariantPayload};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 
-// TODO: what is this used for?
+/// The declared shape of an algebraic data type: its generic parameters and the field types of
+/// each of its variants, with every field left as declared rather than instantiated.
+///
+/// Collected once per program and installed in [`TyCtx`](crate::typeck::ty::ctx::TyCtx), which
+/// substitutes the arguments an ADT was applied to when it hands a field type back out.
 #[derive(Debug)]
 pub enum AdtDef {
     Struct {
@@ -13,14 +17,10 @@ pub enum AdtDef {
     },
     Enum {
         generics: Vec<HirId>,
-        variants: Vec<VariantDef>,
+        /// The field types of each variant, in declaration order. A unit or single-field variant
+        /// has zero or one entry respectively.
+        variants: Vec<Vec<Ty>>,
     },
-}
-
-// TODO: THERES LITERALLY ANOTHER VARIANT DEF
-#[derive(Debug)]
-pub struct VariantDef {
-    pub field_tys: Vec<Ty>,
 }
 
 pub(crate) fn collect_adt_defs(hir: &Hir, types: &TypeResolutions) -> HashMap<DefId, AdtDef> {
@@ -52,7 +52,7 @@ pub(crate) fn collect_adt_defs(hir: &Hir, types: &TypeResolutions) -> HashMap<De
                 let variants = enum_
                     .variants
                     .iter()
-                    .map(|&variant_id| variant_def(hir, types, variant_id))
+                    .map(|&variant_id| variant_field_tys(hir, types, variant_id))
                     .collect();
                 out.insert(
                     def_id,
@@ -68,11 +68,11 @@ pub(crate) fn collect_adt_defs(hir: &Hir, types: &TypeResolutions) -> HashMap<De
     out
 }
 
-/// The ADTs that cannot have a finite size: those that contain themselves by value, whether
+/// Returns the ADTs that cannot have a finite size: those that contain themselves by value, whether
 /// directly (`enum List { cons: { tail: List } }`) or through other value fields. A field of
 /// `iso T` is a heap indirection, so it breaks the cycle and is not traversed.
 pub(crate) fn infinitely_sized_adts(
-    tcx: &crate::typeck::tyctx::TyCtx,
+    tcx: &crate::typeck::ty::ctx::TyCtx,
     adts: &HashMap<DefId, AdtDef>,
 ) -> Vec<DefId> {
     let mut graph: HashMap<DefId, Vec<DefId>> = HashMap::new();
@@ -86,7 +86,7 @@ pub(crate) fn infinitely_sized_adts(
             }
             AdtDef::Enum { variants, .. } => {
                 for variant in variants {
-                    for &field in &variant.field_tys {
+                    for &field in variant {
                         collect_adts(tcx, field, &mut edges);
                     }
                 }
@@ -134,7 +134,7 @@ pub(crate) fn infinitely_sized_adts(
         .collect()
 }
 
-fn collect_adts(tcx: &crate::typeck::tyctx::TyCtx, ty: Ty, out: &mut Vec<DefId>) {
+fn collect_adts(tcx: &crate::typeck::ty::ctx::TyCtx, ty: Ty, out: &mut Vec<DefId>) {
     match tcx.kind(ty) {
         TyKind::Adt { def, .. } => out.push(*def),
         TyKind::Tuple(elems) => {
@@ -149,9 +149,9 @@ fn collect_adts(tcx: &crate::typeck::tyctx::TyCtx, ty: Ty, out: &mut Vec<DefId>)
     }
 }
 
-fn variant_def(hir: &Hir, types: &TypeResolutions, variant_id: HirId) -> VariantDef {
+fn variant_field_tys(hir: &Hir, types: &TypeResolutions, variant_id: HirId) -> Vec<Ty> {
     let variant_node = hir.variant(variant_id);
-    let field_tys = match &variant_node.payload {
+    match &variant_node.payload {
         VariantPayload::Unit => Vec::new(),
         VariantPayload::Type(_) => {
             let declared = types.ty(variant_id).unwrap_or_else(|| {
@@ -173,8 +173,7 @@ fn variant_def(hir: &Hir, types: &TypeResolutions, variant_id: HirId) -> Variant
                 })
             })
             .collect(),
-    };
-    VariantDef { field_tys }
+    }
 }
 
 #[cfg(test)]
@@ -227,16 +226,8 @@ mod tests {
             panic!("expected an AdtDef::Enum for {def:?}");
         };
         assert_eq!(variants.len(), 3);
-        assert!(variants[0].field_tys.is_empty(), "A is a unit variant");
-        assert_eq!(
-            variants[1].field_tys.len(),
-            1,
-            "B: i32 has one payload field"
-        );
-        assert_eq!(
-            variants[2].field_tys.len(),
-            1,
-            "C: {{ x: i64 }} has one record field"
-        );
+        assert!(variants[0].is_empty(), "A is a unit variant");
+        assert_eq!(variants[1].len(), 1, "B: i32 has one payload field");
+        assert_eq!(variants[2].len(), 1, "C: {{ x: i64 }} has one record field");
     }
 }

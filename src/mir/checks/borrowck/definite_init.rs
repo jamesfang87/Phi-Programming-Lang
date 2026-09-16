@@ -8,7 +8,7 @@ use crate::mir::{
     checks::lattice, lower::Mir,
 };
 use crate::session::Session;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 /// The set of registers currently dead. A register's absence means it is live.
 type DeadRegisters = HashSet<Register>;
@@ -48,7 +48,7 @@ fn fixed_point(body: &Body, movable: &Movable) -> Lattice {
         DeadRegisters::default(),
         DeadRegisters::default(),
         |_current, pred_states| meet(pred_states),
-        |entry, block| {
+        |entry, _id, block| {
             let mut state = entry.clone();
             for stmt in &block.statements {
                 apply_statement(&mut state, movable, stmt);

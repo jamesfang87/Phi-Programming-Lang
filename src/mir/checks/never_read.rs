@@ -47,8 +47,8 @@ fn fixed_point(body: &Body, tracked: &[bool], initial: &UnreadLocals) -> Lattice
         body,
         initial.clone(),
         UnreadLocals::default(),
-        |current, pred_states| meet(current, pred_states),
-        |entry, block| {
+        meet,
+        |entry, _id, block| {
             let mut state = entry.clone();
             for stmt in &block.statements {
                 apply_statement(&mut state, tracked, stmt);

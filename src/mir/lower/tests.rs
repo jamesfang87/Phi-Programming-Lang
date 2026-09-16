@@ -6,8 +6,8 @@ use crate::lexer::Lexer;
 use crate::mir::lower::Mir;
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{
-    AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, Local, Operand, Projection,
-    Rvalue, StatementKind, TerminatorKind,
+    AggregateKind, AssertMessage, Body, BodyKind, CastKind, ConstKind, Constant, Local, Operand,
+    Projection, Rvalue, StatementKind, TerminatorKind,
 };
 use crate::nameres;
 use crate::nameres::PrimTy;
@@ -18,7 +18,7 @@ use crate::testing::{
 };
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 /// Lexes, parses, resolves, lowers, type-checks, and MIR-lowers `src`, in debug profile.
 /// Panics if any diagnostic was reported by type checking.
@@ -472,11 +472,11 @@ fn call_callees(body: &Body) -> Vec<DefId> {
             TerminatorKind::Call {
                 func:
                     Operand::Constant(Constant {
-                        kind: ConstKind::FunDef(def, ..),
+                        kind: ConstKind::FunDef(fun),
                         ..
                     }),
                 ..
-            } => Some(*def),
+            } => Some(fun.def),
             _ => None,
         })
         .collect()
@@ -1680,8 +1680,13 @@ fn lower_populates_every_new_mir_field() {
     let point_def = first_struct(&hir);
     assert_eq!(tcx.struct_field_tys(point_def, &[]).len(), 2);
     assert!(program.vtables.is_empty());
-    assert_eq!(program.def_names.leaf(point_def), "Point");
-    assert_eq!(program.main, Some(first_function(&hir)));
+
+    let body = program
+        .bodies
+        .get(&(first_function(&hir), None))
+        .expect("main is lowered");
+    assert_eq!(body.kind, BodyKind::Function);
+    assert!(body.generics.is_empty(), "main declares no generics");
 }
 
 fn assert_terminator(body: &Body) -> (bool, &AssertMessage) {

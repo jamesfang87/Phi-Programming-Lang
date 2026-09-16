@@ -1,3 +1,6 @@
+//! Checking of patterns: what a pattern may match against, the type it binds each of its
+//! sub-patterns at, and whether a `match` covers every value of its scrutinee.
+
 use std::collections::HashMap;
 
 use crate::ast::{Ident, Literal, Mutability, Symbol};
@@ -17,14 +20,16 @@ use crate::typeck::Typeck;
 use crate::typeck::results::PatAdjust;
 use crate::typeck::ty::{Ty, TyKind};
 
-// TODO: what does this file do?
-// why is there VariantDef? Can't the Hir Variant work?
-
-pub(crate) struct VariantDef {
+/// A variant of a specific enum instance: the variant's `HirId` together with its payload
+/// instantiated at that instance's generic arguments. The HIR `Variant` alone cannot stand in,
+/// because its payload types are the enum's declared parameters.
+pub(crate) struct ResolvedVariant {
     pub id: HirId,
     pub payload: VariantTys,
 }
 
+/// The payload a variant declares, with its declared types substituted at the generic arguments
+/// of the enum instance being matched.
 pub(crate) enum VariantTys {
     Unit,
     Single(Ty),
@@ -82,9 +87,9 @@ impl<'hir> Typeck<'hir> {
                 BindingMode::Value => expected,
             },
             PatKind::Literal(lit) => {
-                // TODO: `str` comparison has no lowering yet -- `str` is a `{ pointer, length }`
-                // pair whose equality would need a runtime helper -- so a string pattern is
-                // rejected here rather than left to ICE in MIR lowering.
+                // `str` is a `{ pointer, length }` pair whose equality needs a runtime helper
+                // that no lowering provides yet, so a string pattern is rejected here rather
+                // than left to ICE in MIR lowering.
                 if matches!(lit, Literal::Str(_)) {
                     report_string_pattern_unsupported(self.session, span);
                     self.tcx.error()
@@ -158,7 +163,7 @@ impl<'hir> Typeck<'hir> {
             return self.tcx.error();
         }
 
-        let Some(found) = self.variant_def(expected, variant.text) else {
+        let Some(found) = self.resolve_variant(expected, variant.text) else {
             report_no_variant(self.display_cx(), variant, expected);
             self.check_failed_payload(payload, mode);
             return self.tcx.error();
@@ -171,7 +176,7 @@ impl<'hir> Typeck<'hir> {
     /// Checks a variant pattern's sub-patterns against what the variant declares it carries.
     fn check_payload_pats(
         &mut self,
-        found: &VariantDef,
+        found: &ResolvedVariant,
         payload: &'hir Payload,
         variant: Ident,
         span: SrcSpan,
@@ -222,7 +227,7 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The sub-patterns directly inside `id`.
+    /// Returns the sub-patterns directly inside `id`.
     fn pat_children(&self, id: impl Into<HirId>) -> Vec<HirId> {
         let id = id.into();
         match &self.hir.pat(id).kind {
@@ -252,7 +257,7 @@ impl<'hir> Typeck<'hir> {
         Some((def, generics.iter().copied().zip(args).collect()))
     }
 
-    pub(crate) fn variant_def(&mut self, ty: Ty, name: Symbol) -> Option<VariantDef> {
+    pub(crate) fn resolve_variant(&mut self, ty: Ty, name: Symbol) -> Option<ResolvedVariant> {
         let hir = self.hir;
         let (def, subst) = self.adt_and_generic_substs(ty)?;
         let OwnerNode::Enum(enum_) = hir.def(def) else {
@@ -286,7 +291,7 @@ impl<'hir> Typeck<'hir> {
             ),
         };
 
-        Some(VariantDef { id, payload })
+        Some(ResolvedVariant { id, payload })
     }
 
     pub(crate) fn check_match_exhaustive(
@@ -368,8 +373,8 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Whether `pats` covers every value of `ty`. Only `bool` and enums are enumerated; every
-    /// other type still needs an explicit wildcard, matching what `check_match_exhaustive`
+    /// Returns whether `pats` covers every value of `ty`. Only `bool` and enums are enumerated;
+    /// every other type still needs an explicit wildcard, matching what `check_match_exhaustive`
     /// reports for them.
     fn pats_cover(&mut self, ty: Ty, pats: &[&'hir Pat]) -> bool {
         if pats.iter().any(|pat| self.pat_is_irrefutable(pat.hir_id)) {
@@ -409,7 +414,7 @@ impl<'hir> Typeck<'hir> {
                     if matching.is_empty() {
                         return false;
                     }
-                    let Some(found) = self.variant_def(ty, name.text) else {
+                    let Some(found) = self.resolve_variant(ty, name.text) else {
                         return false;
                     };
                     match &found.payload {
@@ -488,7 +493,7 @@ impl<'hir> Typeck<'hir> {
     }
 }
 
-/// The patterns a variant pattern's payload is made of, whichever shape it was written in.
+/// Returns the patterns a variant pattern's payload is made of, whichever shape it was written in.
 fn payload_pats(payload: &Payload) -> Vec<HirId> {
     match payload {
         Payload::None => Vec::new(),

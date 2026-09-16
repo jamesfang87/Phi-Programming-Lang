@@ -11,17 +11,14 @@ mod tests;
 use std::collections::{HashMap, HashSet};
 
 use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
-use crate::langitems::hir::LangItems;
-use crate::mir::def_infos::{DefInfos, collect_def_infos};
-use crate::mir::def_names::{DefNames, collect_def_names};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::vtables::{VtableInfo, collect_vtables};
 use crate::mir::{AnyMode, Body};
 use crate::options::Mode;
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 /// One unit of lowering work. `Ordinary` is a definition with no `any` anywhere in its
 /// signature, lowered exactly once. `AnySpecialized` is a definition whose return type is
@@ -55,12 +52,6 @@ impl Task {
 pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
     pub vtables: HashMap<(Ty, DefId), VtableInfo>,
-    /// Definition-level facts the passes after lowering need: kind, parent, generics, vtable
-    /// slot. See [`DefInfos`] for why they are snapshotted rather than read from the HIR.
-    pub def_infos: DefInfos,
-    pub def_names: DefNames,
-    pub lang_items: LangItems,
-    pub main: Option<DefId>,
 }
 
 /// Whether `def_id`'s return type is itself `any T`, the one condition the README ties `any`
@@ -142,18 +133,5 @@ pub fn lower(
     Mir {
         bodies,
         vtables: collect_vtables(hir, types),
-        def_infos: collect_def_infos(hir),
-        def_names: collect_def_names(session, hir),
-        lang_items: hir.lang_items().clone(),
-        main: find_crate_root_main(session, hir),
-    }
-}
-
-fn find_crate_root_main(session: &Session, hir: &Hir) -> Option<DefId> {
-    match crate::typeck::entry_point::crate_root_main_candidates(session, hir).as_slice() {
-        [one] => Some(*one),
-        // No candidates: `typeck::entry_point` reports the missing entry point. Several
-        // candidates: it reports the ambiguity. Either way codegen gets no entry point.
-        _ => None,
     }
 }

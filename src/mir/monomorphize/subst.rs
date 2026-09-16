@@ -1,6 +1,6 @@
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::visitor::{self, Subst};
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
-use crate::typeck::visitor::{self, Subst};
 
 pub(crate) fn subst_ty(tcx: &mut TyCtx, ty: Ty, subst: &Subst) -> Ty {
     visitor::subst_ty(tcx, ty, subst)

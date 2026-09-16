@@ -4,18 +4,32 @@ use std::ops::ControlFlow;
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
 use crate::nameres::PrimTy;
-use crate::typeck::adt::AdtDef;
+use crate::typeck::ty::adt::AdtDef;
+use crate::typeck::ty::visitor::{self, TypeVisitor};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
-use crate::typeck::visitor::{self, TypeVisitor};
 
 #[derive(Default)]
 pub struct TyCtx {
     tykinds: Vec<TyKind>,
     handles: HashMap<TyKind, Ty>,
-    // TODO: maybe this field should be moved out
-    next_var_id: u32,
-    // TODO: what is this used for?
+    vars: InferVarSupply,
+    /// The ADTs collected by [`crate::typeck::ty::adt::collect_adt_defs`], looked up for their
+    /// field types and variant counts.
     adts: HashMap<DefId, AdtDef>,
+}
+
+/// Hands out the ids of inference variables, which are unique within one [`TyCtx`].
+#[derive(Default)]
+struct InferVarSupply {
+    next_id: u32,
+}
+
+impl InferVarSupply {
+    fn fresh(&mut self) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
 }
 
 impl TyCtx {
@@ -119,7 +133,7 @@ impl TyCtx {
         let AdtDef::Enum { generics, variants } = self.adt(def) else {
             panic!("variant_field_tys: {def:?} is a struct, not an enum");
         };
-        let (generics, fields) = (generics.clone(), variants[variant].field_tys.clone());
+        let (generics, fields) = (generics.clone(), variants[variant].clone());
         self.subst_declared_tys(&generics, &fields, args)
     }
 
@@ -151,13 +165,13 @@ impl TyCtx {
     }
 
     fn subst_declared_tys(&mut self, generics: &[HirId], declared: &[Ty], args: &[Ty]) -> Vec<Ty> {
-        let subst = crate::typeck::visitor::Subst {
+        let subst = crate::typeck::ty::visitor::Subst {
             generics: generics.iter().copied().zip(args.iter().copied()).collect(),
             self_ty: None,
         };
         declared
             .iter()
-            .map(|&ty| crate::typeck::visitor::subst_ty(self, ty, &subst))
+            .map(|&ty| crate::typeck::ty::visitor::subst_ty(self, ty, &subst))
             .collect()
     }
 
@@ -213,24 +227,18 @@ impl TyCtx {
     }
 
     pub fn next_infer_var(&mut self) -> Ty {
-        let var = InferVar::Any(self.take_var_id());
+        let var = InferVar::Any(self.vars.fresh());
         self.intern(TyKind::Var(var))
     }
 
     pub fn next_int_var(&mut self) -> Ty {
-        let var = InferVar::Int(self.take_var_id());
+        let var = InferVar::Int(self.vars.fresh());
         self.intern(TyKind::Var(var))
     }
 
     pub fn next_float_var(&mut self) -> Ty {
-        let var = InferVar::Float(self.take_var_id());
+        let var = InferVar::Float(self.vars.fresh());
         self.intern(TyKind::Var(var))
-    }
-
-    fn take_var_id(&mut self) -> u32 {
-        let id = self.next_var_id;
-        self.next_var_id += 1;
-        id
     }
 }
 

@@ -12,15 +12,14 @@ use super::{konst, layout, place, ty};
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::hir::DefId;
 use crate::langitems::LangItem;
-use crate::mir::mangle::mangle;
 use crate::mir::{
-    AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, Instance, Local, LocalDecl,
-    Mir, Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
-    VariantIdx,
+    AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, FunRef, Instance, Local,
+    LocalDecl, Mir, Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator,
+    TerminatorKind, VariantIdx,
 };
 use crate::nameres::PrimTy;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 pub fn lower_body<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
@@ -151,7 +150,7 @@ pub fn lower_operand<'ctx>(
     operand: &Operand,
 ) -> BasicValueEnum<'ctx> {
     match operand {
-        Operand::Constant(constant) => konst::lower_constant(cx, tcx, mir, constant),
+        Operand::Constant(constant) => konst::lower_constant(cx, tcx, constant),
         Operand::Copy(place_) | Operand::Move(place_) => {
             let (ptr, place_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
             let llvm_ty = ty::llvm_type(cx, tcx, mir, place_ty);
@@ -1100,7 +1099,10 @@ fn lower_call<'ctx>(
     let dyn_dispatch = matches!(
         func,
         Operand::Constant(Constant {
-            kind: ConstKind::FunDef(_, _, _, Some(self_ty)),
+            kind: ConstKind::FunDef(FunRef {
+                self_ty: Some(self_ty),
+                ..
+            }),
             ..
         }) if matches!(tcx.kind(*self_ty).clone(), TyKind::Dyn { .. })
     );
@@ -1122,7 +1124,7 @@ fn lower_call<'ctx>(
 
     let call_site = if dyn_dispatch {
         let Operand::Constant(Constant {
-            kind: ConstKind::FunDef(def, ..),
+            kind: ConstKind::FunDef(fun),
             ty: sig_ty,
             ..
         }) = func
@@ -1131,10 +1133,12 @@ fn lower_call<'ctx>(
         };
         let receiver = dyn_receiver.expect("a dyn call carries its fat receiver");
         let fn_type = dyn_method_fn_type(cx, tcx, mir, *sig_ty);
-        let index = mir
-            .def_infos
-            .vtable_slot(*def)
-            .unwrap_or_else(|| panic!("codegen: {def:?} is not a trait method with a vtable slot"));
+        let (_, index) = fun.trait_method.unwrap_or_else(|| {
+            panic!(
+                "codegen: {:?} is not a trait method with a vtable slot",
+                fun.def
+            )
+        });
         let (leading, rest) = arg_vals.split_at(usize::from(indirect_return));
         super::vtable::call_dyn_method(
             cx,
@@ -1145,22 +1149,22 @@ fn lower_call<'ctx>(
             rest,
         )
     } else if let Operand::Constant(Constant {
-        kind: ConstKind::FunDef(def, targs, any_mode, self_ty),
+        kind: ConstKind::FunDef(fun),
         ..
     }) = func
     {
-        if Some(*def) == mir.lang_items.get(LangItem::WriteBytes) {
+        if Some(fun.def) == cx.hir.lang_items().get(LangItem::WriteBytes) {
             cx.builder
                 .build_call(cx.libc.write, &arg_vals, "call")
                 .unwrap()
         } else {
             let instance = Instance {
-                def: *def,
-                any_mode: *any_mode,
-                args: targs.clone(),
-                self_ty: *self_ty,
+                def: fun.def,
+                any_mode: fun.any_mode,
+                args: fun.args.clone(),
+                self_ty: fun.self_ty,
             };
-            let name = mangle(mir, tcx, &instance);
+            let name = cx.mangle(tcx, &instance);
             let function = cx.functions[&name];
             cx.builder.build_call(function, &arg_vals, "call").unwrap()
         }
@@ -1342,11 +1346,12 @@ fn assert_message_text(msg: &AssertMessage) -> &'static str {
 mod tests {
     #[test]
     fn empty_function_returns_unit_as_ret_void() {
-        let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir("fun f() {}");
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1364,12 +1369,13 @@ mod tests {
 
     #[test]
     fn arithmetic_lowers_to_int_add() {
-        let (_hir, mut tcx, _types, mir, instances) =
+        let (hir, mut tcx, _types, mir, instances) =
             lower_mir_src_release("fun f(a: i32, b: i32) -> i32 { a + b }");
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1385,7 +1391,7 @@ mod tests {
         src: &str,
     ) -> (
         crate::hir::Hir,
-        crate::typeck::tyctx::TyCtx,
+        crate::typeck::ty::ctx::TyCtx,
         crate::typeck::results::TypeResolutions,
         crate::mir::Mir,
         std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
@@ -1424,7 +1430,16 @@ mod tests {
             &types,
             crate::options::Mode::Release,
         );
-        let instances = crate::mir::monomorphize::monomorphize(&mut tcx, &program);
+        let main = match crate::checks::entry_point::crate_root_main_candidates(
+            crate::testing::session(),
+            &hir,
+        )
+        .as_slice()
+        {
+            [one] => Some(*one),
+            _ => None,
+        };
+        let instances = crate::mir::monomorphize::monomorphize(&mut tcx, &program, main);
         (hir, tcx, types, program, instances)
     }
 
@@ -1436,12 +1451,14 @@ mod tests {
         let dummy_span = crate::driver::source::SrcSpan::new(0, 0);
         let body = crate::mir::Body {
             def_id,
+            kind: crate::mir::BodyKind::Function,
             local_decls: vec![crate::mir::LocalDecl {
                 ty: unit,
                 name: None,
                 span: dummy_span,
             }],
             param_count: 0,
+            generics: vec![],
             basic_blocks: vec![
                 crate::mir::BasicBlockData {
                     statements: vec![],
@@ -1464,7 +1481,8 @@ mod tests {
         };
 
         let llvm = inkwell::context::Context::create();
-        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx =
+            super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let fn_ty = cx.llvm.void_type().fn_type(&[], false);
         let function = cx.module.add_function("f", fn_ty, None);
         super::lower_body(&mut cx, &mir, &mut tcx, &body, function);
@@ -1489,6 +1507,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1514,6 +1533,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1535,6 +1555,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1554,6 +1575,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1576,6 +1598,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1608,6 +1631,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1632,6 +1656,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1656,6 +1681,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1677,6 +1703,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1699,6 +1726,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1718,6 +1746,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1737,6 +1766,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1757,6 +1787,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1776,6 +1807,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1798,6 +1830,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1823,6 +1856,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1849,6 +1883,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1885,6 +1920,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1913,6 +1949,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -1958,8 +1995,10 @@ mod tests {
         });
         let body = crate::mir::Body {
             def_id: instances_first_def(&hir),
+            kind: crate::mir::BodyKind::Function,
             local_decls,
             param_count: 1,
+            generics: vec![],
             basic_blocks: vec![crate::mir::BasicBlockData {
                 statements: vec![crate::mir::Statement {
                     id: crate::mir::StatementId::from_usize(0),
@@ -1984,7 +2023,8 @@ mod tests {
         };
 
         let llvm = inkwell::context::Context::create();
-        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx =
+            super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let i32_llvm_ty = cx.llvm.i32_type();
         let fn_ty = cx.llvm.void_type().fn_type(&[i32_llvm_ty.into()], false);
         let function = cx.module.add_function("f", fn_ty, None);
@@ -2002,14 +2042,15 @@ mod tests {
 
     #[test]
     fn len_of_a_sized_array_place_is_a_compile_time_constant() {
-        let (hir, mut tcx, _types, mir, _instances) =
+        let (hir, mut tcx, _types, _mir, _instances) =
             crate::testing::lower_to_mir("fun f(a: [i32; 2]) {}");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
         let array_ty = tcx.mk_array(i32_ty, Some(2));
         let dummy_span = crate::driver::source::SrcSpan::new(0, 0);
 
         let llvm = inkwell::context::Context::create();
-        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx =
+            super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let fn_ty = cx.llvm.void_type().fn_type(&[], false);
         let function = cx.module.add_function("f", fn_ty, None);
         let entry = cx.llvm.append_basic_block(function, "entry");
@@ -2035,9 +2076,10 @@ mod tests {
 
     #[test]
     fn ref_over_a_fat_place_rebuilds_the_two_word_pair() {
-        let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
-        let mut cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx =
+            super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let fn_ty = cx.llvm.void_type().fn_type(&[], false);
         let function = cx.module.add_function("f", fn_ty, None);
         let entry = cx.llvm.append_basic_block(function, "entry");
@@ -2117,12 +2159,13 @@ mod tests {
     /// Run with `cargo test --bin phi -- --ignored` to reproduce.
     #[test]
     fn float_not_equal_uses_the_unordered_predicate() {
-        let (_hir, mut tcx, _types, mir, instances) =
+        let (hir, mut tcx, _types, mir, instances) =
             lower_mir_src_release("fun f(a: f64, b: f64) -> bool { a != b }");
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,

@@ -2,11 +2,18 @@ use smallvec::SmallVec;
 
 use crate::ast::Ident;
 use crate::driver::source::SrcSpan;
-use crate::hir::DefId;
+use crate::hir::{DefId, HirId};
 use crate::mir::ids::BasicBlock;
 use crate::mir::statement::Statement;
 use crate::mir::terminator::Terminator;
 use crate::typeck::ty::Ty;
+
+/// What a `Body` is the lowered code of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BodyKind {
+    Function,
+    Closure,
+}
 
 /// `Body` is the MIR of one definition.
 /// Only definitions with executable code has a `Body`.
@@ -15,12 +22,16 @@ use crate::typeck::ty::Ty;
 #[derive(Debug)]
 pub struct Body {
     pub def_id: DefId,
+    pub kind: BodyKind,
     pub basic_blocks: Vec<BasicBlockData>,
     pub local_decls: Vec<LocalDecl>,
     /// `arg_count` is the number of `local_decls` that are parameters, `self` included. Slots
     /// `1..=arg_count` are the parameters in declared order, slot `0` is always the return place,
     /// and every slot after `arg_count` is a `let` binding or a compiler-introduced temporary.
     pub param_count: usize,
+    /// The generic parameters an instance's argument list zips against, in order: the enclosing
+    /// `extend`/`trait` block's own parameters, then the definition's own.
+    pub generics: Vec<HirId>,
     pub span: SrcSpan,
 }
 

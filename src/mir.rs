@@ -2,13 +2,10 @@
 
 mod body;
 pub mod checks;
-mod def_infos;
-pub(crate) mod def_names;
 pub mod drop_elaboration;
 mod ids;
 mod instance;
 pub mod lower;
-pub mod mangle;
 pub mod monomorphize;
 mod operand;
 mod place;
@@ -17,12 +14,11 @@ mod statement;
 mod terminator;
 mod vtables;
 
-pub use body::{BasicBlockData, Body, LocalDecl};
-pub use def_infos::DefKind;
+pub use body::{BasicBlockData, Body, BodyKind, LocalDecl};
 pub use ids::{BasicBlock, Local, StatementId, VariantIdx};
 pub use instance::{AnyMode, Instance};
 pub use lower::Mir;
-pub use operand::{ConstKind, Constant, Operand};
+pub use operand::{ConstKind, Constant, FunRef, Operand};
 pub use place::{Place, Projection, place_ty};
 pub use rvalue::{AggregateKind, CastKind, Rvalue};
 pub use statement::{Statement, StatementKind};

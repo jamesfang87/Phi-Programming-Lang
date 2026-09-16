@@ -1,14 +1,16 @@
 use crate::ast::Mutability;
-use crate::mir::{AnyMode, Instance, Mir};
+use crate::hir::{DefId, Hir, OwnerNode};
+use crate::mir::{AnyMode, Instance};
+use crate::session::Session;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
-pub fn mangle(mir: &Mir, tcx: &TyCtx, instance: &Instance) -> String {
-    let mut name = mir.def_names.ancestor_path(instance.def).join("_");
+pub fn mangle(hir: &Hir, session: &Session, tcx: &TyCtx, instance: &Instance) -> String {
+    let mut name = ancestor_path(hir, session, instance.def).join("_");
 
     for &arg in &instance.args {
         name.push('_');
-        name.push_str(&mangle_ty(mir, tcx, arg));
+        name.push_str(&mangle_ty(hir, session, tcx, arg));
     }
 
     if let Some(mode) = instance.any_mode {
@@ -24,14 +26,15 @@ pub fn mangle(mir: &Mir, tcx: &TyCtx, instance: &Instance) -> String {
     name
 }
 
-fn mangle_ty(mir: &Mir, tcx: &TyCtx, ty: Ty) -> String {
+fn mangle_ty(hir: &Hir, session: &Session, tcx: &TyCtx, ty: Ty) -> String {
     match tcx.kind(ty).clone() {
         TyKind::Primitive(prim) => format!("{prim:?}"),
-        TyKind::Adt { def, args } => join_args(mir.def_names.leaf(def), &args, mir, tcx),
+        TyKind::Adt { def, args } => join_args(&leaf(hir, session, def), &args, hir, session, tcx),
         TyKind::Dyn { trait_, args } => join_args(
-            &format!("dyn_{}", mir.def_names.leaf(trait_)),
+            &format!("dyn_{}", leaf(hir, session, trait_)),
             &args,
-            mir,
+            hir,
+            session,
             tcx,
         ),
         TyKind::Ref { base, mutability } => {
@@ -40,33 +43,81 @@ fn mangle_ty(mir: &Mir, tcx: &TyCtx, ty: Ty) -> String {
             } else {
                 "ref_"
             };
-            format!("{prefix}{}", mangle_ty(mir, tcx, base))
+            format!("{prefix}{}", mangle_ty(hir, session, tcx, base))
         }
-        TyKind::Any(base) => format!("any_{}", mangle_ty(mir, tcx, base)),
-        TyKind::Iso(base) => format!("iso_{}", mangle_ty(mir, tcx, base)),
-        TyKind::Tuple(elems) => join_args("tuple", &elems, mir, tcx),
-        TyKind::Array { elem, .. } => format!("array_{}", mangle_ty(mir, tcx, elem)),
+        TyKind::Any(base) => format!("any_{}", mangle_ty(hir, session, tcx, base)),
+        TyKind::Iso(base) => format!("iso_{}", mangle_ty(hir, session, tcx, base)),
+        TyKind::Tuple(elems) => join_args("tuple", &elems, hir, session, tcx),
+        TyKind::Array { elem, .. } => format!("array_{}", mangle_ty(hir, session, tcx, elem)),
         TyKind::Fun { params, ret } => {
-            let params = join_args("", &params, mir, tcx);
-            let ret = ret.map_or_else(|| "unit".to_string(), |r| mangle_ty(mir, tcx, r));
+            let params = join_args("", &params, hir, session, tcx);
+            let ret = ret.map_or_else(|| "unit".to_string(), |r| mangle_ty(hir, session, tcx, r));
             format!("fn{params}_{ret}")
         }
         TyKind::Unit => "unit".to_string(),
         TyKind::Never => "never".to_string(),
         TyKind::Error => "error".to_string(),
         TyKind::Var(_) | TyKind::Generic(_) | TyKind::SelfTy(_) => panic!(
-            "mir::mangle: {ty:?} is still unresolved; mangle is only meaningful after \
+            "codegen::mangle: {ty:?} is still unresolved; mangle is only meaningful after \
              mir::monomorphize has run"
         ),
     }
 }
 
-fn join_args(head: &str, args: &[Ty], mir: &Mir, tcx: &TyCtx) -> String {
+fn join_args(head: &str, args: &[Ty], hir: &Hir, session: &Session, tcx: &TyCtx) -> String {
     if args.is_empty() {
         return head.to_string();
     }
-    let rendered: Vec<String> = args.iter().map(|&a| mangle_ty(mir, tcx, a)).collect();
+    let rendered: Vec<String> = args
+        .iter()
+        .map(|&a| mangle_ty(hir, session, tcx, a))
+        .collect();
     format!("{head}_{}", rendered.join("_"))
+}
+
+/// The definition's written name, sanitized into a valid symbol fragment.
+fn leaf(hir: &Hir, session: &Session, def: DefId) -> String {
+    sanitize(&def_name(hir, session, def))
+}
+
+fn ancestor_path(hir: &Hir, session: &Session, def: DefId) -> Vec<String> {
+    let mut chain = Vec::new();
+    let mut current = Some(def);
+    while let Some(id) = current {
+        chain.push(leaf(hir, session, id));
+        current = hir.parent(id);
+    }
+    chain.reverse();
+    chain
+}
+
+fn def_name(hir: &Hir, session: &Session, def: DefId) -> String {
+    match hir.def(def) {
+        OwnerNode::Module(m) => m
+            .path
+            .segments
+            .last()
+            .map(|seg| session.resolve(seg.text).to_string())
+            .unwrap_or_else(|| "crate".to_string()),
+        OwnerNode::Function(f) => session.resolve(f.name.text).to_string(),
+        OwnerNode::Struct(s) => session.resolve(s.name.text).to_string(),
+        OwnerNode::Enum(e) => session.resolve(e.name.text).to_string(),
+        OwnerNode::Trait(t) => session.resolve(t.name.text).to_string(),
+        OwnerNode::Extend(_) => format!("extend{}", def.index()),
+        OwnerNode::Closure(_) => format!("closure{}", def.index()),
+    }
+}
+
+fn sanitize(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn hash_instance(instance: &Instance) -> u64 {
@@ -96,10 +147,11 @@ mod tests {
     use crate::testing::{first_function, lower_to_hir, lower_to_mir, named_def};
 
     fn mangled(src: &str) -> Vec<(Instance, String)> {
-        let (_hir, tcx, _types, mir, instances) = lower_to_mir(src);
+        let (hir, tcx, _types, _mir, instances) = lower_to_mir(src);
+        let session = crate::testing::session();
         instances
             .keys()
-            .map(|instance| (instance.clone(), mangle(&mir, &tcx, instance)))
+            .map(|instance| (instance.clone(), mangle(&hir, session, &tcx, instance)))
             .collect()
     }
 
@@ -127,6 +179,7 @@ mod tests {
             &types,
             crate::options::Mode::Debug,
         );
+        let _ = &mir;
         let def = first_function(&hir);
         let instance = Instance {
             def,
@@ -134,7 +187,11 @@ mod tests {
             args: Vec::new(),
             self_ty: None,
         };
-        assert_eq!(mangle(&mir, &tcx, &instance), mangle(&mir, &tcx, &instance));
+        let session = crate::testing::session();
+        assert_eq!(
+            mangle(&hir, session, &tcx, &instance),
+            mangle(&hir, session, &tcx, &instance)
+        );
     }
 
     #[test]
@@ -157,11 +214,12 @@ mod tests {
 
     #[test]
     fn every_type_kind_has_its_own_spelling() {
-        let (hir, mut tcx, _types, mir, _instances) = lower_to_mir(
+        let (hir, mut tcx, _types, _mir, _instances) = lower_to_mir(
             "struct Foo { public a: i32 }
              trait Marker {}
              fun f() {}",
         );
+        let session = crate::testing::session();
         let foo = named_def(&hir, "Foo");
         let marker = named_def(&hir, "Marker");
 
@@ -179,28 +237,30 @@ mod tests {
         let never = tcx.never();
         let error = tcx.error();
 
-        assert_eq!(mangle_ty(&mir, &tcx, i32_ty), "I32");
-        assert_eq!(mangle_ty(&mir, &tcx, foo_ty), "Foo");
-        assert_eq!(mangle_ty(&mir, &tcx, ref_i32), "ref_I32");
-        assert_eq!(mangle_ty(&mir, &tcx, refmut_i32), "refmut_I32");
-        assert_eq!(mangle_ty(&mir, &tcx, any_i32), "any_I32");
-        assert_eq!(mangle_ty(&mir, &tcx, iso_i32), "iso_I32");
-        assert_eq!(mangle_ty(&mir, &tcx, tuple), "tuple_I32_Foo");
-        assert_eq!(mangle_ty(&mir, &tcx, array), "array_I32");
-        assert_eq!(mangle_ty(&mir, &tcx, fun), "fn_I32_unit");
-        assert_eq!(mangle_ty(&mir, &tcx, dyn_marker), "dyn_Marker");
-        assert_eq!(mangle_ty(&mir, &tcx, unit), "unit");
-        assert_eq!(mangle_ty(&mir, &tcx, never), "never");
-        assert_eq!(mangle_ty(&mir, &tcx, error), "error");
+        assert_eq!(mangle_ty(&hir, session, &tcx, i32_ty), "I32");
+        assert_eq!(mangle_ty(&hir, session, &tcx, foo_ty), "Foo");
+        assert_eq!(mangle_ty(&hir, session, &tcx, ref_i32), "ref_I32");
+        assert_eq!(mangle_ty(&hir, session, &tcx, refmut_i32), "refmut_I32");
+        assert_eq!(mangle_ty(&hir, session, &tcx, any_i32), "any_I32");
+        assert_eq!(mangle_ty(&hir, session, &tcx, iso_i32), "iso_I32");
+        assert_eq!(mangle_ty(&hir, session, &tcx, tuple), "tuple_I32_Foo");
+        assert_eq!(mangle_ty(&hir, session, &tcx, array), "array_I32");
+        assert_eq!(mangle_ty(&hir, session, &tcx, fun), "fn_I32_unit");
+        assert_eq!(mangle_ty(&hir, session, &tcx, dyn_marker), "dyn_Marker");
+        assert_eq!(mangle_ty(&hir, session, &tcx, unit), "unit");
+        assert_eq!(mangle_ty(&hir, session, &tcx, never), "never");
+        assert_eq!(mangle_ty(&hir, session, &tcx, error), "error");
     }
 
     #[test]
     fn an_any_mode_instance_carries_the_mode_in_its_name() {
-        let (hir, tcx, _types, mir, _instances) = lower_to_mir("fun f() {}");
+        let (hir, tcx, _types, _mir, _instances) = lower_to_mir("fun f() {}");
+        let session = crate::testing::session();
         let def = first_function(&hir);
         let name = |any_mode| {
             mangle(
-                &mir,
+                &hir,
+                session,
                 &tcx,
                 &Instance {
                     def,
@@ -223,9 +283,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "is still unresolved")]
     fn an_unresolved_type_cannot_be_mangled() {
-        let (_hir, mut tcx, _types, mir, _instances) = lower_to_mir("fun f() {}");
+        let (hir, mut tcx, _types, _mir, _instances) = lower_to_mir("fun f() {}");
         let generic = tcx.mk_generic(crate::hir::DefId::from_usize(0).owner_id());
 
-        mangle_ty(&mir, &tcx, generic);
+        mangle_ty(&hir, crate::testing::session(), &tcx, generic);
     }
 }

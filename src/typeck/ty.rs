@@ -1,3 +1,8 @@
+pub mod adt;
+pub mod ctx;
+pub mod unify;
+pub mod visitor;
+
 use crate::ast::Mutability;
 use crate::hir::{DefId, HirId};
 use crate::nameres::PrimTy;

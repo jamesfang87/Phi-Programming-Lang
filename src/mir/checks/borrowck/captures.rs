@@ -3,23 +3,24 @@ use crate::diagnostics::mir::captures::{
     report_captured_reference, report_move_out_of_environment,
 };
 use crate::driver::source::SrcSpan;
-use crate::mir::{Body, DefKind, Local, Operand, StatementKind, lower::Mir};
+use crate::hir::Hir;
+use crate::mir::{Body, BodyKind, Local, Operand, StatementKind, lower::Mir};
 use crate::session::Session;
 use crate::typeck::ty::TyKind;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 const ENVIRONMENT: Local = Local::ENVIRONMENT;
 
-pub fn check(session: &Session, tcx: &mut TyCtx, mir: &Mir) {
-    for (&(def, _), body) in &mir.bodies {
-        if mir.def_infos.kind(def) == DefKind::Closure {
-            check_captured_types(session, tcx, mir, body);
+pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
+    for body in mir.bodies.values() {
+        if body.kind == BodyKind::Closure {
+            check_captured_types(session, hir, tcx, body);
             check_body(session, body);
         }
     }
 }
 
-fn check_captured_types(session: &Session, tcx: &TyCtx, mir: &Mir, body: &Body) {
+fn check_captured_types(session: &Session, hir: &Hir, tcx: &TyCtx, body: &Body) {
     let environment = body.local_decls[ENVIRONMENT.index()].ty;
     let TyKind::Ref { base, .. } = *tcx.kind(environment) else {
         panic!("a closure body's environment local is a reference to the environment it borrows");
@@ -29,11 +30,7 @@ fn check_captured_types(session: &Session, tcx: &TyCtx, mir: &Mir, body: &Body) 
     };
     for &capture in fields.iter().skip(1) {
         if tcx.contains_ref(capture) {
-            report_captured_reference(
-                DisplayCtx::for_mir(session, &mir.def_names, tcx),
-                capture,
-                body.span,
-            );
+            report_captured_reference(DisplayCtx::new(session, hir, tcx), capture, body.span);
         }
     }
 }

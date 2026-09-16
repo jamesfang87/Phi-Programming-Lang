@@ -1,18 +1,25 @@
-// TODO: Why is everything not typeck also dumped into typeck?
-
-use crate::diagnostics::typeck::entry_point::{
+use crate::diagnostics::checks::entry_point::{
     report_ambiguous_main, report_main_is_generic, report_main_returns_a_value,
     report_main_takes_parameters, report_missing_main,
 };
 use crate::hir::{DefId, Hir, OwnerNode};
 use crate::session::Session;
 
-pub fn check(session: &Session, hir: &Hir) {
+pub fn check(session: &Session, hir: &Hir) -> Option<DefId> {
     let candidates = crate_root_main_candidates(session, hir);
     match candidates.as_slice() {
-        [] => report_missing_main(session),
-        [one] => check_signature(session, hir, *one),
-        _ => report_ambiguous_main(session, hir, &candidates),
+        [] => {
+            report_missing_main(session);
+            None
+        }
+        [one] => {
+            check_signature(session, hir, *one);
+            Some(*one)
+        }
+        _ => {
+            report_ambiguous_main(session, hir, &candidates);
+            None
+        }
     }
 }
 
@@ -138,23 +145,23 @@ mod tests {
 
     #[test]
     fn a_root_main_with_a_nested_module_main_is_fine() {
-        let (hir, _tcx, _types, mir, _instances) = testing::lower_mir_src_files(&[
+        let (hir, _tcx, _types, _mir, _instances) = testing::lower_mir_src_files(&[
             "module app;\n\nfun main() {\n}\n",
             "module app::inner;\n\nfun main() {\n}\n",
         ]);
         crate::testing::clear_diagnostics();
-        check(crate::testing::session(), &hir);
+        let main = check(crate::testing::session(), &hir);
         assert!(crate::testing::messages().is_empty());
-        assert!(mir.main.is_some());
+        assert!(main.is_some());
     }
 
     #[test]
     fn a_parameterless_main_is_fine() {
-        let (hir, _tcx, _types, mir, _instances) =
+        let (hir, _tcx, _types, _mir, _instances) =
             testing::lower_to_mir("fun main() { let x = 1; }");
         crate::testing::clear_diagnostics();
-        check(crate::testing::session(), &hir);
+        let main = check(crate::testing::session(), &hir);
         assert!(crate::testing::messages().is_empty());
-        assert!(mir.main.is_some());
+        assert!(main.is_some());
     }
 }

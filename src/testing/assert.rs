@@ -1,6 +1,6 @@
 use super::pipeline::{
     mir_captures_src, mir_definite_init_src, mir_element_moves_src, mir_exclusivity_src,
-    mir_never_read_src, typeck_src,
+    mir_never_read_src, mutability_src, typeck_src,
 };
 
 fn assert_no_diagnostics(reported: Vec<String>, src: &str, what: &str) {
@@ -24,6 +24,14 @@ pub fn typeck_accepts(src: &str) {
 
 pub fn typeck_rejects(src: &str, needle: &str) {
     assert_single_diagnostic_mentioning(typeck_src(src), src, needle);
+}
+
+pub fn mutability_accepts(src: &str) {
+    assert_no_diagnostics(mutability_src(src), src, "pass the mutability check");
+}
+
+pub fn mutability_rejects(src: &str, needle: &str) {
+    assert_single_diagnostic_mentioning(mutability_src(src), src, needle);
 }
 
 pub fn mir_definite_init_accepts(src: &str) {

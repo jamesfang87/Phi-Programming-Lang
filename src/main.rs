@@ -1,9 +1,5 @@
-//! The command-line entry point for the `phi` compiler.
-//!
-//! Argument parsing and dispatch both live in [`driver::cli`]; this is only the shell around
-//! them that turns a returned exit code into a process exit.
-
 mod ast;
+mod checks;
 mod codegen;
 mod diagnostics;
 mod driver;
@@ -15,9 +11,10 @@ mod nameres;
 mod options;
 mod parser;
 mod session;
+mod typeck;
+
 #[cfg(test)]
 mod testing;
-mod typeck;
 
 use std::env;
 

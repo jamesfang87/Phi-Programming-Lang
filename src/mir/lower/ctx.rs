@@ -5,14 +5,14 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId};
 use crate::mir::lower::Task;
 use crate::mir::{
-    AnyMode, BasicBlock, BasicBlockData, Body, Local, LocalDecl, Place, Statement, StatementId,
-    StatementKind, Terminator, TerminatorKind,
+    AnyMode, BasicBlock, BasicBlockData, Body, BodyKind, Local, LocalDecl, Place, Statement,
+    StatementId, StatementKind, Terminator, TerminatorKind,
 };
 use crate::options::Mode;
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::Ty;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 /// One entry of a block's exit obligations: something that has to run at every point control
 /// leaves that block, regardless of which path got it there. See the spec's `with`-lend
@@ -55,6 +55,12 @@ pub(crate) struct BodyLowerCtx<'a> {
     /// sees the same concrete type the parameter's own `LocalDecl` was declared with, not the
     /// unspecialized `Any(T)` typeck recorded for it.
     pub(crate) any_mode: Option<AnyMode>,
+
+    /// Whether the body being lowered is a function or a closure, and the generic parameters an
+    /// instance's argument list zips against. Both are set by
+    /// [`lower_item`](super::item::BodyLowerCtx::lower_item) before lowering starts.
+    pub(crate) kind: BodyKind,
+    pub(crate) generics: Vec<HirId>,
 
     local_decls: Vec<LocalDecl>,
     blocks: Vec<BlockBuilder>,
@@ -107,6 +113,8 @@ impl<'a> BodyLowerCtx<'a> {
             mode,
             def_id,
             any_mode,
+            kind: BodyKind::Function,
+            generics: Vec::new(),
             local_decls: Vec::new(),
             blocks: Vec::new(),
             current: BasicBlock::from_usize(0),
@@ -362,9 +370,11 @@ impl<'a> BodyLowerCtx<'a> {
             .collect();
         Body {
             def_id,
+            kind: self.kind,
             basic_blocks,
             local_decls: std::mem::take(&mut self.local_decls),
             param_count: arg_count,
+            generics: std::mem::take(&mut self.generics),
             span,
         }
     }

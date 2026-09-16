@@ -16,7 +16,7 @@ use crate::options::Mode;
 use crate::parser::Parser;
 use crate::session::Session;
 use crate::typeck;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 /// Collects every `.phi` file under `src_dir`, and the core and standard libraries, into the
 /// session's source map.
@@ -55,10 +55,11 @@ pub fn parse(session: &Session, streams: Vec<(Vec<Token>, usize)>) -> Ast {
 /// all -- `codegen`'s inputs, kept alongside each other so `build`/`run` don't need to
 /// recompute what `check` already has.
 ///
-/// Deliberately no `hir` or `types` here: from lowering onward the pipeline runs off `tcx` and the
-/// MIR, so keeping the pre-MIR representations around for `codegen` would invite reaching back
-/// into them. See `mir::def_infos` for the facts that crossing the boundary required snapshotting.
+/// The `hir` is retained as the sole source of definition names for symbol mangling and of the
+/// core library's lang items, the two things codegen reads straight out of it. MIR-level facts
+/// are all recorded by lowering, so nothing else reaches back.
 struct FrontendOutput {
+    hir: Hir,
     tcx: TyCtx,
     program: mir::Mir,
     instances: HashMap<Instance, Body>,
@@ -105,14 +106,14 @@ fn run_frontend(
             options.exclude_core_in_emit,
         );
     }
+    crate::checks::mutability::check(session, &hir, &checked.tcx, &checked.types);
     // Signature rules for the entry point run before lowering: a malformed `main` should be
-    // reported, not turned into MIR first. `typeck::check` does not run this itself because
-    // having no `main` is only a warning, which would then appear in every type-inference test.
-    typeck::entry_point::check(session, &hir);
+    // reported, not turned into MIR first.
+    let main = crate::checks::entry_point::check(session, &hir);
 
     let program = mir::lower::lower(session, &hir, &mut checked.tcx, &checked.types, config.mode);
-    mir::checks::run_checks(session, &mut checked.tcx, &program);
-    let instances = mir::monomorphize::monomorphize(&mut checked.tcx, &program);
+    mir::checks::run_checks(session, &hir, &mut checked.tcx, &program);
+    let instances = mir::monomorphize::monomorphize(&mut checked.tcx, &program, main);
     let instances = mir::drop_elaboration::elaborate_drops(&mut checked.tcx, instances);
 
     if options.dumps.mir {
@@ -120,7 +121,6 @@ fn run_frontend(
             session,
             &hir,
             &checked.tcx,
-            &program,
             &instances,
             options.exclude_core_in_emit,
         );
@@ -131,6 +131,7 @@ fn run_frontend(
     }
 
     Ok(Some(FrontendOutput {
+        hir,
         tcx: checked.tcx,
         program,
         instances,
@@ -152,6 +153,7 @@ pub fn build(config: &Config, options: &BuildOptions) -> io::Result<bool> {
     let module = match codegen::codegen(
         &session,
         &llvm,
+        &frontend.hir,
         &mut frontend.tcx,
         &frontend.program,
         &frontend.instances,

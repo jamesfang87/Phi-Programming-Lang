@@ -5,6 +5,7 @@ use ariadne::{Color, Config, Fmt, Label, Report, ReportKind};
 
 use crate::driver::source::{SrcMap, SrcSpan};
 
+pub mod checks;
 pub mod codes;
 pub mod display;
 pub mod langitems;

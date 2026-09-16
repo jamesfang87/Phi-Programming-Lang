@@ -5,8 +5,8 @@ use crate::diagnostics::display::DisplayCtx;
 use crate::driver::source::SrcSpan;
 use crate::hir::{Hir, HirId};
 use crate::session::Session;
-use crate::typeck::pat::VariantDef;
-use crate::typeck::unify::UnifyError;
+use crate::typeck::pat::ResolvedVariant;
+use crate::typeck::ty::unify::UnifyError;
 
 pub fn report_literal_pattern_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
     cx.emit_unify(
@@ -26,7 +26,11 @@ pub fn report_string_pattern_unsupported(session: &Session, span: SrcSpan) {
 }
 
 pub fn report_tuple_pattern_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
-    cx.emit_unify(err, span, "this tuple pattern does not match the value's type");
+    cx.emit_unify(
+        err,
+        span,
+        "this tuple pattern does not match the value's type",
+    );
 }
 
 pub fn report_variant_type_unknown(session: &Session, variant: Ident, span: SrcSpan) {
@@ -108,7 +112,7 @@ pub fn report_payload_shape(
     hir: &Hir,
     variant: Ident,
     span: SrcSpan,
-    found: &VariantDef,
+    found: &ResolvedVariant,
 ) {
     let declared = found.payload.describe();
     session.emit(

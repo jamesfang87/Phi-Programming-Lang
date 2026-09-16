@@ -5,10 +5,9 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, Poi
 use super::ctx::CodegenCtx;
 use super::layout;
 use crate::hir::DefId;
-use crate::mir::mangle::mangle;
 use crate::mir::{Instance, Mir};
 use crate::typeck::ty::Ty;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 const HEADER_SLOTS: usize = 3;
 
@@ -69,7 +68,7 @@ pub fn vtable_for<'ctx>(
             args: Vec::new(),
             self_ty: None,
         };
-        let name = mangle(mir, tcx, &instance);
+        let name = cx.mangle(tcx, &instance);
         let function = *cx.functions.get(&name).unwrap_or_else(|| {
             panic!(
                 "vtable_for: no declared function named {name:?} for instance {instance:?} -- \
@@ -216,7 +215,7 @@ mod tests {
         instances: &std::collections::HashMap<Instance, crate::mir::Body>,
     ) {
         for (instance, body) in instances {
-            let name = mangle(mir, tcx, instance);
+            let name = cx.mangle(tcx, instance);
             let fn_type = super::super::ty::function_type(cx, tcx, mir, body);
             let function = cx.module.add_function(&name, fn_type, None);
             cx.functions.insert(name, function);
@@ -233,7 +232,7 @@ fun f() {}";
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
 
         let point_def = find_struct_def(&hir, "Point");
@@ -252,8 +251,9 @@ fun f() {}";
         );
         let impl_method =
             mir.vtables[&(point_ty, trait_def)].methods[0].expect("Point implements greet");
-        let greet_name = mangle(
-            &mir,
+        let greet_name = crate::codegen::mangle::mangle(
+            &hir,
+            crate::testing::session(),
             &tcx,
             &Instance {
                 def: impl_method,
@@ -277,7 +277,7 @@ fun f() {}";
              fun f() {}",
         );
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
 
         let owner_def = find_struct_def(&hir, "Owner");
@@ -297,7 +297,7 @@ fun f() {}";
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
         scratch_function(&cx);
 
@@ -326,7 +326,7 @@ fun f() {}";
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir(TRAIT_AND_IMPL_SRC);
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
         let function =
             cx.module
@@ -372,7 +372,7 @@ extend Wrap<bool> with Show { fun show(&self) -> i32 { return 2; } }
 fun f() {}",
         );
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         declare_all(&mut cx, &mut tcx, &mir, &instances);
 
         let wrap_def = find_struct_def(&hir, "Wrap");
@@ -402,8 +402,9 @@ fun f() {}",
         );
 
         let name_for = |impl_def: DefId| {
-            mangle(
-                &mir,
+            crate::codegen::mangle::mangle(
+                &hir,
+                crate::testing::session(),
                 &tcx,
                 &Instance {
                     def: impl_def,

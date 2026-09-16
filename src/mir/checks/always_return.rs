@@ -36,7 +36,7 @@ fn check_body(body: &Body) -> bool {
         State::DoesReturn,
         State::DoesNotReturn,
         |current, pred_states| meet(*current, pred_states),
-        |entry, block| match block.terminator.kind {
+        |entry, _id, block| match block.terminator.kind {
             TerminatorKind::Return | TerminatorKind::Assert { .. } => State::DoesReturn,
             _ => *entry,
         },

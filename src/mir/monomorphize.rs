@@ -35,12 +35,12 @@ use std::collections::HashMap;
 use crate::hir::{DefId, HirId};
 use crate::mir::lower::Mir;
 use crate::mir::{
-    AggregateKind, AnyMode, AssertMessage, Body, ConstKind, DefKind, Instance, Operand, Rvalue,
-    StatementKind, TerminatorKind,
+    AggregateKind, AnyMode, AssertMessage, Body, BodyKind, ConstKind, FunRef, Instance, Operand,
+    Rvalue, StatementKind, TerminatorKind,
 };
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::visitor::Subst;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
-use crate::typeck::visitor::Subst;
 
 /// A generous ceiling on the number of instances one `monomorphize` call will produce, past
 /// which further instantiation is treated as a pathological, unbounded chain rather than a
@@ -52,7 +52,11 @@ const INSTANTIATION_LIMIT: usize = 4096;
 /// Runs monomorphization over every `Body` `mir::lower` produced, returning one concrete `Body`
 /// per instance actually used, keyed by the same [`Instance`] the spec's "Generic
 /// monomorphization" section describes.
-pub fn monomorphize(tcx: &mut TyCtx, program: &Mir) -> HashMap<Instance, Body> {
+pub fn monomorphize(
+    tcx: &mut TyCtx,
+    program: &Mir,
+    main: Option<DefId>,
+) -> HashMap<Instance, Body> {
     let mut output = HashMap::new();
     let mut worklist: Vec<Instance> = Vec::new();
 
@@ -61,15 +65,15 @@ pub fn monomorphize(tcx: &mut TyCtx, program: &Mir) -> HashMap<Instance, Body> {
     // which this test is load-bearing are the ones nothing calls -- in practice `main`.
     //
     // `main` is therefore seeded on its own terms, not on the test's. It is checked to declare
-    // no generics (`typeck::entry_point`) and nothing calls it, so it is a root by
+    // no generics (`checks::entry_point`) and nothing calls it, so it is a root by
     // definition, with an empty argument list. Leaving it to `body_mentions_generic` made it
     // hostage to every type in its body being concrete, and a lowering bug that put a stray
     // generic in one of its locals dropped the program's entry point silently.
     for (&(def, any_mode), body) in &program.bodies {
-        if program.def_infos.kind(def) == DefKind::Closure {
+        if body.kind == BodyKind::Closure {
             continue;
         }
-        if Some(def) == program.main || !body_mentions_generic(tcx, body) {
+        if Some(def) == main || !body_mentions_generic(tcx, body) {
             worklist.push(Instance {
                 def,
                 any_mode,
@@ -95,7 +99,7 @@ pub fn monomorphize(tcx: &mut TyCtx, program: &Mir) -> HashMap<Instance, Body> {
         let Some(generic_body) = program.bodies.get(&(instance.def, instance.any_mode)) else {
             continue;
         };
-        let subst = build_subst(program, instance.def, &instance.args, instance.self_ty);
+        let subst = build_subst(generic_body, &instance.args, instance.self_ty);
         let mut discovered = Vec::new();
         let concrete = process_body(
             tcx,
@@ -113,18 +117,14 @@ pub fn monomorphize(tcx: &mut TyCtx, program: &Mir) -> HashMap<Instance, Body> {
     output
 }
 
-fn build_subst(program: &Mir, def: DefId, args: &[Ty], self_ty: Option<Ty>) -> Subst {
-    let infos = &program.def_infos;
-    let mut params: Vec<HirId> = Vec::new();
-    if let Some(parent) = infos.parent(def) {
-        match infos.kind(parent) {
-            DefKind::Extend | DefKind::Trait => params.extend(infos.generics(parent)),
-            _ => {}
-        }
-    }
-    params.extend(infos.generics(def));
+fn build_subst(body: &Body, args: &[Ty], self_ty: Option<Ty>) -> Subst {
     Subst {
-        generics: params.into_iter().zip(args.iter().copied()).collect(),
+        generics: body
+            .generics
+            .iter()
+            .copied()
+            .zip(args.iter().copied())
+            .collect(),
         self_ty,
     }
 }
@@ -162,9 +162,11 @@ fn process_body(
 ) -> Body {
     let mut body = Body {
         def_id: generic_body.def_id,
+        kind: generic_body.kind,
         basic_blocks: Vec::with_capacity(generic_body.basic_blocks.len()),
         local_decls: Vec::with_capacity(generic_body.local_decls.len()),
         param_count: generic_body.param_count,
+        generics: generic_body.generics.clone(),
         span: generic_body.span,
     };
 
@@ -328,33 +330,47 @@ fn subst_operand(
     };
     let ty = subst::subst_ty(tcx, constant.ty, subst);
     let kind = match constant.kind {
-        ConstKind::FunDef(def, args, mode, self_ty) => {
+        ConstKind::FunDef(fun) => {
+            let FunRef {
+                def,
+                args,
+                any_mode,
+                self_ty,
+                trait_method,
+            } = fun;
             let args: Vec<Ty> = args
                 .iter()
                 .map(|&a| subst::subst_ty(tcx, a, subst))
                 .collect();
             let self_ty = self_ty.map(|ty| subst::subst_ty(tcx, ty, subst));
             let dyn_dispatch = self_ty.is_some_and(|ty| matches!(tcx.kind(ty), TyKind::Dyn { .. }));
-            let (def, args, self_ty) = if dyn_dispatch {
-                (def, args, self_ty)
+            let (def, args, self_ty, trait_method) = if dyn_dispatch {
+                (def, args, self_ty, trait_method)
             } else {
-                match redirect_trait_default(program, tcx, def, self_ty, &args) {
-                    Some((impl_method, impl_args)) => (impl_method, impl_args, None),
-                    None => (def, args, self_ty),
+                match redirect_trait_default(program, tcx, trait_method, self_ty, &args) {
+                    Some((impl_method, impl_args)) => (impl_method, impl_args, None, None),
+                    None => (def, args, self_ty, trait_method),
                 }
             };
-            let self_ty = match program.def_infos.parent(def) {
-                Some(parent) if program.def_infos.kind(parent) == DefKind::Trait => self_ty,
-                _ => None,
+            let self_ty = if trait_method.is_some() {
+                self_ty
+            } else {
+                None
             };
-            let args = match trait_args_for(program, tcx, def, self_ty) {
+            let args = match trait_args_for(program, tcx, trait_method, self_ty) {
                 Some(trait_args) => trait_args.into_iter().chain(args.into_iter()).collect(),
                 None => args,
             };
             if !dyn_dispatch {
-                queue_fn_def(def, mode, args.clone(), self_ty.clone(), output, discovered);
+                queue_fn_def(def, any_mode, args.clone(), self_ty, output, discovered);
             }
-            ConstKind::FunDef(def, args, mode, self_ty)
+            ConstKind::FunDef(FunRef {
+                def,
+                args,
+                any_mode,
+                self_ty,
+                trait_method,
+            })
         }
         other => other,
     };
@@ -367,12 +383,12 @@ fn subst_operand(
 fn redirect_trait_default(
     program: &Mir,
     tcx: &mut TyCtx,
-    def: DefId,
+    trait_method: Option<(DefId, u32)>,
     self_ty: Option<Ty>,
     args: &[Ty],
 ) -> Option<(DefId, Vec<Ty>)> {
     let self_ty = self_ty?;
-    let (trait_owner, index) = program.def_infos.trait_method(def)?;
+    let (trait_owner, index) = trait_method?;
     let (info, binds) = matching_vtable(program, tcx, trait_owner, self_ty)?;
     let impl_method = info.methods[index as usize]?;
     let mut redirected: Vec<Ty> = info
@@ -389,11 +405,11 @@ fn redirect_trait_default(
 fn trait_args_for(
     program: &Mir,
     tcx: &mut TyCtx,
-    def: DefId,
+    trait_method: Option<(DefId, u32)>,
     self_ty: Option<Ty>,
 ) -> Option<Vec<Ty>> {
     let self_ty = self_ty?;
-    let (trait_owner, _) = program.def_infos.trait_method(def)?;
+    let (trait_owner, _) = trait_method?;
     let (info, binds) = matching_vtable(program, tcx, trait_owner, self_ty)?;
     let subst = Subst {
         generics: binds,

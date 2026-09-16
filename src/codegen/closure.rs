@@ -4,10 +4,9 @@ use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue, StructValue};
 use super::ctx::CodegenCtx;
 use super::{drop, layout, ty as llvm_ty};
 use crate::hir::DefId;
-use crate::mir::mangle::mangle;
 use crate::mir::{Instance, Mir};
 use crate::typeck::ty::Ty;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 const GLUE_FIELD: u32 = 0;
 
@@ -32,7 +31,7 @@ pub fn build_value<'ctx>(
         args: args.to_vec(),
         self_ty,
     };
-    let name = mangle(mir, tcx, &instance);
+    let name = cx.mangle(tcx, &instance);
     let code = cx
         .functions
         .get(&name)
@@ -207,12 +206,13 @@ fn thunk_for<'ctx>(
 #[cfg(test)]
 mod tests {
     fn ir_for(src: &str) -> String {
-        let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(src);
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(src);
         let instances = crate::mir::drop_elaboration::elaborate_drops(&mut tcx, instances);
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,

@@ -7,7 +7,7 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir};
 use crate::session::Session;
 use crate::typeck::ty::Ty;
-use crate::typeck::unify::UnifyError;
+use crate::typeck::ty::unify::UnifyError;
 
 pub fn report_receiver_type_unknown(session: &Session, member: Ident, span: SrcSpan) {
     session.emit(

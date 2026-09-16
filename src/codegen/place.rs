@@ -6,8 +6,8 @@ use super::ctx::CodegenCtx;
 use super::{layout, ty};
 use crate::hir::DefId;
 use crate::mir::{Local, LocalDecl, Mir, Place, Projection, VariantIdx};
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 pub fn lower_place<'ctx>(
     cx: &CodegenCtx<'ctx>,
@@ -132,7 +132,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("struct Point { x: i32, y: i32 }\nfun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         function_with_entry(&cx);
 
         let def = find_struct_def(&hir, "Point");
@@ -165,9 +165,9 @@ mod tests {
 
     #[test]
     fn deref_projection_loads_the_pointee_address() {
-        let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         function_with_entry(&cx);
 
         let i32_ty = tcx.mk_prim(PrimTy::I32);
@@ -202,7 +202,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("enum E { A, C: i64 }\nfun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         function_with_entry(&cx);
 
         let def = find_enum_def(&hir, "E");

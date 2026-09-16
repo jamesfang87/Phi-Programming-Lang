@@ -107,6 +107,19 @@ impl Hir {
         }
     }
 
+    /// The trait and vtable slot `def` belongs to, when `def` is a method a trait declares.
+    pub fn trait_method(&self, def: DefId) -> Option<(DefId, u32)> {
+        let parent = self.parent(def)?;
+        let OwnerNode::Trait(trait_) = self.def(parent) else {
+            return None;
+        };
+        trait_
+            .functions
+            .iter()
+            .position(|&method| method == def)
+            .map(|slot| (parent, slot as u32))
+    }
+
     /// Whether `id` is a path naming a type rather than a value, as `Shape` is in
     /// `Shape.circle(1.0)`.
     ///

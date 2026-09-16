@@ -4,7 +4,7 @@ use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::lower::{Task, is_any_specialized};
 use crate::mir::{
-    AnyMode, ConstKind, Constant, Operand, Place, Projection, Rvalue, TerminatorKind,
+    AnyMode, ConstKind, Constant, FunRef, Operand, Place, Projection, Rvalue, TerminatorKind,
 };
 use crate::typeck::ty::{Ty, TyKind};
 
@@ -177,7 +177,7 @@ impl<'a> BodyLowerCtx<'a> {
         };
         let declared = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
         let generics = self.hir.trait_(trait_).generics.clone();
-        let subst = crate::typeck::visitor::Subst {
+        let subst = crate::typeck::ty::visitor::Subst {
             generics: generics
                 .iter()
                 .copied()
@@ -185,10 +185,16 @@ impl<'a> BodyLowerCtx<'a> {
                 .collect(),
             self_ty: Some(dyn_ty),
         };
-        let sig = crate::typeck::visitor::subst_ty(self.tcx, declared, &subst);
+        let sig = crate::typeck::ty::visitor::subst_ty(self.tcx, declared, &subst);
         Operand::Constant(Constant {
             ty: sig,
-            kind: ConstKind::FunDef(def, args, None, Some(dyn_ty)),
+            kind: ConstKind::FunDef(FunRef {
+                def,
+                args,
+                any_mode: None,
+                self_ty: Some(dyn_ty),
+                trait_method: self.hir.trait_method(def),
+            }),
         })
     }
 
@@ -250,7 +256,13 @@ impl<'a> BodyLowerCtx<'a> {
         let fn_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
         Operand::Constant(Constant {
             ty: fn_ty,
-            kind: ConstKind::FunDef(def, args, any_mode, self_ty),
+            kind: ConstKind::FunDef(FunRef {
+                def,
+                args,
+                any_mode,
+                self_ty,
+                trait_method: self.hir.trait_method(def),
+            }),
         })
     }
 
@@ -407,7 +419,13 @@ impl<'a> BodyLowerCtx<'a> {
         };
         let operand = Operand::Constant(Constant {
             ty: def_ty,
-            kind: ConstKind::FunDef(def, args, any_mode, None),
+            kind: ConstKind::FunDef(FunRef {
+                def,
+                args,
+                any_mode,
+                self_ty: None,
+                trait_method: self.hir.trait_method(def),
+            }),
         });
         let temp = self.new_temp(fn_value_ty, span);
         self.assign(

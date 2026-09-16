@@ -149,7 +149,7 @@ pub(super) fn analyze(droppable: &[bool], body: &Body) -> Vec<MoveState> {
         MoveState::default(),
         MoveState::default(),
         |_current, pred_states| MoveState::meet(pred_states),
-        |entry, block| {
+        |entry, _id, block| {
             let mut state = entry.clone();
             for stmt in &block.statements {
                 state.apply_statement(droppable, stmt);

@@ -55,8 +55,8 @@ fn live_aliases_by_point(
     lifetimes: &Lifetimes,
 ) -> Vec<HashSet<AliasId>> {
     let mut live_at = vec![HashSet::new(); block.statements.len() + 1];
-    for (&alias_id, ranges) in &lifetimes.live_ranges {
-        if let Some(range) = ranges.get(&id) {
+    if let Some(ranges) = lifetimes.live_ranges.get(&id) {
+        for (&alias_id, range) in ranges {
             for point in range.clone() {
                 live_at[point].insert(alias_id);
             }

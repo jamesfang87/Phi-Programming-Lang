@@ -4,7 +4,7 @@ use crate::diagnostics::display::DisplayCtx;
 use crate::driver::source::SrcSpan;
 use crate::session::Session;
 use crate::typeck::ty::Ty;
-use crate::typeck::unify::UnifyError;
+use crate::typeck::ty::unify::UnifyError;
 
 pub fn report_unexpected_generic_args(session: &Session, kind: &str, span: SrcSpan) {
     session.emit(

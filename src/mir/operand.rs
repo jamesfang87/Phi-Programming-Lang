@@ -31,5 +31,16 @@ pub enum ConstKind {
     Bool(bool),
     Char(char),
     Str(Symbol),
-    FunDef(DefId, Vec<Ty>, Option<AnyMode>, Option<Ty>),
+    FunDef(FunRef),
+}
+
+/// A reference to a definition used as a value or a call target.
+#[derive(Clone, Debug)]
+pub struct FunRef {
+    pub def: DefId,
+    pub args: Vec<Ty>,
+    pub any_mode: Option<AnyMode>,
+    pub self_ty: Option<Ty>,
+    /// The trait and vtable slot `def` belongs to, when it is a method a trait declares.
+    pub trait_method: Option<(DefId, u32)>,
 }

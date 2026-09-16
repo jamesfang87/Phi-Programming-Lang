@@ -1,8 +1,8 @@
 use crate::hir::DefId;
 use crate::mir::{Mir, VariantIdx};
 use crate::nameres::PrimTy;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 pub struct FieldLayout {
     pub ty: Ty,
