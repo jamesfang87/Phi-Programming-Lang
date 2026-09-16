@@ -82,7 +82,9 @@ fn arith_checks(ty: &str, op: char) -> Vec<String> {
                     }
                 }
                 '%' => {
-                    if b == 0 {
+                    // `i128::checked_rem` reports `MIN % -1` as `0`, but in the target type
+                    // that quotient overflows and traps on x86-64, so it has to be skipped here.
+                    if b == 0 || (a == min && b == -1) {
                         None
                     } else {
                         a.checked_rem(b)
