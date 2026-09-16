@@ -60,7 +60,15 @@ pub fn emit(module: &Module, options: &EmitOptions) -> Result<PathBuf, CodegenEr
 }
 
 fn link(object_path: &Path, output_path: &Path) -> Result<PathBuf, CodegenError> {
-    for linker in ["cc", "clang"] {
+    link_with(&["cc", "clang"], object_path, output_path)
+}
+
+fn link_with(
+    linkers: &[&str],
+    object_path: &Path,
+    output_path: &Path,
+) -> Result<PathBuf, CodegenError> {
+    for linker in linkers {
         let status = std::process::Command::new(linker)
             .arg(object_path)
             .arg("-o")
@@ -432,20 +440,12 @@ mod tests {
         let object_path = dir.join("nothing.o");
         std::fs::write(&object_path, b"").unwrap();
         let output_path = dir.join("nothing");
-        let empty_path_dir = dir.join("empty-path");
-        std::fs::create_dir_all(&empty_path_dir).unwrap();
 
-        let saved_path = std::env::var_os("PATH");
-        unsafe {
-            std::env::set_var("PATH", &empty_path_dir);
-        }
-        let result = super::link(&object_path, &output_path);
-        unsafe {
-            match &saved_path {
-                Some(p) => std::env::set_var("PATH", p),
-                None => std::env::remove_var("PATH"),
-            }
-        }
+        let result = super::link_with(
+            &["phi-no-such-cc", "phi-no-such-clang"],
+            &object_path,
+            &output_path,
+        );
 
         match result {
             Err(CodegenError::Link(msg)) => {
