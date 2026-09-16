@@ -31,10 +31,6 @@ pub struct Hir {
 }
 
 impl Hir {
-    /// Returns the [`Arena`] belonging to `def_id`.
-    ///
-    /// Panics if `def_id` has no arena, i.e. it does not name an owner or lowering has not
-    /// finished yet.
     pub fn arena(&self, def_id: DefId) -> &Arena {
         &self.arenas[def_id.index()]
     }
@@ -120,14 +116,6 @@ impl Hir {
             .map(|slot| (parent, slot as u32))
     }
 
-    /// Whether `id` is a path naming a type rather than a value, as `Shape` is in
-    /// `Shape.circle(1.0)`.
-    ///
-    /// This is what separates a variant reached through its enum from a field read or a method
-    /// call: all three parse to [`ExprKind::Access`], and only the base's [`Res`] tells them
-    /// apart. Name resolution puts a type in an access base's `Res` and nowhere else, so this
-    /// answers the same question in typeck and in MIR lowering without either pass having to
-    /// record a flag for the other.
     pub fn names_a_type(&self, id: HirId) -> bool {
         matches!(
             &self.expr(id).kind,
@@ -136,12 +124,6 @@ impl Hir {
     }
 }
 
-/// Generates typed lookup methods on [`Hir`] that retrieve a [`Node`] by [`HirId`] and downcast
-/// it to one expected variant.
-///
-/// Generated lookup methods (`hir.block(id)` vs. `hir.expr(id)`) make the type expectation
-/// explicit at the call site and report uniform diagnostic messages that name both the expected
-/// variant and what was actually found.
 macro_rules! typed_node_lookup {
     ($($method:ident($id_ty:ty) => $variant:ident -> $node_ty:ty),* $(,)?) => {
         impl Hir {

@@ -24,10 +24,6 @@ pub(super) enum ExitObligation {
     RunDeferred(HirId),
 }
 
-/// `break_target`/`continue_target` are which block `break`/`continue` jump to; `scope_depth` is
-/// how many block scopes (see [`BodyLowerCtx::block_scopes`]) were open when the loop was
-/// entered, which is where a `break`/`continue` reached from inside it stops replaying exit
-/// obligations -- it leaves every block the loop's own body opened, and no block outside the loop.
 struct LoopCtx {
     break_target: BasicBlock,
     continue_target: BasicBlock,
@@ -49,11 +45,6 @@ pub(crate) struct BodyLowerCtx<'a> {
     pub(crate) types: &'a TypeResolutions,
     pub(crate) mode: Mode,
     pub(crate) def_id: DefId,
-    /// The `any`-mode this task is specialized to, `None` for an `Ordinary` one. Every type
-    /// this context reads through [`BodyLowerCtx::expr_ty`]/[`BodyLowerCtx::pat_ty`] is resolved
-    /// through this uniformly, so a read of an `any`-typed parameter inside a specialized body
-    /// sees the same concrete type the parameter's own `LocalDecl` was declared with, not the
-    /// unspecialized `Any(T)` typeck recorded for it.
     pub(crate) any_mode: Option<AnyMode>,
 
     /// Whether the body being lowered is a function or a closure, and the generic parameters an
@@ -67,22 +58,10 @@ pub(crate) struct BodyLowerCtx<'a> {
     current: BasicBlock,
     next_stmt_id: usize,
 
-    /// Maps a HIR node that names one value slot -- a parameter, a `let`/`with` binding's
-    /// pattern, a closure's implicit environment -- to the `Place` lowering allocated for it.
-    /// Almost always a bare local with no projection; a captured variable inside a closure's own
-    /// body is the one exception, addressed through the closure's environment local instead
-    /// (`mir::lower::closure`). `ExprKind::Path`'s `Res::Local` lowering reads this to turn a
-    /// HIR-level name back into a `Place`.
     hir_locals: HashMap<HirId, Place>,
 
     loop_stack: Vec<LoopCtx>,
 
-    /// A stack of currently-open blocks' own exit obligations, pushed by
-    /// [`BodyLowerCtx::push_block_scope`] on entering a HIR block and popped by
-    /// [`BodyLowerCtx::pop_block_scope`] on leaving it. An early exit (`break`, `continue`,
-    /// `return`) reached from inside one or more of these does not pop them -- it only replays
-    /// a copy of what is currently on the stack, since the blocks are still lexically open for
-    /// whatever in the same block follows the early exit, or for the next loop iteration.
     block_scopes: Vec<Vec<ExitObligation>>,
 
     /// Closures and `any`-mode-specialized callees discovered while lowering this body, merged
@@ -140,19 +119,6 @@ impl<'a> BodyLowerCtx<'a> {
         local
     }
 
-    /// Allocates a new local with no source name, for a value lowering itself introduces (a
-    /// flattened sub-expression, a bounds check's length, and so on). Always immutable: nothing
-    /// after lowering ever assigns into a temporary a second time in a way mutability would
-    /// guard against.
-    ///
-    /// Bracketed in `StorageLive`/`StorageDead` exactly like a `let`/`with` binding's own local
-    /// (see `lower_let`/`lower_with_lend`/`bind_pat`'s `PatKind::Binding` arm), through the same
-    /// block-scoped exit-obligation mechanism: the `StorageDead` is registered against the
-    /// innermost open block scope here, and actually pushed wherever that scope's obligations are
-    /// next replayed (natural fallthrough, `break`, `continue`, or `return`). This is coarser
-    /// than a temporary's true extent -- most live only across the one statement that reads them
-    /// back -- but it is the same scope a `let` local gets, and it means no local in the finished
-    /// `Body`, named or not, is ever live without a `StorageLive`/`StorageDead` pair saying so.
     pub(crate) fn new_temp(&mut self, ty: Ty, span: SrcSpan) -> Local {
         let local = self.new_local(ty, None, span);
         self.push_stmt(StatementKind::StorageLive(local), span);
@@ -293,14 +259,6 @@ impl<'a> BodyLowerCtx<'a> {
             .push(obligation);
     }
 
-    /// Pops the innermost block scope and returns its own obligations, oldest-registration-last
-    /// (the order they should be replayed in: last-registered-runs-first, the same order ordinary
-    /// drop/defer stacking already uses). This is the natural-fallthrough exit from a block: the
-    /// scope is genuinely finished, so it comes off the stack.
-    /// The innermost currently-open block scope's own obligations, in replay order, without
-    /// removing it from the stack. Used by a `match` guard's failure path: the arm's bindings
-    /// need cleaning up before falling to the next candidate, but the scope itself is still open
-    /// for the arm's success path, lowered afterward in the same sequential pass.
     pub(crate) fn peek_block_scope(&self) -> Vec<ExitObligation> {
         self.block_scopes
             .last()
@@ -316,11 +274,6 @@ impl<'a> BodyLowerCtx<'a> {
         scope.into_iter().rev().collect()
     }
 
-    /// Every obligation belonging to a block scope opened at or after `since_depth`, innermost
-    /// block first and, within a block, last-registered first. Used for an early exit (`break`,
-    /// `continue`, `return`) that leaves one or more still-open blocks without popping them --
-    /// whatever is lexically after the early exit inside the same block, or a later loop
-    /// iteration, still needs those scopes open.
     fn obligations_since(&self, since_depth: usize) -> Vec<ExitObligation> {
         let mut out = Vec::new();
         for scope in self.block_scopes[since_depth..].iter().rev() {
@@ -343,13 +296,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.discovered.push(task);
     }
 
-    /// Assembles the finished [`Body`], leaving `self` emptied out (but otherwise usable) behind
-    /// -- `&mut self` rather than `self` by value, so a driver holding a `BodyLowerCtx` behind a
-    /// `&mut` (as the worklist loop in `mir::lower` does, to read `discovered` afterward) does
-    /// not have to give it up just to finish the body. Panics if any block reserved by
-    /// [`BodyLowerCtx::new_block`] was never given a terminator by
-    /// [`BodyLowerCtx::set_terminator`] -- every block this pass reserves, it also means to
-    /// finish, so one left open is a lowering bug, not a user error.
     pub(crate) fn finish(&mut self, arg_count: usize, span: SrcSpan) -> Body {
         assert!(
             self.block_scopes.is_empty(),

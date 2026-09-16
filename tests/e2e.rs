@@ -1,50 +1,29 @@
-//! End-to-end tests for the Phi compiler.
-//!
-//! Every test builds and runs (or type-checks) a real `.phi` project through the actual
-//! `phi` binary, then asserts on what the program *did*: the bytes it wrote to stdout, its
-//! exit status, or the diagnostic it produced. These are deliberately coarse-grained
-//! integration tests -- they exercise the whole pipeline rather than one stage -- and are
-//! complemented by `tests/e2e_generated.rs`, which generates far larger programs whose
-//! expected values are computed independently in Rust.
-//!
-//! Programs write their observable output with `core::io::write_bytes(1, ...)`, or with the
-//! `print`/`println` wrappers, which take a `str` and write it to stdout.
-
 mod support;
 
-/// Builds and runs `source`, asserting it exits 0 and wrote exactly `expected` to stdout.
 fn run(name: &str, source: &str, expected: &str) {
     let output = support::run_src("e2e", name, source);
     support::expect_stdout(&output, expected, name);
 }
 
-/// Builds and runs `source`, asserting only that it exited 0.
 fn runs_ok(name: &str, source: &str) {
     let output = support::run_src("e2e", name, source);
     support::expect_ok(&output, name);
 }
 
-/// Type-checks `source`, asserting the compilation fails with `needle` somewhere on stderr.
 fn rejects(name: &str, source: &str, needle: &str) {
     let output = support::check_src("e2e", name, source);
     support::expect_reject(&output, needle, name);
 }
 
-/// Builds and runs `source`, asserting the process aborts and names `needle` on stderr.
 fn aborts(name: &str, source: &str, needle: &str) {
     let output = support::run_src("e2e", name, source);
     support::expect_abort(&output, needle, name);
 }
 
-/// Builds and runs a multi-file project, asserting stdout.
 fn run_project(name: &str, files: &[(&str, &str)], expected: &str) {
     let output = support::run_files("e2e", name, files);
     support::expect_stdout(&output, expected, name);
 }
-
-// ===========================================================================
-// Literals and expressions
-// ===========================================================================
 
 #[test]
 fn integer_literals() {
@@ -164,10 +143,6 @@ fun main() {
         "abc",
     );
 }
-
-// ===========================================================================
-// Control flow
-// ===========================================================================
 
 #[test]
 fn if_else_selects_the_correct_branch() {
@@ -438,10 +413,6 @@ fun main() {
     );
 }
 
-// ===========================================================================
-// Functions and recursion
-// ===========================================================================
-
 #[test]
 fn functions_with_parameters() {
     run(
@@ -538,10 +509,6 @@ fun main() {
         "ab",
     );
 }
-
-// ===========================================================================
-// Structs
-// ===========================================================================
 
 #[test]
 fn struct_construction_and_field_reads() {
@@ -661,10 +628,6 @@ fun main() {
         "ab",
     );
 }
-
-// ===========================================================================
-// Enums and pattern matching
-// ===========================================================================
 
 #[test]
 fn enum_unit_variants() {
@@ -787,10 +750,6 @@ fun main() {
     );
 }
 
-// ===========================================================================
-// Option and Result
-// ===========================================================================
-
 #[test]
 fn option_basics_and_unwrap() {
     run(
@@ -904,10 +863,6 @@ fun main() {
         "a",
     );
 }
-
-// ===========================================================================
-// Traits, generics, dynamic dispatch
-// ===========================================================================
 
 #[test]
 fn trait_static_dispatch() {
@@ -1051,10 +1006,6 @@ fun main() {
     );
 }
 
-// ===========================================================================
-// Closures
-// ===========================================================================
-
 #[test]
 fn closures_capture_and_compute() {
     run(
@@ -1104,10 +1055,6 @@ fun main() {
         "ok",
     );
 }
-
-// ===========================================================================
-// References and projections
-// ===========================================================================
 
 #[test]
 fn shared_and_mutable_references() {
@@ -1198,10 +1145,6 @@ fun main() {
     );
 }
 
-// ===========================================================================
-// Arrays and tuples
-// ===========================================================================
-
 #[test]
 fn array_element_read_and_write() {
     run(
@@ -1274,10 +1217,6 @@ fun main() {
     );
 }
 
-// ===========================================================================
-// Strings and characters
-// ===========================================================================
-
 #[test]
 fn string_parameter_is_writable() {
     run(
@@ -1324,10 +1263,6 @@ fun main() {
         "ab\nc\n",
     );
 }
-
-// ===========================================================================
-// Larger integration programs
-// ===========================================================================
 
 #[test]
 fn integration_prime_checker() {
@@ -1418,8 +1353,6 @@ fun main() {
 
 #[test]
 fn integration_fizzbuzz() {
-    // Writes a distinct letter for each of the four cases of FizzBuzz, repeated across a
-    // range, and checks the exact multiset of outcomes.
     run(
         "integration_fizzbuzz",
         r#"module app;
@@ -1527,10 +1460,6 @@ fun main() {
     );
 }
 
-// ===========================================================================
-// Multi-file projects
-// ===========================================================================
-
 #[test]
 fn multi_file_function_import() {
     run_project(
@@ -1611,17 +1540,6 @@ extend Circle with Shape { fun area(&self) -> i32 { return self.radius * self.ra
     );
 }
 
-// ===========================================================================
-// Scale / performance regressions
-// ===========================================================================
-
-/// A program with thousands of scalar operations must compile and run in seconds.
-///
-/// The move analyses (`definite_init`, `never_read`, and drop elaboration) once tracked every
-/// temporary in a state that grew with the function and was copied block to block, making
-/// compilation roughly cubic: this program took over a minute before those passes learned to
-/// ignore locals that can never move or be reported on. The generous bound is a regression
-/// guard, not a benchmark.
 #[test]
 fn a_large_scalar_program_compiles_in_reasonable_time() {
     let mut source = String::from("module app;\nfun main() {\n    let mut failures = 0;\n");
@@ -1644,10 +1562,6 @@ fn a_large_scalar_program_compiles_in_reasonable_time() {
         "compiling 2000 scalar checks took {elapsed:?}; a move analysis has regressed to superlinear"
     );
 }
-
-// ===========================================================================
-// Diagnostics: programs the compiler must reject with a clear message
-// ===========================================================================
 
 #[test]
 fn reject_type_mismatch_in_return() {
@@ -1793,7 +1707,6 @@ fn reject_negative_literal_for_unsigned() {
     );
 }
 
-/// A struct may not declare the same field name twice.
 #[test]
 fn duplicate_struct_fields_are_rejected() {
     rejects(
@@ -1802,10 +1715,6 @@ fn duplicate_struct_fields_are_rejected() {
         "x",
     );
 }
-
-// ===========================================================================
-// Runtime safety: programs that must abort, not corrupt state
-// ===========================================================================
 
 #[test]
 fn abort_on_i32_addition_overflow() {
@@ -1855,8 +1764,6 @@ fun main() {
     );
 }
 
-/// Integer negation is overflow-checked in debug mode. Adding and multiplying already abort on
-/// overflow; this covers `-x` at the type's minimum.
 #[test]
 fn unary_negation_overflow_aborts() {
     aborts(
@@ -1977,13 +1884,6 @@ fun main() {
     );
 }
 
-// ===========================================================================
-// Known bugs: these assert the *correct* behavior and are ignored until fixed.
-// ===========================================================================
-
-/// A compound assignment to a projected field (`self.x += 1`, `p.x += 1`). Codegen used to
-/// panic lowering the field place inside the binary operation; `crate::mir::place_ty` now
-/// resolves ADT fields, not just tuple fields.
 #[test]
 fn compound_assignment_to_a_struct_field_runs() {
     run(
@@ -2004,8 +1904,6 @@ fun main() {
     );
 }
 
-/// An enum that contains itself by value has infinite size; the checker rejects it during type
-/// checking (the language provides `iso` for indirection).
 #[test]
 fn value_recursive_enum_is_rejected() {
     rejects(

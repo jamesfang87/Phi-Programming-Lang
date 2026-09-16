@@ -114,8 +114,6 @@ mod tests {
         PrimTy::Str,
     ];
 
-    /// Every one of the 144 ordered pairs is classified one way or the other, which is what
-    /// guarantees the `unreachable!()` in `cast_allowed` never fires.
     #[test]
     fn every_pair_of_primitives_is_classified() {
         for &from in &ALL {
@@ -295,8 +293,6 @@ mod tests {
         assert!(is_lossless_cast(PrimTy::F64, PrimTy::Char).is_err());
     }
 
-    /// `usize` is a 64-bit unsigned integer for casting purposes (see the codegen spec: "usize
-    /// is assumed 64-bit"), so it follows the same same-signedness widening rule as `u64`.
     #[test]
     fn usize_behaves_as_a_64_bit_unsigned_integer() {
         assert!(is_lossless_cast(PrimTy::U8, PrimTy::Usize).is_ok());
@@ -306,9 +302,6 @@ mod tests {
         assert!(is_lossless_cast(PrimTy::Usize, PrimTy::I64).is_err());
     }
 
-    /// `str`'s only legal cast is to `&[u8]`, which isn't a primitive and so is handled outside
-    /// `cast_allowed` entirely (see `Typeck::check_cast`); every primitive-to-primitive pairing
-    /// involving `str` is rejected here.
     #[test]
     fn str_has_no_primitive_to_primitive_cast() {
         assert!(is_lossless_cast(PrimTy::Str, PrimTy::Str).is_ok());
@@ -324,7 +317,6 @@ mod tests {
         }
     }
 
-    /// A codepoint in `0..=0x10FFFF` always fits a 64-bit `usize`, which `int_width` treats it as.
     #[test]
     fn char_casts_to_usize() {
         assert!(

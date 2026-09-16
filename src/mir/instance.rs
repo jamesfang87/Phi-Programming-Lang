@@ -11,10 +11,6 @@ pub enum AnyMode {
     RefMut,
 }
 
-/// Instance represents an monomorphized instance of a definition.
-/// `any_mode` is `None` for a definition whose signature mentions no `any`
-/// `self_ty` is `Some` only for a trait's own method, whose one body is
-/// monomorphized once per implementing type
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Instance {
     pub def: DefId,

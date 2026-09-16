@@ -233,11 +233,6 @@ impl<'a> BodyLowerCtx<'a> {
                     self.tcx.kind(operand_ty),
                     TyKind::Primitive(prim) if prim.is_integer()
                 );
-                // Negating a literal constant is how the type's minimum is written (e.g.
-                // `-128_i8`): the negation folds into the constant and is never a runtime
-                // overflow, so it stays a plain unary op. A runtime value is checked, because
-                // `-x` overflows when `x` is the minimum; routing it through `0 - x` reuses the
-                // same overflow assert as `+`/`-`/`*`.
                 let literal = matches!(self.hir.expr(operand).kind, ExprKind::Literal(_));
                 if op == UnaryOp::Neg
                     && int_operand
@@ -386,10 +381,6 @@ impl<'a> BodyLowerCtx<'a> {
                 let count = self.lower_operand(count);
                 self.assign(dest, Rvalue::NewArray { elem, count }, span);
             }
-            // TODO: implement `spawn`/`concurrent` lowering (README section 14 promises
-            // scoped tasks with `spawn`/`join` inside `concurrent`, but both arms panic,
-            // so no concurrent program compiles -- task handles, nursery scopes, and
-            // data-race-free join semantics are all still missing).
             ExprKind::Spawn(_) => panic!(
                 "mir::lower: `spawn` is not yet implemented (the runtime nursery API is illustrative only)"
             ),
@@ -454,10 +445,6 @@ impl<'a> BodyLowerCtx<'a> {
     // Helpers
     // -----------------------------------------------------------------
 
-    /// `expr_id`'s recorded type, resolved through this body's own `any_mode` -- see the field's
-    /// doc comment on [`BodyLowerCtx`] for why every type this pass reads goes through this
-    /// uniformly rather than only the parameter/return positions `mir::lower::item` sets up
-    /// directly.
     pub(crate) fn expr_ty(&mut self, expr_id: impl Into<HirId>) -> Ty {
         let expr_id = expr_id.into();
         let ty = self
@@ -471,12 +458,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.push_stmt(StatementKind::Assign(dest, rvalue), span);
     }
 
-    /// `Copy` for a place whose type is copyable -- a primitive, a shared `&T`, or a type the
-    /// trait solver proved `Copy` -- `Move` otherwise, with no liveness analysis: the
-    /// classification follows only from `ty`'s own copyability. A shared reference grants no
-    /// exclusive access, so reading the same place holding one twice is exactly as sound as
-    /// reading a primitive twice; a `&mut T` grants exclusive access, so duplicating it would
-    /// defeat the point and it still falls to `Move`.
     pub(crate) fn operand_for_place(&self, place: Place, ty: Ty) -> Operand {
         if self.tcx.is_copy(ty) {
             Operand::Copy(place)
@@ -551,10 +532,6 @@ impl<'a> BodyLowerCtx<'a> {
         (current, count)
     }
 
-    /// The declared field index of `member` on struct type `ty`, by name -- nominal, so no
-    /// typeck help is needed, exactly as `planning/mir.md`'s `rect.l` example describes. For a
-    /// tuple type, `member` is instead the tuple index written in source (`.0`, `.1`, ...),
-    /// already checked in range by typeck.
     fn field_index(&self, ty: Ty, member: crate::ast::interner::Symbol) -> u32 {
         if matches!(self.tcx.kind(ty), TyKind::Tuple(_)) {
             return self
@@ -593,12 +570,6 @@ impl<'a> BodyLowerCtx<'a> {
             TyKind::Array { .. } => {
                 let usize_ty = self.tcx.mk_prim(PrimTy::Usize);
 
-                // A compile-time-constant index (a bare integer literal, not yet folded through
-                // any arithmetic) projects through `ConstantIndex` instead of `Index`: unlike a
-                // runtime `Local`, a constant offset lets borrowck's `register_of` (see
-                // `mir::checks::borrowck::register_of`) tell `a[0]` and `a[1]` apart as disjoint
-                // sub-registers of `a` rather than treating any index into `a` as touching the
-                // whole array.
                 let constant_offset = match self.hir.expr(index).kind.clone() {
                     ExprKind::Literal(lit @ Literal::Int { .. }) => {
                         literal_text(self.session, lit).parse::<u32>().ok()
@@ -662,18 +633,6 @@ impl<'a> BodyLowerCtx<'a> {
                 place.projections.push(projection);
                 place
             }
-            // An overloaded `Index`/`IndexSet` receiver: `check_index` already resolved this as
-            // a method call (see `TypeResolutions::call`), so it is not a plain projection at
-            // all -- lowering it as a place means calling `index`/`index_set` into a temporary
-            // and treating that as the place, which `lower_call_like_into`'s general call
-            // handling already does for a method call used as an operand. There is no direct
-            // `Place` for a user-defined index today (it would need a projection kind this MIR
-            // does not have, one that runs a method call), so this position is not yet
-            // implemented.
-            // TODO: implement user-defined `Index`/`IndexSet` in place position (README
-            // section 12 promises `a[i]` reads and writes via those traits, but this arm
-            // panics, so real programs cannot index hash maps/vectors through overloads,
-            // only built-in arrays).
             _ => panic!(
                 "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"
             ),
@@ -944,10 +903,6 @@ impl<'a> BodyLowerCtx<'a> {
     // `?`
     // -----------------------------------------------------------------
 
-    /// `expr?`, per the spec's own worked example: a `SwitchInt` on the scrutinee's
-    /// discriminant, an `ok` arm that reads the payload through `Downcast(ok).Field(0)` and
-    /// continues, and an `err` arm that builds the enclosing function's own `Result::err`
-    /// variant from the moved error payload and returns it immediately.
     fn lower_try_into(&mut self, inner: impl Into<HirId>, ok_ty: Ty, dest: Place, span: SrcSpan) {
         let inner = inner.into();
         let scrutinee_ty = self.expr_ty(inner);
@@ -1046,11 +1001,6 @@ fn literal_text(session: &Session, lit: Literal) -> String {
     }
 }
 
-/// Reads a qualified variant's payload (`Shape.circle(1.0)`) as the payload the elided form
-/// (`.circle(1.0)`) would have carried, so both spellings lower through one path.
-///
-/// Typeck rejects an argument list that is not exactly one value, so by the time MIR runs a
-/// `Call` payload holds exactly one argument.
 fn variant_payload_of(args: &AccessArgs) -> Payload {
     match args {
         AccessArgs::None => Payload::None,

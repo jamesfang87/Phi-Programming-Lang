@@ -331,8 +331,6 @@ mod tests {
         output.expect("expected a successfully parsed type")
     }
 
-    /// Parses `src` as a type, returning how many parse errors were raised (without asserting
-    /// they're empty, unlike [`parse_ty`]).
     fn diagnostic_count(src: &str) -> usize {
         let chars: Vec<char> = src.chars().collect();
         let offset = crate::testing::add_file(
@@ -393,8 +391,6 @@ mod tests {
         }
     }
 
-    /// `>>` is two `CloseAngle` tokens rather than a shift, so a nested argument list needs no
-    /// special handling to close.
     #[test]
     fn parses_nested_generic_args() {
         let ty = parse_ty("Array<Option<i32>>");
@@ -456,7 +452,6 @@ mod tests {
         }
     }
 
-    /// A trait that declares parameters has to be applied to them before `dyn` names a type.
     #[test]
     fn parses_dyn_type_with_generic_arguments() {
         let ty = parse_ty("dyn Index<K, V>");
@@ -469,8 +464,6 @@ mod tests {
         }
     }
 
-    /// The argument list binds to the `dyn`, not to something after it: a `dyn` inside a
-    /// reference still ends where its own `>` does.
     #[test]
     fn parses_a_reference_to_a_generic_dyn() {
         let ty = parse_ty("&dyn Index<K, V>");
@@ -502,8 +495,6 @@ mod tests {
         }
     }
 
-    /// A one-element tuple type needs the trailing comma, mirroring the expression and
-    /// pattern grammars: `(T,)` is a tuple, `(T)` is just `T`.
     #[test]
     fn parses_one_element_tuple_type_with_trailing_comma() {
         let ty = parse_ty("(i32,)");
@@ -513,7 +504,6 @@ mod tests {
         }
     }
 
-    /// The trailing comma alone is not a type: parens around nothing are not a tuple here.
     #[test]
     fn rejects_empty_tuple_type() {
         assert_eq!(diagnostic_count("()"), 1);
@@ -544,8 +534,6 @@ mod tests {
         }
     }
 
-    /// A reference may wrap another reference (`&&T`): the outer reference's target is itself a
-    /// reference type. `&mut &i32` reaches that shape through two separate `&` tokens.
     #[test]
     fn parses_ref_wrapping_a_ref_type_via_two_amp_tokens() {
         let ty = parse_ty("&mut &i32");
@@ -570,9 +558,6 @@ mod tests {
         }
     }
 
-    /// The same shape, but spelled the natural way: the lexer tokenizes `&&` as a single
-    /// `DoubleAmp` token (it's also the logical-and operator in expression position), so the
-    /// type parser must split it into two reference layers itself rather than requiring a space.
     #[test]
     fn parses_ref_wrapping_a_ref_type_via_double_amp_token() {
         let ty = parse_ty("&&i32");
@@ -597,8 +582,6 @@ mod tests {
         }
     }
 
-    /// `&&mut i32` is a valid shape too: an immutable outer reference (from the `DoubleAmp`
-    /// token) to a mutable inner reference.
     #[test]
     fn parses_ref_wrapping_a_mutable_ref_type_via_double_amp_token() {
         let ty = parse_ty("&&mut i32");
@@ -666,7 +649,6 @@ mod tests {
 
     #[test]
     fn parses_array_of_tuples_with_ref_element_type() {
-        // `[(&i32, bool); 3]` exercises array + tuple + ref nesting together.
         let ty = parse_ty("[(&i32, bool); 3]");
         match &ty.kind {
             TyKind::Array { elem, len } => {
@@ -717,9 +699,6 @@ mod tests {
         assert_eq!(diagnostic_count("any &i32"), 1);
     }
 
-    /// The other direction is rejected too: a reference may not wrap `any`. `any` describes how
-    /// a value crosses a function boundary; layering a reference on top of that would just be a
-    /// second, redundant indirection.
     #[test]
     fn rejects_ref_wrapping_an_any_type() {
         assert_eq!(diagnostic_count("&any i32"), 1);
@@ -749,8 +728,6 @@ mod tests {
         assert_eq!(diagnostic_count("iso &i32"), 1);
     }
 
-    /// `iso` is this language's owning pointer -- Rust's `Box` -- so `iso dyn Trait` is the
-    /// usual way to own an unsized trait object, the same shape as `Box<dyn Trait>`.
     #[test]
     fn parses_iso_dyn_type() {
         let ty = parse_ty("iso dyn Shape");
@@ -810,7 +787,6 @@ mod tests {
 
     #[test]
     fn parses_higher_order_fn_type() {
-        // A fn type whose parameter and return type are themselves fn types.
         let ty = parse_ty("fun(fun(i32) -> i32) -> fun() -> bool");
         match &ty.kind {
             TyKind::Function { params, ret } => {
@@ -830,11 +806,6 @@ mod tests {
         assert_eq!(diagnostic_count("any fun(i32) -> i32"), 1);
     }
 
-    /// BUG: the tuple-type parser builds `TyKind::Tuple` unconditionally and never unwraps the
-    /// single-element case, so `(i32)` becomes `(i32,)`. The expression parser already unwraps
-    /// `(e)` to `e`, and the grammar's own tests and `display.rs` say only `(T,)` is a tuple.
-    ///
-    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
     #[test]
     fn parses_parenthesized_type_as_the_inner_type() {
         let ty = parse_ty("(i32)");

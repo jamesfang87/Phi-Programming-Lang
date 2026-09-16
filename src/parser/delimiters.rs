@@ -60,8 +60,6 @@ mod tests {
     use super::*;
     use crate::testing::lex_src;
 
-    /// Returns the message of each diagnostic `src` raises, paired with the source text its
-    /// primary span covers.
     fn unmatched_in(src: &str) -> Vec<(String, String)> {
         let (tokens, _) = lex_src(src);
         find_unmatched_delimiter_errors(&tokens)
@@ -84,7 +82,6 @@ mod tests {
 
     #[test]
     fn caret_is_not_treated_as_a_delimiter() {
-        // `<` and `>` are comparisons here, not generic brackets, and must not be paired up.
         assert!(unmatched_in("fun main() { if a < b { c > d; } }").is_empty());
     }
 
@@ -105,7 +102,6 @@ mod tests {
         assert_eq!(messages, ["unclosed `{`", "unclosed `(`"]);
     }
 
-    /// The `}` closes the function, but the `(` opened inside it is still waiting for a `)`.
     #[test]
     fn a_close_that_does_not_match_the_innermost_open_is_reported_once() {
         assert_eq!(

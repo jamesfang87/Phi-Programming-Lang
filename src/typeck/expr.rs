@@ -42,13 +42,6 @@ pub(crate) enum DerefContext {
     Place,
 }
 
-/// A variant's payload as written: the expressions following the variant's name, as opposed to
-/// the payload types the variant declares.
-///
-/// The elided form `.circle(1.0)` parses to [`Payload`] and the qualified form
-/// `Shape.circle(1.0)` parses to [`AccessArgs`], but the two describe the same payloads.
-/// Reducing both to this view is what lets [`Typeck::check_variant_of`] check them with one body
-/// instead of two that drift apart.
 #[derive(Clone)]
 pub(crate) enum PayloadExprs<'hir> {
     Unit,
@@ -419,12 +412,6 @@ impl<'hir> Typeck<'hir> {
         self.check_variant_of(self_ty, variant, written, span)
     }
 
-    /// Checks a variant of a known enum against the payload written for it, and returns that
-    /// enum's type.
-    ///
-    /// Both spellings land here: the elided `.circle(1.0)`, whose enum comes from the expected
-    /// type, and the qualified `Shape.circle(1.0)`, whose enum is named outright. Only where
-    /// `self_ty` comes from differs, so everything past that point is shared.
     pub(crate) fn check_variant_of(
         &mut self,
         self_ty: Ty,
@@ -478,16 +465,6 @@ impl<'hir> Typeck<'hir> {
         self_ty
     }
 
-    /// Returns the type an access base names, for a base that names a type rather than a value --
-    /// the `Shape` in `Shape.circle(1.0)`, or a `Self` standing for the type an `extend` block
-    /// is on.
-    ///
-    /// A path in this position carries no generic arguments of its own, so a generic enum gets
-    /// one fresh inference variable per parameter: `Option.some(1)` starts as `Option<?0>` and
-    /// `?0` is pinned by the payload and by whatever the whole expression is unified with.
-    ///
-    /// Returns `None` for a base that names a value, which is every ordinary field read and
-    /// method call.
     pub(crate) fn named_type_of_base(&mut self, base: HirId) -> Option<Ty> {
         let expr = self.hir.expr(base);
         let ExprKind::Path(path) = &expr.kind else {
@@ -958,12 +935,6 @@ impl<'hir> Typeck<'hir> {
 mod tests {
     use crate::testing::{typeck_accepts as accepts, typeck_rejects as rejects};
 
-    // -----------------------------------------------------------------
-    // Bindings and patterns
-    // -----------------------------------------------------------------
-
-    /// The rule the whole of body checking rests on: a `let`'s initializer is what gives the name
-    /// it binds a type, so a later use of that name is checked against it.
     #[test]
     fn a_let_binding_takes_its_type_from_its_initializer() {
         accepts("fun f() -> i32 { let x = 1; return x; }");
@@ -1011,10 +982,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Assignment
-    // -----------------------------------------------------------------
-
     #[test]
     fn an_assignment_checks_the_value_against_the_place() {
         accepts("fun f() { let mut x = 1; x = 2; }");
@@ -1026,13 +993,6 @@ mod tests {
         rejects("fun f() { 1 = 2; }", "cannot be assigned to");
     }
 
-    // Whether a plain `let` (or a `let mut`) may be reassigned to, directly or through a field
-    // or index chain, is `mir::checks::constck`'s question now, exercised by that module's own tests; see
-    // the comment above `a_unit_struct_constructs_and_checks` for why.
-
-    /// An assignment produces nothing, so it cannot be the value of the block it ends. Read
-    /// through a closure, whose body *is* checked against its return type, unlike a function's;
-    /// see the note on [`Typeck::check_function`](crate::typeck::Typeck).
     #[test]
     fn an_assignment_produces_no_value() {
         rejects(
@@ -1041,8 +1001,6 @@ mod tests {
         );
     }
 
-    /// `+=` asks the same question of its left side that `+` asks of its operands, so a struct
-    /// with no `Add` implementation is rejected for the same reason.
     #[test]
     fn a_compound_assignment_needs_the_operators_trait() {
         accepts("fun f() { let mut x = 1; x += 2; }");
@@ -1058,10 +1016,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Borrows
-    // -----------------------------------------------------------------
-
     #[test]
     fn a_borrow_produces_a_reference_to_its_operands_type() {
         accepts("fun f(x: i32) -> &i32 { return &x; }");
@@ -1076,13 +1030,6 @@ mod tests {
             "mismatched types",
         );
     }
-
-    // Whether `&mut x` may take a mutable borrow of `x` is `mir::checks::constck`'s question now too,
-    // for the same reason `a_plain_let_binding_cannot_be_assigned_to`'s old comment gave.
-
-    // -----------------------------------------------------------------
-    // Struct literals
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_struct_literal_checks_each_field_against_its_declared_type() {
@@ -1115,8 +1062,6 @@ mod tests {
         );
     }
 
-    /// `Pair { fst, snd }` is shorthand for `Pair { fst: fst, snd: snd }`: it resolves each bare
-    /// field name against a variable of the same name in scope.
     #[test]
     fn a_struct_literal_field_can_elide_its_value() {
         accepts(
@@ -1125,8 +1070,6 @@ mod tests {
         );
     }
 
-    /// The elided field name is still checked against the struct's declared fields, exactly
-    /// like a written-out `name: value` field.
     #[test]
     fn an_elided_struct_literal_field_that_is_not_declared_is_reported() {
         rejects(
@@ -1136,8 +1079,6 @@ mod tests {
         );
     }
 
-    /// The elided form names no struct at all, so the expectation is the only thing that says
-    /// which one it builds.
     #[test]
     fn an_elided_struct_literal_takes_its_struct_from_the_expectation() {
         accepts(
@@ -1155,8 +1096,6 @@ mod tests {
         );
     }
 
-    /// A written path leaves the struct's parameters as inference variables, and the expectation
-    /// is what pins them.
     #[test]
     fn a_generic_struct_literals_arguments_come_from_the_annotation() {
         accepts(
@@ -1170,10 +1109,6 @@ mod tests {
         );
     }
 
-    /// A field with no `public` is private by default, but only across a module boundary, the
-    /// same rule `SymbolTable::is_visible` enforces for a path lookup. This needs
-    /// `typeck_src_files`, since the plain `accepts`/`rejects` fixtures above all write and read
-    /// a field from inside its own declaring module, where a private field is always reachable.
     #[test]
     fn a_struct_literal_cannot_set_a_private_field_from_another_module() {
         assert_eq!(
@@ -1200,11 +1135,6 @@ mod tests {
         );
     }
 
-    /// More than one private field written in the same literal is each reported on its own, the
-    /// same way a duplicate field and a missing field are already each reported independently.
-    /// Left unwritten instead, the very same two fields are reported *missing* rather than
-    /// private, since a private field can never be supplied from outside its module, whether or
-    /// not the caller tries to name it.
     #[test]
     fn multiple_private_fields_in_one_struct_literal_are_each_reported() {
         assert_eq!(
@@ -1228,10 +1158,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Enum variants
-    // -----------------------------------------------------------------
-
     #[test]
     fn a_variant_takes_its_enum_from_the_expectation() {
         accepts(
@@ -1240,8 +1166,6 @@ mod tests {
         );
     }
 
-    /// The shape the whole expectation mechanism exists for: the return type reaches `.ok`, and
-    /// `.ok`'s declared payload reaches the `.none` inside it.
     #[test]
     fn a_variants_payload_carries_the_expectation_further_down() {
         accepts(
@@ -1291,12 +1215,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Enum variants named through their enum
-    // -----------------------------------------------------------------
-
-    /// All three payload shapes, written through the enum's own name rather than left to the
-    /// expectation. Each is the qualified spelling of a `.variant` the tests above accept.
     #[test]
     fn a_variant_can_be_named_through_its_enum() {
         accepts(
@@ -1307,8 +1225,6 @@ mod tests {
         );
     }
 
-    /// Naming the enum is what the elided form cannot do: there is no expectation here to take
-    /// the enum from, and the qualified form still checks.
     #[test]
     fn naming_the_enum_supplies_what_no_expectation_would() {
         accepts(
@@ -1317,8 +1233,6 @@ mod tests {
         );
     }
 
-    /// The enum's generic arguments are inferred from the payload, since a path in expression
-    /// position cannot carry any of its own.
     #[test]
     fn a_generic_enums_arguments_are_inferred_at_the_qualified_variant() {
         accepts(
@@ -1332,8 +1246,6 @@ mod tests {
         );
     }
 
-    /// `Self` names the type an `extend` block is on, so a method can build a variant of it
-    /// without repeating the enum's name.
     #[test]
     fn self_names_the_enum_inside_an_extend_block() {
         accepts(
@@ -1358,7 +1270,6 @@ mod tests {
              fun f() -> Shape { return Shape.unit(1.0); }",
             "carries no payload",
         );
-        // An argument list that is not one value matches no declared payload at all.
         rejects(
             "enum Shape { unit, circle: f64 }
              fun f() -> Shape { return Shape.circle(1.0, 2.0); }",
@@ -1366,7 +1277,6 @@ mod tests {
         );
     }
 
-    /// A struct has fields, not variants, so naming one before a `.member` finds nothing.
     #[test]
     fn a_variant_named_through_a_struct_is_reported() {
         rejects(
@@ -1376,8 +1286,6 @@ mod tests {
         );
     }
 
-    /// A brace payload only ever builds a variant, so a base naming a value cannot carry one --
-    /// there is no field or method spelled with braces to fall back to.
     #[test]
     fn a_brace_payload_on_a_value_is_reported() {
         rejects(
@@ -1386,10 +1294,6 @@ mod tests {
             "only an enum can be named before",
         );
     }
-
-    // -----------------------------------------------------------------
-    // Branching
-    // -----------------------------------------------------------------
 
     #[test]
     fn an_if_condition_has_to_be_a_bool() {
@@ -1406,8 +1310,6 @@ mod tests {
         );
     }
 
-    /// With no `else` there is no value on the path not taken, so the `if` produces nothing and
-    /// its block has to as well.
     #[test]
     fn an_if_without_an_else_produces_nothing() {
         rejects("fun f(c: bool) { if c { 1 } }", "mismatched types");
@@ -1452,8 +1354,6 @@ mod tests {
         );
     }
 
-    /// A guard runs after the pattern already matched, so it sees that pattern's bindings, the
-    /// same as the arm's body does.
     #[test]
     fn a_match_guard_sees_its_arms_pattern_bindings() {
         accepts(
@@ -1464,8 +1364,6 @@ mod tests {
         );
     }
 
-    /// A variant pattern's payload binds at the type the variant declares, read through the
-    /// scrutinee's generic arguments.
     #[test]
     fn a_variant_pattern_binds_its_payload_at_the_declared_type() {
         accepts(
@@ -1478,10 +1376,6 @@ mod tests {
             "mismatched types",
         );
     }
-
-    // -----------------------------------------------------------------
-    // Dereference
-    // -----------------------------------------------------------------
 
     #[test]
     fn dereferencing_a_reference_returns_its_base_type() {
@@ -1499,8 +1393,6 @@ mod tests {
         );
     }
 
-    /// `&&i32`: an outer reference whose target is itself a reference. Each `*` peels one layer,
-    /// so `**p` must type as `i32`, and both layers need `Copy` to read through without moving.
     #[test]
     fn dereferencing_a_reference_to_a_reference_peels_one_layer_at_a_time() {
         accepts(
@@ -1628,10 +1520,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Indexing
-    // -----------------------------------------------------------------
-
     #[test]
     fn an_array_is_indexed_by_an_integer_and_produces_its_element() {
         accepts("fun f(a: [i32; 4]) -> i32 { return a[0]; }");
@@ -1641,8 +1529,6 @@ mod tests {
         );
     }
 
-    /// Everything that is not an array indexes through the `Index` trait, so `V` is read back out
-    /// of the `extend` block's arguments.
     #[test]
     fn a_type_with_an_index_impl_is_indexed_through_it() {
         accepts(
@@ -1669,10 +1555,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Error propagation
-    // -----------------------------------------------------------------
-
     #[test]
     fn try_on_a_result_produces_what_it_carries() {
         accepts(
@@ -1687,8 +1569,6 @@ mod tests {
         );
     }
 
-    /// The error type leaves the function, so it is the part of the return type
-    /// that has to match.
     #[test]
     fn try_checks_the_error_against_the_enclosing_return_type() {
         rejects(
@@ -1713,10 +1593,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Closures
-    // -----------------------------------------------------------------
-
     #[test]
     fn a_closure_checks_to_a_function_type_of_its_parameters_and_body() {
         accepts(
@@ -1738,8 +1614,6 @@ mod tests {
         );
     }
 
-    /// An unannotated parameter takes its type from the expectation, which is the only thing that
-    /// can say what it is.
     #[test]
     fn an_unannotated_closure_parameter_takes_its_type_from_the_expectation() {
         accepts("fun f() { let g: fun(i64) -> i64 = |x| { x + 1 }; }");
@@ -1754,8 +1628,6 @@ mod tests {
         );
     }
 
-    /// A closure records a signature for itself before its body is checked, so a `return` inside
-    /// one resolves the same way it does in a function.
     #[test]
     fn a_return_inside_a_closure_is_checked_against_the_closures_return_type() {
         accepts("fun f() { let g = |x: i32| -> i32 { return x; }; }");
@@ -1764,10 +1636,6 @@ mod tests {
             "mismatched types",
         );
     }
-
-    // -----------------------------------------------------------------
-    // The blocks that produce nothing
-    // -----------------------------------------------------------------
 
     #[test]
     fn spawn_and_concurrent_run_their_blocks_and_produce_nothing() {
@@ -1784,18 +1652,11 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // `new`, the `iso` constructor
-    // -----------------------------------------------------------------
-
-    /// `new e` allocates storage for `e`'s type and yields `iso T`.
     #[test]
     fn new_of_a_value_has_type_iso_of_that_values_type() {
         accepts("fun f() { let x: iso i32 = new 1; }");
     }
 
-    /// `new [e; n]` requires `n: usize` and yields `iso [T]`, the unsized array whose length is
-    /// carried at runtime.
     #[test]
     fn new_array_requires_a_usize_count_and_yields_iso_of_unsized_array() {
         accepts("fun f(n: usize) { let buf: iso [u8] = new [0_u8; n]; }");
@@ -1855,7 +1716,6 @@ mod tests {
         );
     }
 
-    /// A count that isn't `usize` is rejected, the same as any other type mismatch.
     #[test]
     fn new_array_rejects_a_non_usize_count() {
         rejects(
@@ -1864,44 +1724,26 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // `usize`
-    // -----------------------------------------------------------------
-
-    /// `usize` unifies with an unsuffixed integer literal exactly like any other unsigned
-    /// primitive.
     #[test]
     fn an_unsuffixed_literal_unifies_with_usize() {
         accepts("fun f() { let n: usize = 0; }");
     }
 
-    /// The `_usize` suffix names the type directly, the same as `_u64` or any other integer
-    /// suffix.
     #[test]
     fn a_usize_suffixed_literal_checks() {
         accepts("fun f() { let n = 0_usize; }");
     }
 
-    // -----------------------------------------------------------------
-    // `str`
-    // -----------------------------------------------------------------
-
-    /// A string literal's bytes live in a read-only constant, so the literal itself just names
-    /// them: no allocation, no copy, and a `str` type.
     #[test]
     fn a_string_literal_has_type_str() {
         accepts("fun f() { let s: str = \"hi\"; }");
     }
 
-    /// `str` and `&[u8]` share a representation -- both are `{ pointer, usize }` -- so reaching
-    /// a `str`'s bytes is an ordinary, no-op-at-runtime cast, not a method.
     #[test]
     fn str_as_byte_slice_checks() {
         accepts("fun f(s: str) -> &[u8] { return s as &[u8]; }");
     }
 
-    /// The reverse direction would assert a UTF-8 property the compiler cannot check, so it is
-    /// rejected: `str` is the only cast a `&[u8]` may not make.
     #[test]
     fn byte_slice_as_str_is_rejected() {
         rejects(
@@ -1909,10 +1751,6 @@ mod tests {
             "cannot cast a value of type",
         );
     }
-
-    // -----------------------------------------------------------------
-    // `str` is second-class: same standing as `&T`
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_struct_field_that_is_str_is_rejected() {
@@ -1930,8 +1768,6 @@ mod tests {
         );
     }
 
-    /// An array element is still a stored value, so `str` nested inside one is rejected the
-    /// same way a bare `str` field is.
     #[test]
     fn an_array_field_of_str_is_rejected() {
         rejects(
@@ -1940,11 +1776,6 @@ mod tests {
         );
     }
 
-    /// Instantiating a generic parameter with `str` is caught once the instantiated type is
-    /// actually put into a field, the same way an ordinary reference argument is (see
-    /// `instantiating_a_generic_struct_with_a_reference_argument_in_a_field_is_rejected`):
-    /// there is no way to tell, from `Boxed`'s own declaration, whether `T` ends up in field
-    /// position.
     #[test]
     fn instantiating_a_generic_struct_with_str_in_a_field_is_rejected() {
         rejects(
@@ -1954,8 +1785,6 @@ mod tests {
         );
     }
 
-    /// The same instantiation used only as a function's own parameter type is accepted, exactly
-    /// as it is for an ordinary reference argument: nothing stores `Boxed<str>` anywhere.
     #[test]
     fn instantiating_a_generic_struct_with_str_as_a_parameter_checks() {
         accepts(
@@ -1964,32 +1793,20 @@ mod tests {
         );
     }
 
-    /// A parameter, unlike a field, may hold `str` directly: second-class values are exactly
-    /// what parameters accept.
     #[test]
     fn str_as_a_parameter_checks() {
         accepts("fun greet(name: str) {}");
     }
 
-    /// A local's declared type is not a field either, so `str` is accepted there too.
     #[test]
     fn str_as_a_local_checks() {
         accepts("fun f(s: str) { let t: str = s; }");
     }
 
-    /// Nor is a return type.
     #[test]
     fn str_as_a_return_type_checks() {
         accepts("fun f(s: str) -> str { return s; }");
     }
-
-    // -----------------------------------------------------------------
-    // Ranges
-    //
-    // `lo..hi` has no dedicated typeck rule: `parser::expr_parser` desugars it into a
-    // `std::range::Range { left, right, inclusive }` construction, so it types the same way any
-    // other struct literal does.
-    // -----------------------------------------------------------------
 
     const OPTION_AND_RANGE: [&str; 3] = [
         "module core::option; public enum Option<T> { some: T, none }",
@@ -2016,8 +1833,6 @@ mod tests {
         assert!(crate::testing::typeck_src_files(&files).is_empty());
     }
 
-    /// The two endpoints have to agree, the same way any two values placed into fields of the
-    /// same generic parameter do -- there is no range-specific unification rule for this anymore.
     #[test]
     fn mismatched_range_endpoints_are_reported() {
         let mut files = OPTION_AND_RANGE.to_vec();
@@ -2026,13 +1841,6 @@ mod tests {
         assert_eq!(reported.len(), 1, "{reported:?}");
         assert!(reported[0].contains("mismatched types"));
     }
-
-    // -----------------------------------------------------------------
-    // Loops
-    //
-    // `while`, `for`, and `while let` all desugar to `ExprKind::Loop`; see
-    // `hir::lower::desugar`.
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_while_conditions_type_has_to_be_bool() {
@@ -2044,11 +1852,6 @@ mod tests {
              extend bool with Copy { fun copy(&self) -> Self { return *self; } }
              fun f(c: bool) { while c {} }",
         );
-        // `while` desugars to `loop { if !cond { break }; .. }`, so a non-bool condition is
-        // caught by the desugared `if`'s own check, not by anything `while`-specific. `!x` on a
-        // non-bool operand needs its own real `Not` impl now (`i32` has none in this fixture),
-        // so the rejection here comes from `does not implement \`Not\``, not from the `if`
-        // around it as it did under the old bypass.
         rejects(
             "module core::ops;
              public trait Not { fun not(&self) -> Self; }
@@ -2086,10 +1889,6 @@ mod tests {
         );
     }
 
-    /// `for pat in iter { .. }` desugars through the iterator protocol: `iter.next()` returning
-    /// an `Option`, matched against `.some(pat)`/`.none`; see `hir::lower::desugar::lower_for`.
-    /// No `Iterator` trait or lang item is required for this to work; method resolution finds
-    /// `next` the same way it finds any other method.
     #[test]
     fn a_for_loop_binds_its_pattern_to_the_iterators_item_type() {
         accepts(
@@ -2115,14 +1914,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Method chains and generic nesting
-    // -----------------------------------------------------------------
-
-    /// Chaining `&self` methods off a call's result does not work, since the result is a
-    /// temporary and `&self` needs a place to borrow (see
-    /// `a_temporary_receiver_needing_a_place_is_rejected` below), so this chains through
-    /// `self`-by-value methods instead, which need no place at all.
     #[test]
     fn method_calls_chain_left_to_right() {
         accepts(
@@ -2135,8 +1926,6 @@ mod tests {
         );
     }
 
-    /// The chain's other half: a method taking `&self` cannot be called on a temporary, because
-    /// there is nothing for the implicit borrow to reach.
     #[test]
     fn a_temporary_receiver_needing_a_place_is_rejected() {
         rejects(
@@ -2183,10 +1972,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // `?` on `Option`, closures returning closures
-    // -----------------------------------------------------------------
-
     #[test]
     fn try_on_an_option_produces_what_it_carries() {
         accepts(
@@ -2211,10 +1996,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Assignment through a place other than a bare local
-    // -----------------------------------------------------------------
-
     #[test]
     fn assignment_through_a_field_checks_against_the_fields_type() {
         accepts("struct P { x: i32 } fun f(p: P) { p.x = 1; }");
@@ -2230,30 +2011,10 @@ mod tests {
         rejects("fun f(a: [i32; 4]) { a[0] = true; }", "mismatched types");
     }
 
-    // Whether a place may be written to directly, rejecting a plain `let`'s root once `mut`
-    // fixes it, crossing a reference, a tuple-destructured binding, a `for`/`match`/`with`
-    // binding, and a parameter or `self`, is exercised by `mir::checks::constck`'s own tests now. That
-    // check moved to the MIR this lowers to, so it is no longer typeck's own to test. See
-    // `mir::checks::constck`'s module docs for why a `&mut self` receiver is still checked here instead,
-    // at `Typeck::place_mutable_root`'s one remaining call site.
-
-    // -----------------------------------------------------------------
-    // Unit structs
-    // -----------------------------------------------------------------
-
     #[test]
     fn a_unit_struct_constructs_and_checks() {
         accepts("struct Unit {} fun f() -> Unit { return Unit {}; }");
     }
-
-    // -----------------------------------------------------------------
-    // Casting
-    //
-    // `crate::typeck::cast`'s own tests cover the full matrix of which primitive pairs are
-    // allowed; these exercise `check_cast` wiring that module into the rest of type checking,
-    // with the target and source coming from real, possibly still-unresolved expressions,
-    // rather than two `PrimTy`s handed to it directly.
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_widening_int_cast_is_accepted() {
@@ -2370,17 +2131,11 @@ mod tests {
         );
     }
 
-    /// An unconstrained numeric literal cast to a type in its own family behaves exactly like
-    /// giving it that type directly: there is no existing, wider type being narrowed to lose
-    /// anything from.
     #[test]
     fn an_unconstrained_int_literal_casts_directly_to_any_integer_type() {
         accepts("fun f() -> i64 { let x = 1; return x as i64; }");
     }
 
-    /// An integer literal can never unify with a float type (see `Unifier::decompose`), so a
-    /// cast that would cross families has to start from a literal that already has a concrete
-    /// type of its own; it cannot default its way there.
     #[test]
     fn an_unconstrained_int_literal_cannot_cast_across_families() {
         rejects(
@@ -2520,18 +2275,11 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Remaining expression diagnostics
-    // -----------------------------------------------------------------
-
     #[test]
     fn the_two_sides_of_a_compound_assignment_must_have_the_same_type() {
         rejects("fun f() { let mut x = 1; x += true; }", "mismatched types");
     }
 
-    /// `x += y` stores the operator's result back into `x`, so the type the operator produces has
-    /// to be the one it is stored at. An `any N` place peels to `N` for the operator, so the
-    /// `N` it produces no longer matches the place's `any N`.
     #[test]
     fn a_compound_assignment_whose_operator_produces_another_type_is_reported() {
         rejects(
@@ -2544,8 +2292,6 @@ mod tests {
         );
     }
 
-    /// An index base whose type is still an inference variable cannot be resolved to an array or
-    /// an `Index` implementation, so it needs an annotation.
     #[test]
     fn indexing_a_base_of_unknown_type_is_reported() {
         rejects(
@@ -2554,8 +2300,6 @@ mod tests {
         );
     }
 
-    /// `{ .. }` after a path only builds a struct, so a path naming an enum is rejected before any
-    /// field is looked at.
     #[test]
     fn building_with_a_path_that_names_an_enum_is_reported() {
         rejects(
@@ -2565,8 +2309,6 @@ mod tests {
         );
     }
 
-    /// The elided `.{ .. }` takes its type from the expectation, which can name an enum; an enum
-    /// has no fields, so it is not a struct literal.
     #[test]
     fn an_elided_literal_expecting_an_enum_is_reported() {
         rejects(
@@ -2594,8 +2336,6 @@ mod tests {
         );
     }
 
-    /// `?` needs a `Result` or an `Option`, so an operand still typed by an inference variable
-    /// cannot say which.
     #[test]
     fn try_on_an_operand_of_unknown_type_is_reported() {
         rejects(

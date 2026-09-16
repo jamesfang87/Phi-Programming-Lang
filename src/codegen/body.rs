@@ -341,10 +341,6 @@ fn peel_refs(tcx: &mut TyCtx, ty: Ty) -> (Ty, u32) {
     }
     (current, count)
 }
-
-/// The function type every vtable slot for a trait method shares: the receiver erased to one
-/// thin pointer, the remaining parameters at their own ABI, and the return at its own. The
-/// trait method's own signature is what every implementing type's method matches, modulo the
 /// receiver the vtable passes.
 fn dyn_method_fn_type<'ctx>(
     cx: &CodegenCtx<'ctx>,
@@ -1940,14 +1936,6 @@ mod tests {
 
     #[test]
     fn a_scalar_parameter_followed_by_a_fat_one_unpacks_both_at_the_right_offsets() {
-        // `unpack_params` used to compute each parameter's LLVM index from `param_idx` alone --
-        // `param_offset + param_idx` for a one-word (`Scalar`/`Indirect`) parameter, and
-        // `param_offset + param_idx * 2` for a two-word (`Fat`) one. That's only correct when
-        // every parameter before the current one has the same word width the current branch
-        // assumes. Here `n` takes LLVM param 0 (one word) and `s` should take LLVM params 1-2
-        // (two words, since `str` is `Fat`), but the old formula computed `s`'s words as
-        // `1 * 2 = 2` and `3`, one past the last real parameter -- so codegen panicked on the
-        // out-of-range `get_nth_param` before ever reaching this test's assertions.
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun f(n: i32, s: str) -> &[u8] { return s as &[u8]; }");
         let llvm = inkwell::context::Context::create();
@@ -2156,12 +2144,6 @@ mod tests {
         panic!("no function found");
     }
 
-    /// BUG: floating-point `!=` is lowered to `fcmp one` (ordered-not-equal). `ONE` is false for
-    /// a NaN operand, so `nan != nan` evaluates to `false`, contradicting IEEE 754. The correct
-    /// predicate is `fcmp une` (unordered-not-equal). The `==` direction already uses `OEQ`, so
-    /// only this one is inconsistent.
-    ///
-    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
     #[test]
     fn float_not_equal_uses_the_unordered_predicate() {
         let (hir, mut tcx, _types, mir, instances) =

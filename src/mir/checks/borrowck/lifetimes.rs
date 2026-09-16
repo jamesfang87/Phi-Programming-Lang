@@ -269,14 +269,6 @@ fn held_aliases_before_each_statement(
     states
 }
 
-/// Marks every alias that `place` reads through as used at this point, chasing as many
-/// `Deref` projections as needed. Each `Deref` crosses into a different allocation, so the
-/// register accumulated so far (`place.local` plus the `Field`/`ConstantIndex` projections
-/// seen before that `Deref`) is looked up in `held`; if it currently holds an alias, that
-/// alias is marked used and the walk continues from `alias.borrows` (the register the alias
-/// itself points into) with the remaining projections. If `held` has nothing at that
-/// register, the chain is broken -- there is no alias to chase into for the rest of the
-/// projections, so the walk stops instead of folding them onto the stale register.
 fn mark_place_alias_used(
     aliases: &HashMap<AliasId, Alias>,
     held: &HeldAliases,

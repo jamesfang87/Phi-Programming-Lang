@@ -108,10 +108,6 @@ impl From<OwnerNode> for Node {
     }
 }
 
-/// Stores every node belonging to one owner as a single, densely packed `Vec<Node>`.
-///
-/// Looking up a node by its [`LocalId`] is an index into [`Arena::nodes`]. Index zero
-/// always holds the owner itself.
 #[derive(Debug)]
 pub struct Arena {
     pub(crate) nodes: Vec<Node>,

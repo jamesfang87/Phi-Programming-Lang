@@ -415,8 +415,6 @@ mod tests {
         );
     }
 
-    /// The block's own `<T>` group is what matching may bind; the struct's own `T` is a different
-    /// parameter entirely and must not leak in.
     #[test]
     fn an_impls_generics_are_the_blocks_own_parameters() {
         let hir = lower_to_hir(
@@ -465,7 +463,6 @@ mod tests {
         );
     }
 
-    /// The reachable non-nominal case: a path that names a type parameter rather than a type.
     #[test]
     fn extending_a_type_parameter_is_reported_and_dropped() {
         let hir = lower_to_hir(
@@ -552,12 +549,9 @@ mod tests {
         let checker = indexed(&hir);
 
         assert_eq!(crate::testing::messages(), ["`with` must name a trait"]);
-        // The block itself is still perfectly valid as an inherent block, so it stays in the index.
         assert_eq!(checker.extends.len(), 1);
     }
 
-    /// A type with no `extend` block at all answers the same way as one with an empty bucket,
-    /// which is what keeps the query from needing an "unimplemented" case of its own.
     #[test]
     fn a_type_with_no_impls_has_an_empty_bucket() {
         let hir = lower_to_hir("struct Foo {}");

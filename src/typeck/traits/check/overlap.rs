@@ -92,7 +92,6 @@ mod tests {
     use crate::nameres::PrimTy;
     use crate::typeck::traits::TraitRef;
 
-    /// Returns a checker with no program behind it.
     fn empty_checker() -> Typeck<'static> {
         let hir = Box::leak(Box::new(crate::testing::lower_to_hir("")));
         Typeck::new(crate::testing::session(), hir)
@@ -106,7 +105,6 @@ mod tests {
         DefId::from_usize(n)
     }
 
-    /// Returns a header with no trait.
     fn header(generics: Vec<HirId>, self_ty: Ty) -> ExtendHeader {
         ExtendHeader {
             def: def(900),
@@ -124,7 +122,6 @@ mod tests {
         header
     }
 
-    /// `Foo` and `Bar` here are just `DefId`s to build `Adt`s around; `Show` likewise for traits.
     const FOO: usize = 1;
     const BAR: usize = 2;
     const SHOW: usize = 3;
@@ -132,7 +129,6 @@ mod tests {
 
     #[test]
     fn a_fully_generic_impl_overlaps_a_concrete_one() {
-        // `extend<T> Foo<T>` against `extend Foo<i32>`: `T = i32`.
         let mut checker = empty_checker();
         let t = checker.tcx.mk_generic(param(10));
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
@@ -165,8 +161,6 @@ mod tests {
         assert!(!checker.overlaps(&a, &b));
     }
 
-    /// Neither header is more general than the other, which is exactly the case one-way matching
-    /// cannot decide: `Foo<i32, U>` and `Foo<T, bool>` are both satisfied by `Foo<i32, bool>`.
     #[test]
     fn two_partly_concrete_impls_overlap_when_their_arguments_unify() {
         let mut checker = empty_checker();
@@ -213,7 +207,6 @@ mod tests {
         assert!(!checker.overlaps(&a, &b));
     }
 
-    /// One parameter used twice has to take one value in both places.
     #[test]
     fn a_repeated_parameter_must_bind_consistently() {
         let mut checker = empty_checker();
@@ -230,14 +223,11 @@ mod tests {
         assert!(!checker.overlaps(&a, &inconsistent));
     }
 
-    /// A `TyKind::Generic` that is not in the header's own list is a parameter of some enclosing
-    /// definition, so it is a constant here and only matches itself.
     #[test]
     fn a_generic_that_is_not_the_impls_own_parameter_is_rigid() {
         let mut checker = empty_checker();
         let outer = checker.tcx.mk_generic(param(20));
         let i32_ty = checker.tcx.mk_prim(PrimTy::I32);
-        // Declares nothing of its own, so `outer` is rigid rather than bindable.
         let a = header(vec![], checker.tcx.mk_adt(def(FOO), vec![outer]));
         let concrete = header(vec![], checker.tcx.mk_adt(def(FOO), vec![i32_ty]));
         let same_rigid = header(vec![], checker.tcx.mk_adt(def(FOO), vec![outer]));
@@ -246,9 +236,6 @@ mod tests {
         assert!(checker.overlaps(&a, &same_rigid));
     }
 
-    /// Both sides may name the same parameter and still be two different variables. This is what
-    /// a block compared against a copy of itself looks like, and the two bindings have to be
-    /// tracked apart for the comparison to mean anything.
     #[test]
     fn the_two_sides_parameters_are_renamed_apart() {
         let mut checker = empty_checker();
@@ -266,9 +253,6 @@ mod tests {
         assert!(checker.overlaps(&a, &b));
     }
 
-    /// `T` against `Bar<T>` has no finite solution. Without the occurs check the substitution
-    /// becomes cyclic and resolving it never returns, so a regression here hangs rather than
-    /// fails.
     #[test]
     fn the_occurs_check_refuses_a_variable_inside_its_own_binding() {
         let mut checker = empty_checker();
@@ -277,7 +261,6 @@ mod tests {
             checker.tcx.mk_generic(param(11)),
         );
         let bar_u = checker.tcx.mk_adt(def(BAR), vec![u]);
-        // `Foo<T, T>` against `Foo<Bar<U>, U>`: `T = Bar<U>`, and then `Bar<U>` must equal `U`.
         let a = header(vec![param(10)], checker.tcx.mk_adt(def(FOO), vec![t, t]));
         let b = header(
             vec![param(11)],
@@ -322,8 +305,6 @@ mod tests {
         assert!(!checker.overlaps(&a, &b));
     }
 
-    /// The self type and the trait arguments share one substitution, so a parameter used in both
-    /// has to satisfy both at once.
     #[test]
     fn a_parameter_shared_between_the_self_type_and_the_trait_arguments_binds_once() {
         let mut checker = empty_checker();
@@ -353,8 +334,6 @@ mod tests {
         assert!(!checker.overlaps(&a, &disagrees));
     }
 
-    /// Two impls of *different* traits are still compared on their self types alone, which is
-    /// what lets coherence ask whether they can offer a colliding method name.
     #[test]
     fn impls_of_different_traits_overlap_when_their_self_types_do() {
         let mut checker = empty_checker();
@@ -367,7 +346,6 @@ mod tests {
         assert!(checker.overlaps(&a, &inherent));
     }
 
-    /// A header that failed to lower is not a conflict with everything in sight.
     #[test]
     fn an_error_type_never_overlaps() {
         let mut checker = empty_checker();

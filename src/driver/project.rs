@@ -59,7 +59,6 @@ fn init_at(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
 
-    /// A fresh empty directory under `target/`, named after the calling test.
     fn scratch(name: &str) -> PathBuf {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target/test-scratch")
@@ -78,8 +77,6 @@ mod tests {
             dir.join("Phi.toml").is_file(),
             "the manifest is capitalized"
         );
-        // `.exists()` alone can't tell "Phi.toml" from "phi.toml" on a case-insensitive
-        // filesystem (the macOS default), so check the actual directory listing instead.
         let names: Vec<String> = fs::read_dir(&dir)
             .expect("readable")
             .filter_map(|e| e.ok())
@@ -100,8 +97,6 @@ mod tests {
         assert!(manifest.contains("version = \"0.1.0\""), "{manifest}");
     }
 
-    /// The manifest a fresh project gets must be one `Config::load` accepts, or `phi new`
-    /// would produce a project that `phi build` immediately rejects.
     #[test]
     fn a_new_project_is_loadable() {
         let dir = scratch("loadable_project");

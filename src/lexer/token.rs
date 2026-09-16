@@ -239,10 +239,6 @@ impl std::fmt::Display for TokenKind {
     }
 }
 
-/// The kinds that can begin a statement.
-///
-/// The parser's statement recovery stops before these, and the parser's diagnostics use the
-/// same list to recognize a statement that starts where the previous one should have ended.
 pub(crate) const STATEMENT_STARTERS: &[TokenKind] = &[
     TokenKind::LetKw,
     TokenKind::ReturnKw,
@@ -256,10 +252,6 @@ pub(crate) const STATEMENT_STARTERS: &[TokenKind] = &[
     TokenKind::WithKw,
 ];
 
-/// The kinds that can begin a top-level item.
-///
-/// The parser's item recovery stops before these; the parser's tests use the list to check
-/// that every kind really does open an item, so the two cannot drift apart.
 pub(crate) const ITEM_STARTERS: &[TokenKind] = &[
     TokenKind::PublicKw,
     TokenKind::FunKw,

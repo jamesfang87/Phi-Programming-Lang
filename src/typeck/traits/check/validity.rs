@@ -31,11 +31,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Checks the arity of generic arguments used in extend headers.
-    /// This checks (1)the arguments applied to the type the block extends,
-    /// as in `extend Wrap<i32>`, and (2) the arguments applied to the trait it implements,
-    /// as in `extend Foo with Index<i32, bool>`.
-    /// Each list must supply exactly the parameters its declaration takes.
     pub fn check_extend_headers_arity(&mut self) {
         for block in self.extends.all() {
             self.check_extend_header_arity(block);

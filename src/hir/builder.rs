@@ -1,18 +1,6 @@
 use crate::hir::arena::{Arena, Node};
 use crate::hir::ids::{DefId, HirId, LocalId};
 
-/// [`DefIdAllocator`] allocates a new [`DefId`] whenever lowering discovers a new definition. It
-/// also records each definition's lexical parent at the same time.
-///
-/// Lowering must supply the parent at the moment it allocates a `DefId`. That moment is the only
-/// point where the enclosing owner is known for certain. Recording the parent here is what lets
-/// [`Hir::parent`] and [`Hir::module_of`] later answer "where is this def declared?" for the
-/// rest of the compiler.
-///
-/// One instance of [`DefIdAllocator`] is shared across the whole lowering pass.
-///
-/// [`Hir::parent`]: crate::hir::Hir::parent
-/// [`Hir::module_of`]: crate::hir::Hir::module_of
 pub struct DefIdAllocator {
     /// `parents[i]` is the definition lexically enclosing `DefId(i)`. The root module has no
     /// enclosing definition and is recorded as its own parent, which keeps this dense; see
@@ -54,13 +42,6 @@ impl Default for DefIdAllocator {
     }
 }
 
-/// [`ArenaBuilder`] builds one owner's [`Arena`].
-/// Lowering creates a new [`ArenaBuilder`] for every definition that requires an arena.
-///
-/// A nested owner (a closure inside a function body, or a method inside an `extend` block) gets
-/// its own [`ArenaBuilder`] too. Only the nested owner's own definition is recorded into the
-/// parent's arena; the nested owner's children are allocated in the nested owner's arena
-/// instead.
 pub struct ArenaBuilder {
     /// The [`DefId`] of the definition whose arena this builder is building.
     def_id: DefId,
@@ -82,10 +63,6 @@ impl ArenaBuilder {
         self.def_id
     }
 
-    /// Reserves the next [`LocalId`] in this arena.
-    ///
-    /// Call this before lowering a node's children, so the id being reserved is available to
-    /// build the node's own [`HirId`] once its children are done.
     pub fn reserve(&mut self) -> HirId {
         let local_id = LocalId::from_usize(self.slots.len());
         self.slots.push(None);
@@ -134,9 +111,6 @@ mod tests {
         })
     }
 
-    /// Nodes reference their children by `HirId`, so the type system no longer keeps a child in
-    /// its parent's arena. This is where that is caught: a builder refuses an id belonging to
-    /// any owner but its own.
     #[test]
     #[should_panic(expected = "node filled into another owner's arena")]
     fn filling_a_node_under_a_foreign_id_is_caught() {
@@ -147,8 +121,6 @@ mod tests {
         builder.fill(foreign, block(foreign));
     }
 
-    /// A node's own id is what it gets stored under, which is what lets `Hir::node` check an
-    /// arena against itself.
     #[test]
     fn a_filled_node_is_stored_under_its_own_id() {
         let mut builder = ArenaBuilder::new(DefId::from_usize(0));

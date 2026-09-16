@@ -25,7 +25,6 @@ mod tests {
         output.expect("expected a successfully parsed block")
     }
 
-    /// Like [`parse_block`], but doesn't assert the parse was clean, for exercising recovery.
     fn parse_block_with_errors(src: &str) -> (Block, usize) {
         let (tokens, _) = lex_src(src);
         let parser = Parser::new(crate::testing::session());
@@ -63,7 +62,6 @@ mod tests {
         }
     }
 
-    /// A `}` already ends these unambiguously, so no `;` is needed to make one a statement.
     #[test]
     fn block_bodied_expressions_are_statements_without_a_semicolon() {
         for src in [
@@ -83,8 +81,6 @@ mod tests {
         }
     }
 
-    /// Everything else still needs one. A `;`-less trailing expression is the block's value,
-    /// not a statement, so it must stay the last thing in the block.
     #[test]
     fn other_expressions_still_need_a_semicolon_to_be_statements() {
         let block = parse_block("{ g(); h() }");
@@ -94,7 +90,6 @@ mod tests {
         assert!(errors > 0, "a bare call statement should still want a `;`");
     }
 
-    /// A block-bodied statement doesn't consume the block's value.
     #[test]
     fn block_bodied_statement_leaves_the_tail_expression_alone() {
         let block = parse_block("{ if c { 1 } else { 2 } 5 }");
@@ -191,8 +186,6 @@ mod tests {
         }
     }
 
-    /// A bare `return;`, with no value, produces `StmtKind::Return(None)` rather than requiring
-    /// every `return` to name an expression.
     #[test]
     fn parses_bare_return_stmt() {
         let block = parse_block("{ return; }");
@@ -301,8 +294,6 @@ mod tests {
 
     #[test]
     fn parses_nested_block_inside_while_body() {
-        // Exercises the block parser's recursion: a `while` whose body contains a `let` and a
-        // nested `while`.
         let block = parse_block("{ while true { let x = 1; while x < 2 { x; } } }");
         match &only_stmt(&block).kind {
             StmtKind::While { block, .. } => {
@@ -339,8 +330,6 @@ mod tests {
 
     #[test]
     fn recovers_from_a_malformed_statement_and_keeps_parsing_later_ones() {
-        // `1 +;` is broken (a dangling `+` with no right-hand side before the `;`); the `let`
-        // and `return` statements on either side of it should still show up in the tree.
         let (block, error_count) = parse_block_with_errors("{ let a = 1; 1 +; return a; }");
         assert_eq!(error_count, 1);
         assert_eq!(block.stmts.len(), 3);
@@ -360,8 +349,6 @@ mod tests {
 
     #[test]
     fn recovery_does_not_disturb_a_trailing_tail_expression() {
-        // A semicolon-less tail expression must still come through as the block's final
-        // statement, not get swallowed by statement-recovery.
         let block = parse_block("{ let x = 1; x }");
         assert_eq!(block.stmts.len(), 2);
         assert!(matches!(block.stmts[0].kind, StmtKind::Let { .. }));

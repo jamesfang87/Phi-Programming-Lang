@@ -569,8 +569,6 @@ mod tests {
         let ast = ast_from("fun f(e: i32) { match e { x if x > 0 => 2, _ => 0 } }");
         let mut c = Counter::default();
         c.visit_module(ast.root(), &ast);
-        // The `match` itself, its scrutinee, the guard (`x > 0` plus its `x` and `0` operands),
-        // and both arm bodies.
         assert_eq!(c.exprs, 7, "the arm's guard was not visited");
     }
 

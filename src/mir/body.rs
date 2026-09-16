@@ -15,10 +15,6 @@ pub enum BodyKind {
     Closure,
 }
 
-/// `Body` is the MIR of one definition.
-/// Only definitions with executable code has a `Body`.
-/// This means that only functions and closures have a `Body` while
-/// structs, enums, and traits do not
 #[derive(Debug)]
 pub struct Body {
     pub def_id: DefId,

@@ -387,10 +387,6 @@ impl<'a> BodyLowerCtx<'a> {
         Constant { ty, kind }
     }
 
-    /// The enum `DefId` and declared-order [`VariantIdx`] a variant pattern or variant
-    /// expression names, re-derived from pure HIR plus `ty` (the enum's own recorded `Adt`
-    /// type) -- cheap, and needs no typeck-side state, since a variant is nominal and never
-    /// ambiguous the way a method call is. See `planning/mir.md`'s "Pattern matching" section.
     pub(crate) fn variant_idx_for(
         &self,
         ty: Ty,

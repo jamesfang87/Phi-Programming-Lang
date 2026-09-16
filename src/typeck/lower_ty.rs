@@ -358,21 +358,12 @@ mod tests {
     use crate::typeck::ty::ctx::TyCtx;
     use crate::typeck::ty::{Ty, TyKind};
 
-    /// Everything a lowered program's types are looked up through. The four travel together
-    /// because a `Ty` is an index into `tcx`, and a `TypeResolutions` entry is keyed by a `HirId`
-    /// that only means something against `hir`.
     struct Checked {
         hir: Hir,
         tcx: TyCtx,
         types: TypeResolutions,
     }
 
-    /// Runs `src` through the whole pipeline up to and including `collect`.
-    ///
-    /// Diagnostics are cleared after name resolution, so what a test sees afterwards is only
-    /// what type collection itself reported. Name resolution always reports every lang item as
-    /// missing here: the core library is not registered for these tests, since compiling it
-    /// alongside a two-line fixture would swamp what each test is about.
     fn check(src: &str) -> Checked {
         let hir = lower_to_hir(src);
         crate::testing::clear_diagnostics();
@@ -385,7 +376,6 @@ mod tests {
         }
     }
 
-    /// Returns the messages `collect` reported, in order.
     fn diagnostics() -> Vec<String> {
         crate::testing::diagnostics()
             .into_iter()
@@ -394,7 +384,6 @@ mod tests {
     }
 
     impl Checked {
-        /// Returns the `DefId` of the top-level definition named `name`.
         fn def(&self, name: &str) -> DefId {
             let root = self.hir.root();
             root.items
@@ -413,12 +402,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("no definition named {name:?}"))
         }
 
-        /// Returns the `DefId` of the program's sole `extend` block.
         fn extend(&self) -> DefId {
             crate::testing::first_extend(&self.hir)
         }
 
-        /// Returns the type recorded for a definition as a whole.
         fn def_ty(&self, def: DefId) -> Ty {
             self.types
                 .ty_of_def(def)
@@ -435,7 +422,6 @@ mod tests {
             self.tcx.kind(ty)
         }
 
-        /// Returns the signature of the function `name` declares, as `(params, ret)`.
         fn sig(&self, def: DefId) -> (&[Ty], Option<Ty>) {
             let TyKind::Fun { params, ret } = self.kind(self.def_ty(def)) else {
                 panic!("a function's type is always a Fun type");
@@ -443,7 +429,6 @@ mod tests {
             (params, *ret)
         }
 
-        /// Returns the `Ty` of the `i`th generic parameter `def` declares.
         fn generic(&self, def: DefId, i: usize) -> Ty {
             let generics = match self.hir.def(def) {
                 OwnerNode::Struct(s) => &s.generics,
@@ -571,8 +556,6 @@ mod tests {
         let f = checked.def("f");
         let (params, _) = checked.sig(f);
 
-        // The arguments are dropped rather than the whole annotation: `T` is still the type the
-        // parameter has, so a body mentioning `x` can be checked against something.
         assert_eq!(params[0], checked.generic(f, 0));
         assert_eq!(
             diagnostics(),
@@ -633,8 +616,6 @@ mod tests {
         assert_eq!(diagnostics(), Vec::<String>::new());
     }
 
-    /// Digit separators are stripped from the length's literal value, the same as from any
-    /// other numeric literal, before the constant is folded.
     #[test]
     fn an_array_length_with_digit_separators_is_folded() {
         let checked = check("fun f(a: [i32; 1_0]) {}");
@@ -727,9 +708,6 @@ mod tests {
         assert_eq!(checked.kind(*base), &TyKind::Primitive(PrimTy::I32));
     }
 
-    /// A trait names every type that implements it, not one type of its own, so writing it bare
-    /// in a type position, rather than `dyn Show`, or as a bound on a generic parameter, is a
-    /// mistake, not a shorthand.
     #[test]
     fn a_bare_trait_used_as_a_type_is_rejected() {
         let checked = check(
@@ -745,10 +723,6 @@ mod tests {
         );
     }
 
-    /// The same rejection wherever a trait is named in an ordinary type position, not only a
-    /// parameter, and it is the only diagnostic even though `Index` is applied to arguments
-    /// here too: naming the trait bare is already the whole mistake, so there is nothing to gain
-    /// from also complaining about its argument count.
     #[test]
     fn a_bare_trait_is_rejected_in_a_field_even_when_applied_to_arguments() {
         let checked = check(
@@ -787,8 +761,6 @@ mod tests {
         );
     }
 
-    /// The case `dyn` could not express until it carried an argument list of its own: a trait
-    /// that declares parameters, applied to them.
     #[test]
     fn dyn_carries_the_traits_generic_arguments() {
         let checked = check(
@@ -816,8 +788,6 @@ mod tests {
         );
     }
 
-    /// A `dyn` applied to the wrong number of arguments is an error for the same reason a struct
-    /// is, and, unlike before, one the user can now fix by writing the arguments.
     #[test]
     fn dyn_checks_the_traits_argument_count() {
         let checked = check(
@@ -932,14 +902,6 @@ mod tests {
         assert_eq!(params[0], params[1]);
     }
 
-    // -----------------------------------------------------------------
-    // Deeper composition
-    // -----------------------------------------------------------------
-    //
-    // A reference wrapping another reference (`& &T`) or wrapping `any` (`&any T`) is rejected
-    // at parse time -- see `parser::type_parser::tests::rejects_ref_wrapping_a_ref_type` and
-    // `rejects_ref_wrapping_an_any_type` -- so there is nothing left for typeck to lower here.
-
     #[test]
     fn a_function_type_is_usable_as_a_parameter_annotation() {
         let checked = check("fun f(callback: fun(i32) -> bool) {}");
@@ -1004,8 +966,6 @@ mod tests {
         assert_eq!(checked.kind(l3[0]), &TyKind::Primitive(PrimTy::I32));
     }
 
-    /// A struct's own field may itself be a function type over the struct's generic parameter --
-    /// `T` inside `fun(T) -> T` reaches the same node `Wrap`'s own generic does.
     #[test]
     fn a_generic_field_may_be_a_function_type_over_the_structs_own_parameter() {
         let checked = check("struct Container<T> { f: fun(T) -> T }");
@@ -1021,10 +981,6 @@ mod tests {
         assert_eq!(*ret, Some(t));
     }
 
-    /// `Self` used inside a tuple field. Typeck does not size-check types (there is no codegen
-    /// yet to make an infinitely-sized type observable), so this lowers exactly like any other
-    /// composite containing an `Adt`; nothing here rejects a struct that could never actually
-    /// be constructed.
     #[test]
     fn self_may_appear_nested_inside_a_tuple_field() {
         let checked = check("struct Wrap<T> { pair: (Self, i32) }");
@@ -1038,8 +994,6 @@ mod tests {
         assert_eq!(elems[0], checked.def_ty(wrap));
     }
 
-    /// A trait declaring more than one method, each mentioning both the trait's own generic
-    /// parameter and `Self`.
     #[test]
     fn a_traits_own_generic_and_self_both_appear_across_its_methods() {
         let checked = check(

@@ -13,11 +13,6 @@ impl Symbol {
     }
 }
 
-/// A string interner: maps source text to compact [`Symbol`] handles and back.
-///
-/// Owned by [`Session`](crate::session::Session). Interned text is leaked so a resolved name is
-/// a `&'static str` that outlives the interner that produced it, which lets symbol resolution
-/// happen anywhere a [`Symbol`] is available without carrying an interner reference.
 #[derive(Default)]
 pub struct Interner {
     strings: Vec<&'static str>,

@@ -8,13 +8,6 @@ use inkwell::targets::{
 
 use super::CodegenError;
 
-/// What `emit` needs to turn a verified module into an object file and link it.
-///
-/// Deliberately not [`crate::driver::cli::Config`], which carries the parsed `Phi.toml` --
-/// project name, version, edition, and source root. Taking that here would make codegen depend
-/// on the driver, and on a manifest existing at all; `pipeline::build` projects the two fields
-/// that reach this layer (`target/<name>` and `mode == Release`) and the tests below construct
-/// it directly, with no manifest anywhere.
 pub struct EmitOptions {
     pub output_path: PathBuf,
     pub release: bool,
@@ -115,12 +108,6 @@ mod tests {
         dir
     }
 
-    /// Points the linked executable's `main` at the fixture's own `main`.
-    ///
-    /// These fixtures declare `main` inside a module rather than at the crate root, so there is
-    /// no crate-root entry point and `codegen` emits the do-nothing `main` it gives any crate
-    /// with none. That placeholder is replaced here; adding a second `main` instead would let
-    /// LLVM rename one of them, and the binary would run whichever it kept.
     fn append_c_main_trampoline<'ctx>(
         llvm: &'ctx inkwell::context::Context,
         module: &Module<'ctx>,
@@ -322,10 +309,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Digit-separated numeric literals and float literal patterns have to survive the whole
-    /// pipeline: each once panicked in MIR lowering instead of compiling. `==` on `i32`/`f64`
-    /// comes from [`crate::testing::OPS_PREAMBLE`], whose `Eq` impls the lang item resolves
-    /// from the root module without any import.
     #[test]
     fn digit_separated_literals_and_float_patterns_build_and_run() {
         let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[

@@ -98,8 +98,6 @@ mod tests {
         );
     }
 
-    /// A crate with no entry point still builds; the executable simply does nothing. Only the
-    /// severity separates this from the malformed-`main` cases below.
     #[test]
     fn a_missing_main_is_only_a_warning() {
         assert_eq!(

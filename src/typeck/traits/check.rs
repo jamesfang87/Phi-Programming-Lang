@@ -1,10 +1,3 @@
-//! Checking that the program's traits are well formed: that implementations do not conflict,
-//! that each implementation matches its trait, that every bound names a trait, and that every
-//! header's argument count fits.
-//!
-//! These rules are program-level: they read declarations, not bodies. The per-body trait
-//! questions live in [`crate::typeck::traits::solve`].
-
 mod coherence;
 mod members;
 mod overlap;

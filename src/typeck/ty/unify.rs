@@ -256,10 +256,6 @@ mod tests {
         unifier.decompose(tcx, expected, found).map(|_| ())
     }
 
-    // -----------------------------------------------------------------
-    // find_deep: resolving nested variables
-    // -----------------------------------------------------------------
-
     #[test]
     fn find_deep_replaces_a_variable_nested_inside_a_type() {
         let mut tcx = TyCtx::new();
@@ -305,10 +301,6 @@ mod tests {
         assert_eq!(unifier.unify(&tcx, var, i32_ty), Ok(()));
         assert_eq!(unifier.find_deep(&mut tcx, open), closed);
     }
-
-    // -----------------------------------------------------------------
-    // compatible: wildcards (Error, Never, Var::Any)
-    // -----------------------------------------------------------------
 
     #[test]
     fn error_is_compatible_with_a_primitive() {
@@ -403,10 +395,6 @@ mod tests {
         assert_eq!(compatible(&mut unifier, &tcx, int, any), Ok(()));
     }
 
-    // -----------------------------------------------------------------
-    // compatible: Var::Int
-    // -----------------------------------------------------------------
-
     #[test]
     fn int_var_is_compatible_with_every_integer_primitive() {
         let integers = [
@@ -484,10 +472,6 @@ mod tests {
         assert_eq!(compatible(&mut unifier, &tcx, a, b), Ok(()));
     }
 
-    // -----------------------------------------------------------------
-    // compatible: Var::Float
-    // -----------------------------------------------------------------
-
     #[test]
     fn float_var_is_compatible_with_every_float_primitive() {
         for prim in [PrimTy::F32, PrimTy::F64] {
@@ -535,11 +519,6 @@ mod tests {
 
         assert_eq!(compatible(&mut unifier, &tcx, a, b), Ok(()));
     }
-
-    // -----------------------------------------------------------------
-    // compatible: structural equality (Primitive, Generic, SelfParam, Adt, Ref, Any, Tuple,
-    // Array, Fun, Dyn), and the cross-shape fallback
-    // -----------------------------------------------------------------
 
     #[test]
     fn same_primitive_is_compatible() {
@@ -633,9 +612,6 @@ mod tests {
         assert_eq!(compatible(&mut unifier, &tcx, a, b), Ok(()));
     }
 
-    /// The shapes agree, with the same `def` and the same argument count, so this is not
-    /// something `decompose` can answer; it takes recursing into the argument to find `i32`
-    /// against `bool`. The failure is still reported against the two `Adt`s the caller passed.
     #[test]
     fn adt_with_same_def_and_different_args_is_incompatible() {
         let mut tcx = TyCtx::new();
@@ -708,7 +684,6 @@ mod tests {
         let b = tcx.mk_ref(bool_ty, Mutability::Immutable);
         let mut unifier = Unifier::new();
 
-        // Mutability matches, so only recursing into the base type finds the mismatch.
         assert_eq!(
             unifier.unify(&tcx, a, b),
             Err(UnifyError::Mismatch {
@@ -738,7 +713,6 @@ mod tests {
         let b = tcx.mk_any(bool_ty);
         let mut unifier = Unifier::new();
 
-        // `any T` is the same shape whatever `T` is, so this is found by recursing into it.
         assert_eq!(
             unifier.unify(&tcx, a, b),
             Err(UnifyError::Mismatch {
@@ -786,7 +760,6 @@ mod tests {
         let b = tcx.mk_tuple(vec![bool_ty]);
         let mut unifier = Unifier::new();
 
-        // Same arity, so the elements have to be compared to find the mismatch.
         assert_eq!(
             unifier.unify(&tcx, a, b),
             Err(UnifyError::Mismatch {
@@ -872,7 +845,6 @@ mod tests {
         let b = tcx.mk_fun(vec![], Some(bool_ty));
         let mut unifier = Unifier::new();
 
-        // Both return *something*, so the return types have to be compared to tell them apart.
         assert_eq!(
             unifier.unify(&tcx, a, b),
             Err(UnifyError::Mismatch {
@@ -960,10 +932,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // unify: end-to-end behavior and union-find bookkeeping
-    // -----------------------------------------------------------------
-
     #[test]
     fn unifying_a_type_with_itself_succeeds() {
         let mut tcx = TyCtx::new();
@@ -997,11 +965,6 @@ mod tests {
         assert_eq!(unifier.find_shallow(a), unifier.find_shallow(c));
     }
 
-    /// Union by size keeps a class shallow, so a large class still resolves through
-    /// `find_shallow`'s parent-walking loop without the chain ever getting deep. This is a
-    /// correctness check on that loop over a class far larger than the handful the other tests
-    /// build, not a stack-depth guard, since there is no construction here that makes the tree
-    /// tall.
     #[test]
     fn every_member_of_a_large_class_resolves_to_one_representative() {
         const MEMBERS: usize = 50_000;
@@ -1016,15 +979,10 @@ mod tests {
         }
         assert_eq!(unifier.unify(&tcx, vars[0], i32_ty), Ok(()));
 
-        // The concrete type outranks every variable however large their class grew.
         for &var in &vars {
             assert_eq!(unifier.find_shallow(var), i32_ty);
         }
     }
-
-    // -----------------------------------------------------------------
-    // unify: a concrete type is preferred as the representative over a type variable
-    // -----------------------------------------------------------------
 
     #[test]
     fn unifying_a_var_with_a_concrete_type_makes_the_concrete_type_the_representative() {
@@ -1039,8 +997,6 @@ mod tests {
 
     #[test]
     fn unifying_a_concrete_type_with_a_var_makes_the_concrete_type_the_representative() {
-        // Same as above with the arguments swapped: which side the concrete type is passed on
-        // shouldn't matter.
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let var = tcx.next_infer_var();
@@ -1052,16 +1008,11 @@ mod tests {
 
     #[test]
     fn a_concrete_type_stays_the_representative_no_matter_how_many_vars_join_it() {
-        // Regression guard for the size heuristic: without a concrete-over-variable
-        // preference, a big enough pile of variables unified first could outweigh the
-        // concrete type and make a variable the representative instead.
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let vars: Vec<Ty> = (0..8).map(|_| tcx.next_infer_var()).collect();
         let mut unifier = Unifier::new();
 
-        // Merge every variable into one class first, so its size heuristically dwarfs the
-        // concrete type's size-of-one class.
         for pair in vars.windows(2) {
             assert_eq!(unifier.unify(&tcx, pair[0], pair[1]), Ok(()));
         }
@@ -1085,8 +1036,6 @@ mod tests {
         assert_eq!(unifier.find_shallow(b), i32_ty);
     }
 
-    /// An `{integer}` merged with an `_` has to stay the representative: `_` unifies with
-    /// anything, so pointing the integer variable at it would drop the one thing the class knew.
     #[test]
     fn a_numeric_var_outranks_an_unconstrained_var() {
         let mut tcx = TyCtx::new();
@@ -1097,7 +1046,6 @@ mod tests {
         assert_eq!(unifier.unify(&tcx, any, int), Ok(()));
         assert_eq!(unifier.find_shallow(any), int);
 
-        // Same in the other order: which side it was passed on must not decide this.
         let mut tcx = TyCtx::new();
         let any = tcx.next_infer_var();
         let float = tcx.next_float_var();
@@ -1107,10 +1055,6 @@ mod tests {
         assert_eq!(unifier.find_shallow(any), float);
     }
 
-    /// The end-to-end shape of the same defect: `match .. { _ => 1, _ => true }` checks both arms
-    /// against one type, and the first unification is `_` against `{integer}`. With the `_` kept
-    /// as the representative, the second arm then unified `bool` against an unconstrained
-    /// variable and the whole `match` was accepted.
     #[test]
     fn a_var_that_absorbed_an_int_var_still_rejects_bool() {
         let mut tcx = TyCtx::new();
@@ -1131,29 +1075,18 @@ mod tests {
 
     #[test]
     fn two_vars_unify_by_size_when_neither_is_concrete() {
-        // With no concrete type in play, the original size-based heuristic still governs
-        // which variable becomes the representative: the larger class wins.
         let mut tcx = TyCtx::new();
         let a = tcx.next_infer_var();
         let b = tcx.next_infer_var();
         let c = tcx.next_infer_var();
         let mut unifier = Unifier::new();
 
-        // `a` is folded into `b` first, so `b`'s class has size 2 by the time it meets `c`
-        // (size 1), and should remain the representative.
         assert_eq!(unifier.unify(&tcx, a, b), Ok(()));
         let b_repr = unifier.find_shallow(b);
         assert_eq!(unifier.unify(&tcx, b, c), Ok(()));
         assert_eq!(unifier.find_shallow(c), b_repr);
     }
 
-    // -----------------------------------------------------------------
-    // unify: the occurs check
-    // -----------------------------------------------------------------
-
-    /// Without this the bind succeeds and the *structure* becomes cyclic: resolving the tuple
-    /// resolves `?0`, which resolves back to the tuple. Anything walking a type's structure then
-    /// runs forever, so the test would hang rather than fail.
     #[test]
     fn a_variable_cannot_be_bound_to_a_type_containing_it() {
         let mut tcx = TyCtx::new();
@@ -1166,7 +1099,6 @@ mod tests {
             unifier.unify(&tcx, var, tuple),
             Err(UnifyError::Infinite { var, found: tuple })
         );
-        // The refused bind leaves the variable free.
         assert_eq!(unifier.find_shallow(var), var);
     }
 
@@ -1183,8 +1115,6 @@ mod tests {
         ));
     }
 
-    /// The indirect case: neither bind contains a variable syntactically, but the second
-    /// closes a loop through the first. `occurs` resolves as it descends, which is what sees it.
     #[test]
     fn a_cycle_closed_through_another_variable_is_caught() {
         let mut tcx = TyCtx::new();
@@ -1194,16 +1124,13 @@ mod tests {
         let tuple_a = tcx.mk_tuple(vec![a]);
         let mut unifier = Unifier::new();
 
-        // `a = (b,)` is fine on its own.
         assert_eq!(unifier.unify(&tcx, a, tuple_b), Ok(()));
-        // `b = (a,)` would make both infinite.
         assert!(matches!(
             unifier.unify(&tcx, b, tuple_a),
             Err(UnifyError::Infinite { .. })
         ));
     }
 
-    /// The check must not reject an ordinary nested bind involving a *different* variable.
     #[test]
     fn a_variable_may_be_bound_to_a_type_containing_another_variable() {
         let mut tcx = TyCtx::new();
@@ -1231,7 +1158,6 @@ mod tests {
                 found: bool_ty
             })
         );
-        // Each type remains its own representative; neither was folded into the other.
         assert_eq!(unifier.find_shallow(i32_ty), i32_ty);
         assert_eq!(unifier.find_shallow(bool_ty), bool_ty);
     }
@@ -1259,19 +1185,8 @@ mod tests {
         assert_eq!(unifier.unify(&tcx, var, i32_ty), Ok(()));
     }
 
-    // -----------------------------------------------------------------
-    // unify: structural recursion into composites
-    //
-    // Interning makes handle equality mean type equality only for ground types. A composite
-    // holding an unresolved variable is a different handle from the resolved composite, so
-    // unifying the two takes recursing into the components, which is what these cover.
-    // -----------------------------------------------------------------
-
     #[test]
     fn a_tuple_holding_a_var_unifies_with_the_resolved_tuple() {
-        // The shape `fun f() -> (i32, i32) { return (1, 2); }` produces: the literals are
-        // integer variables, so the returned tuple is `({integer}, {integer})` against the
-        // declared `(i32, i32)`.
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let (v1, v2) = (tcx.next_int_var(), tcx.next_int_var());
@@ -1280,15 +1195,12 @@ mod tests {
         let mut unifier = Unifier::new();
 
         assert_eq!(unifier.unify(&tcx, expected, found), Ok(()));
-        // Unifying the tuples is what resolved the elements.
         assert_eq!(unifier.find_shallow(v1), i32_ty);
         assert_eq!(unifier.find_shallow(v2), i32_ty);
     }
 
     #[test]
     fn unification_recurses_through_every_composite_shape() {
-        // One case per variant that holds a component, so a shape that stops recursing can't
-        // slip through by being the only one left out.
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let def = DefId::from_usize(0);
@@ -1393,8 +1305,6 @@ mod tests {
 
     #[test]
     fn a_mismatch_inside_a_composite_is_reported_against_the_outer_types() {
-        // The caller asked about two tuples, so that is what the diagnostic should name, not
-        // the `i32`/`bool` pair the recursion happened to bottom out on.
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let bool_ty = tcx.mk_prim(PrimTy::Bool);
@@ -1410,8 +1320,6 @@ mod tests {
 
     #[test]
     fn a_var_kind_error_inside_a_composite_keeps_naming_the_variable() {
-        // Unlike a plain mismatch, `ExpectedInteger` already says which variable went wrong, so
-        // it is more useful than the outer types and is passed through as-is.
         let mut tcx = TyCtx::new();
         let bool_ty = tcx.mk_prim(PrimTy::Bool);
         let var = tcx.next_int_var();
@@ -1430,8 +1338,6 @@ mod tests {
 
     #[test]
     fn two_concrete_composites_that_unify_are_not_merged_into_one_class() {
-        // Nothing to record: they were already proven equal componentwise, and merging them
-        // would make a concrete type a non-root member of a class.
         let mut tcx = TyCtx::new();
         let i32_ty = tcx.mk_prim(PrimTy::I32);
         let var = tcx.next_int_var();
@@ -1443,14 +1349,6 @@ mod tests {
         assert_eq!(unifier.find_shallow(expected), expected);
         assert_eq!(unifier.find_shallow(found), found);
     }
-
-    // -----------------------------------------------------------------
-    // unify: Never/Error succeed without merging
-    //
-    // All three of `Never`, `Error` and `Unit` are interned once per pass, so a single merge
-    // would make every later use of that singleton, anywhere in the program, resolve to
-    // whatever it was merged with.
-    // -----------------------------------------------------------------
 
     #[test]
     fn unifying_with_never_does_not_merge_the_two_classes() {
@@ -1486,9 +1384,6 @@ mod tests {
 
     #[test]
     fn never_stays_neutral_across_unrelated_unifications() {
-        // The shape of `fun f() { return true; }` followed by `fun g() { return 1; }` back when
-        // a missing return type lowered to `Never`: unifying `Never` with `bool` for `f` used to
-        // make `Never` *be* `bool`, so `g`'s integer literal was then checked against `bool`.
         let mut tcx = TyCtx::new();
         let bool_ty = tcx.mk_prim(PrimTy::Bool);
         let int_var = tcx.next_int_var();
@@ -1510,9 +1405,6 @@ mod tests {
 
     #[test]
     fn unit_is_never_folded_into_another_class() {
-        // `Unit` is a per-pass singleton like `Never`, but unlike `Never` it does not absorb --
-        // it is a real type that only unifies with itself and with a variable. A variable
-        // unified with it must therefore point at `Unit`, not the other way round.
         let mut tcx = TyCtx::new();
         let unit = tcx.unit();
         let var = tcx.next_infer_var();

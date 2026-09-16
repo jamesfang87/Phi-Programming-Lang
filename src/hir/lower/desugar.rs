@@ -152,10 +152,6 @@ impl OwnerLowerer<'_, '_> {
                     let loop_body = low.synth_block(span, |low, _loop_block_id| {
                         let match_expr = low.synth_expr(span, |low, _match_id| {
                             let next_call = low.synth_expr(span, move |low, _call_id| {
-                                // `__iter` is bound just above, in this same desugaring, so its
-                                // `HirId` is already at hand -- no need to go through
-                                // `NameResolutions`, which (being AST-level) never saw this
-                                // synthesized binding or this synthesized use of it at all.
                                 let receiver = low.synth_expr(span, move |_, _| {
                                     ExprKind::Path(crate::hir::Path {
                                         segments: vec![iter_ident],

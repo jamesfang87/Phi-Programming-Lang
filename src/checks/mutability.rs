@@ -223,8 +223,6 @@ mod tests {
         ));
     }
 
-    /// `let mut` (or a plain `let`) applies to every name a pattern introduces, not only the
-    /// first one written.
     #[test]
     fn tuple_destructured_mutability_applies_to_every_binding_the_pattern_introduces() {
         accepts("fun f() { let mut (a, b) = (1, 2); a = 3; b = 4; }");
@@ -238,8 +236,6 @@ mod tests {
         );
     }
 
-    /// A `for` binding, a `match` arm's, and a `with` lend have no `mut` syntax of their own, so
-    /// this check leaves all three unrestricted.
     #[test]
     fn constness_does_not_restrict_bindings_that_are_not_a_let() {
         accepts(
@@ -272,8 +268,6 @@ mod tests {
         );
     }
 
-    /// Neither a parameter nor `self` has `mut` syntax of its own, so this check leaves both
-    /// unrestricted.
     #[test]
     fn parameters_and_self_fields_remain_unrestricted() {
         accepts("fun f(x: i32) { x = 5; }");
@@ -317,8 +311,6 @@ mod tests {
         );
     }
 
-    /// A `&mut self` call reached two levels down an immutable `let` is rooted at the chain's
-    /// root binding, not the field it was reached through.
     #[test]
     fn a_mut_self_call_reached_through_a_field_chain_is_rooted_at_the_lets_own_binding() {
         rejects(

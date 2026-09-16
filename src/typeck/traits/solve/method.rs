@@ -42,12 +42,6 @@ pub(crate) struct Candidate {
     extend_block_origin: Option<(DefId, Vec<Ty>)>,
 }
 
-// `let p = Pair { first: 4, second: 6 }` gives `p` the type `Pair<{integer}, {integer}>`, and a
-// concrete `extend Pair<i32, i32>` cannot be matched against that: header matching is one-way and
-// never binds the caller's inference variables, so probing for a method does not decide the
-// receiver's type. The call is therefore parked until the body is done constraining `p`, by which
-// point the literals have either been pinned by something else or defaulted.
-/// A method call set aside because its receiver's type was still open when the call was reached.
 pub(crate) struct PendingMethodCall {
     id: HirId,
     receiver: HirId,
@@ -269,10 +263,6 @@ impl<'hir> Typeck<'hir> {
         // what the receiver's type is, so unlike a trait bound it cannot be answered against a
         // type that is still open.
         if matches!(self.tcx.kind(receiver_ty), TyKind::Var(_)) {
-            // A receiver that is still a bare variable is usually the result of another call
-            // that has itself been parked -- the `a.me()` in `a.me().get()`. Parking this one
-            // too lets it be answered once that receiver has a type. No candidate could be found
-            // against a bare variable anyway, so nothing is lost by waiting.
             if !self.checking_pending_method_calls {
                 return self.defer_method_call(id, receiver, member, args);
             }
@@ -290,10 +280,6 @@ impl<'hir> Typeck<'hir> {
         // Step 3: collect every candidate `member` could name on `base`.
         let candidates = self.method_candidates(base, member.text, owner);
         if candidates.is_empty() {
-            // Finding nothing is only final once the receiver's type is. While it still holds
-            // inference variables, a concrete `extend` header could not have matched it whether
-            // or not the method exists, so this is not yet an answer -- park the call and ask
-            // again at the end of the body. See [`PendingMethodCall`].
             if !self.checking_pending_method_calls && self.mentions_infer_var(receiver_ty) {
                 return self.defer_method_call(id, receiver, member, args);
             }
@@ -317,12 +303,6 @@ impl<'hir> Typeck<'hir> {
     // Deferred method calls
     // -----------------------------------------------------------------
 
-    /// Parks a call whose receiver is not yet resolved enough to choose a candidate, handing
-    /// back a fresh variable to stand in for its type.
-    ///
-    /// The arguments are deliberately left unchecked. They are checked against the chosen
-    /// method's parameters once the call is resolved, which is what lets a literal argument take
-    /// its type from the parameter it is passed to rather than from nothing.
     fn defer_method_call(
         &mut self,
         id: HirId,
@@ -341,22 +321,7 @@ impl<'hir> Typeck<'hir> {
         result
     }
 
-    /// Re-checks every call [`Typeck::defer_method_call`] parked, now that the body has placed
-    /// every constraint it is going to on their receivers.
-    ///
-    /// A receiver still carrying unconstrained numeric variables at this point never will be
-    /// constrained, so those are bound to their defaults first -- `{integer}` to `i32` -- which
-    /// is what makes `Pair<{integer}, {integer}>` finally match `extend Pair<i32, i32>`.
     pub(crate) fn check_pending_method_calls(&mut self) {
-        // A parked call's arguments are only checked once it is checked, so checking one can park
-        // another: in `a.twice(b.get())`, `b.get()` is first reached while `a.twice` is being
-        // checked. Checking therefore loops rather than making a single pass.
-        //
-        // `checking_pending_method_calls` bounds that loop. A call reaching here a second time has
-        // already had its receiver's defaults committed once, so parking it again could not make
-        // progress; with the flag set it reports instead, like any other call whose method
-        // cannot be found. That is what stops a receiver holding a variable no default applies
-        // to from cycling forever.
         let mut checked_once: HashSet<HirId> = HashSet::new();
         // Checked front to back: a call parked while checking an earlier one depends on that
         // earlier one's result, so the order they were parked in is the order they can be
@@ -370,28 +335,14 @@ impl<'hir> Typeck<'hir> {
                 self.check_method_call(pending.id, pending.receiver, pending.member, &pending.args);
 
             if matches!(self.tcx.kind(found), TyKind::Error) {
-                // `unify` treats `Error` as matching anything *and records nothing about the
-                // match*, so tying the placeholder to it would leave the placeholder unbound and
-                // this expression typed as a bare variable. `mir::lower` decides whether to skip
-                // a body by looking for a node typed `Error`, so it would then lower a call that
-                // type checking never resolved. Write the error onto the call itself instead.
                 self.types.record(pending.id, found);
             } else {
-                // The placeholder handed out when the call was parked is already recorded as
-                // this expression's type and may have been unified into its surroundings, so the
-                // real result is tied back to it rather than replacing it. A mismatch is
-                // reported where the placeholder was used, so it is left to that unification.
                 let _ = self.unifier.unify(&self.tcx, pending.result, found);
             }
         }
         self.checking_pending_method_calls = false;
     }
 
-    /// Binds every still-unconstrained integer/float variable inside `ty` to its default type.
-    ///
-    /// [`writeback`](Typeck::writeback) applies the same defaults, but only to the types it
-    /// stores; the unifier itself keeps the variables open. A deferred call has to close them
-    /// for real, since the candidate's header is matched against the receiver rigidly.
     pub(crate) fn commit_numeric_defaults(&mut self, ty: Ty) {
         let resolved = self.unifier.find_deep(&mut self.tcx, ty);
 
@@ -516,10 +467,6 @@ impl<'hir> Typeck<'hir> {
             .collect()
     }
 
-    /// Returns the candidate a `dyn Show` receiver offers: it implements exactly the trait it
-    /// names, so it offers exactly what that trait declares. There is no `extend` block behind
-    /// it, since `extend` blocks are nominal, so this is a rule here the same way it is a rule in
-    /// the query.
     fn candidates_from_dyn(&mut self, base: Ty, member: Symbol) -> Vec<Candidate> {
         let TyKind::Dyn { trait_, args } = self.tcx.kind(base).clone() else {
             return Vec::new();
@@ -928,15 +875,12 @@ mod tests {
         typeck_src as check,
     };
 
-    /// Runs the checker through the point candidate collection reads, without checking function
-    /// bodies.
     fn collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
         let checker = checker_through(hir, TypeckStage::Index);
         crate::testing::clear_diagnostics();
         checker
     }
 
-    /// Returns the `DefId` of the top-level definition named `name`.
     fn named(checker: &Typeck<'_>, name: &str) -> DefId {
         crate::testing::named_def(checker.hir, name)
     }
@@ -947,10 +891,6 @@ mod tests {
             CandidateSource::Inherent => panic!("this candidate is inherent"),
         }
     }
-
-    // -----------------------------------------------------------------
-    // Candidate collection
-    // -----------------------------------------------------------------
 
     #[test]
     fn an_inherent_block_offers_the_methods_it_defines() {
@@ -994,8 +934,6 @@ mod tests {
         assert_eq!(trait_of(&candidates[0]), show);
     }
 
-    /// A defaulted method is available without appearing in the block, so the candidate is the
-    /// trait's own declaration.
     #[test]
     fn a_defaulted_method_is_offered_by_an_impl_that_does_not_write_it() {
         let hir = lower_to_hir(
@@ -1017,8 +955,6 @@ mod tests {
         assert_eq!(candidates[0].method, declared.functions[0]);
     }
 
-    /// The index has nothing to say about a bare parameter, so the environment is the only thing
-    /// that can answer.
     #[test]
     fn a_bound_in_scope_offers_its_traits_methods_on_a_parameter() {
         let hir = lower_to_hir(
@@ -1035,7 +971,6 @@ mod tests {
         assert_eq!(trait_of(&candidates[0]), show);
     }
 
-    /// A bound on some *other* parameter says nothing about this one.
     #[test]
     fn a_bound_on_another_parameter_is_not_offered() {
         let hir = lower_to_hir(
@@ -1076,8 +1011,6 @@ mod tests {
         );
     }
 
-    /// An `extend` block whose header does not match this receiver is not a candidate, no
-    /// matter how well the method name lines up.
     #[test]
     fn an_impl_whose_header_does_not_match_is_not_a_candidate() {
         let hir = lower_to_hir(
@@ -1115,8 +1048,6 @@ mod tests {
         );
     }
 
-    /// Two bounds naming the same trait are one candidate, not an ambiguity between a candidate
-    /// and itself.
     #[test]
     fn the_same_method_reached_twice_is_one_candidate() {
         let hir = lower_to_hir(
@@ -1136,11 +1067,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Picking
-    // -----------------------------------------------------------------
-
-    /// Returns the function named `name` that `owner` (a trait or an `extend` block) declares.
     fn method_of(checker: &Typeck<'_>, owner: DefId, name: &str) -> DefId {
         checker
             .hir
@@ -1155,14 +1081,11 @@ mod tests {
             .unwrap_or_else(|| panic!("no method named {name:?}"))
     }
 
-    /// Returns the function named `name` declared by the fixture's one `extend` block.
     fn extend_method(checker: &Typeck<'_>, name: &str) -> DefId {
         let block = crate::testing::first_extend(checker.hir);
         method_of(checker, block, name)
     }
 
-    /// Builds a candidate for testing [`Typeck::select_candidate`] alone, which reads nothing
-    /// but `source`. The block a real candidate came from matters only after one is picked.
     fn fixture_candidate(source: CandidateSource, method: DefId, self_ty: Ty) -> Candidate {
         Candidate {
             method,
@@ -1189,7 +1112,6 @@ mod tests {
             span: SrcSpan::new(0, 0),
         };
 
-        // Trait first, so that "the inherent one" is not merely "the first one".
         let candidates = [
             fixture_candidate(
                 CandidateSource::Trait(show),
@@ -1269,15 +1191,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // The block's own bounds
-    //
-    // A block's header only says which types it *matches*. What it promises them is conditional
-    // on its own `<T: ..>` bounds, so picking a method out of one raises those bounds about the
-    // receiver, exactly as instantiating any other declaration raises the bounds it writes.
-    // -----------------------------------------------------------------
-
-    /// A fixture with both kinds of conditional block: one implementing a trait, one inherent.
     const CONDITIONAL: &str = "trait Show { fun show(&self); }
          struct Foo {}
          struct Bare {}
@@ -1306,8 +1219,6 @@ mod tests {
         );
     }
 
-    /// An inherent block is conditional in exactly the same way: `get` is offered to a `Wrap<T>`
-    /// whose `T` implements `Show`, and there is no trait involved in saying so.
     #[test]
     fn a_conditional_inherent_blocks_method_is_not_available_when_the_bound_fails() {
         assert_eq!(
@@ -1318,8 +1229,6 @@ mod tests {
         );
     }
 
-    /// The bound is raised about the receiver and discharged wherever any other bound would be,
-    /// which for a generic caller is its own environment.
     #[test]
     fn a_conditional_impls_bound_is_discharged_from_the_callers_own_bounds() {
         assert!(
@@ -1336,8 +1245,6 @@ mod tests {
         );
     }
 
-    /// A method the block never wrote out is inherited from the trait's default body, and is as
-    /// conditional as one it did: the block is still what makes the trait apply to this type.
     #[test]
     fn a_method_inherited_through_a_conditional_impl_needs_the_blocks_bound_too() {
         assert_eq!(
@@ -1351,10 +1258,6 @@ mod tests {
             ["the trait bound `Bare: Show` is not satisfied"]
         );
     }
-
-    // -----------------------------------------------------------------
-    // Source-level
-    // -----------------------------------------------------------------
 
     #[test]
     fn an_inherent_method_call_checks() {
@@ -1381,7 +1284,6 @@ mod tests {
         );
     }
 
-    /// The case the environment exists for: nothing is known about `T` but the bound.
     #[test]
     fn a_method_reached_through_a_bound_checks() {
         assert!(
@@ -1404,8 +1306,6 @@ mod tests {
         );
     }
 
-    /// Inside a trait, `Self` implements that trait by definition, letting one default method
-    /// body call another method of the same trait.
     #[test]
     fn a_default_body_may_call_another_method_of_its_own_trait() {
         assert!(
@@ -1425,9 +1325,6 @@ mod tests {
         );
     }
 
-    /// An inherent `extend Foo` block always wins for `Foo` specifically. Coherence separately
-    /// rejects two `extend` blocks that offer the same name for one type, so that diagnostic is
-    /// expected here; picking the trait's method instead would additionally mismatch the `return`.
     #[test]
     fn an_inherent_method_beats_a_trait_method_of_the_same_name() {
         assert_eq!(
@@ -1442,8 +1339,6 @@ mod tests {
         );
     }
 
-    /// Coherence cannot see this one: neither trait is implemented for anything in particular
-    /// here, so the collision only exists at the call site.
     #[test]
     fn a_method_declared_by_two_bounds_is_ambiguous() {
         assert_eq!(
@@ -1479,7 +1374,6 @@ mod tests {
         );
     }
 
-    /// A field's declared type is read through the arguments the receiver applied.
     #[test]
     fn a_generic_structs_field_is_read_through_its_arguments() {
         assert_eq!(
@@ -1535,8 +1429,6 @@ mod tests {
         );
     }
 
-    /// `x.show` without a call is an error, and the diagnostic says what to do about it rather
-    /// than only that no field of that name exists.
     #[test]
     fn naming_a_method_without_calling_it_says_so() {
         assert_eq!(
@@ -1549,9 +1441,6 @@ mod tests {
         );
     }
 
-    /// A field with no `public` is private by default, reachable only from its declaring module
-    /// and that module's descendants, the same rule `SymbolTable::is_visible` enforces for a
-    /// path lookup. This needs `typeck_src_files` to put the access in a different module.
     #[test]
     fn a_private_field_cannot_be_read_from_another_module() {
         assert_eq!(
@@ -1578,13 +1467,8 @@ mod tests {
         );
     }
 
-    /// Re-checks `SymbolTable::is_visible`'s full rule for a field instead of a path lookup:
-    /// `private` reaches the declaring module and every one of its descendants, however deep,
-    /// but neither a sibling module nor the declaring module's own parent.
     #[test]
     fn field_privacy_follows_the_declaring_modules_full_descendant_chain() {
-        // A grandchild of the struct's own module, not just a direct child, can still see its
-        // private field.
         assert!(
             crate::testing::typeck_src_files(&[
                 "module math; public struct Foo { count: i32 }",
@@ -1596,7 +1480,6 @@ mod tests {
             "a descendant module, however deep, should see the private field"
         );
 
-        // A sibling module, neither an ancestor nor a descendant, cannot.
         assert_eq!(
             crate::testing::typeck_src_files(&[
                 "module math; public struct Foo { count: i32 }",
@@ -1608,8 +1491,6 @@ mod tests {
             "an unrelated sibling module should not see the private field"
         );
 
-        // Nor can the declaring module's own parent see into it: visibility only ever reaches
-        // downward.
         assert_eq!(
             crate::testing::typeck_src_files(&[
                 "module math::inner; public struct Foo { count: i32 }",
@@ -1622,9 +1503,6 @@ mod tests {
         );
     }
 
-    /// Combines two things a plain privacy fixture would not: the field is reached through a
-    /// reference, using the same `peel_receiver` step a method call goes through, and the
-    /// struct is generic, so the field's type is substituted through the receiver's arguments.
     #[test]
     fn field_privacy_is_checked_through_autoderef_and_generic_substitution() {
         assert_eq!(
@@ -1636,7 +1514,6 @@ mod tests {
             ]),
             ["field `inner` is private"]
         );
-        // The public field, reached the very same way, is not.
         assert!(
             crate::testing::typeck_src_files(&[
                 "module lib; public struct Wrap<T> { inner: T, public tag: T }",
@@ -1648,12 +1525,8 @@ mod tests {
         );
     }
 
-    /// `field_ty`'s `owner` is the definition an access sits inside, here an `extend` block's
-    /// own method rather than a free function. Privacy is judged by where the block itself was
-    /// written, not by where the type it extends was declared.
     #[test]
     fn an_extend_blocks_method_reads_a_private_field_only_from_the_declaring_module() {
-        // An `extend` block in the struct's own module: allowed, same as any in-module access.
         assert!(
             crate::testing::typeck_src_files(&["module math;
                  public struct Foo { count: i32 }
@@ -1661,8 +1534,6 @@ mod tests {
             .is_empty()
         );
 
-        // An `extend` block for the same type, written in a *different* module: refused exactly
-        // as a free function in that module would be.
         assert_eq!(
             crate::testing::typeck_src_files(&[
                 "module math; public struct Foo { count: i32 }",
@@ -1673,10 +1544,6 @@ mod tests {
             ["field `count` is private"]
         );
     }
-
-    // -----------------------------------------------------------------
-    // Receivers
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_reference_receiver_reaches_a_ref_self_method() {
@@ -1690,8 +1557,6 @@ mod tests {
         );
     }
 
-    /// Autoref takes a reference automatically when the method wants one and the receiver is a
-    /// place.
     #[test]
     fn a_value_receiver_is_autoreffed_for_a_ref_self_method() {
         assert!(
@@ -1728,10 +1593,6 @@ mod tests {
         );
     }
 
-    // Whether a `&mut self` call's autoreffed receiver may be written to is `mir::checks::constck`'s
-    // question, exercised by that module's own tests. `mir::lower::call` materializes this
-    // autoref as an `Rvalue::Ref`, checked the same way an explicit `&mut` borrow is.
-
     #[test]
     fn a_value_receiver_reaches_a_by_value_self_method() {
         assert!(
@@ -1756,7 +1617,6 @@ mod tests {
         );
     }
 
-    /// `any self` accepts a receiver of any form: by value, by reference, or by `any`.
     #[test]
     fn an_any_self_method_accepts_every_receiver() {
         assert!(
@@ -1769,7 +1629,6 @@ mod tests {
         );
     }
 
-    /// A method reached on a value produced by another call has nothing to take a reference to.
     #[test]
     fn a_temporary_receiver_cannot_be_autoreffed() {
         assert_eq!(
@@ -1782,10 +1641,6 @@ mod tests {
             ["`show` takes `&self`, and this receiver is a temporary"]
         );
     }
-
-    // -----------------------------------------------------------------
-    // Arguments
-    // -----------------------------------------------------------------
 
     #[test]
     fn too_many_arguments_are_reported() {
@@ -1823,10 +1678,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Calls
-    // -----------------------------------------------------------------
-
     #[test]
     fn a_call_to_a_free_function_checks_its_arguments() {
         assert_eq!(
@@ -1849,8 +1700,6 @@ mod tests {
         );
     }
 
-    /// Instantiating `g`'s parameter at `Bare` raises the obligation `Bare: Show`, which the
-    /// per-body drain then answers.
     #[test]
     fn a_call_to_a_generic_callee_checks_the_callees_bounds() {
         assert_eq!(
@@ -1878,13 +1727,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Deferred method calls
-    // -----------------------------------------------------------------
-
-    /// The receiver's generic arguments come from integer literals, so at the call it is
-    /// `Pair<{integer}, {integer}>`, which a concrete `extend Pair<i32, i32>` header cannot be
-    /// matched against. The call is parked and answered once the literals have defaulted.
     #[test]
     fn a_concrete_extend_is_found_once_the_receivers_literals_default() {
         assert_eq!(
@@ -1897,11 +1739,8 @@ mod tests {
         );
     }
 
-    /// Defaulting is the fallback, not the answer: something else in the body pinning the
-    /// literals is what the parked call is re-checked against.
     #[test]
     fn a_parked_call_uses_the_type_the_body_pins_the_receiver_to() {
-        // Pinned to `i32` after the call, which is the type the `extend` block is written for.
         assert_eq!(
             check(
                 "struct Pair<A, B> { first: A, second: B }
@@ -1912,8 +1751,6 @@ mod tests {
             ),
             Vec::<String>::new()
         );
-        // Pinned to `i64` instead, so the method genuinely is not there -- and the diagnostic
-        // names the type the receiver resolved to, not the open one it had at the call.
         assert_eq!(
             check(
                 "struct Pair<A, B> { first: A, second: B }
@@ -1926,8 +1763,6 @@ mod tests {
         );
     }
 
-    /// A parked call's arguments are checked only once its receiver is resolved, so resolving
-    /// one call can park another. Both still have to be answered.
     #[test]
     fn a_call_parked_while_checking_another_is_still_answered() {
         assert_eq!(
@@ -1944,8 +1779,6 @@ mod tests {
         );
     }
 
-    /// A receiver that is itself a parked call's result is a bare variable at the time it is
-    /// reached, so it is parked too and answered after the call it depends on.
     #[test]
     fn a_receiver_that_is_a_parked_calls_result_is_answered_after_it() {
         assert_eq!(
@@ -1961,9 +1794,6 @@ mod tests {
         );
     }
 
-    /// A receiver whose type no default applies to is still unresolvable once the body has been
-    /// checked, and reports as such. An unannotated closure parameter is such a receiver: parking
-    /// the call buys nothing, because nothing later will give `x` a type.
     #[test]
     fn an_unresolved_receiver_is_reported() {
         assert_eq!(
@@ -1979,10 +1809,6 @@ mod tests {
         );
     }
 
-    /// An integer literal receiver, by contrast, *is* answerable later: the call is parked, the
-    /// literal defaults to `i32` once the body is done constraining it, and the method is looked
-    /// up on the type it actually resolved to. Saying annotations are needed would have been
-    /// misleading, since no annotation makes `i32` grow a `show`.
     #[test]
     fn a_literal_receiver_is_answered_at_its_defaulted_type() {
         assert_eq!(
@@ -1995,11 +1821,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // `any self`, generic methods, and index-through-a-generic-trait
-    // -----------------------------------------------------------------
-
-    /// `any self` accepts every receiver shape: by value, by reference, and by `any`.
     #[test]
     fn any_self_accepts_every_receiver_shape() {
         assert!(
@@ -2017,8 +1838,6 @@ mod tests {
         );
     }
 
-    /// A method's own generic parameters are instantiated fresh per call, independent of the
-    /// receiver's type.
     #[test]
     fn a_methods_own_generic_parameter_is_inferred_from_its_argument() {
         assert!(
@@ -2039,8 +1858,6 @@ mod tests {
         );
     }
 
-    /// `Index<K, V>` read through a generic `extend` block: `V` is recovered from the receiver's
-    /// own type arguments, not left as the block's bare parameter.
     #[test]
     fn indexing_a_generic_type_reads_v_through_the_receivers_own_arguments() {
         assert!(
@@ -2076,10 +1893,6 @@ mod tests {
             ["mismatched types: expected `&i32`, found `&bool`"]
         );
     }
-
-    // -----------------------------------------------------------------
-    // Resolved-call recording
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_free_call_records_its_callee_and_instantiation() {
@@ -2127,10 +1940,6 @@ mod tests {
         assert_eq!(resolved.def, show);
         assert!(resolved.args.is_empty());
     }
-
-    // -----------------------------------------------------------------
-    // `any`-coercion (README section 7)
-    // -----------------------------------------------------------------
 
     #[test]
     fn an_any_parameter_accepts_a_plain_owned_argument() {

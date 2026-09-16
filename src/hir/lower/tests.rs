@@ -10,17 +10,9 @@ use crate::hir::{
 };
 use crate::testing::{lower_to_hir, parse_src};
 
-// -----------------------------------------------------------------
-// Running the lowering pipeline
-// -----------------------------------------------------------------
-
 fn text(ident: Ident) -> &'static str {
     crate::testing::resolve(ident.text)
 }
-
-// -----------------------------------------------------------------
-// Typed node lookup helpers
-// -----------------------------------------------------------------
 
 fn find_value(hir: &Hir, m: &Module, name: &str) -> DefId {
     m.items
@@ -46,7 +38,6 @@ fn find_type(hir: &Hir, m: &Module, name: &str) -> DefId {
         .unwrap_or_else(|| panic!("no {name:?} in module's items"))
 }
 
-/// The sole top-level function in a single-item source, together with its `DefId`.
 fn only_function(hir: &Hir) -> (DefId, &Function) {
     let m = hir.root();
     assert_eq!(m.items.len(), 1);
@@ -54,34 +45,18 @@ fn only_function(hir: &Hir) -> (DefId, &Function) {
     (id, hir.function(id))
 }
 
-// -----------------------------------------------------------------
-// DefId pre-allocation
-// -----------------------------------------------------------------
-
-/// Every top-level definition -- struct, function, enum, trait, `extend` block -- gets a `DefId`,
-/// plus the root module: six in total.
 #[test]
 fn every_definition_has_a_def_id_before_any_body_is_lowered() {
     let hir = lower_to_hir("struct A {} fun f() {} enum E { x } trait T {} extend A {}");
     assert_eq!(hir.def_ids().count(), 6);
 }
 
-/// `Foo` is declared after the function that names it in a parameter position. Name resolution
-/// already resolved that reference before lowering runs; what this test exercises is that
-/// `Foo`'s `DefId` exists by the time lowering reaches for it to build the `hir::Path`, even
-/// though `Foo`'s own item is pre-allocated after `f`'s.
 #[test]
 fn a_forward_reference_resolves_to_an_already_allocated_def_id() {
     let hir = lower_to_hir("fun f(x: Foo) {} struct Foo {}");
     assert_eq!(hir.def_ids().count(), 3);
 }
 
-/// This test exercises pre-allocation directly rather than just its end result:
-/// it runs the pass only as far as `prealloc_item` and checks every item already has a `DefId`
-/// in `cx.def_ids`, before `lower_module` -- which builds any arena -- has run at all. Before
-/// `def_ids`/`prealloc_item` existed, every one of `lower_item`, `lower_function`,
-/// `lower_struct`, ... allocated its own `DefId` lazily instead, so this assertion had nothing to
-/// check and could not have failed the way it now would if pre-allocation regressed.
 #[test]
 fn every_item_gets_a_def_id_before_lower_module_runs() {
     let unit = parse_src("fun f(x: Foo) {} struct Foo {} trait T { fun m(self) {} }");
@@ -101,9 +76,6 @@ fn every_item_gets_a_def_id_before_lower_module_runs() {
         }
     }
 
-    // No arena exists yet -- `lower_module` was never called -- but every item's `NodeId`
-    // already maps to a `DefId`, including the trait's method, which needed the trait's own id
-    // to be allocated first.
     assert!(cx.arenas.is_empty());
     let root = ast.module(ast.root_id());
     assert_eq!(root.items.len(), 3);
@@ -126,13 +98,8 @@ fn every_item_gets_a_def_id_before_lower_module_runs() {
             .len(),
         1
     );
-    // Root module + fun f + struct Foo + trait T.
     assert_eq!(cx.def_ids.len(), 4);
 }
-
-// -----------------------------------------------------------------
-// Items
-// -----------------------------------------------------------------
 
 #[test]
 fn function_is_declared_in_the_module() {
@@ -179,8 +146,6 @@ fn function_params_and_return_type_are_lowered() {
     ));
 }
 
-/// `expr as ty` lowers its operand as an ordinary expression and its target as an ordinary type
-/// annotation, exactly like a `let`'s or a parameter's.
 #[test]
 fn a_cast_expr_lowers_its_operand_and_target_type() {
     let hir = lower_to_hir("fun f(x: i32) -> i64 { x as i64 }");
@@ -251,9 +216,7 @@ fn trait_functions_are_lowered_as_independent_owners() {
     let f = hir.function(method_id);
     assert_eq!(text(f.name), "area");
     assert!(f.self_param.is_some());
-    // The trait's own function declares no body.
     assert!(f.block.is_none());
-    // A trait method isn't itself a top-level item of the module.
     assert!(!m.items.contains(&method_id));
 }
 
@@ -261,7 +224,6 @@ fn trait_functions_are_lowered_as_independent_owners() {
 fn extend_methods_and_generics_are_lowered() {
     let hir = lower_to_hir("extend<T> Box<T> with Container<T> { fun get(&self) {} }");
     let m = hir.root();
-    // `extend` blocks aren't named, so they're only reachable through the module's item list.
     assert_eq!(m.items.len(), 1);
     let id = m.items[0];
     let e = hir.extend(id);
@@ -288,18 +250,6 @@ fn extend_methods_and_generics_are_lowered() {
     assert_eq!(text(method.name), "get");
 }
 
-/// Regression test: a trait's generics must be lowered before its functions, since a function's
-/// signature or body can name them (`fun get(self) -> T` inside `trait C<T>`), and path lowering
-/// needs the generic's `HirId` to already exist when it resolves such a reference.
-///
-/// This can't observe *when* the generic node was built from outside -- both the old, buggy
-/// order and the fixed one produce the same final `Trait`/`Function` shape, since a function is
-/// lowered into its own separate arena from the trait's. The real guard is that
-/// `LoweringCtx::lower_trait` lowers the trait's generics before it finishes the trait's own
-/// arena, and only then lowers any function -- reordering those statements is what a regression
-/// here would look like, and it is visible in the function body itself rather than behind a
-/// separate builder/resume split. This test is the weaker, black-box check the task brief asks
-/// for regardless: that both the generics and the functions came out right.
 #[test]
 fn a_traits_generics_are_lowered_before_its_functions() {
     let hir = lower_to_hir("trait C<T> { fun get(self) -> T; }");
@@ -313,7 +263,6 @@ fn a_traits_generics_are_lowered_before_its_functions() {
     assert_eq!(text(f.name), "get");
 }
 
-/// Same regression, for an `extend` block's own (`extend<T>`) generics against its methods.
 #[test]
 fn an_extend_blocks_generics_are_lowered_before_its_methods() {
     let hir = lower_to_hir("struct S {} extend<T> S { fun get(self) -> T {} }");
@@ -355,8 +304,6 @@ fn import_glob_and_alias_are_lowered_into_the_module() {
 
 #[test]
 fn nested_module_declaration_synthesizes_ancestor_modules() {
-    // The parser does not wire a file's `module` header into `ParsedSrcFile::module`,
-    // so this attaches the decl by hand to reach the module tree `Ast::from` builds from it.
     let mut unit = parse_src("fun helper() {}");
     let path_span = unit.span;
     unit.module = Some(ModuleHeader {
@@ -380,12 +327,8 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
     let surface_results = crate::nameres::resolve(crate::testing::session(), &ast);
     let hir = Hir::from(crate::testing::session(), &ast, &surface_results);
     let root = hir.root();
-    // The root's only item is the synthesized `math`, which in turn holds `math::vector`.
     assert_eq!(root.items.len(), 1);
 
-    // `lower.rs`'s test module is a descendant of `crate::hir`, so `Hir`'s otherwise-private
-    // fields (see `LoweringCtx::finish`'s comment) are visible here: scan every allocated owner
-    // directly for the module whose path ends in the given last segment.
     let find_module = |hir: &Hir, last_segment: &str| -> DefId {
         (0..hir.arenas.len())
             .map(DefId::from_usize)
@@ -414,8 +357,6 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
     let helper_id = vector_module.items[0];
     assert_eq!(text(hir.function(helper_id).name), "helper");
 
-    // Synthesized ancestors are parented like declared ones, so a def in the innermost
-    // module is walkable all the way back to the root.
     assert_eq!(hir.parent(helper_id), Some(vector_id));
     assert_eq!(hir.parent(vector_id), Some(math_id));
     assert_eq!(hir.parent(math_id), Some(hir.root_id()));
@@ -423,10 +364,6 @@ fn nested_module_declaration_synthesizes_ancestor_modules() {
     assert_eq!(hir.module_of(helper_id), vector_id);
     assert_eq!(hir.module_of(vector_id), vector_id);
 }
-
-// -----------------------------------------------------------------
-// Parents
-// -----------------------------------------------------------------
 
 #[test]
 fn a_free_items_parent_is_its_module() {
@@ -454,11 +391,8 @@ fn a_methods_parent_is_its_trait_or_extend_block() {
     let t_id = hir.trait_(trait_id).functions[0];
     let m_id = hir.extend(extend_id).methods[0];
 
-    // A method is parented to the item that declares it, not to the module -- this allows
-    // `Self` to be inferred from the method's id alone.
     assert_eq!(hir.parent(t_id), Some(trait_id));
     assert_eq!(hir.parent(m_id), Some(extend_id));
-    // ...while `module_of` still skips past it to the enclosing module.
     assert_eq!(hir.module_of(t_id), hir.root_id());
     assert_eq!(hir.module_of(m_id), hir.root_id());
 }
@@ -478,10 +412,6 @@ fn a_closures_parent_is_the_owner_it_appears_in() {
     assert_eq!(hir.parent(*closure_id), Some(f_id));
     assert_eq!(hir.module_of(*closure_id), hir.root_id());
 }
-
-// -----------------------------------------------------------------
-// Types
-// -----------------------------------------------------------------
 
 #[test]
 fn lowers_compound_types() {
@@ -522,10 +452,6 @@ fn lowers_compound_types() {
     }
 }
 
-// -----------------------------------------------------------------
-// Expressions
-// -----------------------------------------------------------------
-
 #[test]
 fn lowers_ctor_tuple_and_range_exprs() {
     let hir =
@@ -555,8 +481,6 @@ fn lowers_ctor_tuple_and_range_exprs() {
         other => panic!("expected a tuple expr, got {other:?}"),
     }
 
-    // `0..5` desugars to `std::range::Range { left: .some(0), right: .some(5), inclusive: false }`
-    // at parse time, so by the time it reaches HIR it's an ordinary ctor.
     let StmtKind::Let { init: r_init, .. } = &hir.stmt(body.stmts[2]).kind else {
         panic!("expected a let statement")
     };
@@ -575,8 +499,6 @@ fn lowers_ctor_tuple_and_range_exprs() {
 
 #[test]
 fn lowers_access_and_index_exprs() {
-    // `a.b` and `.c(1)` are the same node kind -- which is a field and which is a method call
-    // isn't known until typeck -- so they differ only in their `AccessArgs`.
     let hir = lower_to_hir("fun f() { a.b.c(1)[0] }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
@@ -638,11 +560,6 @@ fn lowers_if_and_match_exprs() {
     }
 }
 
-// -----------------------------------------------------------------
-// Variants
-// -----------------------------------------------------------------
-
-/// The `let` initializer of the sole statement in `src`'s only function.
 fn only_init(hir: &Hir) -> HirId {
     let (_, f) = only_function(hir);
     let body = hir.block(f.block.unwrap());
@@ -665,8 +582,6 @@ fn payload_less_variant_lowers_with_no_payload() {
     }
 }
 
-/// A payload is always exactly one value, so a tuple payload lowers to a single
-/// `ExprKind::Tuple` in the payload slot rather than to several arguments.
 #[test]
 fn tuple_payload_lowers_as_one_value() {
     let hir = lower_to_hir("fun f() { let x = .parallelogram((1.0, 2.0)); }");
@@ -707,7 +622,6 @@ fn record_payload_keeps_its_field_names() {
     }
 }
 
-/// `{ l }` is shorthand for `{ l: l }`, so lowering must leave a real expression behind it.
 #[test]
 fn record_payload_field_shorthand_is_desugared() {
     let hir = lower_to_hir("fun f() { let x = .square { l }; }");
@@ -727,7 +641,6 @@ fn record_payload_field_shorthand_is_desugared() {
     }
 }
 
-/// The same shorthand on the pattern side becomes a real binding pattern.
 #[test]
 fn record_pattern_field_shorthand_is_desugared() {
     let hir = lower_to_hir("fun f() { match x { .square { l } => l, _ => 0 } }");
@@ -752,12 +665,6 @@ fn record_pattern_field_shorthand_is_desugared() {
     }
 }
 
-/// The pattern-side shorthand's synthesized binding has no `ast::Pat` of its own, so AST-level
-/// resolution keys it under the `PayloadField`'s `NodeId` instead (see
-/// `Resolver::visit_record_pat_fields` in `src/nameres/resolver.rs`). This checks the
-/// two sides agree end to end: a name shorthand-bound in the pattern actually resolves, inside
-/// the arm's own body, to the binding the shorthand introduced -- not `Res::Err`, and not a
-/// lowering panic.
 #[test]
 fn record_pattern_shorthand_binds_reachable_in_the_arm_body() {
     let hir = lower_to_hir("fun f() { match x { .rect { w, h } => w, _ => 0 } }");
@@ -795,9 +702,6 @@ fn record_pattern_shorthand_binds_reachable_in_the_arm_body() {
     }
 }
 
-/// Symmetric to the pattern-side test above: a record *expression* shorthand field's implicit
-/// value is keyed the same way (`PayloadField::id`, not an `Expr`'s), so this checks a name in
-/// scope resolves through it rather than landing on `Res::Err`.
 #[test]
 fn record_expr_shorthand_resolves_the_name_it_names() {
     let hir = lower_to_hir("fun f(w: i32) { let x = .square { w }; }");
@@ -830,11 +734,6 @@ fn record_expr_shorthand_resolves_the_name_it_names() {
     }
 }
 
-/// `lower_path` panics only when `owner` has no recorded resolution at all for `path` -- a
-/// lowering bug, since AST-level resolution records every path it visits, `Res::Err` included.
-/// An unresolved name is not that case: `Resolver` still records an entry for it, just one
-/// holding `Res::Err`, so `lower_path` does not panic and the reference lowers to a
-/// `hir::Path` whose `res` is `Res::Err`.
 #[test]
 fn an_unresolved_name_lowers_to_res_err_instead_of_panicking() {
     let hir = lower_to_hir("fun f() { let x = does_not_exist; }");
@@ -878,8 +777,6 @@ fn closure_is_lowered_as_its_own_owner() {
     let c = hir.closure(closure_id);
     assert_eq!(c.params.len(), 2);
     assert!(c.ret.is_some());
-    // A closure owns a block directly. The body here was already written as `{ x + y }`, so it
-    // lowers to that block without acquiring a redundant wrapper, and the addition is its tail.
     let closure_block = hir.block(c.block);
     assert!(matches!(
         hir.expr(closure_block.expr.unwrap()).kind,
@@ -900,8 +797,6 @@ fn block_tail_expression_is_not_a_statement() {
     ));
 }
 
-/// The trailing `;` is what discards a block's value, so the same final expression is the
-/// block's tail without one and an ordinary statement with one.
 #[test]
 fn a_trailing_semicolon_discards_the_block_value() {
     let hir = lower_to_hir("fun f() { g() }");
@@ -917,8 +812,6 @@ fn a_trailing_semicolon_discards_the_block_value() {
     assert!(body.expr.is_none());
 }
 
-/// The same holds for a block-bodied expression, which may omit its `;` but doesn't have to --
-/// so both spellings remain distinguishable in the last position.
 #[test]
 fn a_block_bodied_expression_is_a_tail_only_without_a_semicolon() {
     let hir = lower_to_hir("fun f() { if c { 1 } else { 2 } }");
@@ -936,10 +829,6 @@ fn a_block_bodied_expression_is_a_tail_only_without_a_semicolon() {
     assert_eq!(body.stmts.len(), 1);
     assert!(body.expr.is_none());
 }
-
-// -----------------------------------------------------------------
-// Statements
-// -----------------------------------------------------------------
 
 #[test]
 fn lowers_break_continue_return_defer_stmts() {
@@ -980,8 +869,6 @@ fn lowers_with_stmt_lends() {
                     ..
                 }
             ));
-            // `foo();` was written with a `;`, so it stays a statement and the block has no
-            // value (see `lower_block`).
             let with_body = hir.block(*with_block);
             assert_eq!(with_body.stmts.len(), 1);
             assert!(with_body.expr.is_none());
@@ -990,13 +877,8 @@ fn lowers_with_stmt_lends() {
     }
 }
 
-// -----------------------------------------------------------------
-// Desugaring
-// -----------------------------------------------------------------
-
 #[test]
 fn while_loop_desugars_to_loop_with_negated_guard() {
-    // `while cond { body }` -> `loop { if !cond { break; } body... }` (see `lower_while`).
     let hir = lower_to_hir("fun f() { while x < 5 { foo(); } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
@@ -1010,7 +892,6 @@ fn while_loop_desugars_to_loop_with_negated_guard() {
     assert!(matches!(source, LoopSource::While));
 
     let loop_body = hir.block(loop_body_id);
-    // Guard statement, plus the original body's one statement.
     assert_eq!(loop_body.stmts.len(), 2);
 
     let StmtKind::Expr(guard_id) = hir.stmt(loop_body.stmts[0]).kind else {
@@ -1045,7 +926,6 @@ fn while_loop_desugars_to_loop_with_negated_guard() {
 
 #[test]
 fn if_let_desugars_to_a_match() {
-    // `if let pat = e { a } else { b }` -> `match e { pat => { a }, _ => { b } }`.
     let hir = lower_to_hir("fun f() -> i32 { if let .some(x) = o { x } else { 0 } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
@@ -1061,9 +941,6 @@ fn if_let_desugars_to_a_match() {
     }
 }
 
-/// A `match` has to be exhaustive even when the source `if let` had no `else`, so the wildcard
-/// Every HIR construct that owns executable code owns a `Block`, so a match arm written with a
-/// bare expression gets a block whose tail value is that expression.
 #[test]
 fn an_expression_bodied_arm_is_wrapped_in_a_block() {
     let hir = lower_to_hir("fun f() { match o { .some(x) => 1, _ => 2 } }");
@@ -1086,7 +963,6 @@ fn an_expression_bodied_arm_is_wrapped_in_a_block() {
     ));
 }
 
-/// The same wrapping applies to a closure written with a bare expression body.
 #[test]
 fn an_expression_bodied_closure_is_wrapped_in_a_block() {
     let hir = lower_to_hir("fun f() { let g = |x: i32| -> i32 x; }");
@@ -1109,8 +985,6 @@ fn an_expression_bodied_closure_is_wrapped_in_a_block() {
     ));
 }
 
-/// An `else if` lowers to `else { if .. }`, so both of an `If`'s branches are blocks no matter
-/// how long the chain is, instead of the `else` alternating between an `If` and a `Block`.
 #[test]
 fn else_if_lowers_to_a_block_holding_the_nested_if() {
     let hir = lower_to_hir("fun f() { if a { 1 } else if b { 2 } else { 3 } }");
@@ -1122,7 +996,6 @@ fn else_if_lowers_to_a_block_holding_the_nested_if() {
     };
     let outer_else = hir.block(else_block.expect("the chain has an else"));
 
-    // The `else if` is the wrapping block's tail value, not a statement.
     assert!(outer_else.stmts.is_empty());
     let ExprKind::If { else_block, .. } = &hir
         .expr(outer_else.expr.expect("the nested if is the tail"))
@@ -1131,7 +1004,6 @@ fn else_if_lowers_to_a_block_holding_the_nested_if() {
         panic!("expected the else to hold a nested if expr")
     };
 
-    // The final `else { 3 }` was already a block, so it is not wrapped a second time.
     let inner_else = hir.block(else_block.expect("the nested if has an else"));
     assert!(matches!(
         hir.expr(inner_else.expr.expect("`3` is the tail")).kind,
@@ -1139,7 +1011,6 @@ fn else_if_lowers_to_a_block_holding_the_nested_if() {
     ));
 }
 
-/// arm is always there -- yielding an empty block, the same value an `else`-less `if` produces.
 #[test]
 fn if_let_without_else_still_gets_a_wildcard_arm() {
     let hir = lower_to_hir("fun f() { if let .some(x) = o { foo(x); } }");
@@ -1159,7 +1030,6 @@ fn if_let_without_else_still_gets_a_wildcard_arm() {
 
 #[test]
 fn while_let_desugars_to_a_loop_around_a_match() {
-    // `while let pat = e { body }` -> `loop { match e { pat => { body }, _ => break } }`.
     let hir = lower_to_hir("fun f() { while let .some(x) = next() { foo(x); } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
@@ -1172,8 +1042,6 @@ fn while_let_desugars_to_a_loop_around_a_match() {
     };
     assert!(matches!(source, LoopSource::While));
 
-    // Unlike `while`, the body can't be spliced into the loop -- it only runs on a match -- so
-    // the loop holds exactly the one match statement.
     let loop_body = hir.block(loop_body_id);
     assert_eq!(loop_body.stmts.len(), 1);
     let StmtKind::Expr(match_id) = hir.stmt(loop_body.stmts[0]).kind else {
@@ -1197,9 +1065,6 @@ fn while_let_desugars_to_a_loop_around_a_match() {
 
 #[test]
 fn for_loop_desugars_to_iterator_protocol() {
-    // `for pat in iter { body }` ->
-    // `{ let mut __iter = iter; loop { match __iter.next() { Some(pat) => body, None => break } } }`
-    // (see `lower_for`).
     let hir = lower_to_hir("fun f() { for x in xs { foo(x); } }");
     let (_, f) = only_function(&hir);
     let body = hir.block(f.block.unwrap());
