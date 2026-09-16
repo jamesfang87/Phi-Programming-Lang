@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::diagnostics::mir::definite_init::report_use_of_moved_value;
 use crate::driver::source::SrcSpan;
-use crate::mir::checks::borrowck::{Register, register_of, trivially_copyable};
+use crate::mir::checks::borrowck::{Register, register_of};
 use crate::mir::{
     BasicBlock, Body, Operand, Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
     checks::lattice, lower::Mir,
@@ -14,8 +14,8 @@ use crate::typeck::ty::ctx::TyCtx;
 type DeadRegisters = HashSet<Register>;
 type Lattice = lattice::Lattice<BasicBlock, DeadRegisters>;
 
-/// Per local: whether the local's value can be moved at all. A trivially copyable local cannot,
-/// so it is excluded from the state; see [`trivially_copyable`].
+/// Per local: whether the local's value can be moved at all. A copyable local cannot, so it is
+/// excluded from the state; see [`TyCtx::is_copy`].
 type Movable = [bool];
 
 pub fn check(session: &Session, tcx: &TyCtx, mir: &Mir) {
@@ -36,7 +36,7 @@ fn check_body(session: &Session, tcx: &TyCtx, body: &Body) {
     let movable: Vec<bool> = body
         .local_decls
         .iter()
-        .map(|decl| decl.name.is_some() && !trivially_copyable(tcx, decl.ty))
+        .map(|decl| decl.name.is_some() && !tcx.is_copy(decl.ty))
         .collect();
     let lattice = fixed_point(body, &movable);
     report_body(session, body, &movable, &lattice);

@@ -7,6 +7,7 @@ use crate::diagnostics::typeck::traits::bounds::{
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId};
 use crate::typeck::Typeck;
+use crate::typeck::traits::TraitRef;
 use crate::typeck::ty::{Ty, TyKind};
 
 use super::{BoundsEnv, Goal, Solution};
@@ -117,7 +118,8 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn check_obligation(&mut self, obligation: &Obligation, env: &BoundsEnv) {
-        match self.implements(&obligation.query, env) {
+        let query = self.default_numeric_goal(&obligation.query);
+        match self.implements(&query, env) {
             Solution::Holds | Solution::Error => {}
             Solution::DoesNotHold => {
                 report_unsatisfied_bound(self.hir, self.display_cx(), obligation)
@@ -126,6 +128,33 @@ impl<'hir> Typeck<'hir> {
                 report_annotations_needed(self.hir, self.display_cx(), obligation)
             }
         }
+    }
+
+    /// Returns `goal` with the language's default type committed to every unconstrained numeric
+    /// variable it still holds.
+    fn default_numeric_goal(&mut self, goal: &Goal) -> Goal {
+        // The body is fully checked by the time an obligation is proved, so nothing left open can
+        // still be settled later. A bound on a value whose type nothing pinned -- a `for` over a
+        // literal range, such as `{integer}: Step` -- is therefore decided against the defaulted
+        // `i32` rather than reported as ambiguous.
+        Goal {
+            self_ty: self.default_numeric_ty(goal.self_ty),
+            trait_: TraitRef {
+                def: goal.trait_.def,
+                args: goal
+                    .trait_
+                    .args
+                    .iter()
+                    .map(|&arg| self.default_numeric_ty(arg))
+                    .collect(),
+            },
+        }
+    }
+
+    fn default_numeric_ty(&mut self, ty: Ty) -> Ty {
+        let resolved = self.unifier.find_deep(&mut self.tcx, ty);
+        self.commit_numeric_defaults(resolved);
+        self.unifier.find_deep(&mut self.tcx, resolved)
     }
 }
 

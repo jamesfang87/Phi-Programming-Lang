@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
 use crate::ast::Mutability;
@@ -16,6 +16,11 @@ pub struct TyCtx {
     /// The ADTs collected by [`crate::typeck::ty::adt::collect_adt_defs`], looked up for their
     /// field types and variant counts.
     adts: HashMap<DefId, AdtDef>,
+    /// Types the trait solver proved implement `core::ops::Copy`. Copyability is not purely
+    /// structural: a type parameter carries it only when a bound says so, and an ADT only when an
+    /// `extend` block implements the trait, so the decision is recorded once during type checking
+    /// and read back here by MIR lowering and borrow checking.
+    copy: HashSet<Ty>,
 }
 
 /// Hands out the ids of inference variables, which are unique within one [`TyCtx`].
@@ -181,6 +186,19 @@ impl TyCtx {
             "Attempt to recollect ADT definitions (which are only to be collected once)"
         );
         self.adts = adts;
+    }
+
+    /// Records `ty` as implementing `Copy`, so a read of a place of that type may copy it rather
+    /// than move out of it.
+    pub fn mark_copy(&mut self, ty: Ty) {
+        self.copy.insert(ty);
+    }
+
+    /// Returns whether a value of `ty` may be read by copying it. The trait solver records every
+    /// type it proves `Copy` -- including the primitives and shared references `core` implements
+    /// the trait for -- through [`TyCtx::mark_copy`].
+    pub fn is_copy(&self, ty: Ty) -> bool {
+        self.copy.contains(&ty)
     }
 
     pub fn contains_ref(&self, ty: Ty) -> bool {

@@ -329,6 +329,7 @@ impl<'hir> Typeck<'hir> {
             let resolved = self.unifier.find_deep(&mut self.tcx, ty);
             let defaulted = self.default_unconstrained_types(resolved);
             self.types.record(id, defaulted);
+            self.record_copyability(defaulted, owner);
         }
 
         self.check_integer_literals(owner);

@@ -1261,7 +1261,7 @@ fn a_guard_failure_cleans_up_the_arms_bindings_before_falling_through() {
 
 #[test]
 fn a_tuple_patterns_elements_are_tested_independently() {
-    let (hir, _tcx, _types, program) = lower_mir_src(
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
         "fun f(p: (i32, i32)) -> i32 {
              return match p {
                  (0, 0) => 1,
@@ -1614,7 +1614,7 @@ fn a_with_lends_local_carries_its_declared_name() {
 /// `a_mutably_referenced_place_is_moved_not_copied`, just below.
 #[test]
 fn a_shared_reference_is_copied_not_moved() {
-    let (hir, _tcx, _types, program) = lower_mir_src(
+    let (hir, _tcx, _types, program) = lower_mir_src_with_ref_copy(
         "fun f(a: i32) {
              let r = &a;
              use_ref(r);
