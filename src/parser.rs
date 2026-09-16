@@ -128,8 +128,6 @@ mod tests {
     use crate::diagnostics::Diagnostic;
     use crate::testing::{lex_src, parse_src};
 
-    /// Lexes and parses `src` and returns what the test session collected. Unlike [`parse_src`] it
-    /// asserts nothing about the result, so it can be called on source that fails to parse.
     fn diagnostics(src: &str) -> Vec<Diagnostic> {
         let (tokens, offset) = lex_src(src);
         let _ = Parser::new(crate::testing::session()).parse(&tokens, offset);
@@ -140,14 +138,12 @@ mod tests {
         diagnostics(src).len()
     }
 
-    /// The single diagnostic `src` raises. Panics if `src` raises any other number.
     fn only_diagnostic(src: &str) -> Diagnostic {
         let mut raised = diagnostics(src);
         assert_eq!(raised.len(), 1, "expected exactly one diagnostic");
         raised.remove(0)
     }
 
-    /// The source text covered by a diagnostic's primary span.
     fn underlined(diagnostic: &Diagnostic) -> String {
         let span = diagnostic
             .span
@@ -155,8 +151,6 @@ mod tests {
         crate::testing::text_of(span).expect("the span comes from a token the lexer produced")
     }
 
-    /// Like [`diagnostic_count`], but also returns the (best-effort, possibly error-containing)
-    /// parsed unit, for exercising recovery.
     fn parse_with_errors(src: &str) -> (ParsedSrcFile, usize) {
         let (tokens, offset) = lex_src(src);
         let unit = Parser::new(crate::testing::session()).parse(&tokens, offset);
@@ -175,9 +169,6 @@ mod tests {
         }
     }
 
-    /// A file's `module` header and its imports are parsed as ordinary items but don't stay in
-    /// `items`: lowering reads them from their own fields, and needs the header in particular
-    /// before it can place any of the items below it.
     #[test]
     fn module_header_and_imports_are_split_out_of_items() {
         let unit = parse_src(
@@ -191,7 +182,6 @@ mod tests {
         assert_eq!(unit.imports.len(), 2);
         assert!(unit.imports[1].glob);
 
-        // Only the function is left behind.
         assert_eq!(text(only_function(&unit).name), "main");
     }
 
@@ -206,7 +196,6 @@ mod tests {
         let (unit, errors) = parse_with_errors("module a;\nmodule b;\nfun main() {}");
         assert_eq!(errors, 1);
 
-        // The first header still wins, so the rest of the file lowers somewhere sensible.
         let module = unit
             .module
             .as_ref()
@@ -356,7 +345,6 @@ mod tests {
 
     #[test]
     fn respects_arithmetic_precedence() {
-        // 1 + 2 * 3 should parse as 1 + (2 * 3), not (1 + 2) * 3.
         let unit = parse_src("fun main() { return 1 + 2 * 3; }");
         let f = only_function(&unit);
         match &f.block.as_ref().unwrap().stmts[0].kind {
@@ -382,7 +370,6 @@ mod tests {
 
     #[test]
     fn parens_override_precedence() {
-        // (1 + 2) * 3 should parse with `*` at the top.
         let unit = parse_src("fun main() { return (1 + 2) * 3; }");
         let f = only_function(&unit);
         match &f.block.as_ref().unwrap().stmts[0].kind {
@@ -504,8 +491,6 @@ mod tests {
 
     #[test]
     fn recovers_from_a_malformed_item_and_keeps_parsing_later_items() {
-        // `1 + 2;` isn't a valid item at all; the well-formed function after it should still
-        // come through.
         let (unit, error_count) = parse_with_errors("1 + 2; fun ok() {}");
         assert_eq!(error_count, 1);
         assert_eq!(unit.items.len(), 2);
@@ -532,12 +517,6 @@ mod tests {
         assert_eq!(function_names, vec!["a", "b", "c"]);
     }
 
-    // -----------------------------------------------------------------
-    // Wording
-    // -----------------------------------------------------------------
-
-    /// After a complete expression the expected set holds `;` plus every binary, postfix and
-    /// assignment operator. `render_alternatives` keeps only the `;`.
     #[test]
     fn a_missing_semicolon_names_the_semicolon_and_nothing_else() {
         let diagnostic = only_diagnostic("fun main() { let x = 1 let y = 2; }");
@@ -546,9 +525,6 @@ mod tests {
         assert!(diagnostic.help.is_some());
     }
 
-    /// A name run directly into a number (`1e5` reads as `1` glued to a name) is a missing
-    /// operator or `;`, or an attempt at scientific notation, which Phi does not have. The
-    /// help must say that rather than suggest a missing `;` between unrelated statements.
     #[test]
     fn a_name_glued_to_a_number_says_what_is_missing() {
         let diagnostic = only_diagnostic("fun main() { let x = 1e5; }");
@@ -561,8 +537,6 @@ mod tests {
         );
     }
 
-    /// The `labelled("an expression")` on `unary_or_new` replaces the ~20 tokens that can begin
-    /// an operand, since the failure is at the operand's first token.
     #[test]
     fn a_missing_operand_asks_for_an_expression() {
         let diagnostic = only_diagnostic("fun main() { let x = 1 + ; }");
@@ -575,8 +549,6 @@ mod tests {
         assert_eq!(diagnostic.message, "expected a type, found `=`");
     }
 
-    /// A list of nothing but keywords gets `MAX_LISTED_KEYWORDS` rather than
-    /// `MAX_LISTED_ALTERNATIVES`, so all eight item keywords are named instead of four.
     #[test]
     fn a_statement_written_at_file_scope_lists_every_item_keyword() {
         let diagnostic = only_diagnostic("let x = 1;");
@@ -597,8 +569,6 @@ mod tests {
         }
     }
 
-    /// `edit_distance` charges one edit for a transposition, so `strcut` clears the threshold
-    /// `is_probable_typo_of` allows for a six-character keyword.
     #[test]
     fn a_transposed_keyword_is_recognised() {
         let help = only_diagnostic("strcut P { x: i32 }")
@@ -607,8 +577,6 @@ mod tests {
         assert!(help.contains("`struct`"), "got {help:?}");
     }
 
-    /// `fo` is one edit from `for`, but a `let` binding accepts an identifier, so
-    /// `suggested_keyword` returns `None` and the source parses with no diagnostic at all.
     #[test]
     fn a_name_that_merely_resembles_a_keyword_is_left_alone() {
         assert_eq!(diagnostic_count("fun main() { let fo = 1; }"), 0);
@@ -624,16 +592,12 @@ mod tests {
         );
     }
 
-    /// The expected set here is the operators that could continue the condition plus the
-    /// `labelled("a block")` on the `if` body. Only the label survives narrowing.
     #[test]
     fn a_missing_block_asks_for_the_block() {
         let diagnostic = only_diagnostic("fun main() { if x\n foo(); }");
         assert_eq!(diagnostic.message, "expected a block, found identifier");
     }
 
-    /// Three alternatives is under `MAX_LISTED_ALTERNATIVES`, so `render_alternatives` names
-    /// all of them even though `->` and `;` are terminators and `a block` is not.
     #[test]
     fn a_short_list_of_alternatives_is_enumerated() {
         let diagnostic = only_diagnostic("fun add(x: i32) i32 { return x; }");
@@ -643,8 +607,6 @@ mod tests {
         );
     }
 
-    /// The grammar's own failure is at the end of the file; `delimiters::unmatched` replaces it
-    /// with one whose span is the `{`.
     #[test]
     fn an_unclosed_brace_is_reported_at_the_brace_not_at_the_end_of_the_file() {
         let diagnostic = only_diagnostic("fun main() { return 1;");
@@ -652,8 +614,6 @@ mod tests {
         assert_eq!(underlined(&diagnostic), "{");
     }
 
-    /// A non-empty `delimiters::unmatched` result replaces the grammar's errors rather than
-    /// being emitted alongside them, so the mismatch is the only diagnostic.
     #[test]
     fn an_imbalance_suppresses_the_failures_it_causes() {
         let diagnostic = only_diagnostic("fun main() { foo(1; } fun other() {}");
@@ -663,13 +623,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Recovery
-    // -----------------------------------------------------------------
-
-    /// `recover_by_skipping` tracks nesting depth, so the `}` of the nested `if` block does not
-    /// stop the skip. Were it to stop there, the `}` would close the function body and every
-    /// statement after it would be parsed as a top-level item.
     #[test]
     fn recovery_skips_a_nested_block_whole() {
         let (unit, error_count) =
@@ -685,8 +638,6 @@ mod tests {
         assert!(matches!(body.stmts[2].kind, StmtKind::Let { .. }));
     }
 
-    /// `STATEMENT_RECOVERY` consumes the `;` that ends the broken statement, so the following
-    /// `foo();` parses as its own statement.
     #[test]
     fn recovery_stops_at_the_semicolon_that_ends_the_broken_statement() {
         let (unit, error_count) = parse_with_errors("fun main() { 1 +; foo(); }");
@@ -701,9 +652,6 @@ mod tests {
         assert!(matches!(body.stmts[1].kind, StmtKind::Expr { .. }));
     }
 
-    /// `recover_by_skipping` passes the merged span of every token it consumed to `build`.
-    /// Later passes report against these spans, and `SrcSpan::new(0, 0)` would point them all at
-    /// the first file in the `SrcMap`.
     #[test]
     fn a_recovered_statement_spans_the_source_it_replaces() {
         let (unit, _) = parse_with_errors("fun main() { 1 +; }");

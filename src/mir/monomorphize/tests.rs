@@ -31,13 +31,6 @@ fn a_non_generic_body_monomorphizes_to_exactly_itself() {
     assert!(instance.any_mode.is_none());
 }
 
-/// `main` is collected as a root on its own terms, not because its locals happen to be
-/// concrete. It carries no type parameters, so it is never specialized -- there is exactly one
-/// instance of it, with an empty argument list.
-///
-/// The receiver here is what makes this worth pinning: a `&self` method from a generic `extend`
-/// block used to leave `&Wrap<T>` in `main`'s locals, which held `main` back from the roots and
-/// dropped the entry point from the program.
 #[test]
 fn main_is_always_collected_as_a_root() {
     let (hir, _tcx, _types, _mir, instances) = lower_to_mir(
@@ -73,7 +66,6 @@ fn a_generic_function_is_instantiated_once_per_call_site_type() {
              return a;
          }",
     );
-    // `f` itself, plus `identity::<i32>` and `identity::<bool>`.
     assert_eq!(instances.len(), 3);
 
     let identity_instances: Vec<_> = instances.keys().filter(|i| !i.args.is_empty()).collect();
@@ -107,8 +99,6 @@ fn a_recursive_generic_call_with_the_same_argument_does_not_loop_forever() {
          }
          fun g() -> i32 { return f(1); }",
     );
-    // `g`, plus exactly one instantiation of `f` (the recursive call inside it is the same
-    // instance, deduplicated).
     assert_eq!(instances.len(), 2);
 }
 
@@ -119,7 +109,6 @@ fn calling_through_a_reified_function_pointer_still_monomorphizes_the_callee() {
          fun apply(f: fun(i32) -> i32, x: i32) -> i32 { return f(x); }
          fun g() -> i32 { return apply(double, 1); }",
     );
-    // `g`, `apply`, and `double` (reified as a value, still its own Body).
     assert_eq!(instances.len(), 3);
     let reifies = instances.values().any(|body| {
         body.basic_blocks

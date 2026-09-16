@@ -163,10 +163,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// The call operand for a method reached through a `dyn` receiver: the trait's own
-    /// declaration, to be dispatched through the receiver's vtable at codegen time. The
-    /// constant's signature is the trait's, substituted with the `dyn` type's own arguments so
-    /// the erased vtable signature is concrete.
     fn dyn_fn_operand(&mut self, def: DefId, args: Vec<Ty>, dyn_ty: Ty) -> Operand {
         let TyKind::Dyn {
             trait_,
@@ -308,10 +304,6 @@ impl<'a> BodyLowerCtx<'a> {
         };
 
         let recv_ty = self.expr_ty(expr_id);
-        // TODO: implement an `any T` receiver reaching a `&`/`&mut self` method (README
-        // section 7 lets `any self` abstract over borrow mode, but this panics, so generic
-        // projection-polymorphic method calls have no lowering and real `any`-based code
-        // cannot compile once monomorphized to a borrow).
         if matches!(self.tcx.kind(recv_ty), TyKind::Any(_)) {
             panic!(
                 "mir::lower: a receiver whose own type is `any T`, reaching a `&`/`&mut self` \
@@ -323,13 +315,6 @@ impl<'a> BodyLowerCtx<'a> {
         for _ in 0..derefs {
             place.projections.push(Projection::Deref);
         }
-
-        // The temp is typed from the receiver, not from `declared_ty`. `declared_ty` is the
-        // method's `&self` as written, so for a method in `extend<T> Wrap<T>` it is `&Wrap<T>` --
-        // the block's generic parameter, with no call-site substitution applied. Using it here
-        // would put a type mentioning `T` into the *caller's* `local_decls`, and `monomorphize`
-        // seeds its roots with the bodies that mention no generic, so the caller would be dropped
-        // from the program entirely rather than diagnosed. `peeled` is the type of the place the
         // reference is taken of, which is already concrete at this call site.
         let temp_ty = self.tcx.mk_ref(peeled, mutability);
         let temp = self.new_temp(temp_ty, span);
@@ -384,18 +369,6 @@ impl<'a> BodyLowerCtx<'a> {
             .map(|c| c.all_args())
             .unwrap_or_default()
     }
-
-    /// Materializes a named function as a `fun(T) -> U`-typed value: `Rvalue::Cast` with
-    /// `CastKind::ReifyFnPointer`, into a fresh temporary, per the spec's "Operand and Rvalue"
-    /// section.
-    ///
-    /// `def`'s own signature may still carry unresolved `any` positions here -- typeck does not
-    /// resolve them when a named function is used as a bare value rather than called outright, so
-    /// `fn_value_ty` (computed from that signature) can too. A call site picks `any`'s mode from
-    /// how the call's own result is used, and a bare reference like this is not a call at all, so
-    /// there is no such usage to consult. Rather than reject the reference, this pins it to
-    /// `AnyMode::Owned` -- every `any` position becomes its plain `T` -- the same fallback
-    /// `resolve_any` already gives a definition that is not `any`-specialized at all, so an
     /// indirect call through the resulting pointer always finds a compiled body.
     pub(crate) fn reify_fn_pointer(
         &mut self,
@@ -437,11 +410,6 @@ impl<'a> BodyLowerCtx<'a> {
         );
         Operand::Move(Place::from_local(temp))
     }
-
-    /// Resolves every `any` position in a `fun(..) -> ..`-shaped type under `mode`, the same way
-    /// [`BodyLowerCtx::resolve_any`] resolves one position at a time for a parameter or return
-    /// type when lowering a definition's own body. A reified function pointer's type is built
-    /// from the same signature a body is lowered from, so it needs the same treatment applied
     /// across every parameter and the return type at once.
     fn resolve_any_fn_ty(&mut self, fn_ty: Ty, mode: AnyMode) -> Ty {
         let TyKind::Fun { params, ret } = self.tcx.kind(fn_ty).clone() else {

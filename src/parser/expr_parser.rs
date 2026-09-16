@@ -1391,7 +1391,6 @@ mod tests {
 
     #[test]
     fn parses_borrow_of_negated_expr() {
-        // `&-x` exercises stacking a borrow prefix on top of a unary prefix.
         let expr = parse_expr("&-x");
         match &expr.kind {
             ExprKind::Borrow { operand, .. } => {
@@ -1406,10 +1405,6 @@ mod tests {
             other => panic!("expected a borrow expr, got {other:?}"),
         }
     }
-
-    // -----------------------------------------------------------------
-    // `new`
-    // -----------------------------------------------------------------
 
     #[test]
     fn parses_new_expr() {
@@ -1437,8 +1432,6 @@ mod tests {
         }
     }
 
-    /// `new` binds looser than a call: `new f(x)` allocates the result of `f(x)`, not the
-    /// result of allocating `f` and then calling it.
     #[test]
     fn new_binds_looser_than_a_call() {
         let expr = parse_expr("new f(x)");
@@ -1450,7 +1443,6 @@ mod tests {
         }
     }
 
-    /// `new` binds tighter than any binary operator: `new x + 1` is `(new x) + 1`.
     #[test]
     fn new_binds_tighter_than_a_binary_operator() {
         let expr = parse_expr("new x + 1");
@@ -1500,8 +1492,6 @@ mod tests {
         }
     }
 
-    /// Digit separators in a tuple index are stripped the same way a numeric literal's digits
-    /// are: `t.1_0` names field 10, like `t.10` does.
     #[test]
     fn parses_tuple_index_with_digit_separators() {
         let expr = parse_expr("t.1_0");
@@ -1575,7 +1565,6 @@ mod tests {
 
     #[test]
     fn parses_chained_access_postfix() {
-        // `a.b.c(1)` exercises chaining one access into another.
         let expr = parse_expr("a.b.c(1)");
         match &expr.kind {
             ExprKind::Access { base, member, args } => {
@@ -1593,9 +1582,6 @@ mod tests {
         }
     }
 
-    /// This tests a variant named through its type, with a record payload. It is the one
-    /// access shape the grammar pins down on its own, since neither a field nor a method has
-    /// a brace form.
     #[test]
     fn parses_qualified_variant_with_record_payload() {
         let expr = parse_expr("Expr.int { value: 3 }");
@@ -1628,11 +1614,6 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Brace forms in condition position (`BraceForms::Deny`)
-    // -----------------------------------------------------------------
-
-    /// `if a.b { x }` must keep its body: the `{` is the block, not a record payload.
     #[test]
     fn record_payload_is_denied_in_condition_position() {
         let expr = parse_expr("if a.b { x } else { 0 }");
@@ -1653,8 +1634,6 @@ mod tests {
         }
     }
 
-    /// This tests the same restriction on struct literals, the case that used to require
-    /// parenthesizing.
     #[test]
     fn struct_literal_is_denied_in_condition_position() {
         let expr = parse_expr("if Foo { x } else { 0 }");
@@ -1684,8 +1663,6 @@ mod tests {
         }
     }
 
-    /// The restriction covers the whole top-level spine but stops at any bracketing, so a
-    /// parenthesized or argument-position brace form is still fine in a condition.
     #[test]
     fn brace_forms_are_allowed_inside_brackets_in_a_condition() {
         let expr = parse_expr("if (Foo { a: 1 }).b { x } else { 0 }");
@@ -1712,7 +1689,6 @@ mod tests {
         }
     }
 
-    /// Forms that open with `.` are never ambiguous, since a block can't start with `.`.
     #[test]
     fn dot_prefixed_forms_survive_in_condition_position() {
         let expr = parse_expr("if .{ a: 1 } { x } else { 0 }");
@@ -1761,7 +1737,6 @@ mod tests {
 
     #[test]
     fn parses_postfix_binds_tighter_than_prefix() {
-        // `-a.b` should be `-(a.b)`, not `(-a).b`.
         let expr = parse_expr("-a.b");
         match &expr.kind {
             ExprKind::Unary {
@@ -1786,7 +1761,6 @@ mod tests {
         }
     }
 
-    /// `as` binds looser than unary prefix operators: `-x as i64` is `(-x) as i64`.
     #[test]
     fn cast_binds_looser_than_unary_prefix() {
         let expr = parse_expr("-x as i64");
@@ -1804,8 +1778,6 @@ mod tests {
         }
     }
 
-    /// `as` binds tighter than every binary operator: `x as i64 + 1` is `(x as i64) + 1`, not
-    /// `x as (i64 + 1)` (which isn't even a legal type).
     #[test]
     fn cast_binds_tighter_than_binary_operators() {
         let expr = parse_expr("x as i64 + 1");
@@ -1821,8 +1793,6 @@ mod tests {
         }
     }
 
-    /// A chain of casts is left-associative: `x as i32 as i64` casts `x` to `i32`, then that
-    /// result to `i64`.
     #[test]
     fn chained_casts_are_left_associative() {
         let expr = parse_expr("x as i32 as i64");
@@ -1865,7 +1835,6 @@ mod tests {
 
     #[test]
     fn parses_ctor_with_nested_ctor_field() {
-        // A ctor field's value can itself be another ctor expr.
         let expr = parse_expr("Line { start: Point { x: 0, y: 0 } }");
         match &expr.kind {
             ExprKind::Ctor { payload, .. } => {
@@ -1881,7 +1850,6 @@ mod tests {
 
     #[test]
     fn parses_ctor_field_shorthand() {
-        // `Vector2D { x, y }` is shorthand for `Vector2D { x: x, y: y }`.
         let expr = parse_expr("Vector2D { x, y: 2.0 }");
         match &expr.kind {
             ExprKind::Ctor { payload, .. } => {
@@ -1903,7 +1871,6 @@ mod tests {
 
     #[test]
     fn parses_grouping_not_tuple_for_single_element() {
-        // `(x)` is a grouped expr, not a 1-tuple.
         let expr = parse_expr("(x)");
         assert!(matches!(expr.kind, ExprKind::Path(_)));
     }
@@ -1917,9 +1884,6 @@ mod tests {
         }
     }
 
-    /// `(expr,)` — with its trailing comma — is a one-element tuple. The comma is what
-    /// distinguishes it from the grouped expression `(expr)`, so a one-element tuple is
-    /// writable in the same way a one-element tuple pattern or type is.
     #[test]
     fn parses_one_element_tuple_expr_with_trailing_comma() {
         let expr = parse_expr("(x,)");
@@ -1941,8 +1905,6 @@ mod tests {
         }
     }
 
-    /// A range desugars to `std::range::Range { left, right, inclusive }`; this pulls one
-    /// named field's value back out of that `Ctor` so the range tests can check it.
     fn range_field<'a>(expr: &'a Expr, name: &str) -> &'a Expr {
         match &expr.kind {
             ExprKind::Ctor { path, payload } => {
@@ -1966,7 +1928,6 @@ mod tests {
         }
     }
 
-    /// Asserts that `field` is `.some(_)` (`Some`) or bare `.none` (`None`).
     fn assert_range_bound(field: &Expr, expected: Option<()>) {
         match &field.kind {
             ExprKind::Variant { variant, payload } => {
@@ -2029,7 +1990,6 @@ mod tests {
 
     #[test]
     fn parses_range_with_arithmetic_bounds() {
-        // `a..b+1` should be `a..(b+1)`, since range binds looser than `+`.
         let expr = parse_expr("a..b+1");
         let hi = range_field(&expr, "right");
         let ExprKind::Variant {
@@ -2122,7 +2082,6 @@ mod tests {
         }
     }
 
-    /// `else` after an `if let` takes the same branch parser as a plain `if`, so chaining works.
     #[test]
     fn parses_else_if_let_chain() {
         let expr = parse_expr("if let .some(a) = o { a } else if let .none = o { 1 } else { 2 }");
@@ -2135,7 +2094,6 @@ mod tests {
         }
     }
 
-    /// The scrutinee sits in condition position, so brace forms are denied there too.
     #[test]
     fn if_let_scrutinee_denies_brace_forms() {
         let expr = parse_expr("if let .some(x) = Foo { x } else { 0 }");
@@ -2166,8 +2124,6 @@ mod tests {
         }
     }
 
-    /// A `pat if cond => body` arm records its guard separately from the pattern; an arm with no
-    /// `if` leaves it `None`.
     #[test]
     fn parses_match_arm_with_guard() {
         let expr = parse_expr("match n { x if x > 0 => 1, _ => 0 }");
@@ -2182,8 +2138,6 @@ mod tests {
         }
     }
 
-    /// An arm whose body is a bare `{ .. }` block needs no comma before the next arm, since the
-    /// closing brace already marks where the arm ends.
     #[test]
     fn block_bodied_match_arms_do_not_require_commas() {
         let expr = parse_expr("match s { .rectangle => { return 1; } .circle => { return 2; } }");
@@ -2197,7 +2151,6 @@ mod tests {
         }
     }
 
-    /// A comma between block-bodied arms is still accepted; it's optional, not forbidden.
     #[test]
     fn block_bodied_match_arms_still_allow_commas() {
         let expr = parse_expr("match s { .rectangle => { return 1; }, .circle => { return 2; } }");
@@ -2207,9 +2160,6 @@ mod tests {
         }
     }
 
-    /// An arm whose body is a plain expression, with no enclosing `{ .. }`, still requires a
-    /// comma before the next arm: there would otherwise be no way to tell where the expression
-    /// ends and the next arm's pattern begins.
     #[test]
     fn expr_bodied_match_arms_require_commas() {
         let (tokens, _) = lex_src("match s { .a => 1 .b => 2 }");
@@ -2221,7 +2171,6 @@ mod tests {
         );
     }
 
-    /// A trailing comma after the last arm is optional regardless of that arm's body.
     #[test]
     fn parses_match_with_trailing_comma_after_expr_arm() {
         let expr = parse_expr("match s { .a => 1, .b => 2, }");
@@ -2260,8 +2209,6 @@ mod tests {
 
     #[test]
     fn parses_deeply_nested_expression() {
-        // Exercises several layers together: call args containing a ctor, whose field is a
-        // method call on an indexed, borrowed receiver.
         let expr = parse_expr("render(Frame { pixels: (&buf)[0].to_owned() })");
         match &expr.kind {
             ExprKind::Call { args, .. } => {
@@ -2313,7 +2260,6 @@ mod tests {
 
     #[test]
     fn parses_closure_with_no_params() {
-        // `||` lexes as one `DoublePipe` token, not two `Pipe`s.
         let expr = parse_expr("|| 42");
         match &expr.kind {
             ExprKind::Closure { params, body, .. } => {
@@ -2335,7 +2281,6 @@ mod tests {
 
     #[test]
     fn parses_closure_passed_as_call_argument() {
-        // Exercises a closure nested inside a call, matching how it's actually used in practice.
         let expr = parse_expr("map(xs, |x| x * 2)");
         match &expr.kind {
             ExprKind::Call { args, .. } => {
@@ -2386,7 +2331,6 @@ mod tests {
 
     #[test]
     fn assignment_is_right_associative() {
-        // `a = b = c` should be `a = (b = c)`, not `(a = b) = c`.
         let expr = parse_expr("a = b = c");
         match &expr.kind {
             ExprKind::Assign { rhs, .. } => {
@@ -2398,7 +2342,6 @@ mod tests {
 
     #[test]
     fn assignment_binds_looser_than_range() {
-        // `x = a..b` should parse the whole range as the RHS, not `(x = a)..b`.
         let expr = parse_expr("x = a..b");
         match &expr.kind {
             ExprKind::Assign { rhs, .. } => {
@@ -2410,7 +2353,6 @@ mod tests {
 
     #[test]
     fn parses_assignment_through_a_field_place() {
-        // The left-hand side of an assignment need not be a bare name.
         let expr = parse_expr("point.x = 1");
         match &expr.kind {
             ExprKind::Assign { lhs, .. } => {

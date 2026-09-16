@@ -69,11 +69,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.lower_body_block(block, arg_count, span)
     }
 
-    /// A closure's environment is always given an implicit local at the front of its declared
-    /// parameters, per the spec's "Closures" section, whether or not this particular closure
-    /// captures anything -- a uniform calling convention is simpler than a conditional one, and
-    /// an empty environment costs nothing at the value level either (see `ReifyFnPointer`'s
-    /// discussion of an absent environment pointer).
     fn lower_closure_body(
         &mut self,
         params: &[HirId],
@@ -100,13 +95,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.lower_body_block(block, arg_count, span)
     }
 
-    /// Lowers `block` as this body's whole executable content, its trailing expression (if it
-    /// has one) becoming the return place's value, then closes off whichever basic block that
-    /// lowering left open with an implicit `Return`. `lower_block` (which this calls) always
-    /// leaves the "current" block unterminated when it returns -- a diverging path inside it
-    /// (`return`, `break`, `continue`) switches to a fresh open block of its own right after
-    /// setting its own terminator -- so this can set `Return` unconditionally, without needing
-    /// to check whether the block already ended some other way.
     fn lower_body_block(
         &mut self,
         block: HirId,
@@ -133,11 +121,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.resolve_any(ret, any_mode)
     }
 
-    /// Resolves an `any`-marked type to what it concretely is under `any_mode`: `T` for
-    /// `Owned`, `&T` for `Ref`, `&mut T` for `RefMut`. `any_mode` is `None` for a task that is
-    /// not `any`-specialized at all, in which case an `any T` position resolves as the plain
-    /// owned `T` it wraps -- the README's rule that `any` "has no effect" outside an
-    /// `any`-returning definition. A type that is not `any` at all passes through unchanged.
     pub(crate) fn resolve_any(&mut self, ty: Ty, any_mode: Option<AnyMode>) -> Ty {
         let TyKind::Any(inner) = *self.tcx.kind(ty) else {
             return ty;

@@ -261,8 +261,6 @@ mod tests {
 
     #[test]
     fn a_local_read_on_only_one_branch_of_an_if_is_fine() {
-        // `a` is read whenever `cond` is true, so the assignment is not dead: liveness only
-        // needs a read on some path, not every path.
         accepts("fun f(cond: bool) { let a = 1; if cond { let _ = a; } }");
     }
 

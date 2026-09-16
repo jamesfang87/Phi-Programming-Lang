@@ -122,9 +122,6 @@ mod tests {
             "test",
         )
         .expect("codegen succeeds");
-        // The extras are the runtime declarations plus the C `main` trampoline, which is now
-        // emitted for every crate -- this fixture declares no `main`, so that trampoline is the
-        // do-nothing one.
         assert_eq!(module.get_functions().count(), instances.len() + 5);
     }
 
@@ -163,8 +160,6 @@ mod tests {
 
     #[test]
     fn c_main_trampoline_calls_the_crate_root_main_not_a_nested_one() {
-        // `main` returns nothing (the entry-point check enforces that), so the two candidates
-        // are distinguished by which panic message ends up on stderr instead of by exit code.
         let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
             "module app;\n\nfun main() { panic(\"the crate-root main ran\"); }\n",
             "module app::inner;\n\nfun main() { panic(\"the nested main ran\"); }\n",

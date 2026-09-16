@@ -43,11 +43,6 @@ pub fn any_ty(tcx: &TyCtx, ty: Ty, accept: impl FnMut(&TyCtx, Ty) -> bool) -> bo
     walk(&mut Search::descending(accept), tcx, ty).is_break()
 }
 
-/// Returns whether `accept` holds for any type reachable from `ty`, without looking inside a
-/// function type's own signature.
-///
-/// A function's parameters and return type belong to that function, not to the type it appears
-/// in, so a search asking about the surrounding type stops at one.
 pub fn any_ty_outside_funs(tcx: &TyCtx, ty: Ty, accept: impl FnMut(&TyCtx, Ty) -> bool) -> bool {
     walk(&mut Search::shallow(accept), tcx, ty).is_break()
 }
@@ -232,11 +227,6 @@ impl<'hir> Typeck<'hir> {
 // Pairwise decomposition
 // ---------------------------------------------------------------------------
 
-/// Returns the component pairs two same-shaped types must themselves match on, or `None` when
-/// their shapes differ.
-///
-/// This is the structural half of both unification and one-way matching: what each caller does
-/// with the pairs (bind variables, recurse, fail) is its own policy.
 pub fn decompose(tcx: &TyCtx, a: Ty, b: Ty) -> Option<Vec<(Ty, Ty)>> {
     match (tcx.kind(a), tcx.kind(b)) {
         (TyKind::Adt { def: d, args: x }, TyKind::Adt { def: e, args: y })

@@ -1,28 +1,8 @@
-//! Generated, differential end-to-end tests.
-//!
-//! Rather than hand-computing expected values, each test here generates a real Phi
-//! program whose `main` contains hundreds of tiny assertions. The expected value of every
-//! assertion is computed *independently in Rust* by the test itself; the compiler has to
-//! reproduce it exactly for the program to write nothing to stdout.
-//!
-//! A wrong constant fold, operand order, width, signedness, comparison predicate, cast, or
-//! loop lowering changes at least one assertion's outcome; the failing `;N;` marker written
-//! to stdout then names the exact check. Every program is built, linked, and executed
-//! through the real `phi` binary by [`support::run_checks`].
-
 mod support;
 
 use support::check;
 
-// ---------------------------------------------------------------------------
-// Integer arithmetic and comparison batteries
-// ---------------------------------------------------------------------------
-
-/// Returns `a <op> b` computed at `ty`'s width, or `None` when the operation overflows `ty`
-/// or divides by zero.
 fn checked_arith(ty: &str, op: char, a: i128, b: i128) -> Option<i128> {
-    // `i128::checked_rem` reports `MIN % -1` as `0`; at the target width that quotient
-    // overflows and traps, so the arithmetic has to be done in the target type.
     macro_rules! at_width {
         ($t:ty) => {{
             let (a, b) = (a as $t, b as $t);
@@ -51,8 +31,6 @@ fn checked_arith(ty: &str, op: char, a: i128, b: i128) -> Option<i128> {
     }
 }
 
-/// Values chosen to cross zero, hit ± boundaries for the narrow types, and stay small
-/// enough that most operations in range-checked code do not overflow.
 fn sample_values(ty: &str) -> Vec<i128> {
     match ty {
         "i8" => vec![-128, -100, -20, -7, -3, -1, 0, 1, 2, 3, 7, 20, 100, 127],
@@ -81,8 +59,6 @@ fn sample_values(ty: &str) -> Vec<i128> {
     }
 }
 
-/// Emits one check per operand pair for `op`, skipping pairs whose result overflows the type
-/// (which must abort, and is covered separately).
 fn arith_checks(ty: &str, op: char) -> Vec<String> {
     let mut out = Vec::new();
     let mut idx = 0;
@@ -102,7 +78,6 @@ fn arith_checks(ty: &str, op: char) -> Vec<String> {
     out
 }
 
-/// Emits one check per operand pair for a comparison, computing the predicate in Rust.
 fn cmp_checks(ty: &str, op: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut idx = 0;
@@ -126,10 +101,6 @@ fn cmp_checks(ty: &str, op: &str) -> Vec<String> {
     assert!(out.len() > 20, "{ty} {op}: only {} checks", out.len());
     out
 }
-
-// ---------------------------------------------------------------------------
-// Floating-point batteries
-// ---------------------------------------------------------------------------
 
 fn float_samples(ty: &str) -> Vec<String> {
     let values = ["0.5", "1.0", "1.5", "2.0", "3.0", "4.0", "8.0", "0.25"];
@@ -232,10 +203,6 @@ fn float_cmp_checks(ty: &str, op: &str) -> Vec<String> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Casts: every widening pair the checker accepts, checked at several values.
-// ---------------------------------------------------------------------------
-
 const CAST_PAIRS: &[(&str, &str)] = &[
     ("i8", "i16"),
     ("i8", "i32"),
@@ -299,11 +266,6 @@ fn cast_checks(from: &str, to: &str) -> Vec<String> {
     }
     out
 }
-
-// ---------------------------------------------------------------------------
-// Loop / recursion batteries: the expected result is computed in Rust and compared to a
-// Phi implementation of the same algorithm.
-// ---------------------------------------------------------------------------
 
 const SUM_ITEMS: &str = "\
 fun sum_to(n: i32) -> i32 {
@@ -543,11 +505,6 @@ fn generated_digit_sum() {
     support::run_checks("gen_recursion", "digit_sum", DIGIT_ITEMS, &checks);
 }
 
-// ---------------------------------------------------------------------------
-// Test declarations for the integer suites.
-// ---------------------------------------------------------------------------
-
-// `arith_*_i8` etc. Each invocation expands to five tests.
 macro_rules! all_int_arith {
     ($($ty:literal => { $($op:literal => $name:ident),* $(,)? }),* $(,)?) => {
         $($(

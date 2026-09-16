@@ -18,11 +18,6 @@ use crate::session::Session;
 use crate::typeck;
 use crate::typeck::ty::ctx::TyCtx;
 
-/// Collects every `.phi` file under `src_dir`, and the core and standard libraries, into the
-/// session's source map.
-///
-/// `core` and `std` are registered after the user's project, in that order, on purpose; see
-/// [`Session::collect_core`] and [`Session::collect_std`].
 fn collect_sources(session: &Session, src_dir: &Path) -> io::Result<()> {
     if !src_dir.is_dir() {
         return Err(io::Error::new(
@@ -51,13 +46,6 @@ pub fn parse(session: &Session, streams: Vec<(Vec<Token>, usize)>) -> Ast {
     Parser::new(session).parse_all(&streams)
 }
 
-/// Everything the front end (lex through monomorphize) produces, when it produces anything at
-/// all -- `codegen`'s inputs, kept alongside each other so `build`/`run` don't need to
-/// recompute what `check` already has.
-///
-/// The `hir` is retained as the sole source of definition names for symbol mangling and of the
-/// core library's lang items, the two things codegen reads straight out of it. MIR-level facts
-/// are all recorded by lowering, so nothing else reaches back.
 struct FrontendOutput {
     hir: Hir,
     tcx: TyCtx,
@@ -65,15 +53,6 @@ struct FrontendOutput {
     instances: HashMap<Instance, Body>,
 }
 
-/// Runs every front-end stage -- lex, parse, name resolution, HIR lowering, type checking, MIR
-/// lowering, MIR checks, and monomorphization -- reporting any requested `--ast`/`--hir`/etc.
-/// dump along the way, then reports accumulated diagnostics.
-///
-/// Returns `Some` with the computed artifacts on success, `None` if any stage reported a
-/// diagnostic error. `check`, `build`, and `run` all funnel through this so that a change to
-/// the front end only has one place to land, and so `check`'s externally-observed behavior
-/// (report diagnostics, then say pass/fail) stays exactly what it was before `build`/`run`
-/// grew a real code generation backend to run afterward.
 fn run_frontend(
     session: &Session,
     config: &Config,
@@ -166,23 +145,11 @@ pub fn build(config: &Config, options: &BuildOptions) -> io::Result<bool> {
         }
     };
 
-    // Codegen emits diagnostics of its own -- a missing or ill-formed `main`, for one. Without
-    // this the frontend's `report` would already have run, so those would sit unrendered in the
-    // collection while the build carried on to link, turning a compiler error into whatever the
-    // linker made of the missing symbol.
     if session.report() {
         return Ok(false);
     }
 
     if options.dumps.llvm {
-        // The spec requires the dumped IR to reflect the module as codegen left it -- after
-        // verification (so a malformed module is caught first, the same way `emit` itself would
-        // catch it) but before optimization (so what's printed is what codegen actually built,
-        // not what a later pass rewrote it into). `emit` only verifies internally right before
-        // it optimizes, with no hook to observe the module in between, so this verifies here too
-        // -- a second `module.verify()` call is cheap (a single linear pass over the module) and
-        // harmless to run twice; it is not a meaningfully different check than the one `emit`
-        // performs immediately afterward.
         if let Err(e) = module.verify() {
             eprintln!(
                 "error: codegen failed: {}\n{}",

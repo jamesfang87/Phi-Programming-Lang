@@ -16,10 +16,6 @@ pub struct TyCtx {
     /// The ADTs collected by [`crate::typeck::ty::adt::collect_adt_defs`], looked up for their
     /// field types and variant counts.
     adts: HashMap<DefId, AdtDef>,
-    /// Types the trait solver proved implement `core::ops::Copy`. Copyability is not purely
-    /// structural: a type parameter carries it only when a bound says so, and an ADT only when an
-    /// `extend` block implements the trait, so the decision is recorded once during type checking
-    /// and read back here by MIR lowering and borrow checking.
     copy: HashSet<Ty>,
 }
 

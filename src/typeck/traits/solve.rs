@@ -67,13 +67,6 @@ pub enum Solution {
     Error,
 }
 
-/// Matches the open type `open` against the closed type `closed`, recording in `subst` what
-/// each of the header's own parameters had to be. A parameter in `generics` binds on first
-/// sight and must agree with itself on every later sight; anything else is an ordinary rigid
-/// constant, matching only structurally identical types.
-///
-/// Nothing in `closed` is ever bound: matching is one-way, which is what keeps candidate
-/// selection from constraining the caller's own inference variables.
 pub fn match_ty(
     tcx: &TyCtx,
     generics: &[HirId],
@@ -308,10 +301,6 @@ mod tests {
     use crate::nameres::PrimTy;
     use crate::testing::{TypeckStage, checker_through, lower_to_hir};
 
-    // -----------------------------------------------------------------
-    // match_ty
-    // -----------------------------------------------------------------
-
     fn param(n: usize) -> HirId {
         DefId::from_usize(n).owner_id()
     }
@@ -361,8 +350,6 @@ mod tests {
         ));
     }
 
-    /// The asymmetry that makes this matching rather than unification: a parameter on the *goal*
-    /// side is a rigid constant, not something to bind.
     #[test]
     fn matching_is_one_way() {
         let mut tcx = TyCtx::new();
@@ -393,7 +380,6 @@ mod tests {
         let concrete = tcx.mk_adt(def(FOO), vec![i32_ty]);
         let same = tcx.mk_adt(def(FOO), vec![outer]);
 
-        // The header declares `param(10)`, not `param(20)`, so `outer` may not be bound.
         assert!(!match_ty(
             &tcx,
             &[param(10)],
@@ -437,7 +423,6 @@ mod tests {
         assert_eq!(subst[&param(10)], i32_ty);
     }
 
-    /// A parameter binds to whatever is there, including a whole composite.
     #[test]
     fn a_parameter_binds_to_a_composite() {
         let mut tcx = TyCtx::new();
@@ -462,18 +447,12 @@ mod tests {
         assert!(!match_ty(&tcx, &[], i32_ty, error, &mut HashMap::new()));
     }
 
-    // -----------------------------------------------------------------
-    // implements
-    // -----------------------------------------------------------------
-
-    /// Collects `src` and builds the extend index, which is everything the query reads.
     fn solver<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
         let checker = checker_through(hir, TypeckStage::Index);
         crate::testing::clear_diagnostics();
         checker
     }
 
-    /// Returns the `DefId` of the top-level definition named `name`.
     fn named(checker: &Typeck<'_>, name: &str) -> DefId {
         crate::testing::named_def(checker.hir, name)
     }
@@ -511,7 +490,6 @@ mod tests {
         );
     }
 
-    /// A goal whose self type is still an inference variable is not "no", it is "not yet".
     #[test]
     fn an_unresolved_self_type_is_ambiguous() {
         let hir = lower_to_hir(SRC);
@@ -548,8 +526,6 @@ mod tests {
         );
     }
 
-    /// Nothing but a struct, an enum, or a `dyn` can implement anything: a reference to a type
-    /// that implements `Show` does not itself implement it.
     #[test]
     fn a_reference_implements_nothing() {
         use crate::ast::Mutability;
@@ -625,8 +601,6 @@ mod tests {
         );
     }
 
-    /// The environment is consulted before the index, and it is the only thing that can answer a
-    /// goal about a bare type parameter.
     #[test]
     fn a_bound_in_the_environment_proves_a_goal_about_a_parameter() {
         let hir = lower_to_hir(
@@ -662,7 +636,6 @@ mod tests {
         assert_eq!(checker.implements(&goal, &env), Solution::DoesNotHold);
     }
 
-    /// Inside a trait, `Self` implements that trait by definition.
     #[test]
     fn a_traits_own_self_implements_it() {
         let hir = lower_to_hir("trait Show { fun show(&self); }");
@@ -675,7 +648,6 @@ mod tests {
         assert_eq!(checker.implements(&goal, &env), Solution::Holds);
     }
 
-    /// A method sees the bounds of the `extend` block it is declared in, not just its own.
     #[test]
     fn a_method_inherits_its_extend_blocks_bounds() {
         let hir = lower_to_hir(
@@ -695,7 +667,6 @@ mod tests {
         );
     }
 
-    /// A conditional block is honored: `Wrap<T>: Show` holds exactly when `T: Show` does.
     #[test]
     fn a_conditional_impls_own_bounds_are_proved_recursively() {
         let hir = lower_to_hir(
@@ -721,7 +692,6 @@ mod tests {
             Solution::Holds
         );
 
-        // `Bare: Show` fails, so `Wrap<Bare>: Show` fails with it.
         let fails = Goal::new(wrap_bare, show);
         assert_eq!(
             checker.implements(&fails, &BoundsEnv::default()),

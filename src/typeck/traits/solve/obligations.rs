@@ -133,10 +133,6 @@ impl<'hir> Typeck<'hir> {
     /// Returns `goal` with the language's default type committed to every unconstrained numeric
     /// variable it still holds.
     fn default_numeric_goal(&mut self, goal: &Goal) -> Goal {
-        // The body is fully checked by the time an obligation is proved, so nothing left open can
-        // still be settled later. A bound on a value whose type nothing pinned -- a `for` over a
-        // literal range, such as `{integer}: Step` -- is therefore decided against the defaulted
-        // `i32` rather than reported as ambiguous.
         Goal {
             self_ty: self.default_numeric_ty(goal.self_ty),
             trait_: TraitRef {
@@ -301,17 +297,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Draining
-    //
-    // What the single pass over real inference still has to get right, now that it is not a
-    // loop. See "Why deferral" in the module docs.
-    // -----------------------------------------------------------------
-
-    /// A goal built from an already-broken type, such as a reference that failed to resolve,
-    /// answers [`Solution::Error`] and is discharged without comment: a diagnostic for the
-    /// broken reference already exists, and adding a second one about the bound it happens to
-    /// sit in would be noise about the same mistake.
     #[test]
     fn a_bound_about_an_already_broken_type_is_discharged_silently() {
         let hir = lower_to_hir(
@@ -323,11 +308,6 @@ mod tests {
         assert!(bounds(&hir).is_empty());
     }
 
-    /// A goal can still be genuinely undecided once there is nowhere left to check it from: a
-    /// generic call whose own type parameter is never pinned down by anything in the body that
-    /// calls it. A single pass at the end of the body is enough to report this, since looping
-    /// past it would not change the answer, as nothing between one attempt and the next could
-    /// have moved.
     #[test]
     fn a_bound_that_never_resolves_is_reported_as_needing_an_annotation() {
         crate::testing::typeck_rejects(
@@ -338,11 +318,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Several bounds at once
-    // -----------------------------------------------------------------
-
-    /// `T: A + B` raises one obligation per trait named; both have to hold.
     #[test]
     fn a_type_parameter_with_two_bounds_needs_both_satisfied() {
         crate::testing::typeck_accepts(
@@ -356,8 +331,6 @@ mod tests {
         );
     }
 
-    /// Same shape, but the argument only implements one of the two, so exactly the missing one
-    /// is reported.
     #[test]
     fn a_type_parameter_with_two_bounds_reports_whichever_one_is_unmet() {
         let messages = crate::testing::typeck_src(
@@ -375,8 +348,6 @@ mod tests {
         );
     }
 
-    /// Two independently declared type parameters, each with its own bound, are checked
-    /// independently, so a failure on one does not silence or duplicate onto the other.
     #[test]
     fn two_independently_bounded_parameters_are_each_checked_on_their_own() {
         let messages = crate::testing::typeck_src(

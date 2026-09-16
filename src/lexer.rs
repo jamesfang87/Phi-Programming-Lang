@@ -20,10 +20,6 @@ pub struct Lexer<'a> {
     /// [`Lexer::cursor`] is the current position in [`Lexer::src`].
     cursor: usize,
 
-    /// [`Lexer::lexeme_pos`] is position that the current lexeme (lexical unit)
-    /// starts at in [`Lexer::src`].
-    /// This is required for generating spans for multi-character tokens as
-    /// [`Lexer::cursor`] is not the start of the token.
     lexeme_pos: usize,
 }
 
@@ -57,10 +53,6 @@ impl<'a> Lexer<'a> {
         token_stream
     }
 
-    /// Scans and returns one token, starting at `self.cursor`.
-    ///
-    /// This MUST be called only after [`Lexer::skip_trivia`]
-    /// Returns `None` when the current character is invalid
     fn scan(&mut self) -> Option<Token> {
         match self.eat() {
             '(' => Some(self.make_token(TokenKind::OpenParen)),
@@ -512,12 +504,10 @@ mod tests {
         let (tokens, diagnostics) = lex("@ 1");
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("unexpected character '@'"));
-        // Lexing continues past the bad character and still finds the real token.
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].kind, TokenKind::IntLiteral);
     }
 
-    /// Reports the single diagnostic `src` raises, or panics otherwise.
     fn only_diagnostic(src: &str) -> Diagnostic {
         let (_, raised) = lex(src);
         assert_eq!(raised.len(), 1, "expected exactly one diagnostic");
@@ -526,15 +516,12 @@ mod tests {
 
     #[test]
     fn reports_unknown_string_escape() {
-        // `"\q"` must not silently decode to `"aq"`; the escape has to be called out.
         let diagnostic = only_diagnostic(r#""a\qb""#);
         assert!(diagnostic.message.contains("unknown escape sequence `\\q`"));
     }
 
     #[test]
     fn reports_unknown_char_escape() {
-        // `'\u{41}'` previously collapsed to `Char('u')` behind a misleading "too many
-        // characters" report; the unknown escape itself must be what gets named.
         let diagnostic = only_diagnostic(r"'\u{41}'");
         assert!(diagnostic.message.contains("unknown escape sequence `\\u`"));
     }
@@ -552,7 +539,6 @@ mod tests {
 
     #[test]
     fn a_file_ending_in_a_bad_character_gains_no_phantom_token() {
-        // The stray byte is reported, but nothing is appended past the end of input.
         let (tokens, diagnostics) = lex("fun main() {} @");
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
@@ -577,13 +563,8 @@ mod tests {
         tokens.into_iter().map(|t| t.kind).collect()
     }
 
-    // --- keywords -----------------------------------------------------
-
     #[test]
     fn every_keyword_round_trips_through_its_own_token_kind() {
-        // Lexing a keyword's spelling must produce exactly the kind whose `to_string` is that
-        // spelling, so the [`KEYWORDS`] table the lexer looks spellings up in and the spellings
-        // diagnostics name cannot drift apart.
         for (spelling, kind) in KEYWORDS {
             assert_eq!(kinds(spelling), vec![*kind], "lexing {spelling:?}");
             assert_eq!(Descriptor::of(*kind).name(), *spelling, "for {kind:?}");
@@ -592,7 +573,6 @@ mod tests {
 
     #[test]
     fn keywords_use_maximal_munch_not_prefix_match() {
-        // A keyword that's merely a prefix of the identifier must not match early.
         assert_eq!(kinds("structure"), vec![TokenKind::Identifier]);
         assert_eq!(kinds("iffy"), vec![TokenKind::Identifier]);
         assert_eq!(kinds("forever"), vec![TokenKind::Identifier]);
@@ -607,8 +587,6 @@ mod tests {
         assert_eq!(kinds("foo_bar_1"), vec![TokenKind::Identifier]);
     }
 
-    // --- numbers --------------------------------------------------------
-
     #[test]
     fn tokenizes_integers_and_floats() {
         assert_eq!(kinds("42"), vec![TokenKind::IntLiteral]);
@@ -618,8 +596,6 @@ mod tests {
 
     #[test]
     fn trailing_dot_without_digit_is_not_a_float() {
-        // "1." should not greedily consume the '.' as part of a float since there's no
-        // fractional digit; it's an int literal followed by a separate period token.
         assert_eq!(kinds("1."), vec![TokenKind::IntLiteral, TokenKind::Period]);
     }
 
@@ -627,8 +603,6 @@ mod tests {
     fn digit_separators_only_apply_between_digits() {
         assert_eq!(kinds("1_000_000"), vec![TokenKind::IntLiteral]);
         assert_eq!(kinds("3.14_15"), vec![TokenKind::FloatLiteral]);
-        // A trailing underscore not followed by a digit doesn't get folded into the number: it
-        // starts a separate token, here the wildcard `_`.
         assert_eq!(
             kinds("1_ _"),
             vec![
@@ -676,23 +650,16 @@ mod tests {
 
     #[test]
     fn int_syntax_literal_with_a_float_suffix_is_still_an_int_literal_token() {
-        // The lexer only distinguishes `IntLiteral`/`FloatLiteral` by whether a `.` was written;
-        // a `_f64` suffix on a whole number (`5_f64`) doesn't retroactively add one. Type
-        // checking, not the lexer, is what decides `5_f64` is a float.
         assert_eq!(kinds("5_f64"), vec![TokenKind::IntLiteral]);
     }
 
     #[test]
     fn lexer_does_not_validate_suffix_names() {
-        // Any `_name` right after a number's digits is lexed as its suffix; whether `name` is a
-        // real numeric type is left for type checking to say.
         assert_eq!(kinds("42_bogus"), vec![TokenKind::IntLiteral]);
     }
 
     #[test]
     fn suffix_must_be_directly_adjacent_to_the_number() {
-        // A space between the number and what would be a suffix means there's no suffix -- just
-        // two separate tokens.
         assert_eq!(
             kinds("42 _i64"),
             vec![TokenKind::IntLiteral, TokenKind::Identifier]
@@ -719,8 +686,6 @@ mod tests {
         );
     }
 
-    // --- operators --------------------------------------------------------
-
     #[test]
     fn tokenizes_multi_char_operators() {
         let pairs = [
@@ -746,8 +711,6 @@ mod tests {
         }
     }
 
-    /// Phi has no increment/decrement operators, so `++` and `--` are not single tokens: they
-    /// lex as their separate characters and fail later, at the parser, with its own diagnostic.
     #[test]
     fn double_plus_and_double_minus_are_not_single_tokens() {
         assert_eq!(
@@ -798,11 +761,8 @@ mod tests {
 
     #[test]
     fn negative_numbers_lex_as_separate_minus_and_literal() {
-        // Phi has no negative literal syntax; unary minus is a distinct token.
         assert_eq!(kinds("-1"), vec![TokenKind::Minus, TokenKind::IntLiteral]);
     }
-
-    // --- strings and chars --------------------------------------------------------
 
     #[test]
     fn tokenizes_string_with_escapes() {
@@ -857,8 +817,6 @@ mod tests {
         assert!(diagnostics[0].message.contains("unterminated character"));
     }
 
-    // --- comments and whitespace --------------------------------------------------------
-
     #[test]
     fn line_comment_stops_at_newline() {
         let (tokens, diagnostics) = lex("1 // comment\n2");
@@ -881,7 +839,6 @@ mod tests {
 
     #[test]
     fn block_comments_nest() {
-        // The inner `/* ... */` opens a nested comment, so only the outer `*/` closes it.
         let (tokens, diagnostics) = lex("/* outer /* inner */ 1 */");
         assert!(diagnostics.is_empty());
         assert!(tokens.is_empty());
@@ -889,7 +846,6 @@ mod tests {
 
     #[test]
     fn nested_block_comment_missing_inner_close_is_unterminated() {
-        // The outer `*/` closes only the inner comment; the outer one is left open.
         let (_, diagnostics) = lex("/* outer /* inner */");
         assert_eq!(diagnostics.len(), 1);
         assert!(
@@ -917,8 +873,6 @@ mod tests {
         );
     }
 
-    // --- error recovery and multiple diagnostics --------------------------------------------------------
-
     #[test]
     fn accumulates_multiple_diagnostics_across_a_file() {
         let (_, diagnostics) = lex("@ 1 # 2");
@@ -927,12 +881,9 @@ mod tests {
         assert!(diagnostics[1].message.contains("'#'"));
     }
 
-    // --- spans --------------------------------------------------------
-
     #[test]
     fn token_spans_are_correct_char_offsets() {
         let (tokens, _) = lex("let x = 1;");
-        // "let" @ [0,3), "x" @ [4,5), "=" @ [6,7), "1" @ [8,9), ";" @ [9,10)
         assert_eq!(tokens[0].span.as_tuple(), (0, 3));
         assert_eq!(tokens[1].span.as_tuple(), (4, 5));
         assert_eq!(tokens[2].span.as_tuple(), (6, 7));
@@ -947,8 +898,6 @@ mod tests {
         let tokens = Lexer::new(crate::testing::session(), &chars, 100).tokenize();
         assert_eq!(tokens[0].span.as_tuple(), (100, 103));
     }
-
-    // --- realistic snippet from the README --------------------------------------------------------
 
     #[test]
     fn tokenizes_function_declaration() {
@@ -981,7 +930,6 @@ mod tests {
 
     #[test]
     fn tokenizes_projecting_function_signature() {
-        // `:` for projecting return type and `any` as a plain identifier-like keyword-free name.
         assert_eq!(
             kinds("fun min(x: any i32, y: any i32) -> any i32 {"),
             vec![
@@ -1038,8 +986,6 @@ mod tests {
         );
     }
 
-    /// Not a real assertion — run with `cargo test render_sample_report -- --nocapture` to see
-    /// what `ariadne`'s rendered output actually looks like for a couple of these diagnostics.
     #[test]
     fn render_sample_report() {
         crate::testing::clear_diagnostics();

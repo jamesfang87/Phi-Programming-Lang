@@ -1183,10 +1183,6 @@ mod tests {
         accepts("trait Shape { fun area(&self) -> i32; }");
     }
 
-    // -----------------------------------------------------------------
-    // check_expr
-    // -----------------------------------------------------------------
-
     fn checker_with_impls_built<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
         checker_through(hir, TypeckStage::Index)
     }
@@ -1332,7 +1328,6 @@ mod tests {
         let (_stmt_id, expr_id) = find_return(&hir, def);
         let mut checker = checker_with_signatures_collected(&hir);
 
-        // An unsuffixed literal starts out as an integer inference variable.
         let recorded = checker.ty_of(expr_id);
         assert!(matches!(checker.tcx.kind(recorded), TyKind::Var(_)));
 
@@ -1342,7 +1337,6 @@ mod tests {
             .unify(&checker.tcx, recorded, i32_ty)
             .expect("an int var unifies with i32");
 
-        // The table still holds the variable, but nothing reads it directly.
         assert_eq!(checker.types.ty(expr_id), Some(recorded));
         assert_eq!(checker.ty_of(expr_id), i32_ty);
     }
@@ -1388,7 +1382,6 @@ mod tests {
         assert_eq!(*checker.tcx.kind(ty), TyKind::Primitive(PrimTy::I32));
     }
 
-    /// The float counterpart of the test above.
     #[test]
     fn an_unconstrained_float_literal_defaults_to_f64() {
         let hir = lower_to_hir("fun f() { let x = 5.0; }");
@@ -1553,10 +1546,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // check_expr: Path
-    // -----------------------------------------------------------------
-
     #[test]
     fn path_to_a_parameter_checks_to_the_parameters_type() {
         let hir = lower_to_hir("fun f(x: i32) -> i32 { return x; }");
@@ -1610,10 +1599,6 @@ mod tests {
         let ty = checker.ty_of(expr_id);
         assert_eq!(checker.display_cx().show(ty).to_string(), "&S");
     }
-
-    // -----------------------------------------------------------------
-    // Diagnostic rendering
-    // -----------------------------------------------------------------
 
     #[test]
     fn primitive_displays_as_its_keyword() {
@@ -1890,10 +1875,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Primitives
-    // -----------------------------------------------------------------
-
     #[test]
     fn every_integer_primitive_round_trips_through_a_function_signature() {
         for name in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"] {
@@ -2045,10 +2026,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // Shadowing and recursion
-    // -----------------------------------------------------------------
-
     #[test]
     fn a_let_may_rebind_a_name_at_a_different_type() {
         accepts(
@@ -2179,10 +2156,6 @@ mod tests {
         accepts("fun f(x: &i32) {}");
     }
 
-    // -----------------------------------------------------------------
-    // `any` is confined to a function's parameter and return types
-    // -----------------------------------------------------------------
-
     #[test]
     fn any_as_a_parameter_or_return_type_checks() {
         accepts("fun f(x: any i32) -> any i32 { return x; }");
@@ -2228,10 +2201,6 @@ mod tests {
             "`any` may only appear in a parameter or return type",
         );
     }
-
-    // -----------------------------------------------------------------
-    // `dyn` requires wrapping with `&` or `iso`
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_bare_dyn_parameter_is_rejected() {
@@ -2410,14 +2379,6 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Bugs found by targeted testing, now regression tests for their fixes.
-    // -----------------------------------------------------------------
-
-    /// `check_literal` looks only at a literal's suffix, never its value, and the unifier happily
-    /// binds an unconstrained integer literal to any width. Codegen then truncates via
-    /// `const_int(value as u64)`, so an out-of-range literal silently wraps. A literal that does
-    /// not fit its type must be rejected.
     #[test]
     fn an_out_of_range_integer_literal_is_rejected() {
         for src in [
@@ -2433,9 +2394,6 @@ mod tests {
         }
     }
 
-    /// Unary minus on an *undefaulted* numeric literal is accepted without checking that the
-    /// eventual type implements `Neg`. Since there is no `extend u8 with Neg`, `-1` as a `u8`
-    /// should be rejected; instead it is admitted and truncated to `255`.
     #[test]
     fn a_negative_literal_for_an_unsigned_type_is_rejected() {
         let reported = crate::testing::typeck_src("fun f() -> u8 { let x: u8 = -1; return x; }");
@@ -2445,9 +2403,6 @@ mod tests {
         );
     }
 
-    /// Exhaustiveness only checks that each top-level variant name appears in some arm; it never
-    /// inspects the arms' payload patterns. So a match that handles `.some(true)` but not
-    /// `.some(false)` is accepted, and the uncovered case becomes `unreachable` at runtime.
     #[test]
     fn a_match_missing_a_variant_payload_case_is_rejected() {
         let reported = crate::testing::typeck_src(
@@ -2460,9 +2415,6 @@ mod tests {
         );
     }
 
-    /// `pat_is_irrefutable` treats any single-variant enum pattern as irrefutable without
-    /// recursing into the payload, so a refutable `let .one(true) = o;` is accepted without an
-    /// `else` and its literal test is dropped during lowering.
     #[test]
     fn a_refutable_let_pattern_is_rejected() {
         let reported = crate::testing::typeck_src(
@@ -2475,8 +2427,6 @@ mod tests {
         );
     }
 
-    /// `is_place_expr` reports `base.member` as writable whenever `base` is not a type name,
-    /// even when `base` is a call result. Assigning to a field of a temporary should be rejected.
     #[test]
     fn assigning_to_a_temporary_is_rejected() {
         let reported = crate::testing::typeck_src(
@@ -2490,9 +2440,6 @@ mod tests {
         );
     }
 
-    /// The `SelfMode::Mutable` receiver check only inspects the outermost projection layer, so a
-    /// `&mut self` method can be called through a shared reference (`&mut &S`), which lowering
-    /// then actually performs.
     #[test]
     fn a_mutable_method_cannot_be_called_through_a_shared_reference() {
         let reported = crate::testing::typeck_src(
@@ -2506,16 +2453,11 @@ mod tests {
         );
     }
 
-    /// `(T)` is a parenthesized `T`; only `(T,)` is a one-element tuple (see the parser tests and
-    /// the diagnostic renderer). The type parser builds a tuple unconditionally, so this is
-    /// currently typed as `(i32,)` and rejected.
     #[test]
     fn a_parenthesized_type_is_not_a_one_element_tuple() {
         accepts("fun f(x: (i32)) -> i32 { return x; }");
     }
 
-    /// `char` is a Unicode scalar value in `0..=0x10FFFF`, which always fits a 64-bit `usize`.
-    /// `char as u64` is allowed, but `cast_allowed` omits `usize` from the target list.
     #[test]
     fn a_char_can_be_cast_to_usize() {
         accepts("fun f(c: char) -> usize { return c as usize; }");

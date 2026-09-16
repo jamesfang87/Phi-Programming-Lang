@@ -81,20 +81,12 @@ mod tests {
     use crate::hir::Hir;
     use crate::testing::{TypeckStage, checker_through, lower_to_hir};
 
-    /// Runs everything up to and including coherence over `src`, and hands back what it reported.
-    ///
-    /// Diagnostics from name resolution are cleared first: a fixture is resolved without the core
-    /// library, so every one of them reports the whole set of missing lang items.
     fn coherence(hir: &Hir) -> Vec<String> {
         let mut checker = checker_through(hir, TypeckStage::Index);
         crate::testing::clear_diagnostics();
         checker.check_coherence();
         crate::testing::messages()
     }
-
-    // -----------------------------------------------------------------
-    // Check 1: duplicate implementation
-    // -----------------------------------------------------------------
 
     #[test]
     fn implementing_one_trait_twice_for_one_type_is_reported() {
@@ -109,14 +101,11 @@ mod tests {
             coherence(&hir),
             [
                 "conflicting implementations of trait `Show` for type `Foo`",
-                // The same pair collides on `show` as well, which is check 2 speaking.
                 "the method `show` is defined more than once for type `Foo`",
             ]
         );
     }
 
-    /// The conflict is about two blocks, so the diagnostic names two places: the later block,
-    /// which is what has to change, and the earlier one it collides with.
     #[test]
     fn a_conflict_points_at_both_blocks() {
         let hir = lower_to_hir(
@@ -139,14 +128,10 @@ mod tests {
         };
         assert_eq!(first.message, "`Foo` is already implemented here");
 
-        // The secondary points at the earlier block and the primary at the later one, which is
-        // the whole distinction the two labels are drawing.
         let primary = conflict.span.expect("a conflict names a place");
         assert!(first.span.get_begin() < primary.get_begin());
     }
 
-    /// A marker trait with no methods is exactly the case check 2 cannot see, which is why the
-    /// two checks are separate.
     #[test]
     fn implementing_a_method_less_trait_twice_is_still_reported() {
         let hir = lower_to_hir(
@@ -162,8 +147,6 @@ mod tests {
         );
     }
 
-    /// A fully generic block overlaps a concrete one, so the two conflict even though neither is
-    /// literally a duplicate of the other.
     #[test]
     fn a_generic_impl_conflicts_with_a_concrete_one() {
         let hir = lower_to_hir(
@@ -217,8 +200,6 @@ mod tests {
         assert!(coherence(&hir).is_empty());
     }
 
-    /// Bounds are not consulted, so these conflict even though no type could pick the wrong one.
-    /// Proving otherwise takes negative reasoning, and the help text says as much.
     #[test]
     fn a_conditional_impl_still_conflicts_with_a_concrete_one() {
         let hir = lower_to_hir(
@@ -230,10 +211,6 @@ mod tests {
 
         assert_eq!(coherence(&hir).len(), 1);
     }
-
-    // -----------------------------------------------------------------
-    // Check 2: duplicate method name
-    // -----------------------------------------------------------------
 
     #[test]
     fn two_traits_declaring_one_method_name_conflict_for_a_type_implementing_both() {
@@ -251,8 +228,6 @@ mod tests {
         );
     }
 
-    /// The trait's own list is what counts, not the block's. A block that overrides nothing still
-    /// makes every defaulted method available on the type, and so still collides.
     #[test]
     fn an_impl_supplying_only_defaults_still_collides() {
         let hir = lower_to_hir(
@@ -294,8 +269,6 @@ mod tests {
         assert!(coherence(&hir).is_empty());
     }
 
-    /// Blocks that cannot both apply to one type are never compared for method names, however
-    /// many names they share.
     #[test]
     fn impls_for_disjoint_types_may_share_method_names() {
         let hir = lower_to_hir(

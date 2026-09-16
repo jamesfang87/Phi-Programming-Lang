@@ -1,16 +1,3 @@
-//! Stable diagnostic codes.
-//!
-//! A diagnostic's [`code`](crate::diagnostics::Diagnostic::code) is its stable identity, so
-//! tests and tooling can target it even as the `message` is reworded. Codes are grouped by the
-//! pipeline stage that raises them:
-//!
-//! - `E01xx` — lexing and parsing
-//! - `E02xx` — name resolution
-//! - `E03xx` — type checking, including expressions, patterns, types, and the entry point
-//! - `E04xx` — trait solving
-//! - `E05xx` / `W05xx` — MIR analysis (moves, borrows, initialization)
-//! - `E06xx` — the driver and embedded lang items
-
 // Lexing and parsing -------------------------------------------------------
 
 /// A delimiter was opened but never closed.

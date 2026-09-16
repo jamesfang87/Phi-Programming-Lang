@@ -506,8 +506,6 @@ fn payload_pats(payload: &Payload) -> Vec<HirId> {
 mod tests {
     use crate::testing::{typeck_accepts as accepts, typeck_rejects as rejects};
 
-    /// A pattern is checked against the type it matches, so a literal in one has to be able to
-    /// be that type, the same question `1 == x` asks, asked in the other direction.
     #[test]
     fn a_literal_pattern_has_to_match_the_scrutinees_type() {
         accepts("fun f(n: i32) -> i32 { return match n { 0 => 1, _ => 2, }; }");
@@ -517,16 +515,11 @@ mod tests {
         );
     }
 
-    /// A float literal pattern checks like its expression counterpart and lowers to an
-    /// ordinary float equality test.
     #[test]
     fn a_float_literal_pattern_matches_a_float_scrutinee() {
         accepts("fun f(n: f64) -> i32 { return match n { 3.14 => 1, _ => 0 }; }");
     }
 
-    /// `str` equality has no runtime lowering yet -- `str` is a `{ pointer, length }` pair, so
-    /// matching one by value would need a string-comparison helper that does not exist. The
-    /// pattern is rejected here rather than left to ICE in MIR lowering.
     #[test]
     fn a_string_literal_pattern_is_rejected() {
         rejects(
@@ -535,8 +528,6 @@ mod tests {
         );
     }
 
-    /// A wildcard says nothing about the type, so it matches whatever it is given and binds
-    /// nothing.
     #[test]
     fn a_wildcard_matches_anything() {
         accepts("fun f(n: bool) -> i32 { return match n { _ => 1, }; }");
@@ -555,8 +546,6 @@ mod tests {
         );
     }
 
-    /// Unlike a struct literal, a record pattern may name fewer fields than the variant declares:
-    /// the ones left out are simply not bound.
     #[test]
     fn a_record_variant_pattern_may_leave_fields_out() {
         accepts(
@@ -574,9 +563,6 @@ mod tests {
         );
     }
 
-    /// The payload's declared shape is what a pattern has to be written in: `.circle` carries one
-    /// value, so matching it as though it carried none is not a narrower pattern, it is a wrong
-    /// one.
     #[test]
     fn a_variant_pattern_written_with_the_wrong_payload_shape_is_reported() {
         rejects(
@@ -586,8 +572,6 @@ mod tests {
         );
     }
 
-    /// Nesting is what makes pushing the type down rather than working one up the right shape:
-    /// each level hands the next what it declared.
     #[test]
     fn a_pattern_nested_two_levels_deep_still_binds_at_the_declared_type() {
         accepts(
@@ -605,8 +589,6 @@ mod tests {
         );
     }
 
-    /// One mistake, one diagnostic: a pattern below a failed one still binds its names, at
-    /// `Error`, so a use of one of them does not report a second time.
     #[test]
     fn a_binding_under_a_failed_pattern_does_not_report_again() {
         rejects(
@@ -615,12 +597,6 @@ mod tests {
             "no variant `square`",
         );
     }
-
-    // -----------------------------------------------------------------
-    // Exhaustiveness
-    //
-    // See `Typeck::check_match_exhaustive` for exactly how much this does and does not check.
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_match_missing_a_variant_and_with_no_wildcard_is_rejected() {
@@ -647,9 +623,6 @@ mod tests {
         );
     }
 
-    /// Neither a tuple nor a struct is enumerated by this check (see
-    /// `Typeck::check_match_exhaustive`'s doc comment), so both need an explicit catch-all no
-    /// matter how many combinations the arms already spell out.
     #[test]
     fn a_type_this_check_does_not_enumerate_still_needs_a_wildcard() {
         rejects(
@@ -665,8 +638,6 @@ mod tests {
         );
     }
 
-    /// One mistake, one diagnostic: a `match` with an unresolvable arm is not also accused of
-    /// leaving a variant uncovered.
     #[test]
     fn an_unknown_variant_does_not_also_trigger_an_exhaustiveness_diagnostic() {
         rejects(
@@ -676,8 +647,6 @@ mod tests {
         );
     }
 
-    /// A guarded wildcard might not fire, since the guard could come back `false`, so, exactly
-    /// as in Rust, it does not make the match exhaustive on its own.
     #[test]
     fn a_guarded_wildcard_does_not_count_toward_exhaustiveness() {
         rejects(
@@ -686,14 +655,11 @@ mod tests {
         );
     }
 
-    /// Once an unguarded wildcard is also present, the match is exhaustive regardless of what
-    /// any guarded arm above it covers.
     #[test]
     fn an_unguarded_wildcard_after_a_guarded_arm_still_covers_everything() {
         accepts("fun f(b: bool) -> i32 { return match b { true if b => 1, _ => 2, }; }");
     }
 
-    /// A guarded variant arm does not, on its own, count as covering that variant.
     #[test]
     fn a_guarded_variant_arm_does_not_count_toward_exhaustiveness() {
         rejects(
@@ -704,10 +670,6 @@ mod tests {
             "not covered",
         );
     }
-
-    // -----------------------------------------------------------------
-    // Nested patterns, more deeply
-    // -----------------------------------------------------------------
 
     #[test]
     fn a_three_element_tuple_pattern_binds_each_element() {
@@ -753,8 +715,6 @@ mod tests {
         accepts("fun f(c: char) -> i32 { return match c { 'a' => 1, _ => 2, }; }");
     }
 
-    /// A variant pattern nested two levels deep inside another variant pattern: `Option<Shape>`
-    /// matched all the way down to `Shape`'s own payload.
     #[test]
     fn a_variant_pattern_nested_inside_another_variant_pattern() {
         accepts(
@@ -768,9 +728,6 @@ mod tests {
                  };
              }",
         );
-        // The first arm pins the match's result type to `f64` (from `r`, `.circle`'s payload),
-        // and the second arm's `true` then disagrees with that: exactly one mismatch, on the
-        // arm that is actually wrong.
         rejects(
             "enum Option<T> { some: T, none }
              enum Shape { unit, circle: f64 }
@@ -785,7 +742,6 @@ mod tests {
         );
     }
 
-    /// A generic enum with two type parameters (`Result`-shaped) matches through both.
     #[test]
     fn a_two_parameter_generic_enums_variants_bind_each_parameter_separately() {
         accepts(
@@ -809,7 +765,6 @@ mod tests {
         );
     }
 
-    /// A record payload pattern nested inside a tuple pattern.
     #[test]
     fn a_record_payload_pattern_may_appear_inside_a_tuple_pattern() {
         accepts(

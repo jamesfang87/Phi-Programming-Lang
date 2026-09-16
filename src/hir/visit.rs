@@ -733,7 +733,6 @@ mod tests {
             named.iter().filter(|n| *n == "Draw").count() >= 2,
             "expected the generic bound and the extend header's trait path, got {named:?}"
         );
-        // The `extend` header's self type, likewise reachable only through the header.
         assert!(named.iter().any(|n| n == "Pair"), "got {named:?}");
     }
 

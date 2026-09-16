@@ -603,9 +603,6 @@ mod tests {
         assert!(f.ret.is_none());
     }
 
-    /// A free function may end in `;` instead of a body, the same allowance a trait method
-    /// declaration gets. The grammar admits this for every free function; the bodiless-intrinsic
-    /// rule restricting who may actually do it is a typeck concern, not a parser one.
     #[test]
     fn parses_bodiless_free_function() {
         let item = parse_item("fun write_bytes(fd: i32) -> i64;");
@@ -685,9 +682,6 @@ mod tests {
         assert!(matches!(self_param.mode, SelfMode::Any));
     }
 
-    /// A receiver run directly into a named parameter is a mistake (`self x: i32` is missing
-    /// the comma, or the writer did not mean `self` at all), so it must not silently parse as
-    /// a receiver followed by a parameter.
     #[test]
     fn a_receiver_needs_a_comma_before_a_named_parameter() {
         let (tokens, _) = lex_src("fun f(self x: i32) {}");
@@ -803,8 +797,6 @@ mod tests {
         }
     }
 
-    /// Each of the three angle-bracket groups takes more than one argument, comma-separated,
-    /// which is what implementing a trait like `Index<K, V>` needs.
     #[test]
     fn parses_extend_with_multiple_generic_args() {
         let item = parse_item(
@@ -986,10 +978,6 @@ mod tests {
         }
     }
 
-    /// Every kind in [`ITEM_STARTERS`] must really open an item, so the recovery-point list
-    /// and the item grammar cannot drift apart: a kind that stops recovering without opening
-    /// an item would truncate every following item, and one that opens an item without
-    /// stopping recovery would swallow it.
     #[test]
     fn every_item_starter_opens_an_item() {
         let fixtures = [
@@ -1010,8 +998,6 @@ mod tests {
         assert_eq!(starters, fixture_kinds, "fixture list is out of sync");
 
         for (kind, src) in fixtures {
-            // Spans are global offsets into the `SrcMap`, so the declaration must cover
-            // exactly the file's span.
             let (tokens, offset) = lex_src(src);
             let parser = Parser::new(crate::testing::session());
             let (output, errors) = parser.item_parser().parse(&tokens[..]).into_output_errors();

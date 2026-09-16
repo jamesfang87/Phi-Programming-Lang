@@ -20,8 +20,6 @@ use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;
 use crate::typeck::ty::ctx::TyCtx;
 
-/// Lexes, parses, resolves, lowers, type-checks, and MIR-lowers `src`, in debug profile.
-/// Panics if any diagnostic was reported by type checking.
 fn lower_mir_src(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
     lower_mir_src_with_mode(src, Mode::Debug)
 }
@@ -46,9 +44,6 @@ const REF_COPY_PREAMBLE: &str = "module core::ops;
      extend i32 with Copy { fun copy(&self) -> Self { return *self; } }
      extend<T> &T with Copy { fun copy(&self) -> Self { return *self; } }";
 
-/// Like [`lower_mir_src_with_copy_and_drop`], but with `Copy` implemented for `i32` and,
-/// generically, for `&T` -- needed to read through a reference to a reference (`&&T`) without
-/// moving out of either layer.
 fn lower_mir_src_with_ref_copy(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
     crate::testing::clear_diagnostics();
     crate::testing::clear_interner();
@@ -135,7 +130,6 @@ fn lower_mir_src_with_mode(src: &str, mode: Mode) -> (Hir, TyCtx, TypeResolution
     (hir, tcx, types, program)
 }
 
-/// The `Body` lowered for the first top-level function `lower_to_hir`d and MIR-lowered.
 fn first_function_body<'a>(program: &'a Mir, hir: &Hir) -> &'a Body {
     let def_id = first_function(hir);
     program
@@ -157,9 +151,6 @@ fn an_empty_function_returns_unit() {
     ));
 }
 
-/// A bare `return;`, with no expression, lowers exactly like falling off the end of the function
-/// does: `lower_return`'s `None` arm assigns the unit value into the return place itself, rather
-/// than leaving it for the implicit `Return` `lower_body_block` appends.
 #[test]
 fn a_bare_return_assigns_unit_into_the_return_place() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() { return; }");
@@ -196,8 +187,6 @@ fn add_computes_the_sum_and_returns() {
         lower_mir_src_with_ops("fun add(x: i32, y: i32) -> i32 { return x + y; }");
     let body = first_function_body(&program, &hir);
     assert_eq!(body.param_count, 2);
-    // Slots 0..=2 are the return place, `x`, and `y`; debug profile adds further temporaries
-    // for the checked-arithmetic overflow test (see `checked_add_asserts_on_overflow` below).
     assert!(body.local_decls.len() >= 3);
     assert!(
         body.basic_blocks
@@ -222,7 +211,6 @@ fn an_if_expression_joins_both_branches() {
     let (hir, _tcx, _types, program) =
         lower_mir_src_with_ops("fun f(x: i32) -> i32 { return if x < 0 { 0 } else { x }; }");
     let body = first_function_body(&program, &hir);
-    // then-block, else-block, join-block, plus the entry block that switches on the condition.
     assert!(body.basic_blocks.len() >= 4);
     let switches = body
         .basic_blocks
@@ -371,7 +359,6 @@ fn a_capturing_closure_lowers_its_own_body() {
              return add_x(1);
          }",
     );
-    // The closure gets its own Body, in addition to `f`'s.
     let closure_bodies = program
         .bodies
         .iter()
@@ -380,12 +367,6 @@ fn a_capturing_closure_lowers_its_own_body() {
     assert_eq!(closure_bodies, 1, "exactly one closure body was lowered");
 }
 
-// -----------------------------------------------------------------
-// Digging helpers
-// -----------------------------------------------------------------
-
-/// The `DefId` of the top-level function named `name`. [`first_function`] only reaches whichever
-/// one was declared first; several tests below need a specific one out of several.
 fn find_function(hir: &Hir, name: &str) -> DefId {
     hir.root()
         .items
@@ -397,10 +378,6 @@ fn find_function(hir: &Hir, name: &str) -> DefId {
         .unwrap_or_else(|| panic!("no top-level function named {name:?}"))
 }
 
-/// Every `Local` a `StorageLive` statement names, in the order those statements occur across
-/// `body`'s basic blocks. Meaningful as an execution order only for a body with no branching, the
-/// only shape the tests below use it for -- see [`crate::mir::lower::ctx::BodyLowerCtx::new_block`]'s
-/// own doc comment on why blocks are otherwise built in control-flow order rather than list order.
 fn storage_live_order(body: &Body) -> Vec<Local> {
     body.basic_blocks
         .iter()
@@ -412,7 +389,6 @@ fn storage_live_order(body: &Body) -> Vec<Local> {
         .collect()
 }
 
-/// The `StorageDead` counterpart of [`storage_live_order`].
 fn storage_dead_order(body: &Body) -> Vec<Local> {
     body.basic_blocks
         .iter()
@@ -424,10 +400,6 @@ fn storage_dead_order(body: &Body) -> Vec<Local> {
         .collect()
 }
 
-/// `body`'s own local declared with source name `name` -- for a test that needs to pick one
-/// binding's `Local` out of a body that, now that a compiler-inserted temporary gets a
-/// `StorageLive`/`StorageDead` pair exactly like a named binding's own local does, cannot assume
-/// a named binding is the only kind of local `storage_live_order`/`storage_dead_order` reports.
 fn named_local(body: &Body, name: &str) -> Local {
     body.local_decls
         .iter()
@@ -439,7 +411,6 @@ fn named_local(body: &Body, name: &str) -> Local {
         .unwrap_or_else(|| panic!("no local named {name:?} in {body:?}"))
 }
 
-/// Every `Assert` terminator's own message, across `body`'s whole block list.
 fn assert_messages(body: &Body) -> Vec<&AssertMessage> {
     body.basic_blocks
         .iter()
@@ -450,7 +421,6 @@ fn assert_messages(body: &Body) -> Vec<&AssertMessage> {
         .collect()
 }
 
-/// Every `CheckedBinaryOp`'s own operator, across `body`'s whole statement list.
 fn checked_binary_ops(body: &Body) -> Vec<BinaryOp> {
     body.basic_blocks
         .iter()
@@ -462,9 +432,6 @@ fn checked_binary_ops(body: &Body) -> Vec<BinaryOp> {
         .collect()
 }
 
-/// The `DefId` a `Call` terminator's callee names, for every direct call in `body` -- a call to a
-/// named function, reified as `Operand::Constant(FnDef(..))`, as opposed to an indirect call
-/// through a place, which names no single `DefId` at all.
 fn call_callees(body: &Body) -> Vec<DefId> {
     body.basic_blocks
         .iter()
@@ -482,12 +449,6 @@ fn call_callees(body: &Body) -> Vec<DefId> {
         .collect()
 }
 
-// -----------------------------------------------------------------
-// Checked arithmetic, division, and casts
-// -----------------------------------------------------------------
-
-/// The existing `add_computes_the_sum_and_returns` test above only exercises `+`; this covers the
-/// other two operators `lower_binary_op_into` checks in a debug-profile body.
 #[test]
 fn checked_arithmetic_covers_add_sub_and_mul() {
     let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
@@ -580,9 +541,6 @@ fn remainder_by_zero_inserts_an_assert() {
     );
 }
 
-/// Division-by-zero is a memory-safety check, not an overflow check, so unlike `CheckedBinaryOp`
-/// it is not gated on `self.mode == Mode::Debug` in `lower_binary_op_into` -- it must survive a
-/// release build.
 #[test]
 fn division_by_zero_assert_survives_release_mode() {
     let (hir, _tcx, _types, program) = lower_mir_src_with_ops_and_mode(
@@ -602,8 +560,6 @@ fn division_by_zero_assert_survives_release_mode() {
     );
 }
 
-/// `lower_binary_op_into`'s `is_int`/`is_flt` split means neither the zero-check assert nor
-/// `CheckedBinaryOp` ever applies to a float operand -- IEEE 754 already defines `x / 0.0`.
 #[test]
 fn float_division_has_no_assert_and_is_never_checked() {
     let (hir, _tcx, _types, program) =
@@ -629,10 +585,6 @@ fn float_division_has_no_assert_and_is_never_checked() {
         "the division itself still lowers to a plain BinaryOp"
     );
 }
-
-// -----------------------------------------------------------------
-// Places: field access, indexing, casts
-// -----------------------------------------------------------------
 
 #[test]
 fn field_access_through_a_reference_inserts_a_deref_projection() {
@@ -967,10 +919,6 @@ fn an_indirect_call_through_a_function_typed_place_reads_the_callee_without_cons
     );
 }
 
-// -----------------------------------------------------------------
-// Logical short-circuiting
-// -----------------------------------------------------------------
-
 #[test]
 fn logical_and_short_circuits_without_evaluating_the_rhs() {
     let (hir, _tcx, _types, program) =
@@ -1043,14 +991,6 @@ fn logical_or_short_circuits_without_evaluating_the_rhs() {
     );
 }
 
-// -----------------------------------------------------------------
-// Dead code
-// -----------------------------------------------------------------
-
-/// A `match` with no arms is `Never`-typed (see `typeck::expr::check_match`), so this is a
-/// surface-syntax way to construct a `Never`-typed *statement*, exactly the case
-/// `BodyLowerCtx::lower_block`'s own doc comment calls out: "an expression statement whose own
-/// type is `Never`" makes every statement after it dead code that lowering never even visits.
 #[test]
 fn dead_code_after_a_never_typed_statement_is_never_lowered() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -1073,10 +1013,6 @@ fn dead_code_after_a_never_typed_statement_is_never_lowered() {
         "a match with no arms compiles straight to an Unreachable terminator"
     );
 }
-
-// -----------------------------------------------------------------
-// `defer` and `with`: exit obligations
-// -----------------------------------------------------------------
 
 #[test]
 fn defers_run_in_reverse_declaration_order() {
@@ -1145,14 +1081,6 @@ fn with_lend_storage_is_freed_in_reverse_of_acquisition_order() {
     );
 }
 
-/// A bare, irrefutable `let x = 1;` -- no destructuring, no `else` -- allocates exactly one local
-/// for `x`, with `1` lowered directly into it. `lower_let` special-cases this shape specifically
-/// to skip the general scrutinee-then-`bind_pat` walk: there is no structure to test and nothing
-/// else a scrutinee's own place would need to be projected out of. Every other pattern shape (a
-/// `Tuple`, or anything paired with an `else`) still goes through that general path, and still
-/// needs the scrutinee -- see `with_lend_storage_is_freed_in_reverse_of_acquisition_order`, just
-/// above, which sidesteps a `let` binding for exactly that reason: it means to count only the
-/// two with-lends' own locals.
 #[test]
 fn a_plain_let_binding_allocates_exactly_one_local() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() { let x = 1; }");
@@ -1170,18 +1098,6 @@ fn a_plain_let_binding_allocates_exactly_one_local() {
     );
 }
 
-/// `BodyLowerCtx::continue_target`'s own doc comment states the contract this exercises: a
-/// `continue` "leaves every block the loop's own body opened, and no block outside the loop".
-///
-/// This drives `BodyLowerCtx`'s own scope-stack bookkeeping directly, rather than through surface
-/// syntax and `call_callees` counting, the way most of the tests around it do. A syntactic
-/// `while`/`defer` fixture cannot isolate this cleanly: `lower_block`'s own natural-exit replay
-/// runs unconditionally, even after a `continue` has already diverged that same block (see its own
-/// doc comment), so the loop body's own obligations end up replayed twice over regardless -- once
-/// live, by `continue` itself, and once more into dead code nothing ever reaches. That duplication
-/// is real (and, on its own, harmless, since the second copy is unreachable), but it drowns out the
-/// one thing this test means to isolate: that `continue_target`'s own obligation list stops at the
-/// loop's own scope depth and does not reach past it to an obligation registered outside the loop.
 #[test]
 fn continue_target_only_returns_obligations_registered_since_the_loop_was_entered() {
     let (hir, mut tcx, types, _program) = lower_mir_src("fun f() {}");
@@ -1199,9 +1115,6 @@ fn continue_target_only_returns_obligations_registered_since_the_loop_was_entere
         None,
     );
     ctx.push_block_scope();
-    // `new_temp` now registers its own `StorageDead` obligation, the same one a manual
-    // `register_exit_obligation` call used to be needed for here -- see its own doc comment.
-    // Only its presence on the outer scope matters below, not the local itself.
     let _outer_local = ctx.new_temp(unit_ty, span);
 
     let break_block = ctx.new_block();
@@ -1223,15 +1136,6 @@ fn continue_target_only_returns_obligations_registered_since_the_loop_was_entere
     );
 }
 
-// -----------------------------------------------------------------
-// Pattern matching
-// -----------------------------------------------------------------
-
-/// `BodyLowerCtx::peek_block_scope`'s own doc comment describes exactly this: a guard's failure
-/// path must clean up the arm's own bindings before falling through to the next candidate, but
-/// without popping the scope, since the same arm's success path (lowered right after, in the same
-/// sequential pass) still needs it open. So `n`'s `StorageDead` should appear twice: once on the
-/// guard-failure path, once more on the success path.
 #[test]
 fn a_guard_failure_cleans_up_the_arms_bindings_before_falling_through() {
     let (hir, _tcx, _types, program) = lower_mir_src_with_ops(
@@ -1300,13 +1204,6 @@ fn a_tuple_patterns_elements_are_tested_independently() {
     );
 }
 
-// -----------------------------------------------------------------
-// Literals and literal patterns
-// -----------------------------------------------------------------
-
-/// The lexer keeps `_` digit separators in a numeric literal's text, but a `Literal`'s value
-/// symbol is separator-free by construction, so lowering parses the plain digits. Before the
-/// value was normalized at AST construction, `1_000_000` panicked in `parse::<i128>` here.
 #[test]
 #[allow(clippy::approx_constant)]
 fn digit_separated_numeric_literals_lower_to_their_normalized_values() {
@@ -1334,9 +1231,6 @@ fn digit_separated_numeric_literals_lower_to_their_normalized_values() {
     assert_eq!(floats, vec![3.1415]);
 }
 
-/// A float literal pattern tests the scrutinee with `BinaryOp::Eq` against a float constant,
-/// the same shape an integer literal pattern produces; float comparison is fully supported
-/// downstream.
 #[test]
 #[allow(clippy::approx_constant)]
 fn a_float_literal_pattern_lowers_to_an_equality_test_against_a_float_constant() {
@@ -1365,10 +1259,6 @@ fn a_float_literal_pattern_lowers_to_an_equality_test_against_a_float_constant()
         .expect("the float pattern tests the scrutinee against a float constant");
     assert_eq!(found, 3.1415);
 }
-
-// -----------------------------------------------------------------
-// Aggregates: declared field order, not source order
-// -----------------------------------------------------------------
 
 #[test]
 fn a_struct_literals_fields_are_ordered_by_declaration_not_by_source() {
@@ -1444,10 +1334,6 @@ fn a_record_variants_fields_are_ordered_by_declaration_not_by_source() {
     );
 }
 
-// -----------------------------------------------------------------
-// Closures
-// -----------------------------------------------------------------
-
 #[test]
 fn a_variable_read_twice_in_a_closure_is_captured_only_once() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -1478,9 +1364,6 @@ fn a_variable_read_twice_in_a_closure_is_captured_only_once() {
     );
 }
 
-/// A closure's environment local is unconditional, per `lower_closure_body`'s own doc comment:
-/// "whether or not this particular closure captures anything -- a uniform calling convention is
-/// simpler than a conditional one".
 #[test]
 fn a_closure_with_no_captures_still_gets_an_environment_local() {
     let (hir, tcx, _types, program) = lower_mir_src(
@@ -1511,13 +1394,6 @@ fn a_closure_with_no_captures_still_gets_an_environment_local() {
     );
 }
 
-// -----------------------------------------------------------------
-// Compound assignment
-// -----------------------------------------------------------------
-
-/// `ExprKind::AssignOp`'s own lowering calls `lower_place(lhs)` exactly once and reuses the
-/// resulting `Place` for both the read and the write, rather than re-lowering `lhs` a second time
-/// for the write -- otherwise a side-effecting index expression like `idx()` here would run twice.
 #[test]
 fn a_compound_assignments_index_target_is_evaluated_only_once() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -1537,14 +1413,6 @@ fn a_compound_assignments_index_target_is_evaluated_only_once() {
     );
 }
 
-// -----------------------------------------------------------------
-// `any`-mode specialization
-// -----------------------------------------------------------------
-
-/// The README's own `min` example: a definition returning `any i32` is lowered once per mode a
-/// call site actually demands (see `mir::lower`'s module docs), and a parameter declared `any i32`
-/// resolves concretely under that mode -- `&i32` under `AnyMode::Ref`, matching `&min(a, b)`'s own
-/// `&`.
 #[test]
 fn an_any_returning_calls_argument_is_borrowed_to_match_the_call_sites_mode() {
     let (hir, tcx, _types, program) = lower_mir_src_with_ops(
@@ -1568,22 +1436,11 @@ fn an_any_returning_calls_argument_is_borrowed_to_match_the_call_sites_mode() {
     );
 }
 
-// -----------------------------------------------------------------
-// Debug names
-// -----------------------------------------------------------------
-
-/// `LocalDecl::name`'s own doc comment says it "is the source name of a user-written local, for
-/// `--emit-debug` dumps and diagnostics": `bind_pat`'s `PatKind::Binding` arm threads the
-/// pattern's own name through to `new_local`, rather than passing `None`, so a `let`-bound local
-/// is no longer indistinguishable from a compiler-introduced temporary in `--emit-debug`'s own
-/// MIR dump (`driver::emit_debug::print_mir` prints `_` only for a `None` name).
 #[test]
 fn a_let_bound_local_carries_its_declared_name() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() { let x = 1; }");
     let body = first_function_body(&program, &hir);
     assert_eq!(body.param_count, 0);
-    // Slot 0 is the return place; slot 1 is `x` itself -- the fast, scrutinee-free path a bare
-    // `Binding` pattern takes (see `a_plain_let_binding_allocates_exactly_one_local`).
     let x_decl = &body.local_decls[1];
     let name = x_decl
         .name
@@ -1591,13 +1448,11 @@ fn a_let_bound_local_carries_its_declared_name() {
     assert_eq!(crate::testing::resolve(name.text), "x");
 }
 
-/// `lower_with_lend` threads a lend's own pattern name through the same way.
 #[test]
 fn a_with_lends_local_carries_its_declared_name() {
     let (hir, _tcx, _types, program) =
         lower_mir_src("fun f(a: i32) { with x = &a { noop(); } } fun noop() {}");
     let body = first_function_body(&program, &hir);
-    // Slot 0 is the return place; slot 1 is `a`, the parameter; slot 2 is `x`, the lend.
     let x_decl = &body.local_decls[2];
     let name = x_decl
         .name
@@ -1605,15 +1460,6 @@ fn a_with_lends_local_carries_its_declared_name() {
     assert_eq!(crate::testing::resolve(name.text), "x");
 }
 
-// -----------------------------------------------------------------
-// Copy vs Move classification
-// -----------------------------------------------------------------
-
-/// A shared reference grants no exclusive access, so re-reading the same place holding one is
-/// exactly as sound as re-reading any other trivially copyable value: `operand_for_place` treats
-/// `&T` the same as a primitive. A `&mut T` still cannot be duplicated this way (it *is*
-/// exclusive access), so it keeps falling through to `Operand::Move` -- see
-/// `a_mutably_referenced_place_is_moved_not_copied`, just below.
 #[test]
 fn a_shared_reference_is_copied_not_moved() {
     let (hir, _tcx, _types, program) = lower_mir_src_with_ref_copy(
@@ -1643,9 +1489,6 @@ fn a_shared_reference_is_copied_not_moved() {
     }
 }
 
-/// The mirror of `a_shared_reference_is_copied_not_moved`: a `&mut` reference grants exclusive
-/// access, so duplicating it defeats the whole point of exclusivity. It still gets
-/// `Operand::Move`.
 #[test]
 fn a_mutably_referenced_place_is_moved_not_copied() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -1788,11 +1631,6 @@ fn a_payload_bound_through_a_reference_is_a_borrow() {
     );
 }
 
-/// BUG: `lower_index_place` builds the bounds-check `Assert` with a condition that is the
-/// constant `true`, never `index < len`. The backend branches on that condition, so the failure
-/// block that aborts with "index out of bounds" is dead and out-of-bounds reads execute.
-///
-/// Run with `cargo test --bin phi -- --ignored` to reproduce.
 #[test]
 fn array_bounds_check_condition_is_not_a_hard_coded_true() {
     let (hir, _tcx, _types, program) =
@@ -1816,12 +1654,6 @@ fn array_bounds_check_condition_is_not_a_hard_coded_true() {
     );
 }
 
-/// BUG: `lower_index_place` sizes the length temporary with `index_ty` (e.g. `i32` for a default
-/// integer index) even though `Rvalue::Len` is 64-bit and codegen's `Projection::Index`
-/// unconditionally loads/stores `i64`. The temporary should be `usize`/`i64` regardless of the
-/// index expression's own type.
-///
-/// Run with `cargo test --bin phi -- --ignored` to reproduce.
 #[test]
 fn array_bounds_length_local_is_wide_enough_for_rvalue_len() {
     let (hir, tcx, _types, program) =
@@ -1848,12 +1680,6 @@ fn array_bounds_length_local_is_wide_enough_for_rvalue_len() {
     );
 }
 
-// -----------------------------------------------------------------
-// Expression forms in value position
-// -----------------------------------------------------------------
-
-/// The `Result` lang item `?` needs, as its own core file so the test source stays at the crate
-/// root where `first_function` can find it.
 const RESULT_PREAMBLE: &str = "module core::result;
      public enum Result<T, E> { ok: T, err: E }";
 
@@ -1886,8 +1712,6 @@ fn lower_mir_src_with_result(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
 const OPTION_PREAMBLE: &str = "module core::option;
      public enum Option<T> { some: T, none }";
 
-/// Like [`lower_mir_src_with_result`], but with the `Option` lang item defined too, for exercising
-/// `?` on an `Option`.
 fn lower_mir_src_with_option_result(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir) {
     crate::testing::clear_diagnostics();
     crate::testing::clear_interner();
@@ -1918,8 +1742,6 @@ fn lower_mir_src_with_option_result(src: &str) -> (Hir, TyCtx, TypeResolutions, 
     (hir, tcx, types, program)
 }
 
-/// `lower_expr_discarding`'s literal arm: a literal has no place to read or write, so it lowers
-/// to nothing at all rather than a `PlaceMention`.
 #[test]
 fn a_discarded_literal_statement_lowers_to_nothing() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() { 1; }");
@@ -1934,8 +1756,6 @@ fn a_discarded_literal_statement_lowers_to_nothing() {
     );
 }
 
-/// An assignment used as a value (not a bare statement) still writes through its place and the
-/// expression's own value is unit.
 #[test]
 fn an_assignment_used_as_a_value_writes_through_and_yields_unit() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() { let mut a = 0; let x = (a = 1); }");
@@ -1956,8 +1776,6 @@ fn an_assignment_used_as_a_value_writes_through_and_yields_unit() {
     );
 }
 
-/// The `AssignOp` counterpart, whose result is computed and stored back before the unit value is
-/// produced into `dest`.
 #[test]
 fn a_compound_assignment_used_as_a_value_stores_back_and_yields_unit() {
     let (hir, _tcx, _types, program) =
@@ -1981,9 +1799,6 @@ fn a_compound_assignment_used_as_a_value_stores_back_and_yields_unit() {
     );
 }
 
-/// `?` switches on the `Result`'s discriminant and reads the `ok` payload through a
-/// `Downcast(ok).Field(0)` projection; the `err` path returns the enclosing function's own
-/// `Result::err` immediately.
 #[test]
 fn try_unwraps_the_ok_payload_and_returns_the_err() {
     let (hir, _tcx, _types, program) = lower_mir_src_with_result(
@@ -2019,8 +1834,6 @@ fn try_unwraps_the_ok_payload_and_returns_the_err() {
     );
 }
 
-/// A bare block expression reaches `lower_block`'s tail-value path, lowering the block's own
-/// bindings before assigning the tail into the destination.
 #[test]
 fn a_block_expression_lowers_its_inner_bindings_and_tail() {
     let (hir, _tcx, _types, program) = lower_mir_src("fun f() -> i32 { return { let y = 2; y }; }");
@@ -2028,8 +1841,6 @@ fn a_block_expression_lowers_its_inner_bindings_and_tail() {
     let _y = named_local(body, "y");
 }
 
-/// Indexing a reference to an array peels the reference first, so the place reads through a
-/// `Deref` projection before the element projection.
 #[test]
 fn indexing_through_a_reference_derefs_before_indexing() {
     let (hir, _tcx, _types, program) =
@@ -2055,8 +1866,6 @@ fn indexing_through_a_reference_derefs_before_indexing() {
     );
 }
 
-/// The `Index` trait's `index` method resolved in value position (as opposed to a place) lowers
-/// to an ordinary method call through `lower_call_like_into`.
 #[test]
 fn an_overloaded_index_used_as_a_value_lowers_to_its_method_call() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -2076,8 +1885,6 @@ fn an_overloaded_index_used_as_a_value_lowers_to_its_method_call() {
     );
 }
 
-/// A qualified variant call, `Shape.circle(1.0)`, reads as an access but builds a value; its
-/// one call argument becomes the variant's single payload operand.
 #[test]
 fn a_qualified_variant_call_carries_its_single_argument() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -2104,9 +1911,6 @@ fn a_qualified_variant_call_carries_its_single_argument() {
     );
 }
 
-/// TODO: an overloaded `Index` used as a place (an assignment target) is not yet implemented and
-/// panics. Typeck accepts `m[0] = true` as a place, so this is reachable from a valid program;
-/// this test pins the current panic until place-position indexing is implemented.
 #[test]
 #[should_panic(
     expected = "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"
@@ -2122,9 +1926,6 @@ fn an_overloaded_index_used_as_a_place_panics_until_implemented() {
     );
 }
 
-/// `spawn` type-checks as an ordinary block (see `typeck.rs`'s `ExprKind::Spawn` arm) but MIR
-/// lowering is not implemented and panics. Reachable from a program typeck accepts, so the panic
-/// is pinned here until the concurrency runtime lands.
 #[test]
 #[should_panic(
     expected = "mir::lower: `spawn` is not yet implemented (the runtime nursery API is illustrative only)"
@@ -2133,7 +1934,6 @@ fn spawn_panics_until_the_concurrency_runtime_is_implemented() {
     let _ = lower_mir_src("fun f() { spawn { noop(); } } fun noop() {}");
 }
 
-/// The `concurrent` counterpart of [`spawn_panics_until_the_concurrency_runtime_is_implemented`].
 #[test]
 #[should_panic(
     expected = "mir::lower: `concurrent` is not yet implemented (the runtime nursery API is illustrative only)"
@@ -2142,9 +1942,6 @@ fn concurrent_panics_until_the_concurrency_runtime_is_implemented() {
     let _ = lower_mir_src("fun f() { concurrent { noop(); } } fun noop() {}");
 }
 
-/// `?` on an `Option` type-checks (see `Typeck::check_try`), but `lower_try_into` only knows how
-/// to build the `Result`'s own `err` variant and panics when the operand's `Adt` does not carry
-/// two type arguments. Pins the current limitation.
 #[test]
 #[should_panic(expected = "mir::lower: `?`'s operand is not a two-argument Result")]
 fn try_on_an_option_panics_until_option_propagation_is_implemented() {
@@ -2158,9 +1955,6 @@ fn try_on_an_option_panics_until_option_propagation_is_implemented() {
     let _ = first_function_body(&program, &hir);
 }
 
-/// A mutable borrow of an `any`-specialized overloaded index. `m[0]` is a place (its base `m` is
-/// a path), so typeck accepts `&mut m[0]`, and the borrow of the any-specialized call resolves
-/// under `AnyMode::RefMut` rather than `AnyMode::Ref`.
 #[test]
 fn a_mutably_borrowed_any_specialized_index_uses_ref_mut_mode() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -2180,12 +1974,6 @@ fn a_mutably_borrowed_any_specialized_index_uses_ref_mut_mode() {
     );
 }
 
-// -----------------------------------------------------------------
-// `dyn` dispatch, indirect callees, and `any` argument modes
-// -----------------------------------------------------------------
-
-/// A method call through a `&dyn Trait` receiver dispatches through the trait's own declaration,
-/// so the receiver is passed first and the method's written parameters follow it.
 #[test]
 fn a_dyn_receiver_dispatches_through_the_traits_own_declaration() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -2206,8 +1994,6 @@ fn a_dyn_receiver_dispatches_through_the_traits_own_declaration() {
     assert_eq!(call, (2, true), "the dyn call passes `s` then `x`");
 }
 
-/// The `Index` operator on a `&dyn Index<K, V>` receiver is itself dyn-dispatched: the trait's
-/// own `index` declaration is the call target, not any concrete impl.
 #[test]
 fn a_dyn_index_receiver_dispatches_through_the_trait_declaration() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -2227,8 +2013,6 @@ fn a_dyn_index_receiver_dispatches_through_the_trait_declaration() {
     );
 }
 
-/// A method reached through an `any T` receiver lowers the owned `any` position for each
-/// argument, since the receiver's own `any` has no borrow mode of its own to preserve.
 #[test]
 fn a_method_on_an_any_receiver_peels_the_any_wrapper() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -2245,8 +2029,6 @@ fn a_method_on_an_any_receiver_peels_the_any_wrapper() {
     );
 }
 
-/// An `any T` parameter passed to a call whose result is used owned resolves to its plain `T`,
-/// rather than taking a reference to the argument.
 #[test]
 fn an_any_parameter_passed_owned_lowers_the_plain_value() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -2273,8 +2055,6 @@ fn an_any_parameter_passed_owned_lowers_the_plain_value() {
     );
 }
 
-/// An `any T` parameter resolved under a mutable borrow takes a `&mut` reference to the
-/// argument, exercising the mutable arm of the argument lowering.
 #[test]
 fn an_any_parameter_resolved_mutably_takes_a_mutable_borrow() {
     let (hir, _tcx, _types, program) = lower_mir_src(
@@ -2297,8 +2077,6 @@ fn an_any_parameter_resolved_mutably_takes_a_mutable_borrow() {
     );
 }
 
-/// Reifying an `any`-specialized function as a value pins every `any` position to its plain `T`
-/// (`AnyMode::Owned`), since a bare reference has no call site to choose a mode from.
 #[test]
 fn an_any_specialized_function_reified_as_a_value_pins_its_any_positions() {
     let (hir, _tcx, _types, program) = lower_mir_src(

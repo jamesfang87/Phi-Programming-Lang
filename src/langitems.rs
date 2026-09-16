@@ -1,16 +1,3 @@
-//! Lang items are the definitions in the core library which are crucial to
-//! the compiler. These consist of `Option` and `Result`, which are
-//! commonly used by the std library and are required by the `?` operator.
-//! They also include traits such as those which are dispatched by operators
-//! and Iter, which is used in loops.
-//!
-//! Resolving a lang item happens in two stages, matching the compiler's own
-//! `ast` -> `hir` pipeline: [`ast::LangItems`] is collected by
-//! [`ast::collect`], keyed by [`NodeId`](crate::ast::NodeId) since it runs
-//! before any HIR exists; [`hir::LangItems`] is then built out of it by
-//! [`hir::LangItems::from_ast`] once lowering has assigned every item a
-//! [`DefId`](crate::hir::DefId).
-
 pub mod ast;
 pub mod hir;
 

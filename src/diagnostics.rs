@@ -192,10 +192,6 @@ impl Diagnostic {
         }
     }
 
-    /// Whether rendered diagnostics should carry ANSI color.
-    ///
-    /// Colored escape codes work in terminal output. Emit plain text when stderr is redirected to
-    /// a file, a pipe, or (as in tests under `tests/`) captured from a child process.
     fn config_colors() -> bool {
         std::io::stderr().is_terminal()
     }
@@ -248,11 +244,6 @@ fn byte_source(src: &[char]) -> (String, Vec<usize>) {
     (text, byte_offsets)
 }
 
-/// The diagnostics collected during one build.
-///
-/// Owned by [`Session`](crate::session::Session), which forwards its own `emit`/`report` methods
-/// here. A build's diagnostics are ordinary state, not a process-wide singleton: a new build
-/// starts from an empty collection and the previous build's diagnostics cannot leak into it.
 #[derive(Default)]
 pub struct Diagnostics {
     diagnostics: Vec<Diagnostic>,
@@ -334,10 +325,6 @@ mod tests {
         assert_eq!(uncoded.code, None);
     }
 
-    /// An offset far past the end of any file the tests below register.
-    ///
-    /// A local [`SrcMap`] is used rather than a session's, so an unmapped span is selected by an
-    /// absurdly large offset instead of relying on the map being empty.
     const UNMAPPED: usize = usize::MAX / 2;
 
     #[test]
@@ -347,8 +334,6 @@ mod tests {
         assert_eq!(diag.severity, Severity::Error);
     }
 
-    /// The case that used to panic: a diagnostic with nowhere to point rendered against a
-    /// `SrcMap` that has no file covering it.
     #[test]
     fn rendering_a_global_error_does_not_panic() {
         Diagnostic::error_global("missing lang item `core::ops::Add`")
@@ -356,15 +341,12 @@ mod tests {
             .eprint(&SrcMap::new());
     }
 
-    /// A span belonging to no registered file renders as location-less output instead of
-    /// crashing the entire report.
     #[test]
     fn rendering_an_unmapped_span_does_not_panic() {
         Diagnostic::error("span points nowhere", SrcSpan::new(UNMAPPED, UNMAPPED + 4))
             .eprint(&SrcMap::new());
     }
 
-    /// A span exceeding its file's end is clamped instead of causing an out-of-bounds panic.
     #[test]
     fn rendering_an_overlong_span_does_not_panic() {
         let chars: Vec<char> = "fun main() {}\n".chars().collect();
@@ -377,8 +359,6 @@ mod tests {
         .eprint(&sources);
     }
 
-    /// A secondary label pointing into a *different* file than the primary one. Both files have
-    /// to reach `ariadne`, or it panics looking up the source it was asked to quote.
     #[test]
     fn rendering_a_cross_file_secondary_does_not_panic() {
         let decl: Vec<char> = "trait Show { fun show(self); }\n".chars().collect();
@@ -399,8 +379,6 @@ mod tests {
         .eprint(&sources);
     }
 
-    /// A secondary label that resolves to no file is dropped, not escalated: the error it
-    /// elaborates on still gets rendered.
     #[test]
     fn an_unmapped_secondary_is_dropped_not_fatal() {
         let chars: Vec<char> = "fun main() {}\n".chars().collect();
@@ -411,7 +389,6 @@ mod tests {
             .eprint(&sources);
     }
 
-    /// Two labels in one file give `ariadne` one source, not the same one twice.
     #[test]
     fn rendering_two_labels_in_one_file_does_not_panic() {
         let chars: Vec<char> = "fun main() { let x = 1; let x = 2; }\n".chars().collect();
@@ -433,12 +410,9 @@ mod tests {
         assert_eq!(messages, ["first", "second"]);
     }
 
-    /// Sorting reconciles two orderings: diagnostics emit in stage-major order but readers need
-    /// source-major order.
     #[test]
     fn report_orders_by_span_not_emission() {
         let ordered = report_order(vec![
-            // Pipeline emission: lexer diagnostic at file end, then parser diagnostic at start.
             Diagnostic::error("late", SrcSpan::new(90, 95)),
             Diagnostic::error("early", SrcSpan::new(10, 15)),
             Diagnostic::error("middle", SrcSpan::new(50, 55)),
@@ -458,8 +432,6 @@ mod tests {
         );
     }
 
-    /// Diagnostics at the same location preserve emission order, keeping elaborating notes
-    /// attached to their error.
     #[test]
     fn equal_spans_keep_emission_order() {
         let span = SrcSpan::new(10, 15);
@@ -471,8 +443,6 @@ mod tests {
         assert_eq!(messages(ordered), ["earlier", "first note", "second note"]);
     }
 
-    /// Sorting happens only during rendering to stderr; tests asserting on single-pass output
-    /// see emission order.
     #[test]
     fn diagnostics_are_stored_in_emission_order() {
         let mut diagnostics = Diagnostics::new();

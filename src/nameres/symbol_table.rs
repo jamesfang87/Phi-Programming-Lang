@@ -233,10 +233,6 @@ impl<'ast> SymbolTable<'ast> {
     }
 
     fn resolve_import(&mut self, importing_module: NodeId, import: &Import) {
-        // TODO: imports are always module-private (`Import` carries no `Visibility`, and the
-        // parser accepts no `public import`), so re-exports are impossible. Real crates need
-        // `pub import` to re-export items and build a public API facade.
-        // note that ALL imports start from the root, not the importing module
         let root = self.ast.root_id();
 
         let name = import.alias.unwrap_or(
@@ -633,11 +629,6 @@ impl<'ast> SymbolTable<'ast> {
     pub fn pop_self(&mut self) {
         self.self_scopes.pop();
     }
-
-    // TODO: is there a better way to do this?
-    // I'm not sure if I like that there is a public function just for tests
-    // Also, this should probably be the name of
-    // pub fn lookup_self_res(&self, span: SrcSpan) -> Res;
 
     /// Returns the current self entry if present and None if not
     pub fn lookup_self(&self) -> Option<Type> {

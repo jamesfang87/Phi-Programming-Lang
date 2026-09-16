@@ -4,11 +4,6 @@ use crate::hir::{DefId, Hir, HirId, OwnerNode, VariantPayload};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 
-/// The declared shape of an algebraic data type: its generic parameters and the field types of
-/// each of its variants, with every field left as declared rather than instantiated.
-///
-/// Collected once per program and installed in [`TyCtx`](crate::typeck::ty::ctx::TyCtx), which
-/// substitutes the arguments an ADT was applied to when it hands a field type back out.
 #[derive(Debug)]
 pub enum AdtDef {
     Struct {

@@ -1,31 +1,3 @@
-//! Monomorphization: the MIR-to-MIR pass that substitutes a generic [`Body`]'s remaining
-//! `TyKind::Generic`/`SelfTy` occurrences into a concrete one, per instantiation actually used.
-//!
-//! A worklist pass, phased exactly as the plan calls for:
-//!
-//! 1. **Seed**: every `(DefId, Option<AnyMode>)` [`Body`] `mir::lower` actually built that
-//!    mentions no `TyKind::Generic`/`SelfTy` anywhere in it is trivially its own root instance,
-//!    queued with an empty argument list.
-//! 2. **Process**: pop an [`Instance`]; if it was already emitted, skip (this is what keeps a
-//!    recursive-but-not-unbounded generic, such as `fun f<T>() { f::<T>(); }`, from
-//!    re-processing forever). Otherwise substitute every `Ty` the matching generic `Body`
-//!    contains via [`subst::subst_ty`], discovering further instances along the way: a
-//!    `ConstKind::FunDef(def, args, mode, self_ty)` names one, queued through the worklist
-//!    since a function's own declared generics can be zipped against a substituted `args`
-//!    list (and a `self_ty` is carried for a trait's own method, whose body is substituted
-//!    once per implementing type); a closure nested inside is handled eagerly instead,
-//!    recursing immediately with the *same* substitution map, since a closure declares no
-//!    generics of its own to zip against at all -- every `TyKind::Generic` its body mentions
-//!    names a parameter of the *enclosing* definition.
-//! 3. **Terminate**: the queue empties, or a depth guard reports a clear internal error instead
-//!    of hanging on a pathological, ever-growing instantiation chain.
-//!
-//! A call inside a trait's own default body names the trait's declaration of the method, which
-//! may be abstract or overridden. At substitution time the instance's concrete `self_ty` picks
-//! the implementing type's own method out of `Mir::vtables`, so the default body dispatches
-//! statically once per implementing type; a callee the implementing type does not provide keeps
-//! naming the trait's own (default) body.
-
 pub(crate) mod subst;
 #[cfg(test)]
 mod tests;
@@ -42,11 +14,6 @@ use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::visitor::Subst;
 use crate::typeck::ty::{Ty, TyKind};
 
-/// A generous ceiling on the number of instances one `monomorphize` call will produce, past
-/// which further instantiation is treated as a pathological, unbounded chain rather than a
-/// legitimate program -- the same pragmatic limit real compilers reach for (`rustc`'s own
-/// generic-depth overflow error) rather than solving unbounded monomorphization outright, which
-/// is out of scope here.
 const INSTANTIATION_LIMIT: usize = 4096;
 
 /// Runs monomorphization over every `Body` `mir::lower` produced, returning one concrete `Body`
@@ -60,15 +27,6 @@ pub fn monomorphize(
     let mut output = HashMap::new();
     let mut worklist: Vec<Instance> = Vec::new();
 
-    // Seed the worklist with the bodies that need no substitution. This only decides *roots*:
-    // a body something else calls is reached through `discovered` regardless, so the bodies for
-    // which this test is load-bearing are the ones nothing calls -- in practice `main`.
-    //
-    // `main` is therefore seeded on its own terms, not on the test's. It is checked to declare
-    // no generics (`checks::entry_point`) and nothing calls it, so it is a root by
-    // definition, with an empty argument list. Leaving it to `body_mentions_generic` made it
-    // hostage to every type in its body being concrete, and a lowering bug that put a stray
-    // generic in one of its locals dropped the program's entry point silently.
     for (&(def, any_mode), body) in &program.bodies {
         if body.kind == BodyKind::Closure {
             continue;
@@ -128,27 +86,12 @@ fn build_subst(body: &Body, args: &[Ty], self_ty: Option<Ty>) -> Subst {
         self_ty,
     }
 }
-
-/// Whether any of `body`'s locals is typed with a generic still in it.
-///
-/// Used as the stand-in for "this body needs substituting before it can be emitted", which holds
-/// only while every local of a non-generic body is typed concretely. A lowering that puts a
-/// declared, un-substituted type into a caller's locals breaks that equivalence and holds the
-/// caller back from the roots -- see `lower_receiver_operand`, which types the `&self` temp from
-/// the receiver rather than from the method's declared `&self` for exactly this reason.
-///
-/// When it does misfire, the body is still reached if anything calls it, and `main` is seeded
 /// regardless; what is left over is a body nothing calls, which is dead code either way.
 fn body_mentions_generic(tcx: &TyCtx, body: &Body) -> bool {
     body.local_decls
         .iter()
         .any(|decl| subst::mentions_generic(tcx, decl.ty))
 }
-
-/// Substitutes every `Ty` `generic_body` contains, discovering further instances along the way.
-/// A nested closure is substituted eagerly, right here, and inserted into `output` directly,
-/// since it shares `instance`'s own substitution rather than needing a worklist entry of its
-/// own; a nested `FunDef` call is pushed onto `discovered` instead, since it has its own declared
 /// generics an argument list can be zipped against independently.
 #[allow(clippy::too_many_arguments)]
 fn process_body(
@@ -531,10 +474,6 @@ fn queue_fn_def(
         discovered.push(instance);
     }
 }
-
-/// `Call::func` is frequently a `Constant(FnDef(..))` embedded directly in the terminator with
-/// no corresponding `Assign` elsewhere in the body (a direct call, per `mir::lower::call`'s own
-/// construction), so this needs the same discovery-capable substitution `subst_operand` gives a
 /// statement's operands, not a version that skips it.
 fn subst_terminator(
     tcx: &mut TyCtx,

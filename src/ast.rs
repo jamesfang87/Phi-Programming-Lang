@@ -128,12 +128,6 @@ pub struct ParsedSrcFile {
     pub span: SrcSpan,
 }
 
-/// One top-level construct a source file can contain, before [`ParsedSrcFile::from_items`]
-/// separates the module header and imports from the real items.
-///
-/// This is the parser's output shape. A module header and an import name module-level facets
-/// rather than definitions, so they are kept out of [`ItemKind`] and cannot outlive parsing
-/// as items.
 #[derive(Clone, Debug)]
 pub enum ParsedItem {
     Module(ModuleHeader),
@@ -205,10 +199,6 @@ impl Item {
 
 #[derive(Clone, Debug)]
 pub enum ItemKind {
-    // TODO: no `Const`, `Static`, `TypeAlias`, or inline `Module` items exist -- only
-    // `Function`/`Struct`/`Enum`/`Trait`/`Extend`. Real programs need global constants
-    // (`const MAX: i32 = 8;`), `type` aliases, and inline `mod foo { ... }` blocks instead
-    // of one-file-per-module.
     Function(Function),
     Struct(Struct),
     Enum(Enum),
@@ -462,10 +452,6 @@ pub enum StmtKind {
     },
     Break,
     Continue,
-    // TODO: `Break`/`Continue` carry no label and no value, so nested loops cannot
-    // `break 'outer` and a loop cannot `break value`. Real programs need labeled
-    // break/continue (and ideally break-with-value) for nested-loop control flow.
-    /// `return expr;`, or a bare `return;` producing nothing (`None`).
     Return(Option<Expr>),
     /// `defer expr;`. The expression runs just before the enclosing scope exits.
     Defer(Expr),
@@ -477,10 +463,6 @@ pub enum StmtKind {
         init: Expr,
         else_block: Option<Block>,
     },
-    /// A `with` block, such as `with px = &mut point.x, py = &mut point.y { ... }`.
-    ///
-    /// Each binding in `lends` is scoped to `block` and stops projecting its source at the
-    /// closing brace, regardless of where its last use inside the block falls.
     With {
         lends: Vec<WithLend>,
         block: Block,

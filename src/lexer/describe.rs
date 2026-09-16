@@ -127,11 +127,6 @@ impl Descriptor {
         self.spelling().is_some_and(is_word_spelling)
     }
 
-    /// Returns this kind's name for use in a diagnostic message.
-    ///
-    /// A kind with a [`Descriptor::spelling`] is wrapped in backticks so it reads as source text
-    /// (`` `;` ``); one without is named by its [`Descriptor::name`] instead (`identifier`).
-    /// `diagnostics::parser::Expected` relies on the backticks to tell the two apart.
     pub(crate) fn describe(self) -> String {
         match self {
             Descriptor::Spelling(spelling) => quoted_spelling(spelling),

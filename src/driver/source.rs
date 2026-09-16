@@ -2,13 +2,6 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-/// [`SrcSpan`] is a half-open range of character (not byte) offsets into the
-/// compiler's source map.
-///
-/// Offsets stored in [`SrcSpan`] are global. Thus, the offsets of a span not
-/// only record information about a position in a file, but also which file.
-/// This removes the requirement to carry a separate file id, reducing the
-/// memory footprint of the compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SrcSpan {
     begin: usize,
@@ -33,10 +26,6 @@ impl SrcSpan {
         (self.begin, self.end)
     }
 
-    /// Returns the smallest span that covers both `self` and `other`.
-    ///
-    /// Used to build a span for a larger syntax node out of its parts' spans, e.g. a whole
-    /// binary expression from its left and right operand spans.
     pub fn merge(self, other: SrcSpan) -> SrcSpan {
         SrcSpan::new(
             self.begin.min(other.get_begin()),
@@ -104,12 +93,6 @@ impl SrcFile {
     }
 }
 
-/// The build's source files, keyed by the global offset space their contents occupy.
-///
-/// Owned by [`Session`](crate::session::Session); every file registered here is leaked, so a
-/// [`SrcFile`] borrowed from the map lives for the rest of the process. That keeps spans (plain
-/// global offsets) resolvable from anywhere without threading a map reference through span
-/// consumers, while the map itself is an ordinary value owned by the build that created it.
 #[derive(Default)]
 pub struct SrcMap {
     files: Vec<&'static SrcFile>,
@@ -178,12 +161,6 @@ const CORE_FILES: &[(&str, &str)] = &[
     ("core/result.phi", include_str!("../../lib/core/result.phi")),
 ];
 
-/// Every file of the standard library as `(name, source)`.
-///
-/// Unlike `core`, `std` is never auto-imported through a prelude -- a project only pulls in
-/// what it names with `import std::...;`. Its files are registered unconditionally anyway
-/// (see [`collect_std`]), so name resolution can see and resolve those imports;
-/// `std`'s definitions simply sit unused in the module tree when nothing imports them.
 const STD_FILES: &[(&str, &str)] = &[
     ("std/range.phi", include_str!("../../lib/std/range.phi")),
     ("std/string.phi", include_str!("../../lib/std/string.phi")),
@@ -195,22 +172,6 @@ pub fn collect(map: &mut SrcMap, root: &Path) -> io::Result<()> {
     visit_dir(map, root)
 }
 
-/// Registers every core library file with `map`, in the order [`CORE_FILES`]
-/// lists them, and returns exactly the [`SrcFile`]s this call registered.
-///
-/// Phi has no notion of a separately compiled library yet, so `core` is compiled into the
-/// same unit as the user's own files, from source, on every build. Its files carry
-/// ordinary `module core::..;` declarations, so lowering assembles them into the module
-/// tree exactly as it does the user's -- nothing downstream needs to know `core` is
-/// special.
-///
-/// The one thing that is special is when they're registered: this runs after
-/// [`collect`] has walked the project, so `core` sits at the end of the
-/// offset space and editing it doesn't shift the span of every user file in the build.
-///
-/// Which items `core` is expected to declare is not recorded here but in
-/// [`crate::langitems`], which resolves each one to its `DefId` after name resolution has
-/// built `core`'s namespace.
 pub fn collect_core(map: &mut SrcMap) -> Vec<&'static SrcFile> {
     CORE_FILES
         .iter()
@@ -222,19 +183,6 @@ pub fn collect_core(map: &mut SrcMap) -> Vec<&'static SrcFile> {
         .collect()
 }
 
-/// Registers every standard library file with `map`, in the order [`STD_FILES`]
-/// lists them, and returns exactly the [`SrcFile`]s this call registered.
-///
-/// This follows the same reasoning as [`collect_core`]: `std` is compiled
-/// into the build from source, unconditionally, every time, and its files carry ordinary
-/// `module std::..;` declarations so lowering assembles them into the module tree the same
-/// way it does `core`'s and the user's. Its `FileOrigin` is also [`FileOrigin::Core`] --
-/// `std` is compiled-in library code, not user code, so it's already excluded from
-/// `--no-emit-core` dumps the same way `core` is, without needing a separate flag.
-///
-/// Callers should register `std` after `core` (see [`collect_core`]'s note
-/// on why `core` is registered after the user's project), so that `std`'s files sit last
-/// in the offset space.
 pub fn collect_std(map: &mut SrcMap) -> Vec<&'static SrcFile> {
     STD_FILES
         .iter()
@@ -251,10 +199,6 @@ fn visit_dir(map: &mut SrcMap, dir: &Path) -> io::Result<()> {
         return Ok(());
     }
 
-    // `read_dir`'s order is OS-dependent.
-    //
-    // Sort by file name so file collection, and therefore every downstream stage that
-    // depends on it, such as diagnostic output and `--ast` output, stays reproducible.
     let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(|entry| entry.file_name());
 

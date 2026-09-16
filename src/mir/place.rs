@@ -3,10 +3,6 @@ use crate::mir::ids::{Local, VariantIdx};
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
 
-/// A `Place` is a location in memory corresponding to a [`Local`]. Since the
-/// memory of a `Local` can be split into subparts (such as the fields of a struct),
-/// `projections` further defines the exact location in the `local`'s memory.
-/// These projections are applied from left to right.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Place {
     pub local: Local,

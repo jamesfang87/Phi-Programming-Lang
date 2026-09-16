@@ -302,9 +302,6 @@ mod tests {
         );
     }
 
-    /// `--mir` and `--llvm` both dump a real stage now -- this test only checks that both flags
-    /// parse and set their own field here; `pipeline::build` is what actually prints the LLVM IR
-    /// dump when `--llvm` is set.
     #[test]
     fn mir_and_llvm_flags_parse() {
         let dumps = opts(&["--mir", "--llvm"]).expect("both are accepted").dumps;

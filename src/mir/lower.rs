@@ -44,22 +44,11 @@ impl Task {
     }
 }
 
-/// The generic (pre-monomorphization) [`Body`] lowering produced for every [`Task`] actually
-/// demanded, keyed by the same `(DefId, Option<AnyMode>)` pair `Task` carries.
-/// [`mir::monomorphize`](crate::mir::monomorphize) substitutes each one's own remaining
-/// `TyKind::Generic`/`SelfTy` per calling context, keyed by the same pair plus a generic
-/// argument list.
 pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
     pub vtables: HashMap<(Ty, DefId), VtableInfo>,
 }
 
-/// Whether `def_id`'s return type is itself `any T`, the one condition the README ties `any`
-/// specialization to (rule 3: "`any` is only meaningful in a function whose return type is `&T`,
-/// `&mut T`, or `any T`. It has no effect on a function returning an owned type"). An `any`
-/// parameter or `any self` on a definition that does not meet this has, per that same rule, no
-/// effect at all: `mir::lower::item` resolves it as a plain owned value, the same as if `any`
-/// had not been written, and this definition is lowered once, ordinarily.
 pub(super) fn is_any_specialized(tcx: &TyCtx, types: &TypeResolutions, def_id: DefId) -> bool {
     let Some(sig) = types.ty_of_def(def_id) else {
         return false;

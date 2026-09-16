@@ -14,10 +14,6 @@ pub enum Rvalue {
         place: Place,
     },
     BinaryOp(BinaryOp, Operand, Operand),
-    /// `CheckedBinaryOp` behaves like `BinaryOp`, but is only used for integer `+`, `-`, and `*`.
-    /// Its purpose is for checking whether the operation overflowed. It produces a `(T, bool)` tuple
-    /// where the first element is the result of the op and the second is whether an overflow
-    /// occurred Lowering only emits this in debug builds.
     CheckedBinaryOp(BinaryOp, Operand, Operand),
     UnaryOp(UnaryOp, Operand),
     /// `kind` distinguishes a user-written `as` from a compiler-inserted coercion. See

@@ -138,7 +138,6 @@ mod tests {
     use crate::ast::{Literal, PayloadField};
     use crate::testing::lex_src;
 
-    /// The single pattern a `Payload::Single` holds, or a panic.
     fn single(payload: &Payload<Pat>) -> &Pat {
         match payload {
             Payload::Single(inner) => inner,
@@ -245,8 +244,6 @@ mod tests {
         }
     }
 
-    /// A tuple payload is one value, so a tuple pattern nested inside the variant's single
-    /// payload slot destructures it, not several comma-separated bindings.
     #[test]
     fn parses_variant_pattern_with_tuple_payload() {
         let pat = parse_pattern(".parallelogram((b, h))");
@@ -294,7 +291,6 @@ mod tests {
                     }
                     other => panic!("expected a binding, got {other:?}"),
                 }
-                // `w` is the field shorthand: no pattern of its own, it binds `w`.
                 assert_eq!(crate::testing::resolve(fields[1].name.text), "w");
                 assert!(fields[1].value.is_none());
             }
@@ -302,7 +298,6 @@ mod tests {
         }
     }
 
-    /// The leading `.` is the only thing that makes a variant pattern
     #[test]
     fn bare_pascal_case_identifier_is_a_binding() {
         let pat = parse_pattern("Rectangle");
@@ -327,7 +322,6 @@ mod tests {
 
     #[test]
     fn parses_nested_tuple_pattern() {
-        // `(a, (b, c))` exercises tuple nesting.
         let pat = parse_pattern("(a, (b, c))");
         match &pat.kind {
             PatKind::Tuple(pats) => {
@@ -348,7 +342,6 @@ mod tests {
 
     #[test]
     fn parses_tuple_pattern_with_variant_and_wildcard_elements() {
-        // `(.circle(r), _)` exercises tuple + variant + wildcard nesting together.
         let pat = parse_pattern("(.circle(r), _)");
         match &pat.kind {
             PatKind::Tuple(pats) => {
@@ -366,12 +359,6 @@ mod tests {
         }
     }
 
-    /// BUG: the tuple-pattern parser builds `PatKind::Tuple` unconditionally, so `(x)` becomes
-    /// the one-element tuple pattern `(x,)` instead of a parenthesized binding. The expression
-    /// parser unwraps `(e)` to `e`; the pattern grammar should do the same, reserving `(p,)` for
-    /// the one-element tuple.
-    ///
-    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
     #[test]
     fn parses_parenthesized_pattern_as_the_inner_pattern() {
         let pat = parse_pattern("(x)");

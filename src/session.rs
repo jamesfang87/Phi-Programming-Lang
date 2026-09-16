@@ -6,13 +6,6 @@ use crate::ast::interner::{Interner, Symbol};
 use crate::diagnostics::{Diagnostic, Diagnostics};
 use crate::driver::source::{FileOrigin, SrcFile, SrcMap, SrcSpan};
 
-/// The shared state one build reads from and writes to: its source map, string interner, and
-/// collected diagnostics.
-///
-/// Every compiler stage takes a `&Session` and goes through it, so a stage's dependencies on
-/// this state are explicit in its signature rather than hidden behind process-wide singletons.
-/// The state is interior-mutable, so stages can keep taking `&Session` while still interning
-/// names and recording diagnostics.
 pub struct Session {
     sources: RefCell<SrcMap>,
     interner: RefCell<Interner>,

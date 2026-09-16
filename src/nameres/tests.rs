@@ -21,13 +21,6 @@ fn ident(text: &str) -> Ident {
     }
 }
 
-// -----------------------------------------------------------------
-// Driving the parser, for `SymbolTable::collect` tests
-// -----------------------------------------------------------------
-
-/// Lexes and parses `src` into a [`ParsedSrcFile`], asserting no diagnostics were raised.
-/// The test session's diagnostics are *not* cleared here -- callers building an `Ast` out of
-/// several files need each one parsed against the same session's interner and source map.
 fn parse_one(src: &str) -> ParsedSrcFile {
     let chars: Vec<char> = src.chars().collect();
     let offset = crate::testing::add_file("<test>".to_string(), chars.clone(), FileOrigin::User);
@@ -35,14 +28,10 @@ fn parse_one(src: &str) -> ParsedSrcFile {
     Parser::new(crate::testing::session()).parse(&tokens, offset)
 }
 
-/// Lexes, parses, and assembles `src` as a single-file `Ast`, asserting no diagnostics were
-/// raised along the way.
 fn ast_from(src: &str) -> Ast {
     ast_from_files(&[src])
 }
 
-/// Lexes, parses, and assembles `sources` into one `Ast` (built from multiple files, the way a
-/// real build combines them). Asserts no diagnostics were raised.
 fn ast_from_files(sources: &[&str]) -> Ast {
     crate::testing::clear_diagnostics();
     crate::testing::clear_interner();
@@ -55,59 +44,33 @@ fn ast_from_files(sources: &[&str]) -> Ast {
     Ast::from(files)
 }
 
-/// Walks `segments` from `ast`'s root module through `table`'s module namespace, resolving a
-/// canonical path to its module the way tests need to but nothing in `SymbolTable` itself does.
 fn module_by_path(ast: &Ast, table: &SymbolTable, segments: &[Symbol]) -> Option<NodeId> {
     segments.iter().try_fold(ast.root_id(), |current, &seg| {
         table.lookup_mod(current, seg)
     })
 }
 
-/// Builds `src`'s `Ast` and runs [`SymbolTable::collect`] over it, returning the table alongside
-/// every diagnostic the collect walk itself raised (parsing is asserted clean by [`ast_from`],
-/// so nothing from that stage leaks in).
 fn collect_with_diags(src: &str) -> (SymbolTable<'_>, Vec<Diagnostic>) {
     fn inner(ast: &Ast) -> (SymbolTable<'_>, Vec<Diagnostic>) {
         crate::testing::clear_diagnostics();
         let table = SymbolTable::collect(crate::testing::session(), ast);
         (table, crate::testing::diagnostics())
     }
-    // `ast_from` is not inlined because the returned `Ast` must outlive the `SymbolTable<'_>`
-    // that borrows it. A local in `collect_with_diags`'s stack frame can't. So this leaks it,
-    // which is fine for a test helper.
     let ast: &'static Ast = Box::leak(Box::new(ast_from(src)));
     inner(ast)
 }
 
-// -----------------------------------------------------------------
-// Driving the parser, for `SymbolTable::new` tests
-// -----------------------------------------------------------------
-
-/// Builds `ast`'s `SymbolTable` via [`SymbolTable::new`], returning it alongside every
-/// diagnostic construction raised.
 fn new_with_diags(ast: &Ast) -> (SymbolTable<'_>, Vec<Diagnostic>) {
     crate::testing::clear_diagnostics();
     let table = SymbolTable::new(crate::testing::session(), ast);
     (table, crate::testing::diagnostics())
 }
 
-/// Builds a `SymbolTable` via [`SymbolTable::new`], but constructs the `Ast` from `sources`
-/// first (see [`ast_from_files`]). Leaks the `Ast` for the same reason as [`collect_with_diags`].
 fn new_with_diags_from(sources: &[&str]) -> (SymbolTable<'static>, Vec<Diagnostic>) {
     let ast: &'static Ast = Box::leak(Box::new(ast_from_files(sources)));
     new_with_diags(ast)
 }
 
-/// Builds an `Ast` containing the real core library (the way a full build does; see
-/// [`Session::collect_core`](crate::session::Session::collect_core)) so a [`SymbolTable`] built
-/// over it has `core::prelude` to find.
-///
-/// Only the files this call itself registers are lexed and parsed, not every file the thread's
-/// test session has seen. Each test thread gets its own session, so files other tests register
-/// cannot leak in. `collect_core` returns exactly the [`SrcFile`]s it registered, identified by
-/// the files themselves (not a before/after count; see its doc comment). Re-parsing files beyond
-/// those five would raise diagnostics (duplicate declarations, mostly) that belong to this test's
-/// other fixtures.
 fn ast_with_core() -> Ast {
     crate::testing::clear_diagnostics();
     crate::testing::clear_interner();
@@ -128,22 +91,12 @@ fn ast_with_core() -> Ast {
     Ast::from(files)
 }
 
-/// Runs `f` against a freshly cleared diagnostic collection, returning its result alongside every
-/// diagnostic `f` raised.
-///
-/// Mirrors [`new_with_diags`]'s clear-then-collect pattern, but for a single call rather than
-/// a whole `SymbolTable::new`, so a lookup entry point's own diagnostics can be checked in
-/// isolation.
 fn with_diags<T>(f: impl FnOnce() -> T) -> (T, Vec<Diagnostic>) {
     crate::testing::clear_diagnostics();
     let result = f();
     (result, crate::testing::diagnostics())
 }
 
-/// Filters out "missing lang item" diagnostics. `resolve` (unlike `SymbolTable::new` alone)
-/// always runs `langitems::ast::collect`, which reports one for every lang item the core library
-/// would declare. None of the fixtures below build a unit with a core library. That noise is
-/// expected and unrelated to what these tests check.
 fn non_lang_item_diags(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
     diags
         .iter()
@@ -209,9 +162,6 @@ fn entries_is_empty_for_an_unrecorded_node() {
     assert!(r.entries(NodeId::next()).is_empty());
 }
 
-/// `paths` inlines two entries before spilling to the heap (see the `SmallVec<[_; 2]>` doc
-/// comment on `NameResolutions::paths`). A third entry on one node exercises that spill, and
-/// this confirms it isn't dropped in the process.
 #[test]
 fn a_node_with_three_recorded_paths_retrieves_all_three() {
     let mut r = NameResolutions::new();
@@ -227,10 +177,6 @@ fn a_node_with_three_recorded_paths_retrieves_all_three() {
     let got: Vec<_> = r.entries(owner).iter().map(|(p, _)| p.clone()).collect();
     assert_eq!(got, vec![path(&["a"]), path(&["b"]), path(&["c"])]);
 }
-
-// -----------------------------------------------------------------
-// `SymbolTable::collect`
-// -----------------------------------------------------------------
 
 #[test]
 fn collect_puts_a_function_in_the_value_namespace() {
@@ -289,10 +235,6 @@ fn by_path_maps_a_canonical_path_to_its_module() {
     assert!(id.is_some());
 }
 
-// -----------------------------------------------------------------
-// `SymbolTable::new` -- import resolution and the prelude
-// -----------------------------------------------------------------
-
 #[test]
 fn an_import_binds_into_the_importing_modules_own_scope() {
     let ast = ast_from_files(&[
@@ -310,7 +252,6 @@ fn an_import_binds_into_the_importing_modules_own_scope() {
 
 #[test]
 fn an_import_resolves_absolutely_from_the_root_not_relative_to_where_it_is_written() {
-    // `deep::inner` is written inside `app::nested`, and still resolves from the root.
     let ast = ast_from_files(&[
         "module deep; public fun inner() {}",
         "module app::nested; import deep::inner;",
@@ -334,7 +275,6 @@ fn an_import_resolves_absolutely_from_the_root_not_relative_to_where_it_is_writt
 
 #[test]
 fn an_import_may_name_a_module_the_collect_pass_had_not_reached() {
-    // The importing module is parsed first; the imported one second.
     let ast = ast_from_files(&[
         "module app; import later::thing;",
         "module later; public fun thing() {}",
@@ -408,10 +348,6 @@ fn the_prelude_is_none_without_a_core_library() {
     let table = SymbolTable::new(crate::testing::session(), &ast);
     assert!(table.prelude().is_none());
 }
-
-// -----------------------------------------------------------------
-// The scope stacks -- locals, generics, `Self`
-// -----------------------------------------------------------------
 
 #[test]
 fn a_local_shadows_an_outer_one_and_the_outer_is_restored_on_pop() {
@@ -492,10 +428,6 @@ fn self_reads_the_innermost_scope_and_is_none_when_the_stack_is_empty() {
     t.pop_self();
     assert_eq!(t.lookup_self(), None);
 }
-
-// -----------------------------------------------------------------
-// Path lookup
-// -----------------------------------------------------------------
 
 #[test]
 fn a_sibling_item_resolves_without_qualification() {
@@ -662,14 +594,8 @@ fn pushing_a_local_scope_or_self_leaves_generics_untouched() {
     assert_eq!(t.lookup_generic(name), Some(Type::Generic(g)));
 }
 
-// -----------------------------------------------------------------
-// `Self`, bare traits, and `dyn`
-// -----------------------------------------------------------------
-
 #[test]
 fn a_bare_trait_path_in_type_position_resolves_to_a_trait() {
-    // Static dispatch: the function is monomorphized over the concrete type, as Rust's
-    // `impl Trait` does. This is legal and is not an error.
     let ast = ast_from_files(&["module app; trait Show {}"]);
     let table = SymbolTable::new(crate::testing::session(), &ast);
     let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
@@ -713,8 +639,6 @@ fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
         TyDef::Trait(NodeId::next()),
     ] {
         r.table.insert_self(Type::Def(def));
-        // `SelfTy`, not `Type`: the spelling is recorded alongside the type it stands for, so
-        // HIR lowering carries it across rather than re-deriving it from the segment text.
         assert_eq!(
             r.table.lookup_self_res(SrcSpan::new(0, 0)),
             Res::SelfTy(Type::Def(def))
@@ -723,9 +647,6 @@ fn self_resolves_to_each_of_struct_enum_trait_and_extend() {
     }
 }
 
-/// `Self` reaches HIR lowering as `Res::SelfTy` through a real resolve, not just through
-/// the table lookup in isolation -- including from an access base, where `Self.circle(1.0)`
-/// names a variant through the enum an `extend` block is on.
 #[test]
 fn self_as_an_access_base_records_self_ty() {
     let ast = ast_from_files(&[
@@ -739,8 +660,6 @@ fn self_as_an_access_base_records_self_ty() {
     ));
 }
 
-/// A type named outright stays `Res::Type`, so the two spellings really are distinguished
-/// rather than both collapsing to one variant.
 #[test]
 fn a_type_named_outright_is_not_recorded_as_self_ty() {
     let ast = ast_from_files(&[
@@ -786,14 +705,6 @@ fn an_unresolvable_type_path_reports_not_found_and_records_err() {
     assert!(diags[0].message.contains("cannot find"));
 }
 
-// -----------------------------------------------------------------
-// `resolve` -- the full AST traversal
-// -----------------------------------------------------------------
-
-/// Finds the one item in `ast` matching `pred`, across every module. Every fixture below
-/// declares exactly the one item under test, so panicking when `pred` matches nothing (a fixture
-/// that stopped parsing the way the test expects) is preferable to returning an `Option` every
-/// caller would just `unwrap` anyway.
 fn find_item(ast: &Ast, pred: impl Fn(&ItemKind) -> bool) -> &Item {
     ast.mod_ids()
         .find_map(|mod_id| {
@@ -817,8 +728,6 @@ fn extend_self_ty_id(ast: &Ast) -> NodeId {
     e.self_ty.id
 }
 
-/// The first generic parameter declared anywhere in `ast`, wherever it's found -- every fixture
-/// that uses this declares exactly one.
 fn first_generic_id(ast: &Ast) -> NodeId {
     let item = find_item(
         ast,
@@ -830,14 +739,10 @@ fn first_generic_id(ast: &Ast) -> NodeId {
     f.generics[0].id
 }
 
-/// The `NodeId` of the first parameter's type annotation in `ast`'s one function.
 fn param_ty_id(ast: &Ast) -> NodeId {
     only_function(ast).params[0].ty.id
 }
 
-/// The one function `ast` declares, wherever it's found -- a top-level `fun`, an `extend`
-/// block's method, or a trait's. Every fixture using this has exactly one, so the first found
-/// (in item-declaration order) is the one under test.
 fn only_function(ast: &Ast) -> &Function {
     for mod_id in ast.mod_ids() {
         for item in &ast.module(mod_id).items {
@@ -852,9 +757,6 @@ fn only_function(ast: &Ast) -> &Function {
     panic!("expected the fixture to declare a function somewhere");
 }
 
-/// For a fixture of the shape `fun f() { let x = 1; let y = x; }`: the `NodeId` of the `x` path
-/// expression on the right of the second `let`, and the `NodeId` of the `Pat` the first `let`
-/// binds `x` with.
 fn x_use_and_binding(ast: &Ast) -> (NodeId, NodeId) {
     let f = only_function(ast);
     let block = f
@@ -907,8 +809,6 @@ fn an_extend_blocks_two_identical_paths_conflict_and_only_the_adt_path_is_record
         r.get(self_ty, &path(&["Vec2"])),
         Some(Res::Type(Type::Def(TyDef::Struct(_))))
     ));
-    // The trait path is flagged as self-extending before it's ever resolved, so the item itself
-    // owns no entries -- only `self_ty`'s own node does.
     assert_eq!(r.entries(item).len(), 0);
 }
 
@@ -953,8 +853,6 @@ fn a_match_arm_binding_is_scoped_to_that_arm() {
     assert!(diags.iter().any(|d| d.message.contains("cannot find `n`")));
 }
 
-/// A guard runs after its arm's pattern has matched, so the pattern's bindings have to be in
-/// scope for it -- same as they are for the arm's body.
 #[test]
 fn a_match_arm_binding_is_visible_in_that_arms_guard() {
     let ast = ast_from_files(&[
@@ -967,7 +865,6 @@ fn a_match_arm_binding_is_visible_in_that_arms_guard() {
     );
 }
 
-/// A guard's bindings still drop at the arm's boundary, the same as the body's do.
 #[test]
 fn a_match_arm_guard_does_not_leak_its_own_scope() {
     let ast = ast_from_files(&[
@@ -1008,8 +905,6 @@ fn a_path_expression_resolves_to_the_local_it_names() {
     );
 }
 
-/// Returns the base expression of the `.` access that a fixture's only function binds in its
-/// first `let`.
 fn access_base_of_first_let(ast: &Ast) -> &Expr {
     let f = only_function(ast);
     let block = f.block.as_ref().expect("the fixture's function has a body");
@@ -1022,8 +917,6 @@ fn access_base_of_first_let(ast: &Ast) -> &Expr {
     base
 }
 
-/// An access base is looked up in the value namespace and, failing that, the type namespace --
-/// which is what lets `Shape.circle(1.0)` name a variant through its enum.
 #[test]
 fn an_access_base_falls_back_to_the_type_namespace() {
     let ast = ast_from_files(&["module app; enum Shape { unit } fun f() { let s = Shape.unit; }"]);
@@ -1035,8 +928,6 @@ fn an_access_base_falls_back_to_the_type_namespace() {
     ));
 }
 
-/// The value namespace is tried first, so a local named like a type still shadows it here, the
-/// same way it does in every other expression position.
 #[test]
 fn a_local_shadows_a_type_of_the_same_name_as_an_access_base() {
     let ast = ast_from_files(&[
@@ -1050,7 +941,6 @@ fn a_local_shadows_a_type_of_the_same_name_as_an_access_base() {
     ));
 }
 
-/// A base in neither namespace is reported once, not once per namespace tried.
 #[test]
 fn an_access_base_in_neither_namespace_is_reported_once() {
     let ast = ast_from_files(&["module app; fun f() { let s = Nope.unit; }"]);
@@ -1062,8 +952,6 @@ fn an_access_base_in_neither_namespace_is_reported_once() {
 
 #[test]
 fn a_let_rhs_sees_the_outer_x_not_the_one_it_declares() {
-    // The classic bug: binding the pattern before walking the initializer would make `x` on the
-    // right resolve to itself instead of the outer binding.
     let ast = ast_from_files(&["module app; fun f() { let x = 1; { let x = x; } }"]);
     let r = resolve(crate::testing::session(), &ast);
     let f = only_function(&ast);
@@ -1125,10 +1013,6 @@ fn dyn_on_a_non_trait_records_err() {
     assert_eq!(r.get(ty, &path(&["S"])), Some(Res::Err));
 }
 
-/// When `adt_path` fails to resolve at all, a suppressed `Self` scope is pushed
-/// (`SymbolTable::insert_self_unresolved`), so a `Self` written inside the block records
-/// `Res::Err` without reporting its own diagnostic -- only the one explaining why `Nope` itself
-/// failed to resolve. Exactly one diagnostic, matching master's behavior for this case.
 #[test]
 fn an_extends_unresolved_adt_path_suppresses_the_self_diagnostic() {
     let ast = ast_from_files(&["module app; extend Nope { fun f(&self) -> Self {} }"]);
@@ -1148,22 +1032,6 @@ fn an_extends_unresolved_adt_path_suppresses_the_self_diagnostic() {
     assert_eq!(r.get(ty, &path(&["Self"])), Some(Res::Err));
 }
 
-// Note: the parser itself rejects `extend i32 ...` (a primitive is a dedicated token, not an
-// `Identifier`, so it can never appear as `adt_path` -- see `typeck/traits/collect.rs`),
-// so the "adt_path resolved but not to a TyDef" branch above can't be exercised from source text.
-// It is exercised indirectly: every extend fixture elsewhere that resolves cleanly (e.g.
-// every `extend Foo` fixture that resolves cleanly) takes the `Res::Type(Type::Def(_))`
-// arm, and the `_ => false` arm is straightforward enough by inspection not to need a dedicated
-// (unreachable-from-source) fixture.
-
-// -----------------------------------------------------------------
-// `emit_debug::nameres_to_string`
-// -----------------------------------------------------------------
-
-/// `B` is written before `A` in source order, so it must come first in the dump regardless of
-/// the `NodeId`s the global counter happened to hand out -- see the rationale on
-/// `emit_debug::nameres_to_string`. Also guards the companion rule: the dump must never
-/// print a `NodeId` at all.
 #[test]
 fn the_dump_is_ordered_by_span_and_contains_no_node_ids() {
     let ast = ast_from_files(&["module app; struct A {} struct B {} fun f(x: B, y: A) {}"]);
@@ -1180,9 +1048,6 @@ fn the_dump_is_ordered_by_span_and_contains_no_node_ids() {
     );
 }
 
-/// A more thorough version of the ordering check above: three entries, written out of
-/// declaration order relative to their uses, must appear in the dump in the order their own
-/// spans start -- not in the order `collect`/`resolve` happened to visit or record them.
 #[test]
 fn three_entries_out_of_declaration_order_still_print_span_ordered() {
     let ast = ast_from_files(&[
@@ -1201,9 +1066,6 @@ fn three_entries_out_of_declaration_order_still_print_span_ordered() {
     );
 }
 
-/// Every `Res` variant renders as a name, not an id: a function, a local (param, self param,
-/// and a `let`-bound variable), a generic parameter, a primitive, and each of struct/enum/trait
-/// all appear in the dump by name.
 #[test]
 fn every_res_kind_renders_by_name_not_by_node_id() {
     let ast = ast_from_files(&["module app; \
@@ -1246,12 +1108,6 @@ fn every_res_kind_renders_by_name_not_by_node_id() {
     );
 }
 
-// -----------------------------------------------------------------
-// `ExprKind::Ctor` and record-payload shorthand fields (fix round 2)
-// -----------------------------------------------------------------
-
-/// The one function `ast` declares's first `let`'s initializer expression -- every fixture below
-/// declares exactly one function with exactly one `let` as its first statement.
 fn first_let_init(ast: &Ast) -> &Expr {
     let f = only_function(ast);
     let block = f
@@ -1303,8 +1159,6 @@ fn an_unresolved_struct_literal_path_records_err() {
     assert_eq!(r.get(init.id, &path(&["Nope"])), Some(Res::Err));
 }
 
-/// The fields of the one variant-construction expression in `ast`'s function -- the last `let`'s
-/// initializer, an `ExprKind::Variant` with a record payload.
 fn variant_record_fields(ast: &Ast) -> &[PayloadField<Expr>] {
     let f = only_function(ast);
     let block = f.block.as_ref().expect("expected a function body");
@@ -1320,9 +1174,6 @@ fn variant_record_fields(ast: &Ast) -> &[PayloadField<Expr>] {
     fields
 }
 
-/// A record payload's shorthand field (`{ w }`, meaning `{ w: w }`) has no `Expr` of its own for
-/// the implicit value -- `ast::visit`'s `payload_values` helper silently drops it. This confirms
-/// the fix keys the lookup off the field's own `NodeId` instead and still finds the local.
 #[test]
 fn a_variant_record_payloads_shorthand_field_resolves_its_implicit_value() {
     let ast = ast_from_files(&["module app; enum Shape { rect: { w: i32, h: i32 } } \
@@ -1346,11 +1197,6 @@ fn a_variant_record_payloads_shorthand_field_resolves_its_implicit_value() {
     }
 }
 
-/// A record *pattern* payload's shorthand field (`{ w }`) binds `w`, the same as an ordinary
-/// `PatKind::Binding` would -- but again has no `Pat` of its own for `payload_values` to hand
-/// back, so nothing binds it without the fix. Verified indirectly: `w` resolves inside the arm
-/// (no diagnostic there) and is out of scope again immediately after it (one diagnostic, not
-/// zero or two).
 #[test]
 fn a_match_arms_record_payload_shorthand_binds_its_fields() {
     let ast = ast_from_files(&["module app; enum Shape { rect: { w: i32, h: i32 } } \
@@ -1369,13 +1215,6 @@ fn a_match_arms_record_payload_shorthand_binds_its_fields() {
     );
 }
 
-// -----------------------------------------------------------------
-// Namespaces and module structure
-// -----------------------------------------------------------------
-
-/// A function and a struct are declared into separate namespaces (see
-/// `SymbolTable::collect_module`'s three-way match), so sharing a spelling is not a conflict --
-/// only two declarations *in the same namespace* are.
 #[test]
 fn a_function_and_a_struct_of_the_same_name_do_not_conflict() {
     let ast = ast_from_files(&["module app; fun Point() {} struct Point {}"]);
@@ -1386,7 +1225,6 @@ fn a_function_and_a_struct_of_the_same_name_do_not_conflict() {
     );
 }
 
-/// Likewise a function and a module: `insert_mod` and `insert_function` write to different maps.
 #[test]
 fn a_function_and_a_submodule_of_the_same_name_do_not_conflict() {
     let ast = ast_from_files(&[
@@ -1400,8 +1238,6 @@ fn a_function_and_a_submodule_of_the_same_name_do_not_conflict() {
     );
 }
 
-/// Two modules may each declare a function of the same name: each module owns its own
-/// namespace, so `collect_module`'s per-module `ModuleScope` never even compares the two.
 #[test]
 fn two_unrelated_modules_may_each_declare_a_function_of_the_same_name() {
     let ast = ast_from_files(&["module a; fun helper() {}", "module b; fun helper() {}"]);
@@ -1412,11 +1248,6 @@ fn two_unrelated_modules_may_each_declare_a_function_of_the_same_name() {
     );
 }
 
-/// `Visibility` is parsed onto every item (see `ast::Visibility`) and `SymbolTable` reads it
-/// back at every lookup that can reach across module boundaries (`lookup_value_path`,
-/// `lookup_type_path`, and import resolution): a private item (the default; there is no
-/// `private` keyword, only the absence of `public`) is visible only from its own declaring
-/// module and that module's descendants, so importing it into an unrelated module is rejected.
 #[test]
 fn a_private_item_is_not_importable_from_an_unrelated_module() {
     let ast = ast_from_files(&[
@@ -1464,8 +1295,6 @@ fn a_glob_import_sees_names_a_later_glob_brings_in() {
     );
 }
 
-/// The module chain only walks upward through ancestors ([`SymbolTable::module_chain`]), so a
-/// parent never sees a child module's declarations.
 #[test]
 fn a_parent_module_cannot_see_a_childs_declaration() {
     let ast = ast_from_files(&[
@@ -1481,8 +1310,6 @@ fn a_parent_module_cannot_see_a_childs_declaration() {
     );
 }
 
-/// Two sibling modules -- neither an ancestor of the other -- do not see each other's
-/// declarations without an explicit `import`.
 #[test]
 fn sibling_modules_do_not_see_each_other() {
     let ast = ast_from_files(&[
@@ -1498,8 +1325,6 @@ fn sibling_modules_do_not_see_each_other() {
     );
 }
 
-/// The module-chain fallback keeps walking past a direct parent to every ancestor, not just one
-/// level up.
 #[test]
 fn a_name_falls_back_through_three_levels_of_ancestry() {
     let ast = ast_from_files(&[
@@ -1514,8 +1339,6 @@ fn a_name_falls_back_through_three_levels_of_ancestry() {
     );
 }
 
-/// A path segment that names a function rather than a module is not found by `walk_modules`
-/// (which only ever consults the module namespace), so the whole path fails.
 #[test]
 fn a_function_used_as_a_path_qualifier_does_not_resolve() {
     let ast = ast_from_files(&["module app; fun helper() {} fun f() { helper::thing(); }"]);
@@ -1528,8 +1351,6 @@ fn a_function_used_as_a_path_qualifier_does_not_resolve() {
     );
 }
 
-/// A multi-segment path whose prefix resolves but whose final segment does not is still exactly
-/// one "not found" -- not a separate diagnostic for each segment.
 #[test]
 fn an_existing_modules_missing_member_reports_once() {
     let ast = ast_from_files(&[
@@ -1542,11 +1363,6 @@ fn an_existing_modules_missing_member_reports_once() {
     assert!(diags[0].message.contains("cannot find `cross`"));
 }
 
-// -----------------------------------------------------------------
-// Imports: aliasing and glob collisions
-// -----------------------------------------------------------------
-
-/// An aliased import binds under the alias; the original name is not also bound.
 #[test]
 fn an_aliased_import_binds_under_the_alias_only() {
     let ast = ast_from_files(&[
@@ -1567,8 +1383,6 @@ fn an_aliased_import_binds_under_the_alias_only() {
     );
 }
 
-/// Two glob imports that each bring in a name of the same spelling conflict exactly as two
-/// ordinary declarations would -- `import_glob` calls the same `insert_*` that reports it.
 #[test]
 fn two_glob_imports_colliding_on_a_name_conflict() {
     let (_, diags) = new_with_diags_from(&[
@@ -1580,7 +1394,6 @@ fn two_glob_imports_colliding_on_a_name_conflict() {
     assert!(diags[0].message.contains("is defined multiple times"));
 }
 
-/// An imported struct is usable in an ordinary type position, the same as a locally declared one.
 #[test]
 fn an_imported_struct_is_usable_in_a_type_position() {
     let ast = ast_from_files(&[
@@ -1594,7 +1407,6 @@ fn an_imported_struct_is_usable_in_a_type_position() {
     );
 }
 
-/// An imported trait is usable as a bound.
 #[test]
 fn an_imported_trait_is_usable_as_a_bound() {
     let ast = ast_from_files(&[
@@ -1608,15 +1420,6 @@ fn an_imported_trait_is_usable_as_a_bound() {
     );
 }
 
-// -----------------------------------------------------------------
-// Scoping edge cases
-// -----------------------------------------------------------------
-
-/// `visit_stmt`'s `With` arm visits each lend's pattern (binding it into whatever scope is
-/// already open) and only then visits `block`, which pushes a scope of its own -- there is no
-/// scope bracketing the `with` statement itself. So a lend's binding outlives the block written
-/// after it, for the rest of the *enclosing* block. Documents this today; a design that meant a
-/// lend to be scoped to its own `with` would need its own push/pop around the whole statement.
 #[test]
 fn a_with_lends_binding_outlives_its_own_written_block() {
     let ast = ast_from_files(&["module app; fun f() { with x = 1 { } let y = x; }"]);
@@ -1627,9 +1430,6 @@ fn a_with_lends_binding_outlives_its_own_written_block() {
     );
 }
 
-/// A `for` loop's pattern binding is scoped to the loop: `visit_stmt` pushes a scope around the
-/// whole `For` statement before `walk_stmt` binds the pattern, so (unlike `with`, above) nothing
-/// leaks past the closing brace.
 #[test]
 fn a_for_loops_pattern_binding_does_not_outlive_the_loop() {
     let ast = ast_from_files(&["module app; fun f(xs: i32) { for x in xs { } let y = x; }"]);
@@ -1642,7 +1442,6 @@ fn a_for_loops_pattern_binding_does_not_outlive_the_loop() {
     );
 }
 
-/// Likewise `while let`'s pattern binding.
 #[test]
 fn a_while_lets_pattern_binding_does_not_outlive_the_loop() {
     let ast =
@@ -1656,8 +1455,6 @@ fn a_while_lets_pattern_binding_does_not_outlive_the_loop() {
     );
 }
 
-/// A closure's own parameter shadows an outer local of the same name for the closure's body, and
-/// the outer one is unaffected once the closure literal ends.
 #[test]
 fn a_closure_parameter_shadows_an_outer_local_of_the_same_name() {
     let ast =
@@ -1669,10 +1466,6 @@ fn a_closure_parameter_shadows_an_outer_local_of_the_same_name() {
     );
 }
 
-/// Two generic parameters of the same name conflict the same way two module-level declarations
-/// of one name do: `Resolver::push_generics` inserts them one at a time and calls
-/// `report_conflict` on a repeat, rather than building the scope with a plain `HashMap::collect`
-/// that would silently keep only the last.
 #[test]
 fn two_generic_parameters_of_the_same_name_conflict() {
     let ast = ast_from_files(&["module app; fun f<T, T>(x: T) {}"]);
@@ -1685,12 +1478,6 @@ fn two_generic_parameters_of_the_same_name_conflict() {
     );
 }
 
-// -----------------------------------------------------------------
-// Forward references and self-reference
-// -----------------------------------------------------------------
-
-/// `SymbolTable::collect` walks every module's declarations before `resolve_module` looks inside
-/// any of their bodies, so a function may call itself.
 #[test]
 fn a_function_may_call_itself_recursively() {
     let ast = ast_from_files(&["module app; fun fact(n: i32) -> i32 { return fact(n); }"]);
@@ -1701,8 +1488,6 @@ fn a_function_may_call_itself_recursively() {
     );
 }
 
-/// Two functions may call each other regardless of which is declared first in the file, for the
-/// same reason: both are in the module's `ModuleScope` before either body is visited.
 #[test]
 fn two_functions_may_call_each_other_regardless_of_declaration_order() {
     let ast = ast_from_files(&["module app; fun a() { b(); } fun b() { a(); }"]);
@@ -1713,8 +1498,6 @@ fn two_functions_may_call_each_other_regardless_of_declaration_order() {
     );
 }
 
-/// A struct may reference itself through a field, so long as the reference is indirect (a
-/// pointer-sized reference here, rather than the struct embedding itself by value).
 #[test]
 fn a_struct_may_reference_itself_through_a_field_type() {
     let ast = ast_from_files(&["module app; struct Node { next: &Node }"]);
@@ -1725,8 +1508,6 @@ fn a_struct_may_reference_itself_through_a_field_type() {
     );
 }
 
-/// Two structs may reference each other regardless of declaration order, for the same
-/// forward-declaration reason functions can.
 #[test]
 fn two_structs_may_reference_each_other_regardless_of_declaration_order() {
     let ast = ast_from_files(&["module app; struct A { b: &B } struct B { a: &A }"]);
@@ -1737,7 +1518,6 @@ fn two_structs_may_reference_each_other_regardless_of_declaration_order() {
     );
 }
 
-/// An enum variant may reference its own enum through a reference, the same as a struct field.
 #[test]
 fn an_enum_variant_may_reference_its_own_enum_through_a_reference() {
     let ast = ast_from_files(&["module app; enum List { cons: &List, nil }"]);

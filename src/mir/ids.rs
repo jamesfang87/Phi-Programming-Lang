@@ -1,7 +1,3 @@
-/// `Local` addresses one slot of a [`Body`](crate::mir::Body)'s `local_decls`. Slot `0` is
-/// always the return place, and slots `1..=arg_count` are always the parameters, by the
-/// convention `local_decls` itself documents. Every later slot is a `let` binding or a
-/// compiler-introduced temporary.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct Local(u32);
 
