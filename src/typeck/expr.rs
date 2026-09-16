@@ -222,6 +222,15 @@ impl<'hir> Typeck<'hir> {
         matches!(self.implements(&goal, &env), Solution::Holds)
     }
 
+    /// Records `ty` as copyable when the trait solver proves `ty: Copy` under `owner`'s bounds, so
+    /// a later read of a place of that type copies its value rather than moving out of it.
+    pub(crate) fn record_copyability(&mut self, ty: Ty, owner: DefId) {
+        let resolved = self.unifier.find_deep(&mut self.tcx, ty);
+        if self.holds_lang_trait(LangItem::Copy, resolved, owner) {
+            self.tcx.mark_copy(resolved);
+        }
+    }
+
     // -----------------------------------------------------------------
     // Indexing
     // -----------------------------------------------------------------

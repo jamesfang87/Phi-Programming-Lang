@@ -1,10 +1,8 @@
-use crate::ast::Mutability;
 use crate::hir::Hir;
 use crate::mir::lower::Mir;
 use crate::mir::{Local, Place, Projection};
 use crate::session::Session;
 use crate::typeck::ty::ctx::TyCtx;
-use crate::typeck::ty::{Ty, TyKind};
 
 pub(crate) mod captures;
 pub(crate) mod definite_init;
@@ -44,18 +42,6 @@ pub(crate) fn register_of(place: &Place) -> Register {
         owner: place.local,
         subregister,
     }
-}
-
-// TODO: I feel like there is something else outward that has this
-pub(crate) fn trivially_copyable(tcx: &TyCtx, ty: Ty) -> bool {
-    matches!(
-        tcx.kind(ty),
-        TyKind::Primitive(_)
-            | TyKind::Ref {
-                mutability: Mutability::Immutable,
-                ..
-            }
-    )
 }
 
 pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {

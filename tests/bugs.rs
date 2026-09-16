@@ -122,6 +122,28 @@ fn out_of_bounds_literal_index_still_resolves_in_bounds_reads() {
 }
 
 #[test]
+fn a_copy_bound_allows_repeated_reads_of_a_generic() {
+    // A `T: Copy` parameter was classified by shape alone, so reading `x` twice lowered the
+    // second read to a move and borrowck rejected the program with "use of moved value".
+    let dir = project(
+        "generic_copy_bound",
+        "module app;\n\n\
+         import core::ops::Copy;\n\n\
+         fun duplicate<T: Copy>(x: T) -> T {\n    \
+             let a = x;\n    \
+             let b = x;\n    \
+             return a;\n\
+         }\n\n\
+         fun main() {\n    \
+             if duplicate(7) == 7 { core::io::write_bytes(1, \"ok\" as &[u8]); }\n\
+         }\n",
+    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output), "ok");
+}
+
+#[test]
 fn signed_remainder_truncates_toward_zero() {
     let dir = project(
         "remainder_truncates",

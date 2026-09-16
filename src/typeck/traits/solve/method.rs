@@ -392,7 +392,7 @@ impl<'hir> Typeck<'hir> {
     /// [`writeback`](Typeck::writeback) applies the same defaults, but only to the types it
     /// stores; the unifier itself keeps the variables open. A deferred call has to close them
     /// for real, since the candidate's header is matched against the receiver rigidly.
-    fn commit_numeric_defaults(&mut self, ty: Ty) {
+    pub(crate) fn commit_numeric_defaults(&mut self, ty: Ty) {
         let resolved = self.unifier.find_deep(&mut self.tcx, ty);
 
         let mut numeric_vars = Vec::new();

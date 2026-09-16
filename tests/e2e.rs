@@ -350,6 +350,58 @@ fun main() {
 }
 
 #[test]
+fn for_loops_over_numeric_ranges() {
+    run(
+        "for_ranges",
+        r#"module app;
+fun main() {
+    let mut sum = 0;
+    for i in 0..5 {
+        sum += i;
+    }
+    if sum == 10 { core::io::write_bytes(1, "a" as &[u8]); }
+
+    let mut inclusive = 0;
+    for i in 0..=5 {
+        inclusive += i;
+    }
+    if inclusive == 15 { core::io::write_bytes(1, "b" as &[u8]); }
+
+    let n: usize = 4;
+    let mut count = 0;
+    for _ in 0..n {
+        count += 1;
+    }
+    if count == 4 { core::io::write_bytes(1, "c" as &[u8]); }
+}
+"#,
+        "abc",
+    );
+}
+
+#[test]
+fn range_contains_and_is_empty() {
+    run(
+        "range_methods",
+        r#"module app;
+fun main() {
+    let r = 2..8;
+    if r.contains(&5) { core::io::write_bytes(1, "a" as &[u8]); }
+    if !r.contains(&8) { core::io::write_bytes(1, "b" as &[u8]); }
+    if !r.is_empty() { core::io::write_bytes(1, "c" as &[u8]); }
+
+    let empty = 4..4;
+    if empty.is_empty() { core::io::write_bytes(1, "d" as &[u8]); }
+
+    let inclusive = 2..=8;
+    if inclusive.contains(&8) { core::io::write_bytes(1, "e" as &[u8]); }
+}
+"#,
+        "abcde",
+    );
+}
+
+#[test]
 fn if_let_as_an_expression() {
     run(
         "if_let_expression",

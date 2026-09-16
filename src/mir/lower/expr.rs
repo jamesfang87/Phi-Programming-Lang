@@ -472,21 +472,14 @@ impl<'a> BodyLowerCtx<'a> {
         self.push_stmt(StatementKind::Assign(dest, rvalue), span);
     }
 
-    /// `Copy` for a trivially copyable place -- a primitive, or a shared `&T` -- `Move`
-    /// otherwise, with no liveness analysis: the classification follows only from `ty`'s own
-    /// shape. A shared reference grants no exclusive access, so reading the same place holding
-    /// one twice is exactly as sound as reading a primitive twice; a `&mut T` grants exclusive
-    /// access, so duplicating it would defeat the point and it still falls to `Move`.
+    /// `Copy` for a place whose type is copyable -- a primitive, a shared `&T`, or a type the
+    /// trait solver proved `Copy` -- `Move` otherwise, with no liveness analysis: the
+    /// classification follows only from `ty`'s own copyability. A shared reference grants no
+    /// exclusive access, so reading the same place holding one twice is exactly as sound as
+    /// reading a primitive twice; a `&mut T` grants exclusive access, so duplicating it would
+    /// defeat the point and it still falls to `Move`.
     pub(crate) fn operand_for_place(&self, place: Place, ty: Ty) -> Operand {
-        let trivially_copyable = matches!(
-            self.tcx.kind(ty),
-            TyKind::Primitive(_)
-                | TyKind::Ref {
-                    mutability: Mutability::Immutable,
-                    ..
-                }
-        );
-        if trivially_copyable {
+        if self.tcx.is_copy(ty) {
             Operand::Copy(place)
         } else {
             Operand::Move(place)
