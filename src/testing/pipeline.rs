@@ -11,7 +11,7 @@ use crate::options::Mode;
 use crate::parser::Parser;
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 use super::fixtures::OPS_PREAMBLE;
 use super::session::session;
@@ -80,7 +80,12 @@ fn monomorphized(
 ) -> (Hir, TyCtx, TypeResolutions, Mir, HashMap<Instance, Body>) {
     let (hir, mut tcx, types) = typechecked(sources, origin);
     let program = crate::mir::lower::lower(session(), &hir, &mut tcx, &types, Mode::Debug);
-    let instances = crate::mir::monomorphize::monomorphize(&mut tcx, &program);
+    let main =
+        match crate::checks::entry_point::crate_root_main_candidates(session(), &hir).as_slice() {
+            [one] => Some(*one),
+            _ => None,
+        };
+    let instances = crate::mir::monomorphize::monomorphize(&mut tcx, &program, main);
     (hir, tcx, types, program, instances)
 }
 
@@ -102,6 +107,15 @@ pub fn typeck_src(src: &str) -> Vec<String> {
     let hir = lower_to_hir(src);
     session().clear_diagnostics();
     crate::typeck::check(session(), &hir);
+    session().messages()
+}
+
+/// Type-checks `src`, then runs the post-typeck mutability check over it.
+pub fn mutability_src(src: &str) -> Vec<String> {
+    let hir = lower_to_hir(src);
+    session().clear_diagnostics();
+    let checked = crate::typeck::check(session(), &hir);
+    crate::checks::mutability::check(session(), &hir, &checked.tcx, &checked.types);
     session().messages()
 }
 
@@ -127,9 +141,7 @@ pub fn typecheck_only(src: &str) -> (Hir, TyCtx, TypeResolutions) {
     typechecked(&[src], FileOrigin::User)
 }
 
-pub fn lower_to_mir(
-    src: &str,
-) -> (Hir, TyCtx, TypeResolutions, Mir, HashMap<Instance, Body>) {
+pub fn lower_to_mir(src: &str) -> (Hir, TyCtx, TypeResolutions, Mir, HashMap<Instance, Body>) {
     monomorphized(&[src], FileOrigin::User)
 }
 
@@ -145,10 +157,10 @@ pub fn lower_mir_src_as_core(
     monomorphized(&[src], FileOrigin::Core)
 }
 
-fn mir_check_src(src: &str, check: impl FnOnce(&Session, &mut TyCtx, &Mir)) -> Vec<String> {
-    let (_hir, mut tcx, _types, program, _instances) =
+fn mir_check_src(src: &str, check: impl FnOnce(&Session, &Hir, &mut TyCtx, &Mir)) -> Vec<String> {
+    let (hir, mut tcx, _types, program, _instances) =
         monomorphized(&[OPS_PREAMBLE, src], FileOrigin::User);
-    check(session(), &mut tcx, &program);
+    check(session(), &hir, &mut tcx, &program);
     session()
         .diagnostics()
         .into_iter()
@@ -157,31 +169,31 @@ fn mir_check_src(src: &str, check: impl FnOnce(&Session, &mut TyCtx, &Mir)) -> V
 }
 
 pub fn mir_definite_init_src(src: &str) -> Vec<String> {
-    mir_check_src(src, |session, tcx, program| {
+    mir_check_src(src, |session, _hir, tcx, program| {
         crate::mir::checks::borrowck::definite_init::check(session, tcx, program)
     })
 }
 
 pub fn mir_captures_src(src: &str) -> Vec<String> {
-    mir_check_src(src, |session, tcx, program| {
-        crate::mir::checks::borrowck::captures::check(session, tcx, program)
+    mir_check_src(src, |session, hir, tcx, program| {
+        crate::mir::checks::borrowck::captures::check(session, hir, tcx, program)
     })
 }
 
 pub fn mir_element_moves_src(src: &str) -> Vec<String> {
-    mir_check_src(src, |session, tcx, program| {
+    mir_check_src(src, |session, _hir, tcx, program| {
         crate::mir::checks::borrowck::element_moves::check(session, tcx, program)
     })
 }
 
 pub fn mir_exclusivity_src(src: &str) -> Vec<String> {
-    mir_check_src(src, |session, _tcx, program| {
+    mir_check_src(src, |session, _hir, _tcx, program| {
         crate::mir::checks::borrowck::exclusivity::check(session, program)
     })
 }
 
 pub fn mir_never_read_src(src: &str) -> Vec<String> {
-    mir_check_src(src, |session, _tcx, program| {
+    mir_check_src(src, |session, _hir, _tcx, program| {
         crate::mir::checks::never_read::check(session, program)
     })
 }

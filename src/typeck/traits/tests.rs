@@ -162,7 +162,7 @@ fn a_dyn_satisfies_the_trait_it_names_and_no_other() {
 
 /// [`match_ty`](super::solve::match_ty) matching one way instead of unifying.
 ///
-/// `v + v` is asked on the spot, before `v = w` settles what `v` is, so the goal the solver sees
+/// `v + v` is asked on the spot, before `v = w` resolves what `v` is, so the goal the solver sees
 /// is `Wrap<_>: Add` with an inference variable inside it. Both blocks in the index would unify
 /// with that goal, each by binding `_` to a different type, so a solver that unified would answer
 /// this program according to which block happens to be declared first, accepting it under one
@@ -170,7 +170,7 @@ fn a_dyn_satisfies_the_trait_it_names_and_no_other() {
 /// so neither block applies to a type that is not known yet, the variable comes out of the query
 /// exactly as it went in, and the two orders are the same program.
 #[test]
-fn an_unsettled_goal_is_answered_the_same_way_whatever_the_declaration_order() {
+fn an_unresolved_goal_is_answered_the_same_way_whatever_the_declaration_order() {
     let foo = "extend Wrap<Foo> with Add \
                { fun add(&self, other: &Self) -> Self { return .{ inner: self.inner }; } }";
     let bare = "extend Wrap<Bare> with Add \
@@ -207,11 +207,11 @@ fn an_unsettled_goal_is_answered_the_same_way_whatever_the_declaration_order() {
 /// instead of proving it where it is raised.
 ///
 /// At `let mut b = make()` the type `make` was instantiated at is an inference variable, so
-/// `_: Show` can be neither proved nor disproved; `b = a` settles it two tokens later. Proved on
+/// `_: Show` can be neither proved nor disproved; `b = a` resolves it two tokens later. Proved on
 /// the spot the goal is ambiguous and the program is rejected as needing an annotation it does
 /// not need. Answering "no" to an ambiguous goal instead would reject it outright.
 #[test]
-fn a_bound_is_proved_after_the_body_that_settles_its_type() {
+fn a_bound_is_proved_after_the_body_that_resolves_its_type() {
     typeck_accepts(&src("fun make<T: Show>() -> T { return make(); }
          fun f(a: Foo) { let mut b = make(); b = a; }"));
 }
@@ -223,7 +223,7 @@ fn a_bound_is_proved_after_the_body_that_settles_its_type() {
 /// the body either. Discarding ambiguous goals at the drain would let this compile with a type
 /// nothing downstream could lower.
 #[test]
-fn a_bound_that_never_settles_is_reported() {
+fn a_bound_that_never_resolves_is_reported() {
     typeck_rejects(
         &src("fun sort<T: Show>() -> T { return sort(); }
              fun f() { let x = sort(); }"),

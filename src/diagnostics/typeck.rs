@@ -1,7 +1,5 @@
-pub mod entry_point;
 pub mod expr;
 pub mod lower_ty;
-pub mod mutability;
 pub mod pat;
 pub mod traits;
 
@@ -13,7 +11,7 @@ use crate::diagnostics::display::DisplayCtx;
 use crate::driver::source::SrcSpan;
 use crate::session::Session;
 use crate::typeck::ty::Ty;
-use crate::typeck::unify::UnifyError;
+use crate::typeck::ty::unify::UnifyError;
 
 pub fn show_self_mode(mode: SelfMode) -> &'static str {
     match mode {

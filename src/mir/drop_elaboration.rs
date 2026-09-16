@@ -60,7 +60,7 @@ use crate::mir::{
 };
 use crate::nameres::PrimTy;
 use crate::typeck::ty::Ty;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 use move_state::MoveState;
 use tree::{DropNode, FlagLocals, plan};

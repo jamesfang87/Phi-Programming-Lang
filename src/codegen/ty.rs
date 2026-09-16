@@ -4,8 +4,8 @@ use super::ctx::CodegenCtx;
 use super::layout::{self, is_unsized};
 use crate::mir::{Body, Mir};
 use crate::nameres::PrimTy;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AbiClass {
@@ -206,8 +206,8 @@ mod tests {
     #[test]
     fn primitive_ints_map_directly() {
         let llvm = inkwell::context::Context::create();
-        let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
         assert_eq!(
             llvm_type(&cx, &mut tcx, &mir, i32_ty),
@@ -218,8 +218,8 @@ mod tests {
     #[test]
     fn bool_is_i1_in_registers() {
         let llvm = inkwell::context::Context::create();
-        let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let bool_ty = tcx.mk_prim(crate::nameres::PrimTy::Bool);
         assert_eq!(
             llvm_type(&cx, &mut tcx, &mir, bool_ty),
@@ -230,8 +230,8 @@ mod tests {
     #[test]
     fn slice_reference_is_ptr_and_len() {
         let llvm = inkwell::context::Context::create();
-        let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let u8_ty = tcx.mk_prim(crate::nameres::PrimTy::U8);
         let arr = tcx.mk_array(u8_ty, None);
         let slice_ref = tcx.mk_ref(arr, crate::ast::Mutability::Immutable);
@@ -249,8 +249,8 @@ mod tests {
     #[test]
     fn unit_is_an_empty_struct() {
         let llvm = inkwell::context::Context::create();
-        let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let unit = tcx.unit();
         assert_eq!(
             llvm_type(&cx, &mut tcx, &mir, unit),
@@ -261,8 +261,8 @@ mod tests {
     #[test]
     fn tuple_is_a_struct_of_its_elements() {
         let llvm = inkwell::context::Context::create();
-        let (_hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
         let bool_ty = tcx.mk_prim(crate::nameres::PrimTy::Bool);
         let tuple = tcx.mk_tuple(vec![i32_ty, bool_ty]);
@@ -274,9 +274,9 @@ mod tests {
     #[test]
     fn fixed_array_is_an_llvm_array() {
         let llvm = inkwell::context::Context::create();
-        let (_hir, mut tcx, _types, mir, _instances) =
+        let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("fun f(a: [i32; 4]) {}");
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
         let arr = tcx.mk_array(i32_ty, Some(4));
         let got = llvm_type(&cx, &mut tcx, &mir, arr);
@@ -288,7 +288,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("struct Point { x: i32, y: i32 }\nfun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let def = find_struct_def(&hir, "Point");
         let adt = tcx.mk_adt(def, Vec::new());
         let got = llvm_type(&cx, &mut tcx, &mir, adt);
@@ -311,7 +311,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, _instances) =
             crate::testing::lower_to_mir("enum E { A, C: i64 }\nfun f() {}");
         let llvm = inkwell::context::Context::create();
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let def = find_enum_def(&hir, "E");
         let adt = tcx.mk_adt(def, Vec::new());
         let got = llvm_type(&cx, &mut tcx, &mir, adt);
@@ -342,7 +342,7 @@ mod tests {
             "struct Pair { a: i32, b: i32 }\nfun make() -> Pair { return Pair { a: 1, b: 2 }; }",
         );
         let llvm = inkwell::context::Context::create();
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let body = find_body(&hir, &instances, "make");
         let fn_ty = function_type(&cx, &mut tcx, &mir, body);
         assert_eq!(fn_ty.get_return_type(), None, "indirect return is void");
@@ -354,7 +354,7 @@ mod tests {
         let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun add(a: i32, b: i32) -> i32 { return a; }");
         let llvm = inkwell::context::Context::create();
-        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let cx = super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let body = find_body(&hir, &instances, "add");
         let fn_ty = function_type(&cx, &mut tcx, &mir, body);
         assert_eq!(fn_ty.count_param_types(), 2);

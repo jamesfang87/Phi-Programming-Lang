@@ -1,7 +1,7 @@
 use crate::mir::checks::borrowck::{Register, register_of};
 use crate::mir::{Body, Local, Place, Projection, VariantIdx};
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 use super::move_state::{MoveState, Ownership};
 

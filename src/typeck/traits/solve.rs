@@ -9,9 +9,9 @@ use crate::hir::{DefId, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::Typeck;
 use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::collect::TypeHead;
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::visitor;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
-use crate::typeck::visitor;
 
 mod method;
 mod obligations;
@@ -111,7 +111,7 @@ pub fn match_ty(
 }
 
 impl<'hir> Typeck<'hir> {
-    /// Whether `goal` holds, given the bounds already in scope in `env`.
+    /// Returns whether `goal` holds, given the bounds already in scope in `env`.
     pub fn implements(&mut self, goal: &Goal, env: &BoundsEnv) -> Solution {
         let goal = self.resolve_goal(goal);
 
@@ -139,7 +139,7 @@ impl<'hir> Typeck<'hir> {
         self.prove_block_bounds(block, &subst, env)
     }
 
-    /// The answer for a `dyn Foo<T>` self type, which satisfies exactly the trait it names.
+    /// Returns the answer for a `dyn Foo<T>` self type, which satisfies exactly the trait it names.
     fn dyn_goal_solution(&self, goal: &Goal) -> Option<Solution> {
         let TyKind::Dyn { trait_, args } = self.tcx.kind(goal.self_ty) else {
             return None;
@@ -152,8 +152,8 @@ impl<'hir> Typeck<'hir> {
         })
     }
 
-    /// Whether the goal's self type is still an inference variable, so it can be neither proved
-    /// nor disproved yet.
+    /// Returns whether the goal's self type is still an inference variable, so it can be neither
+    /// proved nor disproved yet.
     fn goal_is_unresolved(&self, goal: &Goal) -> bool {
         matches!(self.tcx.kind(goal.self_ty), TyKind::Var(_))
     }
@@ -178,7 +178,7 @@ impl<'hir> Typeck<'hir> {
         Solution::Holds
     }
 
-    /// The first block in the index that proves `goal`, and what its parameters had to be.
+    /// Returns the first block in the index that proves `goal`, and what its parameters had to be.
     fn find_proving_block(
         &self,
         head: TypeHead,
@@ -190,7 +190,8 @@ impl<'hir> Typeck<'hir> {
             .find_map(|&block| Some((block, self.block_proves_goal(block, goal)?)))
     }
 
-    /// Whether `block` implements the goal's trait, and if so what its parameters had to be.
+    /// Returns whether `block` implements the goal's trait, and if so what its parameters had to
+    /// be.
     fn block_proves_goal(&self, block: DefId, goal: &Goal) -> Option<HashMap<HirId, Ty>> {
         let trait_ = self.extends.trait_of(block)?;
         if trait_.def != goal.trait_.def || trait_.args.len() != goal.trait_.args.len() {
@@ -207,8 +208,7 @@ impl<'hir> Typeck<'hir> {
         self.match_block_header(block, once(extended).chain(args))
     }
 
-    /// Whether `block`'s header applies to `self_ty`, used to search the index for a header
-    /// that can prove a goal.
+    /// Returns whether `block`'s header applies to `self_ty`.
     pub(crate) fn header_applies(&self, block: DefId, self_ty: Ty) -> Option<HashMap<HirId, Ty>> {
         self.match_block_header(block, once((self.extended_type(block), self_ty)))
     }
@@ -226,8 +226,7 @@ impl<'hir> Typeck<'hir> {
             .then_some(subst)
     }
 
-    /// The bounds in scope for `owner`, collected by walking outward through its enclosing
-    /// definitions.
+    /// Returns the bounds in scope for `owner`.
     pub fn bounds_env(&mut self, owner: DefId) -> BoundsEnv {
         let mut bounds = Vec::new();
         let mut current = Some(owner);
@@ -250,7 +249,7 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The implicit `Self: ThisTrait` bound that holds inside a trait's declaration.
+    /// Returns the implicit `Self: ThisTrait` bound that holds inside a trait's declaration.
     fn self_trait_goal(&mut self, trait_def: DefId, generics: &[HirId]) -> Goal {
         let self_ty = self.tcx.mk_self_param(trait_def);
         let args = generics.iter().map(|&id| self.tcx.mk_generic(id)).collect();
@@ -263,7 +262,7 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// The trait bounds declared on `generic`, e.g. `Show` for `T: Show`.
+    /// Returns the trait bounds declared on `generic`, e.g. `Show` for `T: Show`.
     pub(crate) fn bounds_of(&mut self, generic: HirId) -> Vec<Goal> {
         let hir: &'hir crate::hir::Hir = self.hir;
         let self_ty = self.tcx.mk_generic(generic);
@@ -295,7 +294,7 @@ impl<'hir> Typeck<'hir> {
         goal.map(&mut |ty| self.unifier.find_deep(&mut self.tcx, ty))
     }
 
-    /// Whether any part of the goal is [`TyKind::Error`].
+    /// Returns whether any part of the goal is [`TyKind::Error`].
     fn goal_mentions_error(&self, goal: &Goal) -> bool {
         let mut tys = std::iter::once(goal.self_ty).chain(goal.trait_.args.iter().copied());
         tys.any(|ty| visitor::mentions_error(&self.tcx, ty))
@@ -474,7 +473,7 @@ mod tests {
         checker
     }
 
-    /// The `DefId` of the top-level definition named `name`.
+    /// Returns the `DefId` of the top-level definition named `name`.
     fn named(checker: &Typeck<'_>, name: &str) -> DefId {
         crate::testing::named_def(checker.hir, name)
     }

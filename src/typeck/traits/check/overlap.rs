@@ -4,9 +4,9 @@ use crate::hir::HirId;
 use crate::typeck::Typeck;
 use crate::typeck::traits::collect::ExtendHeader;
 use crate::typeck::ty::Ty;
-use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::Unifier;
-use crate::typeck::visitor;
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::unify::Unifier;
+use crate::typeck::ty::visitor;
 
 impl<'hir> Typeck<'hir> {
     /// Checks whether two headers extend the same type.
@@ -92,8 +92,7 @@ mod tests {
     use crate::nameres::PrimTy;
     use crate::typeck::traits::TraitRef;
 
-    /// A checker with no program behind it. Every question `overlaps` asks is about headers built
-    /// by hand, so nothing has to be collected into the index first.
+    /// Returns a checker with no program behind it.
     fn empty_checker() -> Typeck<'static> {
         let hir = Box::leak(Box::new(crate::testing::lower_to_hir("")));
         Typeck::new(crate::testing::session(), hir)
@@ -107,7 +106,7 @@ mod tests {
         DefId::from_usize(n)
     }
 
-    /// A header with no trait: enough for every question `overlaps` asks about self types alone.
+    /// Returns a header with no trait.
     fn header(generics: Vec<HirId>, self_ty: Ty) -> ExtendHeader {
         ExtendHeader {
             def: def(900),

@@ -82,7 +82,7 @@ fn link(object_path: &Path, output_path: &Path) -> Result<PathBuf, CodegenError>
 mod tests {
     use super::*;
     use crate::hir::Hir;
-    use crate::typeck::tyctx::TyCtx;
+    use crate::typeck::ty::ctx::TyCtx;
 
     fn tempdir_for_test(name: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -102,16 +102,15 @@ mod tests {
 
     /// Points the linked executable's `main` at the fixture's own `main`.
     ///
-    /// These fixtures declare `main` inside a module rather than at the crate root, so
-    /// `mir.main` is `None` and `codegen` emits the do-nothing `main` it gives any crate with no
-    /// entry point. That placeholder is replaced here; adding a second `main` instead would let
+    /// These fixtures declare `main` inside a module rather than at the crate root, so there is
+    /// no crate-root entry point and `codegen` emits the do-nothing `main` it gives any crate
+    /// with none. That placeholder is replaced here; adding a second `main` instead would let
     /// LLVM rename one of them, and the binary would run whichever it kept.
     fn append_c_main_trampoline<'ctx>(
         llvm: &'ctx inkwell::context::Context,
         module: &Module<'ctx>,
         hir: &Hir,
         tcx: &TyCtx,
-        mir: &crate::mir::Mir,
         instances: &std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
     ) {
         let phi_main_name = instances
@@ -123,7 +122,9 @@ mod tests {
                         if crate::testing::resolve(f.name.text) == "main"
                 )
             })
-            .map(|instance| crate::mir::mangle::mangle(mir, tcx, instance))
+            .map(|instance| {
+                crate::codegen::mangle::mangle(hir, crate::testing::session(), tcx, instance)
+            })
             .expect("fixture defines a `main` function");
         let phi_main = module
             .get_function(&phi_main_name)
@@ -155,13 +156,14 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
             "t",
         )
         .expect("codegen succeeds");
-        append_c_main_trampoline(&llvm, &module, &hir, &tcx, &mir, &instances);
+        append_c_main_trampoline(&llvm, &module, &hir, &tcx, &instances);
 
         let dir = tempdir_for_test("hello-world");
         let exe = emit(
@@ -188,12 +190,13 @@ mod tests {
 
     #[test]
     fn panic_writes_its_message_to_stderr_and_aborts() {
-        let (_hir, mut tcx, _types, mir, instances) =
+        let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir(r#"fun main() { panic("boom"); }"#);
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -229,12 +232,13 @@ mod tests {
 
     #[test]
     fn assert_false_aborts_with_the_default_message() {
-        let (_hir, mut tcx, _types, mir, instances) =
+        let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun main() { assert(false); }");
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -267,12 +271,13 @@ mod tests {
 
     #[test]
     fn assert_true_does_not_abort() {
-        let (_hir, mut tcx, _types, mir, instances) =
+        let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun main() { assert(true); }");
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -308,7 +313,7 @@ mod tests {
     /// from the root module without any import.
     #[test]
     fn digit_separated_literals_and_float_patterns_build_and_run() {
-        let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
             crate::testing::OPS_PREAMBLE,
             "module app;
              fun pick(x: f64) -> i32 { return match x { 3.14_15 => 1, _ => 0 }; }
@@ -322,6 +327,7 @@ mod tests {
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -353,12 +359,13 @@ mod tests {
 
     #[test]
     fn unreachable_aborts_with_its_own_default_message() {
-        let (_hir, mut tcx, _types, mir, instances) =
+        let (hir, mut tcx, _types, mir, instances) =
             crate::testing::lower_to_mir("fun main() { unreachable(); }");
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,

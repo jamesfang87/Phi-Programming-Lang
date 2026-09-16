@@ -1,7 +1,7 @@
 use crate::mir::body::LocalDecl;
 use crate::mir::ids::{Local, VariantIdx};
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 /// A `Place` is a location in memory corresponding to a [`Local`]. Since the
 /// memory of a `Local` can be split into subparts (such as the fields of a struct),

@@ -30,23 +30,19 @@ use crate::typeck::results::{ResolvedCall, TypeResolutions};
 use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::collect::ExtendIndex;
 use crate::typeck::traits::solve::{Goal, Obligation, PendingMethodCall, Solution};
+use crate::typeck::ty::adt;
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::unify::{Unifier, UnifyError};
+use crate::typeck::ty::visitor;
 use crate::typeck::ty::{InferVar, Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::{Unifier, UnifyError};
 
-pub mod adt;
 pub mod cast;
-pub mod entry_point;
 pub mod expr;
 pub mod lower_ty;
-pub mod mutability;
 pub mod pat;
 pub mod results;
 pub mod traits;
 pub mod ty;
-pub mod tyctx;
-pub mod unify;
-pub mod visitor;
 
 pub struct Typeck<'hir> {
     session: &'hir Session,
@@ -64,12 +60,12 @@ pub struct Typeck<'hir> {
     trait_bound_obligations: BTreeMap<DefId, Vec<Obligation>>,
 
     /// Method calls put aside because the receiver's type was still open when they were
-    /// reached. Drained at the end of the enclosing function; see
-    /// [`Typeck::settle_pending_method_calls`].
+    /// reached. Checked at the end of the enclosing function; see
+    /// [`Typeck::check_pending_method_calls`].
     pending_method_calls: VecDeque<PendingMethodCall>,
-    /// Set while draining the queue above, so a call that is still unresolvable reports instead
+    /// Set while checking the queue above, so a call that is still unresolvable reports instead
     /// of being deferred a second time.
-    settling_method_calls: bool,
+    checking_pending_method_calls: bool,
 
     self_tys: HashMap<DefId, Ty>,
 
@@ -80,7 +76,7 @@ pub struct Typeck<'hir> {
     /// Closures checked since the enclosing function began, so their recorded
     /// types can be written back once every constraint the function places on
     /// them has been made.
-    closures_in_flight: Vec<DefId>,
+    closures_to_write_back: Vec<DefId>,
 }
 
 impl<'hir> Typeck<'hir> {
@@ -94,10 +90,10 @@ impl<'hir> Typeck<'hir> {
             extends: ExtendIndex::new(),
             trait_bound_obligations: BTreeMap::new(),
             pending_method_calls: VecDeque::new(),
-            settling_method_calls: false,
+            checking_pending_method_calls: false,
             self_tys: HashMap::new(),
             computing_self_tys: HashSet::new(),
-            closures_in_flight: Vec::new(),
+            closures_to_write_back: Vec::new(),
         }
     }
 
@@ -921,7 +917,7 @@ impl<'hir> Typeck<'hir> {
 
     pub fn check_function(&mut self, function: DefId) {
         let function_node = self.hir.function(function);
-        let closures_in_flight = self.closures_in_flight.len();
+        let closures_to_write_back = self.closures_to_write_back.len();
 
         match function_node.block {
             Some(block) => {
@@ -937,11 +933,11 @@ impl<'hir> Typeck<'hir> {
             }
             None => self.check_bodiless_function(function, function_node.span),
         }
-        self.settle_pending_method_calls();
+        self.check_pending_method_calls();
         self.writeback(function);
         let closures: Vec<DefId> = self
-            .closures_in_flight
-            .drain(closures_in_flight..)
+            .closures_to_write_back
+            .drain(closures_to_write_back..)
             .collect();
         for closure in closures {
             self.writeback(closure);
@@ -1071,7 +1067,6 @@ pub fn check(session: &Session, hir: &Hir) -> TypeckOutput {
     checker.register_extend_header_bounds();
     checker.check_module(hir.root_id());
     checker.check_bound_obligations();
-    mutability::check(session, hir, &checker.tcx, &checker.types);
     TypeckOutput {
         tcx: checker.tcx,
         types: checker.types,
@@ -1088,7 +1083,7 @@ mod tests {
         first_struct, first_trait, lower_to_hir, typeck_accepts as accepts,
         typeck_rejects as rejects, typeck_src_as_core,
     };
-    use crate::typeck::unify::UnifyError;
+    use crate::typeck::ty::unify::UnifyError;
 
     fn checker_with_signatures_collected<'hir>(hir: &'hir Hir) -> Typeck<'hir> {
         checker_through(hir, TypeckStage::Collect)

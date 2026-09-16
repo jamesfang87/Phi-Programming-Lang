@@ -1,5 +1,5 @@
 use crate::ast::{Ident, Mutability};
-use crate::diagnostics::typeck::mutability::report_not_mutable;
+use crate::diagnostics::checks::mutability::report_not_mutable;
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
@@ -8,9 +8,8 @@ use crate::hir::{
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
-// TODO: should probably move this out of typeck
 pub fn check(session: &Session, hir: &Hir, tcx: &TyCtx, types: &TypeResolutions) {
     let mut pass = LetScopes {
         session,
@@ -190,7 +189,7 @@ impl MutationScan<'_, '_> {
 }
 #[cfg(test)]
 mod tests {
-    use crate::testing::{typeck_accepts as accepts, typeck_rejects as rejects};
+    use crate::testing::{mutability_accepts as accepts, mutability_rejects as rejects};
 
     #[test]
     fn assignment_through_a_bare_local_is_checked_against_its_own_let() {

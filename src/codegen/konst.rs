@@ -2,16 +2,14 @@ use inkwell::values::BasicValueEnum;
 
 use super::ctx::CodegenCtx;
 use crate::ast::Symbol;
-use crate::mir::mangle::mangle;
-use crate::mir::{ConstKind, Constant, Instance, Mir};
+use crate::mir::{ConstKind, Constant, Instance};
 use crate::nameres::PrimTy;
 use crate::typeck::ty::TyKind;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 pub fn lower_constant<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
-    mir: &Mir,
     constant: &Constant,
 ) -> BasicValueEnum<'ctx> {
     match &constant.kind {
@@ -31,14 +29,14 @@ pub fn lower_constant<'ctx>(
         ConstKind::Bool(b) => cx.llvm.bool_type().const_int(*b as u64, false).into(),
         ConstKind::Char(c) => cx.llvm.i32_type().const_int(*c as u64, false).into(),
         ConstKind::Str(sym) => str_operand(cx, *sym),
-        ConstKind::FunDef(def, args, any_mode, self_ty) => {
+        ConstKind::FunDef(fun) => {
             let instance = Instance {
-                def: *def,
-                any_mode: *any_mode,
-                args: args.clone(),
-                self_ty: *self_ty,
+                def: fun.def,
+                any_mode: fun.any_mode,
+                args: fun.args.clone(),
+                self_ty: fun.self_ty,
             };
-            let name = mangle(mir, tcx, &instance);
+            let name = cx.mangle(tcx, &instance);
             let function = cx.functions[&name];
             let sret = matches!(
                 tcx.kind(constant.ty).clone(),
@@ -111,7 +109,7 @@ mod tests {
 
     #[test]
     fn equal_string_literals_share_one_global_distinct_ones_dont() {
-        let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
             r#"fun f() { let a = "hi"; let b = "hi"; let c = "bye"; }"#,
         );
         let body = instances.values().next().expect("one instance");
@@ -123,7 +121,7 @@ mod tests {
         );
 
         let llvm = inkwell::context::Context::create();
-        let mut cx = CodegenCtx::new(crate::testing::session(), &llvm, "t");
+        let mut cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
         let locals = std::collections::HashMap::new();
         for operand in &string_constants {
             lower_operand(&mut cx, &mut tcx, &mir, &locals, &body.local_decls, operand);

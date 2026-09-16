@@ -6,7 +6,7 @@ use crate::mir::{
     StatementKind, SwitchTargets, TerminatorKind, VariantIdx,
 };
 use crate::testing::{OPS_PREAMBLE, lower_mir_src_files, lower_to_mir, named_def};
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 fn elaborated(src: &str) -> (Hir, TyCtx, HashMap<Instance, Body>) {
     let (hir, mut tcx, _types, _mir, instances) = lower_to_mir(src);

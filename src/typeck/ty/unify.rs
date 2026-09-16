@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::ops::ControlFlow;
 
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::visitor::{self, TypeVisitor};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
-use crate::typeck::visitor::{self, TypeVisitor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnifyError {
@@ -18,8 +18,7 @@ pub enum UnifyError {
 #[derive(Default)]
 pub struct Unifier {
     parents: HashMap<Ty, Ty>,
-    /// Used only for the union-by-size heuristic in [`Unifier::merge`]
-    /// It has no other effect on unification's result.
+    // Sized for the union-by-size heuristic in `merge`; it has no effect on unification's result.
     sizes: HashMap<Ty, u32>,
 }
 
@@ -134,14 +133,14 @@ impl Unifier {
         visitor::walk(&mut Occurs { unifier: self, var }, tcx, ty).is_break()
     }
 
-    // TODO: THere exists something for this
+    /// Returns the component pairs of two root types that unification has to unify, or the reason
+    /// they cannot be.
     fn decompose(&self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<Vec<(Ty, Ty)>, UnifyError> {
+        // Inference variables are handled before the structural decomposition: an `any` matches
+        // anything without components, and an integer or float variable only decomposes against a
+        // primitive of the matching kind.
         debug_assert_eq!(self.parents.get(&t), Some(&t));
         debug_assert_eq!(self.parents.get(&u), Some(&u));
-
-        if is_absorbing(tcx, t) || is_absorbing(tcx, u) {
-            return Ok(Vec::new());
-        }
 
         let no_components = Ok(Vec::new());
 
@@ -251,6 +250,9 @@ mod tests {
     ) -> Result<(), UnifyError> {
         let expected = unifier.find_shallow(expected);
         let found = unifier.find_shallow(found);
+        if is_absorbing(tcx, expected) || is_absorbing(tcx, found) {
+            return Ok(());
+        }
         unifier.decompose(tcx, expected, found).map(|_| ())
     }
 

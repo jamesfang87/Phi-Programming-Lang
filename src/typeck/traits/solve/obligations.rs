@@ -7,7 +7,7 @@ use crate::diagnostics::typeck::traits::bounds::{
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, HirId};
 use crate::typeck::Typeck;
-use crate::typeck::ty::Ty;
+use crate::typeck::ty::{Ty, TyKind};
 
 use super::{BoundsEnv, Goal, Solution};
 
@@ -27,9 +27,7 @@ impl<'hir> Typeck<'hir> {
     // Recording
     // -----------------------------------------------------------------
 
-    /// Records what `def` applied to `args` requires of its own parameters. The bounds are
-    /// proved after the whole body is checked, not here, because the body may still settle the
-    /// types they mention.
+    /// Records what `def` applied to `args` requires of its own parameters.
     pub fn register_bound_obligations(
         &mut self,
         def: DefId,
@@ -37,6 +35,8 @@ impl<'hir> Typeck<'hir> {
         cause: SrcSpan,
         owner: DefId,
     ) {
+        // The bounds are proved after the whole body is checked, not here, because the body may
+        // still constrain the types they mention.
         let obligations = self.bound_obligations_of(def, args, cause);
         self.trait_bound_obligations
             .entry(owner)
@@ -44,8 +44,9 @@ impl<'hir> Typeck<'hir> {
             .extend(obligations);
     }
 
-    /// The obligations `def` applied to `args` raises for its own parameters. Empty when the
-    /// arguments do not line up with the parameters, since there is nothing to substitute.
+    /// Returns the obligations `def` applied to `args` raises for its own parameters. It is empty
+    /// when the arguments do not line up with the parameters, since there is nothing to
+    /// substitute.
     fn bound_obligations_of(&mut self, def: DefId, args: &[Ty], cause: SrcSpan) -> Vec<Obligation> {
         let params = self.declared_generics(def);
         if params.len() != args.len() {
@@ -67,12 +68,40 @@ impl<'hir> Typeck<'hir> {
         obligations
     }
 
+    /// Records the bounds every `extend` block's header arguments must satisfy.
+    pub fn register_extend_header_bounds(&mut self) {
+        for block in self.extends.all() {
+            self.register_extended_type_bounds(block);
+            self.register_implemented_trait_bounds(block);
+        }
+    }
+
+    /// Records the bounds the extended type's declaration requires of the arguments it was
+    /// applied to. Only an ADT has such a declaration.
+    fn register_extended_type_bounds(&mut self, block: DefId) {
+        let self_ty = self.extended_type(block);
+        let span = self.hir.ty(self.hir.extend(block).self_ty).span;
+        if let TyKind::Adt { def, args } = self.tcx.kind(self_ty).clone() {
+            self.register_bound_obligations(def, &args, span, block);
+        }
+    }
+
+    /// Records the bounds the `with`-clause trait's declaration requires of the arguments it was
+    /// applied to.
+    fn register_implemented_trait_bounds(&mut self, block: DefId) {
+        let Some(trait_ref) = self.extends.trait_of(block).cloned() else {
+            return;
+        };
+        let span = self.trait_path_span(block);
+        self.register_bound_obligations(trait_ref.def, &trait_ref.args, span, block);
+    }
+
     // -----------------------------------------------------------------
     // Proving
     // -----------------------------------------------------------------
 
     /// Proves every bound recorded during checking, now that all bodies are done, and reports
-    /// the ones that do not hold or never settled.
+    /// the ones that do not hold or never resolved.
     pub fn check_bound_obligations(&mut self) {
         for (owner, obligations) in mem::take(&mut self.trait_bound_obligations) {
             self.check_obligations(owner, obligations);
@@ -271,7 +300,7 @@ mod tests {
     /// past it would not change the answer, as nothing between one attempt and the next could
     /// have moved.
     #[test]
-    fn a_bound_that_never_settles_is_reported_as_needing_an_annotation() {
+    fn a_bound_that_never_resolves_is_reported_as_needing_an_annotation() {
         crate::testing::typeck_rejects(
             "trait Show { fun show(&self); }
              fun sort<T: Show>() -> T { return sort(); }

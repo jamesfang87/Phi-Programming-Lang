@@ -4,7 +4,7 @@ use crate::testing::{OPS_PREAMBLE, lower_mir_src_files, lower_to_mir};
 fn monomorphized(
     src: &str,
 ) -> (
-    crate::typeck::tyctx::TyCtx,
+    crate::typeck::ty::ctx::TyCtx,
     std::collections::HashMap<crate::mir::Instance, crate::mir::Body>,
 ) {
     let (_hir, tcx, _types, _mir, instances) = lower_to_mir(src);
@@ -40,12 +40,13 @@ fn a_non_generic_body_monomorphizes_to_exactly_itself() {
 /// dropped the entry point from the program.
 #[test]
 fn main_is_always_collected_as_a_root() {
-    let (_hir, _tcx, _types, mir, instances) = lower_to_mir(
+    let (hir, _tcx, _types, _mir, instances) = lower_to_mir(
         "struct Wrap<T> { value: T }\n\
          extend<T> Wrap<T> { fun ping(&self) -> i32 { return 3; } }\n\
          fun main() { let w: Wrap<i32> = Wrap { value: 1 }; let n = w.ping(); }",
     );
-    let main_def = mir.main.expect("the fixture declares a crate-root `main`");
+    let main_def = crate::checks::entry_point::check(crate::testing::session(), &hir)
+        .expect("the fixture declares a crate-root `main`");
     let mains: Vec<_> = instances
         .keys()
         .filter(|instance| instance.def == main_def)
@@ -226,11 +227,12 @@ fn a_trait_default_body_calls_the_implementing_types_own_method() {
         for block in &body.basic_blocks {
             if let crate::mir::TerminatorKind::Call { func, .. } = &block.terminator.kind
                 && let crate::mir::Operand::Constant(constant) = func
-                && let crate::mir::ConstKind::FunDef(callee, ..) = &constant.kind
+                && let crate::mir::ConstKind::FunDef(fun) = &constant.kind
             {
                 assert!(
-                    hir.function(*callee).block.is_some(),
-                    "{callee:?} is abstract; a default body must dispatch to an impl's method"
+                    hir.function(fun.def).block.is_some(),
+                    "{:?} is abstract; a default body must dispatch to an impl's method",
+                    fun.def
                 );
             }
         }

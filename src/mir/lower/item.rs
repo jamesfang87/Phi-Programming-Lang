@@ -1,15 +1,17 @@
 use crate::ast::Mutability;
-use crate::hir::{HirId, OwnerNode};
+use crate::hir::{DefId, Hir, HirId, OwnerNode};
 use crate::mir::lower::Task;
 use crate::mir::lower::ctx::BodyLowerCtx;
-use crate::mir::{AnyMode, Body, Place, TerminatorKind};
+use crate::mir::{AnyMode, Body, BodyKind, Place, TerminatorKind};
 use crate::typeck::ty::{Ty, TyKind};
 
 impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn lower_item(&mut self, task: Task) -> Body {
         let any_mode = task.any_mode();
+        self.generics = instance_generics(self.hir, self.def_id);
         match self.hir.def(self.def_id) {
             OwnerNode::Function(function) => {
+                self.kind = BodyKind::Function;
                 let self_param = function.self_param;
                 let params = function.params.clone();
                 let block = function
@@ -19,6 +21,7 @@ impl<'a> BodyLowerCtx<'a> {
                 self.lower_function_like(self_param, &params, block, span, any_mode)
             }
             OwnerNode::Closure(closure) => {
+                self.kind = BodyKind::Closure;
                 let params = closure.params.clone();
                 let block = closure.block;
                 let span = closure.span;
@@ -145,4 +148,22 @@ impl<'a> BodyLowerCtx<'a> {
             Some(AnyMode::RefMut) => self.tcx.mk_ref(inner, Mutability::Mutable),
         }
     }
+}
+
+/// The generic parameters an instance's argument list zips against: the enclosing
+/// `extend`/`trait` block's own parameters, then the definition's own. A closure declares no
+/// parameters of its own.
+fn instance_generics(hir: &Hir, def_id: DefId) -> Vec<HirId> {
+    let mut generics = Vec::new();
+    if let Some(parent) = hir.parent(def_id) {
+        match hir.def(parent) {
+            OwnerNode::Extend(extend) => generics.extend(extend.extend_generics.iter().copied()),
+            OwnerNode::Trait(trait_) => generics.extend(trait_.generics.iter().copied()),
+            _ => {}
+        }
+    }
+    if let OwnerNode::Function(function) = hir.def(def_id) {
+        generics.extend(function.generics.iter().copied());
+    }
+    generics
 }

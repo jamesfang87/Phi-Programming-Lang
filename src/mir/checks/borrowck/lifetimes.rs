@@ -35,7 +35,7 @@ pub struct Alias {
 #[derive(Default, Debug)]
 pub struct Lifetimes {
     pub aliases: HashMap<AliasId, Alias>,
-    pub live_ranges: HashMap<AliasId, HashMap<BasicBlock, Range<usize>>>,
+    pub live_ranges: HashMap<BasicBlock, HashMap<AliasId, Range<usize>>>,
 }
 
 /// Variables (and fields or indicies) allow the extension
@@ -126,57 +126,20 @@ fn collect_alias_births(body: &Body) -> HashMap<AliasId, Alias> {
 }
 
 fn compute_held_aliases(body: &Body) -> HeldAliasesLattice {
-    let mut lattice: HeldAliasesLattice = Default::default();
-    let preds = body.predecessors();
-
-    for index in 0..body.basic_blocks.len() {
-        let id = BasicBlock::from_usize(index);
-        lattice.set_entry(id, HeldAliases::default());
-        lattice.set_exit(id, HeldAliases::default());
-    }
-
-    let mut changed = true;
-    while changed {
-        changed = false;
-
-        for (index, block) in body.basic_blocks.iter().enumerate() {
-            let id = BasicBlock::from_usize(index);
-
-            // Use meet on the predecessors
-            let pred_states: Vec<&HeldAliases> = preds
-                .of(id)
-                .iter()
-                .filter_map(|&pred| lattice.exit(pred))
-                .collect();
-            let old_entry = lattice
-                .entry(id)
-                .expect("every block's entry is given above")
-                .clone();
-            let new_entry = meet_held_aliases(&pred_states);
-            lattice.set_entry(id, new_entry.clone());
-
-            // Update changed if so
-            if old_entry != new_entry {
-                changed = true;
-            }
-
-            // Now the transfer functions
-            let mut new_exit = new_entry;
+    lattice::solve(
+        body,
+        HeldAliases::default(),
+        HeldAliases::default(),
+        |_current, predecessor_states| meet_held_aliases(predecessor_states),
+        |entry, _id, block| {
+            let mut state = entry.clone();
             for stmt in &block.statements {
-                apply_statement_to_held_aliases(&mut new_exit, stmt);
+                apply_statement_to_held_aliases(&mut state, stmt);
             }
-            apply_terminator_to_held_aliases(&mut new_exit, &block.terminator);
-
-            // Update changed if so
-            let old_exit = lattice.exit(id).expect("every block's exit is given above");
-            if *old_exit != new_exit {
-                changed = true;
-            }
-            lattice.set_exit(id, new_exit);
-        }
-    }
-
-    lattice
+            apply_terminator_to_held_aliases(&mut state, &block.terminator);
+            state
+        },
+    )
 }
 
 /// meet for calculating held aliases
@@ -460,45 +423,18 @@ fn compute_live_aliases(
     held_aliases: &HeldAliasesLattice,
     aliases: &HashMap<AliasId, Alias>,
 ) -> LiveAliasLattice {
-    let mut lattice: LiveAliasLattice = Default::default();
-
-    for index in 0..body.basic_blocks.len() {
-        let id = BasicBlock::from_usize(index);
-        lattice.set_entry(id, LiveAliasSet::default());
-        lattice.set_exit(id, LiveAliasSet::default());
-    }
-
-    let mut changed = true;
-    while changed {
-        changed = false;
-
-        for (index, block) in body.basic_blocks.iter().enumerate() {
-            let id = BasicBlock::from_usize(index);
-
-            // We are going backwards, check the successors of the block
-            // to get our value for the exit value of the block
-            let succ_states: Vec<&LiveAliasSet> = body
-                .successors(id)
-                .filter_map(|succ| lattice.entry(succ))
-                .collect();
-            let old_exit = lattice
-                .exit(id)
-                .expect("every block's exit is given above")
-                .clone();
-            let new_exit = meet_live_aliases(&succ_states);
-            lattice.set_exit(id, new_exit.clone());
-
-            // Update changed if so
-            if old_exit != new_exit {
-                changed = true;
-            }
-
+    lattice::solve_backward(
+        body,
+        LiveAliasSet::default(),
+        LiveAliasSet::default(),
+        |_current, successor_states| meet_live_aliases(successor_states),
+        |exit, id, block| {
             let entry_held = held_aliases
                 .entry(id)
                 .expect("every block's entry is given above");
             let held_states = held_aliases_before_each_statement(entry_held, block);
 
-            let mut current = new_exit;
+            let mut current = exit.clone();
             mark_terminator_aliases_used(
                 aliases,
                 &held_states[block.statements.len()],
@@ -511,18 +447,9 @@ fn compute_live_aliases(
                 }
                 mark_statement_aliases_used(aliases, &held_states[index], stmt, &mut current);
             }
-
-            let old_entry = lattice
-                .entry(id)
-                .expect("every block's entry is given above");
-            if *old_entry != current {
-                changed = true;
-            }
-            lattice.set_entry(id, current);
-        }
-    }
-
-    lattice
+            current
+        },
+    )
 }
 
 /// meet for live aliases
@@ -565,8 +492,8 @@ fn compute_live_ranges(
     held_aliases: &HeldAliasesLattice,
     live_aliases: &LiveAliasLattice,
     aliases: &HashMap<AliasId, Alias>,
-) -> HashMap<AliasId, HashMap<BasicBlock, Range<usize>>> {
-    let mut live_ranges: HashMap<AliasId, HashMap<BasicBlock, Range<usize>>> = HashMap::new();
+) -> HashMap<BasicBlock, HashMap<AliasId, Range<usize>>> {
+    let mut live_ranges: HashMap<BasicBlock, HashMap<AliasId, Range<usize>>> = HashMap::new();
 
     for (index, block) in body.basic_blocks.iter().enumerate() {
         let id = BasicBlock::from_usize(index);
@@ -596,9 +523,9 @@ fn compute_live_ranges(
             }
             if let Some(start) = start {
                 live_ranges
-                    .entry(alias.id)
+                    .entry(id)
                     .or_default()
-                    .insert(id, start..end);
+                    .insert(alias.id, start..end);
             }
         }
     }
@@ -652,8 +579,8 @@ mod tests {
         let alias = lifetimes.aliases.values().next().unwrap();
         assert!(!alias.with_lend);
         assert_eq!(alias.kind, Mutability::Immutable);
-        let ranges = &lifetimes.live_ranges[&alias.id];
-        let range = ranges.get(&BasicBlock::from_usize(0)).unwrap();
+        let ranges = &lifetimes.live_ranges[&BasicBlock::from_usize(0)];
+        let range = ranges.get(&alias.id).unwrap();
         assert_eq!(range.end - range.start, 2);
     }
 
@@ -663,8 +590,8 @@ mod tests {
         let body = first_function_body(&program, &hir);
         let lifetimes = compute_lifetimes(body);
         let alias = lifetimes.aliases.values().next().unwrap();
-        let range = lifetimes.live_ranges[&alias.id]
-            .get(&BasicBlock::from_usize(0))
+        let range = lifetimes.live_ranges[&BasicBlock::from_usize(0)]
+            .get(&alias.id)
             .unwrap();
         assert_eq!(range.end - range.start, 1);
     }
@@ -687,8 +614,8 @@ mod tests {
             .values()
             .find(|alias| alias.with_lend)
             .expect("the with lend produced a with-scoped alias");
-        let range = lifetimes.live_ranges[&alias.id]
-            .get(&BasicBlock::from_usize(0))
+        let range = lifetimes.live_ranges[&BasicBlock::from_usize(0)]
+            .get(&alias.id)
             .unwrap();
         assert!(range.end - range.start > 2);
     }
@@ -724,8 +651,8 @@ mod tests {
             .values()
             .find(|alias| !alias.with_lend)
             .unwrap();
-        let range = lifetimes.live_ranges[&reassigned.id]
-            .get(&BasicBlock::from_usize(0))
+        let range = lifetimes.live_ranges[&BasicBlock::from_usize(0)]
+            .get(&reassigned.id)
             .unwrap();
         assert_eq!(
             range.end - range.start,

@@ -9,12 +9,20 @@ use inkwell::values::{FunctionValue, PointerValue};
 
 use crate::ast::Symbol;
 use crate::codegen::intrinsic::{self, Libc};
-use crate::hir::DefId;
+use crate::hir::{DefId, Hir};
+use crate::mir::Instance;
 use crate::session::Session;
 use crate::typeck::ty::Ty;
+use crate::typeck::ty::ctx::TyCtx;
+
+use super::mangle::mangle;
 
 pub struct CodegenCtx<'ctx> {
     pub session: &'ctx Session,
+    /// The HIR, the sole source of definition names for symbol mangling and of the core
+    /// library's lang items. Codegen only reaches back into it for those, never for MIR-level
+    /// facts, which lowering has already recorded.
+    pub hir: &'ctx Hir,
     pub llvm: &'ctx Context,
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
@@ -28,11 +36,17 @@ pub struct CodegenCtx<'ctx> {
 }
 
 impl<'ctx> CodegenCtx<'ctx> {
-    pub fn new(session: &'ctx Session, llvm: &'ctx Context, module_name: &str) -> Self {
+    pub fn new(
+        session: &'ctx Session,
+        hir: &'ctx Hir,
+        llvm: &'ctx Context,
+        module_name: &str,
+    ) -> Self {
         let module = llvm.create_module(module_name);
         let libc = intrinsic::declare_libc(llvm, &module);
         CodegenCtx {
             session,
+            hir,
             llvm,
             module,
             builder: llvm.create_builder(),
@@ -44,5 +58,10 @@ impl<'ctx> CodegenCtx<'ctx> {
             drop_glues: RefCell::new(HashMap::new()),
             fun_thunks: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// The symbol name of `instance`, for the function it will be emitted as.
+    pub fn mangle(&self, tcx: &TyCtx, instance: &Instance) -> String {
+        mangle(self.hir, self.session, tcx, instance)
     }
 }

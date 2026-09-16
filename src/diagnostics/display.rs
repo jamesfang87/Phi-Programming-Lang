@@ -4,66 +4,23 @@ use crate::ast::Mutability;
 use crate::diagnostics::Diagnostic;
 use crate::diagnostics::codes;
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, Hir, HirId, OwnerNode};
-use crate::mir::def_names::DefNames;
+use crate::hir::{DefId, Hir, OwnerNode};
 use crate::nameres::PrimTy;
 use crate::session::Session;
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::unify::UnifyError;
 use crate::typeck::ty::{InferVar, Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
-use crate::typeck::unify::UnifyError;
 
 #[derive(Clone, Copy)]
 pub struct DisplayCtx<'a> {
     tcx: &'a TyCtx,
     session: &'a Session,
-    names: Names<'a>,
-}
-
-/// Where a [`DisplayCtx`] reads definition and generic names from.
-#[derive(Clone, Copy)]
-enum Names<'a> {
-    /// The HIR itself. Every pass before lowering already has it, so reading a name straight out
-    /// of it costs no snapshot to keep in step.
-    Hir(&'a Hir),
-    /// The name table [`mir::lower`](crate::mir::lower) took into
-    /// [`Mir::def_names`](crate::mir::lower::Mir), for diagnostics raised *after* lowering, where
-    /// reaching back into the HIR would undo the lowering boundary this compiler keeps.
-    Mir(&'a DefNames),
-}
-
-impl<'a> Names<'a> {
-    fn def_name(self, session: &Session, def: DefId) -> &'a str {
-        match self {
-            Names::Hir(hir) => def_name(session, hir, def),
-            Names::Mir(names) => names.def_name(def),
-        }
-    }
-
-    fn generic_name(self, session: &Session, id: HirId) -> &'a str {
-        match self {
-            Names::Hir(hir) => session.resolve(hir.generic(id).name.text),
-            Names::Mir(names) => names.generic_name(id),
-        }
-    }
+    hir: &'a Hir,
 }
 
 impl<'a> DisplayCtx<'a> {
     pub fn new(session: &'a Session, hir: &'a Hir, tcx: &'a TyCtx) -> Self {
-        DisplayCtx {
-            tcx,
-            session,
-            names: Names::Hir(hir),
-        }
-    }
-
-    /// A [`DisplayCtx`] for diagnostics raised after lowering, reading names from the snapshot
-    /// [`mir::lower`](crate::mir::lower) built rather than from the HIR. See [`Names::Mir`].
-    pub fn for_mir(session: &'a Session, names: &'a DefNames, tcx: &'a TyCtx) -> Self {
-        DisplayCtx {
-            tcx,
-            session,
-            names: Names::Mir(names),
-        }
+        DisplayCtx { tcx, session, hir }
     }
 
     /// Records `diagnostic` on the session this context was built from.
@@ -120,10 +77,14 @@ impl Pretty for Ty {
 
             TyKind::Primitive(prim) => write!(f, "{}", prim_name(*prim)),
             TyKind::Adt { def, args } => {
-                write!(f, "{}", cx.names.def_name(cx.session, *def))?;
+                write!(f, "{}", def_name(cx.session, cx.hir, *def))?;
                 write_args(f, cx, args)
             }
-            TyKind::Generic(hir_id) => write!(f, "{}", cx.names.generic_name(cx.session, *hir_id)),
+            TyKind::Generic(hir_id) => write!(
+                f,
+                "{}",
+                cx.session.resolve(cx.hir.generic(*hir_id).name.text)
+            ),
             // Only appears inside a trait's body, where `Self` names no concrete type yet.
             TyKind::SelfTy(_) => write!(f, "Self"),
             TyKind::Ref { base, mutability } => {
@@ -177,7 +138,7 @@ impl Pretty for Ty {
                 Ok(())
             }
             TyKind::Dyn { trait_, args } => {
-                write!(f, "dyn {}", cx.names.def_name(cx.session, *trait_))?;
+                write!(f, "dyn {}", def_name(cx.session, cx.hir, *trait_))?;
                 write_args(f, cx, args)
             }
             TyKind::Never => write!(f, "!"),

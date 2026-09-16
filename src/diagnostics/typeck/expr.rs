@@ -6,7 +6,7 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{Hir, HirId};
 use crate::session::Session;
 use crate::typeck::ty::Ty;
-use crate::typeck::unify::UnifyError;
+use crate::typeck::ty::unify::UnifyError;
 
 // -----------------------------------------------------------------
 // Assignment

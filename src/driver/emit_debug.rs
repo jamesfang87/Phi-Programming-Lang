@@ -14,8 +14,8 @@ use crate::nameres::results::NameResolutions;
 use crate::nameres::{Local as NameResLocal, Res as NameResRes, TyDef, Type as NameResType};
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 fn is_user_def(session: &Session, hir: &Hir, def_id: DefId) -> bool {
     is_user_span(session, hir.def(def_id).span())
@@ -273,7 +273,6 @@ pub fn print_mir(
     session: &Session,
     hir: &Hir,
     tcx: &TyCtx,
-    mir: &crate::mir::Mir,
     instances: &HashMap<Instance, Body>,
     exclude_core_in_emit: bool,
 ) {
@@ -284,7 +283,7 @@ pub fn print_mir(
         .filter(|(instance, _)| !exclude_core_in_emit || is_user_def(session, hir, instance.def))
         .map(|(instance, body)| {
             (
-                crate::mir::mangle::mangle(mir, tcx, instance),
+                crate::codegen::mangle::mangle(hir, session, tcx, instance),
                 instance,
                 body,
             )

@@ -44,7 +44,7 @@ pub fn solve<State: Clone + PartialEq>(
     init_entry: State,
     init_exit: State,
     meet: impl Fn(&State, &[&State]) -> State,
-    transfer: impl Fn(&State, &BasicBlockData) -> State,
+    transfer: impl Fn(&State, BasicBlock, &BasicBlockData) -> State,
 ) -> Lattice<BasicBlock, State> {
     let n = body.basic_blocks.len();
     let mut lattice: Lattice<BasicBlock, State> = Default::default();
@@ -75,7 +75,7 @@ pub fn solve<State: Clone + PartialEq>(
             meet(current, &pred_states)
         };
 
-        let new_exit = transfer(&new_entry, block);
+        let new_exit = transfer(&new_entry, id, block);
         lattice.set_entry(id, new_entry);
 
         if lattice.exit(id) != Some(&new_exit) {
@@ -84,6 +84,64 @@ pub fn solve<State: Clone + PartialEq>(
                 if !queued[succ.index()] {
                     queued[succ.index()] = true;
                     queue.push_back(succ);
+                }
+            }
+        }
+    }
+
+    lattice
+}
+
+/// The backward dual of [`solve`]: a block's exit is met from its successors' entries, and the
+/// transfer function maps an exit to an entry.
+pub fn solve_backward<State: Clone + PartialEq>(
+    body: &Body,
+    init_entry: State,
+    init_exit: State,
+    meet: impl Fn(&State, &[&State]) -> State,
+    transfer: impl Fn(&State, BasicBlock, &BasicBlockData) -> State,
+) -> Lattice<BasicBlock, State> {
+    let n = body.basic_blocks.len();
+    let mut lattice: Lattice<BasicBlock, State> = Default::default();
+    let preds = body.predecessors();
+
+    for index in 0..n {
+        let id = BasicBlock::from_usize(index);
+        lattice.set_entry(id, init_entry.clone());
+        lattice.set_exit(id, init_exit.clone());
+    }
+
+    let mut queued = vec![true; n];
+    let mut queue: VecDeque<BasicBlock> = {
+        let mut order = reverse_postorder(body);
+        order.reverse();
+        order.into()
+    };
+
+    while let Some(id) = queue.pop_front() {
+        queued[id.index()] = false;
+        let block = &body.basic_blocks[id.index()];
+
+        let new_exit = {
+            let succ_states: Vec<&State> = body
+                .successors(id)
+                .filter_map(|succ| lattice.entry(succ))
+                .collect();
+            let current = lattice
+                .exit(id)
+                .expect("every block's exit is seeded above");
+            meet(current, &succ_states)
+        };
+
+        let new_entry = transfer(&new_exit, id, block);
+        lattice.set_exit(id, new_exit);
+
+        if lattice.entry(id) != Some(&new_entry) {
+            lattice.set_entry(id, new_entry);
+            for &pred in preds.of(id) {
+                if !queued[pred.index()] {
+                    queued[pred.index()] = true;
+                    queue.push_back(pred);
                 }
             }
         }

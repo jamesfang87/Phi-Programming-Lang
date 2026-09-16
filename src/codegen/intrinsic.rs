@@ -35,11 +35,12 @@ pub fn declare_libc<'ctx>(llvm: &'ctx Context, module: &Module<'ctx>) -> Libc<'c
 mod tests {
     #[test]
     fn module_declares_the_four_libc_functions() {
-        let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir("fun f() {}");
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
         let module = crate::codegen::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,
@@ -59,7 +60,7 @@ mod tests {
 
     #[test]
     fn write_bytes_call_becomes_direct_libc_write_call() {
-        let (_hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_as_core(
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_as_core(
             r#"module core::io;
             public fun write_bytes(fd: i32, buf: &[u8]) -> i64;
             public fun main() { write_bytes(1, "hello" as &[u8]); }"#,
@@ -68,6 +69,7 @@ mod tests {
         let module = crate::codegen::codegen(
             crate::testing::session(),
             &llvm,
+            &hir,
             &mut tcx,
             &mir,
             &instances,

@@ -1,9 +1,7 @@
 use crate::nameres::PrimTy;
 
-// TODO: this needs to be changed based on the compilation target
-/// Width in bits of an integer primitive. `usize` is treated as 64-bit for casting purposes
-/// (see the codegen spec: "usize is assumed 64-bit"), which is why this stays next to the cast
-/// rules rather than on [`PrimTy`] itself: it is cast policy, not an intrinsic property.
+/// Returns the width in bits of an integer primitive. `usize` is treated as 64-bit, matching the
+/// codegen spec's "usize is assumed 64-bit".
 fn int_width(prim: PrimTy) -> Option<u32> {
     match prim {
         PrimTy::I8 | PrimTy::U8 => Some(8),
@@ -14,7 +12,8 @@ fn int_width(prim: PrimTy) -> Option<u32> {
     }
 }
 
-// TODO: don't mix abstraction levels, move some details out
+/// Returns the reason a cast from `from` to `to` is not lossless, or `Ok(())` when every value of
+/// `from` is representable exactly in `to`.
 pub(crate) fn is_lossless_cast(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     use PrimTy::*;
 
@@ -26,38 +25,16 @@ pub(crate) fn is_lossless_cast(from: PrimTy, to: PrimTy) -> Result<(), &'static 
         return Err("`str` cannot be cast to any primitive`");
     }
 
-    if from.is_integer() && to.is_integer() {
-        let (from_width, to_width) = (
-            int_width(from).expect("caller checked `from` is an integer"),
-            int_width(to).expect("caller checked `to` is an integer"),
-        );
-
-        return match (from.is_signed(), to.is_signed()) {
-            (true, true) | (false, false) if from_width <= to_width => Ok(()),
-            (true, true) | (false, false) => {
-                Err("possible narrowing from this cast to a smaller integer type")
-            }
-            (false, true) if from_width < to_width => Ok(()),
-            (false, true) => Err("possible overflow from this cast"),
-            (true, false) => Err("possible lossy conversion from signed to unsigned integer"),
-        };
-    }
-
     match (from, to) {
-        (f, F32) if f.is_integer() && int_width(f) <= Some(16) => Ok(()),
-        (f, F64) if f.is_integer() && int_width(f) <= Some(32) => Ok(()),
-        (f, F32 | F64) if f.is_integer() => Err(
-            "this integer type is wider than the float type's mantissa, so a large enough \
-                 value would round",
+        (f, t) if f.is_integer() && t.is_integer() => integer_to_integer(f, t),
+        (f, t) if f.is_integer() && t.is_float() => integer_to_float(f, t),
+        (f, t) if f.is_float() && t.is_integer() => Err(
+            "would truncate any fractional part -- there is no truncating cast here, only \
+             lossless ones",
         ),
 
         (F32, F64) => Ok(()),
         (F64, F32) => Err("narrows to a smaller float type, which can lose precision"),
-
-        (f, t) if f.is_float() && t.is_integer() => Err(
-            "would truncate any fractional part -- there is no truncating cast here, only \
-                 lossless ones",
-        ),
 
         (Bool, t) if t.is_integer() || t.is_float() => Ok(()),
         (f, Bool) if f.is_integer() || f.is_float() => {
@@ -82,6 +59,37 @@ pub(crate) fn is_lossless_cast(from: PrimTy, to: PrimTy) -> Result<(), &'static 
         _ => unreachable!(
             "cast_allowed should classify every pair of primitives; missing ({from:?}, {to:?})"
         ),
+    }
+}
+
+/// Returns the reason an integer-to-integer cast is not lossless.
+fn integer_to_integer(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
+    let from_width = int_width(from).expect("caller checked `from` is an integer");
+    let to_width = int_width(to).expect("caller checked `to` is an integer");
+
+    match (from.is_signed(), to.is_signed()) {
+        (true, true) | (false, false) if from_width <= to_width => Ok(()),
+        (true, true) | (false, false) => {
+            Err("possible narrowing from this cast to a smaller integer type")
+        }
+        (false, true) if from_width < to_width => Ok(()),
+        (false, true) => Err("possible overflow from this cast"),
+        (true, false) => Err("possible lossy conversion from signed to unsigned integer"),
+    }
+}
+
+/// Returns the reason an integer-to-float cast is not lossless. A float can represent an integer
+/// exactly only while the integer's width fits the float's mantissa.
+fn integer_to_float(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
+    let width = int_width(from).expect("caller checked `from` is an integer");
+    match to {
+        PrimTy::F32 if width <= 16 => Ok(()),
+        PrimTy::F64 if width <= 32 => Ok(()),
+        PrimTy::F32 | PrimTy::F64 => Err(
+            "this integer type is wider than the float type's mantissa, so a large enough \
+             value would round",
+        ),
+        _ => unreachable!("caller checked `to` is a float"),
     }
 }
 
@@ -316,11 +324,7 @@ mod tests {
         }
     }
 
-    /// BUG: `char` is allowed to cast to `u32`/`u64`/`i32`/`i64`, but `usize` is missing from the
-    /// arm even though `int_width` treats it as 64-bit everywhere else. A codepoint in
-    /// `0..=0x10FFFF` always fits a 64-bit `usize`, so `char as usize` must be allowed.
-    ///
-    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
+    /// A codepoint in `0..=0x10FFFF` always fits a 64-bit `usize`, which `int_width` treats it as.
     #[test]
     fn char_casts_to_usize() {
         assert!(

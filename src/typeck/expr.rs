@@ -42,46 +42,36 @@ pub(crate) enum DerefContext {
     Place,
 }
 
-/// A variant's payload as it was written, borrowed out of whichever node carried it.
+/// A variant's payload as written: the expressions following the variant's name, as opposed to
+/// the payload types the variant declares.
 ///
 /// The elided form `.circle(1.0)` parses to [`Payload`] and the qualified form
-/// `Shape.circle(1.0)` parses to [`AccessArgs`], but the two describe the same three payload
-/// shapes. Reducing both to this view is what lets [`Typeck::check_variant_of`] check them
-/// with one body instead of two that drift apart.
-// TODO: I swear I've seen this like a trillion times, why are there so many???
-/// There shouldn't be so many, just remove as much as you can at any cost
-#[derive(Clone, Copy)]
-// TODO: Bad name
-pub(crate) enum WrittenPayload<'hir> {
-    None,
-    Single(ExprId), // TODO: Why even have this? can't you just always use ArgList? Also I think there might be things that already represent this
+/// `Shape.circle(1.0)` parses to [`AccessArgs`], but the two describe the same payloads.
+/// Reducing both to this view is what lets [`Typeck::check_variant_of`] check them with one body
+/// instead of two that drift apart.
+#[derive(Clone)]
+pub(crate) enum PayloadExprs<'hir> {
+    Unit,
+    /// A parenthesised argument list. A declared single-field payload needs exactly one argument;
+    /// any other length matches no declared payload and reports as a shape mismatch.
+    Args(Vec<ExprId>),
     Record(&'hir [PayloadField]),
-    /// A parenthesised list that is not one value, as in `Shape.circle()` or
-    /// `Shape.circle(1.0, 2.0)`. No declared payload has this shape, so it always reports as a
-    /// payload-shape mismatch; it exists only because [`AccessArgs::Call`] can hold any number
-    /// of arguments while [`Payload::Single`] holds exactly one.
-    ///
-    /// TODO: I don't know, despite the above, I feel like this should be changed
-    ArgList(&'hir [ExprId]),
 }
 
-impl<'hir> WrittenPayload<'hir> {
+impl<'hir> PayloadExprs<'hir> {
     fn from_payload(payload: &'hir Payload) -> Self {
         match payload {
-            Payload::None => WrittenPayload::None,
-            Payload::Single(value) => WrittenPayload::Single((*value).into()),
-            Payload::Record(fields) => WrittenPayload::Record(fields),
+            Payload::None => PayloadExprs::Unit,
+            Payload::Single(value) => PayloadExprs::Args(vec![(*value).into()]),
+            Payload::Record(fields) => PayloadExprs::Record(fields),
         }
     }
 
     pub(crate) fn from_access_args(args: &'hir AccessArgs) -> Self {
         match args {
-            AccessArgs::None => WrittenPayload::None,
-            AccessArgs::Call(args) => match args.as_slice() {
-                [value] => WrittenPayload::Single(*value),
-                args => WrittenPayload::ArgList(args),
-            },
-            AccessArgs::Record(fields) => WrittenPayload::Record(fields),
+            AccessArgs::None => PayloadExprs::Unit,
+            AccessArgs::Call(args) => PayloadExprs::Args(args.clone()),
+            AccessArgs::Record(fields) => PayloadExprs::Record(fields),
         }
     }
 }
@@ -403,16 +393,16 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) -> Ty {
         let expected = expected.map(|ty| self.unifier.find_deep(&mut self.tcx, ty));
-        let written = WrittenPayload::from_payload(payload);
+        let written = PayloadExprs::from_payload(payload);
         let self_ty = match expected {
             Some(ty) if matches!(self.tcx.kind(ty), TyKind::Error) => {
-                self.check_payload_exprs_only(written);
+                self.check_payload_exprs_only(&written);
                 return self.tcx.error();
             }
             Some(ty) if !matches!(self.tcx.kind(ty), TyKind::Var(_)) => ty,
             _ => {
                 report_variant_enum_unknown(self.session, variant, span);
-                self.check_payload_exprs_only(written);
+                self.check_payload_exprs_only(&written);
                 return self.tcx.error();
             }
         };
@@ -430,24 +420,25 @@ impl<'hir> Typeck<'hir> {
         &mut self,
         self_ty: Ty,
         variant: Ident,
-        written: WrittenPayload<'hir>,
+        written: PayloadExprs<'hir>,
         span: SrcSpan,
     ) -> Ty {
         if matches!(self.tcx.kind(self_ty), TyKind::Error) {
-            self.check_payload_exprs_only(written);
+            self.check_payload_exprs_only(&written);
             return self.tcx.error();
         }
 
-        let Some(found) = self.variant_def(self_ty, variant.text) else {
+        let Some(found) = self.resolve_variant(self_ty, variant.text) else {
             report_no_variant(self.display_cx(), variant, self_ty);
-            self.check_payload_exprs_only(written);
+            self.check_payload_exprs_only(&written);
             return self.tcx.error();
         };
 
-        match (&found.payload, written) {
-            (VariantTys::Unit, WrittenPayload::None) => {}
-            (VariantTys::Single(want), WrittenPayload::Single(value)) => {
+        match (&found.payload, &written) {
+            (VariantTys::Unit, PayloadExprs::Unit) => {}
+            (VariantTys::Single(want), PayloadExprs::Args(args)) if args.len() == 1 => {
                 let want = *want;
+                let value = args[0];
                 let got = self.ty_of_expecting(value, Some(want));
                 if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
                     report_variant_payload_mismatch(
@@ -457,7 +448,7 @@ impl<'hir> Typeck<'hir> {
                     );
                 }
             }
-            (VariantTys::Record(want), WrittenPayload::Record(fields)) => {
+            (VariantTys::Record(want), PayloadExprs::Record(fields)) => {
                 let want = want.clone();
                 self.check_variant_record(&want, fields, found.id);
             }
@@ -471,16 +462,16 @@ impl<'hir> Typeck<'hir> {
                     declared,
                     found.id,
                 );
-                self.check_payload_exprs_only(written);
+                self.check_payload_exprs_only(&written);
             }
         }
 
         self_ty
     }
 
-    /// The type an access base names, for a base that names a type rather than a value -- the
-    /// `Shape` in `Shape.circle(1.0)`, or a `Self` standing for the type an `extend` block is
-    /// on.
+    /// Returns the type an access base names, for a base that names a type rather than a value --
+    /// the `Shape` in `Shape.circle(1.0)`, or a `Self` standing for the type an `extend` block
+    /// is on.
     ///
     /// A path in this position carries no generic arguments of its own, so a generic enum gets
     /// one fresh inference variable per parameter: `Option.some(1)` starts as `Option<?0>` and
@@ -565,20 +556,17 @@ impl<'hir> Typeck<'hir> {
     /// Types every expression written in a payload without checking it against a declared one.
     /// Reached once a variant has already failed: an expression left untyped here would show up
     /// as a missing type in a later pass rather than as the mistake it may itself contain.
-    fn check_payload_exprs_only(&mut self, written: WrittenPayload<'hir>) {
+    fn check_payload_exprs_only(&mut self, written: &PayloadExprs<'hir>) {
         match written {
-            WrittenPayload::None => {}
-            WrittenPayload::Single(value) => {
-                self.ty_of(value);
-            }
-            WrittenPayload::Record(fields) => {
-                for field in fields {
-                    self.ty_of(field.value);
-                }
-            }
-            WrittenPayload::ArgList(args) => {
+            PayloadExprs::Unit => {}
+            PayloadExprs::Args(args) => {
                 for &arg in args {
                     self.ty_of(arg);
+                }
+            }
+            PayloadExprs::Record(fields) => {
+                for field in *fields {
+                    self.ty_of(field.value);
                 }
             }
         }
@@ -909,7 +897,7 @@ impl<'hir> Typeck<'hir> {
     pub(crate) fn check_closure(&mut self, def: DefId, expected: Option<Ty>) -> Ty {
         let hir: &'hir Hir = self.hir;
         let closure = hir.closure(def);
-        self.closures_in_flight.push(def);
+        self.closures_to_write_back.push(def);
 
         // Only a function type of matching arity is a usable hint:
         let hint = expected.and_then(|expected| match self.tcx.kind(expected).clone() {
@@ -940,8 +928,8 @@ impl<'hir> Typeck<'hir> {
             let _ = self.unifier.unify(&self.tcx, ret, ret_var);
         }
 
-        let temp = self.tcx.mk_fun(param_tys.clone(), Some(ret_var));
-        self.types.record_def(def, temp);
+        let signature = self.tcx.mk_fun(param_tys.clone(), Some(ret_var));
+        self.types.record_def(def, signature);
 
         let body = self.check_block_expecting(closure.block, Some(ret_var));
         if let Err(err) = self.unifier.unify(&self.tcx, ret_var, body) {

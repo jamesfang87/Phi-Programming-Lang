@@ -3,24 +3,19 @@ use crate::diagnostics::nameres::{report_dyn_not_trait, report_self_unavailable}
 use crate::diagnostics::typeck::lower_ty::{
     report_arg_count, report_array_len_division_by_zero, report_array_len_negative,
     report_array_len_not_constant, report_array_len_not_usize, report_array_len_overflow,
-    report_reference_generic_arg, report_self_cycle, report_trait_as_ty,
-    report_unexpected_generic_args, report_unsized_dyn,
+    report_self_cycle, report_trait_as_ty,
 };
-use crate::diagnostics::typeck::report_any_outside_signature;
 use crate::driver::source::SrcSpan;
 use crate::hir::{
     DefId, ExprId, ExprKind as HirExprKind, HirId, OwnerNode, Res, TyDef, TyId,
     TyKind as HirTyKind, Type,
 };
 use crate::nameres::PrimTy;
-use crate::session::Session;
 use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
 
-// TODO: there are many functions used for checks like "contains_any",
-// "contains_bare_dyn", "contains_ref". Is there any way to
-// concentrate the checking stage and like kinda separate it from
-// the lowering stage.
+mod checks;
+
 impl<'hir> Typeck<'hir> {
     pub fn lower_ty(&mut self, id: TyId) -> Ty {
         let ty = self.hir.ty(id);
@@ -246,45 +241,6 @@ impl<'hir> Typeck<'hir> {
         self.tcx.mk_adt(def, lowered_args)
     }
 
-    fn check_no_reference_args(&mut self, hir_args: &[TyId], args: &[Ty]) -> bool {
-        for (&hir_id, &arg) in hir_args.iter().zip(args) {
-            if self.tcx.contains_ref(arg) {
-                let span = self.hir.ty(hir_id).span;
-                report_reference_generic_arg(self.display_cx(), arg, span);
-                return false;
-            }
-        }
-        true
-    }
-
-    fn check_no_any_args(&mut self, hir_args: &[TyId], args: &[Ty]) -> bool {
-        for (&hir_id, &arg) in hir_args.iter().zip(args) {
-            if self.tcx.contains_any(arg) {
-                let span = self.hir.ty(hir_id).span;
-                report_any_outside_signature(self.display_cx(), arg, span);
-                return false;
-            }
-        }
-        true
-    }
-
-    fn check_no_dyn_args(&mut self, hir_args: &[TyId], args: &[Ty]) -> bool {
-        for (&hir_id, &arg) in hir_args.iter().zip(args) {
-            if self.tcx.contains_bare_dyn(arg) {
-                let span = self.hir.ty(hir_id).span;
-                report_unsized_dyn(self.display_cx(), arg, span);
-                return false;
-            }
-        }
-        true
-    }
-
-    pub(crate) fn check_no_dyn(&mut self, ty: Ty, span: SrcSpan) {
-        if self.tcx.contains_bare_dyn(ty) {
-            report_unsized_dyn(self.display_cx(), ty, span);
-        }
-    }
-
     fn lower_dyn(&mut self, id: TyId, res: Res, args: &[TyId], span: SrcSpan) -> Ty {
         match res {
             Res::Type(Type::Def(TyDef::Trait(trait_def))) => {
@@ -390,12 +346,6 @@ impl<'hir> Typeck<'hir> {
         let args = params.iter().map(|&id| self.tcx.mk_generic(id)).collect();
         self.tcx.mk_adt(def, args)
     }
-
-    fn check_no_args(session: &Session, args: &[TyId], span: SrcSpan, kind: &str) {
-        if !args.is_empty() {
-            report_unexpected_generic_args(session, kind, span);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -405,8 +355,8 @@ mod tests {
     use crate::nameres::PrimTy;
     use crate::testing::lower_to_hir;
     use crate::typeck::results::TypeResolutions;
+    use crate::typeck::ty::ctx::TyCtx;
     use crate::typeck::ty::{Ty, TyKind};
-    use crate::typeck::tyctx::TyCtx;
 
     /// Everything a lowered program's types are looked up through. The four travel together
     /// because a `Ty` is an index into `tcx`, and a `TypeResolutions` entry is keyed by a `HirId`
@@ -435,7 +385,7 @@ mod tests {
         }
     }
 
-    /// The messages `collect` reported, in order.
+    /// Returns the messages `collect` reported, in order.
     fn diagnostics() -> Vec<String> {
         crate::testing::diagnostics()
             .into_iter()
@@ -444,7 +394,7 @@ mod tests {
     }
 
     impl Checked {
-        /// The `DefId` of the top-level definition named `name`.
+        /// Returns the `DefId` of the top-level definition named `name`.
         fn def(&self, name: &str) -> DefId {
             let root = self.hir.root();
             root.items
@@ -463,12 +413,12 @@ mod tests {
                 .unwrap_or_else(|| panic!("no definition named {name:?}"))
         }
 
-        /// The `DefId` of the program's sole `extend` block.
+        /// Returns the `DefId` of the program's sole `extend` block.
         fn extend(&self) -> DefId {
             crate::testing::first_extend(&self.hir)
         }
 
-        /// The type recorded for a definition as a whole.
+        /// Returns the type recorded for a definition as a whole.
         fn def_ty(&self, def: DefId) -> Ty {
             self.types
                 .ty_of_def(def)
@@ -485,7 +435,7 @@ mod tests {
             self.tcx.kind(ty)
         }
 
-        /// The signature of the function `name` declares, as `(params, ret)`.
+        /// Returns the signature of the function `name` declares, as `(params, ret)`.
         fn sig(&self, def: DefId) -> (&[Ty], Option<Ty>) {
             let TyKind::Fun { params, ret } = self.kind(self.def_ty(def)) else {
                 panic!("a function's type is always a Fun type");
@@ -493,7 +443,7 @@ mod tests {
             (params, *ret)
         }
 
-        /// The `Ty` of the `i`th generic parameter `def` declares.
+        /// Returns the `Ty` of the `i`th generic parameter `def` declares.
         fn generic(&self, def: DefId, i: usize) -> Ty {
             let generics = match self.hir.def(def) {
                 OwnerNode::Struct(s) => &s.generics,

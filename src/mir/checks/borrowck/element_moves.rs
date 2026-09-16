@@ -3,7 +3,7 @@ use crate::driver::source::SrcSpan;
 use crate::mir::{Body, Operand, StatementKind, lower::Mir, place_ty};
 use crate::mir::{Place, Projection};
 use crate::session::Session;
-use crate::typeck::tyctx::TyCtx;
+use crate::typeck::ty::ctx::TyCtx;
 
 // TODO: not exactly sure what this does or why its a separate module
 pub fn check(session: &Session, tcx: &mut TyCtx, mir: &Mir) {

@@ -1,9 +1,10 @@
 use crate::ast::Mutability;
+use crate::hir::Hir;
 use crate::mir::lower::Mir;
 use crate::mir::{Local, Place, Projection};
 use crate::session::Session;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
 
 pub(crate) mod captures;
 pub(crate) mod definite_init;
@@ -57,9 +58,9 @@ pub(crate) fn trivially_copyable(tcx: &TyCtx, ty: Ty) -> bool {
     )
 }
 
-pub fn check(session: &Session, tcx: &mut TyCtx, mir: &Mir) {
+pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
     definite_init::check(session, tcx, mir);
     exclusivity::check(session, mir);
     element_moves::check(session, tcx, mir);
-    captures::check(session, tcx, mir);
+    captures::check(session, hir, tcx, mir);
 }

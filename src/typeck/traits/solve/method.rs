@@ -15,10 +15,10 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, OwnerNode, PayloadField, Res};
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
-use crate::typeck::expr::{DerefContext, WrittenPayload};
+use crate::typeck::expr::{DerefContext, PayloadExprs};
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::visitor::{self, TypeVisitor};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
-use crate::typeck::visitor::{self, TypeVisitor};
 
 /// A function that a method call could resolve to with the substitution mapping its
 /// generic parameters to the concrete types they stand for at this call site.
@@ -42,20 +42,18 @@ pub(crate) struct Candidate {
     extend_block_origin: Option<(DefId, Vec<Ty>)>,
 }
 
+// `let p = Pair { first: 4, second: 6 }` gives `p` the type `Pair<{integer}, {integer}>`, and a
+// concrete `extend Pair<i32, i32>` cannot be matched against that: header matching is one-way and
+// never binds the caller's inference variables, so probing for a method does not decide the
+// receiver's type. The call is therefore parked until the body is done constraining `p`, by which
+// point the literals have either been pinned by something else or defaulted.
 /// A method call set aside because its receiver's type was still open when the call was reached.
-///
-/// `let p = Pair { first: 4, second: 6 }` gives `p` the type `Pair<{integer}, {integer}>`, and a
-/// concrete `extend Pair<i32, i32>` cannot be matched against that: header matching is one-way
-/// and never binds the caller's inference variables, precisely so that probing for a method does
-/// not decide the receiver's type. The call is therefore parked here and re-checked once the
-/// body is done constraining `p`, by which point the literals have either been pinned by
-/// something else or defaulted.
 pub(crate) struct PendingMethodCall {
     id: HirId,
     receiver: HirId,
     member: Ident,
     args: Vec<ExprId>,
-    /// Stands in for the call's type until it is settled, so the expressions built around the
+    /// Stands in for the call's type until it is checked, so the expressions built around the
     /// call can carry on being checked in the meantime.
     result: Ty,
 }
@@ -78,7 +76,7 @@ pub(crate) enum Layer {
     Any,
 }
 
-/// What checking a chosen method call settled on: the method, the types its generic parameters
+/// What checking a chosen method call resolved to: the method, the types its generic parameters
 /// stand for, the `extend` block it came from with the types that block's parameters stand for,
 /// and the receiver type. Recorded once checking is done.
 struct ResolvedMethodCall {
@@ -133,7 +131,7 @@ impl<'hir> Typeck<'hir> {
             return self.check_variant_of(
                 self_ty,
                 member,
-                WrittenPayload::from_access_args(args),
+                PayloadExprs::from_access_args(args),
                 span,
             );
         }
@@ -275,7 +273,7 @@ impl<'hir> Typeck<'hir> {
             // that has itself been parked -- the `a.me()` in `a.me().get()`. Parking this one
             // too lets it be answered once that receiver has a type. No candidate could be found
             // against a bare variable anyway, so nothing is lost by waiting.
-            if !self.settling_method_calls {
+            if !self.checking_pending_method_calls {
                 return self.defer_method_call(id, receiver, member, args);
             }
             report_receiver_type_unknown(self.session, member, self.hir.expr(receiver).span);
@@ -296,14 +294,14 @@ impl<'hir> Typeck<'hir> {
             // inference variables, a concrete `extend` header could not have matched it whether
             // or not the method exists, so this is not yet an answer -- park the call and ask
             // again at the end of the body. See [`PendingMethodCall`].
-            if !self.settling_method_calls && self.mentions_infer_var(receiver_ty) {
+            if !self.checking_pending_method_calls && self.mentions_infer_var(receiver_ty) {
                 return self.defer_method_call(id, receiver, member, args);
             }
             report_no_method(self.display_cx(), member, base);
             return self.check_unresolved_call_args(args);
         }
 
-        // Step 4: settle on exactly one candidate, or report why the call is ambiguous.
+        // Step 4: choose exactly one candidate, or report why the call is ambiguous.
         let Some(chosen) = self.select_candidate(&candidates, member) else {
             return self.check_unresolved_call_args(args);
         };
@@ -323,7 +321,7 @@ impl<'hir> Typeck<'hir> {
     /// back a fresh variable to stand in for its type.
     ///
     /// The arguments are deliberately left unchecked. They are checked against the chosen
-    /// method's parameters once the call is settled, which is what lets a literal argument take
+    /// method's parameters once the call is resolved, which is what lets a literal argument take
     /// its type from the parameter it is passed to rather than from nothing.
     fn defer_method_call(
         &mut self,
@@ -349,22 +347,22 @@ impl<'hir> Typeck<'hir> {
     /// A receiver still carrying unconstrained numeric variables at this point never will be
     /// constrained, so those are bound to their defaults first -- `{integer}` to `i32` -- which
     /// is what makes `Pair<{integer}, {integer}>` finally match `extend Pair<i32, i32>`.
-    pub(crate) fn settle_pending_method_calls(&mut self) {
-        // A parked call's arguments are only checked once it is settled, so settling one can
-        // park another: in `a.twice(b.get())`, `b.get()` is first reached while `a.twice` is
-        // being settled. Draining therefore loops rather than making a single pass.
+    pub(crate) fn check_pending_method_calls(&mut self) {
+        // A parked call's arguments are only checked once it is checked, so checking one can park
+        // another: in `a.twice(b.get())`, `b.get()` is first reached while `a.twice` is being
+        // checked. Checking therefore loops rather than making a single pass.
         //
-        // `settling_method_calls` bounds that loop. A call reaching here a second time has
+        // `checking_pending_method_calls` bounds that loop. A call reaching here a second time has
         // already had its receiver's defaults committed once, so parking it again could not make
         // progress; with the flag set it reports instead, like any other call whose method
         // cannot be found. That is what stops a receiver holding a variable no default applies
         // to from cycling forever.
-        let mut settled_once: HashSet<HirId> = HashSet::new();
-        // Drained front to back: a call parked while settling an earlier one depends on that
+        let mut checked_once: HashSet<HirId> = HashSet::new();
+        // Checked front to back: a call parked while checking an earlier one depends on that
         // earlier one's result, so the order they were parked in is the order they can be
         // answered in.
         while let Some(pending) = self.pending_method_calls.pop_front() {
-            self.settling_method_calls = !settled_once.insert(pending.id);
+            self.checking_pending_method_calls = !checked_once.insert(pending.id);
             let receiver_ty = self.ty_of_as_place(pending.receiver);
             self.commit_numeric_defaults(receiver_ty);
 
@@ -386,7 +384,7 @@ impl<'hir> Typeck<'hir> {
                 let _ = self.unifier.unify(&self.tcx, pending.result, found);
             }
         }
-        self.settling_method_calls = false;
+        self.checking_pending_method_calls = false;
     }
 
     /// Binds every still-unconstrained integer/float variable inside `ty` to its default type.
@@ -414,7 +412,7 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Whether `ty` still contains an inference variable once resolved.
+    /// Returns whether `ty` still contains an inference variable once resolved.
     pub(crate) fn mentions_infer_var(&mut self, ty: Ty) -> bool {
         let resolved = self.unifier.find_deep(&mut self.tcx, ty);
         visitor::any_ty(&self.tcx, resolved, |tcx, ty| {
@@ -504,8 +502,8 @@ impl<'hir> Typeck<'hir> {
         Self::without_duplicates(candidates)
     }
 
-    /// Candidates from the inherent and trait `extend` blocks keyed on the head of the self type
-    /// -- a struct, enum, primitive, tuple, array, reference, function type, or `iso`.
+    /// Returns candidates from the inherent and trait `extend` blocks keyed on the head of the
+    /// self type -- a struct, enum, primitive, tuple, array, reference, function type, or `iso`.
     fn candidates_from_extend_blocks(&mut self, base: Ty, member: Symbol) -> Vec<Candidate> {
         let Some(head) = self.type_head(base) else {
             return Vec::new();
@@ -518,9 +516,10 @@ impl<'hir> Typeck<'hir> {
             .collect()
     }
 
-    /// The candidate a `dyn Show` receiver offers: it implements exactly the trait it names, so
-    /// it offers exactly what that trait declares. There is no `extend` block behind it, since
-    /// `extend` blocks are nominal, so this is a rule here the same way it is a rule in the query.
+    /// Returns the candidate a `dyn Show` receiver offers: it implements exactly the trait it
+    /// names, so it offers exactly what that trait declares. There is no `extend` block behind
+    /// it, since `extend` blocks are nominal, so this is a rule here the same way it is a rule in
+    /// the query.
     fn candidates_from_dyn(&mut self, base: Ty, member: Symbol) -> Vec<Candidate> {
         let TyKind::Dyn { trait_, args } = self.tcx.kind(base).clone() else {
             return Vec::new();
@@ -537,8 +536,8 @@ impl<'hir> Typeck<'hir> {
         }]
     }
 
-    /// Candidates from the bounds in scope, the only step that can answer for a receiver whose
-    /// type is a bare parameter, since a parameter is not in the index at all.
+    /// Returns candidates from the bounds in scope, the only step that can answer for a receiver
+    /// whose type is a bare parameter, since a parameter is not in the index at all.
     fn candidates_from_bounds(&mut self, base: Ty, member: Symbol, owner: DefId) -> Vec<Candidate> {
         self.bounds_env(owner)
             .bounds
@@ -718,23 +717,22 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// A method reached through a `dyn` receiver runs through a vtable, so it must work for
-    /// every implementing type alike: it has to borrow its receiver, and it cannot mention
-    /// `Self` in any other parameter or in its return type.
+    /// Checks that a method reached through a `dyn` receiver is usable: it must borrow its
+    /// receiver and must not mention `Self` in any other parameter or in its return type.
     fn check_dyn_method_usable(&mut self, method: DefId, mode: Option<SelfMode>, member: Ident) {
         self.check_dyn_receiver_mode(method, mode, member);
         self.check_dyn_signature_mentions_self(method, member);
     }
 
-    /// A `dyn` method must borrow its receiver; running by value would move it out of the vtable.
+    /// Checks that a `dyn` method borrows its receiver; running by value would move it out of the
+    /// vtable.
     fn check_dyn_receiver_mode(&self, method: DefId, mode: Option<SelfMode>, member: Ident) {
         if mode == Some(SelfMode::Move) {
             report_dyn_self_by_value(self.session, self.hir, member, method);
         }
     }
 
-    /// A `dyn` method must work for every implementing type alike, so it cannot mention `Self`
-    /// in any parameter other than the receiver, or in its return type.
+    /// Checks that a `dyn` method's signature does not mention `Self` outside its receiver.
     fn check_dyn_signature_mentions_self(&mut self, method: DefId, member: Ident) {
         let function = self.hir.function(method);
         let (params, ret) = self.signature(method).unwrap_or_default();
@@ -938,7 +936,7 @@ mod tests {
         checker
     }
 
-    /// The `DefId` of the top-level definition named `name`.
+    /// Returns the `DefId` of the top-level definition named `name`.
     fn named(checker: &Typeck<'_>, name: &str) -> DefId {
         crate::testing::named_def(checker.hir, name)
     }
@@ -1142,9 +1140,7 @@ mod tests {
     // Picking
     // -----------------------------------------------------------------
 
-    /// The function named `name` that `owner` (a trait or an `extend` block) declares. A
-    /// [`Candidate`]'s `method` is always a real function, since diagnostics point at where it
-    /// was declared, so a fixture using the trait's own `DefId` would not fool the reporting path.
+    /// Returns the function named `name` that `owner` (a trait or an `extend` block) declares.
     fn method_of(checker: &Typeck<'_>, owner: DefId, name: &str) -> DefId {
         checker
             .hir
@@ -1159,9 +1155,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no method named {name:?}"))
     }
 
-    /// The function named `name` declared by the fixture's one `extend` block. An `extend` block
-    /// has no name of its own to look it up by, and a fixture that needs this only ever writes
-    /// one.
+    /// Returns the function named `name` declared by the fixture's one `extend` block.
     fn extend_method(checker: &Typeck<'_>, name: &str) -> DefId {
         let block = crate::testing::first_extend(checker.hir);
         method_of(checker, block, name)
@@ -1906,7 +1900,7 @@ mod tests {
     /// Defaulting is the fallback, not the answer: something else in the body pinning the
     /// literals is what the parked call is re-checked against.
     #[test]
-    fn a_parked_call_uses_the_type_the_body_settles_on() {
+    fn a_parked_call_uses_the_type_the_body_pins_the_receiver_to() {
         // Pinned to `i32` after the call, which is the type the `extend` block is written for.
         assert_eq!(
             check(
@@ -1919,7 +1913,7 @@ mod tests {
             Vec::<String>::new()
         );
         // Pinned to `i64` instead, so the method genuinely is not there -- and the diagnostic
-        // names the type the receiver settled at, not the open one it had at the call.
+        // names the type the receiver resolved to, not the open one it had at the call.
         assert_eq!(
             check(
                 "struct Pair<A, B> { first: A, second: B }
@@ -1932,10 +1926,10 @@ mod tests {
         );
     }
 
-    /// A parked call's arguments are checked only when it is settled, so settling one call can
-    /// park another. Both still have to be answered.
+    /// A parked call's arguments are checked only once its receiver is resolved, so resolving
+    /// one call can park another. Both still have to be answered.
     #[test]
-    fn a_call_parked_while_settling_another_is_still_answered() {
+    fn a_call_parked_while_checking_another_is_still_answered() {
         assert_eq!(
             check(
                 "struct Box<T> { v: T }
@@ -1987,7 +1981,7 @@ mod tests {
 
     /// An integer literal receiver, by contrast, *is* answerable later: the call is parked, the
     /// literal defaults to `i32` once the body is done constraining it, and the method is looked
-    /// up on the type it actually settled at. Saying annotations are needed would have been
+    /// up on the type it actually resolved to. Saying annotations are needed would have been
     /// misleading, since no annotation makes `i32` grow a `show`.
     #[test]
     fn a_literal_receiver_is_answered_at_its_defaulted_type() {

@@ -3,25 +3,28 @@ use std::ops::ControlFlow;
 
 use crate::hir::HirId;
 use crate::typeck::Typeck;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
-use crate::typeck::tyctx::TyCtx;
-
-// TODO: Give these better names and comments
 
 // ---------------------------------------------------------------------------
 // Visiting
 // ---------------------------------------------------------------------------
 
+/// A read-only traversal over the types nested inside a type.
 pub trait TypeVisitor {
     type Output;
 
+    /// Visits `ty`, returning `ControlFlow::Break` to stop the whole traversal early.
     fn visit(&mut self, tcx: &TyCtx, ty: Ty) -> ControlFlow<Self::Output>;
 
+    /// Returns the immediate sub-types of `ty` to descend into; defaults to [`children`].
     fn children(&mut self, tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
         children(tcx, ty)
     }
 }
 
+/// Returns the result of the first `Break` reached while visiting `ty` and everything reachable
+/// from it, or `Continue` when the traversal finishes.
 pub fn walk<V: TypeVisitor>(visitor: &mut V, tcx: &TyCtx, ty: Ty) -> ControlFlow<V::Output> {
     visitor.visit(tcx, ty)?;
     for child in visitor.children(tcx, ty) {
@@ -30,18 +33,18 @@ pub fn walk<V: TypeVisitor>(visitor: &mut V, tcx: &TyCtx, ty: Ty) -> ControlFlow
     ControlFlow::Continue(())
 }
 
-/// Walks `ty` for its side effects, ignoring a visitor that never breaks.
+/// Visits `ty` and everything reachable from it, ignoring a visitor that never breaks.
 pub fn walk_all<V: TypeVisitor<Output = ()>>(visitor: &mut V, tcx: &TyCtx, ty: Ty) {
     let _ = walk(visitor, tcx, ty);
 }
 
-/// Whether any type `accept` accepts is reachable from `ty`.
+/// Returns whether `accept` holds for any type reachable from `ty`.
 pub fn any_ty(tcx: &TyCtx, ty: Ty, accept: impl FnMut(&TyCtx, Ty) -> bool) -> bool {
     walk(&mut Search::descending(accept), tcx, ty).is_break()
 }
 
-/// Whether any type `accept` accepts is reachable from `ty`, without looking inside a function
-/// type's own signature.
+/// Returns whether `accept` holds for any type reachable from `ty`, without looking inside a
+/// function type's own signature.
 ///
 /// A function's parameters and return type belong to that function, not to the type it appears
 /// in, so a search asking about the surrounding type stops at one.
@@ -49,7 +52,7 @@ pub fn any_ty_outside_funs(tcx: &TyCtx, ty: Ty, accept: impl FnMut(&TyCtx, Ty) -
     walk(&mut Search::shallow(accept), tcx, ty).is_break()
 }
 
-/// Whether `ty` mentions [`TyKind::Error`] anywhere inside it.
+/// Returns whether `ty` mentions [`TyKind::Error`] anywhere inside it.
 pub fn mentions_error(tcx: &TyCtx, ty: Ty) -> bool {
     any_ty(tcx, ty, |tcx, ty| matches!(tcx.kind(ty), TyKind::Error))
 }
@@ -96,7 +99,7 @@ impl<F: FnMut(&TyCtx, Ty) -> bool> TypeVisitor for Search<F> {
     }
 }
 
-/// The immediate sub-types of `ty`, in declaration order.
+/// Returns the immediate sub-types of `ty`, in declaration order.
 pub fn children(tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
     match tcx.kind(ty) {
         TyKind::Adt { args, .. } | TyKind::Dyn { args, .. } | TyKind::Tuple(args) => args.clone(),
@@ -122,10 +125,8 @@ pub fn children(tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
 // Folding
 // ---------------------------------------------------------------------------
 
-/// Rebuilds `ty`, giving `rewrite` the chance to replace each type first.
-///
-/// `rewrite` returning `Some(replacement)` replaces that type outright, without descending into
-/// it; `None` walks its children and rebuilds it from the rewritten results.
+/// Returns `ty` rebuilt by `rewrite`: the first type `rewrite` returns `Some` for is replaced
+/// outright, and every other type is rebuilt from its rewritten children.
 pub fn fold_ty(
     tcx: &mut TyCtx,
     ty: Ty,
@@ -180,6 +181,7 @@ pub fn fold_ty(
     }
 }
 
+/// Returns each of `tys` rebuilt by [`fold_ty`].
 pub fn fold_tys(
     tcx: &mut TyCtx,
     tys: &[Ty],
@@ -188,12 +190,15 @@ pub fn fold_tys(
     tys.iter().map(|&ty| fold_ty(tcx, ty, rewrite)).collect()
 }
 
+/// The types to replace generic parameters and `Self` with.
 #[derive(Default)]
 pub struct Subst {
     pub generics: HashMap<HirId, Ty>,
     pub self_ty: Option<Ty>,
 }
 
+/// Returns `ty` with each generic parameter replaced by its binding in `subst`, and each `Self`
+/// replaced by `subst.self_ty`.
 pub fn subst_ty(tcx: &mut TyCtx, ty: Ty, subst: &Subst) -> Ty {
     fold_ty(tcx, ty, &mut |tcx, ty| match *tcx.kind(ty) {
         TyKind::Generic(param) => Some(subst.generics.get(&param).copied().unwrap_or(ty)),
@@ -203,7 +208,7 @@ pub fn subst_ty(tcx: &mut TyCtx, ty: Ty, subst: &Subst) -> Ty {
 }
 
 impl<'hir> Typeck<'hir> {
-    /// Rebuilds `ty` with every generic parameter in `subst` replaced by what it is bound to.
+    /// Returns `ty` with every generic parameter in `subst` replaced by what it is bound to.
     pub fn subst_ty(&mut self, ty: Ty, subst: &HashMap<HirId, Ty>) -> Ty {
         let subst = Subst {
             generics: subst.clone(),
@@ -212,8 +217,8 @@ impl<'hir> Typeck<'hir> {
         subst_ty(&mut self.tcx, ty, &subst)
     }
 
-    /// Rebuilds `ty` with every generic parameter in `subst` replaced by what it is bound to,
-    /// and every `Self` replaced by `self_ty`.
+    /// Returns `ty` with every generic parameter in `subst` replaced by what it is bound to, and
+    /// every `Self` replaced by `self_ty`.
     pub(crate) fn subst_sig_ty(&mut self, ty: Ty, subst: &HashMap<HirId, Ty>, self_ty: Ty) -> Ty {
         fold_ty(&mut self.tcx, ty, &mut |tcx, ty| match *tcx.kind(ty) {
             TyKind::Generic(param) => Some(subst.get(&param).copied().unwrap_or(ty)),
@@ -227,8 +232,8 @@ impl<'hir> Typeck<'hir> {
 // Pairwise decomposition
 // ---------------------------------------------------------------------------
 
-/// Decomposes two same-shaped types into the component pairs that must themselves match, or
-/// `None` when their shapes differ.
+/// Returns the component pairs two same-shaped types must themselves match on, or `None` when
+/// their shapes differ.
 ///
 /// This is the structural half of both unification and one-way matching: what each caller does
 /// with the pairs (bind variables, recurse, fail) is its own policy.
