@@ -61,3 +61,17 @@ jobs:
         if: failure()
         run: |
           awk '/panicked at/ { msg = $0; for (i = 0; i < 6 && (getline line) > 0; i++) msg = msg " " line; print "::error::" msg }' test-output.log | head -10
+      - name: Diagnose generated-test failures
+        if: failure()
+        run: |
+          for d in target/test-scratch/arith/arith_i8_rem target/test-scratch/arith/arith_i16_rem; do
+            [ -d "$d" ] || continue
+            bin="$d/target/$(basename "$d")"
+            if [ -x "$bin" ]; then
+              "$bin" >/tmp/o 2>/tmp/e
+              c=$?
+              echo "::error::$(basename "$d") exit=$c stdout=$(tr '\n' '~' </tmp/o) stderr=$(tr '\n' '~' </tmp/e)"
+            else
+              echo "::error::$(basename "$d") artifact missing; target/$(ls "$d/target" 2>&1 | tr '\n' ' ')"
+            fi
+          done
