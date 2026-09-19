@@ -138,20 +138,24 @@ impl<'a> BodyLowerCtx<'a> {
         self.register_exit_obligation(ExitObligation::StorageDead(scrutinee));
     }
 
+    // A plain binding is bound directly to the lend's own local, so the loan the initializer
+    // establishes stays attached to the name the `with` declares. Any other pattern destructures
+    // through the same local, exactly as `let` destructures its own scrutinee.
     fn lower_with_lend(&mut self, lend: &crate::hir::WithLend) {
         let span = lend.span;
         let ty = self.expr_ty(lend.init);
-        let PatKind::Binding { name, .. } = self.hir.pat(lend.pat).kind else {
-            panic!(
-                "mir::lower: a `with` lend pattern other than a plain binding is not yet \
-                 implemented"
-            );
+        let name = match self.hir.pat(lend.pat).kind {
+            PatKind::Binding { name, .. } => Some(name),
+            _ => None,
         };
-        let local = self.new_local(ty, Some(name), span);
+        let local = self.new_local(ty, name, span);
         self.push_stmt(StatementKind::StorageLive(local), span);
         self.push_stmt(StatementKind::WithLend(local), span);
         self.lower_expr_into(lend.init, Place::from_local(local));
-        self.bind_local(lend.pat, local);
+        match name {
+            Some(_) => self.bind_local(lend.pat, local),
+            None => self.bind_pat(lend.pat, Place::from_local(local)),
+        }
         self.register_exit_obligation(ExitObligation::StorageDead(local));
     }
 

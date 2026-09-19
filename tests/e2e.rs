@@ -772,6 +772,27 @@ fun main() {
 }
 
 #[test]
+fn option_try_propagates_none() {
+    run(
+        "option_try",
+        r#"module app;
+fun bump(o: Option<i32>) -> Option<i32> {
+    let v = o?;
+    return .some(v + 1);
+}
+fun main() {
+    let a: Option<i32> = .some(41);
+    if bump(a).unwrap() == 42 { core::io::write_bytes(1, "a" as &[u8]); }
+    let b: Option<i32> = .none;
+    let propagated = bump(b);
+    if propagated.is_none() { core::io::write_bytes(1, "b" as &[u8]); }
+}
+"#,
+        "ab",
+    );
+}
+
+#[test]
 fn option_map_and_and_then() {
     run(
         "option_map_chain",
@@ -1091,6 +1112,25 @@ fun main() {
 }
 
 #[test]
+fn with_lend_destructures_a_tuple_pattern() {
+    run(
+        "with_destructure",
+        r#"module app;
+fun main() {
+    let mut p = (1, 2);
+    with (a, b) = &mut p {
+        *a = 10;
+        *b = 20;
+    }
+    if p.0 == 10 { core::io::write_bytes(1, "a" as &[u8]); }
+    if p.1 == 20 { core::io::write_bytes(1, "b" as &[u8]); }
+}
+"#,
+        "ab",
+    );
+}
+
+#[test]
 fn method_call_through_a_reference() {
     run(
         "method_through_reference",
@@ -1108,6 +1148,26 @@ fun main() {
 }
 "#,
         "ok",
+    );
+}
+
+#[test]
+fn any_parameter_receiver_calls_a_shared_method() {
+    run(
+        "any_receiver_shared",
+        r#"module app;
+struct Foo { x: i32 }
+extend Foo { fun show(&self) -> i32 { return self.x; } }
+fun relay(d: any Foo) -> i32 { return d.show(); }
+fun main() {
+    let f = Foo { x: 5 };
+    if relay(f) == 5 { core::io::write_bytes(1, "a" as &[u8]); }
+    let g = Foo { x: 7 };
+    let r: &Foo = &g;
+    if relay(r) == 7 { core::io::write_bytes(1, "b" as &[u8]); }
+}
+"#,
+        "ab",
     );
 }
 
@@ -1578,6 +1638,15 @@ fn reject_unknown_name() {
         "reject_unknown_name",
         "module app;\nfun main() { let x = nope; }\n",
         "E0201",
+    );
+}
+
+#[test]
+fn reject_unknown_name_suggests_a_nearby_one() {
+    rejects(
+        "reject_unknown_name_hint",
+        "module app;\nfun main() { let counter = 1; let y = countr; }\n",
+        "did you mean `counter`?",
     );
 }
 

@@ -705,6 +705,76 @@ fn an_unresolvable_type_path_reports_not_found_and_records_err() {
     assert!(diags[0].message.contains("cannot find"));
 }
 
+fn help_for(diags: &[Diagnostic], needle: &str) -> Option<String> {
+    diags
+        .iter()
+        .find(|d| d.message.contains(needle))
+        .and_then(|d| d.help.clone())
+}
+
+#[test]
+fn a_misspelled_local_suggests_the_nearby_binding() {
+    let ast = ast_from_files(&["module app; fun f() { let counter = 1; let y = countr; }"]);
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
+    assert_eq!(
+        help_for(&diags, "cannot find `countr`").as_deref(),
+        Some("did you mean `counter`?")
+    );
+}
+
+#[test]
+fn a_misspelled_function_suggests_the_nearby_declaration() {
+    let ast = ast_from_files(&["module app; fun compute() {} fun f() { comput(); }"]);
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
+    assert_eq!(
+        help_for(&diags, "cannot find `comput`").as_deref(),
+        Some("did you mean `compute`?")
+    );
+}
+
+#[test]
+fn a_misspelled_type_suggests_the_nearby_definition() {
+    let ast = ast_from_files(&["module app; struct Point { x: i32 } fun f(p: Piont) {}"]);
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
+    assert_eq!(
+        help_for(&diags, "cannot find `Piont`").as_deref(),
+        Some("did you mean `Point`?")
+    );
+}
+
+#[test]
+fn a_misspelled_qualified_name_suggests_a_name_in_that_module() {
+    let ast = ast_from_files(&[
+        "module math; public fun dot() {}",
+        "module app; fun f() { math::dots(); }",
+    ]);
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
+    assert_eq!(
+        help_for(&diags, "cannot find `dots`").as_deref(),
+        Some("did you mean `dot`?")
+    );
+}
+
+#[test]
+fn a_misspelled_import_suggests_the_nearby_item() {
+    let ast = ast_from_files(&[
+        "module math; public fun dot() {}",
+        "module app; import math::dt;",
+    ]);
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
+    assert_eq!(
+        help_for(&diags, "cannot find `dt`").as_deref(),
+        Some("did you mean `dot`?")
+    );
+}
+
+#[test]
+fn an_unresolved_name_with_no_spelling_neighbor_has_no_help() {
+    let ast = ast_from_files(&["module app; fun f() { let x = 1; let y = unrelated; }"]);
+    let (_, diags) = with_diags(|| resolve(crate::testing::session(), &ast));
+    assert_eq!(help_for(&diags, "cannot find `unrelated`"), None);
+}
+
 fn find_item(ast: &Ast, pred: impl Fn(&ItemKind) -> bool) -> &Item {
     ast.mod_ids()
         .find_map(|mod_id| {

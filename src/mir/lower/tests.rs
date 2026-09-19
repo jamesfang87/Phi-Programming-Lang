@@ -1461,6 +1461,29 @@ fn a_with_lends_local_carries_its_declared_name() {
 }
 
 #[test]
+fn a_with_lend_destructures_a_projection_pattern() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "fun f() {
+             let p = (1, 2);
+             with (a, b) = &p {
+                 noop();
+             }
+         }
+         fun noop() {}",
+    );
+    let body = first_function_body(&program, &hir);
+    let names: Vec<&str> = body
+        .local_decls
+        .iter()
+        .filter_map(|decl| decl.name.map(|name| crate::testing::resolve(name.text)))
+        .collect();
+    assert!(
+        names.contains(&"a") && names.contains(&"b"),
+        "a destructured `with` lend binds each name in its pattern: {names:?}"
+    );
+}
+
+#[test]
 fn a_shared_reference_is_copied_not_moved() {
     let (hir, _tcx, _types, program) = lower_mir_src_with_ref_copy(
         "fun f(a: i32) {
@@ -1631,6 +1654,11 @@ fn a_payload_bound_through_a_reference_is_a_borrow() {
     );
 }
 
+/// BUG: `lower_index_place` builds the bounds-check `Assert` with a condition that is the
+/// constant `true`, never `index < len`. The backend branches on that condition, so the failure
+/// block that aborts with "index out of bounds" is dead and out-of-bounds reads execute.
+///
+/// Run with `cargo test --bin phi -- --ignored` to reproduce.
 #[test]
 fn array_bounds_check_condition_is_not_a_hard_coded_true() {
     let (hir, _tcx, _types, program) =
@@ -1654,6 +1682,12 @@ fn array_bounds_check_condition_is_not_a_hard_coded_true() {
     );
 }
 
+/// BUG: `lower_index_place` sizes the length temporary with `index_ty` (e.g. `i32` for a default
+/// integer index) even though `Rvalue::Len` is 64-bit and codegen's `Projection::Index`
+/// unconditionally loads/stores `i64`. The temporary should be `usize`/`i64` regardless of the
+/// index expression's own type.
+///
+/// Run with `cargo test --bin phi -- --ignored` to reproduce.
 #[test]
 fn array_bounds_length_local_is_wide_enough_for_rvalue_len() {
     let (hir, tcx, _types, program) =
@@ -1911,6 +1945,9 @@ fn a_qualified_variant_call_carries_its_single_argument() {
     );
 }
 
+/// TODO: an overloaded `Index` used as a place (an assignment target) is not yet implemented and
+/// panics. Typeck accepts `m[0] = true` as a place, so this is reachable from a valid program;
+/// this test pins the current panic until place-position indexing is implemented.
 #[test]
 #[should_panic(
     expected = "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"
@@ -1943,8 +1980,7 @@ fn concurrent_panics_until_the_concurrency_runtime_is_implemented() {
 }
 
 #[test]
-#[should_panic(expected = "mir::lower: `?`'s operand is not a two-argument Result")]
-fn try_on_an_option_panics_until_option_propagation_is_implemented() {
+fn try_on_an_option_unwraps_the_some_payload_and_propagates_none() {
     let (hir, _tcx, _types, program) = lower_mir_src_with_option_result(
         "import core::option::Option;
          fun f(o: Option<i32>) -> Option<i32> {
@@ -1952,7 +1988,47 @@ fn try_on_an_option_panics_until_option_propagation_is_implemented() {
              return .some(v);
          }",
     );
-    let _ = first_function_body(&program, &hir);
+    let body = first_function_body(&program, &hir);
+    let switches = body
+        .basic_blocks
+        .iter()
+        .filter(|b| matches!(b.terminator.kind, TerminatorKind::SwitchInt { .. }))
+        .count();
+    assert!(switches >= 1, "`?` switches on the Option's discriminant");
+    let downcasts = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| match &s.kind {
+            StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place) | Operand::Move(place))) => {
+                place
+                    .projections
+                    .iter()
+                    .any(|p| matches!(p, Projection::Downcast(_)))
+            }
+            _ => false,
+        });
+    assert!(
+        downcasts,
+        "`?` reads the payload through a Downcast projection"
+    );
+    let propagates_payloadless_none =
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| {
+                matches!(
+                    &s.kind,
+                    StatementKind::Assign(
+                        _,
+                        Rvalue::Aggregate(kind, operands)
+                    ) if matches!(**kind, AggregateKind::Adt { .. }) && operands.is_empty()
+                )
+            });
+    assert!(
+        propagates_payloadless_none,
+        "`?` on an Option returns its payloadless `none` variant on the failure path"
+    );
 }
 
 #[test]
@@ -2026,6 +2102,66 @@ fn a_method_on_an_any_receiver_peels_the_any_wrapper() {
             .iter()
             .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
         "`d.show()` on an `any Foo` receiver lowers to a call"
+    );
+}
+
+#[test]
+fn an_any_receiver_reaching_a_shared_method_takes_a_shared_reference() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "struct Foo {}
+         extend Foo { fun show(&self) {} }
+         fun f(d: any Foo) { d.show(); }",
+    );
+    let body = first_function_body(&program, &hir);
+    let borrows = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| {
+            matches!(
+                &s.kind,
+                StatementKind::Assign(
+                    _,
+                    Rvalue::Ref {
+                        mutability: crate::ast::Mutability::Immutable,
+                        ..
+                    }
+                )
+            )
+        });
+    assert!(
+        borrows,
+        "`d.show()` takes a shared reference to the `any Foo` receiver"
+    );
+}
+
+#[test]
+fn an_any_receiver_reaching_a_mutable_method_takes_a_mutable_reference() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "struct Foo {}
+         extend Foo { fun set(&mut self) {} }
+         fun f(d: any Foo) { d.set(); }",
+    );
+    let body = first_function_body(&program, &hir);
+    let borrows = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| {
+            matches!(
+                &s.kind,
+                StatementKind::Assign(
+                    _,
+                    Rvalue::Ref {
+                        mutability: crate::ast::Mutability::Mutable,
+                        ..
+                    }
+                )
+            )
+        });
+    assert!(
+        borrows,
+        "`d.set()` takes a mutable reference to the `any Foo` receiver"
     );
 }
 

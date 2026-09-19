@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use crate::lexer::describe::{Descriptor, is_word_spelling, quoted_spelling};
 use crate::lexer::token::{STATEMENT_STARTERS, Token, TokenKind};
 use crate::session::Session;
+use crate::spelling::{edit_distance, is_probable_typo_of};
 
 const MAX_LISTED_ALTERNATIVES: usize = 4;
 
@@ -205,40 +206,6 @@ fn suggested_keyword(session: &Session, expected: &[Expected], found: Token) -> 
         .map(str::to_string)
 }
 
-fn is_probable_typo_of(written: &str, keyword: &str) -> bool {
-    if written.len() >= 2 && keyword.starts_with(written) {
-        return true;
-    }
-    let allowed = if written.len() >= 4 { 2 } else { 1 };
-    edit_distance(written, keyword) <= allowed
-}
-
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-
-    let mut table = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for (i, row) in table.iter_mut().enumerate() {
-        row[0] = i;
-    }
-    for (j, cell) in table[0].iter_mut().enumerate() {
-        *cell = j;
-    }
-
-    for i in 1..=a.len() {
-        for j in 1..=b.len() {
-            let substitute = table[i - 1][j - 1] + usize::from(a[i - 1] != b[j - 1]);
-            let mut best = substitute.min(table[i - 1][j] + 1).min(table[i][j - 1] + 1);
-            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
-                best = best.min(table[i - 2][j - 2] + 1);
-            }
-            table[i][j] = best;
-        }
-    }
-
-    table[a.len()][b.len()]
-}
-
 fn starts_a_statement(kind: TokenKind) -> bool {
     STATEMENT_STARTERS.contains(&kind)
 }
@@ -321,16 +288,5 @@ mod tests {
         assert!(rendered.contains("`import`"));
         assert!(rendered.contains("`public`"));
         assert!(!rendered.contains("other kinds of token"));
-    }
-
-    #[test]
-    fn transpositions_count_as_one_edit() {
-        assert_eq!(edit_distance("strcut", "struct"), 1);
-    }
-
-    #[test]
-    fn a_two_character_prefix_of_a_keyword_is_a_probable_typo() {
-        assert!(is_probable_typo_of("pub", "public"));
-        assert!(!is_probable_typo_of("xyz", "public"));
     }
 }

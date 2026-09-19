@@ -2144,6 +2144,12 @@ mod tests {
         panic!("no function found");
     }
 
+    /// BUG: floating-point `!=` is lowered to `fcmp one` (ordered-not-equal). `ONE` is false for
+    /// a NaN operand, so `nan != nan` evaluates to `false`, contradicting IEEE 754. The correct
+    /// predicate is `fcmp une` (unordered-not-equal). The `==` direction already uses `OEQ`, so
+    /// only this one is inconsistent.
+    ///
+    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
     #[test]
     fn float_not_equal_uses_the_unordered_predicate() {
         let (hir, mut tcx, _types, mir, instances) =
