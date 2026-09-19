@@ -698,7 +698,7 @@ Nested modules are expressed with `::` in the module path, both at the declarati
 module math::vector;
 ```
 
-By default, every item — a struct, function, trait, or enum — is private to the module it's declared in. The `public` keyword exports an item so that other modules may import it. For fields, it allows the field to be accessed outside of the struct.
+By default, every item is private to the module it's declared in. The `public` keyword exports an item so that other modules may import it. For fields, it allows the field to be accessed outside of the struct.
 
 ```phi
 module math;
