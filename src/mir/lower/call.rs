@@ -304,11 +304,16 @@ impl<'a> BodyLowerCtx<'a> {
         };
 
         let recv_ty = self.expr_ty(expr_id);
-        if matches!(self.tcx.kind(recv_ty), TyKind::Any(_)) {
-            panic!(
-                "mir::lower: a receiver whose own type is `any T`, reaching a `&`/`&mut self` \
-                 method, is not yet implemented"
-            );
+        // `expr_ty` resolves a receiver's `any` against the enclosing instance's mode, so an
+        // `any` wrapper still here has no mode of its own. The method's receiver mode fixes it:
+        // `&self` forces `Ref` and `&mut self` forces `RefMut`, and at either the value already
+        // is the reference the call passes, so it is forwarded rather than borrowed again.
+        if let TyKind::Any(_) = *self.tcx.kind(recv_ty) {
+            let place = self.lower_place(expr_id);
+            return match mutability {
+                Mutability::Mutable => Operand::Move(place),
+                Mutability::Immutable => Operand::Copy(place),
+            };
         }
         let (peeled, derefs) = self.peel_refs(recv_ty);
         let mut place = self.lower_place(expr_id);

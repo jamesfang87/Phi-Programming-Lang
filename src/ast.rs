@@ -199,6 +199,10 @@ impl Item {
 
 #[derive(Clone, Debug)]
 pub enum ItemKind {
+    // TODO: no `Const`, `Static`, `TypeAlias`, or inline `Module` items exist -- only
+    // `Function`/`Struct`/`Enum`/`Trait`/`Extend`. Real programs need global constants
+    // (`const MAX: i32 = 8;`), `type` aliases, and inline `mod foo { ... }` blocks instead
+    // of one-file-per-module.
     Function(Function),
     Struct(Struct),
     Enum(Enum),
@@ -452,6 +456,9 @@ pub enum StmtKind {
     },
     Break,
     Continue,
+    // TODO: `Break`/`Continue` carry no label and no value, so nested loops cannot
+    // `break 'outer` and a loop cannot `break value`. Real programs need labeled
+    // break/continue (and ideally break-with-value) for nested-loop control flow.
     Return(Option<Expr>),
     /// `defer expr;`. The expression runs just before the enclosing scope exits.
     Defer(Expr),

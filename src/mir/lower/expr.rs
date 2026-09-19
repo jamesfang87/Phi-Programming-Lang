@@ -381,6 +381,10 @@ impl<'a> BodyLowerCtx<'a> {
                 let count = self.lower_operand(count);
                 self.assign(dest, Rvalue::NewArray { elem, count }, span);
             }
+            // TODO: implement `spawn`/`concurrent` lowering (README section 14 promises
+            // scoped tasks with `spawn`/`join` inside `concurrent`, but both arms panic,
+            // so no concurrent program compiles -- task handles, nursery scopes, and
+            // data-race-free join semantics are all still missing).
             ExprKind::Spawn(_) => panic!(
                 "mir::lower: `spawn` is not yet implemented (the runtime nursery API is illustrative only)"
             ),
@@ -633,6 +637,10 @@ impl<'a> BodyLowerCtx<'a> {
                 place.projections.push(projection);
                 place
             }
+            // TODO: implement user-defined `Index`/`IndexSet` in place position (README
+            // section 12 promises `a[i]` reads and writes via those traits, but this arm
+            // panics, so real programs cannot index hash maps/vectors through overloads,
+            // only built-in arrays).
             _ => panic!(
                 "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"
             ),
@@ -910,13 +918,21 @@ impl<'a> BodyLowerCtx<'a> {
         let scrutinee_place = Place::from_local(scrutinee_local);
         self.lower_expr_into(inner, scrutinee_place.clone());
 
-        let result_def = self
-            .hir
-            .lang_items()
-            .get(crate::langitems::LangItem::Result)
-            .expect("`?` requires the `Result` lang item");
-        let ok_idx = self.variant_idx_by_name(result_def, "ok");
-        let err_idx = self.variant_idx_by_name(result_def, "err");
+        let TyKind::Adt { def, args } = self.tcx.kind(scrutinee_ty).clone() else {
+            unreachable!("typeck accepts `?` only on `Result`/`Option`");
+        };
+        let is_result = Some(def)
+            == self
+                .hir
+                .lang_items()
+                .get(crate::langitems::LangItem::Result);
+        let (ok_name, propagate_name) = if is_result {
+            ("ok", "err")
+        } else {
+            ("some", "none")
+        };
+        let ok_idx = self.variant_idx_by_name(def, ok_name);
+        let propagate_idx = self.variant_idx_by_name(def, propagate_name);
 
         let i32_ty = self.tcx.mk_prim(PrimTy::I32);
         let discr_local = self.new_temp(i32_ty, span);
@@ -927,35 +943,37 @@ impl<'a> BodyLowerCtx<'a> {
         );
 
         let ok_block = self.new_block();
-        let err_block = self.new_block();
+        let propagate_block = self.new_block();
         self.set_terminator(
             TerminatorKind::SwitchInt {
                 discr: Operand::Copy(Place::from_local(discr_local)),
                 targets: crate::mir::SwitchTargets {
                     values: vec![(ok_idx.index() as u128, ok_block)],
-                    otherwise: err_block,
+                    otherwise: propagate_block,
                 },
             },
             span,
         );
 
-        self.switch_to(err_block);
-        let mut err_place = scrutinee_place.clone();
-        err_place.projections.push(Projection::Downcast(err_idx));
-        err_place.projections.push(Projection::Field(0));
-        let err_ty = match self.tcx.kind(scrutinee_ty).clone() {
-            TyKind::Adt { args, .. } if args.len() == 2 => args[1],
-            _ => panic!("mir::lower: `?`'s operand is not a two-argument Result"),
+        self.switch_to(propagate_block);
+        let mut propagate_place = scrutinee_place.clone();
+        propagate_place
+            .projections
+            .push(Projection::Downcast(propagate_idx));
+        let propagate_operands = if is_result {
+            propagate_place.projections.push(Projection::Field(0));
+            vec![self.operand_for_place(propagate_place, args[1])]
+        } else {
+            vec![]
         };
-        let err_operand = self.operand_for_place(err_place, err_ty);
         self.assign(
             Place::from_local(crate::mir::Local::RETURN_PLACE),
             Rvalue::Aggregate(
                 Box::new(AggregateKind::Adt {
-                    def: result_def,
-                    variant: err_idx,
+                    def,
+                    variant: propagate_idx,
                 }),
-                vec![err_operand],
+                propagate_operands,
             ),
             span,
         );

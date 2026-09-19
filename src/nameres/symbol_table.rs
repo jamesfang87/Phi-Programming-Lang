@@ -10,8 +10,30 @@ use crate::driver::source::SrcSpan;
 use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::session::Session;
+use crate::spelling;
 
 const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
+
+/// At most this many nearby names are offered when a lookup fails.
+const MAX_SUGGESTIONS: usize = 3;
+
+/// Every primitive type, paired with its spelling.
+const PRIMITIVE_TYPES: [(&str, PrimTy); 14] = [
+    ("i8", PrimTy::I8),
+    ("i16", PrimTy::I16),
+    ("i32", PrimTy::I32),
+    ("i64", PrimTy::I64),
+    ("u8", PrimTy::U8),
+    ("u16", PrimTy::U16),
+    ("u32", PrimTy::U32),
+    ("u64", PrimTy::U64),
+    ("usize", PrimTy::Usize),
+    ("f32", PrimTy::F32),
+    ("f64", PrimTy::F64),
+    ("bool", PrimTy::Bool),
+    ("char", PrimTy::Char),
+    ("str", PrimTy::Str),
+];
 
 enum SelfScope {
     Defined(Type),
@@ -81,23 +103,10 @@ impl ModuleScope {
 }
 
 pub fn is_prim_ty(session: &Session, name: Symbol) -> Option<PrimTy> {
-    Some(match session.resolve(name) {
-        "i8" => PrimTy::I8,
-        "i16" => PrimTy::I16,
-        "i32" => PrimTy::I32,
-        "i64" => PrimTy::I64,
-        "u8" => PrimTy::U8,
-        "u16" => PrimTy::U16,
-        "u32" => PrimTy::U32,
-        "u64" => PrimTy::U64,
-        "usize" => PrimTy::Usize,
-        "f32" => PrimTy::F32,
-        "f64" => PrimTy::F64,
-        "bool" => PrimTy::Bool,
-        "char" => PrimTy::Char,
-        "str" => PrimTy::Str,
-        _ => return None,
-    })
+    PRIMITIVE_TYPES
+        .iter()
+        .find(|(spelling, _)| *spelling == session.resolve(name))
+        .map(|(_, ty)| *ty)
 }
 
 impl<'ast> SymbolTable<'ast> {
@@ -205,6 +214,7 @@ impl<'ast> SymbolTable<'ast> {
             .map(|(module_id, import)| {
                 let source = self.resolve_import_mod_path(root, &import.path);
                 if source.is_none() {
+                    let suggestions = self.suggest_import_names(&import.path);
                     report_not_found(
                         self.session,
                         *import
@@ -212,6 +222,7 @@ impl<'ast> SymbolTable<'ast> {
                             .segments
                             .last()
                             .expect("a path always has at least one segment"),
+                        &suggestions,
                     );
                 }
                 (module_id, import, source)
@@ -233,6 +244,9 @@ impl<'ast> SymbolTable<'ast> {
     }
 
     fn resolve_import(&mut self, importing_module: NodeId, import: &Import) {
+        // TODO: imports are always module-private (`Import` carries no `Visibility`, and the
+        // parser accepts no `public import`), so re-exports are impossible. Real crates need
+        // `pub import` to re-export items and build a public API facade.
         let root = self.ast.root_id();
 
         let name = import.alias.unwrap_or(
@@ -291,7 +305,10 @@ impl<'ast> SymbolTable<'ast> {
                 .get_mut(&importing_module)
                 .unwrap()
                 .insert_mod(self.session, name, id),
-            (None, None, None) => report_not_found(self.session, name),
+            (None, None, None) => {
+                let suggestions = self.suggest_import_names(&import.path);
+                report_not_found(self.session, name, &suggestions);
+            }
             _ => report_ambiguous_import(self.session, name),
         }
     }
@@ -484,7 +501,8 @@ impl<'ast> SymbolTable<'ast> {
         match self.probe_type_path(from, path) {
             Some(ty) => Res::Type(ty),
             None => {
-                report_not_found(self.session, last);
+                let suggestions = self.suggest_type_names(from, path);
+                report_not_found(self.session, last, &suggestions);
                 Res::Err
             }
         }
@@ -511,6 +529,50 @@ impl<'ast> SymbolTable<'ast> {
                 Res::Err
             }
         }
+    }
+
+    //-------------------------------------------------------------------------
+
+    /// Returns spellings close to the last segment of `path`, for a value lookup that failed from
+    /// `from`.
+    pub fn suggest_value_names(&self, from: NodeId, path: &Path) -> Vec<String> {
+        let Some(written) = self.last_segment_text(path) else {
+            return Vec::new();
+        };
+        let candidates = self.value_candidate_names(from, path);
+        spelling::nearest_names(
+            written,
+            candidates.iter().map(String::as_str),
+            MAX_SUGGESTIONS,
+        )
+    }
+
+    /// Returns spellings close to the last segment of `path`, for a type lookup that failed from
+    /// `from`.
+    pub fn suggest_type_names(&self, from: NodeId, path: &Path) -> Vec<String> {
+        let Some(written) = self.last_segment_text(path) else {
+            return Vec::new();
+        };
+        let candidates = self.type_candidate_names(from, path);
+        spelling::nearest_names(
+            written,
+            candidates.iter().map(String::as_str),
+            MAX_SUGGESTIONS,
+        )
+    }
+
+    /// Returns spellings close to the last segment of `path`, for an import that named nothing in
+    /// any namespace. Imports resolve from the crate root.
+    pub fn suggest_import_names(&self, path: &Path) -> Vec<String> {
+        let Some(written) = self.last_segment_text(path) else {
+            return Vec::new();
+        };
+        let candidates = self.import_candidate_names(path);
+        spelling::nearest_names(
+            written,
+            candidates.iter().map(String::as_str),
+            MAX_SUGGESTIONS,
+        )
     }
 
     //-------------------------------------------------------------------------
@@ -560,6 +622,126 @@ impl<'ast> SymbolTable<'ast> {
             current = self.lookup_mod(current, segment.text)?;
         }
         Some(current)
+    }
+
+    //-------------------------------------------------------------------------
+
+    /// Returns the names a failed value lookup of `path` from `from` could have found.
+    fn value_candidate_names(&self, from: NodeId, path: &Path) -> Vec<String> {
+        let Some((_, prefix)) = path.segments.split_last() else {
+            return Vec::new();
+        };
+        if !prefix.is_empty() {
+            return self.prefix_module_names(from, prefix, Namespace::Value);
+        }
+
+        let mut names: Vec<String> = self
+            .local_scopes
+            .iter()
+            .flat_map(|scope| {
+                scope
+                    .keys()
+                    .map(|name| self.session.resolve(*name).to_owned())
+            })
+            .collect();
+        names.extend(self.module_chain_names(from, Namespace::Value));
+        names
+    }
+
+    /// Returns the names a failed type lookup of `path` from `from` could have found.
+    fn type_candidate_names(&self, from: NodeId, path: &Path) -> Vec<String> {
+        let Some((_, prefix)) = path.segments.split_last() else {
+            return Vec::new();
+        };
+        if !prefix.is_empty() {
+            return self.prefix_module_names(from, prefix, Namespace::Type);
+        }
+
+        let mut names: Vec<String> = self
+            .generic_scopes
+            .iter()
+            .flat_map(|scope| {
+                scope
+                    .keys()
+                    .map(|name| self.session.resolve(*name).to_owned())
+            })
+            .collect();
+        names.extend(
+            PRIMITIVE_TYPES
+                .iter()
+                .map(|(spelling, _)| (*spelling).to_owned()),
+        );
+        names.extend(self.module_chain_names(from, Namespace::Type));
+        names
+    }
+
+    /// Returns the names a failed import of `path` could have found, across every namespace.
+    fn import_candidate_names(&self, path: &Path) -> Vec<String> {
+        let Some((_, prefix)) = path.segments.split_last() else {
+            return Vec::new();
+        };
+        let root = self.ast.root_id();
+        let mut names = self.prefix_module_names(root, prefix, Namespace::Value);
+        names.extend(self.prefix_module_names(root, prefix, Namespace::Type));
+        names.extend(self.prefix_module_names(root, prefix, Namespace::Module));
+        names
+    }
+
+    /// Returns the names `namespace` binds in the module `prefix` resolves to, searching the module
+    /// chain from `from` as a lookup does.
+    fn prefix_module_names(
+        &self,
+        from: NodeId,
+        prefix: &[Ident],
+        namespace: Namespace,
+    ) -> Vec<String> {
+        match self.in_module_chain(from, |base| self.walk_modules(base, prefix)) {
+            Some(module) => self.module_names(from, module, namespace),
+            None => Vec::new(),
+        }
+    }
+
+    /// Returns the names `namespace` binds in every module visible from `from`, and in the prelude.
+    fn module_chain_names(&self, from: NodeId, namespace: Namespace) -> Vec<String> {
+        self.module_chain(from)
+            .into_iter()
+            .chain(self.prelude)
+            .flat_map(|module| self.module_names(from, module, namespace))
+            .collect()
+    }
+
+    /// Returns the names `namespace` binds in `module`, dropping those not visible from `from`.
+    fn module_names(&self, from: NodeId, module: NodeId, namespace: Namespace) -> Vec<String> {
+        let Some(scope) = self.module_scopes.get(&module) else {
+            return Vec::new();
+        };
+        match namespace {
+            Namespace::Value => scope
+                .functions
+                .iter()
+                .filter(|(_, id)| self.is_visible_from(from, module, self.visibility(**id)))
+                .map(|(name, _)| self.session.resolve(*name).to_owned())
+                .collect(),
+            Namespace::Type => scope
+                .types
+                .iter()
+                .filter(|(_, def)| {
+                    self.is_visible_from(from, module, self.visibility(def.node_id()))
+                })
+                .map(|(name, _)| self.session.resolve(*name).to_owned())
+                .collect(),
+            Namespace::Module => scope
+                .mods
+                .keys()
+                .map(|name| self.session.resolve(*name).to_owned())
+                .collect(),
+        }
+    }
+
+    fn last_segment_text(&self, path: &Path) -> Option<&'static str> {
+        path.segments
+            .last()
+            .map(|segment| self.session.resolve(segment.text))
     }
 
     //-------------------------------------------------------------------------
@@ -629,6 +811,11 @@ impl<'ast> SymbolTable<'ast> {
     pub fn pop_self(&mut self) {
         self.self_scopes.pop();
     }
+
+    // TODO: is there a better way to do this?
+    // I'm not sure if I like that there is a public function just for tests
+    // Also, this should probably be the name of
+    // pub fn lookup_self_res(&self, span: SrcSpan) -> Res;
 
     /// Returns the current self entry if present and None if not
     pub fn lookup_self(&self) -> Option<Type> {

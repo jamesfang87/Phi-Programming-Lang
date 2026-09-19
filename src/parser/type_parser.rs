@@ -806,6 +806,11 @@ mod tests {
         assert_eq!(diagnostic_count("any fun(i32) -> i32"), 1);
     }
 
+    /// BUG: the tuple-type parser builds `TyKind::Tuple` unconditionally and never unwraps the
+    /// single-element case, so `(i32)` becomes `(i32,)`. The expression parser already unwraps
+    /// `(e)` to `e`, and the grammar's own tests and `display.rs` say only `(T,)` is a tuple.
+    ///
+    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
     #[test]
     fn parses_parenthesized_type_as_the_inner_type() {
         let ty = parse_ty("(i32)");

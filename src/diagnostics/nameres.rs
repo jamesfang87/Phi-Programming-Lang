@@ -4,15 +4,33 @@ use crate::diagnostics::codes;
 use crate::driver::source::SrcSpan;
 use crate::session::Session;
 
-pub fn report_not_found(session: &Session, name: Ident) {
-    session.emit(
-        Diagnostic::error(
-            format!("cannot find `{}` in this scope", session.resolve(name.text)),
-            name.span,
-        )
-        .with_code(codes::UNRESOLVED_NAME)
-        .with_label("not found in this scope"),
-    );
+pub fn report_not_found(session: &Session, name: Ident, suggestions: &[String]) {
+    let mut diagnostic = Diagnostic::error(
+        format!("cannot find `{}` in this scope", session.resolve(name.text)),
+        name.span,
+    )
+    .with_code(codes::UNRESOLVED_NAME)
+    .with_label("not found in this scope");
+    if let Some(help) = nearby_name_help(suggestions) {
+        diagnostic = diagnostic.with_help(help);
+    }
+    session.emit(diagnostic);
+}
+
+/// Returns the `help:` text for a name lookup that failed, or `None` when no spelling is nearby.
+fn nearby_name_help(suggestions: &[String]) -> Option<String> {
+    let quoted: Vec<String> = suggestions.iter().map(|name| format!("`{name}`")).collect();
+    match quoted.as_slice() {
+        [] => None,
+        [only] => Some(format!("did you mean {only}?")),
+        [first, second] => Some(format!("did you mean {first} or {second}?")),
+        many => {
+            let (last, rest) = many
+                .split_last()
+                .expect("`many` has at least three elements");
+            Some(format!("did you mean {}, or {last}?", rest.join(", ")))
+        }
+    }
 }
 
 pub fn report_conflict(session: &Session, name: Ident) {

@@ -116,13 +116,15 @@ impl<'ast> Resolver<'ast> {
                 Some(value) => self.visit_expr(value),
                 None => {
                     let path = Path::from(field.name);
-                    let res = self
-                        .table
-                        .lookup_value_path(self.current_module, &path)
-                        .unwrap_or_else(|| {
-                            report_not_found(self.session, field.name);
+                    let res = match self.table.lookup_value_path(self.current_module, &path) {
+                        Some(res) => res,
+                        None => {
+                            let suggestions =
+                                self.table.suggest_value_names(self.current_module, &path);
+                            report_not_found(self.session, field.name, &suggestions);
                             Res::Err
-                        });
+                        }
+                    };
                     self.results.record(field.id, path, res);
                 }
             }
@@ -348,23 +350,25 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
     fn visit_expr(&mut self, expr: &'ast Expr) {
         match &expr.kind {
             ExprKind::Path(path) => {
-                let res = self
-                    .table
-                    .lookup_value_path(self.current_module, path)
-                    .unwrap_or_else(|| {
+                let res = match self.table.lookup_value_path(self.current_module, path) {
+                    Some(res) => res,
+                    None => {
+                        let suggestions = self.table.suggest_value_names(self.current_module, path);
                         report_not_found(
                             self.session,
                             *path
                                 .segments
                                 .last()
                                 .expect("a path always has at least one segment"),
+                            &suggestions,
                         );
                         Res::Err
-                    });
+                    }
+                };
                 self.results.record(expr.id, path.clone(), res);
             }
             ExprKind::SelfKw => {
-                report_not_found(self.session, Ident::self_kw(self.session, expr.span));
+                report_not_found(self.session, Ident::self_kw(self.session, expr.span), &[]);
                 self.results
                     .record(expr.id, Path::self_kw(self.session, expr.span), Res::Err);
             }
