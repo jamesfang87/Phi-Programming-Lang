@@ -19,6 +19,10 @@ enum AccessKind {
 
 pub fn check(session: &Session, mir: &Mir) {
     let lifetimes = lifetimes::compute(mir);
+    check_with(session, mir, &lifetimes);
+}
+
+pub fn check_with(session: &Session, mir: &Mir, lifetimes: &lifetimes::LifetimesMap) {
     for (key, body) in &mir.bodies {
         if let Some(body_lifetimes) = lifetimes.get(key) {
             check_body(session, body, body_lifetimes);

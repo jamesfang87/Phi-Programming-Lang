@@ -498,7 +498,7 @@ fn comparisons_are_never_checked_or_wrapped() {
 }
 
 #[test]
-fn division_by_zero_inserts_an_assert_and_is_never_checked_for_overflow() {
+fn division_inserts_a_zero_check_and_a_debug_overflow_check() {
     let (hir, _tcx, _types, program) =
         lower_mir_src_with_ops("fun f(x: i32, y: i32) -> i32 { return x / y; }");
     let body = first_function_body(&program, &hir);
@@ -509,8 +509,14 @@ fn division_by_zero_inserts_an_assert_and_is_never_checked_for_overflow() {
         "an integer division inserts a zero-check assert ahead of the division itself"
     );
     assert!(
+        assert_messages(body)
+            .iter()
+            .any(|m| matches!(m, AssertMessage::Overflow(BinaryOp::Div, ..))),
+        "a debug-profile division inserts an assert against the `MIN / -1` overflow"
+    );
+    assert!(
         checked_binary_ops(body).is_empty(),
-        "a division has no overflow to check, so it is never wrapped in CheckedBinaryOp"
+        "a division's overflow check is a separate assert, not a CheckedBinaryOp"
     );
     let has_plain_div = body
         .basic_blocks
@@ -524,12 +530,12 @@ fn division_by_zero_inserts_an_assert_and_is_never_checked_for_overflow() {
         });
     assert!(
         has_plain_div,
-        "the division itself is a plain BinaryOp, past the assert"
+        "the division itself is a plain BinaryOp, past the asserts"
     );
 }
 
 #[test]
-fn remainder_by_zero_inserts_an_assert() {
+fn remainder_inserts_a_zero_check_and_a_debug_overflow_check() {
     let (hir, _tcx, _types, program) =
         lower_mir_src_with_ops("fun f(x: i32, y: i32) -> i32 { return x % y; }");
     let body = first_function_body(&program, &hir);
@@ -538,6 +544,12 @@ fn remainder_by_zero_inserts_an_assert() {
             .iter()
             .any(|m| matches!(m, AssertMessage::RemainderByZero(_))),
         "an integer remainder inserts its own zero-check assert, distinct from division's"
+    );
+    assert!(
+        assert_messages(body)
+            .iter()
+            .any(|m| matches!(m, AssertMessage::Overflow(BinaryOp::Rem, ..))),
+        "a debug-profile remainder inserts an assert against the `MIN % -1` overflow"
     );
 }
 
@@ -555,8 +567,10 @@ fn division_by_zero_assert_survives_release_mode() {
         "release profile still inserts the division-by-zero assert"
     );
     assert!(
-        checked_binary_ops(body).is_empty(),
-        "release profile still never checks for overflow"
+        !assert_messages(body)
+            .iter()
+            .any(|m| matches!(m, AssertMessage::Overflow(..))),
+        "release profile does not insert the debug-only overflow assert"
     );
 }
 
@@ -1654,11 +1668,6 @@ fn a_payload_bound_through_a_reference_is_a_borrow() {
     );
 }
 
-/// BUG: `lower_index_place` builds the bounds-check `Assert` with a condition that is the
-/// constant `true`, never `index < len`. The backend branches on that condition, so the failure
-/// block that aborts with "index out of bounds" is dead and out-of-bounds reads execute.
-///
-/// Run with `cargo test --bin phi -- --ignored` to reproduce.
 #[test]
 fn array_bounds_check_condition_is_not_a_hard_coded_true() {
     let (hir, _tcx, _types, program) =
@@ -1682,12 +1691,6 @@ fn array_bounds_check_condition_is_not_a_hard_coded_true() {
     );
 }
 
-/// BUG: `lower_index_place` sizes the length temporary with `index_ty` (e.g. `i32` for a default
-/// integer index) even though `Rvalue::Len` is 64-bit and codegen's `Projection::Index`
-/// unconditionally loads/stores `i64`. The temporary should be `usize`/`i64` regardless of the
-/// index expression's own type.
-///
-/// Run with `cargo test --bin phi -- --ignored` to reproduce.
 #[test]
 fn array_bounds_length_local_is_wide_enough_for_rvalue_len() {
     let (hir, tcx, _types, program) =

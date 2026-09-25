@@ -21,3 +21,12 @@ pub fn report_not_mutable(session: &Session, name: Ident, span: SrcSpan) {
         )),
     );
 }
+
+pub fn report_write_through_shared_ref(session: &Session, span: SrcSpan) {
+    session.emit(
+        Diagnostic::error("cannot write through a shared reference", span)
+            .with_code(codes::WRITE_THROUGH_SHARED_REF)
+            .with_label("`&` is an immutable borrow")
+            .with_help("borrow the value with `&mut` to write through it"),
+    );
+}

@@ -9,6 +9,7 @@ pub(crate) mod definite_init;
 pub(crate) mod element_moves;
 pub(crate) mod exclusivity;
 pub(crate) mod lifetimes;
+pub(crate) mod returned_reference;
 
 /// `Register` is a simplification of [`Place`](crate::mir::Place) for borrowcking. It
 /// only contains projections (field access and constant index) for the purposes of narrowing
@@ -46,7 +47,9 @@ pub(crate) fn register_of(place: &Place) -> Register {
 
 pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
     definite_init::check(session, tcx, mir);
-    exclusivity::check(session, mir);
+    let lifetimes = lifetimes::compute(mir);
+    exclusivity::check_with(session, mir, &lifetimes);
+    returned_reference::check(session, tcx, mir, &lifetimes);
     element_moves::check(session, tcx, mir);
     captures::check(session, hir, tcx, mir);
 }

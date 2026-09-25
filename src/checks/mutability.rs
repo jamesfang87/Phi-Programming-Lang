@@ -1,9 +1,9 @@
-use crate::ast::{Ident, Mutability};
-use crate::diagnostics::checks::mutability::report_not_mutable;
+use crate::ast::{Ident, Mutability, UnaryOp};
+use crate::diagnostics::checks::mutability::{report_not_mutable, report_write_through_shared_ref};
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
-    AccessArgs, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind,
+    AccessArgs, DefId, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind,
 };
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
@@ -11,34 +11,45 @@ use crate::typeck::ty::TyKind;
 use crate::typeck::ty::ctx::TyCtx;
 
 pub fn check(session: &Session, hir: &Hir, tcx: &TyCtx, types: &TypeResolutions) {
-    let mut pass = LetScopes {
+    let mut immutable_writes = ImmutableLetWrites {
+        session,
+        hir,
+        tcx,
+        types,
+    };
+    let mut shared_writes = SharedReferenceWrites {
         session,
         hir,
         tcx,
         types,
     };
     for def_id in hir.def_ids() {
-        match hir.def(def_id) {
-            OwnerNode::Function(function) => {
-                if let Some(block) = function.block {
-                    pass.visit_block(block.into());
-                }
-            }
-            OwnerNode::Closure(closure) => pass.visit_block(closure.block.into()),
-            _ => {}
-        }
+        let Some(block) = body_block(hir, def_id) else {
+            continue;
+        };
+        immutable_writes.visit_block(block);
+        shared_writes.visit_block(block);
     }
 }
 
-// TODO: why is it called LetScopes?
-struct LetScopes<'hir, 'a> {
+fn body_block(hir: &Hir, def_id: DefId) -> Option<HirId> {
+    match hir.def(def_id) {
+        OwnerNode::Function(function) => function.block.map(HirId::from),
+        OwnerNode::Closure(closure) => Some(closure.block.into()),
+        _ => None,
+    }
+}
+
+/// Rejects writes to a binding introduced by a plain `let`. The binding is in scope from its
+/// declaration to the end of its enclosing block, so only the statements after it are scanned.
+struct ImmutableLetWrites<'hir, 'a> {
     session: &'a Session,
     hir: &'hir Hir,
     tcx: &'a TyCtx,
     types: &'a TypeResolutions,
 }
 
-impl<'hir> Visitor<'hir> for LetScopes<'hir, '_> {
+impl<'hir> Visitor<'hir> for ImmutableLetWrites<'hir, '_> {
     fn hir(&self) -> &'hir Hir {
         self.hir
     }
@@ -187,6 +198,94 @@ impl MutationScan<'_, '_> {
         )
     }
 }
+
+/// Rejects writes whose place reaches through a shared `&`. A `&mut` borrow on the path permits
+/// the write; a shared `&` never does, whether the write is an assignment, a compound assignment,
+/// or an explicit `&mut`.
+struct SharedReferenceWrites<'hir, 'a> {
+    session: &'a Session,
+    hir: &'hir Hir,
+    tcx: &'a TyCtx,
+    types: &'a TypeResolutions,
+}
+
+impl<'hir> Visitor<'hir> for SharedReferenceWrites<'hir, '_> {
+    fn hir(&self) -> &'hir Hir {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, id: HirId) {
+        let expr = self.hir.expr(id);
+        match &expr.kind {
+            ExprKind::Assign { lhs, .. } | ExprKind::AssignOp { lhs, .. } => {
+                self.check_writable((*lhs).into(), expr.span);
+            }
+            ExprKind::Borrow {
+                mutability: Mutability::Mutable,
+                operand,
+            } => self.check_writable((*operand).into(), expr.span),
+            _ => {}
+        }
+        visit::walk_expr(self, id);
+    }
+}
+
+impl SharedReferenceWrites<'_, '_> {
+    /// Walks the projections of a written `place`, reporting the one that crosses a `&`.
+    fn check_writable(&self, place: HirId, span: SrcSpan) {
+        match &self.hir.expr(place).kind {
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => {
+                if self.is_shared_ref((*operand).into()) {
+                    report_write_through_shared_ref(self.session, span);
+                    return;
+                }
+                self.check_writable((*operand).into(), span);
+            }
+            ExprKind::Access {
+                base,
+                args: AccessArgs::None,
+                ..
+            }
+            | ExprKind::Index { base, .. } => self.check_borrowed_base((*base).into(), span),
+            _ => {}
+        }
+    }
+
+    /// Checks the base of a field or index projection, which the compiler auto-dereferences.
+    /// Peeling a `&mut` is fine; peeling a `&` is the write this rejects.
+    fn check_borrowed_base(&self, base: HirId, span: SrcSpan) {
+        let mut ty = self.types.ty(base);
+        while let Some(current) = ty {
+            match *self.tcx.kind(current) {
+                TyKind::Ref { base, mutability } => {
+                    if mutability == Mutability::Immutable {
+                        report_write_through_shared_ref(self.session, span);
+                        return;
+                    }
+                    ty = Some(base);
+                }
+                _ => break,
+            }
+        }
+        self.check_writable(base, span);
+    }
+
+    fn is_shared_ref(&self, expr: HirId) -> bool {
+        self.types.ty(expr).is_some_and(|ty| {
+            matches!(
+                self.tcx.kind(ty),
+                TyKind::Ref {
+                    mutability: Mutability::Immutable,
+                    ..
+                }
+            )
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::testing::{mutability_accepts as accepts, mutability_rejects as rejects};
@@ -379,5 +478,55 @@ mod tests {
     #[test]
     fn a_lets_scope_does_not_reach_statements_written_before_it() {
         accepts("fun f() { let mut a = 1; a = 2; let a = 3; let _ = a; }");
+    }
+
+    #[test]
+    fn writing_through_a_shared_reference_is_rejected() {
+        let structs = "struct S { x: i32 }";
+
+        rejects(
+            "fun f(r: &i32) { *r = 1; }",
+            "cannot write through a shared reference",
+        );
+        rejects(
+            &format!("{structs} fun f(s: &S) {{ s.x = 1; }}"),
+            "cannot write through a shared reference",
+        );
+        rejects(
+            &format!("{structs} fun f(s: &S) {{ let r = s; r.x = 1; }}"),
+            "cannot write through a shared reference",
+        );
+        rejects(
+            "fun f(a: &[i32; 4]) { a[0] = 1; }",
+            "cannot write through a shared reference",
+        );
+
+        accepts("fun f(r: &mut i32) { *r = 1; }");
+        accepts(&format!("{structs} fun f(s: &mut S) {{ s.x = 1; }}"));
+        accepts("fun f(a: &mut [i32; 4]) { a[0] = 1; }");
+    }
+
+    #[test]
+    fn a_write_through_a_shared_receiver_or_self_field_is_rejected() {
+        let shared = "struct S { x: i32 }
+             extend S { fun set(&self, v: i32) { self.x = v; } }";
+        rejects(shared, "cannot write through a shared reference");
+
+        let mut_derivation = "struct S { x: i32 }
+             extend S { fun bad(&self) -> &mut i32 { return &mut self.x; } }";
+        rejects(mut_derivation, "cannot write through a shared reference");
+
+        let mutable = "struct S { x: i32 }
+             extend S { fun set(&mut self, v: i32) { self.x = v; } }";
+        accepts(mutable);
+    }
+
+    #[test]
+    fn a_mutable_borrow_of_a_shared_reference_is_rejected() {
+        rejects(
+            "fun f(r: &i32) { let m: &mut i32 = &mut *r; }",
+            "cannot write through a shared reference",
+        );
+        accepts("fun f(r: &mut i32) { let m: &mut i32 = &mut *r; }");
     }
 }

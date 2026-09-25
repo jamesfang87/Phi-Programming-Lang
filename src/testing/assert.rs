@@ -1,6 +1,6 @@
 use super::pipeline::{
     mir_captures_src, mir_definite_init_src, mir_element_moves_src, mir_exclusivity_src,
-    mir_never_read_src, mutability_src, typeck_src,
+    mir_never_read_src, mir_returned_reference_src, mutability_src, typeck_src,
 };
 
 fn assert_no_diagnostics(reported: Vec<String>, src: &str, what: &str) {
@@ -76,6 +76,18 @@ pub fn mir_exclusivity_accepts(src: &str) {
 
 pub fn mir_exclusivity_rejects(src: &str, needle: &str) {
     assert_single_diagnostic_mentioning(mir_exclusivity_src(src), src, needle);
+}
+
+pub fn mir_returned_reference_accepts(src: &str) {
+    assert_no_diagnostics(
+        mir_returned_reference_src(src),
+        src,
+        "pass the returned-reference check",
+    );
+}
+
+pub fn mir_returned_reference_rejects(src: &str, needle: &str) {
+    assert_single_diagnostic_mentioning(mir_returned_reference_src(src), src, needle);
 }
 
 pub fn mir_never_read_accepts(src: &str) {

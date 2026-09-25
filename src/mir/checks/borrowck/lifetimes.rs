@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use crate::ast::Mutability;
+use crate::driver::source::SrcSpan;
 use crate::hir::DefId;
 use crate::mir::checks::borrowck::{Register, SubRegisters, register_of};
 use crate::mir::checks::lattice;
@@ -29,6 +30,8 @@ pub struct Alias {
     /// Whether this alias was introduced in a with-stmt, which changes the
     /// behavior of borrow from NLL to scoped lifetimes.
     pub with_lend: bool,
+    /// The span of the borrow expression that created the alias.
+    pub span: SrcSpan,
 }
 
 /// Information about lifetimes for a [`Body`]
@@ -37,6 +40,9 @@ pub struct Lifetimes {
     pub aliases: HashMap<AliasId, Alias>,
     pub live_ranges: HashMap<BasicBlock, HashMap<AliasId, Range<usize>>>,
 }
+
+/// The lifetimes of every body in a [`Mir`], keyed the same way `Mir::bodies` is.
+pub type LifetimesMap = HashMap<(DefId, Option<AnyMode>), Lifetimes>;
 
 /// Variables (and fields or indicies) allow the extension
 /// of the lifetime of Aliases.
@@ -48,7 +54,7 @@ type HeldAliasesLattice = lattice::Lattice<BasicBlock, HeldAliases>;
 type LiveAliasSet = HashSet<AliasId>;
 type LiveAliasLattice = lattice::Lattice<BasicBlock, LiveAliasSet>;
 
-pub fn compute(mir: &Mir) -> HashMap<(DefId, Option<AnyMode>), Lifetimes> {
+pub fn compute(mir: &Mir) -> LifetimesMap {
     mir.bodies
         .iter()
         .map(|(&key, body)| (key, compute_lifetimes(body)))
@@ -117,6 +123,7 @@ fn collect_alias_births(body: &Body) -> HashMap<AliasId, Alias> {
                         register: register_of(borrowed),
                         kind: *mutability,
                         with_lend: pending_with_lend.remove(&place.local),
+                        span: stmt.span,
                     },
                 );
             }

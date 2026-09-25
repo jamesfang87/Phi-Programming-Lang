@@ -166,6 +166,10 @@ pub const MAIN_RETURNS_A_VALUE: &str = "E0367";
 pub const MAIN_IS_GENERIC: &str = "E0368";
 /// A binding is assigned through but not declared `mut`.
 pub const NOT_MUTABLE: &str = "E0369";
+/// A value is written through a shared reference.
+pub const WRITE_THROUGH_SHARED_REF: &str = "E0370";
+/// A reference to a local is returned from the function that owns it.
+pub const RETURNED_LOCAL_REFERENCE: &str = "E0371";
 
 // Trait solving ------------------------------------------------------------
 
