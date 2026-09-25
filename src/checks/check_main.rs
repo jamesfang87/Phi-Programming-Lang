@@ -37,9 +37,6 @@ fn check_signature(session: &Session, hir: &Hir, def_id: DefId) {
     }
 }
 
-/// Every function named `main` at the crate root or in one of the root's direct child modules,
-/// in declaration order. A `main` nested any deeper is not a candidate: codegen would not call
-/// it, so it must not be mistaken for an entry point here.
 pub(crate) fn crate_root_main_candidates(session: &Session, hir: &Hir) -> Vec<DefId> {
     let root = hir.root();
     let mut candidates: Vec<DefId> = root

@@ -10,7 +10,7 @@ pub struct Place {
 }
 
 impl Place {
-    /// This is the whole-value place naming `local` directly, with no projection.
+
     pub fn from_local(local: Local) -> Self {
         Place {
             local,
@@ -19,20 +19,17 @@ impl Place {
     }
 }
 
-/// `Projection` represents one step of a [`Place`]'s projection.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Projection {
-    /// `Deref` represents `*p`
+
     Deref,
-    /// `Field` addresses the `n`th field of a struct, tuple, tuple-variant payload, or
-    /// record-variant payload.
+
     Field(u32),
-    /// `Index` represents `a[i]`, where `i` is itself a local holding the index.
+
     Index(Local),
-    /// `ConstantIndex` represents `a[N]` where N is a compile-time-constant
+
     ConstantIndex(u32),
-    /// `Downcast` narrows an enum place to one variant's payload and is required before any
-    /// `Field` projection into that payload is well-typed.
+
     Downcast(VariantIdx),
 }
 

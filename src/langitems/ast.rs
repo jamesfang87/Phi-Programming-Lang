@@ -37,7 +37,7 @@ pub fn collect(session: &Session, symbol_tab: &SymbolTable<'_>, root: NodeId) ->
             Some(AstType::Def(def)) => {
                 items.insert(item, def.node_id());
             }
-            _ => match symbol_tab.lookup_value_path(root, &path) {
+            _ => match symbol_tab.probe_value_path(root, &path) {
                 Some(Res::Function(id)) => {
                     items.insert(item, id);
                 }

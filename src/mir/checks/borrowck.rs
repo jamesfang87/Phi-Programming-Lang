@@ -11,30 +11,27 @@ pub(crate) mod exclusivity;
 pub(crate) mod lifetimes;
 pub(crate) mod returned_reference;
 
-/// `Register` is a simplification of [`Place`](crate::mir::Place) for borrowcking. It
-/// only contains projections (field access and constant index) for the purposes of narrowing
-/// down the memory location.
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct Register {
     pub owner: Local,
-    pub subregister: Vec<SubRegisters>,
+    pub subregister: Vec<SubRegister>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
-pub enum SubRegisters {
+pub enum SubRegister {
     Deref,
     Field(u32),
     ConstantIndex(u32),
 }
 
-pub(crate) fn register_of(place: &Place) -> Register {
+pub(crate) fn to_register(place: &Place) -> Register {
     let mut subregister = Vec::with_capacity(place.projections.len());
     for projection in &place.projections {
         match *projection {
-            Projection::Deref => subregister.push(SubRegisters::Deref),
-            Projection::Field(n) => subregister.push(SubRegisters::Field(n)),
+            Projection::Deref => subregister.push(SubRegister::Deref),
+            Projection::Field(n) => subregister.push(SubRegister::Field(n)),
             Projection::ConstantIndex(offset) => {
-                subregister.push(SubRegisters::ConstantIndex(offset))
+                subregister.push(SubRegister::ConstantIndex(offset))
             }
             Projection::Downcast(_) | Projection::Index(_) => {}
         }
@@ -47,9 +44,9 @@ pub(crate) fn register_of(place: &Place) -> Register {
 
 pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
     definite_init::check(session, tcx, mir);
-    let lifetimes = lifetimes::compute(mir);
-    exclusivity::check_with(session, mir, &lifetimes);
-    returned_reference::check(session, tcx, mir, &lifetimes);
+    let computed = lifetimes::compute_lifetimes_map(mir);
+    exclusivity::check_with_lifetimes(session, mir, &computed);
+    returned_reference::check(session, tcx, mir, &computed);
     element_moves::check(session, tcx, mir);
     captures::check(session, hir, tcx, mir);
 }

@@ -15,7 +15,7 @@ pub enum AbiClass {
     Void,
 }
 
-pub fn abi_class(tcx: &TyCtx, ty: Ty) -> AbiClass {
+pub fn classify_abi(tcx: &TyCtx, ty: Ty) -> AbiClass {
     match tcx.kind(ty) {
         TyKind::Unit | TyKind::Never => AbiClass::Void,
         TyKind::Ref { base, .. } | TyKind::Iso(base) if is_unsized(tcx, *base) => AbiClass::Fat,
@@ -38,16 +38,18 @@ pub fn llvm_type<'ctx>(
     let computed = match tcx.kind(ty).clone() {
         TyKind::Primitive(prim) => primitive_llvm_type(cx, prim),
         TyKind::Unit => cx.llvm.struct_type(&[], false).into(),
-        TyKind::Ref { base, .. } | TyKind::Iso(base) if is_unsized(tcx, base) => two_word_type(cx),
+        TyKind::Ref { base, .. } | TyKind::Iso(base) if is_unsized(tcx, base) => {
+            fat_pointer_type(cx)
+        }
         TyKind::Ref { .. } | TyKind::Iso(_) => cx.llvm.ptr_type(Default::default()).into(),
-        TyKind::Fun { .. } => two_word_type(cx),
+        TyKind::Fun { .. } => fat_pointer_type(cx),
         TyKind::Tuple(elems) => struct_llvm_type(cx, tcx, mir, &elems),
         TyKind::Array {
             elem,
             len: Some(len),
         } => array_llvm_type(cx, tcx, mir, elem, len),
         TyKind::Adt { def, args } => adt_llvm_type(cx, tcx, mir, def, &args),
-        TyKind::Dyn { .. } => two_word_type(cx),
+        TyKind::Dyn { .. } => fat_pointer_type(cx),
         TyKind::Never => cx.llvm.struct_type(&[], false).into(),
         other => unreachable!("no LLVM representation for {other:?} at codegen time"),
     };
@@ -65,11 +67,11 @@ fn primitive_llvm_type<'ctx>(cx: &CodegenCtx<'ctx>, prim: PrimTy) -> BasicTypeEn
         PrimTy::F32 => cx.llvm.f32_type().into(),
         PrimTy::F64 => cx.llvm.f64_type().into(),
         PrimTy::Bool => cx.llvm.bool_type().into(),
-        PrimTy::Str => two_word_type(cx),
+        PrimTy::Str => fat_pointer_type(cx),
     }
 }
 
-fn two_word_type<'ctx>(cx: &CodegenCtx<'ctx>) -> BasicTypeEnum<'ctx> {
+fn fat_pointer_type<'ctx>(cx: &CodegenCtx<'ctx>) -> BasicTypeEnum<'ctx> {
     cx.llvm
         .struct_type(
             &[
@@ -112,45 +114,69 @@ fn adt_llvm_type<'ctx>(
     def: crate::hir::DefId,
     args: &[Ty],
 ) -> BasicTypeEnum<'ctx> {
-    let adt_ty = tcx_adt_ty(tcx, def, args);
+    let adt_ty = tcx.mk_adt(def, args.to_vec());
     match tcx.enum_variant_count(def) {
-        Some(_) => {
-            let layout = layout::layout_of(tcx, mir, adt_ty);
-            let tag_ty = match layout
-                .tag_ty
-                .expect("an enum's own layout always has a tag")
-            {
-                layout::TagTy::I8 => cx.llvm.i8_type(),
-                layout::TagTy::I16 => cx.llvm.i16_type(),
-                layout::TagTy::I32 => cx.llvm.i32_type(),
-            };
-            let tag_size = tag_ty.get_bit_width() as u64 / 8;
-            let pad_bytes = layout.payload_offset - tag_size;
-            let payload_bytes = layout.size - layout.payload_offset;
-            let name = format!("enum.{}", def.index());
-            let opaque = cx.llvm.opaque_struct_type(&name);
-            let pad = cx.llvm.i8_type().array_type(pad_bytes as u32);
-            let payload = cx.llvm.i8_type().array_type(payload_bytes as u32);
-            opaque.set_body(&[tag_ty.into(), pad.into(), payload.into()], false);
-            opaque.into()
-        }
-        None => {
-            let layout = layout::layout_of(tcx, mir, adt_ty);
-            let name = format!("struct.{}", def.index());
-            let opaque = cx.llvm.opaque_struct_type(&name);
-            let fields: Vec<BasicTypeEnum<'ctx>> = layout
-                .fields
-                .iter()
-                .map(|field| llvm_type(cx, tcx, mir, field.ty))
-                .collect();
-            opaque.set_body(&fields, false);
-            opaque.into()
-        }
+        Some(_) => enum_llvm_type(cx, tcx, mir, def, adt_ty),
+        None => adt_struct_llvm_type(cx, tcx, mir, def, adt_ty),
     }
 }
 
-fn tcx_adt_ty(tcx: &mut TyCtx, def: crate::hir::DefId, args: &[Ty]) -> Ty {
-    tcx.mk_adt(def, args.to_vec())
+/// Returns an enum's LLVM type as a `{ tag, pad, payload }` struct.
+fn enum_llvm_type<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    def: crate::hir::DefId,
+    adt_ty: Ty,
+) -> BasicTypeEnum<'ctx> {
+    let layout = layout::layout_of(tcx, mir, adt_ty);
+    let tag_ty = tag_llvm_type(
+        cx,
+        layout
+            .tag_ty
+            .expect("an enum's own layout always has a tag"),
+    );
+    let tag_size = tag_ty.get_bit_width() as u64 / 8;
+    let pad_bytes = layout.payload_offset - tag_size;
+    let payload_bytes = layout.size - layout.payload_offset;
+    let name = format!("enum.{}", def.index());
+    let opaque = cx.llvm.opaque_struct_type(&name);
+    let pad = cx.llvm.i8_type().array_type(pad_bytes as u32);
+    let payload = cx.llvm.i8_type().array_type(payload_bytes as u32);
+    opaque.set_body(&[tag_ty.into(), pad.into(), payload.into()], false);
+    opaque.into()
+}
+
+/// Returns the LLVM integer type for an enum's tag.
+pub(super) fn tag_llvm_type<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tag_ty: layout::TagTy,
+) -> inkwell::types::IntType<'ctx> {
+    match tag_ty {
+        layout::TagTy::I8 => cx.llvm.i8_type(),
+        layout::TagTy::I16 => cx.llvm.i16_type(),
+        layout::TagTy::I32 => cx.llvm.i32_type(),
+    }
+}
+
+/// Returns a struct's LLVM type as one field per declared field.
+fn adt_struct_llvm_type<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    def: crate::hir::DefId,
+    adt_ty: Ty,
+) -> BasicTypeEnum<'ctx> {
+    let layout = layout::layout_of(tcx, mir, adt_ty);
+    let name = format!("struct.{}", def.index());
+    let opaque = cx.llvm.opaque_struct_type(&name);
+    let fields: Vec<BasicTypeEnum<'ctx>> = layout
+        .fields
+        .iter()
+        .map(|field| llvm_type(cx, tcx, mir, field.ty))
+        .collect();
+    opaque.set_body(&fields, false);
+    opaque.into()
 }
 
 pub fn function_type<'ctx>(
@@ -170,7 +196,7 @@ pub fn function_type<'ctx>(
         push_param_types(cx, tcx, mir, param, &mut param_llvm);
     }
 
-    match abi_class(tcx, ret_ty) {
+    match classify_abi(tcx, ret_ty) {
         AbiClass::Void => cx.llvm.void_type().fn_type(&param_llvm, false),
         AbiClass::Indirect => {
             let mut params = vec![cx.llvm.ptr_type(Default::default()).into()];
@@ -188,7 +214,7 @@ pub(super) fn push_param_types<'ctx>(
     ty: Ty,
     out: &mut Vec<BasicMetadataTypeEnum<'ctx>>,
 ) {
-    match abi_class(tcx, ty) {
+    match classify_abi(tcx, ty) {
         AbiClass::Void => {}
         AbiClass::Fat => {
             out.push(cx.llvm.ptr_type(Default::default()).into());

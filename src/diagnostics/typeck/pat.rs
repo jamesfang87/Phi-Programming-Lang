@@ -5,7 +5,7 @@ use crate::diagnostics::display::DisplayCtx;
 use crate::driver::source::SrcSpan;
 use crate::hir::{Hir, HirId};
 use crate::session::Session;
-use crate::typeck::pat::ResolvedVariant;
+use crate::typeck::check::pat::ResolvedVariant;
 use crate::typeck::ty::unify::UnifyError;
 
 pub fn report_literal_pattern_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {

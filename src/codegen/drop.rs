@@ -8,7 +8,7 @@ use crate::mir::Mir;
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
 
-pub fn drop_glue<'ctx>(
+pub fn emit_drop_glue<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
     mir: &Mir,
@@ -18,24 +18,24 @@ pub fn drop_glue<'ctx>(
     if !tcx.needs_drop(ty) {
         return;
     }
-    let glue = glue_function(cx, tcx, mir, ty);
+    let glue = get_or_build_glue_function(cx, tcx, mir, ty);
     cx.builder.build_call(glue, &[ptr.into()], "").unwrap();
 }
 
-pub fn glue_pointer<'ctx>(
+pub fn find_glue_pointer<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
     mir: &Mir,
     ty: Ty,
 ) -> Option<PointerValue<'ctx>> {
     tcx.needs_drop(ty).then(|| {
-        glue_function(cx, tcx, mir, ty)
+        get_or_build_glue_function(cx, tcx, mir, ty)
             .as_global_value()
             .as_pointer_value()
     })
 }
 
-fn glue_function<'ctx>(
+fn get_or_build_glue_function<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
     mir: &Mir,
@@ -63,7 +63,7 @@ fn glue_function<'ctx>(
         .get_nth_param(0)
         .expect("drop glue takes the value's address")
         .into_pointer_value();
-    emit_body(cx, tcx, mir, value, ty);
+    emit_drop_body(cx, tcx, mir, value, ty);
     cx.builder.build_return(None).unwrap();
     if let Some(block) = resume_at {
         cx.builder.position_at_end(block);
@@ -72,7 +72,7 @@ fn glue_function<'ctx>(
     glue
 }
 
-fn emit_body<'ctx>(
+fn emit_drop_body<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
     mir: &Mir,
@@ -81,40 +81,79 @@ fn emit_body<'ctx>(
 ) {
     match tcx.kind(ty).clone() {
         TyKind::Iso(base) if is_unsized(tcx, base) => {
-            let (data, meta) = load_fat(cx, ptr);
-            match tcx.kind(base).clone() {
-                TyKind::Array { elem, .. } => emit_element_loop(cx, tcx, mir, data, elem, meta),
-                TyKind::Dyn { .. } => emit_virtual_drop(cx, data, meta),
-                other => unreachable!("no unsized type but a slice or a `dyn`: {other:?}"),
-            }
-            free_allocation(cx, data);
+            emit_unsized_iso_drop(cx, tcx, mir, ptr, base)
         }
-        TyKind::Iso(base) => {
-            let data = load_thin(cx, ptr);
-            drop_glue(cx, tcx, mir, data, base);
-            free_allocation(cx, data);
-        }
+        TyKind::Iso(base) => emit_sized_iso_drop(cx, tcx, mir, ptr, base),
         TyKind::Fun { .. } => emit_environment_drop(cx, ptr),
         TyKind::Tuple(elems) => emit_field_drops(cx, tcx, mir, ptr, ty, &elems),
-        TyKind::Adt { def, args } => match tcx.enum_variant_count(def) {
-            None => {
-                let fields = tcx.struct_field_tys(def, &args);
-                emit_field_drops(cx, tcx, mir, ptr, ty, &fields);
-            }
-            Some(variant_count) => {
-                emit_variant_drops(cx, tcx, mir, ptr, ty, def, &args, variant_count)
-            }
-        },
+        TyKind::Adt { def, args } => emit_adt_drop(cx, tcx, mir, ptr, ty, def, &args),
         TyKind::Array {
             elem,
             len: Some(len),
-        } => {
-            let len = cx.llvm.i64_type().const_int(len, false);
-            emit_element_loop(cx, tcx, mir, ptr, elem, len);
-        }
+        } => emit_array_drop(cx, tcx, mir, ptr, elem, len),
         other => {
             unreachable!("no drop glue for {other:?}, which `needs_drop` reported owns something")
         }
+    }
+}
+
+/// Drops an `iso` whose pointee has no static size: run the element or virtual drop through the
+/// fat pointer's metadata, then free the allocation.
+fn emit_unsized_iso_drop<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    base: Ty,
+) {
+    let (data, meta) = load_fat(cx, ptr);
+    match tcx.kind(base).clone() {
+        TyKind::Array { elem, .. } => emit_element_loop(cx, tcx, mir, data, elem, meta),
+        TyKind::Dyn { .. } => emit_virtual_drop(cx, data, meta),
+        other => unreachable!("no unsized type but a slice or a `dyn`: {other:?}"),
+    }
+    free_allocation(cx, data);
+}
+
+fn emit_sized_iso_drop<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    base: Ty,
+) {
+    let data = load_thin(cx, ptr);
+    emit_drop_glue(cx, tcx, mir, data, base);
+    free_allocation(cx, data);
+}
+
+fn emit_array_drop<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    elem: Ty,
+    len: u64,
+) {
+    let len = cx.llvm.i64_type().const_int(len, false);
+    emit_element_loop(cx, tcx, mir, ptr, elem, len);
+}
+
+fn emit_adt_drop<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+    def: crate::hir::DefId,
+    args: &[Ty],
+) {
+    match tcx.enum_variant_count(def) {
+        None => {
+            let fields = tcx.struct_field_tys(def, args);
+            emit_field_drops(cx, tcx, mir, ptr, ty, &fields);
+        }
+        Some(variant_count) => emit_variant_drops(cx, tcx, mir, ptr, ty, def, args, variant_count),
     }
 }
 
@@ -145,14 +184,14 @@ fn emit_environment_drop<'ctx>(cx: &mut CodegenCtx<'ctx>, ptr: PointerValue<'ctx
         .unwrap();
 
     cx.builder.position_at_end(owned);
-    emit_glue_word_call(cx, env);
+    emit_environment_glue_call(cx, env);
     free_allocation(cx, env);
     cx.builder.build_unconditional_branch(done).unwrap();
 
     cx.builder.position_at_end(done);
 }
 
-fn emit_glue_word_call<'ctx>(cx: &mut CodegenCtx<'ctx>, env: PointerValue<'ctx>) {
+fn emit_environment_glue_call<'ctx>(cx: &mut CodegenCtx<'ctx>, env: PointerValue<'ctx>) {
     let ptr_ty = cx.llvm.ptr_type(Default::default());
     let glue_word = cx
         .builder
@@ -219,10 +258,10 @@ fn load_fat<'ctx>(
 ) -> (PointerValue<'ctx>, IntValue<'ctx>) {
     let ptr_ty = cx.llvm.ptr_type(Default::default());
     let i64_ty = cx.llvm.i64_type();
-    let two_word_ty = cx.llvm.struct_type(&[ptr_ty.into(), i64_ty.into()], false);
+    let fat_pointer_ty = cx.llvm.struct_type(&[ptr_ty.into(), i64_ty.into()], false);
     let data_field = cx
         .builder
-        .build_struct_gep(two_word_ty, ptr, 0, "iso.data_ptr")
+        .build_struct_gep(fat_pointer_ty, ptr, 0, "iso.data_ptr")
         .unwrap();
     let data = cx
         .builder
@@ -231,7 +270,7 @@ fn load_fat<'ctx>(
         .into_pointer_value();
     let meta_field = cx
         .builder
-        .build_struct_gep(two_word_ty, ptr, 1, "iso.meta_ptr")
+        .build_struct_gep(fat_pointer_ty, ptr, 1, "iso.meta_ptr")
         .unwrap();
     let meta = cx
         .builder
@@ -317,8 +356,24 @@ fn emit_field_drops<'ctx>(
             .builder
             .build_struct_gep(struct_ty, ptr, index as u32, "drop.field")
             .unwrap();
-        drop_glue(cx, tcx, mir, field, field_ty);
+        emit_drop_glue(cx, tcx, mir, field, field_ty);
     }
+}
+
+/// Returns the variants whose payload owns something to drop.
+fn droppable_variant_indices(
+    tcx: &mut TyCtx,
+    def: crate::hir::DefId,
+    args: &[Ty],
+    variant_count: usize,
+) -> Vec<usize> {
+    (0..variant_count)
+        .filter(|&variant| {
+            tcx.variant_field_tys(def, args, variant)
+                .into_iter()
+                .any(|field| tcx.needs_drop(field))
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -332,13 +387,7 @@ fn emit_variant_drops<'ctx>(
     args: &[Ty],
     variant_count: usize,
 ) {
-    let droppable: Vec<usize> = (0..variant_count)
-        .filter(|&variant| {
-            tcx.variant_field_tys(def, args, variant)
-                .into_iter()
-                .any(|field| tcx.needs_drop(field))
-        })
-        .collect();
+    let droppable = droppable_variant_indices(tcx, def, args, variant_count);
     if droppable.is_empty() {
         return;
     }
@@ -433,7 +482,7 @@ fn emit_element_loop<'ctx>(
             .build_gep(elem_llvm_ty, base, &[current], "drop.elem_ptr")
             .unwrap()
     };
-    drop_glue(cx, tcx, mir, element, elem);
+    emit_drop_glue(cx, tcx, mir, element, elem);
     let next = cx
         .builder
         .build_int_add(current, i64_ty.const_int(1, false), "drop.next")
@@ -472,7 +521,7 @@ mod tests {
             .build_alloca(cx.llvm.ptr_type(Default::default()), "x")
             .unwrap();
 
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_ty);
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();
@@ -490,16 +539,16 @@ mod tests {
         let u8_ty = tcx.mk_prim(crate::nameres::PrimTy::U8);
         let slice_ty = tcx.mk_array(u8_ty, None);
         let iso_slice_ty = tcx.mk_iso(slice_ty);
-        let two_word_ty = cx.llvm.struct_type(
+        let fat_pointer_ty = cx.llvm.struct_type(
             &[
                 cx.llvm.ptr_type(Default::default()).into(),
                 cx.llvm.i64_type().into(),
             ],
             false,
         );
-        let alloca = cx.builder.build_alloca(two_word_ty, "x").unwrap();
+        let alloca = cx.builder.build_alloca(fat_pointer_ty, "x").unwrap();
 
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_slice_ty);
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_slice_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();
@@ -521,7 +570,7 @@ mod tests {
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
         let alloca = cx.builder.build_alloca(cx.llvm.i32_type(), "x").unwrap();
 
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, i32_ty);
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, i32_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();
@@ -563,7 +612,7 @@ mod tests {
             .builder
             .build_alloca(cx.llvm.ptr_type(Default::default()), "h")
             .unwrap();
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_handle_ty);
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_handle_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();
@@ -595,7 +644,7 @@ mod tests {
 
         let list_ty = adt_named(&hir, &mut tcx, "List");
         let alloca = cx.builder.build_alloca(cx.llvm.i64_type(), "l").unwrap();
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, list_ty);
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, list_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();
@@ -626,7 +675,7 @@ mod tests {
 
         let box_ty = adt_named(&hir, &mut tcx, "Box_");
         let alloca = cx.builder.build_alloca(cx.llvm.i64_type(), "b").unwrap();
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, box_ty);
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, box_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();
@@ -654,15 +703,15 @@ mod tests {
         let elem_ty = tcx.mk_iso(i32_ty);
         let slice_ty = tcx.mk_array(elem_ty, None);
         let iso_slice_ty = tcx.mk_iso(slice_ty);
-        let two_word_ty = cx.llvm.struct_type(
+        let fat_pointer_ty = cx.llvm.struct_type(
             &[
                 cx.llvm.ptr_type(Default::default()).into(),
                 cx.llvm.i64_type().into(),
             ],
             false,
         );
-        let alloca = cx.builder.build_alloca(two_word_ty, "s").unwrap();
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_slice_ty);
+        let alloca = cx.builder.build_alloca(fat_pointer_ty, "s").unwrap();
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_slice_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();
@@ -688,15 +737,15 @@ mod tests {
         let trait_def = crate::testing::named_def(&hir, "Greet");
         let dyn_ty = tcx.mk_dyn(trait_def, Vec::new());
         let iso_dyn_ty = tcx.mk_iso(dyn_ty);
-        let two_word_ty = cx.llvm.struct_type(
+        let fat_pointer_ty = cx.llvm.struct_type(
             &[
                 cx.llvm.ptr_type(Default::default()).into(),
                 cx.llvm.i64_type().into(),
             ],
             false,
         );
-        let alloca = cx.builder.build_alloca(two_word_ty, "d").unwrap();
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_dyn_ty);
+        let alloca = cx.builder.build_alloca(fat_pointer_ty, "d").unwrap();
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, iso_dyn_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();
@@ -728,7 +777,7 @@ mod tests {
 
         let point_ty = adt_named(&hir, &mut tcx, "Point");
         let alloca = cx.builder.build_alloca(cx.llvm.i64_type(), "p").unwrap();
-        drop_glue(&mut cx, &mut tcx, &mir, alloca, point_ty);
+        emit_drop_glue(&mut cx, &mut tcx, &mir, alloca, point_ty);
         cx.builder.build_return(None).unwrap();
 
         let ir = cx.module.print_to_string().to_string();

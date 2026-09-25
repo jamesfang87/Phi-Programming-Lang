@@ -3,14 +3,13 @@ use crate::typeck::ty::Ty;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum AnyMode {
-    /// Every `any` position becomes its bare `T`, taken by value.
     Owned,
-    /// Every `any` position becomes `&T`.
     Ref,
-    /// Every `any` position becomes `&mut T`.
     RefMut,
 }
 
+// TODO: this is unclear as to what instance refers to
+// is this a struct or a function or both
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Instance {
     pub def: DefId,

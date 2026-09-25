@@ -12,7 +12,7 @@ use crate::lexer::token::Token;
 use crate::mir;
 use crate::mir::{Body, Instance};
 use crate::nameres;
-use crate::options::Mode;
+use crate::driver::cli::Mode;
 use crate::parser::Parser;
 use crate::session::Session;
 use crate::typeck;
@@ -85,10 +85,10 @@ fn run_frontend(
             options.exclude_core_in_emit,
         );
     }
-    crate::checks::mutability::check(session, &hir, &checked.tcx, &checked.types);
+    crate::checks::check_mutability(session, &hir, &checked.tcx, &checked.types);
     // Signature rules for the entry point run before lowering: a malformed `main` should be
     // reported, not turned into MIR first.
-    let main = crate::checks::entry_point::check(session, &hir);
+    let main = crate::checks::check_entry_point(session, &hir);
 
     let program = mir::lower::lower(session, &hir, &mut checked.tcx, &checked.types, config.mode);
     mir::checks::run_checks(session, &hir, &mut checked.tcx, &program);

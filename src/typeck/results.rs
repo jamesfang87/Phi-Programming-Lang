@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use crate::hir::{BindingMode, DefId, HirId};
 use crate::typeck::ty::Ty;
 
-/// What a call resolves to.
 #[derive(Clone, Debug)]
 pub struct ResolvedCall {
     pub def: DefId,

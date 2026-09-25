@@ -12,12 +12,10 @@ pub mod langitems;
 pub mod mir;
 pub mod nameres;
 pub mod parser;
+pub(crate) mod spelling;
 pub mod typeck;
 pub(crate) mod wording;
 
-/// How serious a diagnostic is.
-///
-/// Controls both the `ariadne` report kind used to render it and the color it's shown in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -49,8 +47,7 @@ pub struct SecondaryLabel {
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub severity: Severity,
-    /// Stable identity for this kind of diagnostic, if one is assigned. Tests should target
-    /// this rather than the [`Diagnostic::message`], which may be reworded.
+
     pub code: Option<&'static str>,
     pub message: String,
     pub span: Option<SrcSpan>,
@@ -80,31 +77,24 @@ impl Diagnostic {
         }
     }
 
-    /// An error about the compilation as a whole rather than about a place in the source.
-    /// Typically used for missing lang items
     pub fn error_global(message: impl Into<String>) -> Self {
         Self::new(Severity::Error, message, None)
     }
 
-    /// A warning about the program as a whole, with no source span to point at.
     pub fn warning_global(message: impl Into<String>) -> Self {
         Self::new(Severity::Warning, message, None)
     }
 
-    /// Attaches the stable code for this kind of diagnostic.
     pub fn with_code(mut self, code: &'static str) -> Self {
         self.code = Some(code);
         self
     }
 
-    /// Sets the text shown right under the highlighted span, avoiding repetition of the
-    /// diagnostic message.
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self
     }
 
-    /// Sets a trailing "help:" note shown after the diagnostic.
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
         self
@@ -133,8 +123,29 @@ impl Diagnostic {
             report = report.with_code(code);
         }
 
-        // `ariadne` starts a new source group, with its own file header, whenever a label sits
-        // above the one before it. Adding the labels in source order keeps them in one group.
+        let mut located = Vec::new();
+        for (at, message, color) in self.ordered_labels(span, &primary, sources) {
+            report =
+                report.with_label(Label::new(at.id()).with_message(message).with_color(color));
+            located.push(at);
+        }
+
+        if let Some(help) = &self.help {
+            report = report.with_help(help);
+        }
+
+        report
+            .finish()
+            .eprint(ariadne::sources(label_sources(located)))
+            .unwrap();
+    }
+
+    fn ordered_labels<'a>(
+        &'a self,
+        span: SrcSpan,
+        primary: &Located,
+        sources: &SrcMap,
+    ) -> Vec<(Located, &'a str, Color)> {
         let mut labelled = vec![(
             span,
             primary.clone(),
@@ -153,28 +164,12 @@ impl Diagnostic {
             ));
         }
         labelled.sort_by_key(|(span, ..)| (span.get_begin(), span.get_end()));
-
-        let mut located = Vec::with_capacity(labelled.len());
-        for (_, at, message, color) in labelled {
-            report = report.with_label(Label::new(at.id()).with_message(message).with_color(color));
-            located.push(at);
-        }
-
-        if let Some(help) = &self.help {
-            report = report.with_help(help);
-        }
-
-        let mut cache: Vec<(&'static str, String)> = Vec::with_capacity(located.len());
-        for at in located {
-            if !cache.iter().any(|(name, _)| *name == at.name) {
-                cache.push((at.name, at.text));
-            }
-        }
-
-        report.finish().eprint(ariadne::sources(cache)).unwrap();
+        labelled
+            .into_iter()
+            .map(|(_, at, message, color)| (at, message, color))
+            .collect()
     }
 
-    /// Renders this diagnostic to stderr with no source snippet.
     fn eprint_bare(&self) {
         let color = Self::config_colors().then(|| self.severity.color());
 
@@ -201,7 +196,6 @@ impl Diagnostic {
     }
 }
 
-/// The color secondary labels are drawn in.
 const SECONDARY_COLOR: Color = Color::Blue;
 
 #[derive(Clone)]
@@ -227,10 +221,19 @@ impl Located {
         })
     }
 
-    /// How `ariadne` addresses this location: which source, and where in it.
     fn id(&self) -> (&'static str, Range<usize>) {
         (self.name, self.range.clone())
     }
+}
+
+fn label_sources(located: Vec<Located>) -> Vec<(&'static str, String)> {
+    let mut cache: Vec<(&'static str, String)> = Vec::with_capacity(located.len());
+    for at in located {
+        if !cache.iter().any(|(name, _)| *name == at.name) {
+            cache.push((at.name, at.text));
+        }
+    }
+    cache
 }
 
 fn byte_source(src: &[char]) -> (String, Vec<usize>) {
@@ -254,29 +257,22 @@ impl Diagnostics {
         Diagnostics::default()
     }
 
-    /// Records `diagnostic`. It isn't rendered until [`Diagnostics::report`] is called.
     pub fn emit(&mut self, diagnostic: Diagnostic) {
         self.diagnostics.push(diagnostic);
     }
 
-    /// Records an error-severity diagnostic. See [`Diagnostics::emit`].
     pub fn error(&mut self, message: impl Into<String>, span: SrcSpan) {
         self.emit(Diagnostic::error(message, span));
     }
 
-    /// Records a warning-severity diagnostic. See [`Diagnostics::emit`].
     pub fn warning(&mut self, message: impl Into<String>, span: SrcSpan) {
         self.emit(Diagnostic::warning(message, span));
     }
 
-    /// Returns every diagnostic recorded so far, in the order it was recorded.
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
         self.diagnostics.clone()
     }
 
-    /// Returns just the message text of every diagnostic recorded so far, in the order they were
-    /// recorded. The spans and labels are what [`Diagnostics::report`] renders; a caller
-    /// comparing against expected output wants only the messages.
     pub fn messages(&self) -> Vec<String> {
         self.diagnostics
             .iter()
@@ -284,13 +280,10 @@ impl Diagnostics {
             .collect()
     }
 
-    /// Discards every diagnostic collected so far.
     pub fn clear(&mut self) {
         self.diagnostics.clear();
     }
 
-    /// Renders every diagnostic collected so far to stderr in source order, takes them out of the
-    /// collection, and returns whether any of them was error-severity.
     pub fn report(&mut self, sources: &SrcMap) -> bool {
         let pending = std::mem::take(&mut self.diagnostics);
         let had_error = pending.iter().any(|diag| diag.severity == Severity::Error);
@@ -301,7 +294,6 @@ impl Diagnostics {
     }
 }
 
-/// Sorts diagnostics into the order they are printed.
 pub(crate) fn report_order(mut diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
     diagnostics.sort_by_key(|diag| diag.span.map(|span| (span.get_begin(), span.get_end())));
     diagnostics

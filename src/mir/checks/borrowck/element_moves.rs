@@ -5,7 +5,6 @@ use crate::mir::{Place, Projection};
 use crate::session::Session;
 use crate::typeck::ty::ctx::TyCtx;
 
-// TODO: not exactly sure what this does or why its a separate module
 pub fn check(session: &Session, tcx: &mut TyCtx, mir: &Mir) {
     for body in mir.bodies.values() {
         check_body(session, tcx, body);
@@ -50,7 +49,6 @@ fn check_operand(
     report_move_out_of_array(session, name, span);
 }
 
-// TODO: why is this pub(crate)?
 pub(crate) fn element_of_array(place: &Place) -> bool {
     place.projections.iter().any(|projection| {
         matches!(

@@ -1,7 +1,9 @@
+use crate::ast::Ident;
 use crate::driver::source::SrcSpan;
 use crate::hir::{HirId, PatKind, StmtKind};
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{Place, StatementKind, TerminatorKind};
+use crate::typeck::ty::Ty;
 
 impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn lower_block(&mut self, block_id: impl Into<HirId>, dest: Option<Place>) {
@@ -31,8 +33,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.replay_obligations(&obligations);
     }
 
-    /// Lowers one statement, and reports whether it unconditionally diverges -- see
-    /// [`BodyLowerCtx::lower_block`]'s docs for exactly what that does and does not detect.
     fn lower_stmt(&mut self, stmt_id: impl Into<HirId>) -> bool {
         let stmt_id = stmt_id.into();
         let stmt = self.hir.stmt(stmt_id);
@@ -97,50 +97,79 @@ impl<'a> BodyLowerCtx<'a> {
     ) {
         let (pat, init) = (pat.into(), init.into());
         let else_block = else_block.map(Into::into);
+        let init_ty = self.compute_init_ty(init);
+
         if else_block.is_none()
             && let PatKind::Binding { name, .. } = self.hir.pat(pat).kind
         {
-            let init_ty = self
-                .types
-                .unsize(init)
-                .unwrap_or_else(|| self.expr_ty(init));
-            let local = self.new_local(init_ty, Some(name), span);
-            self.push_stmt(StatementKind::StorageLive(local), span);
-            self.lower_expr_into(init, Place::from_local(local));
-            self.bind_local(pat, local);
-            self.register_exit_obligation(ExitObligation::StorageDead(local));
+            self.lower_binding_let(pat, init, name, init_ty, span);
             return;
         }
+        self.lower_scrutinee_let(pat, init, else_block, init_ty, span);
+    }
 
-        let init_ty = self
-            .types
+    /// Returns the type a `let` initializer is stored at, which is its unsized coercion target
+    /// when it has one and its own type otherwise.
+    fn compute_init_ty(&mut self, init: HirId) -> Ty {
+        self.types
             .unsize(init)
-            .unwrap_or_else(|| self.expr_ty(init));
+            .unwrap_or_else(|| self.expr_ty(init))
+    }
+
+    fn lower_binding_let(
+        &mut self,
+        pat: HirId,
+        init: HirId,
+        name: Ident,
+        init_ty: Ty,
+        span: SrcSpan,
+    ) {
+        let local = self.new_local(init_ty, Some(name), span);
+        self.push_stmt(StatementKind::StorageLive(local), span);
+        self.lower_expr_into(init, Place::from_local(local));
+        self.bind_local(pat, local);
+        self.register_exit_obligation(ExitObligation::StorageDead(local));
+    }
+
+    fn lower_scrutinee_let(
+        &mut self,
+        pat: HirId,
+        init: HirId,
+        else_block: Option<HirId>,
+        init_ty: Ty,
+        span: SrcSpan,
+    ) {
         let scrutinee = self.new_local(init_ty, None, span);
         self.push_stmt(StatementKind::StorageLive(scrutinee), span);
         self.lower_expr_into(init, Place::from_local(scrutinee));
 
         match else_block {
             None => self.bind_pat(pat, Place::from_local(scrutinee)),
-            Some(else_id) => {
-                let fail_block = self.new_block();
-                self.test_pat(pat, Place::from_local(scrutinee), fail_block);
-                self.bind_pat(pat, Place::from_local(scrutinee));
-                let after = self.current_block();
-
-                self.switch_to(fail_block);
-                self.lower_block(else_id, None);
-                self.set_terminator(TerminatorKind::Unreachable, span);
-
-                self.switch_to(after);
-            }
+            Some(else_id) => self.lower_let_else(pat, else_id, scrutinee, span),
         }
         self.register_exit_obligation(ExitObligation::StorageDead(scrutinee));
     }
 
-    // A plain binding is bound directly to the lend's own local, so the loan the initializer
-    // establishes stays attached to the name the `with` declares. Any other pattern destructures
-    // through the same local, exactly as `let` destructures its own scrutinee.
+    /// Lowers the `else` block of a refutable `let`, which runs when `scrutinee` fails to match.
+    fn lower_let_else(
+        &mut self,
+        pat: HirId,
+        else_id: HirId,
+        scrutinee: crate::mir::Local,
+        span: SrcSpan,
+    ) {
+        let fail_block = self.new_block();
+        self.test_pat(pat, Place::from_local(scrutinee), fail_block);
+        self.bind_pat(pat, Place::from_local(scrutinee));
+        let after = self.current_block();
+
+        self.switch_to(fail_block);
+        self.lower_block(else_id, None);
+        self.set_terminator(TerminatorKind::Unreachable, span);
+
+        self.switch_to(after);
+    }
+
     fn lower_with_lend(&mut self, lend: &crate::hir::WithLend) {
         let span = lend.span;
         let ty = self.expr_ty(lend.init);
@@ -192,7 +221,7 @@ impl<'a> BodyLowerCtx<'a> {
         let fresh = self.new_block();
         self.switch_to(fresh);
     }
-    /// contained within this one replay step, before this loop moves on to the next obligation.
+
     pub(crate) fn replay_obligations(&mut self, obligations: &[ExitObligation]) {
         for &obligation in obligations {
             match obligation {

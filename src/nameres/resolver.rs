@@ -116,7 +116,7 @@ impl<'ast> Resolver<'ast> {
                 Some(value) => self.visit_expr(value),
                 None => {
                     let path = Path::from(field.name);
-                    let res = match self.table.lookup_value_path(self.current_module, &path) {
+                    let res = match self.table.probe_value_path(self.current_module, &path) {
                         Some(res) => res,
                         None => {
                             let suggestions =
@@ -145,7 +145,7 @@ impl<'ast> Resolver<'ast> {
     fn resolve_access_base(&mut self, base: &'ast Expr) {
         match &base.kind {
             ExprKind::Path(path) => {
-                let res = match self.table.lookup_value_path(self.current_module, path) {
+                let res = match self.table.probe_value_path(self.current_module, path) {
                     Some(res) => res,
                     None => self.table.lookup_type_path(self.current_module, path),
                 };
@@ -350,7 +350,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
     fn visit_expr(&mut self, expr: &'ast Expr) {
         match &expr.kind {
             ExprKind::Path(path) => {
-                let res = match self.table.lookup_value_path(self.current_module, path) {
+                let res = match self.table.probe_value_path(self.current_module, path) {
                     Some(res) => res,
                     None => {
                         let suggestions = self.table.suggest_value_names(self.current_module, path);

@@ -1,37 +1,42 @@
 use std::collections::HashSet;
 
-use crate::mir::checks::borrowck::{Register, register_of};
+use crate::mir::checks::borrowck::{Register, to_register};
 use crate::mir::{
     BasicBlock, Body, Operand, Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
 };
 
+/// Whether a place still owns its value, has been moved, or may have been moved on some path.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Ownership {
     Owned,
     Moved,
-    Maybe,
+    MaybeMoved,
 }
 
+/// The registers that may have been moved and the subset that definitely has been.
 #[derive(Clone, PartialEq, Eq, Default, Debug)]
 pub(super) struct MoveState {
-    may: HashSet<Register>,
-    must: HashSet<Register>,
+    maybe_moved: HashSet<Register>,
+    definitely_moved: HashSet<Register>,
 }
 
 impl MoveState {
     fn meet(predecessors: &[&MoveState]) -> MoveState {
-        let mut may = HashSet::new();
+        let mut maybe_moved = HashSet::new();
         for state in predecessors {
-            may.extend(state.may.iter().cloned());
+            maybe_moved.extend(state.maybe_moved.iter().cloned());
         }
-        let mut must: HashSet<Register> = match predecessors.first() {
-            Some(first) => first.must.clone(),
+        let mut definitely_moved: HashSet<Register> = match predecessors.first() {
+            Some(first) => first.definitely_moved.clone(),
             None => HashSet::new(),
         };
         for state in &predecessors[predecessors.len().min(1)..] {
-            must.retain(|register| state.must.contains(register));
+            definitely_moved.retain(|register| state.definitely_moved.contains(register));
         }
-        MoveState { may, must }
+        MoveState {
+            maybe_moved,
+            definitely_moved,
+        }
     }
 
     fn covers(set: &HashSet<Register>, register: &Register, from: usize) -> bool {
@@ -43,33 +48,33 @@ impl MoveState {
         })
     }
 
-    pub(super) fn status(&self, place: &Place) -> Ownership {
-        self.status_from(&register_of(place), 0)
+    pub(super) fn ownership_of(&self, place: &Place) -> Ownership {
+        self.ownership_from(&to_register(place), 0)
     }
 
-    pub(super) fn status_within(&self, place: &Place, covered: &Register) -> Ownership {
-        let register = register_of(place);
+    pub(super) fn ownership_within(&self, place: &Place, covered: &Register) -> Ownership {
+        let register = to_register(place);
         debug_assert!(
             register.owner == covered.owner
                 && register.subregister.starts_with(&covered.subregister),
-            "status_within: {register:?} does not sit inside {covered:?}"
+            "ownership_within: {register:?} does not sit inside {covered:?}"
         );
-        self.status_from(&register, covered.subregister.len() + 1)
+        self.ownership_from(&register, covered.subregister.len() + 1)
     }
 
-    fn status_from(&self, register: &Register, from: usize) -> Ownership {
-        if Self::covers(&self.must, register, from) {
+    fn ownership_from(&self, register: &Register, from: usize) -> Ownership {
+        if Self::covers(&self.definitely_moved, register, from) {
             Ownership::Moved
-        } else if Self::covers(&self.may, register, from) {
-            Ownership::Maybe
+        } else if Self::covers(&self.maybe_moved, register, from) {
+            Ownership::MaybeMoved
         } else {
             Ownership::Owned
         }
     }
 
     pub(super) fn owns_every_part(&self, place: &Place) -> bool {
-        let register = register_of(place);
-        !self.may.iter().any(|moved| {
+        let register = to_register(place);
+        !self.maybe_moved.iter().any(|moved| {
             moved.owner == register.owner
                 && moved.subregister.len() > register.subregister.len()
                 && moved.subregister.starts_with(&register.subregister)
@@ -80,15 +85,15 @@ impl MoveState {
         if !droppable[register.owner.index()] {
             return;
         }
-        self.may.insert(register.clone());
-        self.must.insert(register);
+        self.maybe_moved.insert(register.clone());
+        self.definitely_moved.insert(register);
     }
 
     fn mark_initialized(&mut self, droppable: &[bool], register: &Register) {
         if !droppable[register.owner.index()] {
             return;
         }
-        for set in [&mut self.may, &mut self.must] {
+        for set in [&mut self.maybe_moved, &mut self.definitely_moved] {
             set.retain(|held| {
                 held.owner != register.owner || !held.subregister.starts_with(&register.subregister)
             });
@@ -97,7 +102,7 @@ impl MoveState {
 
     fn apply_operand(&mut self, droppable: &[bool], operand: &Operand) {
         if let Operand::Move(place) = operand {
-            self.mark_moved(droppable, register_of(place));
+            self.mark_moved(droppable, to_register(place));
         }
     }
 
@@ -119,7 +124,7 @@ impl MoveState {
             }
             StatementKind::Assign(place, rvalue) => {
                 self.apply_rvalue(droppable, rvalue);
-                self.mark_initialized(droppable, &register_of(place));
+                self.mark_initialized(droppable, &to_register(place));
             }
             StatementKind::PlaceMention(_)
             | StatementKind::SetDiscriminant { .. }
@@ -133,18 +138,19 @@ impl MoveState {
         }
         match &terminator.kind {
             TerminatorKind::Call { destination, .. } => {
-                self.mark_initialized(droppable, &register_of(destination))
+                self.mark_initialized(droppable, &to_register(destination))
             }
             TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
-                self.mark_moved(droppable, register_of(place))
+                self.mark_moved(droppable, to_register(place))
             }
             _ => {}
         }
     }
 }
 
+/// Returns the move state on entry to every block of `body`.
 pub(super) fn analyze(droppable: &[bool], body: &Body) -> Vec<MoveState> {
-    let lattice = crate::mir::checks::lattice::solve(
+    let solved = crate::mir::checks::lattice::solve(
         body,
         MoveState::default(),
         MoveState::default(),
@@ -162,7 +168,7 @@ pub(super) fn analyze(droppable: &[bool], body: &Body) -> Vec<MoveState> {
     (0..body.basic_blocks.len())
         .map(BasicBlock::from_usize)
         .map(|id| {
-            lattice
+            solved
                 .entry(id)
                 .expect("every block's entry is seeded by the solver")
                 .clone()

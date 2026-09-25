@@ -1,5 +1,6 @@
 use crate::ast::BinaryOp;
 use crate::ast::{Ast, ParsedSrcFile};
+use crate::driver::cli::Mode;
 use crate::driver::source::FileOrigin;
 use crate::hir::{DefId, Hir, OwnerNode};
 use crate::lexer::Lexer;
@@ -11,7 +12,6 @@ use crate::mir::{
 };
 use crate::nameres;
 use crate::nameres::PrimTy;
-use crate::options::Mode;
 use crate::parser::Parser;
 use crate::testing::{
     OPS_PREAMBLE, first_extend_method, first_function, first_struct, lower_to_hir,
@@ -1948,9 +1948,6 @@ fn a_qualified_variant_call_carries_its_single_argument() {
     );
 }
 
-/// TODO: an overloaded `Index` used as a place (an assignment target) is not yet implemented and
-/// panics. Typeck accepts `m[0] = true` as a place, so this is reachable from a valid program;
-/// this test pins the current panic until place-position indexing is implemented.
 #[test]
 #[should_panic(
     expected = "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"

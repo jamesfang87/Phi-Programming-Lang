@@ -1,6 +1,6 @@
-use crate::ast::{BinaryOp, Literal, Mutability};
+use crate::ast::{BinaryOp, Ident, Literal, Mutability};
 use crate::driver::source::SrcSpan;
-use crate::hir::{ArmId, BindingMode, HirId, PatKind, Payload};
+use crate::hir::{ArmId, BindingMode, ExprId, HirId, PatId, PatKind, Payload};
 use crate::mir::lower::ctx::{BodyLowerCtx, ExitObligation};
 use crate::mir::{
     BasicBlock, ConstKind, Constant, Operand, Place, Projection, Rvalue, StatementKind,
@@ -10,10 +10,6 @@ use crate::nameres::PrimTy;
 use crate::typeck::ty::{Ty, TyKind};
 
 impl<'a> BodyLowerCtx<'a> {
-    // -----------------------------------------------------------------
-    // `if`
-    // -----------------------------------------------------------------
-
     pub(crate) fn lower_if_into(
         &mut self,
         cond: impl Into<HirId>,
@@ -53,10 +49,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.switch_to(join);
     }
 
-    // -----------------------------------------------------------------
-    // `loop`
-    // -----------------------------------------------------------------
-
     pub(crate) fn lower_loop_into(&mut self, block: impl Into<HirId>, dest: Place, span: SrcSpan) {
         let block = block.into();
         let body_start = self.new_block();
@@ -70,16 +62,9 @@ impl<'a> BodyLowerCtx<'a> {
         self.pop_loop();
         self.set_terminator(TerminatorKind::Goto { target: body_start }, span);
 
-        // Every `break` jumps here directly; `Break` carries no value, so the loop's own value
-        // (when it is used as one) is always unit, assigned once here rather than at every
-        // `break` site.
         self.switch_to(break_target);
         self.assign_unit(dest, span);
     }
-
-    // -----------------------------------------------------------------
-    // `match`
-    // -----------------------------------------------------------------
 
     pub(crate) fn lower_match_into(
         &mut self,
@@ -104,135 +89,159 @@ impl<'a> BodyLowerCtx<'a> {
 
         for (i, &arm_id) in arms.iter().enumerate() {
             self.switch_to(starts[i]);
-            let arm = self.hir.arm(arm_id);
-            let (pat, guard, body, arm_span) = (arm.pat, arm.guard, arm.block, arm.span);
             let next = starts.get(i + 1).copied().unwrap_or(no_match);
-
-            self.test_pat(pat, scrutinee_place.clone(), next);
-
-            self.push_block_scope();
-            self.bind_pat(pat, scrutinee_place.clone());
-
-            if let Some(guard_id) = guard {
-                let guard_span = self.hir.expr(guard_id).span;
-                let cond = self.lower_operand(guard_id);
-                let guard_ok = self.new_block();
-                let guard_fail = self.new_block();
-                self.set_terminator(
-                    TerminatorKind::SwitchInt {
-                        discr: cond,
-                        targets: SwitchTargets {
-                            values: vec![(1, guard_ok)],
-                            otherwise: guard_fail,
-                        },
-                    },
-                    guard_span,
-                );
-
-                self.switch_to(guard_fail);
-                let peeked = self.peek_block_scope();
-                self.replay_obligations(&peeked);
-                self.set_terminator(TerminatorKind::Goto { target: next }, guard_span);
-
-                self.switch_to(guard_ok);
-            }
-
-            self.lower_block(body, Some(dest.clone()));
-            let obligations = self.pop_block_scope();
-            self.replay_obligations(&obligations);
-            self.set_terminator(TerminatorKind::Goto { target: join }, arm_span);
+            self.lower_match_arm(arm_id, scrutinee_place.clone(), dest.clone(), next, join);
         }
 
-        // typeck already proved the match exhaustive, so this is never actually reached; every
-        // reserved block still needs a terminator.
         self.switch_to(no_match);
         self.set_terminator(TerminatorKind::Unreachable, span);
 
         self.switch_to(join);
     }
 
-    // -----------------------------------------------------------------
-    // Pattern testing (structure only, no binding)
-    // -----------------------------------------------------------------
+    /// Lowers one match arm: tests its pattern, binds its names, runs its guard and body, and
+    /// jumps to `join`. A failed test or guard jumps to `next`, the arm after it.
+    fn lower_match_arm(
+        &mut self,
+        arm_id: ArmId,
+        scrutinee_place: Place,
+        dest: Place,
+        next: BasicBlock,
+        join: BasicBlock,
+    ) {
+        let arm = self.hir.arm(arm_id);
+        let (pat, guard, body, arm_span) = (arm.pat, arm.guard, arm.block, arm.span);
 
-    /// Tests `pat`'s structure against `place`, falling through on a full match and jumping to
-    /// `fail` on any refutation. Binds nothing -- see the module docs for why binding is a
-    /// separate walk, run only by the caller once this returns having matched.
+        self.test_pat(pat, scrutinee_place.clone(), next);
+        self.push_block_scope();
+        self.bind_pat(pat, scrutinee_place);
+
+        if let Some(guard_id) = guard {
+            self.lower_match_guard(guard_id, next);
+        }
+
+        self.lower_block(body, Some(dest));
+        let obligations = self.pop_block_scope();
+        self.replay_obligations(&obligations);
+        self.set_terminator(TerminatorKind::Goto { target: join }, arm_span);
+    }
+
+    /// Lowers an arm guard, jumping to `next` when it evaluates false.
+    fn lower_match_guard(&mut self, guard_id: ExprId, next: BasicBlock) {
+        let guard_span = self.hir.expr(guard_id).span;
+        let cond = self.lower_operand(guard_id);
+        let guard_ok = self.new_block();
+        let guard_fail = self.new_block();
+        self.set_terminator(
+            TerminatorKind::SwitchInt {
+                discr: cond,
+                targets: SwitchTargets {
+                    values: vec![(1, guard_ok)],
+                    otherwise: guard_fail,
+                },
+            },
+            guard_span,
+        );
+
+        self.switch_to(guard_fail);
+        let peeked = self.peek_block_scope();
+        self.replay_obligations(&peeked);
+        self.set_terminator(TerminatorKind::Goto { target: next }, guard_span);
+
+        self.switch_to(guard_ok);
+    }
+
     pub(crate) fn test_pat(&mut self, pat_id: impl Into<HirId>, place: Place, fail: BasicBlock) {
         let pat_id = pat_id.into();
         let pat = self.hir.pat(pat_id);
         let span = pat.span;
-        let adjust = self.types.pat_adjust(pat_id);
-        let mut place = place;
-        for _ in 0..adjust.derefs {
-            place.projections.push(Projection::Deref);
-        }
+        let place = self.place_with_pat_adjust(pat_id, place);
         match &pat.kind {
             PatKind::Wildcard | PatKind::Binding { .. } => {}
-            PatKind::Literal(lit) => {
-                let lit = *lit;
-                let ty = self.pat_ty(pat_id);
-                let constant = self.lower_pat_literal(lit, ty);
-                let operand = self.operand_for_place(place, ty);
-                let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-                let eq_local = self.new_temp(bool_ty, span);
-                self.assign(
-                    Place::from_local(eq_local),
-                    Rvalue::BinaryOp(BinaryOp::Eq, operand, Operand::Constant(constant)),
-                    span,
-                );
-                let cont = self.new_block();
-                self.set_terminator(
-                    TerminatorKind::SwitchInt {
-                        discr: Operand::Copy(Place::from_local(eq_local)),
-                        targets: SwitchTargets {
-                            values: vec![(1, cont)],
-                            otherwise: fail,
-                        },
-                    },
-                    span,
-                );
-                self.switch_to(cont);
-            }
+            PatKind::Literal(lit) => self.test_literal_pat(pat_id, *lit, place, fail, span),
             PatKind::Variant { variant, payload } => {
-                let variant = *variant;
-                let ty = self.pat_ty(pat_id);
-                let (_, variant_idx) = self.variant_idx_for(ty, variant.text);
-                let i32_ty = self.tcx.mk_prim(PrimTy::I32);
-                let discr_local = self.new_temp(i32_ty, span);
-                self.assign(
-                    Place::from_local(discr_local),
-                    Rvalue::Discriminant(place.clone()),
-                    span,
-                );
-                let cont = self.new_block();
-                self.set_terminator(
-                    TerminatorKind::SwitchInt {
-                        discr: Operand::Copy(Place::from_local(discr_local)),
-                        targets: SwitchTargets {
-                            values: vec![(variant_idx.index() as u128, cont)],
-                            otherwise: fail,
-                        },
-                    },
-                    span,
-                );
-                self.switch_to(cont);
-
-                let mut payload_place = place;
-                payload_place
-                    .projections
-                    .push(Projection::Downcast(variant_idx));
-                self.test_payload(ty, variant_idx, payload, payload_place, fail, span);
+                self.test_variant_pat(pat_id, *variant, payload, place, fail, span)
             }
-            PatKind::Tuple(elems) => {
-                let elems = elems.clone();
-                for (i, &elem) in elems.iter().enumerate() {
-                    let mut elem_place = place.clone();
-                    elem_place.projections.push(Projection::Field(i as u32));
-                    self.test_pat(elem, elem_place, fail);
-                }
-            }
+            PatKind::Tuple(elems) => self.test_tuple_pat(elems, place, fail),
             PatKind::Error => unreachable!("a fully type-checked body contains no PatKind::Error"),
+        }
+    }
+
+    fn test_literal_pat(
+        &mut self,
+        pat_id: HirId,
+        lit: Literal,
+        place: Place,
+        fail: BasicBlock,
+        span: SrcSpan,
+    ) {
+        let ty = self.pat_ty(pat_id);
+        let constant = self.lower_pat_literal(lit, ty);
+        let operand = self.operand_for_place(place, ty);
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+        let eq_local = self.new_temp(bool_ty, span);
+        self.assign(
+            Place::from_local(eq_local),
+            Rvalue::BinaryOp(BinaryOp::Eq, operand, Operand::Constant(constant)),
+            span,
+        );
+        let cont = self.new_block();
+        self.set_terminator(
+            TerminatorKind::SwitchInt {
+                discr: Operand::Copy(Place::from_local(eq_local)),
+                targets: SwitchTargets {
+                    values: vec![(1, cont)],
+                    otherwise: fail,
+                },
+            },
+            span,
+        );
+        self.switch_to(cont);
+    }
+
+    fn test_variant_pat(
+        &mut self,
+        pat_id: HirId,
+        variant: Ident,
+        payload: &'a Payload,
+        place: Place,
+        fail: BasicBlock,
+        span: SrcSpan,
+    ) {
+        let ty = self.pat_ty(pat_id);
+        let (_, variant_idx) = self.variant_idx_for(ty, variant.text);
+        let i32_ty = self.tcx.mk_prim(PrimTy::I32);
+        let discr_local = self.new_temp(i32_ty, span);
+        self.assign(
+            Place::from_local(discr_local),
+            Rvalue::Discriminant(place.clone()),
+            span,
+        );
+        let cont = self.new_block();
+        self.set_terminator(
+            TerminatorKind::SwitchInt {
+                discr: Operand::Copy(Place::from_local(discr_local)),
+                targets: SwitchTargets {
+                    values: vec![(variant_idx.index() as u128, cont)],
+                    otherwise: fail,
+                },
+            },
+            span,
+        );
+        self.switch_to(cont);
+
+        let mut payload_place = place;
+        payload_place
+            .projections
+            .push(Projection::Downcast(variant_idx));
+        self.test_payload(ty, variant_idx, payload, payload_place, fail);
+    }
+
+    fn test_tuple_pat(&mut self, elems: &[PatId], place: Place, fail: BasicBlock) {
+        for (i, &elem) in elems.iter().enumerate() {
+            let mut elem_place = place.clone();
+            elem_place.projections.push(Projection::Field(i as u32));
+            self.test_pat(elem, elem_place, fail);
         }
     }
 
@@ -243,7 +252,6 @@ impl<'a> BodyLowerCtx<'a> {
         payload: &Payload,
         base: Place,
         fail: BasicBlock,
-        span: SrcSpan,
     ) {
         match payload {
             Payload::None => {}
@@ -254,75 +262,94 @@ impl<'a> BodyLowerCtx<'a> {
             }
             Payload::Record(fields) => {
                 for field in fields {
-                    let index = self.record_field_index(enum_ty, variant_idx, field.name.text);
+                    let index = self.find_record_field_index(enum_ty, variant_idx, field.name.text);
                     let mut field_place = base.clone();
                     field_place.projections.push(Projection::Field(index));
                     self.test_pat(field.value, field_place, fail);
                 }
             }
         }
-        let _ = span;
     }
 
-    // -----------------------------------------------------------------
-    // Pattern binding (run only once a pattern is known to fully match)
-    // -----------------------------------------------------------------
-
-    /// Binds every name a pattern known to already match introduces. Used both for an
-    /// irrefutable `let`/`with` pattern (called directly, with no preceding [`test_pat`]) and
-    /// for a `match`/`if let` candidate that has already passed [`test_pat`].
     pub(crate) fn bind_pat(&mut self, pat_id: impl Into<HirId>, place: Place) {
         let pat_id = pat_id.into();
         let pat = self.hir.pat(pat_id);
         let span = pat.span;
-        let adjust = self.types.pat_adjust(pat_id);
-        let mut place = place;
-        for _ in 0..adjust.derefs {
-            place.projections.push(Projection::Deref);
-        }
+        let mode = self.types.pat_adjust(pat_id).mode;
+        let place = self.place_with_pat_adjust(pat_id, place);
         match &pat.kind {
-            PatKind::Wildcard => {}
+            PatKind::Wildcard | PatKind::Literal(_) => {}
             PatKind::Binding { name, .. } => {
-                let name = *name;
-                let ty = self.pat_ty(pat_id);
-                let local = self.new_local(ty, Some(name), span);
-                self.push_stmt(StatementKind::StorageLive(local), span);
-                let rvalue = match adjust.mode {
-                    BindingMode::Ref => Rvalue::Ref {
-                        mutability: Mutability::Immutable,
-                        place,
-                    },
-                    BindingMode::RefMut => Rvalue::Ref {
-                        mutability: Mutability::Mutable,
-                        place,
-                    },
-                    BindingMode::Value => Rvalue::Use(self.operand_for_place(place, ty)),
-                };
-                self.assign(Place::from_local(local), rvalue, span);
-                self.bind_local(pat_id, local);
-                self.register_exit_obligation(ExitObligation::StorageDead(local));
+                self.bind_binding_pat(pat_id, *name, mode, place, span)
             }
-            PatKind::Literal(_) => {}
             PatKind::Variant { variant, payload } => {
-                let variant = *variant;
-                let ty = self.pat_ty(pat_id);
-                let (_, variant_idx) = self.variant_idx_for(ty, variant.text);
-                let mut payload_place = place;
-                payload_place
-                    .projections
-                    .push(Projection::Downcast(variant_idx));
-                self.bind_payload(ty, variant_idx, payload, payload_place);
+                self.bind_variant_pat(pat_id, *variant, payload, place)
             }
-            PatKind::Tuple(elems) => {
-                let elems = elems.clone();
-                for (i, &elem) in elems.iter().enumerate() {
-                    let mut elem_place = place.clone();
-                    elem_place.projections.push(Projection::Field(i as u32));
-                    self.bind_pat(elem, elem_place);
-                }
-            }
+            PatKind::Tuple(elems) => self.bind_tuple_pat(elems, place),
             PatKind::Error => unreachable!("a fully type-checked body contains no PatKind::Error"),
         }
+    }
+
+    fn bind_binding_pat(
+        &mut self,
+        pat_id: HirId,
+        name: Ident,
+        mode: BindingMode,
+        place: Place,
+        span: SrcSpan,
+    ) {
+        let ty = self.pat_ty(pat_id);
+        let local = self.new_local(ty, Some(name), span);
+        self.push_stmt(StatementKind::StorageLive(local), span);
+        let rvalue = match mode {
+            BindingMode::Ref => Rvalue::Ref {
+                mutability: Mutability::Immutable,
+                place,
+            },
+            BindingMode::RefMut => Rvalue::Ref {
+                mutability: Mutability::Mutable,
+                place,
+            },
+            BindingMode::Value => Rvalue::Use(self.operand_for_place(place, ty)),
+        };
+        self.assign(Place::from_local(local), rvalue, span);
+        self.bind_local(pat_id, local);
+        self.register_exit_obligation(ExitObligation::StorageDead(local));
+    }
+
+    fn bind_variant_pat(
+        &mut self,
+        pat_id: HirId,
+        variant: Ident,
+        payload: &'a Payload,
+        place: Place,
+    ) {
+        let ty = self.pat_ty(pat_id);
+        let (_, variant_idx) = self.variant_idx_for(ty, variant.text);
+        let mut payload_place = place;
+        payload_place
+            .projections
+            .push(Projection::Downcast(variant_idx));
+        self.bind_payload(ty, variant_idx, payload, payload_place);
+    }
+
+    fn bind_tuple_pat(&mut self, elems: &[PatId], place: Place) {
+        for (i, &elem) in elems.iter().enumerate() {
+            let mut elem_place = place.clone();
+            elem_place.projections.push(Projection::Field(i as u32));
+            self.bind_pat(elem, elem_place);
+        }
+    }
+
+    /// Returns `place` with the dereferences `pat_id`'s binding adjustment strips from its
+    /// matched scrutinee.
+    fn place_with_pat_adjust(&self, pat_id: HirId, place: Place) -> Place {
+        let derefs = self.types.pat_adjust(pat_id).derefs;
+        let mut adjusted = place;
+        for _ in 0..derefs {
+            adjusted.projections.push(Projection::Deref);
+        }
+        adjusted
     }
 
     fn bind_payload(
@@ -341,7 +368,7 @@ impl<'a> BodyLowerCtx<'a> {
             }
             Payload::Record(fields) => {
                 for field in fields {
-                    let index = self.record_field_index(enum_ty, variant_idx, field.name.text);
+                    let index = self.find_record_field_index(enum_ty, variant_idx, field.name.text);
                     let mut field_place = base.clone();
                     field_place.projections.push(Projection::Field(index));
                     self.bind_pat(field.value, field_place);
@@ -350,12 +377,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Shared helpers
-    // -----------------------------------------------------------------
-
-    /// `pat_id`'s recorded type, resolved through this body's own `any_mode` -- see
-    /// [`BodyLowerCtx::expr_ty`], its expression-level counterpart.
     pub(crate) fn pat_ty(&mut self, pat_id: impl Into<HirId>) -> Ty {
         let pat_id = pat_id.into();
         let ty = self
@@ -378,8 +399,7 @@ impl<'a> BodyLowerCtx<'a> {
                     .parse()
                     .unwrap_or_else(|_| panic!("mir::lower: float pattern literal does not parse")),
             ),
-            // Typeck rejects a string literal pattern (no runtime string-equality lowering
-            // exists for `str`), so none reach here.
+
             Literal::Str(_) => unreachable!("typeck rejects string literal patterns"),
             Literal::Bool(b) => ConstKind::Bool(b),
             Literal::Char(c) => ConstKind::Char(c),
@@ -404,7 +424,7 @@ impl<'a> BodyLowerCtx<'a> {
         (def, VariantIdx::from_usize(index))
     }
 
-    fn record_field_index(
+    fn find_record_field_index(
         &self,
         enum_ty: Ty,
         variant_idx: VariantIdx,

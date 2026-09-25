@@ -8,7 +8,7 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{FunctionValue, PointerValue};
 
 use crate::ast::Symbol;
-use crate::codegen::intrinsic::{self, Libc};
+use crate::codegen::libc::{self, Libc};
 use crate::hir::{DefId, Hir};
 use crate::mir::Instance;
 use crate::session::Session;
@@ -19,9 +19,7 @@ use super::mangle::mangle;
 
 pub struct CodegenCtx<'ctx> {
     pub session: &'ctx Session,
-    /// The HIR, the sole source of definition names for symbol mangling and of the core
-    /// library's lang items. Codegen only reaches back into it for those, never for MIR-level
-    /// facts, which lowering has already recorded.
+
     pub hir: &'ctx Hir,
     pub llvm: &'ctx Context,
     pub module: Module<'ctx>,
@@ -43,7 +41,7 @@ impl<'ctx> CodegenCtx<'ctx> {
         module_name: &str,
     ) -> Self {
         let module = llvm.create_module(module_name);
-        let libc = intrinsic::declare_libc(llvm, &module);
+        let libc = libc::declare_libc(llvm, &module);
         CodegenCtx {
             session,
             hir,
@@ -60,7 +58,6 @@ impl<'ctx> CodegenCtx<'ctx> {
         }
     }
 
-    /// The symbol name of `instance`, for the function it will be emitted as.
     pub fn mangle(&self, tcx: &TyCtx, instance: &Instance) -> String {
         mangle(self.hir, self.session, tcx, instance)
     }

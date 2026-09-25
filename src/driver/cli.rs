@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::driver::{pipeline, project};
-use crate::options::Mode;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Dumps {
@@ -59,6 +58,14 @@ impl BuildOptions {
             exclude_core_in_emit: has("--no-emit-core"),
         })
     }
+}
+
+/// The optimization mode a build is compiled in.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    #[default]
+    Debug,
+    Release,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

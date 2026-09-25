@@ -2,7 +2,7 @@
 pub struct Local(u32);
 
 impl Local {
-    /// This is the slot every `Body` reserves for its return value.
+
     pub const RETURN_PLACE: Local = Local(0);
 
     pub const ENVIRONMENT: Local = Local(1);
@@ -16,12 +16,11 @@ impl Local {
     }
 }
 
-/// `BasicBlock` addresses one slot of a [`Body`](crate::mir::Body)'s `basic_blocks`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct BasicBlock(u32);
 
 impl BasicBlock {
-    /// Every `Body` begins executing at this block.
+
     pub const START_BLOCK: BasicBlock = BasicBlock(0);
 
     pub(crate) fn from_usize(index: usize) -> Self {

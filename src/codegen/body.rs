@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use inkwell::basic_block::BasicBlock;
 use inkwell::intrinsics::Intrinsic;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType};
 use inkwell::values::{
@@ -32,36 +33,66 @@ pub fn lower_body<'ctx>(
     cx.builder.position_at_end(entry);
 
     let sret = matches!(
-        ty::abi_class(tcx, body.local_decls[0].ty),
+        ty::classify_abi(tcx, body.local_decls[0].ty),
         ty::AbiClass::Indirect
     );
     let locals = alloca_locals(cx, mir, tcx, body, function, sret);
     unpack_params(cx, mir, tcx, body, function, &locals, sret);
 
-    let blocks: Vec<_> = body
-        .basic_blocks
-        .iter()
-        .enumerate()
-        .map(|(i, _)| cx.llvm.append_basic_block(function, &format!("bb{i}")))
-        .collect();
+    let blocks = create_basic_blocks(cx, function, body);
     cx.builder.build_unconditional_branch(blocks[0]).unwrap();
 
-    for (i, bb) in body.basic_blocks.iter().enumerate() {
+    for (i, basic_block) in body.basic_blocks.iter().enumerate() {
         cx.builder.position_at_end(blocks[i]);
-        for stmt in &bb.statements {
-            lower_statement(cx, mir, tcx, &locals, &body.local_decls, stmt);
-        }
-        lower_terminator(
+        lower_basic_block(
             cx,
             mir,
             tcx,
             &locals,
             &body.local_decls,
             &blocks,
-            &bb.terminator,
+            basic_block,
             sret,
         );
     }
+}
+
+fn create_basic_blocks<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    function: FunctionValue<'ctx>,
+    body: &Body,
+) -> Vec<BasicBlock<'ctx>> {
+    body.basic_blocks
+        .iter()
+        .enumerate()
+        .map(|(i, _)| cx.llvm.append_basic_block(function, &format!("bb{i}")))
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_basic_block<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    blocks: &[BasicBlock<'ctx>],
+    basic_block: &crate::mir::BasicBlockData,
+    sret: bool,
+) {
+    for stmt in &basic_block.statements {
+        lower_statement(cx, mir, tcx, locals, local_decls, stmt);
+    }
+    lower_terminator(
+        cx,
+        mir,
+        tcx,
+        locals,
+        local_decls,
+        blocks,
+        &basic_block.terminator,
+        sret,
+    );
 }
 
 fn alloca_locals<'ctx>(
@@ -103,41 +134,54 @@ fn unpack_params<'ctx>(
     for local_idx in 1..=body.param_count {
         let decl = &body.local_decls[local_idx];
         let dest = locals[&Local::from_usize(local_idx)];
-        match ty::abi_class(tcx, decl.ty) {
-            ty::AbiClass::Fat => {
-                let word0 = function.get_nth_param(llvm_idx as u32).unwrap();
-                let word1 = function.get_nth_param((llvm_idx + 1) as u32).unwrap();
-                llvm_idx += 2;
-                let struct_ty = ty::llvm_type(cx, tcx, mir, decl.ty).into_struct_type();
-                let field0 = cx
-                    .builder
-                    .build_struct_gep(struct_ty, dest, 0, "p0")
-                    .unwrap();
-                cx.builder.build_store(field0, word0).unwrap();
-                let field1 = cx
-                    .builder
-                    .build_struct_gep(struct_ty, dest, 1, "p1")
-                    .unwrap();
-                cx.builder.build_store(field1, word1).unwrap();
-            }
-            ty::AbiClass::Indirect => {
-                let src = function
-                    .get_nth_param(llvm_idx as u32)
-                    .unwrap()
-                    .into_pointer_value();
-                llvm_idx += 1;
-                let size = layout::layout_of(tcx, mir, decl.ty).size;
-                cx.builder
-                    .build_memcpy(dest, 8, src, 8, cx.llvm.i64_type().const_int(size, false))
-                    .unwrap();
-            }
-            ty::AbiClass::Scalar => {
-                let param = function.get_nth_param(llvm_idx as u32).unwrap();
-                llvm_idx += 1;
-                cx.builder.build_store(dest, param).unwrap();
-            }
-            ty::AbiClass::Void => {}
+        llvm_idx += unpack_param(cx, mir, tcx, function, decl.ty, dest, llvm_idx);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn unpack_param<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    function: FunctionValue<'ctx>,
+    ty: Ty,
+    dest: PointerValue<'ctx>,
+    llvm_idx: usize,
+) -> usize {
+    match ty::classify_abi(tcx, ty) {
+        ty::AbiClass::Fat => {
+            let word0 = function.get_nth_param(llvm_idx as u32).unwrap();
+            let word1 = function.get_nth_param((llvm_idx + 1) as u32).unwrap();
+            let struct_ty = ty::llvm_type(cx, tcx, mir, ty).into_struct_type();
+            let field0 = cx
+                .builder
+                .build_struct_gep(struct_ty, dest, 0, "p0")
+                .unwrap();
+            cx.builder.build_store(field0, word0).unwrap();
+            let field1 = cx
+                .builder
+                .build_struct_gep(struct_ty, dest, 1, "p1")
+                .unwrap();
+            cx.builder.build_store(field1, word1).unwrap();
+            2
         }
+        ty::AbiClass::Indirect => {
+            let src = function
+                .get_nth_param(llvm_idx as u32)
+                .unwrap()
+                .into_pointer_value();
+            let size = layout::layout_of(tcx, mir, ty).size;
+            cx.builder
+                .build_memcpy(dest, 8, src, 8, cx.llvm.i64_type().const_int(size, false))
+                .unwrap();
+            1
+        }
+        ty::AbiClass::Scalar => {
+            let param = function.get_nth_param(llvm_idx as u32).unwrap();
+            cx.builder.build_store(dest, param).unwrap();
+            1
+        }
+        ty::AbiClass::Void => 0,
     }
 }
 
@@ -209,13 +253,7 @@ fn lower_rvalue<'ctx>(
     match rvalue {
         Rvalue::Use(operand) => lower_operand(cx, tcx, mir, locals, local_decls, operand),
         Rvalue::Ref { place: place_, .. } => {
-            let ref_place_ty = crate::mir::place_ty(tcx, local_decls, place_);
-            if layout::is_unsized(tcx, ref_place_ty) {
-                lower_fat_ref(cx, tcx, locals, local_decls, place_)
-            } else {
-                let (ptr, _) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
-                ptr.as_basic_value_enum()
-            }
+            lower_ref_rvalue(cx, tcx, mir, locals, local_decls, place_)
         }
         Rvalue::BinaryOp(op, lhs, rhs) => {
             let operand_ty = operand_ty(tcx, local_decls, lhs);
@@ -263,22 +301,7 @@ fn lower_rvalue<'ctx>(
             super::vtable::unsize(cx, tcx, mir, val.into_pointer_value(), concrete, *trait_)
         }
         Rvalue::Discriminant(place_) => {
-            let (ptr, place_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
-            let enum_llvm_ty = ty::llvm_type(cx, tcx, mir, place_ty).into_struct_type();
-            let tag_ptr = cx
-                .builder
-                .build_struct_gep(enum_llvm_ty, ptr, 0, "tag")
-                .unwrap();
-            let tag_llvm_ty = enum_llvm_ty.get_field_type_at_index(0).unwrap();
-            let tag = cx
-                .builder
-                .build_load(tag_llvm_ty, tag_ptr, "discr")
-                .unwrap();
-            let discr_llvm_ty = ty::llvm_type(cx, tcx, mir, dest_ty).into_int_type();
-            cx.builder
-                .build_int_z_extend_or_bit_cast(tag.into_int_value(), discr_llvm_ty, "discr.widen")
-                .unwrap()
-                .into()
+            lower_discriminant_rvalue(cx, tcx, mir, locals, local_decls, place_, dest_ty)
         }
         Rvalue::Len(place_) => lower_len(cx, tcx, locals, local_decls, place_),
         Rvalue::New(operand) => lower_new(cx, tcx, mir, locals, local_decls, operand),
@@ -286,6 +309,53 @@ fn lower_rvalue<'ctx>(
             lower_new_array(cx, tcx, mir, locals, local_decls, elem, count)
         }
     }
+}
+
+/// Returns a reference to `place_`, as a thin pointer or a fat pointer when the referent is
+/// unsized.
+fn lower_ref_rvalue<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    place_: &Place,
+) -> BasicValueEnum<'ctx> {
+    let ref_place_ty = crate::mir::place_ty(tcx, local_decls, place_);
+    if layout::is_unsized(tcx, ref_place_ty) {
+        lower_fat_ref(cx, tcx, locals, local_decls, place_)
+    } else {
+        let (ptr, _) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
+        ptr.as_basic_value_enum()
+    }
+}
+
+/// Returns an enum's tag widened to `dest_ty`'s own integer type.
+fn lower_discriminant_rvalue<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    place_: &Place,
+    dest_ty: Ty,
+) -> BasicValueEnum<'ctx> {
+    let (ptr, place_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
+    let enum_llvm_ty = ty::llvm_type(cx, tcx, mir, place_ty).into_struct_type();
+    let tag_ptr = cx
+        .builder
+        .build_struct_gep(enum_llvm_ty, ptr, 0, "tag")
+        .unwrap();
+    let tag_llvm_ty = enum_llvm_ty.get_field_type_at_index(0).unwrap();
+    let tag = cx
+        .builder
+        .build_load(tag_llvm_ty, tag_ptr, "discr")
+        .unwrap();
+    let discr_llvm_ty = ty::llvm_type(cx, tcx, mir, dest_ty).into_int_type();
+    cx.builder
+        .build_int_z_extend_or_bit_cast(tag.into_int_value(), discr_llvm_ty, "discr.widen")
+        .unwrap()
+        .into()
 }
 
 fn operand_ty(tcx: &mut TyCtx, local_decls: &[LocalDecl], operand: &Operand) -> Ty {
@@ -297,7 +367,7 @@ fn operand_ty(tcx: &mut TyCtx, local_decls: &[LocalDecl], operand: &Operand) -> 
     }
 }
 
-fn two_word_struct_type<'ctx>(cx: &CodegenCtx<'ctx>) -> inkwell::types::StructType<'ctx> {
+fn fat_pointer_type<'ctx>(cx: &CodegenCtx<'ctx>) -> inkwell::types::StructType<'ctx> {
     cx.llvm.struct_type(
         &[
             cx.llvm.ptr_type(Default::default()).into(),
@@ -305,6 +375,27 @@ fn two_word_struct_type<'ctx>(cx: &CodegenCtx<'ctx>) -> inkwell::types::StructTy
         ],
         false,
     )
+}
+
+/// Returns a `{ data pointer, metadata }` pair, the value an unsized reference or `iso` lowers to.
+fn build_fat_pointer<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    data_ptr: PointerValue<'ctx>,
+    metadata: inkwell::values::IntValue<'ctx>,
+) -> BasicValueEnum<'ctx> {
+    let fat_pointer_ty = fat_pointer_type(cx);
+    let mut agg = fat_pointer_ty.get_undef();
+    agg = cx
+        .builder
+        .build_insert_value(agg, data_ptr, 0, "fat0")
+        .unwrap()
+        .into_struct_value();
+    agg = cx
+        .builder
+        .build_insert_value(agg, metadata, 1, "fat1")
+        .unwrap()
+        .into_struct_value();
+    agg.into()
 }
 
 fn lower_fat_place_addr<'ctx>(
@@ -341,7 +432,7 @@ fn peel_refs(tcx: &mut TyCtx, ty: Ty) -> (Ty, u32) {
     }
     (current, count)
 }
-/// receiver the vtable passes.
+
 fn dyn_method_fn_type<'ctx>(
     cx: &CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
@@ -358,7 +449,7 @@ fn dyn_method_fn_type<'ctx>(
         ty::push_param_types(cx, tcx, mir, *param, &mut param_llvm);
     }
     let ret_ty = ret.unwrap_or_else(|| tcx.unit());
-    match ty::abi_class(tcx, ret_ty) {
+    match ty::classify_abi(tcx, ret_ty) {
         ty::AbiClass::Void => cx.llvm.void_type().fn_type(&param_llvm, false),
         ty::AbiClass::Indirect => {
             let mut params = vec![ptr_ty.into()];
@@ -377,10 +468,10 @@ fn lower_fat_ref<'ctx>(
     place_: &Place,
 ) -> BasicValueEnum<'ctx> {
     let fat_addr = lower_fat_place_addr(tcx, locals, local_decls, place_);
-    let two_word_ty = two_word_struct_type(cx);
+    let fat_pointer_ty = fat_pointer_type(cx);
     let ptr_field = cx
         .builder
-        .build_struct_gep(two_word_ty, fat_addr, 0, "data_ptr_slot")
+        .build_struct_gep(fat_pointer_ty, fat_addr, 0, "data_ptr_slot")
         .unwrap();
     let data_ptr = cx
         .builder
@@ -388,24 +479,14 @@ fn lower_fat_ref<'ctx>(
         .unwrap();
     let len_field = cx
         .builder
-        .build_struct_gep(two_word_ty, fat_addr, 1, "len_slot")
+        .build_struct_gep(fat_pointer_ty, fat_addr, 1, "len_slot")
         .unwrap();
     let len = cx
         .builder
         .build_load(cx.llvm.i64_type(), len_field, "len")
-        .unwrap();
-    let mut agg = two_word_ty.get_undef();
-    agg = cx
-        .builder
-        .build_insert_value(agg, data_ptr, 0, "fat0")
         .unwrap()
-        .into_struct_value();
-    agg = cx
-        .builder
-        .build_insert_value(agg, len, 1, "fat1")
-        .unwrap()
-        .into_struct_value();
-    agg.into()
+        .into_int_value();
+    build_fat_pointer(cx, data_ptr.into_pointer_value(), len)
 }
 
 fn lower_len<'ctx>(
@@ -422,10 +503,10 @@ fn lower_len<'ctx>(
         return cx.llvm.i64_type().const_int(n, false).into();
     }
     let fat_addr = lower_fat_place_addr(tcx, locals, local_decls, place_);
-    let two_word_ty = two_word_struct_type(cx);
+    let fat_pointer_ty = fat_pointer_type(cx);
     let len_field = cx
         .builder
-        .build_struct_gep(two_word_ty, fat_addr, 1, "len_slot")
+        .build_struct_gep(fat_pointer_ty, fat_addr, 1, "len_slot")
         .unwrap();
     cx.builder
         .build_load(cx.llvm.i64_type(), len_field, "len")
@@ -484,42 +565,83 @@ fn lower_primitive_cast<'ctx>(
     }
     let dst_llvm = ty::llvm_type(cx, tcx, mir, dst_ty);
     match (numeric_kind(tcx, src_ty), numeric_kind(tcx, dst_ty)) {
-        (NumKind::Float, NumKind::Float) => cx
-            .builder
-            .build_float_cast(val.into_float_value(), dst_llvm.into_float_type(), "cast")
-            .unwrap()
-            .into(),
-        (NumKind::Float, NumKind::Signed) => cx
-            .builder
-            .build_float_to_signed_int(val.into_float_value(), dst_llvm.into_int_type(), "cast")
-            .unwrap()
-            .into(),
-        (NumKind::Float, NumKind::Unsigned) => cx
-            .builder
-            .build_float_to_unsigned_int(val.into_float_value(), dst_llvm.into_int_type(), "cast")
-            .unwrap()
-            .into(),
-        (NumKind::Signed, NumKind::Float) => cx
-            .builder
-            .build_signed_int_to_float(val.into_int_value(), dst_llvm.into_float_type(), "cast")
-            .unwrap()
-            .into(),
-        (NumKind::Unsigned, NumKind::Float) => cx
-            .builder
-            .build_unsigned_int_to_float(val.into_int_value(), dst_llvm.into_float_type(), "cast")
-            .unwrap()
-            .into(),
-        (src_kind, _) => cx
-            .builder
-            .build_int_cast_sign_flag(
-                val.into_int_value(),
-                dst_llvm.into_int_type(),
-                src_kind == NumKind::Signed,
-                "cast",
-            )
-            .unwrap()
-            .into(),
+        (NumKind::Float, NumKind::Float) => lower_float_widen(cx, val, dst_llvm),
+        (NumKind::Float, NumKind::Signed) => lower_float_to_int(cx, val, dst_llvm, true),
+        (NumKind::Float, NumKind::Unsigned) => lower_float_to_int(cx, val, dst_llvm, false),
+        (NumKind::Signed, NumKind::Float) => lower_int_to_float(cx, val, dst_llvm, true),
+        (NumKind::Unsigned, NumKind::Float) => lower_int_to_float(cx, val, dst_llvm, false),
+        (src_kind, _) => lower_int_cast(cx, val, dst_llvm, src_kind == NumKind::Signed),
     }
+}
+
+fn lower_float_widen<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    dst_llvm: BasicTypeEnum<'ctx>,
+) -> BasicValueEnum<'ctx> {
+    cx.builder
+        .build_float_cast(val.into_float_value(), dst_llvm.into_float_type(), "cast")
+        .unwrap()
+        .into()
+}
+
+fn lower_float_to_int<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    dst_llvm: BasicTypeEnum<'ctx>,
+    signed: bool,
+) -> BasicValueEnum<'ctx> {
+    let value = val.into_float_value();
+    let int_ty = dst_llvm.into_int_type();
+    if signed {
+        cx.builder
+            .build_float_to_signed_int(value, int_ty, "cast")
+            .unwrap()
+            .into()
+    } else {
+        cx.builder
+            .build_float_to_unsigned_int(value, int_ty, "cast")
+            .unwrap()
+            .into()
+    }
+}
+
+fn lower_int_to_float<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    dst_llvm: BasicTypeEnum<'ctx>,
+    signed: bool,
+) -> BasicValueEnum<'ctx> {
+    let value = val.into_int_value();
+    let float_ty = dst_llvm.into_float_type();
+    if signed {
+        cx.builder
+            .build_signed_int_to_float(value, float_ty, "cast")
+            .unwrap()
+            .into()
+    } else {
+        cx.builder
+            .build_unsigned_int_to_float(value, float_ty, "cast")
+            .unwrap()
+            .into()
+    }
+}
+
+fn lower_int_cast<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    dst_llvm: BasicTypeEnum<'ctx>,
+    sign_extend: bool,
+) -> BasicValueEnum<'ctx> {
+    cx.builder
+        .build_int_cast_sign_flag(
+            val.into_int_value(),
+            dst_llvm.into_int_type(),
+            sign_extend,
+            "cast",
+        )
+        .unwrap()
+        .into()
 }
 
 fn lower_checked_binary_op<'ctx>(
@@ -600,7 +722,7 @@ fn lower_aggregate<'ctx>(
                     (value, ty)
                 })
                 .collect();
-            super::closure::build_value(cx, tcx, mir, *def, args, *self_ty, &captures)
+            super::closure::build_closure_value(cx, tcx, mir, *def, args, *self_ty, &captures)
         }
     }
 }
@@ -641,68 +763,112 @@ fn lower_adt_aggregate<'ctx>(
     operands: &[Operand],
 ) -> BasicValueEnum<'ctx> {
     match tcx.enum_variant_count(def) {
-        None => {
-            let struct_llvm_ty = ty::llvm_type(cx, tcx, mir, dest_ty).into_struct_type();
-            let mut agg = struct_llvm_ty.get_undef();
-            for (i, operand) in operands.iter().enumerate() {
-                let val = lower_operand(cx, tcx, mir, locals, local_decls, operand);
-                agg = cx
-                    .builder
-                    .build_insert_value(agg, val, i as u32, "field")
-                    .unwrap()
-                    .into_struct_value();
-            }
-            agg.into()
-        }
-        Some(_) => {
-            let enum_layout = layout::layout_of(tcx, mir, dest_ty);
-            let tag_llvm_ty = match enum_layout
-                .tag_ty
-                .expect("an enum's own layout always has a tag")
-            {
-                layout::TagTy::I8 => cx.llvm.i8_type(),
-                layout::TagTy::I16 => cx.llvm.i16_type(),
-                layout::TagTy::I32 => cx.llvm.i32_type(),
-            };
-            let tag_size = tag_llvm_ty.get_bit_width() as u64 / 8;
-            let pad_bytes = enum_layout.payload_offset - tag_size;
-            let tag_val = tag_llvm_ty.const_int(variant.index() as u64, false);
-
-            let field_vals: Vec<BasicValueEnum<'ctx>> = operands
-                .iter()
-                .map(|op| lower_operand(cx, tcx, mir, locals, local_decls, op))
-                .collect();
-            let field_types: Vec<BasicTypeEnum<'ctx>> =
-                field_vals.iter().map(BasicValueEnum::get_type).collect();
-            let payload_ty = cx.llvm.struct_type(&field_types, false);
-            let mut payload = payload_ty.get_undef();
-            for (i, val) in field_vals.into_iter().enumerate() {
-                payload = cx
-                    .builder
-                    .build_insert_value(payload, val, i as u32, "payload_field")
-                    .unwrap()
-                    .into_struct_value();
-            }
-
-            let pad_ty = cx.llvm.i8_type().array_type(pad_bytes as u32);
-            let outer_ty = cx.llvm.struct_type(
-                &[tag_llvm_ty.into(), pad_ty.into(), payload_ty.into()],
-                false,
-            );
-            let mut outer = outer_ty.get_undef();
-            outer = cx
-                .builder
-                .build_insert_value(outer, tag_val, 0, "tag")
-                .unwrap()
-                .into_struct_value();
-            outer = cx
-                .builder
-                .build_insert_value(outer, payload, 2, "payload")
-                .unwrap()
-                .into_struct_value();
-            outer.into()
-        }
+        None => lower_struct_aggregate(cx, mir, tcx, locals, local_decls, dest_ty, operands),
+        Some(_) => lower_enum_aggregate(
+            cx,
+            mir,
+            tcx,
+            locals,
+            local_decls,
+            dest_ty,
+            variant,
+            operands,
+        ),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_struct_aggregate<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    dest_ty: Ty,
+    operands: &[Operand],
+) -> BasicValueEnum<'ctx> {
+    let struct_llvm_ty = ty::llvm_type(cx, tcx, mir, dest_ty).into_struct_type();
+    let mut agg = struct_llvm_ty.get_undef();
+    for (i, operand) in operands.iter().enumerate() {
+        let val = lower_operand(cx, tcx, mir, locals, local_decls, operand);
+        agg = cx
+            .builder
+            .build_insert_value(agg, val, i as u32, "field")
+            .unwrap()
+            .into_struct_value();
+    }
+    agg.into()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_enum_aggregate<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    dest_ty: Ty,
+    variant: VariantIdx,
+    operands: &[Operand],
+) -> BasicValueEnum<'ctx> {
+    let enum_layout = layout::layout_of(tcx, mir, dest_ty);
+    let tag_llvm_ty = ty::tag_llvm_type(
+        cx,
+        enum_layout
+            .tag_ty
+            .expect("an enum's own layout always has a tag"),
+    );
+    let tag_size = tag_llvm_ty.get_bit_width() as u64 / 8;
+    let pad_bytes = enum_layout.payload_offset - tag_size;
+    let tag_val = tag_llvm_ty.const_int(variant.index() as u64, false);
+
+    let payload = build_variant_payload(cx, tcx, mir, locals, local_decls, operands);
+    let payload_ty = payload.get_type();
+    let pad_ty = cx.llvm.i8_type().array_type(pad_bytes as u32);
+
+    let outer_ty = cx.llvm.struct_type(
+        &[tag_llvm_ty.into(), pad_ty.into(), payload_ty.into()],
+        false,
+    );
+    let mut outer = outer_ty.get_undef();
+    outer = cx
+        .builder
+        .build_insert_value(outer, tag_val, 0, "tag")
+        .unwrap()
+        .into_struct_value();
+    outer = cx
+        .builder
+        .build_insert_value(outer, payload, 2, "payload")
+        .unwrap()
+        .into_struct_value();
+    outer.into()
+}
+
+/// Returns a variant's payload as an LLVM struct, one field per operand.
+fn build_variant_payload<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    operands: &[Operand],
+) -> inkwell::values::StructValue<'ctx> {
+    let field_vals: Vec<BasicValueEnum<'ctx>> = operands
+        .iter()
+        .map(|op| lower_operand(cx, tcx, mir, locals, local_decls, op))
+        .collect();
+    let field_types: Vec<BasicTypeEnum<'ctx>> =
+        field_vals.iter().map(BasicValueEnum::get_type).collect();
+    let payload_ty = cx.llvm.struct_type(&field_types, false);
+    let mut payload = payload_ty.get_undef();
+    for (i, val) in field_vals.into_iter().enumerate() {
+        payload = cx
+            .builder
+            .build_insert_value(payload, val, i as u32, "payload_field")
+            .unwrap()
+            .into_struct_value();
+    }
+    payload
 }
 
 fn lower_new<'ctx>(
@@ -763,19 +929,7 @@ fn lower_new_array<'ctx>(
 
     build_fill_loop(cx, data_ptr, elem_llvm_ty, count_val, elem_val);
 
-    let two_word_ty = two_word_struct_type(cx);
-    let mut agg = two_word_ty.get_undef();
-    agg = cx
-        .builder
-        .build_insert_value(agg, data_ptr, 0, "fat0")
-        .unwrap()
-        .into_struct_value();
-    agg = cx
-        .builder
-        .build_insert_value(agg, count_val, 1, "fat1")
-        .unwrap()
-        .into_struct_value();
-    agg.into()
+    build_fat_pointer(cx, data_ptr, count_val)
 }
 
 fn build_fill_loop<'ctx>(
@@ -852,95 +1006,117 @@ fn lower_binary_op<'ctx>(
 ) -> BasicValueEnum<'ctx> {
     let b = &cx.builder;
     if is_float(tcx, ty) {
-        let (l, r) = (lhs.into_float_value(), rhs.into_float_value());
-        match op {
-            BinaryOp::Add => b.build_float_add(l, r, "add").unwrap().into(),
-            BinaryOp::Sub => b.build_float_sub(l, r, "sub").unwrap().into(),
-            BinaryOp::Mul => b.build_float_mul(l, r, "mul").unwrap().into(),
-            BinaryOp::Div => b.build_float_div(l, r, "div").unwrap().into(),
-            BinaryOp::Rem => b.build_float_rem(l, r, "rem").unwrap().into(),
-            BinaryOp::Eq => b
-                .build_float_compare(FloatPredicate::OEQ, l, r, "eq")
-                .unwrap()
-                .into(),
-            BinaryOp::Ne => b
-                .build_float_compare(FloatPredicate::UNE, l, r, "ne")
-                .unwrap()
-                .into(),
-            BinaryOp::Lt => b
-                .build_float_compare(FloatPredicate::OLT, l, r, "lt")
-                .unwrap()
-                .into(),
-            BinaryOp::Le => b
-                .build_float_compare(FloatPredicate::OLE, l, r, "le")
-                .unwrap()
-                .into(),
-            BinaryOp::Gt => b
-                .build_float_compare(FloatPredicate::OGT, l, r, "gt")
-                .unwrap()
-                .into(),
-            BinaryOp::Ge => b
-                .build_float_compare(FloatPredicate::OGE, l, r, "ge")
-                .unwrap()
-                .into(),
-            BinaryOp::And | BinaryOp::Or => {
-                unreachable!("typeck rejects logical And/Or on a float operand")
-            }
-        }
+        lower_float_binary(b, op, lhs.into_float_value(), rhs.into_float_value())
     } else {
-        let signed = is_signed(tcx, ty);
-        let (l, r) = (lhs.into_int_value(), rhs.into_int_value());
-        match op {
-            BinaryOp::Add => b.build_int_add(l, r, "add").unwrap().into(),
-            BinaryOp::Sub => b.build_int_sub(l, r, "sub").unwrap().into(),
-            BinaryOp::Mul => b.build_int_mul(l, r, "mul").unwrap().into(),
-            BinaryOp::Div if signed => b.build_int_signed_div(l, r, "div").unwrap().into(),
-            BinaryOp::Div => b.build_int_unsigned_div(l, r, "div").unwrap().into(),
-            BinaryOp::Rem if signed => b.build_int_signed_rem(l, r, "rem").unwrap().into(),
-            BinaryOp::Rem => b.build_int_unsigned_rem(l, r, "rem").unwrap().into(),
-            BinaryOp::Eq => b
-                .build_int_compare(IntPredicate::EQ, l, r, "eq")
-                .unwrap()
-                .into(),
-            BinaryOp::Ne => b
-                .build_int_compare(IntPredicate::NE, l, r, "ne")
-                .unwrap()
-                .into(),
-            BinaryOp::Lt if signed => b
-                .build_int_compare(IntPredicate::SLT, l, r, "lt")
-                .unwrap()
-                .into(),
-            BinaryOp::Lt => b
-                .build_int_compare(IntPredicate::ULT, l, r, "lt")
-                .unwrap()
-                .into(),
-            BinaryOp::Le if signed => b
-                .build_int_compare(IntPredicate::SLE, l, r, "le")
-                .unwrap()
-                .into(),
-            BinaryOp::Le => b
-                .build_int_compare(IntPredicate::ULE, l, r, "le")
-                .unwrap()
-                .into(),
-            BinaryOp::Gt if signed => b
-                .build_int_compare(IntPredicate::SGT, l, r, "gt")
-                .unwrap()
-                .into(),
-            BinaryOp::Gt => b
-                .build_int_compare(IntPredicate::UGT, l, r, "gt")
-                .unwrap()
-                .into(),
-            BinaryOp::Ge if signed => b
-                .build_int_compare(IntPredicate::SGE, l, r, "ge")
-                .unwrap()
-                .into(),
-            BinaryOp::Ge => b
-                .build_int_compare(IntPredicate::UGE, l, r, "ge")
-                .unwrap()
-                .into(),
-            BinaryOp::And => b.build_and(l, r, "and").unwrap().into(),
-            BinaryOp::Or => b.build_or(l, r, "or").unwrap().into(),
+        lower_int_binary(
+            b,
+            op,
+            is_signed(tcx, ty),
+            lhs.into_int_value(),
+            rhs.into_int_value(),
+        )
+    }
+}
+
+fn lower_float_binary<'ctx>(
+    b: &inkwell::builder::Builder<'ctx>,
+    op: BinaryOp,
+    l: inkwell::values::FloatValue<'ctx>,
+    r: inkwell::values::FloatValue<'ctx>,
+) -> BasicValueEnum<'ctx> {
+    match op {
+        BinaryOp::Add => b.build_float_add(l, r, "add").unwrap().into(),
+        BinaryOp::Sub => b.build_float_sub(l, r, "sub").unwrap().into(),
+        BinaryOp::Mul => b.build_float_mul(l, r, "mul").unwrap().into(),
+        BinaryOp::Div => b.build_float_div(l, r, "div").unwrap().into(),
+        BinaryOp::Rem => b.build_float_rem(l, r, "rem").unwrap().into(),
+        BinaryOp::Eq => b
+            .build_float_compare(FloatPredicate::OEQ, l, r, "eq")
+            .unwrap()
+            .into(),
+        BinaryOp::Ne => b
+            .build_float_compare(FloatPredicate::UNE, l, r, "ne")
+            .unwrap()
+            .into(),
+        BinaryOp::Lt => b
+            .build_float_compare(FloatPredicate::OLT, l, r, "lt")
+            .unwrap()
+            .into(),
+        BinaryOp::Le => b
+            .build_float_compare(FloatPredicate::OLE, l, r, "le")
+            .unwrap()
+            .into(),
+        BinaryOp::Gt => b
+            .build_float_compare(FloatPredicate::OGT, l, r, "gt")
+            .unwrap()
+            .into(),
+        BinaryOp::Ge => b
+            .build_float_compare(FloatPredicate::OGE, l, r, "ge")
+            .unwrap()
+            .into(),
+        BinaryOp::And | BinaryOp::Or => {
+            unreachable!("typeck rejects logical And/Or on a float operand")
         }
+    }
+}
+
+fn lower_int_binary<'ctx>(
+    b: &inkwell::builder::Builder<'ctx>,
+    op: BinaryOp,
+    signed: bool,
+    l: inkwell::values::IntValue<'ctx>,
+    r: inkwell::values::IntValue<'ctx>,
+) -> BasicValueEnum<'ctx> {
+    match op {
+        BinaryOp::Add => b.build_int_add(l, r, "add").unwrap().into(),
+        BinaryOp::Sub => b.build_int_sub(l, r, "sub").unwrap().into(),
+        BinaryOp::Mul => b.build_int_mul(l, r, "mul").unwrap().into(),
+        BinaryOp::Div if signed => b.build_int_signed_div(l, r, "div").unwrap().into(),
+        BinaryOp::Div => b.build_int_unsigned_div(l, r, "div").unwrap().into(),
+        BinaryOp::Rem if signed => b.build_int_signed_rem(l, r, "rem").unwrap().into(),
+        BinaryOp::Rem => b.build_int_unsigned_rem(l, r, "rem").unwrap().into(),
+        BinaryOp::Eq => b
+            .build_int_compare(IntPredicate::EQ, l, r, "eq")
+            .unwrap()
+            .into(),
+        BinaryOp::Ne => b
+            .build_int_compare(IntPredicate::NE, l, r, "ne")
+            .unwrap()
+            .into(),
+        BinaryOp::Lt if signed => b
+            .build_int_compare(IntPredicate::SLT, l, r, "lt")
+            .unwrap()
+            .into(),
+        BinaryOp::Lt => b
+            .build_int_compare(IntPredicate::ULT, l, r, "lt")
+            .unwrap()
+            .into(),
+        BinaryOp::Le if signed => b
+            .build_int_compare(IntPredicate::SLE, l, r, "le")
+            .unwrap()
+            .into(),
+        BinaryOp::Le => b
+            .build_int_compare(IntPredicate::ULE, l, r, "le")
+            .unwrap()
+            .into(),
+        BinaryOp::Gt if signed => b
+            .build_int_compare(IntPredicate::SGT, l, r, "gt")
+            .unwrap()
+            .into(),
+        BinaryOp::Gt => b
+            .build_int_compare(IntPredicate::UGT, l, r, "gt")
+            .unwrap()
+            .into(),
+        BinaryOp::Ge if signed => b
+            .build_int_compare(IntPredicate::SGE, l, r, "ge")
+            .unwrap()
+            .into(),
+        BinaryOp::Ge => b
+            .build_int_compare(IntPredicate::UGE, l, r, "ge")
+            .unwrap()
+            .into(),
+        BinaryOp::And => b.build_and(l, r, "and").unwrap().into(),
+        BinaryOp::Or => b.build_or(l, r, "or").unwrap().into(),
     }
 }
 
@@ -983,35 +1159,10 @@ fn lower_terminator<'ctx>(
     sret: bool,
 ) {
     match &terminator.kind {
-        TerminatorKind::Goto { target } => {
-            cx.builder
-                .build_unconditional_branch(blocks[target.index()])
-                .unwrap();
-        }
-        TerminatorKind::Return => {
-            if sret || matches!(ty::abi_class(tcx, local_decls[0].ty), ty::AbiClass::Void) {
-                cx.builder.build_return(None).unwrap();
-            } else {
-                let llvm_ty = ty::llvm_type(cx, tcx, mir, local_decls[0].ty);
-                let val = cx
-                    .builder
-                    .build_load(llvm_ty, locals[&Local::RETURN_PLACE], "ret")
-                    .unwrap();
-                cx.builder.build_return(Some(&val)).unwrap();
-            }
-        }
+        TerminatorKind::Goto { target } => branch_to_target(cx, blocks, Some(*target)),
+        TerminatorKind::Return => lower_return(cx, mir, tcx, locals, local_decls, sret),
         TerminatorKind::SwitchInt { discr, targets } => {
-            let discr_val =
-                lower_operand(cx, tcx, mir, locals, local_decls, discr).into_int_value();
-            let int_ty = discr_val.get_type();
-            let cases: Vec<_> = targets
-                .values
-                .iter()
-                .map(|&(v, target)| (int_ty.const_int(v as u64, false), blocks[target.index()]))
-                .collect();
-            cx.builder
-                .build_switch(discr_val, blocks[targets.otherwise.index()], &cases)
-                .unwrap();
+            lower_switch_int(cx, mir, tcx, locals, local_decls, blocks, discr, targets);
         }
         TerminatorKind::Call {
             func,
@@ -1038,42 +1189,143 @@ fn lower_terminator<'ctx>(
             msg,
             target,
         } => {
-            let cond_val = lower_operand(cx, tcx, mir, locals, local_decls, cond).into_int_value();
-            let function = cx.builder.get_insert_block().unwrap().get_parent().unwrap();
-            let ok_block = blocks[target.index()];
-            let fail_block = cx.llvm.append_basic_block(function, "assert.fail");
-            let (then_block, else_block) = if *expected {
-                (ok_block, fail_block)
-            } else {
-                (fail_block, ok_block)
-            };
-            cx.builder
-                .build_conditional_branch(cond_val, then_block, else_block)
-                .unwrap();
-
-            cx.builder.position_at_end(fail_block);
-            lower_assert_failure(cx, tcx, mir, locals, local_decls, msg);
+            lower_assert_terminator(
+                cx,
+                mir,
+                tcx,
+                locals,
+                local_decls,
+                blocks,
+                cond,
+                *expected,
+                msg,
+                *target,
+            );
         }
         TerminatorKind::Unreachable => {
             cx.builder.build_unreachable().unwrap();
         }
         TerminatorKind::Drop { place, target } => {
-            let (place_ptr, place_ty) =
-                place::lower_place(cx, tcx, mir, locals, local_decls, place);
-            super::drop::drop_glue(cx, tcx, mir, place_ptr, place_ty);
-            cx.builder
-                .build_unconditional_branch(blocks[target.index()])
-                .unwrap();
+            lower_drop_terminator(
+                cx,
+                mir,
+                tcx,
+                locals,
+                local_decls,
+                blocks,
+                place,
+                *target,
+                false,
+            );
         }
         TerminatorKind::DropIso { place, target } => {
-            let (place_ptr, place_ty) =
-                place::lower_place(cx, tcx, mir, locals, local_decls, place);
-            super::drop::free_iso_shallow(cx, tcx, place_ptr, place_ty);
-            cx.builder
-                .build_unconditional_branch(blocks[target.index()])
-                .unwrap();
+            lower_drop_terminator(
+                cx,
+                mir,
+                tcx,
+                locals,
+                local_decls,
+                blocks,
+                place,
+                *target,
+                true,
+            );
         }
     }
+}
+
+fn lower_return<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    sret: bool,
+) {
+    if sret || matches!(ty::classify_abi(tcx, local_decls[0].ty), ty::AbiClass::Void) {
+        cx.builder.build_return(None).unwrap();
+        return;
+    }
+    let llvm_ty = ty::llvm_type(cx, tcx, mir, local_decls[0].ty);
+    let val = cx
+        .builder
+        .build_load(llvm_ty, locals[&Local::RETURN_PLACE], "ret")
+        .unwrap();
+    cx.builder.build_return(Some(&val)).unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_switch_int<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
+    discr: &Operand,
+    targets: &crate::mir::SwitchTargets,
+) {
+    let discr_val = lower_operand(cx, tcx, mir, locals, local_decls, discr).into_int_value();
+    let int_ty = discr_val.get_type();
+    let cases: Vec<_> = targets
+        .values
+        .iter()
+        .map(|&(v, target)| (int_ty.const_int(v as u64, false), blocks[target.index()]))
+        .collect();
+    cx.builder
+        .build_switch(discr_val, blocks[targets.otherwise.index()], &cases)
+        .unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_assert_terminator<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
+    cond: &Operand,
+    expected: bool,
+    msg: &AssertMessage,
+    target: crate::mir::BasicBlock,
+) {
+    let cond_val = lower_operand(cx, tcx, mir, locals, local_decls, cond).into_int_value();
+    let function = cx.builder.get_insert_block().unwrap().get_parent().unwrap();
+    let ok_block = blocks[target.index()];
+    let fail_block = cx.llvm.append_basic_block(function, "assert.fail");
+    let (then_block, else_block) = if expected {
+        (ok_block, fail_block)
+    } else {
+        (fail_block, ok_block)
+    };
+    cx.builder
+        .build_conditional_branch(cond_val, then_block, else_block)
+        .unwrap();
+
+    cx.builder.position_at_end(fail_block);
+    lower_assert_failure(cx, tcx, mir, locals, local_decls, msg);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_drop_terminator<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
+    place: &Place,
+    target: crate::mir::BasicBlock,
+    iso: bool,
+) {
+    let (place_ptr, place_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place);
+    if iso {
+        super::drop::free_iso_shallow(cx, tcx, place_ptr, place_ty);
+    } else {
+        super::drop::emit_drop_glue(cx, tcx, mir, place_ptr, place_ty);
+    }
+    branch_to_target(cx, blocks, Some(target));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1090,25 +1342,64 @@ fn lower_call<'ctx>(
     target: Option<crate::mir::BasicBlock>,
 ) {
     let (dest_ptr, dest_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, destination);
-    let indirect_return = matches!(ty::abi_class(tcx, dest_ty), ty::AbiClass::Indirect);
+    let indirect_return = matches!(ty::classify_abi(tcx, dest_ty), ty::AbiClass::Indirect);
+    let dyn_dispatch = is_dyn_dispatch(tcx, func);
 
+    let dyn_receiver = dyn_dispatch
+        .then(|| lower_operand(cx, tcx, mir, locals, local_decls, &args[0]).into_struct_value());
+
+    let mut arg_vals = collect_call_arguments(
+        cx,
+        mir,
+        tcx,
+        locals,
+        local_decls,
+        args,
+        dyn_dispatch,
+        indirect_return,
+        dest_ptr,
+    );
+
+    let call_site = emit_call_site(
+        cx,
+        mir,
+        tcx,
+        locals,
+        local_decls,
+        func,
+        dyn_dispatch,
+        dyn_receiver,
+        indirect_return,
+        &mut arg_vals,
+    );
+
+    if !indirect_return && let Some(ret_val) = call_site.try_as_basic_value().basic() {
+        cx.builder.build_store(dest_ptr, ret_val).unwrap();
+    }
+
+    branch_to_target(cx, blocks, target);
+}
+
+/// Returns the LLVM arguments for a call: the indirect-return slot first when `indirect_return`,
+/// then each written argument (skipping the receiver when `dyn_dispatch` lowers it separately).
+#[allow(clippy::too_many_arguments)]
+fn collect_call_arguments<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    args: &[Operand],
+    dyn_dispatch: bool,
+    indirect_return: bool,
+    dest_ptr: PointerValue<'ctx>,
+) -> Vec<BasicMetadataValueEnum<'ctx>> {
     let mut arg_vals: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
     if indirect_return {
         arg_vals.push(dest_ptr.into());
     }
-    let dyn_dispatch = matches!(
-        func,
-        Operand::Constant(Constant {
-            kind: ConstKind::FunDef(FunRef {
-                self_ty: Some(self_ty),
-                ..
-            }),
-            ..
-        }) if matches!(tcx.kind(*self_ty).clone(), TyKind::Dyn { .. })
-    );
-    let dyn_receiver = dyn_dispatch
-        .then(|| lower_operand(cx, tcx, mir, locals, local_decls, &args[0]).into_struct_value());
-    for arg in if dyn_dispatch { &args[1..] } else { args } {
+    let written_args = if dyn_dispatch { &args[1..] } else { args };
+    for arg in written_args {
         let arg_ty = operand_ty(tcx, local_decls, arg);
         push_call_arg(
             cx,
@@ -1121,68 +1412,142 @@ fn lower_call<'ctx>(
             &mut arg_vals,
         );
     }
+    arg_vals
+}
 
-    let call_site = if dyn_dispatch {
-        let Operand::Constant(Constant {
-            kind: ConstKind::FunDef(fun),
-            ty: sig_ty,
+fn is_dyn_dispatch(tcx: &TyCtx, func: &Operand) -> bool {
+    matches!(
+        func,
+        Operand::Constant(Constant {
+            kind: ConstKind::FunDef(FunRef {
+                self_ty: Some(self_ty),
+                ..
+            }),
             ..
-        }) = func
-        else {
-            unreachable!("dyn dispatch is only decided on a FunDef constant");
-        };
-        let receiver = dyn_receiver.expect("a dyn call carries its fat receiver");
-        let fn_type = dyn_method_fn_type(cx, tcx, mir, *sig_ty);
-        let (_, index) = fun.trait_method.unwrap_or_else(|| {
-            panic!(
-                "codegen: {:?} is not a trait method with a vtable slot",
-                fun.def
-            )
-        });
-        let (leading, rest) = arg_vals.split_at(usize::from(indirect_return));
-        super::vtable::call_dyn_method(
-            cx,
-            receiver.into(),
-            usize::try_from(index).expect("a vtable slot fits a usize"),
-            fn_type,
-            leading,
-            rest,
-        )
-    } else if let Operand::Constant(Constant {
+        }) if matches!(tcx.kind(*self_ty).clone(), TyKind::Dyn { .. })
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_call_site<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    func: &Operand,
+    dyn_dispatch: bool,
+    dyn_receiver: Option<inkwell::values::StructValue<'ctx>>,
+    indirect_return: bool,
+    arg_vals: &mut Vec<BasicMetadataValueEnum<'ctx>>,
+) -> inkwell::values::CallSiteValue<'ctx> {
+    if dyn_dispatch {
+        return emit_dyn_call(cx, mir, tcx, func, dyn_receiver, indirect_return, arg_vals);
+    }
+    if let Operand::Constant(Constant {
         kind: ConstKind::FunDef(fun),
         ..
     }) = func
     {
-        if Some(fun.def) == cx.hir.lang_items().get(LangItem::WriteBytes) {
-            cx.builder
-                .build_call(cx.libc.write, &arg_vals, "call")
-                .unwrap()
-        } else {
-            let instance = Instance {
-                def: fun.def,
-                any_mode: fun.any_mode,
-                args: fun.args.clone(),
-                self_ty: fun.self_ty,
-            };
-            let name = cx.mangle(tcx, &instance);
-            let function = cx.functions[&name];
-            cx.builder.build_call(function, &arg_vals, "call").unwrap()
-        }
-    } else {
-        let callee = lower_operand(cx, tcx, mir, locals, local_decls, func).into_struct_value();
-        let (code, env) = super::closure::unpack(cx, callee);
-        arg_vals.insert(usize::from(indirect_return), env.into());
-        let func_ty = operand_ty(tcx, local_decls, func);
-        let fn_type = indirect_fn_type(cx, tcx, mir, func_ty);
-        cx.builder
-            .build_indirect_call(fn_type, code, &arg_vals, "call")
-            .unwrap()
-    };
-
-    if !indirect_return && let Some(ret_val) = call_site.try_as_basic_value().basic() {
-        cx.builder.build_store(dest_ptr, ret_val).unwrap();
+        return emit_direct_call(cx, tcx, fun, arg_vals);
     }
+    emit_indirect_call(
+        cx,
+        mir,
+        tcx,
+        locals,
+        local_decls,
+        func,
+        indirect_return,
+        arg_vals,
+    )
+}
 
+fn emit_dyn_call<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    func: &Operand,
+    dyn_receiver: Option<inkwell::values::StructValue<'ctx>>,
+    indirect_return: bool,
+    arg_vals: &mut [BasicMetadataValueEnum<'ctx>],
+) -> inkwell::values::CallSiteValue<'ctx> {
+    let Operand::Constant(Constant {
+        kind: ConstKind::FunDef(fun),
+        ty: sig_ty,
+        ..
+    }) = func
+    else {
+        unreachable!("dyn dispatch is only decided on a FunDef constant");
+    };
+    let receiver = dyn_receiver.expect("a dyn call carries its fat receiver");
+    let fn_type = dyn_method_fn_type(cx, tcx, mir, *sig_ty);
+    let (_, index) = fun.trait_method.unwrap_or_else(|| {
+        panic!(
+            "codegen: {:?} is not a trait method with a vtable slot",
+            fun.def
+        )
+    });
+    let (leading, rest) = arg_vals.split_at(usize::from(indirect_return));
+    super::vtable::call_dyn_method(
+        cx,
+        receiver.into(),
+        usize::try_from(index).expect("a vtable slot fits a usize"),
+        fn_type,
+        leading,
+        rest,
+    )
+}
+
+fn emit_direct_call<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &TyCtx,
+    fun: &FunRef,
+    arg_vals: &[BasicMetadataValueEnum<'ctx>],
+) -> inkwell::values::CallSiteValue<'ctx> {
+    if Some(fun.def) == cx.hir.lang_items().get(LangItem::WriteBytes) {
+        return cx
+            .builder
+            .build_call(cx.libc.write, arg_vals, "call")
+            .unwrap();
+    }
+    let instance = Instance {
+        def: fun.def,
+        any_mode: fun.any_mode,
+        args: fun.args.clone(),
+        self_ty: fun.self_ty,
+    };
+    let name = cx.mangle(tcx, &instance);
+    let function = cx.functions[&name];
+    cx.builder.build_call(function, arg_vals, "call").unwrap()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_indirect_call<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    mir: &Mir,
+    tcx: &mut TyCtx,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    func: &Operand,
+    indirect_return: bool,
+    arg_vals: &mut Vec<BasicMetadataValueEnum<'ctx>>,
+) -> inkwell::values::CallSiteValue<'ctx> {
+    let callee = lower_operand(cx, tcx, mir, locals, local_decls, func).into_struct_value();
+    let (code, env) = super::closure::unpack(cx, callee);
+    arg_vals.insert(usize::from(indirect_return), env.into());
+    let func_ty = operand_ty(tcx, local_decls, func);
+    let fn_type = indirect_fn_type(cx, tcx, mir, func_ty);
+    cx.builder
+        .build_indirect_call(fn_type, code, arg_vals, "call")
+        .unwrap()
+}
+
+fn branch_to_target<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    blocks: &[inkwell::basic_block::BasicBlock<'ctx>],
+    target: Option<crate::mir::BasicBlock>,
+) {
     match target {
         Some(t) => {
             cx.builder
@@ -1206,7 +1571,7 @@ fn push_call_arg<'ctx>(
     arg_ty: Ty,
     out: &mut Vec<BasicMetadataValueEnum<'ctx>>,
 ) {
-    match ty::abi_class(tcx, arg_ty) {
+    match ty::classify_abi(tcx, arg_ty) {
         ty::AbiClass::Void => {}
         ty::AbiClass::Fat => {
             let val = lower_operand(cx, tcx, mir, locals, local_decls, operand).into_struct_value();
@@ -1250,7 +1615,7 @@ fn indirect_fn_type<'ctx>(
         push_call_param_type(cx, tcx, mir, param, &mut param_llvm);
     }
 
-    match ty::abi_class(tcx, ret_ty) {
+    match ty::classify_abi(tcx, ret_ty) {
         ty::AbiClass::Void => cx.llvm.void_type().fn_type(&param_llvm, false),
         ty::AbiClass::Indirect => {
             let mut params_llvm = vec![cx.llvm.ptr_type(Default::default()).into()];
@@ -1268,7 +1633,7 @@ fn push_call_param_type<'ctx>(
     ty: Ty,
     out: &mut Vec<BasicMetadataTypeEnum<'ctx>>,
 ) {
-    match ty::abi_class(tcx, ty) {
+    match ty::classify_abi(tcx, ty) {
         ty::AbiClass::Void => {}
         ty::AbiClass::Fat => {
             out.push(cx.llvm.ptr_type(Default::default()).into());
@@ -1287,46 +1652,58 @@ fn lower_assert_failure<'ctx>(
     local_decls: &[LocalDecl],
     msg: &AssertMessage,
 ) {
-    let fd = cx.llvm.i32_type().const_int(2, false);
     match msg.user_message() {
-        Some(operand) => {
-            let value =
-                lower_operand(cx, tcx, mir, locals, local_decls, operand).into_struct_value();
-            let ptr = cx
-                .builder
-                .build_extract_value(value, 0, "msg.ptr")
-                .unwrap()
-                .into_pointer_value();
-            let len = cx
-                .builder
-                .build_extract_value(value, 1, "msg.len")
-                .unwrap()
-                .into_int_value();
-            cx.builder
-                .build_call(cx.libc.write, &[fd.into(), ptr.into(), len.into()], "write")
-                .unwrap();
-        }
-        None => {
-            let text = assert_message_text(msg);
-            let bytes = text.as_bytes();
-            let global = cx.module.add_global(
-                cx.llvm.i8_type().array_type(bytes.len() as u32),
-                None,
-                "assert.msg",
-            );
-            global.set_initializer(&cx.llvm.const_string(bytes, false));
-            global.set_linkage(inkwell::module::Linkage::Private);
-            global.set_constant(true);
-            let ptr = global.as_pointer_value();
-            let len = cx.llvm.i64_type().const_int(bytes.len() as u64, false);
-            cx.builder
-                .build_call(cx.libc.write, &[fd.into(), ptr.into(), len.into()], "write")
-                .unwrap();
-        }
+        Some(operand) => write_user_assert_message(cx, tcx, mir, locals, local_decls, operand),
+        None => write_static_assert_message(cx, msg),
     }
-
     cx.builder.build_call(cx.libc.abort, &[], "abort").unwrap();
     cx.builder.build_unreachable().unwrap();
+}
+
+/// Writes the message carried by the assertion's own operand to standard error.
+fn write_user_assert_message<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    operand: &Operand,
+) {
+    let fd = cx.llvm.i32_type().const_int(2, false);
+    let value = lower_operand(cx, tcx, mir, locals, local_decls, operand).into_struct_value();
+    let ptr = cx
+        .builder
+        .build_extract_value(value, 0, "msg.ptr")
+        .unwrap()
+        .into_pointer_value();
+    let len = cx
+        .builder
+        .build_extract_value(value, 1, "msg.len")
+        .unwrap()
+        .into_int_value();
+    cx.builder
+        .build_call(cx.libc.write, &[fd.into(), ptr.into(), len.into()], "write")
+        .unwrap();
+}
+
+/// Writes the default message for `msg` to standard error, interning it as a private global.
+fn write_static_assert_message<'ctx>(cx: &mut CodegenCtx<'ctx>, msg: &AssertMessage) {
+    let fd = cx.llvm.i32_type().const_int(2, false);
+    let text = assert_message_text(msg);
+    let bytes = text.as_bytes();
+    let global = cx.module.add_global(
+        cx.llvm.i8_type().array_type(bytes.len() as u32),
+        None,
+        "assert.msg",
+    );
+    global.set_initializer(&cx.llvm.const_string(bytes, false));
+    global.set_linkage(inkwell::module::Linkage::Private);
+    global.set_constant(true);
+    let ptr = global.as_pointer_value();
+    let len = cx.llvm.i64_type().const_int(bytes.len() as u64, false);
+    cx.builder
+        .build_call(cx.libc.write, &[fd.into(), ptr.into(), len.into()], "write")
+        .unwrap();
 }
 
 fn assert_message_text(msg: &AssertMessage) -> &'static str {
@@ -1429,13 +1806,10 @@ mod tests {
             &hir,
             &mut tcx,
             &types,
-            crate::options::Mode::Release,
+            crate::driver::cli::Mode::Release,
         );
-        let main = match crate::checks::entry_point::crate_root_main_candidates(
-            crate::testing::session(),
-            &hir,
-        )
-        .as_slice()
+        let main = match crate::checks::crate_root_main_candidates(crate::testing::session(), &hir)
+            .as_slice()
         {
             [one] => Some(*one),
             _ => None,
@@ -2068,7 +2442,7 @@ mod tests {
     }
 
     #[test]
-    fn ref_over_a_fat_place_rebuilds_the_two_word_pair() {
+    fn ref_over_a_fat_place_rebuilds_the_fat_pointer_pair() {
         let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
         let llvm = inkwell::context::Context::create();
         let mut cx =
@@ -2082,18 +2456,18 @@ mod tests {
         let unsized_arr = tcx.mk_array(i32_ty, None);
         let ref_ty = tcx.mk_ref(unsized_arr, crate::ast::Mutability::Immutable);
 
-        let two_word_ty = super::two_word_struct_type(&cx);
-        let alloca = cx.builder.build_alloca(two_word_ty, "s").unwrap();
+        let fat_pointer_ty = super::fat_pointer_type(&cx);
+        let alloca = cx.builder.build_alloca(fat_pointer_ty, "s").unwrap();
         let field0 = cx
             .builder
-            .build_struct_gep(two_word_ty, alloca, 0, "p0")
+            .build_struct_gep(fat_pointer_ty, alloca, 0, "p0")
             .unwrap();
         cx.builder
             .build_store(field0, cx.llvm.ptr_type(Default::default()).const_null())
             .unwrap();
         let field1 = cx
             .builder
-            .build_struct_gep(two_word_ty, alloca, 1, "p1")
+            .build_struct_gep(fat_pointer_ty, alloca, 1, "p1")
             .unwrap();
         cx.builder
             .build_store(field1, cx.llvm.i64_type().const_int(7, false))

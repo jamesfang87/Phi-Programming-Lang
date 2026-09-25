@@ -8,16 +8,24 @@ use crate::mir::{
 };
 use crate::typeck::ty::{Ty, TyKind};
 
+struct CallTarget {
+    func: Operand,
+    receiver: Option<ExprId>,
+    arg_exprs: Vec<ExprId>,
+    callee_def: Option<DefId>,
+    dyn_dispatch: bool,
+}
+
 impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn is_any_specialized_call(&self, expr_id: impl Into<HirId>) -> bool {
         let expr_id = expr_id.into();
-        let Some(def) = self.call_target_def(expr_id) else {
+        let Some(def) = self.find_call_target_def(expr_id) else {
             return false;
         };
         is_any_specialized(self.tcx, self.types, def)
     }
 
-    fn call_target_def(&self, expr_id: impl Into<HirId>) -> Option<DefId> {
+    fn find_call_target_def(&self, expr_id: impl Into<HirId>) -> Option<DefId> {
         let expr_id = expr_id.into();
         match &self.hir.expr(expr_id).kind {
             ExprKind::Call { callee, .. } => match &self.hir.expr(*callee).kind {
@@ -44,93 +52,125 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) {
         let expr_id = expr_id.into();
-        let expr_kind = self.hir.expr(expr_id).kind.clone();
-        let (func, receiver, arg_exprs, def_for_args, dyn_dispatch) = match expr_kind {
-            ExprKind::Call { callee, args } => {
-                let func = self.lower_callee(expr_id, callee, mode, span);
-                let def = self.call_target_def(expr_id);
-                (func, None, args, def, false)
-            }
+        let target = self.lower_call_target(expr_id, mode);
+        let any_mode = self.select_call_any_mode(&target, mode);
+        let args = self.lower_call_operand_list(&target, any_mode, span);
+        self.emit_call(expr_id, target.func, args, dest, span);
+    }
+
+    fn lower_call_target(&mut self, expr_id: HirId, mode: AnyMode) -> CallTarget {
+        match self.hir.expr(expr_id).kind.clone() {
+            ExprKind::Call { callee, args } => CallTarget {
+                func: self.lower_callee(expr_id, callee, mode),
+                receiver: None,
+                arg_exprs: args,
+                callee_def: self.find_call_target_def(expr_id),
+                dyn_dispatch: false,
+            },
             ExprKind::Access {
                 base,
                 args: AccessArgs::Call(args),
                 ..
-            } => {
-                let resolved = self
-                    .types
-                    .call(expr_id)
-                    .unwrap_or_else(|| panic!("mir::lower: {expr_id:?} has no resolved call"))
-                    .clone();
-                if let Some(dyn_ty) = self.dyn_receiver_ty(base) {
-                    let func = self.dyn_fn_operand(resolved.def, resolved.all_args(), dyn_ty);
-                    (func, Some(base), args, Some(resolved.def), true)
-                } else {
-                    let func = self.resolved_fn_operand(
-                        resolved.def,
-                        resolved.all_args(),
-                        resolved.self_ty,
-                        mode,
-                        span,
-                    );
-                    (func, Some(base), args, Some(resolved.def), false)
-                }
-            }
+            } => self.receiver_call_target(expr_id, base, args, mode),
             ExprKind::Index { base, index } => {
-                let resolved = self
-                    .types
-                    .call(expr_id)
-                    .unwrap_or_else(|| panic!("mir::lower: {expr_id:?} has no resolved call"))
-                    .clone();
-                if let Some(dyn_ty) = self.dyn_receiver_ty(base) {
-                    let func = self.dyn_fn_operand(resolved.def, resolved.all_args(), dyn_ty);
-                    (func, Some(base), vec![index], Some(resolved.def), true)
-                } else {
-                    let func = self.resolved_fn_operand(
-                        resolved.def,
-                        resolved.all_args(),
-                        resolved.self_ty,
-                        mode,
-                        span,
-                    );
-                    (func, Some(base), vec![index], Some(resolved.def), false)
-                }
+                self.receiver_call_target(expr_id, base, vec![index], mode)
             }
             _ => unreachable!("lower_call_like_into is only called for Call/Access/Index"),
-        };
+        }
+    }
 
-        let any_mode = match def_for_args {
-            Some(def) if !dyn_dispatch && is_any_specialized(self.tcx, self.types, def) => {
+    fn receiver_call_target(
+        &mut self,
+        expr_id: HirId,
+        base: ExprId,
+        args: Vec<ExprId>,
+        mode: AnyMode,
+    ) -> CallTarget {
+        let resolved = self
+            .types
+            .call(expr_id)
+            .unwrap_or_else(|| panic!("mir::lower: {expr_id:?} has no resolved call"))
+            .clone();
+        let (func, dyn_dispatch) = match self.find_dyn_receiver_ty(base) {
+            Some(dyn_ty) => (
+                self.dyn_fn_operand(resolved.def, resolved.all_args(), dyn_ty),
+                true,
+            ),
+            None => (
+                self.resolved_fn_operand(resolved.def, resolved.all_args(), resolved.self_ty, mode),
+                false,
+            ),
+        };
+        CallTarget {
+            func,
+            receiver: Some(base),
+            arg_exprs: args,
+            callee_def: Some(resolved.def),
+            dyn_dispatch,
+        }
+    }
+
+    fn select_call_any_mode(&self, target: &CallTarget, mode: AnyMode) -> Option<AnyMode> {
+        match target.callee_def {
+            Some(def) if !target.dyn_dispatch && is_any_specialized(self.tcx, self.types, def) => {
                 Some(mode)
             }
             _ => None,
-        };
-        let args = match (dyn_dispatch, def_for_args, receiver) {
+        }
+    }
+
+    fn lower_call_operand_list(
+        &mut self,
+        target: &CallTarget,
+        any_mode: Option<AnyMode>,
+        span: SrcSpan,
+    ) -> Vec<Operand> {
+        match (target.dyn_dispatch, target.callee_def, target.receiver) {
             (true, Some(def), Some(recv)) => {
-                let function = self.hir.function(def);
-                let mut operands = vec![self.lower_operand(recv)];
-                for (i, &arg_expr) in arg_exprs.iter().enumerate() {
-                    let declared = function
-                        .params
-                        .get(i)
-                        .and_then(|&id| self.types.ty(id))
-                        .unwrap_or_else(|| self.tcx.error());
-                    operands.push(self.lower_arg_operand(arg_expr, declared, None, span));
-                }
-                operands
+                self.lower_dyn_call_operands(def, recv, &target.arg_exprs, span)
             }
             (_, Some(def), receiver) => {
-                self.lower_call_args(def, any_mode, receiver, &arg_exprs, span)
+                self.lower_call_args(def, any_mode, receiver, &target.arg_exprs, span)
             }
             (_, None, _) => {
                 let mut operands = Vec::new();
-                if let Some(recv) = receiver {
+                if let Some(recv) = target.receiver {
                     operands.push(self.lower_operand(recv));
                 }
-                operands.extend(arg_exprs.iter().map(|&a| self.lower_operand(a)));
+                operands.extend(target.arg_exprs.iter().map(|&a| self.lower_operand(a)));
                 operands
             }
-        };
+        }
+    }
 
+    fn lower_dyn_call_operands(
+        &mut self,
+        def: DefId,
+        receiver: ExprId,
+        arg_exprs: &[ExprId],
+        span: SrcSpan,
+    ) -> Vec<Operand> {
+        let function = self.hir.function(def);
+        let mut operands = vec![self.lower_operand(receiver)];
+        for (i, &arg_expr) in arg_exprs.iter().enumerate() {
+            let declared = function
+                .params
+                .get(i)
+                .and_then(|&id| self.types.ty(id))
+                .unwrap_or_else(|| self.tcx.error());
+            operands.push(self.lower_arg_operand(arg_expr, declared, None, span));
+        }
+        operands
+    }
+
+    fn emit_call(
+        &mut self,
+        expr_id: HirId,
+        func: Operand,
+        args: Vec<Operand>,
+        dest: Place,
+        span: SrcSpan,
+    ) {
         let call_ty = self.expr_ty(expr_id);
         let never_returns = matches!(self.tcx.kind(call_ty), TyKind::Never);
         let target = if never_returns {
@@ -151,8 +191,7 @@ impl<'a> BodyLowerCtx<'a> {
         self.switch_to(fresh);
     }
 
-    /// The `dyn Trait` type a receiver's peeled type names, if it is one.
-    fn dyn_receiver_ty(&mut self, receiver_expr: impl Into<HirId>) -> Option<Ty> {
+    fn find_dyn_receiver_ty(&mut self, receiver_expr: impl Into<HirId>) -> Option<Ty> {
         let receiver_expr = receiver_expr.into();
         let receiver_ty = self.expr_ty(receiver_expr);
         let (peeled, _) = self.peel_refs(receiver_ty);
@@ -209,7 +248,6 @@ impl<'a> BodyLowerCtx<'a> {
         call_expr_id: impl Into<HirId>,
         callee_id: impl Into<HirId>,
         mode: AnyMode,
-        span: SrcSpan,
     ) -> Operand {
         let (call_expr_id, callee_id) = (call_expr_id.into(), callee_id.into());
         let is_named_fn = matches!(
@@ -222,13 +260,7 @@ impl<'a> BodyLowerCtx<'a> {
                 .call(call_expr_id)
                 .unwrap_or_else(|| panic!("mir::lower: {call_expr_id:?} has no resolved call"))
                 .clone();
-            self.resolved_fn_operand(
-                resolved.def,
-                resolved.all_args(),
-                resolved.self_ty,
-                mode,
-                span,
-            )
+            self.resolved_fn_operand(resolved.def, resolved.all_args(), resolved.self_ty, mode)
         } else {
             let place = self.lower_place(callee_id);
             Operand::Copy(place)
@@ -241,7 +273,6 @@ impl<'a> BodyLowerCtx<'a> {
         args: Vec<Ty>,
         self_ty: Option<Ty>,
         mode: AnyMode,
-        _span: SrcSpan,
     ) -> Operand {
         let any_mode = if is_any_specialized(self.tcx, self.types, def) {
             self.discover(Task::AnySpecialized(def, mode));
@@ -304,10 +335,7 @@ impl<'a> BodyLowerCtx<'a> {
         };
 
         let recv_ty = self.expr_ty(expr_id);
-        // `expr_ty` resolves a receiver's `any` against the enclosing instance's mode, so an
-        // `any` wrapper still here has no mode of its own. The method's receiver mode fixes it:
-        // `&self` forces `Ref` and `&mut self` forces `RefMut`, and at either the value already
-        // is the reference the call passes, so it is forwarded rather than borrowed again.
+
         if let TyKind::Any(_) = *self.tcx.kind(recv_ty) {
             let place = self.lower_place(expr_id);
             return match mutability {
@@ -320,7 +348,7 @@ impl<'a> BodyLowerCtx<'a> {
         for _ in 0..derefs {
             place.projections.push(Projection::Deref);
         }
-        // reference is taken of, which is already concrete at this call site.
+
         let temp_ty = self.tcx.mk_ref(peeled, mutability);
         let temp = self.new_temp(temp_ty, span);
         self.assign(
@@ -364,9 +392,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// The type arguments a value-position use of a named function was instantiated with, for
-    /// `ReifyFnPointer` -- reusing the same resolved-call table a direct call already uses, since
-    /// `callee_sig` records a non-generic function's call too (with an empty list).
     pub(crate) fn call_type_args(&self, expr_id: impl Into<HirId>) -> Vec<Ty> {
         let expr_id = expr_id.into();
         self.types
@@ -374,7 +399,7 @@ impl<'a> BodyLowerCtx<'a> {
             .map(|c| c.all_args())
             .unwrap_or_default()
     }
-    /// indirect call through the resulting pointer always finds a compiled body.
+
     pub(crate) fn reify_fn_pointer(
         &mut self,
         def: DefId,
@@ -415,7 +440,7 @@ impl<'a> BodyLowerCtx<'a> {
         );
         Operand::Move(Place::from_local(temp))
     }
-    /// across every parameter and the return type at once.
+
     fn resolve_any_fn_ty(&mut self, fn_ty: Ty, mode: AnyMode) -> Ty {
         let TyKind::Fun { params, ret } = self.tcx.kind(fn_ty).clone() else {
             return fn_ty;

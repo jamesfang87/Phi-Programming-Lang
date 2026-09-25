@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::diagnostics::mir::definite_init::report_use_of_moved_value;
 use crate::driver::source::SrcSpan;
-use crate::mir::checks::borrowck::{Register, register_of};
+use crate::mir::checks::borrowck::{Register, to_register};
 use crate::mir::{
     BasicBlock, Body, Operand, Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
     checks::lattice, lower::Mir,
@@ -10,12 +10,9 @@ use crate::mir::{
 use crate::session::Session;
 use crate::typeck::ty::ctx::TyCtx;
 
-/// The set of registers currently dead. A register's absence means it is live.
 type DeadRegisters = HashSet<Register>;
 type Lattice = lattice::Lattice<BasicBlock, DeadRegisters>;
 
-/// Per local: whether the local's value can be moved at all. A copyable local cannot, so it is
-/// excluded from the state; see [`TyCtx::is_copy`].
 type Movable = [bool];
 
 pub fn check(session: &Session, tcx: &TyCtx, mir: &Mir) {
@@ -38,11 +35,11 @@ fn check_body(session: &Session, tcx: &TyCtx, body: &Body) {
         .iter()
         .map(|decl| decl.name.is_some() && !tcx.is_copy(decl.ty))
         .collect();
-    let lattice = fixed_point(body, &movable);
-    report_body(session, body, &movable, &lattice);
+    let dead_states = solve_fixed_point(body, &movable);
+    report_body(session, body, &movable, &dead_states);
 }
 
-fn fixed_point(body: &Body, movable: &Movable) -> Lattice {
+fn solve_fixed_point(body: &Body, movable: &Movable) -> Lattice {
     lattice::solve(
         body,
         DeadRegisters::default(),
@@ -59,11 +56,10 @@ fn fixed_point(body: &Body, movable: &Movable) -> Lattice {
     )
 }
 
-/// Report use-free errors in the body.
-fn report_body(session: &Session, body: &Body, movable: &Movable, lattice: &Lattice) {
+fn report_body(session: &Session, body: &Body, movable: &Movable, dead_states: &Lattice) {
     for (index, block) in body.basic_blocks.iter().enumerate() {
         let id = BasicBlock::from_usize(index);
-        let mut state = lattice
+        let mut state = dead_states
             .entry(id)
             .expect("every block's entry is given above")
             .clone();
@@ -74,7 +70,6 @@ fn report_body(session: &Session, body: &Body, movable: &Movable, lattice: &Latt
     }
 }
 
-/// Checks if a register is dead.
 fn is_dead(dead: &DeadRegisters, movable: &Movable, register: &Register) -> bool {
     if !movable[register.owner.index()] {
         return false;
@@ -89,7 +84,6 @@ fn is_dead(dead: &DeadRegisters, movable: &Movable, register: &Register) -> bool
         .any(|d| d.owner == register.owner && d.subregister.starts_with(&register.subregister))
 }
 
-/// Sets the state of `register` to live
 fn mark_live(dead: &mut DeadRegisters, movable: &Movable, register: &Register) {
     if !movable[register.owner.index()] {
         return;
@@ -97,7 +91,6 @@ fn mark_live(dead: &mut DeadRegisters, movable: &Movable, register: &Register) {
     dead.retain(|d| d.owner != register.owner || !d.subregister.starts_with(&register.subregister));
 }
 
-/// Records `register` as dead, unless its owner cannot move.
 fn mark_dead(dead: &mut DeadRegisters, movable: &Movable, register: Register) {
     if movable[register.owner.index()] {
         dead.insert(register);
@@ -106,7 +99,7 @@ fn mark_dead(dead: &mut DeadRegisters, movable: &Movable, register: Register) {
 
 fn apply_operand(dead: &mut DeadRegisters, movable: &Movable, operand: &Operand) {
     if let Operand::Move(place) = operand {
-        mark_dead(dead, movable, register_of(place));
+        mark_dead(dead, movable, to_register(place));
     }
 }
 
@@ -141,7 +134,6 @@ fn apply_statement(dead: &mut DeadRegisters, movable: &Movable, stmt: &Statement
     match &stmt.kind {
         StatementKind::StorageLive(local) | StatementKind::StorageDead(local) => {
             if movable[local.index()] {
-                // We do the same for StorageLive for re-entry into loops
                 dead.retain(|r| r.owner != *local);
                 dead.insert(Register {
                     owner: *local,
@@ -151,7 +143,7 @@ fn apply_statement(dead: &mut DeadRegisters, movable: &Movable, stmt: &Statement
         }
         StatementKind::Assign(place, rvalue) => {
             apply_rvalue(dead, movable, rvalue);
-            mark_live(dead, movable, &register_of(place));
+            mark_live(dead, movable, &to_register(place));
         }
         StatementKind::PlaceMention(_)
         | StatementKind::SetDiscriminant { .. }
@@ -178,10 +170,10 @@ fn apply_terminator(dead: &mut DeadRegisters, movable: &Movable, terminator: &Te
             for arg in args {
                 apply_operand(dead, movable, arg);
             }
-            mark_live(dead, movable, &register_of(destination));
+            mark_live(dead, movable, &to_register(destination));
         }
         TerminatorKind::Drop { place, .. } | TerminatorKind::DropIso { place, .. } => {
-            mark_dead(dead, movable, register_of(place));
+            mark_dead(dead, movable, to_register(place));
         }
         TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {}
     }
@@ -195,7 +187,7 @@ fn check_read(
     place: &Place,
     span: SrcSpan,
 ) {
-    let register = register_of(place);
+    let register = to_register(place);
     if is_dead(dead, movable, &register) {
         let name = body.local_decls[register.owner.index()]
             .name
@@ -268,7 +260,7 @@ fn check_statement(
     match &stmt.kind {
         StatementKind::Assign(place, rvalue) => {
             check_rvalue(session, dead, movable, body, rvalue, stmt.span);
-            mark_live(dead, movable, &register_of(place));
+            mark_live(dead, movable, &to_register(place));
         }
         StatementKind::PlaceMention(place) => {
             check_read(session, dead, movable, body, place, stmt.span);
@@ -307,7 +299,7 @@ fn check_terminator(
             for arg in args {
                 check_operand(session, dead, movable, body, arg, terminator.span);
             }
-            mark_live(dead, movable, &register_of(destination));
+            mark_live(dead, movable, &to_register(destination));
         }
         TerminatorKind::Drop { .. }
         | TerminatorKind::DropIso { .. }

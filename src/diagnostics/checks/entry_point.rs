@@ -4,9 +4,6 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir};
 use crate::session::Session;
 
-/// A warning, not an error: a crate with no entry point still compiles and links. The binary is
-/// simply one that does nothing, which is what a caller building a crate for its definitions
-/// alone wants.
 pub fn report_missing_main(session: &Session) {
     session.emit(
         Diagnostic::warning_global(

@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Literal, UnaryOp};
+use crate::ast::{BinaryOp, Literal, Mutability, UnaryOp};
 use crate::diagnostics::nameres::{report_dyn_not_trait, report_self_unavailable};
 use crate::diagnostics::typeck::lower_ty::{
     report_arg_count, report_array_len_division_by_zero, report_array_len_negative,
@@ -7,7 +7,7 @@ use crate::diagnostics::typeck::lower_ty::{
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{
-    DefId, ExprId, ExprKind as HirExprKind, HirId, OwnerNode, Res, TyDef, TyId,
+    DefId, ExprId, ExprKind as HirExprKind, Hir, HirId, OwnerNode, Res, TyDef, TyId,
     TyKind as HirTyKind, Type,
 };
 use crate::nameres::PrimTy;
@@ -17,6 +17,7 @@ use crate::typeck::ty::Ty;
 mod checks;
 
 impl<'hir> Typeck<'hir> {
+
     pub fn lower_ty(&mut self, id: TyId) -> Ty {
         let ty = self.hir.ty(id);
         let span = ty.span;
@@ -28,62 +29,19 @@ impl<'hir> Typeck<'hir> {
             }
             HirTyKind::SelfTy(args) => {
                 let args = args.clone();
-                Self::check_no_args(self.session, &args, span, "`Self`");
-                self.self_ty(id.owner(), span)
+                self.lower_self_ty(id, &args, span)
             }
-            HirTyKind::Ref { base, mutability } => {
-                let (base, mutability) = (*base, *mutability);
-                let base = self.lower_ty(base);
-                self.tcx.mk_ref(base, mutability)
-            }
-            HirTyKind::Any(base) => {
-                let base = self.lower_ty(*base);
-                self.tcx.mk_any(base)
-            }
-            HirTyKind::Iso(base) => {
-                let base = self.lower_ty(*base);
-                self.tcx.mk_iso(base)
-            }
+            HirTyKind::Ref { base, mutability } => self.lower_ref(*base, *mutability),
+            HirTyKind::Any(base) => self.lower_any(*base),
+            HirTyKind::Iso(base) => self.lower_iso(*base),
             HirTyKind::Tuple(elems) => {
                 let elems = elems.clone();
-                let elems = self.lower_tys(&elems);
-                self.tcx.mk_tuple(elems)
+                self.lower_tuple(&elems)
             }
-            HirTyKind::Array { elem, len } => {
-                let (elem, len) = (*elem, *len);
-                let elem = self.lower_ty(elem);
-                match len {
-                    None => self.tcx.mk_array(elem, None),
-                    Some(len_id) => {
-                        let len_ty = self.ty_of(len_id);
-                        let usize_ty = self.tcx.mk_prim(PrimTy::Usize);
-                        if let Err(err) = self.unifier.unify(&self.tcx, usize_ty, len_ty) {
-                            report_array_len_not_usize(
-                                self.display_cx(),
-                                err,
-                                self.hir.expr(len_id).span,
-                            );
-                        }
-                        match self.fold_array_len(len_id) {
-                            Some(len) => self.tcx.mk_array(elem, Some(len)),
-                            None => self.tcx.error(),
-                        }
-                    }
-                }
-            }
+            HirTyKind::Array { elem, len } => self.lower_array(*elem, *len),
             HirTyKind::Function { params, ret } => {
-                let (hir_params, ret) = (params.clone(), *ret);
-                let params = self.lower_tys(&hir_params);
-                for (&hir_id, &param) in hir_params.iter().zip(&params) {
-                    self.check_no_dyn(param, self.hir.ty(hir_id).span);
-                }
-                let ret = ret.map(|ret| {
-                    let ret_span = self.hir.ty(ret).span;
-                    let ret = self.lower_ty(ret);
-                    self.check_no_dyn(ret, ret_span);
-                    ret
-                });
-                self.tcx.mk_fun(params, ret)
+                let (params, ret) = (params.clone(), *ret);
+                self.lower_function(&params, ret)
             }
             HirTyKind::Dyn { path, args } => {
                 let (res, args) = (path.res, args.clone());
@@ -98,6 +56,64 @@ impl<'hir> Typeck<'hir> {
 
     pub fn lower_tys(&mut self, ids: &[TyId]) -> Vec<Ty> {
         ids.iter().map(|&id| self.lower_ty(id)).collect()
+    }
+
+    fn lower_self_ty(&mut self, id: TyId, args: &[TyId], span: SrcSpan) -> Ty {
+        Self::check_no_args(self.session, args, span, "`Self`");
+        self.self_ty(id.owner(), span)
+    }
+
+    fn lower_ref(&mut self, base: TyId, mutability: Mutability) -> Ty {
+        let base = self.lower_ty(base);
+        self.tcx.mk_ref(base, mutability)
+    }
+
+    fn lower_any(&mut self, base: TyId) -> Ty {
+        let base = self.lower_ty(base);
+        self.tcx.mk_any(base)
+    }
+
+    fn lower_iso(&mut self, base: TyId) -> Ty {
+        let base = self.lower_ty(base);
+        self.tcx.mk_iso(base)
+    }
+
+    fn lower_tuple(&mut self, elems: &[TyId]) -> Ty {
+        let elems = self.lower_tys(elems);
+        self.tcx.mk_tuple(elems)
+    }
+
+    fn lower_array(&mut self, elem: TyId, len: Option<ExprId>) -> Ty {
+        let elem = self.lower_ty(elem);
+        let Some(len_id) = len else {
+            return self.tcx.mk_array(elem, None);
+        };
+
+        let len_ty = self.ty_of(len_id);
+        let usize_ty = self.tcx.mk_prim(PrimTy::Usize);
+        if let Err(err) = self.unifier.unify(&self.tcx, usize_ty, len_ty) {
+            report_array_len_not_usize(self.display_cx(), err, self.hir.expr(len_id).span);
+        }
+        match self.fold_array_len(len_id) {
+            Some(len) => self.tcx.mk_array(elem, Some(len)),
+            None => self.tcx.error(),
+        }
+    }
+
+    fn lower_function(&mut self, params: &[TyId], ret: Option<TyId>) -> Ty {
+        let lowered = self.lower_tys(params);
+        for (&param_id, &param) in params.iter().zip(&lowered) {
+            self.check_no_dyn(param, self.hir.ty(param_id).span);
+        }
+        let ret = ret.map(|ret| self.lower_return(ret));
+        self.tcx.mk_fun(lowered, ret)
+    }
+
+    fn lower_return(&mut self, ret: TyId) -> Ty {
+        let span = self.hir.ty(ret).span;
+        let ret = self.lower_ty(ret);
+        self.check_no_dyn(ret, span);
+        ret
     }
 
     fn fold_array_len(&mut self, len_id: ExprId) -> Option<u64> {
@@ -197,7 +213,7 @@ impl<'hir> Typeck<'hir> {
                 self.lower_def(def, arity, args, span, id.owner())
             }
             Res::Type(Type::Def(TyDef::Trait(_))) => {
-                // Traits can only appear with `dyn Trait` or as Bounds
+
                 report_trait_as_ty(self.session, span);
                 self.tcx.error()
             }
@@ -260,6 +276,18 @@ impl<'hir> Typeck<'hir> {
     }
 
     pub fn self_ty(&mut self, owner: DefId, span: SrcSpan) -> Ty {
+        let Some(introducer) = self.self_introducer(owner, span) else {
+            return self.tcx.error();
+        };
+        if let Some(ty) = self.types.ty_of_def(introducer) {
+            return ty;
+        }
+        let self_ty = self.compute_self_ty(introducer, span);
+        self.types.record_def(introducer, self_ty);
+        self_ty
+    }
+
+    fn self_introducer(&mut self, owner: DefId, span: SrcSpan) -> Option<DefId> {
         let mut introducer = owner;
         loop {
             if matches!(
@@ -269,27 +297,20 @@ impl<'hir> Typeck<'hir> {
                     | OwnerNode::Trait(_)
                     | OwnerNode::Extend(_)
             ) {
-                break;
+                return Some(introducer);
             }
             match self.hir.parent(introducer) {
                 Some(parent) => introducer = parent,
                 None => {
                     report_self_unavailable(self.session, span);
-                    return self.tcx.error();
+                    return None;
                 }
             }
         }
+    }
 
-        if let Some(&cached) = self.self_tys.get(&introducer) {
-            return cached;
-        }
-
-        if !self.computing_self_tys.insert(introducer) {
-            report_self_cycle(self.session, span);
-            return self.tcx.error();
-        }
-
-        let self_ty = match self.hir.def(introducer) {
+    fn compute_self_ty(&mut self, introducer: DefId, span: SrcSpan) -> Ty {
+        match self.hir.def(introducer) {
             OwnerNode::Struct(struct_) => {
                 let params = struct_.generics.clone();
                 self.adt_of_own_params(introducer, &params)
@@ -300,51 +321,67 @@ impl<'hir> Typeck<'hir> {
             }
             OwnerNode::Trait(_) => self.tcx.mk_self_param(introducer),
             OwnerNode::Extend(extend) => {
-                let self_ty_id = extend.self_ty;
-                let adt_path = match &self.hir.ty(self_ty_id).kind {
-                    HirTyKind::Path { path, args } => Some((path.res, args.clone())),
-                    _ => None,
-                };
-                match adt_path {
-                    Some((adt_res, hir_args)) => {
-                        let args = self.lower_tys(&hir_args);
-                        if !self.check_no_reference_args(&hir_args, &args)
-                            || !self.check_no_any_args(&hir_args, &args)
-                            || !self.check_no_dyn_args(&hir_args, &args)
-                        {
-                            self.tcx.error()
-                        } else {
-                            match adt_res {
-                                Res::Type(Type::Def(tydef)) => {
-                                    self.tcx.mk_adt(tydef.def_id(), args)
-                                }
-                                Res::Type(Type::Prim(prim)) => {
-                                    Self::check_no_args(
-                                        self.session,
-                                        &hir_args,
-                                        span,
-                                        "a primitive type",
-                                    );
-                                    self.tcx.mk_prim(prim)
-                                }
-                                _ => self.tcx.error(),
-                            }
-                        }
-                    }
-                    None => self.lower_ty(self_ty_id),
+                if mentions_self(self.hir, extend.self_ty) {
+                    report_self_cycle(self.session, span);
+                    return self.tcx.error();
                 }
+                self.extend_self_ty(extend.self_ty, span)
             }
             _ => unreachable!("only a struct, enum, trait, or extend block introduces a `Self`"),
+        }
+    }
+
+    fn extend_self_ty(&mut self, self_ty_id: TyId, span: SrcSpan) -> Ty {
+        let Some((adt_res, hir_args)) = self.extend_self_path(self_ty_id) else {
+            return self.lower_ty(self_ty_id);
         };
 
-        self.computing_self_tys.remove(&introducer);
-        self.self_tys.insert(introducer, self_ty);
-        self_ty
+        let args = self.lower_tys(&hir_args);
+        if !self.check_no_reference_args(&hir_args, &args)
+            || !self.check_no_any_args(&hir_args, &args)
+            || !self.check_no_dyn_args(&hir_args, &args)
+        {
+            return self.tcx.error();
+        }
+        match adt_res {
+            Res::Type(Type::Def(tydef)) => self.tcx.mk_adt(tydef.def_id(), args),
+            Res::Type(Type::Prim(prim)) => {
+                Self::check_no_args(self.session, &hir_args, span, "a primitive type");
+                self.tcx.mk_prim(prim)
+            }
+            _ => self.tcx.error(),
+        }
+    }
+
+    fn extend_self_path(&self, self_ty_id: TyId) -> Option<(Res, Vec<TyId>)> {
+        match &self.hir.ty(self_ty_id).kind {
+            HirTyKind::Path { path, args } => Some((path.res, args.clone())),
+            _ => None,
+        }
     }
 
     fn adt_of_own_params(&mut self, def: DefId, params: &[HirId]) -> Ty {
         let args = params.iter().map(|&id| self.tcx.mk_generic(id)).collect();
         self.tcx.mk_adt(def, args)
+    }
+}
+
+fn mentions_self(hir: &Hir, id: TyId) -> bool {
+    match &hir.ty(id).kind {
+        HirTyKind::SelfTy(_) => true,
+        HirTyKind::Path { args, .. } | HirTyKind::Dyn { args, .. } => {
+            args.iter().any(|&arg| mentions_self(hir, arg))
+        }
+        HirTyKind::Ref { base, .. } | HirTyKind::Any(base) | HirTyKind::Iso(base) => {
+            mentions_self(hir, *base)
+        }
+        HirTyKind::Tuple(elems) => elems.iter().any(|&elem| mentions_self(hir, elem)),
+        HirTyKind::Array { elem, .. } => mentions_self(hir, *elem),
+        HirTyKind::Function { params, ret } => {
+            params.iter().any(|&param| mentions_self(hir, param))
+                || ret.is_some_and(|ret| mentions_self(hir, ret))
+        }
+        HirTyKind::Error => false,
     }
 }
 
@@ -463,6 +500,15 @@ mod tests {
         let (params, ret) = checked.sig(checked.def("f"));
         assert!(params.is_empty());
         assert_eq!(ret, None);
+    }
+
+    #[test]
+    fn an_extend_header_that_mentions_its_own_self_is_a_cycle() {
+        let messages = crate::testing::typeck_src(
+            "struct Wrap<T> { inner: T }
+             extend Wrap<Self> {}",
+        );
+        assert_eq!(messages, ["`Self` is defined in terms of itself"]);
     }
 
     #[test]

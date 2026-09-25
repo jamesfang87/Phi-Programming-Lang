@@ -1,7 +1,5 @@
 use crate::nameres::PrimTy;
 
-/// Returns the width in bits of an integer primitive. `usize` is treated as 64-bit, matching the
-/// codegen spec's "usize is assumed 64-bit".
 fn int_width(prim: PrimTy) -> Option<u32> {
     match prim {
         PrimTy::I8 | PrimTy::U8 => Some(8),
@@ -12,8 +10,6 @@ fn int_width(prim: PrimTy) -> Option<u32> {
     }
 }
 
-/// Returns the reason a cast from `from` to `to` is not lossless, or `Ok(())` when every value of
-/// `from` is representable exactly in `to`.
 pub(crate) fn is_lossless_cast(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     use PrimTy::*;
 
@@ -62,7 +58,6 @@ pub(crate) fn is_lossless_cast(from: PrimTy, to: PrimTy) -> Result<(), &'static 
     }
 }
 
-/// Returns the reason an integer-to-integer cast is not lossless.
 fn integer_to_integer(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     let from_width = int_width(from).expect("caller checked `from` is an integer");
     let to_width = int_width(to).expect("caller checked `to` is an integer");
@@ -78,8 +73,6 @@ fn integer_to_integer(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     }
 }
 
-/// Returns the reason an integer-to-float cast is not lossless. A float can represent an integer
-/// exactly only while the integer's width fits the float's mantissa.
 fn integer_to_float(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     let width = int_width(from).expect("caller checked `from` is an integer");
     match to {

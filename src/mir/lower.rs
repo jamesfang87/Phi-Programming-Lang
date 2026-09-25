@@ -10,19 +10,16 @@ mod tests;
 
 use std::collections::{HashMap, HashSet};
 
+use crate::driver::cli::Mode;
 use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::vtables::{VtableInfo, collect_vtables};
 use crate::mir::{AnyMode, Body};
-use crate::options::Mode;
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
 
-/// One unit of lowering work. `Ordinary` is a definition with no `any` anywhere in its
-/// signature, lowered exactly once. `AnySpecialized` is a definition whose return type is
-/// `any T`, lowered once per mode some call site actually demands -- see the module docs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Task {
     Ordinary(DefId),
@@ -77,29 +74,74 @@ pub fn lower(
     types: &TypeResolutions,
     mode: Mode,
 ) -> Mir {
-    let erroneous: HashSet<DefId> = hir
-        .def_ids()
-        .filter(|&def_id| item_has_errors(hir, tcx, types, def_id))
-        .collect();
-
+    let erroneous = collect_erroneous_defs(hir, tcx, types);
+    let mut worklist = seed_worklist(hir, tcx, types, &erroneous);
     let mut bodies = HashMap::new();
-    let mut worklist: Vec<Task> = Vec::new();
+    lower_worklist(
+        session,
+        hir,
+        tcx,
+        types,
+        mode,
+        &erroneous,
+        &mut worklist,
+        &mut bodies,
+    );
 
+    Mir {
+        bodies,
+        vtables: collect_vtables(hir, types),
+    }
+}
+
+fn collect_erroneous_defs(hir: &Hir, tcx: &TyCtx, types: &TypeResolutions) -> HashSet<DefId> {
+    hir.def_ids()
+        .filter(|&def_id| item_has_errors(hir, tcx, types, def_id))
+        .collect()
+}
+
+fn seed_worklist(
+    hir: &Hir,
+    tcx: &TyCtx,
+    types: &TypeResolutions,
+    erroneous: &HashSet<DefId>,
+) -> Vec<Task> {
+    let mut worklist = Vec::new();
     for def_id in hir.def_ids() {
         if erroneous.contains(&def_id) {
             continue;
         }
-        match hir.def(def_id) {
-            OwnerNode::Function(function) if function.block.is_some() => {
-                if !is_any_specialized(tcx, types, def_id) {
-                    worklist.push(Task::Ordinary(def_id));
-                }
-            }
-            OwnerNode::Closure(_) => worklist.push(Task::Ordinary(def_id)),
-            _ => {}
+        if let Some(task) = body_task(hir, tcx, types, def_id) {
+            worklist.push(task);
         }
     }
+    worklist
+}
 
+/// Returns the task that lowers `def_id`'s body, or `None` when the def has no body to lower.
+fn body_task(hir: &Hir, tcx: &TyCtx, types: &TypeResolutions, def_id: DefId) -> Option<Task> {
+    match hir.def(def_id) {
+        OwnerNode::Function(function)
+            if function.block.is_some() && !is_any_specialized(tcx, types, def_id) =>
+        {
+            Some(Task::Ordinary(def_id))
+        }
+        OwnerNode::Closure(_) => Some(Task::Ordinary(def_id)),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_worklist(
+    session: &Session,
+    hir: &Hir,
+    tcx: &mut TyCtx,
+    types: &TypeResolutions,
+    mode: Mode,
+    erroneous: &HashSet<DefId>,
+    worklist: &mut Vec<Task>,
+    bodies: &mut HashMap<(DefId, Option<AnyMode>), Body>,
+) {
     while let Some(task) = worklist.pop() {
         let key = (task.def_id(), task.any_mode());
         if bodies.contains_key(&key) || erroneous.contains(&task.def_id()) {
@@ -117,10 +159,5 @@ pub fn lower(
         let body = ctx.lower_item(task);
         worklist.append(&mut ctx.discovered);
         bodies.insert(key, body);
-    }
-
-    Mir {
-        bodies,
-        vtables: collect_vtables(hir, types),
     }
 }

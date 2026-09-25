@@ -23,12 +23,10 @@ impl<'a> DisplayCtx<'a> {
         DisplayCtx { tcx, session, hir }
     }
 
-    /// Records `diagnostic` on the session this context was built from.
     pub fn emit(&self, diagnostic: Diagnostic) {
         self.session.emit(diagnostic);
     }
 
-    /// Emits the diagnostic for a failed unification, labelled `label`.
     pub fn emit_unify(&self, err: UnifyError, span: SrcSpan, label: impl Into<String>) {
         let diagnostic = Diagnostic::error(self.show(err).to_string(), span)
             .with_code(unify_code(&err))
@@ -36,17 +34,14 @@ impl<'a> DisplayCtx<'a> {
         self.emit(diagnostic);
     }
 
-    /// Resolves an interned name through the session this context was built from.
     pub fn resolve(&self, symbol: crate::ast::interner::Symbol) -> &'static str {
         self.session.resolve(symbol)
     }
 
-    /// The session this context was built from.
     pub fn session(&self) -> &'a Session {
         self.session
     }
 
-    /// Wraps `value` so it can be printed: `format!("{}", cx.show(ty))`.
     pub fn show<T: Pretty>(&self, value: T) -> Show<'a, T> {
         Show { cx: *self, value }
     }
@@ -85,7 +80,7 @@ impl Pretty for Ty {
                 "{}",
                 cx.session.resolve(cx.hir.generic(*hir_id).name.text)
             ),
-            // Only appears inside a trait's body, where `Self` names no concrete type yet.
+
             TyKind::SelfTy(_) => write!(f, "Self"),
             TyKind::Ref { base, mutability } => {
                 match mutability {
@@ -111,7 +106,7 @@ impl Pretty for Ty {
                     }
                     elem.pretty(f, cx)?;
                 }
-                // `(T,)` disambiguates a one-element tuple from a parenthesized `T`
+
                 if elems.len() == 1 {
                     write!(f, ",")?;
                 }

@@ -8,7 +8,6 @@ use crate::mir::statement::Statement;
 use crate::mir::terminator::Terminator;
 use crate::typeck::ty::Ty;
 
-/// What a `Body` is the lowered code of.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BodyKind {
     Function,
@@ -21,12 +20,9 @@ pub struct Body {
     pub kind: BodyKind,
     pub basic_blocks: Vec<BasicBlockData>,
     pub local_decls: Vec<LocalDecl>,
-    /// `arg_count` is the number of `local_decls` that are parameters, `self` included. Slots
-    /// `1..=arg_count` are the parameters in declared order, slot `0` is always the return place,
-    /// and every slot after `arg_count` is a `let` binding or a compiler-introduced temporary.
+
     pub param_count: usize,
-    /// The generic parameters an instance's argument list zips against, in order: the enclosing
-    /// `extend`/`trait` block's own parameters, then the definition's own.
+
     pub generics: Vec<HirId>,
     pub span: SrcSpan,
 }
@@ -60,14 +56,11 @@ impl Predecessors {
 #[derive(Debug)]
 pub struct LocalDecl {
     pub ty: Ty,
-    /// `name` is the source name of a user-written local. It is `None` for a compiler-introduced temporary.
+
     pub name: Option<Ident>,
     pub span: SrcSpan,
 }
 
-/// `BasicBlockData` holds the data for one basic block.
-/// It consists of a sequence of `statements` ending in
-/// exactly one `terminator`.
 #[derive(Debug)]
 pub struct BasicBlockData {
     pub statements: Vec<Statement>,

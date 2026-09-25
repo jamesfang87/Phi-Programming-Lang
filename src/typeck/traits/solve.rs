@@ -16,7 +16,6 @@ use crate::typeck::ty::{Ty, TyKind};
 mod method;
 mod obligations;
 
-pub(crate) use method::PendingMethodCall;
 pub use obligations::Obligation;
 
 /// A goal: does `self_ty` implement `trait_`?

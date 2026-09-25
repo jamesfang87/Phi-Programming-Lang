@@ -6,7 +6,7 @@ use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
 
 pub fn mangle(hir: &Hir, session: &Session, tcx: &TyCtx, instance: &Instance) -> String {
-    let mut name = ancestor_path(hir, session, instance.def).join("_");
+    let mut name = collect_ancestor_path(hir, session, instance.def).join("_");
 
     for &arg in &instance.args {
         name.push('_');
@@ -22,16 +22,18 @@ pub fn mangle(hir: &Hir, session: &Session, tcx: &TyCtx, instance: &Instance) ->
         });
     }
 
-    name.push_str(&format!("_h{:016x}", hash_instance(instance)));
+    name.push_str(&format!("_h{:016x}", compute_instance_hash(instance)));
     name
 }
 
 fn mangle_ty(hir: &Hir, session: &Session, tcx: &TyCtx, ty: Ty) -> String {
     match tcx.kind(ty).clone() {
         TyKind::Primitive(prim) => format!("{prim:?}"),
-        TyKind::Adt { def, args } => join_args(&leaf(hir, session, def), &args, hir, session, tcx),
+        TyKind::Adt { def, args } => {
+            join_args(&leaf_symbol(hir, session, def), &args, hir, session, tcx)
+        }
         TyKind::Dyn { trait_, args } => join_args(
-            &format!("dyn_{}", leaf(hir, session, trait_)),
+            &format!("dyn_{}", leaf_symbol(hir, session, trait_)),
             &args,
             hir,
             session,
@@ -75,23 +77,22 @@ fn join_args(head: &str, args: &[Ty], hir: &Hir, session: &Session, tcx: &TyCtx)
     format!("{head}_{}", rendered.join("_"))
 }
 
-/// The definition's written name, sanitized into a valid symbol fragment.
-fn leaf(hir: &Hir, session: &Session, def: DefId) -> String {
-    sanitize(&def_name(hir, session, def))
+fn leaf_symbol(hir: &Hir, session: &Session, def: DefId) -> String {
+    sanitize_identifier(&name_of_def(hir, session, def))
 }
 
-fn ancestor_path(hir: &Hir, session: &Session, def: DefId) -> Vec<String> {
+fn collect_ancestor_path(hir: &Hir, session: &Session, def: DefId) -> Vec<String> {
     let mut chain = Vec::new();
     let mut current = Some(def);
     while let Some(id) = current {
-        chain.push(leaf(hir, session, id));
+        chain.push(leaf_symbol(hir, session, id));
         current = hir.parent(id);
     }
     chain.reverse();
     chain
 }
 
-fn def_name(hir: &Hir, session: &Session, def: DefId) -> String {
+fn name_of_def(hir: &Hir, session: &Session, def: DefId) -> String {
     match hir.def(def) {
         OwnerNode::Module(m) => m
             .path
@@ -108,8 +109,9 @@ fn def_name(hir: &Hir, session: &Session, def: DefId) -> String {
     }
 }
 
-fn sanitize(s: &str) -> String {
-    s.chars()
+fn sanitize_identifier(identifier: &str) -> String {
+    identifier
+        .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '_' {
                 c
@@ -120,7 +122,7 @@ fn sanitize(s: &str) -> String {
         .collect()
 }
 
-fn hash_instance(instance: &Instance) -> u64 {
+fn compute_instance_hash(instance: &Instance) -> u64 {
     let mut bytes =
         format!("{:?}", (&instance.def, &instance.any_mode, &instance.args)).into_bytes();
     if let Some(self_ty) = instance.self_ty {
@@ -177,7 +179,7 @@ mod tests {
             &hir,
             &mut tcx,
             &types,
-            crate::options::Mode::Debug,
+            crate::driver::cli::Mode::Debug,
         );
         let _ = &mir;
         let def = first_function(&hir);

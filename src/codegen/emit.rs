@@ -13,41 +13,63 @@ pub struct EmitOptions {
     pub release: bool,
 }
 
+/// Returns the path of the linked executable built from `module`.
 pub fn emit(module: &Module, options: &EmitOptions) -> Result<PathBuf, CodegenError> {
+    verify_module(module)?;
+    let target_machine = build_target_machine(options.release)?;
+
+    let object_path = options.output_path.with_extension("o");
+    write_object_file(&target_machine, module, &object_path)?;
+    link_and_remove_object(&object_path, &options.output_path)
+}
+
+fn verify_module(module: &Module) -> Result<(), CodegenError> {
     module.verify().map_err(|e| {
         CodegenError::Verification(format!("{e}\n{}", module.print_to_string().to_string()))
-    })?;
+    })
+}
 
+fn build_target_machine(release: bool) -> Result<TargetMachine, CodegenError> {
     Target::initialize_native(&InitializationConfig::default())
         .map_err(CodegenError::Verification)?;
 
     let triple = TargetMachine::get_default_triple();
     let target =
         Target::from_triple(&triple).map_err(|e| CodegenError::Verification(e.to_string()))?;
-    let opt_level = if options.release {
-        OptimizationLevel::Aggressive
-    } else {
-        OptimizationLevel::None
-    };
-    let target_machine = target
+    target
         .create_target_machine(
             &triple,
             "generic",
             "",
-            opt_level,
+            select_optimization_level(release),
             RelocMode::PIC,
             CodeModel::Default,
         )
-        .ok_or_else(|| CodegenError::Verification("no target machine for host triple".into()))?;
+        .ok_or_else(|| CodegenError::Verification("no target machine for host triple".into()))
+}
 
-    let object_path = options.output_path.with_extension("o");
+fn select_optimization_level(release: bool) -> OptimizationLevel {
+    if release {
+        OptimizationLevel::Aggressive
+    } else {
+        OptimizationLevel::None
+    }
+}
+
+fn write_object_file(
+    target_machine: &TargetMachine,
+    module: &Module,
+    object_path: &Path,
+) -> Result<(), CodegenError> {
     target_machine
-        .write_to_file(module, FileType::Object, &object_path)
-        .map_err(|e| CodegenError::Verification(e.to_string()))?;
+        .write_to_file(module, FileType::Object, object_path)
+        .map_err(|e| CodegenError::Verification(e.to_string()))
+}
 
-    let result = link(&object_path, &options.output_path);
+fn link_and_remove_object(object_path: &Path, output_path: &Path) -> Result<PathBuf, CodegenError> {
+    let result = link(object_path, output_path);
     if result.is_ok() {
-        let _ = std::fs::remove_file(&object_path);
+        let _ = std::fs::remove_file(object_path);
     }
     result
 }

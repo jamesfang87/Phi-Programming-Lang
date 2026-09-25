@@ -48,7 +48,7 @@ pub fn layout_of(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> AdtLayout {
     match tcx.kind(ty).clone() {
         TyKind::Tuple(elems) => layout_fields(tcx, mir, &elems),
         TyKind::Adt { def, args } => match tcx.enum_variant_count(def) {
-            Some(variant_count) => enum_layout(tcx, mir, def, &args, variant_count),
+            Some(variant_count) => layout_enum(tcx, mir, def, &args, variant_count),
             None => {
                 let field_tys = tcx.struct_field_tys(def, &args);
                 layout_fields(tcx, mir, &field_tys)
@@ -58,7 +58,7 @@ pub fn layout_of(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> AdtLayout {
     }
 }
 
-pub fn variant_layout(
+pub fn layout_variant(
     tcx: &mut TyCtx,
     mir: &Mir,
     def: DefId,
@@ -69,11 +69,7 @@ pub fn variant_layout(
     layout_fields(tcx, mir, &field_tys)
 }
 
-pub fn field_index(_ty: Ty, field: u32) -> usize {
-    field as usize
-}
-
-fn enum_layout(
+fn layout_enum(
     tcx: &mut TyCtx,
     mir: &Mir,
     def: DefId,
@@ -87,7 +83,7 @@ fn enum_layout(
     let mut payload_align = 1u64;
     for index in 0..variant_count {
         let variant = VariantIdx::from_usize(index);
-        let layout = variant_layout(tcx, mir, def, args, variant);
+        let layout = layout_variant(tcx, mir, def, args, variant);
         payload_size = payload_size.max(layout.size);
         payload_align = payload_align.max(layout.align);
     }
@@ -111,7 +107,7 @@ fn layout_fields(tcx: &mut TyCtx, mir: &Mir, tys: &[Ty]) -> AdtLayout {
     let mut fields = Vec::with_capacity(tys.len());
 
     for &ty in tys {
-        let (size, field_align) = size_align_of(tcx, mir, ty);
+        let (size, field_align) = compute_size_align(tcx, mir, ty);
         offset = round_up(offset, field_align);
         fields.push(FieldLayout { ty, offset });
         offset += size;
@@ -127,7 +123,7 @@ fn layout_fields(tcx: &mut TyCtx, mir: &Mir, tys: &[Ty]) -> AdtLayout {
     }
 }
 
-fn size_align_of(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> (u64, u64) {
+fn compute_size_align(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> (u64, u64) {
     match tcx.kind(ty).clone() {
         TyKind::Primitive(prim) => primitive_size_align(prim),
         TyKind::Unit | TyKind::Never => (0, 1),
@@ -144,17 +140,17 @@ fn size_align_of(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> (u64, u64) {
             elem,
             len: Some(len),
         } => {
-            let (elem_size, elem_align) = size_align_of(tcx, mir, elem);
+            let (elem_size, elem_align) = compute_size_align(tcx, mir, elem);
             (round_up(elem_size, elem_align) * len, elem_align)
         }
         TyKind::Array { len: None, .. } => {
-            unreachable!("size_align_of: a bare unsized array cannot be a field's own type")
+            unreachable!("compute_size_align: a bare unsized array cannot be a field's own type")
         }
         TyKind::Tuple(_) | TyKind::Adt { .. } => {
             let layout = layout_of(tcx, mir, ty);
             (layout.size, layout.align)
         }
-        other => unreachable!("size_align_of: no layout for {other:?} at codegen time"),
+        other => unreachable!("compute_size_align: no layout for {other:?} at codegen time"),
     }
 }
 
@@ -270,26 +266,16 @@ mod tests {
             crate::testing::lower_to_mir("enum E { A, B: i32, C: { x: i64 } }\nfun f() {}");
         let def = find_enum_def(&hir, "E");
 
-        let unit_layout = variant_layout(&mut tcx, &mir, def, &[], VariantIdx::from_usize(0));
+        let unit_layout = layout_variant(&mut tcx, &mir, def, &[], VariantIdx::from_usize(0));
         assert_eq!(unit_layout.size, 0);
         assert!(unit_layout.fields.is_empty());
 
-        let tuple_layout = variant_layout(&mut tcx, &mir, def, &[], VariantIdx::from_usize(1));
+        let tuple_layout = layout_variant(&mut tcx, &mir, def, &[], VariantIdx::from_usize(1));
         assert_eq!(tuple_layout.fields.len(), 1);
         assert_eq!(tuple_layout.size, 4);
 
-        let record_layout = variant_layout(&mut tcx, &mir, def, &[], VariantIdx::from_usize(2));
+        let record_layout = layout_variant(&mut tcx, &mir, def, &[], VariantIdx::from_usize(2));
         assert_eq!(record_layout.fields.len(), 1);
         assert_eq!(record_layout.size, 8);
-    }
-
-    #[test]
-    fn field_index_is_declaration_order_in_v1() {
-        let (hir, mut tcx, _types, _mir, _instances) =
-            crate::testing::lower_to_mir("struct S { a: i8, b: i32 }\nfun f() {}");
-        let def = find_struct_def(&hir, "S");
-        let adt = tcx.mk_adt(def, Vec::new());
-        assert_eq!(field_index(adt, 0), 0);
-        assert_eq!(field_index(adt, 1), 1);
     }
 }

@@ -16,7 +16,7 @@ pub enum TerminatorKind {
         target: BasicBlock,
     },
     Return,
-    /// Switch statement
+
     SwitchInt {
         discr: Operand,
         targets: SwitchTargets,
@@ -25,9 +25,7 @@ pub enum TerminatorKind {
         func: Operand,
         args: Vec<Operand>,
         destination: Place,
-        /// This is `None` for a call whose return type is `Never`. For example, the runtime
-        /// panic function never returns control to its caller, so a call to it has no
-        /// continuation block to target.
+
         target: Option<BasicBlock>,
     },
     Drop {

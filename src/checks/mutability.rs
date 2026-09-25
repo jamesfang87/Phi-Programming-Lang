@@ -40,8 +40,6 @@ fn body_block(hir: &Hir, def_id: DefId) -> Option<HirId> {
     }
 }
 
-/// Rejects writes to a binding introduced by a plain `let`. The binding is in scope from its
-/// declaration to the end of its enclosing block, so only the statements after it are scanned.
 struct ImmutableLetWrites<'hir, 'a> {
     session: &'a Session,
     hir: &'hir Hir,
@@ -199,9 +197,6 @@ impl MutationScan<'_, '_> {
     }
 }
 
-/// Rejects writes whose place reaches through a shared `&`. A `&mut` borrow on the path permits
-/// the write; a shared `&` never does, whether the write is an assignment, a compound assignment,
-/// or an explicit `&mut`.
 struct SharedReferenceWrites<'hir, 'a> {
     session: &'a Session,
     hir: &'hir Hir,
@@ -231,7 +226,7 @@ impl<'hir> Visitor<'hir> for SharedReferenceWrites<'hir, '_> {
 }
 
 impl SharedReferenceWrites<'_, '_> {
-    /// Walks the projections of a written `place`, reporting the one that crosses a `&`.
+
     fn check_writable(&self, place: HirId, span: SrcSpan) {
         match &self.hir.expr(place).kind {
             ExprKind::Unary {
@@ -254,8 +249,6 @@ impl SharedReferenceWrites<'_, '_> {
         }
     }
 
-    /// Checks the base of a field or index projection, which the compiler auto-dereferences.
-    /// Peeling a `&mut` is fine; peeling a `&` is the write this rejects.
     fn check_borrowed_base(&self, base: HirId, span: SrcSpan) {
         let mut ty = self.types.ty(base);
         while let Some(current) = ty {

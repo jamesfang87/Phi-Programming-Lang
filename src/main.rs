@@ -8,10 +8,8 @@ mod langitems;
 mod lexer;
 mod mir;
 mod nameres;
-mod options;
 mod parser;
 mod session;
-mod spelling;
 mod typeck;
 
 #[cfg(test)]

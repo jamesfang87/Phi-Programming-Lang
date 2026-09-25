@@ -435,7 +435,7 @@ fn a_sibling_item_resolves_without_qualification() {
     let table = SymbolTable::new(crate::testing::session(), &ast);
     let app = module_by_path(&ast, &table, &[crate::testing::intern("app")]).unwrap();
     assert!(matches!(
-        table.lookup_value_path(app, &path(&["helper"])),
+        table.probe_value_path(app, &path(&["helper"])),
         Some(Res::Function(_))
     ));
 }
@@ -456,7 +456,7 @@ fn a_name_falls_back_to_an_ancestor_module() {
         ],
     )
     .unwrap();
-    assert!(table.lookup_value_path(inner, &path(&["shared"])).is_some());
+    assert!(table.probe_value_path(inner, &path(&["shared"])).is_some());
 }
 
 #[test]
@@ -477,7 +477,7 @@ fn a_fully_qualified_path_resolves_from_anywhere() {
     .unwrap();
     assert!(
         table
-            .lookup_value_path(deep, &path(&["math", "vector", "dot"]))
+            .probe_value_path(deep, &path(&["math", "vector", "dot"]))
             .is_some()
     );
 }
@@ -520,7 +520,7 @@ fn a_local_shadows_a_module_level_function_in_value_position() {
     table.push_scope();
     table.insert_local(ident("x"), Local::Variable(local));
     assert_eq!(
-        table.lookup_value_path(app, &path(&["x"])),
+        table.probe_value_path(app, &path(&["x"])),
         Some(Res::Local(Local::Variable(local)))
     );
 }
@@ -545,7 +545,7 @@ fn an_unresolvable_path_is_none() {
     let table = SymbolTable::new(crate::testing::session(), &ast);
     assert!(
         table
-            .lookup_value_path(ast.root_id(), &path(&["nope"]))
+            .probe_value_path(ast.root_id(), &path(&["nope"]))
             .is_none()
     );
 }

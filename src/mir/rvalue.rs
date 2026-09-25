@@ -8,7 +8,7 @@ use crate::typeck::ty::Ty;
 #[derive(Clone, Debug)]
 pub enum Rvalue {
     Use(Operand),
-    /// `Ref` represents `&place` or `&mut place`.
+
     Ref {
         mutability: Mutability,
         place: Place,
@@ -16,31 +16,25 @@ pub enum Rvalue {
     BinaryOp(BinaryOp, Operand, Operand),
     CheckedBinaryOp(BinaryOp, Operand, Operand),
     UnaryOp(UnaryOp, Operand),
-    /// `kind` distinguishes a user-written `as` from a compiler-inserted coercion. See
-    /// [`CastKind::ReifyFnPointer`] for the one coercion this represents.
+
     Cast {
         operand: Operand,
         ty: Ty,
         kind: CastKind,
     },
     Aggregate(Box<AggregateKind>, Vec<Operand>),
-    /// Turns a `&Concrete` operand into the `&dyn Trait` fat pointer a coercion was recorded
-    /// for: word 0 is the operand's own pointer, word 1 the implementing type's vtable.
+
     Unsize {
         operand: Operand,
         trait_: DefId,
     },
-    /// `Discriminant` reads a place's enum discriminant as an integer
+
     Discriminant(Place),
-    /// `Len` reads the length of an array or a slice-typed place.
+
     Len(Place),
-    /// Allocates storage for the operand's type, moves the operand into it, and produces an
-    /// `iso T` naming that storage. Allocation and initialization are one step: an `iso` local
-    /// is never observably allocated-but-uninitialized.
+
     New(Operand),
-    /// Allocates storage for `count` elements and initializes every one of them to `elem`,
-    /// producing `iso [T]`. `count` is a `usize` operand, so the length is not required to be a
-    /// constant.
+
     NewArray {
         elem: Operand,
         count: Operand,
@@ -69,10 +63,9 @@ impl Rvalue {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CastKind {
-    /// This variant is a user-written `expr as Ty`
+
     Primitive,
-    /// This variant is compiler-inserted. It materializes an
-    /// actual function-pointer value from a zero-sized `ConstKind::FunDef` operand
+
     ReifyFunPointer,
 }
 

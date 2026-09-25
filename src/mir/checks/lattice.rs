@@ -3,34 +3,30 @@ use std::hash::Hash;
 
 use crate::mir::{BasicBlock, BasicBlockData, Body};
 
-pub struct Lattice<Key: Hash + Eq, SomeState> {
-    pub entry: HashMap<Key, SomeState>,
-    pub exit: HashMap<Key, SomeState>,
+pub struct Lattice<Key: Hash + Eq, State> {
+    pub entry: HashMap<Key, State>,
+    pub exit: HashMap<Key, State>,
 }
 
-impl<Key: Hash + Eq, SomeState> Lattice<Key, SomeState> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn set_entry(&mut self, key: Key, state: SomeState) -> Option<SomeState> {
+impl<Key: Hash + Eq, State> Lattice<Key, State> {
+    pub fn set_entry(&mut self, key: Key, state: State) -> Option<State> {
         self.entry.insert(key, state)
     }
 
-    pub fn set_exit(&mut self, key: Key, state: SomeState) -> Option<SomeState> {
+    pub fn set_exit(&mut self, key: Key, state: State) -> Option<State> {
         self.exit.insert(key, state)
     }
 
-    pub fn entry(&self, key: Key) -> Option<&SomeState> {
+    pub fn entry(&self, key: Key) -> Option<&State> {
         self.entry.get(&key)
     }
 
-    pub fn exit(&self, key: Key) -> Option<&SomeState> {
+    pub fn exit(&self, key: Key) -> Option<&State> {
         self.exit.get(&key)
     }
 }
 
-impl<Key: Hash + Eq, SomeState> Default for Lattice<Key, SomeState> {
+impl<Key: Hash + Eq, State> Default for Lattice<Key, State> {
     fn default() -> Self {
         Self {
             entry: HashMap::new(),
@@ -92,8 +88,6 @@ pub fn solve<State: Clone + PartialEq>(
     lattice
 }
 
-/// The backward dual of [`solve`]: a block's exit is met from its successors' entries, and the
-/// transfer function maps an exit to an entry.
 pub fn solve_backward<State: Clone + PartialEq>(
     body: &Body,
     init_entry: State,

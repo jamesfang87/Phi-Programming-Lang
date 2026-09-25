@@ -38,7 +38,7 @@ fn main_is_always_collected_as_a_root() {
          extend<T> Wrap<T> { fun ping(&self) -> i32 { return 3; } }\n\
          fun main() { let w: Wrap<i32> = Wrap { value: 1 }; let n = w.ping(); }",
     );
-    let main_def = crate::checks::entry_point::check(crate::testing::session(), &hir)
+    let main_def = crate::checks::check_entry_point(crate::testing::session(), &hir)
         .expect("the fixture declares a crate-root `main`");
     let mains: Vec<_> = instances
         .keys()

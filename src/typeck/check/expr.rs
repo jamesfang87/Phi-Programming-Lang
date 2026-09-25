@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ast::{BinaryOp, Ident, Mutability};
+use crate::ast::{BinaryOp, Ident, Literal, Mutability, Symbol, UnaryOp};
 use crate::diagnostics::typeck::expr::{
     report_assert_cond_not_bool, report_assign_mismatch, report_cast_not_allowed,
     report_cast_operand_unknown, report_cast_source_not_primitive,
@@ -19,19 +19,25 @@ use crate::diagnostics::typeck::expr::{
     report_variant_payload_mismatch,
 };
 use crate::diagnostics::typeck::lower_ty::report_trait_as_ty;
-use crate::diagnostics::typeck::report_any_outside_signature;
-use crate::diagnostics::typeck::{report_no_field, report_no_variant, report_private_field};
+use crate::diagnostics::typeck::traits::solve::report_operator_trait_missing;
+use crate::diagnostics::typeck::{
+    report_any_outside_signature, report_binary_operand_mismatch,
+    report_int_suffix_on_float_literal, report_logic_op_needs_bool_operands, report_no_field,
+    report_no_variant, report_operand_has_unknown_type, report_private_field,
+    report_unknown_literal_suffix,
+};
 use crate::driver::source::SrcSpan;
 use crate::hir::BindingMode;
 use crate::hir::{
-    AccessArgs, ArmId, DefId, ExprId, ExprKind, Hir, HirId, OwnerNode, Path, Payload, PayloadField,
-    Res, TyDef, Type,
+    AccessArgs, ArmId, DefId, ExprId, ExprKind, Hir, HirId, Local, OwnerNode, Path, Payload,
+    PayloadField, Res, TyDef, Type,
 };
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
+use crate::nameres::symbol_table::is_prim_ty;
 use crate::typeck::Typeck;
-use crate::typeck::cast;
-use crate::typeck::pat::VariantTys;
+use crate::typeck::check::cast;
+use crate::typeck::check::pat::VariantTys;
 use crate::typeck::results::DerefMode;
 use crate::typeck::traits::solve::{Goal, Solution};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
@@ -45,8 +51,7 @@ pub(crate) enum DerefContext {
 #[derive(Clone)]
 pub(crate) enum PayloadExprs<'hir> {
     Unit,
-    /// A parenthesised argument list. A declared single-field payload needs exactly one argument;
-    /// any other length matches no declared payload and reports as a shape mismatch.
+
     Args(Vec<ExprId>),
     Record(&'hir [PayloadField]),
 }
@@ -70,9 +75,6 @@ impl<'hir> PayloadExprs<'hir> {
 }
 
 impl<'hir> Typeck<'hir> {
-    // -----------------------------------------------------------------
-    // Assignment
-    // -----------------------------------------------------------------
 
     pub(crate) fn check_assign(
         &mut self,
@@ -82,8 +84,7 @@ impl<'hir> Typeck<'hir> {
     ) -> Ty {
         let (lhs, rhs) = (lhs.into(), rhs.into());
         let lhs_ty = self.ty_of_as_place(lhs);
-        // Whether the local this reaches may be written to at all, rather than a plain `let`'s,
-        // is checked on the MIR this lowers to, not here; see `mir::checks::constck`.
+
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.session, self.hir.expr(lhs).span);
         }
@@ -104,7 +105,7 @@ impl<'hir> Typeck<'hir> {
     ) -> Ty {
         let (lhs, rhs) = (lhs.into(), rhs.into());
         let lhs_ty = self.ty_of_as_place(lhs);
-        // See `check_assign`'s own comment: the mutability check itself moved to `mir::checks::constck`.
+
         if !self.is_place_expr(lhs) {
             report_not_assignable(self.session, self.hir.expr(lhs).span);
         }
@@ -117,8 +118,7 @@ impl<'hir> Typeck<'hir> {
 
         let operand = self.unifier.find_deep(&mut self.tcx, lhs_ty);
         let produced = self.check_operator(op, operand, lhs.owner, span);
-        // `foo += bar` stores the operator's result back into `foo`, so an operator that produces
-        // something else cannot be compounded.
+
         if let Err(err) = self.unifier.unify(&self.tcx, operand, produced) {
             report_compound_assign_result_mismatch(self.display_cx(), err, span);
         }
@@ -132,7 +132,7 @@ impl<'hir> Typeck<'hir> {
         expected: Option<Ty>,
     ) -> Ty {
         let operand = operand.into();
-        // See `check_assign`'s own comment: the mutability check itself moved to `mir::checks::constck`.
+
         if mutability == Mutability::Mutable && !self.is_place_expr(operand) {
             report_not_assignable(self.session, self.hir.expr(operand).span);
         }
@@ -215,8 +215,6 @@ impl<'hir> Typeck<'hir> {
         matches!(self.implements(&goal, &env), Solution::Holds)
     }
 
-    /// Records `ty` as copyable when the trait solver proves `ty: Copy` under `owner`'s bounds, so
-    /// a later read of a place of that type copies its value rather than moving out of it.
     pub(crate) fn record_copyability(&mut self, ty: Ty, owner: DefId) {
         let resolved = self.unifier.find_deep(&mut self.tcx, ty);
         if self.holds_lang_trait(LangItem::Copy, resolved, owner) {
@@ -224,11 +222,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Indexing
-    // -----------------------------------------------------------------
-
-    /// Checks `base[index]`.
     pub(crate) fn check_index(
         &mut self,
         id: impl Into<HirId>,
@@ -251,14 +244,28 @@ impl<'hir> Typeck<'hir> {
 
         let (peeled, _layers) = self.peel_receiver(base_ty);
         if let TyKind::Array { elem, .. } = *self.tcx.kind(peeled) {
-            let int = self.tcx.next_int_var();
-            let index_ty = self.ty_of(index);
-            if let Err(err) = self.unifier.unify(&self.tcx, int, index_ty) {
-                report_index_not_int(self.display_cx(), err, span);
-            }
+            self.check_array_index_operand(index, span);
             return elem;
         }
+        self.check_index_through_method(id, base, peeled, index, span)
+    }
 
+    fn check_array_index_operand(&mut self, index: HirId, span: SrcSpan) {
+        let int = self.tcx.next_int_var();
+        let index_ty = self.ty_of(index);
+        if let Err(err) = self.unifier.unify(&self.tcx, int, index_ty) {
+            report_index_not_int(self.display_cx(), err, span);
+        }
+    }
+
+    fn check_index_through_method(
+        &mut self,
+        id: HirId,
+        base: HirId,
+        peeled: Ty,
+        index: HirId,
+        span: SrcSpan,
+    ) -> Ty {
         let member = Ident {
             text: self.session.intern("index"),
             span,
@@ -274,10 +281,6 @@ impl<'hir> Typeck<'hir> {
         self.check_method_call(id, base, member, &[ExprId::from(index)])
     }
 
-    // -----------------------------------------------------------------
-    // Building a nominal value
-    // -----------------------------------------------------------------
-
     pub(crate) fn check_ctor(
         &mut self,
         id: impl Into<HirId>,
@@ -288,21 +291,35 @@ impl<'hir> Typeck<'hir> {
         let id = id.into();
         let (span, owner) = (self.hir.expr(id).span, id.owner);
         let Some(self_ty) = self.ctor_ty(path, expected, span, owner) else {
-            for field in payload {
-                self.ty_of(field.value);
-            }
+            self.check_fields_only(payload);
             return self.tcx.error();
         };
-
         let Some((struct_def, declared)) = self.struct_fields(self_ty) else {
             report_not_a_struct_literal(self.display_cx(), self_ty, span);
-            for field in payload {
-                self.ty_of(field.value);
-            }
+            self.check_fields_only(payload);
             return self.tcx.error();
         };
-        let struct_module = self.hir.module_of(struct_def);
 
+        let written = self.check_ctor_fields(struct_def, &declared, payload, self_ty, owner);
+        self.report_missing_ctor_fields(&declared, &written, self_ty, span);
+        self_ty
+    }
+
+    fn check_fields_only(&mut self, payload: &'hir [PayloadField]) {
+        for field in payload {
+            self.ty_of(field.value);
+        }
+    }
+
+    fn check_ctor_fields(
+        &mut self,
+        struct_def: DefId,
+        declared: &[(Ident, HirId, Ty)],
+        payload: &'hir [PayloadField],
+        self_ty: Ty,
+        owner: DefId,
+    ) -> HashSet<Symbol> {
+        let struct_module = self.hir.module_of(struct_def);
         let mut written = HashSet::new();
         for field in payload {
             if !written.insert(field.name.text) {
@@ -317,14 +334,7 @@ impl<'hir> Typeck<'hir> {
                     if !self.is_visible_from(struct_module, owner, visibility) {
                         report_private_field(self.session, field.name);
                     }
-                    let got = self.ty_of_expecting(field.value, Some(want));
-                    if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                        report_field_type_mismatch(
-                            self.display_cx(),
-                            err,
-                            self.hir.expr(field.value).span,
-                        );
-                    }
+                    self.check_field_value(field.value, want);
                 }
                 None => {
                     report_no_field(self.display_cx(), field.name, self_ty);
@@ -332,7 +342,23 @@ impl<'hir> Typeck<'hir> {
                 }
             }
         }
+        written
+    }
 
+    fn check_field_value(&mut self, value: HirId, want: Ty) {
+        let got = self.ty_of_expecting(value, Some(want));
+        if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
+            report_field_type_mismatch(self.display_cx(), err, self.hir.expr(value).span);
+        }
+    }
+
+    fn report_missing_ctor_fields(
+        &self,
+        declared: &[(Ident, HirId, Ty)],
+        written: &HashSet<Symbol>,
+        self_ty: Ty,
+        span: SrcSpan,
+    ) {
         let missing: Vec<&'static str> = declared
             .iter()
             .filter(|(name, _, _)| !written.contains(&name.text))
@@ -341,8 +367,6 @@ impl<'hir> Typeck<'hir> {
         if !missing.is_empty() {
             report_missing_fields(self.display_cx(), &missing, self_ty, span);
         }
-
-        self_ty
     }
 
     fn ctor_ty(
@@ -379,7 +403,7 @@ impl<'hir> Typeck<'hir> {
                 Some(ty)
             }
             Res::SelfTy(_) => Some(self.self_ty(owner, span)),
-            Res::Err => None, // already reported by name resolution
+            Res::Err => None,
             _ => {
                 report_ctor_not_a_struct(self.session, span);
                 None
@@ -433,16 +457,7 @@ impl<'hir> Typeck<'hir> {
         match (&found.payload, &written) {
             (VariantTys::Unit, PayloadExprs::Unit) => {}
             (VariantTys::Single(want), PayloadExprs::Args(args)) if args.len() == 1 => {
-                let want = *want;
-                let value = args[0];
-                let got = self.ty_of_expecting(value, Some(want));
-                if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                    report_variant_payload_mismatch(
-                        self.display_cx(),
-                        err,
-                        self.hir.expr(value).span,
-                    );
-                }
+                self.check_single_payload(*want, args[0]);
             }
             (VariantTys::Record(want), PayloadExprs::Record(fields)) => {
                 let want = want.clone();
@@ -465,6 +480,13 @@ impl<'hir> Typeck<'hir> {
         self_ty
     }
 
+    fn check_single_payload(&mut self, want: Ty, value: ExprId) {
+        let got = self.ty_of_expecting(value, Some(want));
+        if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
+            report_variant_payload_mismatch(self.display_cx(), err, self.hir.expr(value).span);
+        }
+    }
+
     pub(crate) fn named_type_of_base(&mut self, base: HirId) -> Option<Ty> {
         let expr = self.hir.expr(base);
         let ExprKind::Path(path) = &expr.kind else {
@@ -484,9 +506,7 @@ impl<'hir> Typeck<'hir> {
                 let args = (0..arity).map(|_| self.tcx.next_infer_var()).collect();
                 self.tcx.mk_adt(def, args)
             }
-            // A bare trait name is not a type, so it names no variants either. This is the same
-            // rejection `lower_ty` makes in type position, repeated because an access base is
-            // the one expression position a trait name can reach.
+
             Res::Type(Type::Def(TyDef::Trait(_))) => {
                 report_trait_as_ty(self.session, span);
                 self.tcx.error()
@@ -512,16 +532,7 @@ impl<'hir> Typeck<'hir> {
                 .iter()
                 .find(|(name, _)| name.text == field.name.text)
             {
-                Some(&(_, want)) => {
-                    let got = self.ty_of_expecting(field.value, Some(want));
-                    if let Err(err) = self.unifier.unify(&self.tcx, want, got) {
-                        report_field_type_mismatch(
-                            self.display_cx(),
-                            err,
-                            self.hir.expr(field.value).span,
-                        );
-                    }
-                }
+                Some(&(_, want)) => self.check_field_value(field.value, want),
                 None => {
                     report_record_field_unknown(self.session, self.hir, field.name, variant);
                     self.ty_of(field.value);
@@ -539,9 +550,6 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    /// Types every expression written in a payload without checking it against a declared one.
-    /// Reached once a variant has already failed: an expression left untyped here would show up
-    /// as a missing type in a later pass rather than as the mistake it may itself contain.
     fn check_payload_exprs_only(&mut self, written: &PayloadExprs<'hir>) {
         match written {
             PayloadExprs::Unit => {}
@@ -557,10 +565,6 @@ impl<'hir> Typeck<'hir> {
             }
         }
     }
-
-    // -----------------------------------------------------------------
-    // Branching
-    // -----------------------------------------------------------------
 
     pub(crate) fn check_if(
         &mut self,
@@ -594,7 +598,6 @@ impl<'hir> Typeck<'hir> {
         self.unifier.find_deep(&mut self.tcx, then_ty)
     }
 
-    /// Checks `match scrutinee { pat => { .. }, .. }`.
     pub(crate) fn check_match(
         &mut self,
         scrutinee: impl Into<HirId>,
@@ -605,8 +608,6 @@ impl<'hir> Typeck<'hir> {
         let scrutinee = scrutinee.into();
         let scrutinee_ty = self.ty_of(scrutinee);
 
-        // A `match` with no arms can produce no value, since no arm ever runs to produce one.
-        // `Never` is what says that, and it unifies with whatever the context wanted.
         if arms.is_empty() {
             return self.tcx.never();
         }
@@ -616,30 +617,9 @@ impl<'hir> Typeck<'hir> {
             None => self.tcx.next_infer_var(),
         };
 
-        // Whether any arm's own pattern already failed to check
         let mut pat_failed = false;
-
         for &arm in arms {
-            let arm_node = self.hir.arm(arm);
-            let (pat, guard, block, arm_span) =
-                (arm_node.pat, arm_node.guard, arm_node.block, arm_node.span);
-
-            self.check_pat(pat, scrutinee_ty, BindingMode::Value);
-            let pat_ty = self.types.ty(pat.into());
-            pat_failed |= pat_ty.is_some_and(|ty| matches!(self.tcx.kind(ty), TyKind::Error));
-
-            if let Some(guard) = guard {
-                let guard_ty = self.ty_of(guard);
-                let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-                if let Err(err) = self.unifier.unify(&self.tcx, bool_ty, guard_ty) {
-                    report_match_guard_not_bool(self.display_cx(), err, self.hir.expr(guard).span);
-                }
-            }
-
-            let body = self.check_block_expecting(block, Some(result));
-            if let Err(err) = self.unifier.unify(&self.tcx, result, body) {
-                report_match_arm_mismatch(self.display_cx(), err, arm_span);
-            }
+            pat_failed |= self.check_match_arm(arm, scrutinee_ty, result);
         }
 
         if !pat_failed {
@@ -648,6 +628,36 @@ impl<'hir> Typeck<'hir> {
         }
 
         self.unifier.find_deep(&mut self.tcx, result)
+    }
+
+    fn check_match_arm(&mut self, arm: ArmId, scrutinee_ty: Ty, result: Ty) -> bool {
+        let arm_node = self.hir.arm(arm);
+        let (pat, guard, block, arm_span) = (
+            arm_node.pat,
+            arm_node.guard,
+            arm_node.block,
+            arm_node.span,
+        );
+
+        self.check_pat(pat, scrutinee_ty, BindingMode::Value);
+        let pat_failed = self
+            .types
+            .ty(pat.into())
+            .is_some_and(|ty| matches!(self.tcx.kind(ty), TyKind::Error));
+
+        if let Some(guard) = guard {
+            let guard_ty = self.ty_of(guard);
+            let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+            if let Err(err) = self.unifier.unify(&self.tcx, bool_ty, guard_ty) {
+                report_match_guard_not_bool(self.display_cx(), err, self.hir.expr(guard).span);
+            }
+        }
+
+        let body = self.check_block_expecting(block, Some(result));
+        if let Err(err) = self.unifier.unify(&self.tcx, result, body) {
+            report_match_arm_mismatch(self.display_cx(), err, arm_span);
+        }
+        pat_failed
     }
 
     pub(crate) fn check_assert(
@@ -677,11 +687,6 @@ impl<'hir> Typeck<'hir> {
         self.tcx.never()
     }
 
-    // -----------------------------------------------------------------
-    // Error propagation
-    // -----------------------------------------------------------------
-
-    /// Checks `operand?`.
     pub(crate) fn check_try(&mut self, id: impl Into<HirId>, operand: impl Into<HirId>) -> Ty {
         let (id, operand) = (id.into(), operand.into());
         let (span, owner) = (self.hir.expr(id).span, id.owner);
@@ -742,18 +747,12 @@ impl<'hir> Typeck<'hir> {
             return;
         }
 
-        // A `Result`'s error type leaves the function, so it is the one thing
-        // about the return type that has to match exactly rather than merely be the same enum.
         if let (Some(error_ty), Some(ret_error)) = (error_ty, args.get(1).copied())
             && let Err(err) = self.unifier.unify(&self.tcx, ret_error, error_ty)
         {
             report_try_error_mismatch(self.display_cx(), err, span);
         }
     }
-
-    // -----------------------------------------------------------------
-    // Casting
-    // -----------------------------------------------------------------
 
     pub(crate) fn check_cast(
         &mut self,
@@ -832,11 +831,6 @@ impl<'hir> Typeck<'hir> {
         matches!(self.tcx.kind(elem), TyKind::Primitive(PrimTy::U8))
     }
 
-    // -----------------------------------------------------------------
-    // `new`, the `iso` constructor
-    // -----------------------------------------------------------------
-
-    /// Checks `new e`: `e: T` gives `new e` the type `iso T`.
     pub(crate) fn check_new(&mut self, operand: impl Into<HirId>) -> Ty {
         let operand = operand.into();
         let operand_ty = self.ty_of(operand);
@@ -844,8 +838,6 @@ impl<'hir> Typeck<'hir> {
         self.tcx.mk_iso(operand_ty)
     }
 
-    /// Checks `new [elem; count]`: `elem: T` and `count: usize` give it the type `iso [T]`, the
-    /// unsized array whose length is carried at runtime rather than fixed by the type.
     pub(crate) fn check_new_array(
         &mut self,
         elem: impl Into<HirId>,
@@ -876,46 +868,15 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Closures
-    // -----------------------------------------------------------------
-
     pub(crate) fn check_closure(&mut self, def: DefId, expected: Option<Ty>) -> Ty {
         let hir: &'hir Hir = self.hir;
         let closure = hir.closure(def);
-        self.closures_to_write_back.push(def);
 
-        // Only a function type of matching arity is a usable hint:
-        let hint = expected.and_then(|expected| match self.tcx.kind(expected).clone() {
-            TyKind::Fun { params, ret } if params.len() == closure.params.len() => {
-                Some((params, ret))
-            }
-            _ => None,
-        });
-
-        let mut param_tys = Vec::with_capacity(closure.params.len());
-        for (index, &id) in closure.params.iter().enumerate() {
-            let ty = match hir.closure_param(id).ty {
-                Some(annotation) => self.lower_ty(annotation),
-                None => match hint.as_ref().map(|(params, _)| params[index]) {
-                    Some(ty) => ty,
-                    None => self.tcx.next_infer_var(),
-                },
-            };
-            self.types.record(id, ty);
-            param_tys.push(ty);
-        }
-
-        let declared = closure.ret.map(|ret| self.lower_ty(ret));
-        let ret_var = self.tcx.next_infer_var();
-        if let Some(declared) = declared {
-            let _ = self.unifier.unify(&self.tcx, declared, ret_var);
-        } else if let Some(ret) = hint.as_ref().and_then(|(_, ret)| *ret) {
-            let _ = self.unifier.unify(&self.tcx, ret, ret_var);
-        }
-
-        let signature = self.tcx.mk_fun(param_tys.clone(), Some(ret_var));
-        self.types.record_def(def, signature);
+        let hint = self.closure_hint(expected, closure.params.len());
+        let param_tys = self.check_closure_params(&closure.params, hint.as_ref());
+        let ret_var = self.check_closure_return(closure.ret, hint.as_ref());
+        self.types
+            .record_def(def, self.tcx.mk_fun(param_tys.clone(), Some(ret_var)));
 
         let body = self.check_block_expecting(closure.block, Some(ret_var));
         if let Err(err) = self.unifier.unify(&self.tcx, ret_var, body) {
@@ -926,8 +887,52 @@ impl<'hir> Typeck<'hir> {
         let ret = (ret != self.tcx.unit()).then_some(ret);
         let sig = self.tcx.mk_fun(param_tys, ret);
         self.types.record_def(def, sig);
-
         sig
+    }
+
+    fn closure_hint(
+        &mut self,
+        expected: Option<Ty>,
+        arity: usize,
+    ) -> Option<(Vec<Ty>, Option<Ty>)> {
+        match self.tcx.kind(expected?).clone() {
+            TyKind::Fun { params, ret } if params.len() == arity => Some((params, ret)),
+            _ => None,
+        }
+    }
+
+    fn check_closure_params(
+        &mut self,
+        params: &'hir [HirId],
+        hint: Option<&(Vec<Ty>, Option<Ty>)>,
+    ) -> Vec<Ty> {
+        let mut param_tys = Vec::with_capacity(params.len());
+        for (index, &id) in params.iter().enumerate() {
+            let ty = match self.hir.closure_param(id).ty {
+                Some(annotation) => self.lower_ty(annotation),
+                None => match hint.map(|(params, _)| params[index]) {
+                    Some(ty) => ty,
+                    None => self.tcx.next_infer_var(),
+                },
+            };
+            self.types.record(id, ty);
+            param_tys.push(ty);
+        }
+        param_tys
+    }
+
+    fn check_closure_return(
+        &mut self,
+        declared: Option<crate::hir::TyId>,
+        hint: Option<&(Vec<Ty>, Option<Ty>)>,
+    ) -> Ty {
+        let ret_var = self.tcx.next_infer_var();
+        if let Some(declared) = declared.map(|ret| self.lower_ty(ret)) {
+            let _ = self.unifier.unify(&self.tcx, declared, ret_var);
+        } else if let Some(ret) = hint.and_then(|(_, ret)| *ret) {
+            let _ = self.unifier.unify(&self.tcx, ret, ret_var);
+        }
+        ret_var
     }
 }
 
@@ -2362,5 +2367,206 @@ mod tests {
              fun f(r: Result<i32, bool>) -> i32 { let v = r?; return v; }",
             "cannot propagate out of a function returning `i32`",
         );
+    }
+}
+
+impl<'hir> Typeck<'hir> {
+    #[must_use]
+    pub(crate) fn check_expr(&mut self, id: impl Into<HirId>, expected: Option<Ty>) -> Ty {
+        let id = id.into();
+        let expr = self.hir.expr(id);
+
+        match &expr.kind {
+            ExprKind::Literal(lit) => self.check_literal(lit, expr.span),
+            ExprKind::Tuple(elems) => {
+                let tys = elems.iter().map(|&elem| self.ty_of(elem)).collect();
+                self.tcx.mk_tuple(tys)
+            }
+            ExprKind::Path(path) => match path.res {
+                Res::Local(Local::Param(local) | Local::Variable(local)) => self.ty_of(local),
+                Res::Local(Local::SelfParam(self_param)) => self.ty_of(self_param),
+                Res::Function(def) => self.ty_of(def.owner_id()),
+                Res::Err => self.tcx.error(),
+                Res::Type(_) | Res::SelfTy(_) => unreachable!(
+                    "name resolution never resolves a value-position path to a type, a \
+                         module, or Self"
+                ),
+            },
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => self.check_deref(id, *operand, expr.span),
+            ExprKind::Unary { op, operand } => {
+                let operand_ty = self.ty_of(*operand);
+                let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
+
+                let item = match op {
+                    UnaryOp::Neg => LangItem::Neg,
+                    UnaryOp::Not => LangItem::Not,
+                    UnaryOp::Deref => unreachable!("handled by the arm above"),
+                };
+
+                if self.is_undefaulted_numeric_var(resolved)
+                    || self.implements_operator(item, resolved, id.owner, expr.span)
+                {
+                    resolved
+                } else {
+                    self.tcx.error()
+                }
+            }
+            ExprKind::Binary { op, lhs, rhs } => {
+                let (lhs, rhs) = (self.ty_of(*lhs), self.ty_of(*rhs));
+                if let Err(error) = self.unifier.unify(&self.tcx, lhs, rhs) {
+                    report_binary_operand_mismatch(self.display_cx(), error, lhs, rhs, expr.span);
+                    return self.tcx.error();
+                }
+                let resolved = self.unifier.find_deep(&mut self.tcx, lhs);
+                self.check_operator(*op, resolved, id.owner, expr.span)
+            }
+            ExprKind::Assign { lhs, rhs } => self.check_assign(*lhs, *rhs, expr.span),
+            ExprKind::AssignOp { op, lhs, rhs } => self.check_assign_op(*op, *lhs, *rhs, expr.span),
+            ExprKind::Borrow {
+                mutability,
+                operand,
+            } => self.check_borrow(*mutability, *operand, expected),
+            ExprKind::Call { callee, args } => self.check_call(id, *callee, args, expr.span),
+            ExprKind::Access { base, member, args } => self.check_access(id, *base, *member, args),
+            ExprKind::Index { base, index } => self.check_index(id, *base, *index),
+            ExprKind::Ctor { path, payload } => {
+                self.check_ctor(id, path.as_ref(), payload, expected)
+            }
+            ExprKind::Variant { variant, payload } => {
+                self.check_variant_expr(*variant, payload, expected, expr.span)
+            }
+            ExprKind::Try(operand) => self.check_try(id, *operand),
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => self.check_if(*cond, *then_block, *else_block, expected, expr.span),
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_match(*scrutinee, arms, expected, expr.span)
+            }
+            ExprKind::Loop { block, .. } => {
+                self.check_block(*block);
+                self.tcx.unit()
+            }
+            ExprKind::Spawn(block) | ExprKind::Concurrent(block) => self.check_block(*block),
+            ExprKind::Block(block_id) => self.check_block_expecting(*block_id, expected),
+            ExprKind::Closure(def) => self.check_closure(*def, expected),
+            ExprKind::Cast { expr: operand, ty } => self.check_cast(*operand, *ty, expr.span),
+            ExprKind::New(operand) => self.check_new(*operand),
+            ExprKind::NewArray { elem, count } => self.check_new_array(*elem, *count),
+            ExprKind::Assert { cond, msg } => self.check_assert(*cond, *msg),
+            ExprKind::Panic { msg } | ExprKind::Unreachable { msg } => {
+                self.check_panic_message(*msg)
+            }
+            ExprKind::Error => self.tcx.error(),
+        }
+    }
+
+    fn check_operator(&mut self, op: BinaryOp, operand: Ty, owner: DefId, span: SrcSpan) -> Ty {
+        let operand = self.peel_any(operand);
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+
+        let (item, produced) = match op {
+            BinaryOp::Add => (LangItem::Add, operand),
+            BinaryOp::Sub => (LangItem::Sub, operand),
+            BinaryOp::Mul => (LangItem::Mul, operand),
+            BinaryOp::Div => (LangItem::Div, operand),
+            BinaryOp::Rem => (LangItem::Rem, operand),
+            BinaryOp::Eq | BinaryOp::Ne => (LangItem::Eq, bool_ty),
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                (LangItem::Comparable, bool_ty)
+            }
+            BinaryOp::And | BinaryOp::Or => {
+                if let Err(error) = self.unifier.unify(&self.tcx, operand, bool_ty) {
+                    report_logic_op_needs_bool_operands(self.display_cx(), error, operand, span);
+                }
+                return bool_ty;
+            }
+        };
+
+        if self.is_undefaulted_numeric_var(operand)
+            || self.implements_operator(item, operand, owner, span)
+        {
+            produced
+        } else {
+            self.tcx.error()
+        }
+    }
+
+    fn implements_operator(
+        &mut self,
+        item: LangItem,
+        self_ty: Ty,
+        owner: DefId,
+        span: SrcSpan,
+    ) -> bool {
+        if matches!(self.tcx.kind(self_ty), TyKind::Var(InferVar::Any(_))) {
+            report_operand_has_unknown_type(self.session, span);
+            return false;
+        }
+        let Some(def) = self.hir.lang_items().get(item) else {
+            return false;
+        };
+
+        let goal = Goal::new(self_ty, def);
+        let env = self.bounds_env(owner);
+        match self.implements(&goal, &env) {
+            Solution::Holds => true,
+            Solution::DoesNotHold => {
+                let name = crate::diagnostics::display::def_name(self.session, self.hir, def);
+                report_operator_trait_missing(self.display_cx(), self_ty, name, span);
+                false
+            }
+            Solution::Ambiguous | Solution::Error => false,
+        }
+    }
+
+    fn is_undefaulted_numeric_var(&self, ty: Ty) -> bool {
+        matches!(
+            self.tcx.kind(ty),
+            TyKind::Var(InferVar::Int(_) | InferVar::Float(_))
+        )
+    }
+
+    fn peel_any(&self, mut ty: Ty) -> Ty {
+        while let TyKind::Any(base) = *self.tcx.kind(ty) {
+            ty = base;
+        }
+        ty
+    }
+
+    pub(crate) fn check_literal(&mut self, lit: &Literal, span: SrcSpan) -> Ty {
+        match lit {
+            Literal::Bool(_) => self.tcx.mk_prim(PrimTy::Bool),
+            Literal::Char(_) => self.tcx.mk_prim(PrimTy::Char),
+            Literal::Int { suffix, .. } => match suffix {
+                None => self.tcx.next_int_var(),
+                Some(suffix) => match is_prim_ty(self.session, *suffix) {
+                    Some(prim) if prim.is_integer() || prim.is_float() => self.tcx.mk_prim(prim),
+                    _ => {
+                        report_unknown_literal_suffix(self.session, *suffix, span);
+                        self.tcx.error()
+                    }
+                },
+            },
+            Literal::Float { suffix, .. } => match suffix {
+                None => self.tcx.next_float_var(),
+                Some(suffix) => match is_prim_ty(self.session, *suffix) {
+                    Some(prim) if prim.is_float() => self.tcx.mk_prim(prim),
+                    Some(prim) if prim.is_integer() => {
+                        report_int_suffix_on_float_literal(self.session, *suffix, span);
+                        self.tcx.error()
+                    }
+                    _ => {
+                        report_unknown_literal_suffix(self.session, *suffix, span);
+                        self.tcx.error()
+                    }
+                },
+            },
+            Literal::Str(_) => self.tcx.mk_prim(PrimTy::Str),
+        }
     }
 }

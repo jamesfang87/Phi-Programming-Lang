@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, Ident, Literal, Mutability, UnaryOp};
 use crate::driver::source::SrcSpan;
-use crate::hir::{AccessArgs, ExprKind, HirId, Local as HirLocal, Payload, Res};
+use crate::hir::{AccessArgs, ExprId, ExprKind, HirId, Local as HirLocal, Payload, Res};
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::{
     AggregateKind, AssertMessage, CastKind, ConstKind, Constant, Operand, Place, Projection,
@@ -12,23 +12,17 @@ use crate::typeck::results::DerefMode;
 use crate::typeck::ty::{Ty, TyKind};
 
 impl<'a> BodyLowerCtx<'a> {
-    // -----------------------------------------------------------------
-    // Entry points
-    // -----------------------------------------------------------------
-
-    /// Lowers `expr_id` to an [`Operand`] without a redundant temporary when it is already one.
     pub(crate) fn lower_operand(&mut self, expr_id: impl Into<HirId>) -> Operand {
         let expr_id = expr_id.into();
-        if let Some(target) = self.unsize_target_for(expr_id) {
+        if let Some(target) = self.take_unsize_target(expr_id) {
             return self.lower_coerced_operand(expr_id, target);
         }
         self.lower_operand_without_coercion(expr_id)
     }
 
-    /// The unsize coercion recorded for `expr_id`, if it has not been lowered yet. Whoever
-    /// reaches the expression first claims the coercion; a claim is never revisited, because an
-    /// expression is lowered exactly once.
-    fn unsize_target_for(&mut self, expr_id: impl Into<HirId>) -> Option<Ty> {
+    /// Returns `expr_id`'s unsized coercion target, claiming it so a later visit treats the
+    /// expression as already coerced and does not unsize it twice.
+    fn take_unsize_target(&mut self, expr_id: impl Into<HirId>) -> Option<Ty> {
         let expr_id = expr_id.into();
         if self.coerced.contains(&expr_id) {
             return None;
@@ -38,9 +32,6 @@ impl<'a> BodyLowerCtx<'a> {
         Some(target)
     }
 
-    /// Lowers a coercion-recorded expression as the fat `&dyn Trait` pointer it was checked to
-    /// coerce into: the inner expression is lowered as itself (its own thin pointer), and the
-    /// vtable word comes from the concrete type's impl at codegen time.
     fn lower_coerced_operand(&mut self, expr_id: impl Into<HirId>, target: Ty) -> Operand {
         let expr_id = expr_id.into();
         let span = self.hir.expr(expr_id).span;
@@ -93,8 +84,7 @@ impl<'a> BodyLowerCtx<'a> {
                 }
                 Res::Function(def) => {
                     let args = self.call_type_args(expr_id);
-                    let fn_ty = ty;
-                    self.reify_fn_pointer(def, args, fn_ty, span)
+                    self.reify_fn_pointer(def, args, ty, span)
                 }
                 other => unreachable!("mir::lower: a value-position path resolves to {other:?}"),
             },
@@ -102,9 +92,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// Lowers `expr_id` to a [`Place`]: a location this pass can read, write, or take a
-    /// reference to. A path, a field access, an index, or a dereference already is one; anything
-    /// else (a call's result, an aggregate literal, ...) needs a fresh temporary first.
     pub(crate) fn lower_place(&mut self, expr_id: impl Into<HirId>) -> Place {
         let expr_id = expr_id.into();
         let expr = self.hir.expr(expr_id);
@@ -137,7 +124,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// Lowers `expr_id` purely for its side effects, discarding its value.
     pub(crate) fn lower_expr_discarding(&mut self, expr_id: impl Into<HirId>) {
         let expr_id = expr_id.into();
         let expr = self.hir.expr(expr_id);
@@ -196,16 +182,13 @@ impl<'a> BodyLowerCtx<'a> {
         );
     }
 
-    /// The main dispatcher. Lowers `expr_id`'s value into `dest`, ending with `dest` holding the
-    /// result -- every `ExprKind` funnels through here, including the control-flow ones (`if`,
-    /// `match`, a bare block), which use `dest` as their shared join-point destination.
     pub(crate) fn lower_expr_into(&mut self, expr_id: impl Into<HirId>, dest: Place) {
         let expr_id = expr_id.into();
         let expr = self.hir.expr(expr_id);
         let span = expr.span;
         let ty = self.expr_ty(expr_id);
 
-        if let Some(target) = self.unsize_target_for(expr_id) {
+        if let Some(target) = self.take_unsize_target(expr_id) {
             let operand = self.lower_coerced_operand(expr_id, target);
             self.assign(dest, Rvalue::Use(operand), span);
             return;
@@ -216,91 +199,22 @@ impl<'a> BodyLowerCtx<'a> {
                 let operand = self.lower_operand(expr_id);
                 self.assign(dest, Rvalue::Use(operand), span);
             }
-            ExprKind::Unary {
-                op: UnaryOp::Deref,
-                operand,
-            } => {
-                let place = self.lower_deref_place(operand);
-                let operand = match self.types.deref_mode(expr_id) {
-                    DerefMode::Copy => Operand::Copy(place),
-                    DerefMode::Move => Operand::Move(place),
-                };
-                self.assign(dest, Rvalue::Use(operand), span);
-            }
             ExprKind::Unary { op, operand } => {
-                let operand_ty = self.expr_ty(operand);
-                let int_operand = matches!(
-                    self.tcx.kind(operand_ty),
-                    TyKind::Primitive(prim) if prim.is_integer()
-                );
-                let literal = matches!(self.hir.expr(operand).kind, ExprKind::Literal(_));
-                if op == UnaryOp::Neg
-                    && int_operand
-                    && !literal
-                    && self.mode == crate::options::Mode::Debug
-                {
-                    let zero = Operand::Constant(Constant {
-                        ty: operand_ty,
-                        kind: ConstKind::Int(0),
-                    });
-                    let operand = self.lower_operand(operand);
-                    self.lower_binary_op_into(BinaryOp::Sub, zero, operand, dest, operand_ty, span);
-                } else {
-                    let operand = self.lower_operand(operand);
-                    self.assign(dest, Rvalue::UnaryOp(op, operand), span);
-                }
+                self.lower_unary_into(expr_id, op, operand, dest, span)
             }
-            ExprKind::Binary { op, lhs, rhs } => {
-                self.lower_binary_into(op, lhs, rhs, dest, span);
-            }
-            ExprKind::Assign { lhs, rhs } => {
-                let place = self.lower_place(lhs);
-                self.lower_expr_into(rhs, place);
-                self.assign_unit(dest, span);
-            }
+            ExprKind::Binary { op, lhs, rhs } => self.lower_binary_into(op, lhs, rhs, dest, span),
+            ExprKind::Assign { lhs, rhs } => self.lower_assign_into(lhs, rhs, dest, span),
             ExprKind::AssignOp { op, lhs, rhs } => {
-                let place = self.lower_place(lhs);
-                let lhs_ty = self.expr_ty(lhs);
-                let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
-                let rhs_operand = self.lower_operand(rhs);
-                let result_local = self.new_temp(lhs_ty, span);
-                self.lower_binary_op_into(
-                    op,
-                    lhs_operand,
-                    rhs_operand,
-                    Place::from_local(result_local),
-                    lhs_ty,
-                    span,
-                );
-                self.assign(
-                    place,
-                    Rvalue::Use(Operand::Move(Place::from_local(result_local))),
-                    span,
-                );
-                self.assign_unit(dest, span);
+                self.lower_assign_op_into(op, lhs, rhs, dest, span)
             }
             ExprKind::Borrow {
                 mutability,
                 operand,
-            } => {
-                if self.is_any_specialized_call(operand) {
-                    let mode = if mutability == Mutability::Mutable {
-                        crate::mir::AnyMode::RefMut
-                    } else {
-                        crate::mir::AnyMode::Ref
-                    };
-                    self.lower_call_like_into(operand, dest, mode, span);
-                } else {
-                    let place = self.lower_place(operand);
-                    self.assign(dest, Rvalue::Ref { mutability, place }, span);
-                }
-            }
+            } => self.lower_borrow_into(mutability, operand, dest, span),
             ExprKind::Call { .. } => {
                 self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
             }
-            // A variant reached through its enum, such as `Shape.circle(1.0)`. It reads as an
-            // access, but it builds a value rather than reaching into one, so it is split off
-            // ahead of the field and method arms exactly as typeck splits it off.
+
             ExprKind::Access { base, member, args } if self.hir.names_a_type(base.into()) => {
                 let payload = variant_payload_of(&args);
                 self.lower_variant_into(member, ty, &payload, dest, span);
@@ -311,8 +225,7 @@ impl<'a> BodyLowerCtx<'a> {
             } => {
                 self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
             }
-            // A record payload on a base that names a value is rejected by typeck, so the only
-            // `Access` left holding one would have been caught by the qualified-variant arm.
+
             ExprKind::Access {
                 args: crate::hir::AccessArgs::Record(_),
                 ..
@@ -320,35 +233,15 @@ impl<'a> BodyLowerCtx<'a> {
             ExprKind::Access {
                 args: crate::hir::AccessArgs::None,
                 ..
-            } => {
-                let place = self.lower_place(expr_id);
-                let operand = self.operand_for_place(place, ty);
-                self.assign(dest, Rvalue::Use(operand), span);
-            }
-
-            ExprKind::Index { .. } => {
-                if self.types.call(expr_id).is_some() {
-                    self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
-                } else {
-                    let place = self.lower_place(expr_id);
-                    let operand = self.operand_for_place(place, ty);
-                    self.assign(dest, Rvalue::Use(operand), span);
-                }
-            }
+            } => self.lower_access_none_into(expr_id, dest, ty, span),
+            ExprKind::Index { .. } => self.lower_index_into(expr_id, dest, ty, span),
             ExprKind::Ctor { payload, .. } => {
                 self.lower_ctor_into(ty, &payload, dest, span);
             }
             ExprKind::Variant { variant, payload } => {
                 self.lower_variant_into(variant, ty, &payload, dest, span);
             }
-            ExprKind::Tuple(elems) => {
-                let operands = elems.iter().map(|&elem| self.lower_operand(elem)).collect();
-                self.assign(
-                    dest,
-                    Rvalue::Aggregate(Box::new(AggregateKind::Tuple), operands),
-                    span,
-                );
-            }
+            ExprKind::Tuple(elems) => self.lower_tuple_into(&elems, dest, span),
             ExprKind::Try(inner) => self.lower_try_into(inner, ty, dest, span),
             ExprKind::If {
                 cond,
@@ -359,37 +252,16 @@ impl<'a> BodyLowerCtx<'a> {
             ExprKind::Loop { block, .. } => self.lower_loop_into(block, dest, span),
             ExprKind::Block(block) => self.lower_block(block, Some(dest)),
             ExprKind::Closure(def_id) => self.lower_closure_literal_into(def_id, dest, span),
-            ExprKind::Cast { expr, ty: ty_id } => {
-                let _ = ty_id;
-                let operand = self.lower_operand(expr);
-                self.assign(
-                    dest,
-                    Rvalue::Cast {
-                        operand,
-                        ty,
-                        kind: CastKind::Primitive,
-                    },
-                    span,
-                );
-            }
-            ExprKind::New(operand) => {
-                let operand = self.lower_operand(operand);
-                self.assign(dest, Rvalue::New(operand), span);
-            }
+            ExprKind::Cast { expr, .. } => self.lower_cast_into(expr, ty, dest, span),
+            ExprKind::New(operand) => self.lower_new_into(operand, dest, span),
             ExprKind::NewArray { elem, count } => {
-                let elem = self.lower_operand(elem);
-                let count = self.lower_operand(count);
-                self.assign(dest, Rvalue::NewArray { elem, count }, span);
+                self.lower_new_array_into(elem, count, dest, span)
             }
-            // TODO: implement `spawn`/`concurrent` lowering (README section 14 promises
-            // scoped tasks with `spawn`/`join` inside `concurrent`, but both arms panic,
-            // so no concurrent program compiles -- task handles, nursery scopes, and
-            // data-race-free join semantics are all still missing).
+
             ExprKind::Spawn(_) => panic!(
                 "mir::lower: `spawn` is not yet implemented (the runtime nursery API is illustrative only)"
             ),
-            // TODO: see above -- `concurrent` block lowering (wait-for-all-spawns scope
-            // and its value result) is part of the same missing concurrency runtime.
+
             ExprKind::Concurrent(_) => panic!(
                 "mir::lower: `concurrent` is not yet implemented (the runtime nursery API is illustrative only)"
             ),
@@ -408,11 +280,156 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
+    fn lower_unary_into(
+        &mut self,
+        expr_id: HirId,
+        op: UnaryOp,
+        operand: ExprId,
+        dest: Place,
+        span: SrcSpan,
+    ) {
+        if op == UnaryOp::Deref {
+            let place = self.lower_deref_place(operand);
+            let operand = match self.types.deref_mode(expr_id) {
+                DerefMode::Copy => Operand::Copy(place),
+                DerefMode::Move => Operand::Move(place),
+            };
+            self.assign(dest, Rvalue::Use(operand), span);
+            return;
+        }
+
+        let operand_ty = self.expr_ty(operand);
+        let int_operand = matches!(
+            self.tcx.kind(operand_ty),
+            TyKind::Primitive(prim) if prim.is_integer()
+        );
+        let literal = matches!(self.hir.expr(operand).kind, ExprKind::Literal(_));
+        if op == UnaryOp::Neg
+            && int_operand
+            && !literal
+            && self.mode == crate::driver::cli::Mode::Debug
+        {
+            let zero = Operand::Constant(Constant {
+                ty: operand_ty,
+                kind: ConstKind::Int(0),
+            });
+            let operand = self.lower_operand(operand);
+            self.lower_binary_op_into(BinaryOp::Sub, zero, operand, dest, operand_ty, span);
+        } else {
+            let operand = self.lower_operand(operand);
+            self.assign(dest, Rvalue::UnaryOp(op, operand), span);
+        }
+    }
+
+    fn lower_assign_into(&mut self, lhs: ExprId, rhs: ExprId, dest: Place, span: SrcSpan) {
+        let place = self.lower_place(lhs);
+        self.lower_expr_into(rhs, place);
+        self.assign_unit(dest, span);
+    }
+
+    fn lower_assign_op_into(
+        &mut self,
+        op: BinaryOp,
+        lhs: ExprId,
+        rhs: ExprId,
+        dest: Place,
+        span: SrcSpan,
+    ) {
+        let place = self.lower_place(lhs);
+        let lhs_ty = self.expr_ty(lhs);
+        let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
+        let rhs_operand = self.lower_operand(rhs);
+        let result_local = self.new_temp(lhs_ty, span);
+        self.lower_binary_op_into(
+            op,
+            lhs_operand,
+            rhs_operand,
+            Place::from_local(result_local),
+            lhs_ty,
+            span,
+        );
+        self.assign(
+            place,
+            Rvalue::Use(Operand::Move(Place::from_local(result_local))),
+            span,
+        );
+        self.assign_unit(dest, span);
+    }
+
+    fn lower_borrow_into(
+        &mut self,
+        mutability: Mutability,
+        operand: ExprId,
+        dest: Place,
+        span: SrcSpan,
+    ) {
+        if self.is_any_specialized_call(operand) {
+            let mode = if mutability == Mutability::Mutable {
+                crate::mir::AnyMode::RefMut
+            } else {
+                crate::mir::AnyMode::Ref
+            };
+            self.lower_call_like_into(operand, dest, mode, span);
+        } else {
+            let place = self.lower_place(operand);
+            self.assign(dest, Rvalue::Ref { mutability, place }, span);
+        }
+    }
+
+    fn lower_access_none_into(&mut self, expr_id: HirId, dest: Place, ty: Ty, span: SrcSpan) {
+        let place = self.lower_place(expr_id);
+        let operand = self.operand_for_place(place, ty);
+        self.assign(dest, Rvalue::Use(operand), span);
+    }
+
+    fn lower_index_into(&mut self, expr_id: HirId, dest: Place, ty: Ty, span: SrcSpan) {
+        if self.types.call(expr_id).is_some() {
+            self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
+        } else {
+            let place = self.lower_place(expr_id);
+            let operand = self.operand_for_place(place, ty);
+            self.assign(dest, Rvalue::Use(operand), span);
+        }
+    }
+
+    fn lower_tuple_into(&mut self, elems: &[ExprId], dest: Place, span: SrcSpan) {
+        let operands = elems.iter().map(|&elem| self.lower_operand(elem)).collect();
+        self.assign(
+            dest,
+            Rvalue::Aggregate(Box::new(AggregateKind::Tuple), operands),
+            span,
+        );
+    }
+
+    fn lower_cast_into(&mut self, operand: ExprId, ty: Ty, dest: Place, span: SrcSpan) {
+        let operand = self.lower_operand(operand);
+        self.assign(
+            dest,
+            Rvalue::Cast {
+                operand,
+                ty,
+                kind: CastKind::Primitive,
+            },
+            span,
+        );
+    }
+
+    fn lower_new_into(&mut self, operand: ExprId, dest: Place, span: SrcSpan) {
+        let operand = self.lower_operand(operand);
+        self.assign(dest, Rvalue::New(operand), span);
+    }
+
+    fn lower_new_array_into(&mut self, elem: ExprId, count: ExprId, dest: Place, span: SrcSpan) {
+        let elem = self.lower_operand(elem);
+        let count = self.lower_operand(count);
+        self.assign(dest, Rvalue::NewArray { elem, count }, span);
+    }
+
     fn lower_trap_into(
         &mut self,
         cond: Option<impl Into<HirId>>,
         msg: Option<impl Into<HirId>>,
-        make_msg: fn(Option<Operand>) -> AssertMessage,
+        build_assert_message: fn(Option<Operand>) -> AssertMessage,
         dest: Place,
         span: SrcSpan,
     ) {
@@ -434,7 +451,7 @@ impl<'a> BodyLowerCtx<'a> {
             TerminatorKind::Assert {
                 cond: cond_operand,
                 expected,
-                msg: make_msg(msg_operand),
+                msg: build_assert_message(msg_operand),
                 target,
             },
             span,
@@ -444,10 +461,6 @@ impl<'a> BodyLowerCtx<'a> {
             self.assign_unit(dest, span);
         }
     }
-
-    // -----------------------------------------------------------------
-    // Helpers
-    // -----------------------------------------------------------------
 
     pub(crate) fn expr_ty(&mut self, expr_id: impl Into<HirId>) -> Ty {
         let expr_id = expr_id.into();
@@ -470,9 +483,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// Assigns the unit value into `dest`. Represented as a zero-element tuple aggregate rather
-    /// than a dedicated constant -- `()` is exactly the 0-arity tuple mathematically, and
-    /// `AggregateKind::Tuple` already covers it without needing a new `ConstKind` variant.
     pub(crate) fn assign_unit(&mut self, dest: Place, span: SrcSpan) {
         self.assign(
             dest,
@@ -519,13 +529,11 @@ impl<'a> BodyLowerCtx<'a> {
         for _ in 0..derefs {
             place.projections.push(Projection::Deref);
         }
-        let index = self.field_index(peeled_ty, member.text);
+        let index = self.find_field_index(peeled_ty, member.text);
         place.projections.push(Projection::Field(index));
         place
     }
 
-    /// Strips every `&`/`&mut` layer off `ty`, returning the base type and how many layers came
-    /// off -- how many `Deref` projections a place reaching through it needs.
     pub(crate) fn peel_refs(&self, ty: Ty) -> (Ty, u32) {
         let mut current = ty;
         let mut count = 0;
@@ -536,7 +544,7 @@ impl<'a> BodyLowerCtx<'a> {
         (current, count)
     }
 
-    fn field_index(&self, ty: Ty, member: crate::ast::interner::Symbol) -> u32 {
+    fn find_field_index(&self, ty: Ty, member: crate::ast::interner::Symbol) -> u32 {
         if matches!(self.tcx.kind(ty), TyKind::Tuple(_)) {
             return self
                 .session
@@ -573,78 +581,89 @@ impl<'a> BodyLowerCtx<'a> {
         match self.tcx.kind(peeled).clone() {
             TyKind::Array { .. } => {
                 let usize_ty = self.tcx.mk_prim(PrimTy::Usize);
-
-                let constant_offset = match self.hir.expr(index).kind.clone() {
-                    ExprKind::Literal(lit @ Literal::Int { .. }) => {
-                        literal_text(self.session, lit).parse::<u32>().ok()
-                    }
-                    _ => None,
-                };
-                let projection = match constant_offset {
-                    Some(offset) => Projection::ConstantIndex(offset),
-                    None => {
-                        let index_operand = self.lower_operand(index);
-                        let index_local = self.new_temp(usize_ty, span);
-                        self.assign(
-                            Place::from_local(index_local),
-                            Rvalue::Cast {
-                                operand: index_operand,
-                                ty: usize_ty,
-                                kind: CastKind::Primitive,
-                            },
-                            span,
-                        );
-                        Projection::Index(index_local)
-                    }
-                };
-
-                let len_local = self.new_temp(usize_ty, span);
-                self.assign(
-                    Place::from_local(len_local),
-                    Rvalue::Len(place.clone()),
-                    span,
-                );
-                let index_operand = match projection {
-                    Projection::ConstantIndex(offset) => Operand::Constant(Constant {
-                        ty: usize_ty,
-                        kind: ConstKind::Int(offset as i128),
-                    }),
-                    Projection::Index(index_local) => Operand::Copy(Place::from_local(index_local)),
-                    _ => unreachable!("projection is always ConstantIndex or Index here"),
-                };
-                let len_operand = Operand::Copy(Place::from_local(len_local));
-                let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-                let in_bounds_local = self.new_temp(bool_ty, span);
-                self.assign(
-                    Place::from_local(in_bounds_local),
-                    Rvalue::BinaryOp(BinaryOp::Lt, index_operand.clone(), len_operand.clone()),
-                    span,
-                );
-                let assert_target = self.new_block();
-                self.set_terminator(
-                    TerminatorKind::Assert {
-                        cond: Operand::Copy(Place::from_local(in_bounds_local)),
-                        expected: true,
-                        msg: AssertMessage::BoundsCheck {
-                            len: len_operand,
-                            index: index_operand,
-                        },
-                        target: assert_target,
-                    },
-                    span,
-                );
-                self.switch_to(assert_target);
+                let projection = self.lower_index_projection(index, usize_ty, span);
+                self.assert_index_in_bounds(&place, &projection, usize_ty, span);
                 place.projections.push(projection);
                 place
             }
-            // TODO: implement user-defined `Index`/`IndexSet` in place position (README
-            // section 12 promises `a[i]` reads and writes via those traits, but this arm
-            // panics, so real programs cannot index hash maps/vectors through overloads,
-            // only built-in arrays).
+
             _ => panic!(
                 "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"
             ),
         }
+    }
+
+    fn lower_index_projection(&mut self, index: HirId, usize_ty: Ty, span: SrcSpan) -> Projection {
+        let constant_offset = match self.hir.expr(index).kind.clone() {
+            ExprKind::Literal(lit @ Literal::Int { .. }) => {
+                literal_text(self.session, lit).parse::<u32>().ok()
+            }
+            _ => None,
+        };
+        match constant_offset {
+            Some(offset) => Projection::ConstantIndex(offset),
+            None => {
+                let index_operand = self.lower_operand(index);
+                let index_local = self.new_temp(usize_ty, span);
+                self.assign(
+                    Place::from_local(index_local),
+                    Rvalue::Cast {
+                        operand: index_operand,
+                        ty: usize_ty,
+                        kind: CastKind::Primitive,
+                    },
+                    span,
+                );
+                Projection::Index(index_local)
+            }
+        }
+    }
+
+    fn assert_index_in_bounds(
+        &mut self,
+        place: &Place,
+        projection: &Projection,
+        usize_ty: Ty,
+        span: SrcSpan,
+    ) {
+        let len_local = self.new_temp(usize_ty, span);
+        self.assign(
+            Place::from_local(len_local),
+            Rvalue::Len(place.clone()),
+            span,
+        );
+
+        let index_operand = match projection {
+            Projection::ConstantIndex(offset) => Operand::Constant(Constant {
+                ty: usize_ty,
+                kind: ConstKind::Int(*offset as i128),
+            }),
+            Projection::Index(index_local) => Operand::Copy(Place::from_local(*index_local)),
+            _ => unreachable!("projection is always ConstantIndex or Index here"),
+        };
+        let len_operand = Operand::Copy(Place::from_local(len_local));
+
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+        let in_bounds_local = self.new_temp(bool_ty, span);
+        self.assign(
+            Place::from_local(in_bounds_local),
+            Rvalue::BinaryOp(BinaryOp::Lt, index_operand.clone(), len_operand.clone()),
+            span,
+        );
+        let assert_target = self.new_block();
+        self.set_terminator(
+            TerminatorKind::Assert {
+                cond: Operand::Copy(Place::from_local(in_bounds_local)),
+                expected: true,
+                msg: AssertMessage::BoundsCheck {
+                    len: len_operand,
+                    index: index_operand,
+                },
+                target: assert_target,
+            },
+            span,
+        );
+        self.switch_to(assert_target);
     }
 
     fn lower_binary_into(
@@ -656,7 +675,7 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) {
         let (lhs, rhs) = (lhs.into(), rhs.into());
-        // `&&`/`||` short-circuit, so they are control flow, not a plain `Rvalue::BinaryOp`.
+
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
             return self.lower_short_circuit_into(op, lhs, rhs, dest, span);
         }
@@ -715,9 +734,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.switch_to(join_block);
     }
 
-    /// Lowers the arithmetic itself, once both operands are already `Operand`s: a checked
-    /// operation with an overflow `Assert` for integer `+`/`-`/`*` in a debug-profile body, an
-    /// unconditional zero-check `Assert` for `/`/`%`, and a plain operation otherwise.
     fn lower_binary_op_into(
         &mut self,
         op: BinaryOp,
@@ -728,93 +744,103 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) {
         let is_int = matches!(self.tcx.kind(operand_ty), TyKind::Primitive(p) if p.is_integer());
-        let is_flt = matches!(self.tcx.kind(operand_ty), TyKind::Primitive(p) if p.is_float());
+        let is_division = matches!(op, BinaryOp::Div | BinaryOp::Rem);
+        let debug = self.mode == crate::driver::cli::Mode::Debug;
 
-        if is_int && matches!(op, BinaryOp::Div | BinaryOp::Rem) {
-            let assert_msg = if op == BinaryOp::Div {
-                AssertMessage::DivisionByZero(rhs.clone())
-            } else {
-                AssertMessage::RemainderByZero(rhs.clone())
-            };
-            let zero = Operand::Constant(Constant {
-                ty: operand_ty,
-                kind: ConstKind::Int(0),
-            });
-            let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-            let ne_zero_local = self.new_temp(bool_ty, span);
-            self.assign(
-                Place::from_local(ne_zero_local),
-                Rvalue::BinaryOp(BinaryOp::Ne, rhs.clone(), zero),
-                span,
-            );
-            let target = self.new_block();
-            self.set_terminator(
-                TerminatorKind::Assert {
-                    cond: Operand::Copy(Place::from_local(ne_zero_local)),
-                    expected: true,
-                    msg: assert_msg,
-                    target,
-                },
-                span,
-            );
-            self.switch_to(target);
+        if is_int && is_division {
+            self.lower_division_guard(op, &rhs, operand_ty, span);
+            if debug {
+                self.lower_division_overflow_check(op, &lhs, &rhs, operand_ty, span);
+            }
         }
 
-        if is_int
-            && matches!(op, BinaryOp::Div | BinaryOp::Rem)
-            && self.mode == crate::options::Mode::Debug
-        {
-            self.lower_division_overflow_check(op, &lhs, &rhs, operand_ty, span);
-        }
-
-        let checked = is_int
-            && matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul)
-            && self.mode == crate::options::Mode::Debug;
-
+        let checked =
+            is_int && matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul) && debug;
         if checked {
-            let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-            let pair_ty = self.tcx.mk_tuple(vec![operand_ty, bool_ty]);
-            let pair_local = self.new_temp(pair_ty, span);
-            self.assign(
-                Place::from_local(pair_local),
-                Rvalue::CheckedBinaryOp(op, lhs.clone(), rhs.clone()),
-                span,
-            );
-            let overflowed = Place {
-                local: pair_local,
-                projections: vec![Projection::Field(1)],
-            };
-            let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-            let not_overflowed_local = self.new_temp(bool_ty, span);
-            self.assign(
-                Place::from_local(not_overflowed_local),
-                Rvalue::UnaryOp(UnaryOp::Not, Operand::Copy(overflowed)),
-                span,
-            );
-            let target = self.new_block();
-            self.set_terminator(
-                TerminatorKind::Assert {
-                    cond: Operand::Copy(Place::from_local(not_overflowed_local)),
-                    expected: true,
-                    msg: AssertMessage::Overflow(op, lhs, rhs),
-                    target,
-                },
-                span,
-            );
-            self.switch_to(target);
-            let result = Place {
-                local: pair_local,
-                projections: vec![Projection::Field(0)],
-            };
-            self.assign(dest, Rvalue::Use(Operand::Move(result)), span);
+            self.lower_checked_arithmetic(op, lhs, rhs, dest, operand_ty, span);
         } else {
-            let _ = is_flt;
             self.assign(dest, Rvalue::BinaryOp(op, lhs, rhs), span);
         }
     }
 
-    /// Asserts that `lhs / rhs` (or `lhs % rhs`) does not overflow. Only signed integers are
-    /// checked, and only in a debug-profile body, like the checked `+`/`-`/`*`.
+    fn lower_division_guard(&mut self, op: BinaryOp, rhs: &Operand, operand_ty: Ty, span: SrcSpan) {
+        let assert_msg = if op == BinaryOp::Div {
+            AssertMessage::DivisionByZero(rhs.clone())
+        } else {
+            AssertMessage::RemainderByZero(rhs.clone())
+        };
+        let zero = Operand::Constant(Constant {
+            ty: operand_ty,
+            kind: ConstKind::Int(0),
+        });
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+        let ne_zero_local = self.new_temp(bool_ty, span);
+        self.assign(
+            Place::from_local(ne_zero_local),
+            Rvalue::BinaryOp(BinaryOp::Ne, rhs.clone(), zero),
+            span,
+        );
+        let target = self.new_block();
+        self.set_terminator(
+            TerminatorKind::Assert {
+                cond: Operand::Copy(Place::from_local(ne_zero_local)),
+                expected: true,
+                msg: assert_msg,
+                target,
+            },
+            span,
+        );
+        self.switch_to(target);
+    }
+
+    fn lower_checked_arithmetic(
+        &mut self,
+        op: BinaryOp,
+        lhs: Operand,
+        rhs: Operand,
+        dest: Place,
+        operand_ty: Ty,
+        span: SrcSpan,
+    ) {
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+        let pair_ty = self.tcx.mk_tuple(vec![operand_ty, bool_ty]);
+        let pair_local = self.new_temp(pair_ty, span);
+        self.assign(
+            Place::from_local(pair_local),
+            Rvalue::CheckedBinaryOp(op, lhs.clone(), rhs.clone()),
+            span,
+        );
+
+        let overflowed = Place {
+            local: pair_local,
+            projections: vec![Projection::Field(1)],
+        };
+        let not_overflowed_local = self.new_temp(bool_ty, span);
+        self.assign(
+            Place::from_local(not_overflowed_local),
+            Rvalue::UnaryOp(UnaryOp::Not, Operand::Copy(overflowed)),
+            span,
+        );
+
+        let target = self.new_block();
+        self.set_terminator(
+            TerminatorKind::Assert {
+                cond: Operand::Copy(Place::from_local(not_overflowed_local)),
+                expected: true,
+                msg: AssertMessage::Overflow(op, lhs, rhs),
+                target,
+            },
+            span,
+        );
+        self.switch_to(target);
+
+        let result = Place {
+            local: pair_local,
+            projections: vec![Projection::Field(0)],
+        };
+        self.assign(dest, Rvalue::Use(Operand::Move(result)), span);
+    }
+
     fn lower_division_overflow_check(
         &mut self,
         op: BinaryOp,
@@ -823,8 +849,6 @@ impl<'a> BodyLowerCtx<'a> {
         operand_ty: Ty,
         span: SrcSpan,
     ) {
-        // Signed division and remainder overflow only in the `MIN / -1` case, which the hardware
-        // instruction traps on.
         let TyKind::Primitive(prim) = *self.tcx.kind(operand_ty) else {
             return;
         };
@@ -833,19 +857,8 @@ impl<'a> BodyLowerCtx<'a> {
         };
 
         let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-        let neg_one = Operand::Constant(Constant {
-            ty: operand_ty,
-            kind: ConstKind::Int(-1),
-        });
-        let rhs_is_neg_one = self.new_temp(bool_ty, span);
-        self.assign(
-            Place::from_local(rhs_is_neg_one),
-            Rvalue::BinaryOp(BinaryOp::Eq, rhs.clone(), neg_one),
-            span,
-        );
+        let rhs_is_neg_one = self.lower_equality_test(rhs, -1, operand_ty, bool_ty, span);
 
-        // A signed division only overflows when the divisor is `-1`, so `lhs == MIN` is only
-        // tested on that path.
         let check_min = self.new_block();
         let done = self.new_block();
         self.set_terminator(
@@ -860,16 +873,7 @@ impl<'a> BodyLowerCtx<'a> {
         );
 
         self.switch_to(check_min);
-        let min_value = Operand::Constant(Constant {
-            ty: operand_ty,
-            kind: ConstKind::Int(min),
-        });
-        let lhs_is_min = self.new_temp(bool_ty, span);
-        self.assign(
-            Place::from_local(lhs_is_min),
-            Rvalue::BinaryOp(BinaryOp::Eq, lhs.clone(), min_value),
-            span,
-        );
+        let lhs_is_min = self.lower_equality_test(lhs, min, operand_ty, bool_ty, span);
         self.set_terminator(
             TerminatorKind::Assert {
                 cond: Operand::Copy(Place::from_local(lhs_is_min)),
@@ -882,9 +886,26 @@ impl<'a> BodyLowerCtx<'a> {
         self.switch_to(done);
     }
 
-    // -----------------------------------------------------------------
-    // Aggregates: struct literals, enum variants
-    // -----------------------------------------------------------------
+    fn lower_equality_test(
+        &mut self,
+        operand: &Operand,
+        value: i128,
+        operand_ty: Ty,
+        bool_ty: Ty,
+        span: SrcSpan,
+    ) -> crate::mir::Local {
+        let constant = Operand::Constant(Constant {
+            ty: operand_ty,
+            kind: ConstKind::Int(value),
+        });
+        let local = self.new_temp(bool_ty, span);
+        self.assign(
+            Place::from_local(local),
+            Rvalue::BinaryOp(BinaryOp::Eq, operand.clone(), constant),
+            span,
+        );
+        local
+    }
 
     fn lower_ctor_into(
         &mut self,
@@ -983,10 +1004,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    // -----------------------------------------------------------------
-    // `?`
-    // -----------------------------------------------------------------
-
     fn lower_try_into(&mut self, inner: impl Into<HirId>, ok_ty: Ty, dest: Place, span: SrcSpan) {
         let inner = inner.into();
         let scrutinee_ty = self.expr_ty(inner);
@@ -1010,14 +1027,7 @@ impl<'a> BodyLowerCtx<'a> {
         let ok_idx = self.variant_idx_by_name(def, ok_name);
         let propagate_idx = self.variant_idx_by_name(def, propagate_name);
 
-        let i32_ty = self.tcx.mk_prim(PrimTy::I32);
-        let discr_local = self.new_temp(i32_ty, span);
-        self.assign(
-            Place::from_local(discr_local),
-            Rvalue::Discriminant(scrutinee_place.clone()),
-            span,
-        );
-
+        let discr_local = self.lower_discriminant(&scrutinee_place, span);
         let ok_block = self.new_block();
         let propagate_block = self.new_block();
         self.set_terminator(
@@ -1032,7 +1042,33 @@ impl<'a> BodyLowerCtx<'a> {
         );
 
         self.switch_to(propagate_block);
-        let mut propagate_place = scrutinee_place.clone();
+        self.lower_try_propagate(def, is_result, propagate_idx, &scrutinee_place, &args, span);
+
+        self.switch_to(ok_block);
+        self.lower_try_ok(ok_idx, scrutinee_place, ok_ty, dest, span);
+    }
+
+    fn lower_discriminant(&mut self, place: &Place, span: SrcSpan) -> crate::mir::Local {
+        let i32_ty = self.tcx.mk_prim(PrimTy::I32);
+        let discr_local = self.new_temp(i32_ty, span);
+        self.assign(
+            Place::from_local(discr_local),
+            Rvalue::Discriminant(place.clone()),
+            span,
+        );
+        discr_local
+    }
+
+    fn lower_try_propagate(
+        &mut self,
+        def: crate::hir::DefId,
+        is_result: bool,
+        propagate_idx: crate::mir::VariantIdx,
+        scrutinee: &Place,
+        args: &[Ty],
+        span: SrcSpan,
+    ) {
+        let mut propagate_place = scrutinee.clone();
         propagate_place
             .projections
             .push(Projection::Downcast(propagate_idx));
@@ -1059,9 +1095,17 @@ impl<'a> BodyLowerCtx<'a> {
         let dead = self.new_block();
         self.switch_to(dead);
         self.set_terminator(TerminatorKind::Unreachable, span);
+    }
 
-        self.switch_to(ok_block);
-        let mut ok_place = scrutinee_place;
+    fn lower_try_ok(
+        &mut self,
+        ok_idx: crate::mir::VariantIdx,
+        scrutinee: Place,
+        ok_ty: Ty,
+        dest: Place,
+        span: SrcSpan,
+    ) {
+        let mut ok_place = scrutinee;
         ok_place.projections.push(Projection::Downcast(ok_idx));
         ok_place.projections.push(Projection::Field(0));
         let ok_operand = self.operand_for_place(ok_place, ok_ty);
@@ -1095,8 +1139,6 @@ fn literal_text(session: &Session, lit: Literal) -> String {
     }
 }
 
-/// Returns the most negative value a signed integer primitive can hold, or `None` for the
-/// unsigned ones. Only signed division and remainder can overflow.
 fn signed_integer_min(prim: PrimTy) -> Option<i128> {
     match prim {
         PrimTy::I8 => Some(i8::MIN as i128),

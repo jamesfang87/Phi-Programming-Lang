@@ -29,10 +29,7 @@ impl<'hir> Visitor<'hir> for CaptureVisitor<'hir> {
 }
 
 impl<'a> BodyLowerCtx<'a> {
-    /// Every outer local `closure_def`'s own body reads, in first-occurrence order -- the
-    /// closure's captures, in the order `AggregateKind::Closure`'s operand list and the
-    /// closure's own environment tuple both use.
-    pub(crate) fn captures_of(&self, closure_def: DefId) -> Vec<HirId> {
+    pub(crate) fn collect_closure_captures(&self, closure_def: DefId) -> Vec<HirId> {
         let closure = self.hir.closure(closure_def);
         let mut visitor = CaptureVisitor {
             hir: self.hir,
@@ -44,7 +41,7 @@ impl<'a> BodyLowerCtx<'a> {
         visitor.found
     }
 
-    pub(crate) fn environment_ty(&mut self, captures: &[HirId]) -> Ty {
+    pub(crate) fn build_environment_ty(&mut self, captures: &[HirId]) -> Ty {
         let mut tys: Vec<Ty> = vec![self.tcx.mk_prim(crate::nameres::PrimTy::Usize)];
         tys.extend(captures.iter().map(|&id| {
             self.types
@@ -55,8 +52,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.tcx.mk_ref(tuple, crate::ast::Mutability::Mutable)
     }
 
-    /// Binds every captured HIR local to a projection into the environment local, so that an
-    /// ordinary `ExprKind::Path` read inside the closure's own body resolves to
     pub(crate) fn bind_environment(&mut self, env_local: Local, captures: &[HirId]) {
         for (index, &hir_id) in captures.iter().enumerate() {
             let place = Place {
@@ -67,9 +62,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// Builds a closure literal's value: `Assign(dest, Aggregate(Closure { def }, captures))`,
-    /// at the point it is evaluated, where each capture's `Copy`/`Move`/`Ref`-ness follows the
-    /// same rule an ordinary read of that place would.
     pub(crate) fn lower_closure_literal_into(
         &mut self,
         def_id: DefId,
@@ -77,10 +69,10 @@ impl<'a> BodyLowerCtx<'a> {
         span: crate::driver::source::SrcSpan,
     ) {
         self.discover(crate::mir::lower::Task::Ordinary(def_id));
-        let captures = self.captures_of(def_id);
+        let captures = self.collect_closure_captures(def_id);
         let operands = captures
             .iter()
-            .map(|&hir_id| self.capture_operand(hir_id))
+            .map(|&hir_id| self.lower_capture_operand(hir_id))
             .collect();
         self.assign(
             dest,
@@ -96,7 +88,7 @@ impl<'a> BodyLowerCtx<'a> {
         );
     }
 
-    fn capture_operand(&mut self, hir_id: impl Into<HirId>) -> crate::mir::Operand {
+    fn lower_capture_operand(&mut self, hir_id: impl Into<HirId>) -> crate::mir::Operand {
         let hir_id = hir_id.into();
         let place = self.place_for(hir_id);
         let ty = self

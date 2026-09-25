@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use crate::lexer::describe::{Descriptor, is_word_spelling, quoted_spelling};
 use crate::lexer::token::{STATEMENT_STARTERS, Token, TokenKind};
 use crate::session::Session;
-use crate::spelling::{edit_distance, is_probable_typo_of};
+use super::spelling::{edit_distance, is_probable_typo_of};
 
 const MAX_LISTED_ALTERNATIVES: usize = 4;
 

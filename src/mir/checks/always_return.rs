@@ -3,41 +3,29 @@ use crate::mir::{BasicBlock, Body, TerminatorKind, checks::lattice, lower::Mir};
 use crate::session::Session;
 
 #[derive(Clone, Copy, PartialEq)]
-enum State {
+enum ReturnState {
     DoesReturn,
     DoesNotReturn,
 }
 
 pub fn check(session: &Session, mir: &Mir) {
     for body in mir.bodies.values() {
-        if !check_body(body) {
+        if !body_always_returns(body) {
             report_not_all_paths_return(session, body.span);
         }
     }
 }
 
-fn meet(cur_entry: State, predecessor_states: &[&State]) -> State {
-    if predecessor_states.is_empty() {
-        return cur_entry;
-    }
-    if predecessor_states
-        .iter()
-        .all(|state| **state == State::DoesReturn)
-    {
-        State::DoesReturn
-    } else {
-        State::DoesNotReturn
-    }
-}
-
-fn check_body(body: &Body) -> bool {
-    let lattice = lattice::solve(
+/// Returns whether every path from the entry block reaches a `return`, so a function without an
+/// explicit trailing return is accepted.
+fn body_always_returns(body: &Body) -> bool {
+    let solved = lattice::solve(
         body,
-        State::DoesReturn,
-        State::DoesNotReturn,
-        |current, pred_states| meet(*current, pred_states),
+        ReturnState::DoesReturn,
+        ReturnState::DoesNotReturn,
+        meet,
         |entry, _id, block| match block.terminator.kind {
-            TerminatorKind::Return | TerminatorKind::Assert { .. } => State::DoesReturn,
+            TerminatorKind::Return | TerminatorKind::Assert { .. } => ReturnState::DoesReturn,
             _ => *entry,
         },
     );
@@ -45,12 +33,28 @@ fn check_body(body: &Body) -> bool {
     (0..body.basic_blocks.len())
         .map(BasicBlock::from_usize)
         .filter(|&id| body.successors(id).next().is_none())
-        .all(|id| lattice.exit(id) == Some(&State::DoesReturn))
+        .all(|id| solved.exit(id) == Some(&ReturnState::DoesReturn))
+}
+
+/// Returns the meet of a block's predecessor states: `DoesReturn` only when every predecessor
+/// returns, and `entry` when it has no predecessors.
+fn meet(entry: &ReturnState, predecessor_states: &[&ReturnState]) -> ReturnState {
+    if predecessor_states.is_empty() {
+        return *entry;
+    }
+    if predecessor_states
+        .iter()
+        .all(|state| **state == ReturnState::DoesReturn)
+    {
+        ReturnState::DoesReturn
+    } else {
+        ReturnState::DoesNotReturn
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::check_body;
+    use super::body_always_returns;
     use crate::testing::{OPS_PREAMBLE, first_function, lower_mir_src_files};
 
     fn always_returns(src: &str) -> bool {
@@ -60,7 +64,7 @@ mod tests {
             .bodies
             .get(&(def_id, None))
             .unwrap_or_else(|| panic!("no lowered body for the first function in {src:?}"));
-        check_body(body)
+        body_always_returns(body)
     }
 
     #[test]

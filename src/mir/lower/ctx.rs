@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::Ident;
+use crate::driver::cli::Mode;
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId};
 use crate::mir::lower::Task;
@@ -8,19 +9,15 @@ use crate::mir::{
     AnyMode, BasicBlock, BasicBlockData, Body, BodyKind, Local, LocalDecl, Place, Statement,
     StatementId, StatementKind, Terminator, TerminatorKind,
 };
-use crate::options::Mode;
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::Ty;
 use crate::typeck::ty::ctx::TyCtx;
 
-/// One entry of a block's exit obligations: something that has to run at every point control
-/// leaves that block, regardless of which path got it there. See the spec's `with`-lend
-/// `StorageDead` note and this pass's block-scoped `defer`.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ExitObligation {
     StorageDead(Local),
-    /// Runs the deferred expression `HirId` for its side effects, discarding its value.
+
     RunDeferred(HirId),
 }
 
@@ -30,9 +27,6 @@ struct LoopCtx {
     scope_depth: usize,
 }
 
-/// One block under construction: statements accumulate directly, but the terminator stays
-/// unset until the code lowering into this block reaches its own end, which is why it is an
-/// `Option` here and a plain field on the finished [`BasicBlockData`].
 struct BlockBuilder {
     statements: Vec<Statement>,
     terminator: Option<Terminator>,
@@ -47,9 +41,6 @@ pub(crate) struct BodyLowerCtx<'a> {
     pub(crate) def_id: DefId,
     pub(crate) any_mode: Option<AnyMode>,
 
-    /// Whether the body being lowered is a function or a closure, and the generic parameters an
-    /// instance's argument list zips against. Both are set by
-    /// [`lower_item`](super::item::BodyLowerCtx::lower_item) before lowering starts.
     pub(crate) kind: BodyKind,
     pub(crate) generics: Vec<HirId>,
 
@@ -64,13 +55,8 @@ pub(crate) struct BodyLowerCtx<'a> {
 
     block_scopes: Vec<Vec<ExitObligation>>,
 
-    /// Closures and `any`-mode-specialized callees discovered while lowering this body, merged
-    /// into the driver's worklist once this body finishes. See `mir::lower`'s module docs.
     pub(crate) discovered: Vec<Task>,
 
-    /// The unsize coercions this body has already lowered. An expression is lowered once, so
-    /// whoever reaches it first builds the fat pointer; the record itself lives in
-    /// `TypeResolutions` for the whole body and must not re-fire on re-entry.
     pub(crate) coerced: HashSet<HirId>,
 }
 
@@ -109,10 +95,6 @@ impl<'a> BodyLowerCtx<'a> {
         ctx
     }
 
-    // -----------------------------------------------------------------
-    // Locals
-    // -----------------------------------------------------------------
-
     pub(crate) fn new_local(&mut self, ty: Ty, name: Option<Ident>, span: SrcSpan) -> Local {
         let local = Local::from_usize(self.local_decls.len());
         self.local_decls.push(LocalDecl { ty, name, span });
@@ -126,23 +108,16 @@ impl<'a> BodyLowerCtx<'a> {
         local
     }
 
-    /// Records that HIR node `id` (a parameter, a binding pattern) is addressed by `local`,
-    /// with no projection, from here on.
     pub(crate) fn bind_local(&mut self, id: impl Into<HirId>, local: Local) {
         let id = id.into();
         self.hir_locals.insert(id, Place::from_local(local));
     }
 
-    /// Records that HIR node `id` is addressed by `place` from here on -- the general form
-    /// [`BodyLowerCtx::bind_local`] is sugar for, used directly for a closure's captured
-    /// variable, which projects into the environment local instead of naming a local of its own.
     pub(crate) fn bind_place(&mut self, id: impl Into<HirId>, place: Place) {
         let id = id.into();
         self.hir_locals.insert(id, place);
     }
 
-    /// The `Place` bound to HIR node `id` by an earlier [`BodyLowerCtx::bind_local`]/
-    /// [`BodyLowerCtx::bind_place`].
     pub(crate) fn place_for(&self, id: impl Into<HirId>) -> Place {
         let id = id.into();
         self.hir_locals
@@ -151,19 +126,10 @@ impl<'a> BodyLowerCtx<'a> {
             .clone()
     }
 
-    /// `local`'s own declaration span, for a synthesized statement (a `StorageDead`, chiefly)
-    /// that addresses no source text of its own.
     pub(crate) fn local_decl_span(&self, local: Local) -> SrcSpan {
         self.local_decls[local.index()].span
     }
 
-    // -----------------------------------------------------------------
-    // Blocks
-    // -----------------------------------------------------------------
-
-    /// Reserves a new, empty block with no terminator yet, without moving the "current block"
-    /// cursor onto it. The caller switches to it explicitly with [`BodyLowerCtx::switch_to`]
-    /// once it is ready to lower code into it.
     pub(crate) fn new_block(&mut self) -> BasicBlock {
         let block = BasicBlock::from_usize(self.blocks.len());
         self.blocks.push(BlockBuilder {
@@ -177,8 +143,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.current
     }
 
-    /// Moves the "current block" cursor: every later [`BodyLowerCtx::push_stmt`]/
-    /// [`BodyLowerCtx::set_terminator`] call targets `block` until this is called again.
     pub(crate) fn switch_to(&mut self, block: BasicBlock) {
         self.current = block;
     }
@@ -191,9 +155,6 @@ impl<'a> BodyLowerCtx<'a> {
             .push(Statement { id, kind, span });
     }
 
-    /// Sets the current block's terminator. Panics if it already has one -- a block gets exactly
-    /// one transfer of control, and a second call here means two branches of lowering both tried
-    /// to close the same block, a lowering-pass bug rather than anything a user program can cause.
     pub(crate) fn set_terminator(&mut self, kind: TerminatorKind, span: SrcSpan) {
         let block = &mut self.blocks[self.current.index()];
         assert!(
@@ -203,10 +164,6 @@ impl<'a> BodyLowerCtx<'a> {
         );
         block.terminator = Some(Terminator { kind, span });
     }
-
-    // -----------------------------------------------------------------
-    // Loops
-    // -----------------------------------------------------------------
 
     pub(crate) fn push_loop(&mut self, break_target: BasicBlock, continue_target: BasicBlock) {
         self.loop_stack.push(LoopCtx {
@@ -222,9 +179,6 @@ impl<'a> BodyLowerCtx<'a> {
             .expect("mir::lower: pop_loop with no loop on the stack");
     }
 
-    /// The innermost enclosing loop's break target and the exit obligations a `break` reached
-    /// from here needs to replay first, innermost block first. `None` if `break` was reached
-    /// outside any loop, which typeck already rules out for an accepted program.
     pub(crate) fn break_target(&self) -> Option<(BasicBlock, Vec<ExitObligation>)> {
         let loop_ctx = self.loop_stack.last()?;
         Some((
@@ -233,7 +187,6 @@ impl<'a> BodyLowerCtx<'a> {
         ))
     }
 
-    /// The counterpart of [`BodyLowerCtx::break_target`] for `continue`.
     pub(crate) fn continue_target(&self) -> Option<(BasicBlock, Vec<ExitObligation>)> {
         let loop_ctx = self.loop_stack.last()?;
         Some((
@@ -242,16 +195,10 @@ impl<'a> BodyLowerCtx<'a> {
         ))
     }
 
-    // -----------------------------------------------------------------
-    // Block-scoped exit obligations (`with`-lend `StorageDead`, `defer`)
-    // -----------------------------------------------------------------
-
     pub(crate) fn push_block_scope(&mut self) {
         self.block_scopes.push(Vec::new());
     }
 
-    /// Registers `obligation` against the innermost currently-open block, to be replayed at
-    /// every point control leaves it.
     pub(crate) fn register_exit_obligation(&mut self, obligation: ExitObligation) {
         self.block_scopes
             .last_mut()
@@ -282,15 +229,9 @@ impl<'a> BodyLowerCtx<'a> {
         out
     }
 
-    /// Every currently-open block's exit obligations, for a `return` reached from anywhere in
-    /// the body: it leaves every block between here and the function's own outermost one.
     pub(crate) fn obligations_for_return(&self) -> Vec<ExitObligation> {
         self.obligations_since(0)
     }
-
-    // -----------------------------------------------------------------
-    // Finishing
-    // -----------------------------------------------------------------
 
     pub(crate) fn discover(&mut self, task: Task) {
         self.discovered.push(task);

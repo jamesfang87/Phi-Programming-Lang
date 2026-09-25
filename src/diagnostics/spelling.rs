@@ -1,5 +1,4 @@
-/// Returns the Levenshtein edit distance between `a` and `b`, counting a transposition of two
-/// adjacent characters as a single edit.
+/// Returns the Levenshtein edit distance between `a` and `b`
 pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -35,8 +34,9 @@ pub(crate) fn is_probable_typo_of(written: &str, target: &str) -> bool {
     edit_distance(written, target) <= allowed
 }
 
-/// Returns the entries of `candidates` that are probable misspellings of `written`, ordered by
-/// increasing edit distance and then by spelling, capped at `limit`.
+/// Returns the entries of `candidates` that are probable misspellings of `written`.
+/// The number of entries returned is capped by `limit`.
+/// The returned entries are ordered by increasing edit distance and then by spelling.
 pub(crate) fn nearest_names<'a>(
     written: &str,
     candidates: impl IntoIterator<Item = &'a str>,

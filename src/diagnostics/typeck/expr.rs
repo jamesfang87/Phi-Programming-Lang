@@ -8,10 +8,6 @@ use crate::session::Session;
 use crate::typeck::ty::Ty;
 use crate::typeck::ty::unify::UnifyError;
 
-// -----------------------------------------------------------------
-// Assignment
-// -----------------------------------------------------------------
-
 pub fn report_not_assignable(session: &Session, span: SrcSpan) {
     session.emit(
         Diagnostic::error("this expression cannot be assigned to", span)
@@ -48,10 +44,6 @@ pub fn report_compound_assign_result_mismatch(cx: DisplayCtx<'_>, err: UnifyErro
     );
 }
 
-// -----------------------------------------------------------------
-// Dereference
-// -----------------------------------------------------------------
-
 pub fn report_deref_not_a_reference(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
     cx.emit(
         Diagnostic::error(format!("`{}` cannot be dereferenced", cx.show(ty)), span)
@@ -80,10 +72,6 @@ pub fn report_move_out_of_reference(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
     );
 }
 
-// -----------------------------------------------------------------
-// Indexing
-// -----------------------------------------------------------------
-
 pub fn report_index_base_unknown(session: &Session, span: SrcSpan) {
     session.emit(
         Diagnostic::error(
@@ -102,10 +90,6 @@ pub fn report_index_base_unknown(session: &Session, span: SrcSpan) {
 pub fn report_index_not_int(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
     cx.emit_unify(err, span, "an array is indexed by an integer");
 }
-
-// -----------------------------------------------------------------
-// `new`
-// -----------------------------------------------------------------
 
 pub fn report_new_array_count_not_usize(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
     cx.emit_unify(err, span, "`new [elem; count]`'s count is a `usize`");
@@ -153,10 +137,6 @@ pub fn report_not_indexable(cx: DisplayCtx<'_>, base: Ty, span: SrcSpan) {
             ),
     );
 }
-
-// -----------------------------------------------------------------
-// Building a nominal value
-// -----------------------------------------------------------------
 
 pub fn report_elided_ctor_unknown(session: &Session, span: SrcSpan) {
     session.emit(
@@ -242,8 +222,6 @@ pub fn report_variant_enum_unknown(session: &Session, variant: Ident, span: SrcS
     );
 }
 
-/// `x.rect { w: 1.0 }` where `x` is a value. A brace payload after a `.` builds a variant and
-/// nothing else, so its base has to name the enum rather than a value of it.
 pub fn report_variant_base_not_a_type(session: &Session, span: SrcSpan) {
     session.emit(
         Diagnostic::error("only an enum can be named before `.variant { .. }`", span)
@@ -314,10 +292,6 @@ pub fn report_variant_missing_fields(
     );
 }
 
-// -----------------------------------------------------------------
-// Branching
-// -----------------------------------------------------------------
-
 pub fn report_if_cond_not_bool(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
     cx.emit_unify(err, span, "an `if` condition has to be a `bool`");
 }
@@ -361,10 +335,6 @@ pub fn report_match_arm_mismatch(cx: DisplayCtx<'_>, err: UnifyError, arm_span: 
 pub fn report_match_guard_not_bool(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
     cx.emit_unify(err, span, "a match guard has to be a `bool`");
 }
-
-// -----------------------------------------------------------------
-// Error propagation
-// -----------------------------------------------------------------
 
 pub fn report_try_operand_unknown(session: &Session, span: SrcSpan) {
     session.emit(
@@ -434,10 +404,6 @@ pub fn report_try_error_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: SrcS
     );
 }
 
-// -----------------------------------------------------------------
-// Closures
-// -----------------------------------------------------------------
-
 pub fn report_closure_body_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
     cx.emit_unify(
         err,
@@ -445,10 +411,6 @@ pub fn report_closure_body_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: S
         "this closure's body does not produce the return type it was checked against",
     );
 }
-
-// -----------------------------------------------------------------
-// Casting
-// -----------------------------------------------------------------
 
 pub fn report_cast_target_not_primitive(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
     cx.emit(

@@ -4,7 +4,7 @@ use crate::ast::Mutability;
 use crate::diagnostics::mir::exclusivity::report_exclusivity_violation;
 use crate::driver::source::SrcSpan;
 use crate::mir::checks::borrowck::lifetimes::{self, Alias, AliasId, Lifetimes};
-use crate::mir::checks::borrowck::{Register, register_of};
+use crate::mir::checks::borrowck::{Register, to_register};
 use crate::mir::{
     BasicBlock, BasicBlockData, Body, Operand, Place, Rvalue, Statement, StatementKind, Terminator,
     TerminatorKind, lower::Mir,
@@ -18,27 +18,27 @@ enum AccessKind {
 }
 
 pub fn check(session: &Session, mir: &Mir) {
-    let lifetimes = lifetimes::compute(mir);
-    check_with(session, mir, &lifetimes);
+    let computed = lifetimes::compute_lifetimes_map(mir);
+    check_with_lifetimes(session, mir, &computed);
 }
 
-pub fn check_with(session: &Session, mir: &Mir, lifetimes: &lifetimes::LifetimesMap) {
+pub fn check_with_lifetimes(session: &Session, mir: &Mir, computed: &lifetimes::LifetimesMap) {
     for (key, body) in &mir.bodies {
-        if let Some(body_lifetimes) = lifetimes.get(key) {
+        if let Some(body_lifetimes) = computed.get(key) {
             check_body(session, body, body_lifetimes);
         }
     }
 }
 
-fn check_body(session: &Session, body: &Body, lifetimes: &Lifetimes) {
+fn check_body(session: &Session, body: &Body, body_lifetimes: &Lifetimes) {
     for (index, block) in body.basic_blocks.iter().enumerate() {
         let id = BasicBlock::from_usize(index);
-        let live_at_point = live_aliases_by_point(id, block, lifetimes);
+        let live_at_point = compute_live_aliases_by_point(id, block, body_lifetimes);
         for (stmt_index, stmt) in block.statements.iter().enumerate() {
             check_statement(
                 session,
                 body,
-                &lifetimes.aliases,
+                &body_lifetimes.aliases,
                 &live_at_point[stmt_index],
                 stmt,
             );
@@ -46,14 +46,14 @@ fn check_body(session: &Session, body: &Body, lifetimes: &Lifetimes) {
         check_terminator(
             session,
             body,
-            &lifetimes.aliases,
+            &body_lifetimes.aliases,
             &live_at_point[block.statements.len()],
             &block.terminator,
         );
     }
 }
 
-fn live_aliases_by_point(
+fn compute_live_aliases_by_point(
     id: BasicBlock,
     block: &BasicBlockData,
     lifetimes: &Lifetimes,
@@ -74,7 +74,7 @@ fn registers_conflict(a: &Register, b: &Register) -> bool {
         && (a.subregister.starts_with(&b.subregister) || b.subregister.starts_with(&a.subregister))
 }
 
-fn access_kind_for_borrow(mutability: Mutability) -> AccessKind {
+fn classify_borrow(mutability: Mutability) -> AccessKind {
     match mutability {
         Mutability::Mutable => AccessKind::Write,
         Mutability::Immutable => AccessKind::Read,
@@ -128,7 +128,7 @@ fn check_place_access(
         body,
         aliases,
         live,
-        &register_of(place),
+        &to_register(place),
         kind,
         span,
     );
@@ -169,7 +169,7 @@ fn check_assign_rvalue(
                 aliases,
                 live,
                 place,
-                access_kind_for_borrow(*mutability),
+                classify_borrow(*mutability),
                 span,
             );
         }

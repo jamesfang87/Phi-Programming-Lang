@@ -10,7 +10,7 @@ use crate::driver::source::SrcSpan;
 use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::session::Session;
-use crate::spelling;
+use crate::diagnostics::spelling;
 
 const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
 
@@ -450,8 +450,9 @@ impl<'ast> SymbolTable<'ast> {
 
     //-------------------------------------------------------------------------
 
-    // TODO: the behavior of these are slightly diff
-    pub fn lookup_value_path(&self, from: NodeId, path: &Path) -> Option<Res> {
+    /// Looks up `path` in the value namespace, resolving a leading local or parameter when the path
+    /// has no prefix. Returns the resolved `Res` if it is found, `None` otherwise.
+    pub fn probe_value_path(&self, from: NodeId, path: &Path) -> Option<Res> {
         let (last, prefix) = path.segments.split_last()?;
 
         if prefix.is_empty()
@@ -812,12 +813,8 @@ impl<'ast> SymbolTable<'ast> {
         self.self_scopes.pop();
     }
 
-    // TODO: is there a better way to do this?
-    // I'm not sure if I like that there is a public function just for tests
-    // Also, this should probably be the name of
-    // pub fn lookup_self_res(&self, span: SrcSpan) -> Res;
-
     /// Returns the current self entry if present and None if not
+    #[cfg(test)]
     pub fn lookup_self(&self) -> Option<Type> {
         match self.self_scopes.last() {
             Some(SelfScope::Defined(ty)) => Some(*ty),

@@ -1,11 +1,26 @@
+use inkwell::types::{FloatType, IntType};
 use inkwell::values::BasicValueEnum;
 
 use super::ctx::CodegenCtx;
 use crate::ast::Symbol;
-use crate::mir::{ConstKind, Constant, Instance};
+use crate::mir::{ConstKind, Constant, FunRef, Instance};
 use crate::nameres::PrimTy;
+use crate::typeck::ty::Ty;
 use crate::typeck::ty::TyKind;
 use crate::typeck::ty::ctx::TyCtx;
+
+/// Whether an integer constant's value should be sign-extended into its LLVM type.
+#[derive(Clone, Copy)]
+enum IntegerSignedness {
+    Signed,
+    Unsigned,
+}
+
+impl IntegerSignedness {
+    fn sign_extend(self) -> bool {
+        matches!(self, IntegerSignedness::Signed)
+    }
+}
 
 pub fn lower_constant<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
@@ -13,51 +28,72 @@ pub fn lower_constant<'ctx>(
     constant: &Constant,
 ) -> BasicValueEnum<'ctx> {
     match &constant.kind {
-        ConstKind::Int(v) => {
-            if matches!(
-                tcx.kind(constant.ty),
-                TyKind::Primitive(PrimTy::F32 | PrimTy::F64)
-            ) {
-                return float_llvm_type(cx, tcx, constant.ty)
-                    .const_float(*v as f64)
-                    .into();
-            }
-            let (int_ty, is_signed) = int_llvm_type(cx, tcx, constant.ty);
-            int_ty.const_int(*v as u64, is_signed).into()
-        }
-        ConstKind::Float(v) => float_llvm_type(cx, tcx, constant.ty).const_float(*v).into(),
-        ConstKind::Bool(b) => cx.llvm.bool_type().const_int(*b as u64, false).into(),
-        ConstKind::Char(c) => cx.llvm.i32_type().const_int(*c as u64, false).into(),
-        ConstKind::Str(sym) => str_operand(cx, *sym),
-        ConstKind::FunDef(fun) => {
-            let instance = Instance {
-                def: fun.def,
-                any_mode: fun.any_mode,
-                args: fun.args.clone(),
-                self_ty: fun.self_ty,
-            };
-            let name = cx.mangle(tcx, &instance);
-            let function = cx.functions[&name];
-            let sret = matches!(
-                tcx.kind(constant.ty).clone(),
-                TyKind::Fun { ret: Some(ret), .. }
-                    if matches!(super::ty::abi_class(tcx, ret), super::ty::AbiClass::Indirect)
-            );
-            super::closure::reify(cx, function, sret)
-        }
+        ConstKind::Int(value) => lower_integer_constant(cx, tcx, constant.ty, *value),
+        ConstKind::Float(value) => select_float_llvm_type(cx, tcx, constant.ty)
+            .const_float(*value)
+            .into(),
+        ConstKind::Bool(value) => cx.llvm.bool_type().const_int(*value as u64, false).into(),
+        ConstKind::Char(value) => cx.llvm.i32_type().const_int(*value as u64, false).into(),
+        ConstKind::Str(sym) => lower_string_literal(cx, *sym),
+        ConstKind::FunDef(fun) => lower_function_reference(cx, tcx, constant.ty, fun),
     }
 }
 
-fn int_llvm_type<'ctx>(
+fn lower_integer_constant<'ctx>(
     cx: &CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
-    ty: crate::typeck::ty::Ty,
-) -> (inkwell::types::IntType<'ctx>, bool) {
+    ty: Ty,
+    value: i128,
+) -> BasicValueEnum<'ctx> {
+    if matches!(tcx.kind(ty), TyKind::Primitive(PrimTy::F32 | PrimTy::F64)) {
+        return select_float_llvm_type(cx, tcx, ty)
+            .const_float(value as f64)
+            .into();
+    }
+    let (int_ty, signedness) = select_int_llvm_type(cx, tcx, ty);
+    int_ty
+        .const_int(value as u64, signedness.sign_extend())
+        .into()
+}
+
+/// Returns the value of a function constant: a fat-pointer closure pointing at `fun`'s reified
+/// thunk.
+fn lower_function_reference<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    fn_ty: Ty,
+    fun: &FunRef,
+) -> BasicValueEnum<'ctx> {
+    let instance = Instance {
+        def: fun.def,
+        any_mode: fun.any_mode,
+        args: fun.args.clone(),
+        self_ty: fun.self_ty,
+    };
+    let name = cx.mangle(tcx, &instance);
+    let function = cx.functions[&name];
+    let sret = matches!(
+        tcx.kind(fn_ty).clone(),
+        TyKind::Fun { ret: Some(ret), .. }
+            if matches!(super::ty::classify_abi(tcx, ret), super::ty::AbiClass::Indirect)
+    );
+    super::closure::reify(cx, function, sret)
+}
+
+fn select_int_llvm_type<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    ty: Ty,
+) -> (IntType<'ctx>, IntegerSignedness) {
     let prim = match tcx.kind(ty) {
         TyKind::Primitive(prim) => *prim,
         other => unreachable!("ConstKind::Int has a non-integer type {other:?}"),
     };
-    let is_signed = matches!(prim, PrimTy::I8 | PrimTy::I16 | PrimTy::I32 | PrimTy::I64);
+    let signedness = if matches!(prim, PrimTy::I8 | PrimTy::I16 | PrimTy::I32 | PrimTy::I64) {
+        IntegerSignedness::Signed
+    } else {
+        IntegerSignedness::Unsigned
+    };
     let int_ty = match prim {
         PrimTy::I8 | PrimTy::U8 => cx.llvm.i8_type(),
         PrimTy::I16 | PrimTy::U16 => cx.llvm.i16_type(),
@@ -65,14 +101,10 @@ fn int_llvm_type<'ctx>(
         PrimTy::I64 | PrimTy::U64 | PrimTy::Usize => cx.llvm.i64_type(),
         other => unreachable!("ConstKind::Int has a non-integer primitive {other:?}"),
     };
-    (int_ty, is_signed)
+    (int_ty, signedness)
 }
 
-fn float_llvm_type<'ctx>(
-    cx: &CodegenCtx<'ctx>,
-    tcx: &TyCtx,
-    ty: crate::typeck::ty::Ty,
-) -> inkwell::types::FloatType<'ctx> {
+fn select_float_llvm_type<'ctx>(cx: &CodegenCtx<'ctx>, tcx: &TyCtx, ty: Ty) -> FloatType<'ctx> {
     if matches!(tcx.kind(ty), TyKind::Primitive(PrimTy::F32)) {
         cx.llvm.f32_type()
     } else {
@@ -80,7 +112,7 @@ fn float_llvm_type<'ctx>(
     }
 }
 
-fn str_operand<'ctx>(cx: &mut CodegenCtx<'ctx>, sym: Symbol) -> BasicValueEnum<'ctx> {
+fn lower_string_literal<'ctx>(cx: &mut CodegenCtx<'ctx>, sym: Symbol) -> BasicValueEnum<'ctx> {
     let bytes = cx.session.resolve(sym).as_bytes();
     let next_index = cx.strings.borrow().len();
     let ptr = *cx.strings.borrow_mut().entry(sym).or_insert_with(|| {

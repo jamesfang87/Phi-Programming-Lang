@@ -34,9 +34,6 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    /// Shared by a free function and a method: both are an optional `self` parameter, an
-    /// ordinary parameter list, and a block, with no environment to thread through the way a
-    /// closure has.
     fn lower_function_like(
         &mut self,
         self_param: Option<HirId>,
@@ -47,7 +44,7 @@ impl<'a> BodyLowerCtx<'a> {
     ) -> Body {
         let block = block.into();
         let ret_ty = self.return_ty(any_mode);
-        // Slot 0: the return place, by the convention every `Body` follows.
+
         self.new_local(ret_ty, None, span);
 
         if let Some(self_id) = self_param {
@@ -79,8 +76,8 @@ impl<'a> BodyLowerCtx<'a> {
         let ret_ty = self.return_ty(None);
         self.new_local(ret_ty, None, span);
 
-        let captures = self.captures_of(self.def_id);
-        let env_ty = self.environment_ty(&captures);
+        let captures = self.collect_closure_captures(self.def_id);
+        let env_ty = self.build_environment_ty(&captures);
         let env_local = self.new_local(env_ty, None, span);
 
         for &param_id in params {
@@ -107,8 +104,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.finish(arg_count, span)
     }
 
-    /// This task's return type, with `any T` resolved per `any_mode` (or, absent one, resolved
-    /// as the plain owned type `any` wraps -- see [`BodyLowerCtx::resolve_any`]).
     fn return_ty(&mut self, any_mode: Option<AnyMode>) -> Ty {
         let sig = self
             .types
@@ -133,9 +128,6 @@ impl<'a> BodyLowerCtx<'a> {
     }
 }
 
-/// The generic parameters an instance's argument list zips against: the enclosing
-/// `extend`/`trait` block's own parameters, then the definition's own. A closure declares no
-/// parameters of its own.
 fn instance_generics(hir: &Hir, def_id: DefId) -> Vec<HirId> {
     let mut generics = Vec::new();
     if let Some(parent) = hir.parent(def_id) {

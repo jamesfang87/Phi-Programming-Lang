@@ -1,3 +1,5 @@
+// TODO: does this even have to be a check with a Lattice or can we simplify it to a single pass?
+
 use std::collections::HashSet;
 
 use crate::ast::Ident;
@@ -38,11 +40,11 @@ fn check_body(session: &Session, body: &Body) {
         .map(Local::from_usize)
         .filter(|local| tracked[local.index()])
         .collect();
-    let lattice = fixed_point(body, &tracked, &initial);
-    report_body(session, body, &tracked, &lattice);
+    let unread_states = solve_fixed_point(body, &tracked, &initial);
+    report_body(session, body, &tracked, &unread_states);
 }
 
-fn fixed_point(body: &Body, tracked: &[bool], initial: &UnreadLocals) -> Lattice {
+fn solve_fixed_point(body: &Body, tracked: &[bool], initial: &UnreadLocals) -> Lattice {
     lattice::solve(
         body,
         initial.clone(),
@@ -59,10 +61,10 @@ fn fixed_point(body: &Body, tracked: &[bool], initial: &UnreadLocals) -> Lattice
     )
 }
 
-fn report_body(session: &Session, body: &Body, tracked: &[bool], lattice: &Lattice) {
+fn report_body(session: &Session, body: &Body, tracked: &[bool], unread_states: &Lattice) {
     for (index, block) in body.basic_blocks.iter().enumerate() {
         let id = BasicBlock::from_usize(index);
-        let mut state = lattice
+        let mut state = unread_states
             .entry(id)
             .expect("every block's entry is given above")
             .clone();
@@ -71,11 +73,11 @@ fn report_body(session: &Session, body: &Body, tracked: &[bool], lattice: &Latti
         }
         apply_terminator(&mut state, tracked, &block.terminator);
     }
-    if let Some(exit) = exit_state(body, lattice) {
+    if let Some(exit) = compute_exit_state(body, unread_states) {
         for index in 0..body.local_decls.len() {
             let local = Local::from_usize(index);
             if exit.contains(&local)
-                && let Some(name) = reported_name(session, body, local)
+                && let Some(name) = resolve_reported_name(session, body, local)
             {
                 let span = body.local_decls[index].span;
                 if index <= body.param_count {
@@ -88,15 +90,15 @@ fn report_body(session: &Session, body: &Body, tracked: &[bool], lattice: &Latti
     }
 }
 
-fn exit_state(body: &Body, lattice: &Lattice) -> Option<UnreadLocals> {
+fn compute_exit_state(body: &Body, unread_states: &Lattice) -> Option<UnreadLocals> {
     (0..body.basic_blocks.len())
         .map(BasicBlock::from_usize)
         .filter(|&id| body.successors(id).next().is_none())
-        .filter_map(|id| lattice.exit(id).cloned())
+        .filter_map(|id| unread_states.exit(id).cloned())
         .reduce(|acc, state| acc.intersection(&state).cloned().collect())
 }
 
-fn reported_name(session: &Session, body: &Body, local: Local) -> Option<Ident> {
+fn resolve_reported_name(session: &Session, body: &Body, local: Local) -> Option<Ident> {
     let name = body.local_decls[local.index()].name?;
     (!session.resolve(name.text).starts_with('_')).then_some(name)
 }
@@ -197,7 +199,7 @@ fn check_never_read(
     span: SrcSpan,
 ) {
     if unread.contains(&local)
-        && let Some(name) = reported_name(session, body, local)
+        && let Some(name) = resolve_reported_name(session, body, local)
     {
         report_value_never_read(session, name, span);
     }

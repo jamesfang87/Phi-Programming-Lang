@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::ops::ControlFlow;
 
+use crate::nameres::PrimTy;
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::visitor::{self, TypeVisitor};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
@@ -18,7 +19,7 @@ pub enum UnifyError {
 #[derive(Default)]
 pub struct Unifier {
     parents: HashMap<Ty, Ty>,
-    // Sized for the union-by-size heuristic in `merge`; it has no effect on unification's result.
+
     sizes: HashMap<Ty, u32>,
 }
 
@@ -67,16 +68,18 @@ impl Unifier {
         let t = self.find_shallow(expected);
         let u = self.find_shallow(found);
 
-        if t == u {
+        if t == u || is_absorbing(tcx, t) || is_absorbing(tcx, u) {
             return Ok(());
         }
 
-        if is_absorbing(tcx, t) || is_absorbing(tcx, u) {
-            return Ok(());
-        }
+        self.unify_components(tcx, t, u)?;
+        self.merge(tcx, t, u)
+    }
 
-        let components = self.decompose(tcx, t, u)?;
-        for (t_component, u_component) in components {
+    /// Unifies every component pair the two roots decompose into, reporting a mismatch against
+    /// the roots themselves when a component pair does not match.
+    fn unify_components(&mut self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<(), UnifyError> {
+        for (t_component, u_component) in self.decompose(tcx, t, u)? {
             self.unify(tcx, t_component, u_component)
                 .map_err(|err| match err {
                     UnifyError::Mismatch { .. } => UnifyError::Mismatch {
@@ -86,23 +89,12 @@ impl Unifier {
                     other => other,
                 })?;
         }
-
-        self.merge(tcx, t, u)?;
         Ok(())
     }
 
     fn merge(&mut self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<(), UnifyError> {
-        let (root, child) = match constraint(tcx, t).cmp(&constraint(tcx, u)) {
-            Ordering::Less => (u, t),
-            Ordering::Greater => (t, u),
-            Ordering::Equal if constraint(tcx, t) == Constraint::Concrete => return Ok(()),
-            Ordering::Equal => {
-                if self.sizes[&t] < self.sizes[&u] {
-                    (u, t)
-                } else {
-                    (t, u)
-                }
-            }
+        let Some((root, child)) = self.select_merging_root(tcx, t, u) else {
+            return Ok(());
         };
 
         if self.occurs(tcx, child, root) {
@@ -123,68 +115,90 @@ impl Unifier {
             tcx.kind(root),
         );
 
+        self.merge_classes(root, child);
+        Ok(())
+    }
+
+    /// Returns the root and the member the two roots merge into, or `None` when there is nothing
+    /// to merge.
+    fn select_merging_root(&self, tcx: &TyCtx, t: Ty, u: Ty) -> Option<(Ty, Ty)> {
+        match constraint(tcx, t).cmp(&constraint(tcx, u)) {
+            Ordering::Less => Some((u, t)),
+            Ordering::Greater => Some((t, u)),
+            Ordering::Equal if constraint(tcx, t) == Constraint::Concrete => None,
+            Ordering::Equal if self.sizes[&t] < self.sizes[&u] => Some((u, t)),
+            Ordering::Equal => Some((t, u)),
+        }
+    }
+
+    fn merge_classes(&mut self, root: Ty, child: Ty) {
         self.sizes
             .insert(root, self.sizes[&root] + self.sizes[&child]);
         self.parents.insert(child, root);
-        Ok(())
     }
 
     fn occurs(&mut self, tcx: &TyCtx, var: Ty, ty: Ty) -> bool {
         visitor::walk(&mut Occurs { unifier: self, var }, tcx, ty).is_break()
     }
 
-    /// Returns the component pairs of two root types that unification has to unify, or the reason
-    /// they cannot be.
     fn decompose(&self, tcx: &TyCtx, t: Ty, u: Ty) -> Result<Vec<(Ty, Ty)>, UnifyError> {
-        // Inference variables are handled before the structural decomposition: an `any` matches
-        // anything without components, and an integer or float variable only decomposes against a
-        // primitive of the matching kind.
         debug_assert_eq!(self.parents.get(&t), Some(&t));
         debug_assert_eq!(self.parents.get(&u), Some(&u));
 
-        let no_components = Ok(Vec::new());
+        if let Some(components) = self.decompose_inference_variables(tcx, t, u) {
+            return components;
+        }
 
-        match (tcx.kind(t), tcx.kind(u)) {
+        visitor::decompose(tcx, t, u).ok_or(UnifyError::Mismatch {
+            expected: t,
+            found: u,
+        })
+    }
+
+    /// Returns the component pairs of two roots when at least one is an inference variable, or
+    /// `None` when neither is.
+    fn decompose_inference_variables(
+        &self,
+        tcx: &TyCtx,
+        t: Ty,
+        u: Ty,
+    ) -> Option<Result<Vec<(Ty, Ty)>, UnifyError>> {
+        let no_components = Ok(Vec::new());
+        let decomposition = match (tcx.kind(t), tcx.kind(u)) {
             (TyKind::Var(InferVar::Any(_)), _) | (_, TyKind::Var(InferVar::Any(_))) => {
                 no_components
             }
             (TyKind::Var(InferVar::Int(_)), TyKind::Var(InferVar::Int(_))) => no_components,
-            (TyKind::Var(InferVar::Int(_)), TyKind::Primitive(p)) => {
-                if p.is_integer() {
-                    no_components
-                } else {
-                    Err(UnifyError::ExpectedInteger { var: t, found: u })
-                }
-            }
-            (TyKind::Primitive(p), TyKind::Var(InferVar::Int(_))) => {
-                if p.is_integer() {
-                    no_components
-                } else {
-                    Err(UnifyError::ExpectedInteger { var: u, found: t })
-                }
-            }
+            (TyKind::Var(InferVar::Int(_)), TyKind::Primitive(p)) => expect_integer(*p, t, u),
+            (TyKind::Primitive(p), TyKind::Var(InferVar::Int(_))) => expect_integer(*p, u, t),
 
             (TyKind::Var(InferVar::Float(_)), TyKind::Var(InferVar::Float(_))) => no_components,
-            (TyKind::Var(InferVar::Float(_)), TyKind::Primitive(p)) => {
-                if p.is_float() {
-                    no_components
-                } else {
-                    Err(UnifyError::ExpectedFloat { var: t, found: u })
-                }
-            }
-            (TyKind::Primitive(p), TyKind::Var(InferVar::Float(_))) => {
-                if p.is_float() {
-                    no_components
-                } else {
-                    Err(UnifyError::ExpectedFloat { var: u, found: t })
-                }
-            }
+            (TyKind::Var(InferVar::Float(_)), TyKind::Primitive(p)) => expect_float(*p, t, u),
+            (TyKind::Primitive(p), TyKind::Var(InferVar::Float(_))) => expect_float(*p, u, t),
 
-            _ => visitor::decompose(tcx, t, u).ok_or(UnifyError::Mismatch {
-                expected: t,
-                found: u,
-            }),
-        }
+            _ => return None,
+        };
+        Some(decomposition)
+    }
+}
+
+/// Returns no component pairs when `prim` is an integer type, letting the integer variable `var`
+/// stand for it. Otherwise returns an `ExpectedInteger` error naming `found`.
+fn expect_integer(prim: PrimTy, var: Ty, found: Ty) -> Result<Vec<(Ty, Ty)>, UnifyError> {
+    if prim.is_integer() {
+        Ok(Vec::new())
+    } else {
+        Err(UnifyError::ExpectedInteger { var, found })
+    }
+}
+
+/// Returns no component pairs when `prim` is a float type, letting the float variable `var` stand
+/// for it. Otherwise returns an `ExpectedFloat` error naming `found`.
+fn expect_float(prim: PrimTy, var: Ty, found: Ty) -> Result<Vec<(Ty, Ty)>, UnifyError> {
+    if prim.is_float() {
+        Ok(Vec::new())
+    } else {
+        Err(UnifyError::ExpectedFloat { var, found })
     }
 }
 
@@ -211,11 +225,10 @@ impl TypeVisitor for Occurs<'_> {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Constraint {
-    /// `_`: unifies with anything.
     Any,
-    /// can only unify with either `{integer}` or `{float}`
+
     Numeric,
-    /// Must only unify with itself
+
     Concrete,
 }
 
@@ -236,7 +249,7 @@ mod tests {
     use super::*;
     use crate::ast::Mutability;
     use crate::hir::{DefId, HirId};
-    use crate::typeck::PrimTy;
+    use crate::nameres::PrimTy;
 
     fn hir_id(n: u32) -> HirId {
         DefId::from_usize(n as usize).owner_id()

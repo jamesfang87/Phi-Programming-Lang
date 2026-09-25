@@ -17,7 +17,6 @@ pub fn report_not_found(session: &Session, name: Ident, suggestions: &[String]) 
     session.emit(diagnostic);
 }
 
-/// Returns the `help:` text for a name lookup that failed, or `None` when no spelling is nearby.
 fn nearby_name_help(suggestions: &[String]) -> Option<String> {
     let quoted: Vec<String> = suggestions.iter().map(|name| format!("`{name}`")).collect();
     match quoted.as_slice() {

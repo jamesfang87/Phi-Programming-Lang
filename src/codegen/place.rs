@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use inkwell::values::PointerValue;
+use inkwell::values::{IntValue, PointerValue};
 
 use super::ctx::CodegenCtx;
 use super::{layout, ty};
@@ -19,67 +19,128 @@ pub fn lower_place<'ctx>(
 ) -> (PointerValue<'ctx>, Ty) {
     let mut ptr = locals[&place.local];
     let mut ty = local_decls[place.local.index()].ty;
-
     for proj in &place.projections {
-        match proj {
-            Projection::Deref => {
-                let loaded = cx
-                    .builder
-                    .build_load(cx.llvm.ptr_type(Default::default()), ptr, "deref")
-                    .unwrap();
-                ptr = loaded.into_pointer_value();
-                ty = deref_target(tcx, ty);
-            }
-            Projection::Field(index) => {
-                let field_idx = layout::field_index(ty, *index) as u32;
-                let struct_llvm_ty = ty::llvm_type(cx, tcx, mir, ty).into_struct_type();
-                ptr = cx
-                    .builder
-                    .build_struct_gep(struct_llvm_ty, ptr, field_idx, "field")
-                    .unwrap();
-                ty = field_ty(tcx, mir, ty, *index);
-            }
-            Projection::Index(index_local) => {
-                let index_val = cx
-                    .builder
-                    .build_load(cx.llvm.i64_type(), locals[index_local], "index")
-                    .unwrap();
-                let elem = elem_ty(tcx, ty);
-                let elem_llvm_ty = ty::llvm_type(cx, tcx, mir, elem);
-                ptr = unsafe {
-                    cx.builder
-                        .build_gep(elem_llvm_ty, ptr, &[index_val.into_int_value()], "elem")
-                        .unwrap()
-                };
-                ty = elem;
-            }
-            Projection::ConstantIndex(offset) => {
-                let elem = elem_ty(tcx, ty);
-                let elem_llvm_ty = ty::llvm_type(cx, tcx, mir, elem);
-                let idx = cx.llvm.i64_type().const_int(*offset as u64, false);
-                ptr = unsafe {
-                    cx.builder
-                        .build_gep(elem_llvm_ty, ptr, &[idx], "elem")
-                        .unwrap()
-                };
-                ty = elem;
-            }
-            Projection::Downcast(variant) => {
-                let (def, args) = match tcx.kind(ty).clone() {
-                    TyKind::Adt { def, args } => (def, args),
-                    other => panic!("Downcast projection on non-Adt type {other:?}"),
-                };
-                let enum_llvm_ty = ty::llvm_type(cx, tcx, mir, ty).into_struct_type();
-                ptr = cx
-                    .builder
-                    .build_struct_gep(enum_llvm_ty, ptr, 2, "payload")
-                    .unwrap();
-                ty = variant_ty(tcx, mir, def, &args, *variant);
-            }
-        }
+        (ptr, ty) = lower_projection(cx, tcx, mir, locals, ptr, ty, proj);
     }
-
     (ptr, ty)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_projection<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+    proj: &Projection,
+) -> (PointerValue<'ctx>, Ty) {
+    match proj {
+        Projection::Deref => lower_deref_projection(cx, tcx, ptr, ty),
+        Projection::Field(index) => lower_field_projection(cx, tcx, mir, ptr, ty, *index),
+        Projection::Index(index_local) => {
+            lower_index_projection(cx, tcx, mir, locals, ptr, ty, *index_local)
+        }
+        Projection::ConstantIndex(offset) => {
+            lower_constant_index_projection(cx, tcx, mir, ptr, ty, *offset)
+        }
+        Projection::Downcast(variant) => lower_downcast_projection(cx, tcx, mir, ptr, ty, *variant),
+    }
+}
+
+fn lower_deref_projection<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+) -> (PointerValue<'ctx>, Ty) {
+    let loaded = cx
+        .builder
+        .build_load(cx.llvm.ptr_type(Default::default()), ptr, "deref")
+        .unwrap();
+    (loaded.into_pointer_value(), deref_target(tcx, ty))
+}
+
+fn lower_field_projection<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+    index: u32,
+) -> (PointerValue<'ctx>, Ty) {
+    let struct_llvm_ty = ty::llvm_type(cx, tcx, mir, ty).into_struct_type();
+    let ptr = cx
+        .builder
+        .build_struct_gep(struct_llvm_ty, ptr, index, "field")
+        .unwrap();
+    (ptr, field_ty(tcx, mir, ty, index))
+}
+
+fn lower_index_projection<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+    index_local: Local,
+) -> (PointerValue<'ctx>, Ty) {
+    let index = cx
+        .builder
+        .build_load(cx.llvm.i64_type(), locals[&index_local], "index")
+        .unwrap();
+    lower_array_element(cx, tcx, mir, ptr, ty, index.into_int_value())
+}
+
+fn lower_constant_index_projection<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+    offset: u32,
+) -> (PointerValue<'ctx>, Ty) {
+    let index = cx.llvm.i64_type().const_int(offset as u64, false);
+    lower_array_element(cx, tcx, mir, ptr, ty, index)
+}
+
+fn lower_array_element<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+    index: IntValue<'ctx>,
+) -> (PointerValue<'ctx>, Ty) {
+    let elem = elem_ty(tcx, ty);
+    let elem_llvm_ty = ty::llvm_type(cx, tcx, mir, elem);
+    let ptr = unsafe {
+        cx.builder
+            .build_gep(elem_llvm_ty, ptr, &[index], "elem")
+            .unwrap()
+    };
+    (ptr, elem)
+}
+
+fn lower_downcast_projection<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+    variant: VariantIdx,
+) -> (PointerValue<'ctx>, Ty) {
+    let (def, args) = match tcx.kind(ty).clone() {
+        TyKind::Adt { def, args } => (def, args),
+        other => panic!("Downcast projection on non-Adt type {other:?}"),
+    };
+    let enum_llvm_ty = ty::llvm_type(cx, tcx, mir, ty).into_struct_type();
+    let ptr = cx
+        .builder
+        .build_struct_gep(enum_llvm_ty, ptr, 2, "payload")
+        .unwrap();
+    (ptr, variant_ty(tcx, mir, def, &args, variant))
 }
 
 fn deref_target(tcx: &mut TyCtx, ty: Ty) -> Ty {
@@ -105,7 +166,7 @@ fn elem_ty(tcx: &mut TyCtx, ty: Ty) -> Ty {
 }
 
 fn variant_ty(tcx: &mut TyCtx, mir: &Mir, def: DefId, args: &[Ty], variant: VariantIdx) -> Ty {
-    let layout = layout::variant_layout(tcx, mir, def, args, variant);
+    let layout = layout::layout_variant(tcx, mir, def, args, variant);
     let field_tys: Vec<Ty> = layout.fields.iter().map(|field| field.ty).collect();
     tcx.mk_tuple(field_tys)
 }

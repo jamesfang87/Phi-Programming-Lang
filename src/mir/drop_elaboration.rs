@@ -6,7 +6,7 @@ mod tree;
 use std::collections::HashMap;
 
 use crate::driver::source::SrcSpan;
-use crate::mir::checks::borrowck::{Register, register_of};
+use crate::mir::checks::borrowck::{Register, to_register};
 use crate::mir::{
     BasicBlock, BasicBlockData, Body, ConstKind, Constant, Instance, Local, LocalDecl, Operand,
     Place, Rvalue, Statement, StatementId, StatementKind, SwitchTargets, Terminator,
@@ -19,6 +19,7 @@ use crate::typeck::ty::ctx::TyCtx;
 use move_state::MoveState;
 use tree::{DropNode, FlagLocals, plan};
 
+/// Returns `instances` with drop glue, allocation frees, and drop flags spliced into every body.
 pub fn elaborate_drops(
     tcx: &mut TyCtx,
     mut instances: HashMap<Instance, Body>,
@@ -29,6 +30,7 @@ pub fn elaborate_drops(
     instances
 }
 
+/// A drop plan to splice into a block immediately before the statement at `before`.
 struct Insertion {
     before: usize,
     tree: DropNode,
@@ -64,40 +66,52 @@ fn plan_insertions(
     droppable: &[bool],
     flags: &mut FlagLocals,
 ) -> Vec<Vec<Insertion>> {
-    let reachable = reachable_blocks(body);
-    let mut insertions: Vec<Vec<Insertion>> = Vec::new();
-
-    for (index, block) in body.basic_blocks.iter().enumerate() {
-        if !reachable[index] {
-            insertions.push(Vec::new());
-            continue;
-        }
-        let mut state = entry_states[index].clone();
-        let mut block_insertions = Vec::new();
-
-        for (before, statement) in block.statements.iter().enumerate() {
-            if let Some(tree) = plan_at_statement(tcx, body, &state, flags, statement) {
-                block_insertions.push(Insertion { before, tree });
+    let reachable = compute_reachable_blocks(body);
+    body.basic_blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| {
+            if !reachable[index] {
+                return Vec::new();
             }
-            state.apply_statement(droppable, statement);
-        }
+            plan_block_insertions(tcx, body, &entry_states[index], droppable, flags, block)
+        })
+        .collect()
+}
 
-        if matches!(block.terminator.kind, TerminatorKind::Return)
-            && let Some(tree) = plan_parameter_drops(tcx, body, &state, flags)
-        {
-            block_insertions.push(Insertion {
-                before: block.statements.len(),
-                tree,
-            });
-        }
+/// Returns the insertions for one block, replaying the move state from its entry to each
+/// statement that drops something.
+fn plan_block_insertions(
+    tcx: &mut TyCtx,
+    body: &Body,
+    entry_state: &MoveState,
+    droppable: &[bool],
+    flags: &mut FlagLocals,
+    block: &BasicBlockData,
+) -> Vec<Insertion> {
+    let mut state = entry_state.clone();
+    let mut insertions = Vec::new();
 
-        insertions.push(block_insertions);
+    for (before, statement) in block.statements.iter().enumerate() {
+        if let Some(tree) = plan_at_statement(tcx, body, &state, flags, statement) {
+            insertions.push(Insertion { before, tree });
+        }
+        state.apply_statement(droppable, statement);
+    }
+
+    if matches!(block.terminator.kind, TerminatorKind::Return)
+        && let Some(tree) = plan_parameter_drops(tcx, body, &state, flags)
+    {
+        insertions.push(Insertion {
+            before: block.statements.len(),
+            tree,
+        });
     }
 
     insertions
 }
 
-fn reachable_blocks(body: &Body) -> Vec<bool> {
+fn compute_reachable_blocks(body: &Body) -> Vec<bool> {
     let mut reachable = vec![false; body.basic_blocks.len()];
     let mut worklist = vec![BasicBlock::START_BLOCK];
     while let Some(block) = worklist.pop() {
@@ -169,7 +183,7 @@ impl<'a> Editor<'a> {
         }
     }
 
-    fn statement(&mut self, kind: StatementKind, span: SrcSpan) -> Statement {
+    fn new_statement(&mut self, kind: StatementKind, span: SrcSpan) -> Statement {
         let id = StatementId::from_usize(self.next_statement_id);
         self.next_statement_id += 1;
         Statement { id, kind, span }
@@ -180,7 +194,7 @@ impl<'a> Editor<'a> {
             ty: self.bool_ty,
             kind: ConstKind::Bool(value),
         };
-        self.statement(
+        self.new_statement(
             StatementKind::Assign(
                 Place::from_local(flag),
                 Rvalue::Use(Operand::Constant(constant)),
@@ -189,7 +203,7 @@ impl<'a> Editor<'a> {
         )
     }
 
-    fn block(
+    fn new_block(
         &mut self,
         statements: Vec<Statement>,
         terminator: TerminatorKind,
@@ -206,7 +220,7 @@ impl<'a> Editor<'a> {
         block
     }
 
-    fn temp(&mut self, ty: Ty, span: SrcSpan) -> Local {
+    fn new_temp(&mut self, ty: Ty, span: SrcSpan) -> Local {
         let local = Local::from_usize(self.body.local_decls.len());
         self.body.local_decls.push(LocalDecl {
             ty,
@@ -218,70 +232,79 @@ impl<'a> Editor<'a> {
 
     fn emit(&mut self, node: DropNode, continues_at: BasicBlock, span: SrcSpan) -> BasicBlock {
         match node {
-            DropNode::Glue(place) => self.block(
-                Vec::new(),
-                TerminatorKind::Drop {
-                    place,
-                    target: continues_at,
-                },
-                span,
-            ),
-            DropNode::FreeAllocation(place) => self.block(
-                Vec::new(),
-                TerminatorKind::DropIso {
-                    place,
-                    target: continues_at,
-                },
-                span,
-            ),
+            DropNode::Glue(place) => self.emit_drop(place, continues_at, span),
+            DropNode::FreeAllocation(place) => self.emit_free(place, continues_at, span),
             DropNode::Seq(nodes) => nodes
                 .into_iter()
                 .rev()
                 .fold(continues_at, |next, node| self.emit(node, next, span)),
             DropNode::Variants { place, arms } => {
-                let discriminant = self.temp(self.discriminant_ty, span);
-                let values = arms
-                    .into_iter()
-                    .map(|(variant, arm)| {
-                        (variant.index() as u128, self.emit(arm, continues_at, span))
-                    })
-                    .collect();
-                let read = self.statement(
-                    StatementKind::Assign(
-                        Place::from_local(discriminant),
-                        Rvalue::Discriminant(place),
-                    ),
-                    span,
-                );
-                self.block(
-                    vec![read],
-                    TerminatorKind::SwitchInt {
-                        discr: Operand::Copy(Place::from_local(discriminant)),
-                        targets: SwitchTargets {
-                            values,
-                            otherwise: continues_at,
-                        },
-                    },
-                    span,
-                )
+                self.emit_variants(place, arms, continues_at, span)
             }
             DropNode::Flagged { flag, inner } => {
-                let inner = self.emit(*inner, continues_at, span);
-                let cleared = self.set_flag(flag, false, span);
-                let arm = self.block(vec![cleared], TerminatorKind::Goto { target: inner }, span);
-                self.block(
-                    Vec::new(),
-                    TerminatorKind::SwitchInt {
-                        discr: Operand::Copy(Place::from_local(flag)),
-                        targets: SwitchTargets {
-                            values: vec![(1, arm)],
-                            otherwise: continues_at,
-                        },
-                    },
-                    span,
-                )
+                self.emit_flagged(flag, *inner, continues_at, span)
             }
         }
+    }
+
+    fn emit_drop(&mut self, place: Place, target: BasicBlock, span: SrcSpan) -> BasicBlock {
+        self.new_block(Vec::new(), TerminatorKind::Drop { place, target }, span)
+    }
+
+    fn emit_free(&mut self, place: Place, target: BasicBlock, span: SrcSpan) -> BasicBlock {
+        self.new_block(Vec::new(), TerminatorKind::DropIso { place, target }, span)
+    }
+
+    fn emit_variants(
+        &mut self,
+        place: Place,
+        arms: Vec<(crate::mir::VariantIdx, DropNode)>,
+        continues_at: BasicBlock,
+        span: SrcSpan,
+    ) -> BasicBlock {
+        let discriminant = self.new_temp(self.discriminant_ty, span);
+        let values = arms
+            .into_iter()
+            .map(|(variant, arm)| (variant.index() as u128, self.emit(arm, continues_at, span)))
+            .collect();
+        let read = self.new_statement(
+            StatementKind::Assign(Place::from_local(discriminant), Rvalue::Discriminant(place)),
+            span,
+        );
+        self.new_block(
+            vec![read],
+            TerminatorKind::SwitchInt {
+                discr: Operand::Copy(Place::from_local(discriminant)),
+                targets: SwitchTargets {
+                    values,
+                    otherwise: continues_at,
+                },
+            },
+            span,
+        )
+    }
+
+    fn emit_flagged(
+        &mut self,
+        flag: Local,
+        inner: DropNode,
+        continues_at: BasicBlock,
+        span: SrcSpan,
+    ) -> BasicBlock {
+        let inner = self.emit(inner, continues_at, span);
+        let cleared = self.set_flag(flag, false, span);
+        let arm = self.new_block(vec![cleared], TerminatorKind::Goto { target: inner }, span);
+        self.new_block(
+            Vec::new(),
+            TerminatorKind::SwitchInt {
+                discr: Operand::Copy(Place::from_local(flag)),
+                targets: SwitchTargets {
+                    values: vec![(1, arm)],
+                    otherwise: continues_at,
+                },
+            },
+            span,
+        )
     }
 
     fn rewrite_block(
@@ -311,13 +334,13 @@ impl<'a> Editor<'a> {
                 cuts.push((statements.len(), tree));
             }
             let span = statement.span;
-            let updates = self.flag_updates_for_statement(&statement, flags, span);
+            let updates = self.compute_flag_updates_for_statement(&statement, flags, span);
             statements.push(statement);
             statements.extend(updates);
         }
 
         let span = data.terminator.span;
-        statements.extend(self.flag_updates_for_terminator(&data.terminator, flags, span));
+        statements.extend(self.compute_flag_updates_for_terminator(&data.terminator, flags, span));
         if let Some(insertion) = insertions.next() {
             cuts.push((statements.len(), insertion.tree));
         }
@@ -342,11 +365,11 @@ impl<'a> Editor<'a> {
         };
 
         let tail = statements.split_off(position);
-        let continues_at = self.block(tail, terminator.kind, span);
+        let continues_at = self.new_block(tail, terminator.kind, span);
         let mut entry = self.emit(tree, continues_at, span);
         while let Some((position, tree)) = cuts.pop() {
             let run = statements.split_off(position);
-            let continues_at = self.block(run, TerminatorKind::Goto { target: entry }, span);
+            let continues_at = self.new_block(run, TerminatorKind::Goto { target: entry }, span);
             entry = self.emit(tree, continues_at, span);
         }
 
@@ -359,7 +382,7 @@ impl<'a> Editor<'a> {
         };
     }
 
-    fn flag_updates_for_statement(
+    fn compute_flag_updates_for_statement(
         &mut self,
         statement: &Statement,
         flags: &[(Register, Local)],
@@ -376,9 +399,9 @@ impl<'a> Editor<'a> {
             }
             StatementKind::Assign(place, rvalue) => {
                 for operand in rvalue.operands() {
-                    updates.extend(moved_flags(operand, flags));
+                    updates.extend(compute_moved_flags(operand, flags));
                 }
-                updates.extend(initialized_flags(place, flags));
+                updates.extend(compute_initialized_flags(place, flags));
             }
             _ => {}
         }
@@ -388,7 +411,7 @@ impl<'a> Editor<'a> {
             .collect()
     }
 
-    fn flag_updates_for_terminator(
+    fn compute_flag_updates_for_terminator(
         &mut self,
         terminator: &Terminator,
         flags: &[(Register, Local)],
@@ -396,10 +419,10 @@ impl<'a> Editor<'a> {
     ) -> Vec<Statement> {
         let mut updates = Vec::new();
         for operand in terminator.kind.operands() {
-            updates.extend(moved_flags(operand, flags));
+            updates.extend(compute_moved_flags(operand, flags));
         }
         if let TerminatorKind::Call { destination, .. } = &terminator.kind {
-            updates.extend(initialized_flags(destination, flags));
+            updates.extend(compute_initialized_flags(destination, flags));
         }
         updates
             .into_iter()
@@ -408,11 +431,11 @@ impl<'a> Editor<'a> {
     }
 }
 
-fn moved_flags(operand: &Operand, flags: &[(Register, Local)]) -> Vec<(Local, bool)> {
+fn compute_moved_flags(operand: &Operand, flags: &[(Register, Local)]) -> Vec<(Local, bool)> {
     let Operand::Move(place) = operand else {
         return Vec::new();
     };
-    let moved = register_of(place);
+    let moved = to_register(place);
     flags
         .iter()
         .filter(|(register, _)| overlaps(register, &moved))
@@ -420,8 +443,8 @@ fn moved_flags(operand: &Operand, flags: &[(Register, Local)]) -> Vec<(Local, bo
         .collect()
 }
 
-fn initialized_flags(place: &Place, flags: &[(Register, Local)]) -> Vec<(Local, bool)> {
-    let initialized = register_of(place);
+fn compute_initialized_flags(place: &Place, flags: &[(Register, Local)]) -> Vec<(Local, bool)> {
+    let initialized = to_register(place);
     flags
         .iter()
         .filter(|(register, _)| covers(&initialized, register))

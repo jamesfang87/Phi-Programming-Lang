@@ -3,9 +3,9 @@ mod closure;
 mod ctx;
 mod drop;
 pub mod emit;
-mod intrinsic;
 mod konst;
 mod layout;
+mod libc;
 pub(crate) mod mangle;
 mod place;
 mod ty;
@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::values::{FunctionValue, IntValue};
 
 use crate::hir::Hir;
 use crate::mir::{Body, Instance, Mir};
@@ -57,26 +58,8 @@ pub fn codegen<'ctx>(
     Ok(cx.module)
 }
 
-// TODO: why is this called trampoline?? what is that?
 fn emit_c_main_trampoline(cx: &mut CodegenCtx, tcx: &TyCtx, instances: &HashMap<Instance, Body>) {
-    let main = match crate::checks::entry_point::crate_root_main_candidates(cx.session, cx.hir)
-        .as_slice()
-    {
-        [one] => Some(*one),
-        _ => None,
-    };
-    let phi_main = main.map(|main_def| {
-        let instance = instances
-            .keys()
-            .find(|instance| instance.def == main_def)
-            .unwrap_or_else(|| {
-                panic!(
-                    "codegen: `main` is declared but `mir::monomorphize` collected no instance \
-                     for it, though the entry point is seeded as a root unconditionally"
-                )
-            });
-        cx.functions[&cx.mangle(tcx, instance)]
-    });
+    let phi_main = find_crate_root_main(cx, tcx, instances);
 
     let llvm = cx.llvm;
     let c_main_type = llvm.i32_type().fn_type(&[], false);
@@ -84,22 +67,49 @@ fn emit_c_main_trampoline(cx: &mut CodegenCtx, tcx: &TyCtx, instances: &HashMap<
     let entry = llvm.append_basic_block(c_main, "entry");
     cx.builder.position_at_end(entry);
 
-    let zero = llvm.i32_type().const_int(0, false);
-    let ret_val = match phi_main {
-        Some(phi_main) => {
-            let call = cx
-                .builder
-                .build_call(phi_main, &[], "call_phi_main")
-                .unwrap();
-            call.try_as_basic_value()
-                .basic()
-                .filter(|v| v.is_int_value() && v.into_int_value().get_type() == llvm.i32_type())
-                .map(|v| v.into_int_value())
-                .unwrap_or(zero)
-        }
-        None => zero,
-    };
+    let ret_val = call_main_or_zero(cx, phi_main);
     cx.builder.build_return(Some(&ret_val)).unwrap();
+}
+
+fn find_crate_root_main<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &TyCtx,
+    instances: &HashMap<Instance, Body>,
+) -> Option<FunctionValue<'ctx>> {
+    let main = match crate::checks::crate_root_main_candidates(cx.session, cx.hir).as_slice() {
+        [one] => *one,
+        _ => return None,
+    };
+    let instance = instances
+        .keys()
+        .find(|instance| instance.def == main)
+        .unwrap_or_else(|| {
+            panic!(
+                "codegen: `main` is declared but `mir::monomorphize` collected no instance \
+                 for it, though the entry point is seeded as a root unconditionally"
+            )
+        });
+    Some(cx.functions[&cx.mangle(tcx, instance)])
+}
+
+fn call_main_or_zero<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    phi_main: Option<FunctionValue<'ctx>>,
+) -> IntValue<'ctx> {
+    let llvm = cx.llvm;
+    let zero = llvm.i32_type().const_int(0, false);
+    let Some(phi_main) = phi_main else {
+        return zero;
+    };
+    let call = cx
+        .builder
+        .build_call(phi_main, &[], "call_phi_main")
+        .unwrap();
+    call.try_as_basic_value()
+        .basic()
+        .filter(|v| v.is_int_value() && v.into_int_value().get_type() == llvm.i32_type())
+        .map(|v| v.into_int_value())
+        .unwrap_or(zero)
 }
 
 #[cfg(test)]
@@ -147,7 +157,7 @@ mod tests {
             "module app;\n\nfun main() {\n}\n",
             "module app::inner;\n\nfun main() {\n}\n",
         ]);
-        let found = crate::checks::entry_point::check(crate::testing::session(), &hir)
+        let found = crate::checks::check_entry_point(crate::testing::session(), &hir)
             .expect("a root-level `main` exists");
         let is_in_app_module = hir.root().items.iter().any(
             |&child| matches!(hir.def(child), OwnerNode::Module(m) if m.items.contains(&found)),

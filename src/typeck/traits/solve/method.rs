@@ -12,10 +12,10 @@ use crate::diagnostics::typeck::traits::method::{
 };
 use crate::diagnostics::typeck::{report_no_field, report_private_field};
 use crate::driver::source::SrcSpan;
-use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, OwnerNode, PayloadField, Res};
+use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, Node, OwnerNode, PayloadField, Res};
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
-use crate::typeck::expr::{DerefContext, PayloadExprs};
+use crate::typeck::check::expr::{DerefContext, PayloadExprs};
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::visitor::{self, TypeVisitor};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
@@ -42,13 +42,17 @@ pub(crate) struct Candidate {
     extend_block_origin: Option<(DefId, Vec<Ty>)>,
 }
 
-pub(crate) struct PendingMethodCall {
+#[derive(Clone, Copy)]
+enum UnknownReceiverAction {
+    Defer,
+    Report,
+}
+
+struct PendingMethodCall {
     id: HirId,
     receiver: HirId,
     member: Ident,
     args: Vec<ExprId>,
-    /// Stands in for the call's type until it is checked, so the expressions built around the
-    /// call can carry on being checked in the meantime.
     result: Ty,
 }
 
@@ -80,7 +84,7 @@ struct ResolvedMethodCall {
     self_ty: Ty,
 }
 
-/// Collects every integer or float inference variable inside a type, so a deferred call can
+/// Collects every integer or float inference variable inside a type, so a pending call can
 /// close them before a header is matched against the receiver rigidly.
 struct CollectNumericVars<'a>(&'a mut Vec<Ty>);
 
@@ -255,7 +259,23 @@ impl<'hir> Typeck<'hir> {
         member: Ident,
         args: &[ExprId],
     ) -> Ty {
-        let (id, receiver) = (id.into(), receiver.into());
+        self.method_call(
+            id.into(),
+            receiver.into(),
+            member,
+            args,
+            UnknownReceiverAction::Defer,
+        )
+    }
+
+    fn method_call(
+        &mut self,
+        id: HirId,
+        receiver: HirId,
+        member: Ident,
+        args: &[ExprId],
+        unknown_receiver_action: UnknownReceiverAction,
+    ) -> Ty {
         let owner = receiver.owner;
         let receiver_ty = self.ty_of_as_place(receiver);
 
@@ -263,11 +283,17 @@ impl<'hir> Typeck<'hir> {
         // what the receiver's type is, so unlike a trait bound it cannot be answered against a
         // type that is still open.
         if matches!(self.tcx.kind(receiver_ty), TyKind::Var(_)) {
-            if !self.checking_pending_method_calls {
-                return self.defer_method_call(id, receiver, member, args);
-            }
-            report_receiver_type_unknown(self.session, member, self.hir.expr(receiver).span);
-            return self.check_unresolved_call_args(args);
+            return match unknown_receiver_action {
+                UnknownReceiverAction::Defer => self.pending_call_type(),
+                UnknownReceiverAction::Report => {
+                    report_receiver_type_unknown(
+                        self.session,
+                        member,
+                        self.hir.expr(receiver).span,
+                    );
+                    self.check_unresolved_call_args(args)
+                }
+            };
         }
         if matches!(self.tcx.kind(receiver_ty), TyKind::Error) {
             return self.check_unresolved_call_args(args);
@@ -280,8 +306,10 @@ impl<'hir> Typeck<'hir> {
         // Step 3: collect every candidate `member` could name on `base`.
         let candidates = self.method_candidates(base, member.text, owner);
         if candidates.is_empty() {
-            if !self.checking_pending_method_calls && self.mentions_infer_var(receiver_ty) {
-                return self.defer_method_call(id, receiver, member, args);
+            if matches!(unknown_receiver_action, UnknownReceiverAction::Defer)
+                && self.mentions_infer_var(receiver_ty)
+            {
+                return self.pending_call_type();
             }
             report_no_method(self.display_cx(), member, base);
             return self.check_unresolved_call_args(args);
@@ -300,47 +328,79 @@ impl<'hir> Typeck<'hir> {
     }
 
     // -----------------------------------------------------------------
-    // Deferred method calls
+    // Pending method calls
     // -----------------------------------------------------------------
 
-    fn defer_method_call(
-        &mut self,
-        id: HirId,
-        receiver: HirId,
-        member: Ident,
-        args: &[ExprId],
-    ) -> Ty {
-        let result = self.tcx.next_infer_var();
-        self.pending_method_calls.push_back(PendingMethodCall {
-            id,
-            receiver,
-            member,
-            args: args.to_vec(),
-            result,
-        });
-        result
+    fn pending_call_type(&mut self) -> Ty {
+        self.tcx.next_infer_var()
     }
 
-    pub(crate) fn check_pending_method_calls(&mut self) {
-        let mut checked_once: HashSet<HirId> = HashSet::new();
-        // Checked front to back: a call parked while checking an earlier one depends on that
-        // earlier one's result, so the order they were parked in is the order they can be
-        // answered in.
-        while let Some(pending) = self.pending_method_calls.pop_front() {
-            self.checking_pending_method_calls = !checked_once.insert(pending.id);
-            let receiver_ty = self.ty_of_as_place(pending.receiver);
-            self.commit_numeric_defaults(receiver_ty);
-
-            let found =
-                self.check_method_call(pending.id, pending.receiver, pending.member, &pending.args);
-
-            if matches!(self.tcx.kind(found), TyKind::Error) {
-                self.types.record(pending.id, found);
-            } else {
-                let _ = self.unifier.unify(&self.tcx, pending.result, found);
+    pub(crate) fn resolve_pending_method_calls(&mut self, owner: DefId) {
+        loop {
+            let pending = self.pending_method_calls(owner);
+            if pending.is_empty() {
+                break;
+            }
+            for call in pending {
+                self.resolve_pending_method_call(&call);
             }
         }
-        self.checking_pending_method_calls = false;
+    }
+
+    fn pending_method_calls(&self, owner: DefId) -> Vec<PendingMethodCall> {
+        let mut pending: Vec<PendingMethodCall> = self
+            .annotations_of(owner)
+            .into_iter()
+            .filter_map(|(id, result)| {
+                if self.types.call(id).is_some() || !matches!(self.tcx.kind(result), TyKind::Var(_))
+                {
+                    return None;
+                }
+                let Node::Expr(expr) = self.hir.node(id) else {
+                    return None;
+                };
+                let ExprKind::Access {
+                    base,
+                    member,
+                    args: AccessArgs::Call(args),
+                } = &expr.kind
+                else {
+                    return None;
+                };
+                Some(PendingMethodCall {
+                    id,
+                    receiver: (*base).into(),
+                    member: *member,
+                    args: args.clone(),
+                    result,
+                })
+            })
+            .collect();
+
+        pending.sort_by_key(|call| match *self.tcx.kind(call.result) {
+            TyKind::Var(InferVar::Any(index)) => index,
+            _ => u32::MAX,
+        });
+        pending
+    }
+
+    fn resolve_pending_method_call(&mut self, call: &PendingMethodCall) {
+        let receiver_ty = self.ty_of_as_place(call.receiver);
+        self.commit_numeric_defaults(receiver_ty);
+
+        let found = self.method_call(
+            call.id,
+            call.receiver,
+            call.member,
+            &call.args,
+            UnknownReceiverAction::Report,
+        );
+
+        if matches!(self.tcx.kind(found), TyKind::Error) {
+            self.types.record(call.id, found);
+        } else {
+            let _ = self.unifier.unify(&self.tcx, call.result, found);
+        }
     }
 
     pub(crate) fn commit_numeric_defaults(&mut self, ty: Ty) {
@@ -1740,7 +1800,7 @@ mod tests {
     }
 
     #[test]
-    fn a_parked_call_uses_the_type_the_body_pins_the_receiver_to() {
+    fn a_pending_call_uses_the_type_the_body_pins_the_receiver_to() {
         assert_eq!(
             check(
                 "struct Pair<A, B> { first: A, second: B }
@@ -1764,7 +1824,7 @@ mod tests {
     }
 
     #[test]
-    fn a_call_parked_while_checking_another_is_still_answered() {
+    fn a_call_left_pending_while_resolving_another_is_still_resolved() {
         assert_eq!(
             check(
                 "struct Box<T> { v: T }
@@ -1780,7 +1840,7 @@ mod tests {
     }
 
     #[test]
-    fn a_receiver_that_is_a_parked_calls_result_is_answered_after_it() {
+    fn a_receiver_that_is_a_pending_calls_result_is_resolved_after_it() {
         assert_eq!(
             check(
                 "struct Box<T> { v: T }

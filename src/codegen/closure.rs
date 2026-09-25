@@ -10,13 +10,13 @@ use crate::typeck::ty::ctx::TyCtx;
 
 const GLUE_FIELD: u32 = 0;
 
-pub fn environment_ty(tcx: &mut TyCtx, captures: &[Ty]) -> Ty {
+pub fn build_environment_ty(tcx: &mut TyCtx, captures: &[Ty]) -> Ty {
     let mut fields = vec![tcx.mk_prim(crate::nameres::PrimTy::Usize)];
     fields.extend_from_slice(captures);
     tcx.mk_tuple(fields)
 }
 
-pub fn build_value<'ctx>(
+pub fn build_closure_value<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
     mir: &Mir,
@@ -25,6 +25,18 @@ pub fn build_value<'ctx>(
     self_ty: Option<Ty>,
     captures: &[(BasicValueEnum<'ctx>, Ty)],
 ) -> BasicValueEnum<'ctx> {
+    let code = find_closure_code(cx, tcx, def, args, self_ty);
+    let env = build_environment(cx, tcx, mir, captures);
+    build_closure_pair(cx, code, env.into())
+}
+
+fn find_closure_code<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &TyCtx,
+    def: DefId,
+    args: &[Ty],
+    self_ty: Option<Ty>,
+) -> PointerValue<'ctx> {
     let instance = Instance {
         def,
         any_mode: None,
@@ -32,57 +44,60 @@ pub fn build_value<'ctx>(
         self_ty,
     };
     let name = cx.mangle(tcx, &instance);
-    let code = cx
-        .functions
+    cx.functions
         .get(&name)
         .unwrap_or_else(|| {
             panic!(
-                "closure::build_value: no declared function named {name:?} for {instance:?} -- \
+                "closure::build_closure_value: no declared function named {name:?} for {instance:?} -- \
                  every closure `mir::monomorphize` reached is declared alongside every other \
                  instance"
             )
         })
         .as_global_value()
-        .as_pointer_value();
+        .as_pointer_value()
+}
 
-    let env = match captures.is_empty() {
-        true => cx.llvm.i64_type().const_zero(),
-        false => {
-            let capture_tys: Vec<Ty> = captures.iter().map(|&(_, ty)| ty).collect();
-            let env_ty = environment_ty(tcx, &capture_tys);
-            let env_llvm_ty = llvm_ty::llvm_type(cx, tcx, mir, env_ty).into_struct_type();
-            let size = layout::layout_of(tcx, mir, env_ty).size;
-            let env_ptr = cx
-                .builder
-                .build_call(
-                    cx.libc.malloc,
-                    &[cx.llvm.i64_type().const_int(size, false).into()],
-                    "closure.env",
-                )
-                .unwrap()
-                .try_as_basic_value()
-                .unwrap_basic()
-                .into_pointer_value();
+fn build_environment<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    captures: &[(BasicValueEnum<'ctx>, Ty)],
+) -> inkwell::values::IntValue<'ctx> {
+    if captures.is_empty() {
+        return cx.llvm.i64_type().const_zero();
+    }
 
-            let glue = match drop::glue_pointer(cx, tcx, mir, env_ty) {
-                Some(glue) => cx
-                    .builder
-                    .build_ptr_to_int(glue, cx.llvm.i64_type(), "closure.glue")
-                    .unwrap(),
-                None => cx.llvm.i64_type().const_zero(),
-            };
-            store_field(cx, env_llvm_ty, env_ptr, GLUE_FIELD, glue.into());
-            for (index, &(value, _)) in captures.iter().enumerate() {
-                store_field(cx, env_llvm_ty, env_ptr, index as u32 + 1, value);
-            }
+    let capture_tys: Vec<Ty> = captures.iter().map(|&(_, ty)| ty).collect();
+    let env_ty = build_environment_ty(tcx, &capture_tys);
+    let env_llvm_ty = llvm_ty::llvm_type(cx, tcx, mir, env_ty).into_struct_type();
+    let size = layout::layout_of(tcx, mir, env_ty).size;
+    let env_ptr = cx
+        .builder
+        .build_call(
+            cx.libc.malloc,
+            &[cx.llvm.i64_type().const_int(size, false).into()],
+            "closure.env",
+        )
+        .unwrap()
+        .try_as_basic_value()
+        .unwrap_basic()
+        .into_pointer_value();
 
-            cx.builder
-                .build_ptr_to_int(env_ptr, cx.llvm.i64_type(), "closure.env_word")
-                .unwrap()
-        }
+    let glue = match drop::find_glue_pointer(cx, tcx, mir, env_ty) {
+        Some(glue) => cx
+            .builder
+            .build_ptr_to_int(glue, cx.llvm.i64_type(), "closure.glue")
+            .unwrap(),
+        None => cx.llvm.i64_type().const_zero(),
     };
+    store_field(cx, env_llvm_ty, env_ptr, GLUE_FIELD, glue.into());
+    for (index, &(value, _)) in captures.iter().enumerate() {
+        store_field(cx, env_llvm_ty, env_ptr, index as u32 + 1, value);
+    }
 
-    pair(cx, code, env.into())
+    cx.builder
+        .build_ptr_to_int(env_ptr, cx.llvm.i64_type(), "closure.env_word")
+        .unwrap()
 }
 
 fn store_field<'ctx>(
@@ -99,7 +114,7 @@ fn store_field<'ctx>(
     cx.builder.build_store(field, value).unwrap();
 }
 
-fn pair<'ctx>(
+fn build_closure_pair<'ctx>(
     cx: &CodegenCtx<'ctx>,
     code: PointerValue<'ctx>,
     env: BasicValueEnum<'ctx>,
@@ -131,11 +146,11 @@ pub fn reify<'ctx>(
     function: FunctionValue<'ctx>,
     sret: bool,
 ) -> BasicValueEnum<'ctx> {
-    let thunk = thunk_for(cx, function, sret)
+    let thunk = get_or_build_thunk(cx, function, sret)
         .as_global_value()
         .as_pointer_value();
     let null_env = cx.llvm.i64_type().const_zero();
-    pair(cx, thunk, null_env.into())
+    build_closure_pair(cx, thunk, null_env.into())
 }
 
 pub fn unpack<'ctx>(
@@ -159,7 +174,8 @@ pub fn unpack<'ctx>(
     (code, env)
 }
 
-fn thunk_for<'ctx>(
+/// Returns the forwarding thunk for `function`, declaring and emitting it on first request.
+fn get_or_build_thunk<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     function: FunctionValue<'ctx>,
     sret: bool,
@@ -169,6 +185,19 @@ fn thunk_for<'ctx>(
         return thunk;
     }
 
+    let thunk = declare_thunk(cx, &name, function, sret);
+    emit_thunk_forwarder(cx, thunk, function, usize::from(sret));
+    thunk
+}
+
+/// Declares the thunk: `function`'s signature with an extra leading environment pointer, inserted
+/// after the return slot when `sret` makes it the thunk's first parameter.
+fn declare_thunk<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    name: &str,
+    function: FunctionValue<'ctx>,
+    sret: bool,
+) -> FunctionValue<'ctx> {
     let target_ty = function.get_type();
     let mut params: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = target_ty.get_param_types();
     let env_at = usize::from(sret);
@@ -179,9 +208,19 @@ fn thunk_for<'ctx>(
     };
     let thunk = cx
         .module
-        .add_function(&name, thunk_ty, Some(inkwell::module::Linkage::Internal));
-    cx.fun_thunks.borrow_mut().insert(name, thunk);
+        .add_function(name, thunk_ty, Some(inkwell::module::Linkage::Internal));
+    cx.fun_thunks.borrow_mut().insert(name.to_string(), thunk);
+    thunk
+}
 
+/// Emits the thunk's body: drop the environment parameter and forward every other argument to
+/// `function`.
+fn emit_thunk_forwarder<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    thunk: FunctionValue<'ctx>,
+    function: FunctionValue<'ctx>,
+    env_at: usize,
+) {
     let resume_at = cx.builder.get_insert_block();
     let entry = cx.llvm.append_basic_block(thunk, "entry");
     cx.builder.position_at_end(entry);
@@ -199,8 +238,6 @@ fn thunk_for<'ctx>(
     if let Some(block) = resume_at {
         cx.builder.position_at_end(block);
     }
-
-    thunk
 }
 
 #[cfg(test)]

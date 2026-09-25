@@ -7,7 +7,7 @@ use crate::lexer::Lexer;
 use crate::lexer::token::Token;
 use crate::mir::{Body, Instance, Mir};
 use crate::nameres;
-use crate::options::Mode;
+use crate::driver::cli::Mode;
 use crate::parser::Parser;
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
@@ -81,7 +81,7 @@ fn monomorphized(
     let (hir, mut tcx, types) = typechecked(sources, origin);
     let program = crate::mir::lower::lower(session(), &hir, &mut tcx, &types, Mode::Debug);
     let main =
-        match crate::checks::entry_point::crate_root_main_candidates(session(), &hir).as_slice() {
+        match crate::checks::crate_root_main_candidates(session(), &hir).as_slice() {
             [one] => Some(*one),
             _ => None,
         };
@@ -115,7 +115,7 @@ pub fn mutability_src(src: &str) -> Vec<String> {
     let hir = lower_to_hir(src);
     session().clear_diagnostics();
     let checked = crate::typeck::check(session(), &hir);
-    crate::checks::mutability::check(session(), &hir, &checked.tcx, &checked.types);
+    crate::checks::check_mutability(session(), &hir, &checked.tcx, &checked.types);
     session().messages()
 }
 
@@ -194,8 +194,8 @@ pub fn mir_exclusivity_src(src: &str) -> Vec<String> {
 
 pub fn mir_returned_reference_src(src: &str) -> Vec<String> {
     mir_check_src(src, |session, _hir, tcx, program| {
-        let lifetimes = crate::mir::checks::borrowck::lifetimes::compute(program);
-        crate::mir::checks::borrowck::returned_reference::check(session, tcx, program, &lifetimes);
+        let computed = crate::mir::checks::borrowck::lifetimes::compute_lifetimes_map(program);
+        crate::mir::checks::borrowck::returned_reference::check(session, tcx, program, &computed);
     })
 }
 

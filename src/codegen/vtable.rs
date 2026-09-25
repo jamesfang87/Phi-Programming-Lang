@@ -13,7 +13,7 @@ const HEADER_SLOTS: usize = 3;
 
 pub(super) const DROP_SLOT: usize = 2;
 
-fn two_word_struct_type<'ctx>(cx: &CodegenCtx<'ctx>) -> inkwell::types::StructType<'ctx> {
+fn fat_pointer_type<'ctx>(cx: &CodegenCtx<'ctx>) -> inkwell::types::StructType<'ctx> {
     cx.llvm.struct_type(
         &[
             cx.llvm.ptr_type(Default::default()).into(),
@@ -35,19 +35,7 @@ pub fn vtable_for<'ctx>(
     }
 
     let layout = layout::layout_of(tcx, mir, concrete);
-    let ptr_ty = cx.llvm.ptr_type(Default::default());
-    let i64_ty = cx.llvm.i64_type();
-
-    let drop_glue = match super::drop::glue_pointer(cx, tcx, mir, concrete) {
-        Some(glue) => glue,
-        None => ptr_ty.const_null(),
-    };
-    let mut fields: Vec<BasicValueEnum<'ctx>> = vec![
-        i64_ty.const_int(layout.size, false).into(),
-        i64_ty.const_int(layout.align, false).into(),
-        drop_glue.into(),
-    ];
-
+    let mut fields = vtable_header_fields(cx, tcx, mir, concrete, &layout);
     let info = mir.vtables.get(&(concrete, trait_)).unwrap_or_else(|| {
         panic!(
             "vtable_for: no `extend .. with Trait` block implementing {trait_:?} was found for \
@@ -55,31 +43,75 @@ pub fn vtable_for<'ctx>(
              whose self type doesn't resolve to a concrete `Ty`"
         )
     });
-    for (i, impl_method) in info.methods.iter().enumerate() {
-        let impl_method = impl_method.unwrap_or_else(|| {
-            panic!(
-                "vtable_for: {concrete:?}'s `extend .. with {trait_:?}` block never defines \
-                 trait method index {i}"
-            )
-        });
-        let instance = Instance {
-            def: impl_method,
-            any_mode: None,
-            args: Vec::new(),
-            self_ty: None,
-        };
-        let name = cx.mangle(tcx, &instance);
-        let function = *cx.functions.get(&name).unwrap_or_else(|| {
-            panic!(
-                "vtable_for: no declared function named {name:?} for instance {instance:?} -- \
-                 every instance a vtable references must already be in cx.functions, same as any \
-                 other call target"
-            )
-        });
-        fields.push(function.as_global_value().as_pointer_value().into());
-    }
+    fields.extend(collect_vtable_method_fields(cx, tcx, &info.methods));
 
-    let const_struct = cx.llvm.const_struct(&fields, false);
+    let vtable_ptr = build_vtable_global(cx, trait_, concrete, &fields);
+    cx.vtables
+        .borrow_mut()
+        .insert((concrete, trait_), vtable_ptr);
+    vtable_ptr
+}
+
+/// Returns a vtable's header slots in order: the concrete type's size, its alignment, and its
+/// drop glue pointer. [`DROP_SLOT`] is the drop glue's index within them.
+fn vtable_header_fields<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    concrete: Ty,
+    layout: &layout::AdtLayout,
+) -> Vec<BasicValueEnum<'ctx>> {
+    let ptr_ty = cx.llvm.ptr_type(Default::default());
+    let i64_ty = cx.llvm.i64_type();
+    let drop_glue = match super::drop::find_glue_pointer(cx, tcx, mir, concrete) {
+        Some(glue) => glue,
+        None => ptr_ty.const_null(),
+    };
+    vec![
+        i64_ty.const_int(layout.size, false).into(),
+        i64_ty.const_int(layout.align, false).into(),
+        drop_glue.into(),
+    ]
+}
+
+fn collect_vtable_method_fields<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &TyCtx,
+    methods: &[Option<DefId>],
+) -> Vec<BasicValueEnum<'ctx>> {
+    methods
+        .iter()
+        .enumerate()
+        .map(|(i, impl_method)| {
+            let impl_method = impl_method.unwrap_or_else(|| {
+                panic!("vtable_for: this impl block never defines trait method index {i}")
+            });
+            let instance = Instance {
+                def: impl_method,
+                any_mode: None,
+                args: Vec::new(),
+                self_ty: None,
+            };
+            let name = cx.mangle(tcx, &instance);
+            let function = *cx.functions.get(&name).unwrap_or_else(|| {
+                panic!(
+                    "vtable_for: no declared function named {name:?} for instance {instance:?} -- \
+                     every instance a vtable references must already be in cx.functions, same as any \
+                     other call target"
+                )
+            });
+            function.as_global_value().as_pointer_value().into()
+        })
+        .collect()
+}
+
+fn build_vtable_global<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    trait_: DefId,
+    concrete: Ty,
+    fields: &[BasicValueEnum<'ctx>],
+) -> PointerValue<'ctx> {
+    let const_struct = cx.llvm.const_struct(fields, false);
     let global_name = format!("vt.{}.{}", trait_.index(), concrete.index());
     let global = cx
         .module
@@ -88,12 +120,7 @@ pub fn vtable_for<'ctx>(
     global.set_linkage(Linkage::Private);
     global.set_constant(true);
     global.set_unnamed_addr(true);
-    let vtable_ptr = global.as_pointer_value();
-
-    cx.vtables
-        .borrow_mut()
-        .insert((concrete, trait_), vtable_ptr);
-    vtable_ptr
+    global.as_pointer_value()
 }
 
 pub fn unsize<'ctx>(
@@ -110,8 +137,8 @@ pub fn unsize<'ctx>(
         .build_ptr_to_int(vtable_ptr, cx.llvm.i64_type(), "vtable_word")
         .unwrap();
 
-    let two_word_ty = two_word_struct_type(cx);
-    let mut agg = two_word_ty.get_undef();
+    let fat_pointer_ty = fat_pointer_type(cx);
+    let mut agg = fat_pointer_ty.get_undef();
     agg = cx
         .builder
         .build_insert_value(agg, data_ptr, 0, "dyn.data")
@@ -149,6 +176,23 @@ pub fn call_dyn_method<'ctx>(
         .builder
         .build_int_to_ptr(vtable_word, ptr_ty, "self.vtable")
         .unwrap();
+    let method_ptr = load_vtable_slot(cx, vtable_ptr, method_index);
+
+    let mut args: Vec<BasicMetadataValueEnum<'ctx>> = leading.to_vec();
+    args.push(data_ptr.into());
+    args.extend_from_slice(rest);
+    cx.builder
+        .build_indirect_call(fn_type, method_ptr, &args, "dyn_call")
+        .unwrap()
+}
+
+/// Returns the method pointer held in the slot `method_index` past the vtable header.
+fn load_vtable_slot<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    vtable_ptr: PointerValue<'ctx>,
+    method_index: usize,
+) -> PointerValue<'ctx> {
+    let ptr_ty = cx.llvm.ptr_type(Default::default());
     let slot = cx
         .llvm
         .i64_type()
@@ -158,18 +202,10 @@ pub fn call_dyn_method<'ctx>(
             .build_gep(ptr_ty, vtable_ptr, &[slot], "method_slot")
             .unwrap()
     };
-    let method_ptr = cx
-        .builder
+    cx.builder
         .build_load(ptr_ty, slot_ptr, "method_ptr")
         .unwrap()
-        .into_pointer_value();
-
-    let mut args: Vec<BasicMetadataValueEnum<'ctx>> = leading.to_vec();
-    args.push(data_ptr.into());
-    args.extend_from_slice(rest);
-    cx.builder
-        .build_indirect_call(fn_type, method_ptr, &args, "dyn_call")
-        .unwrap()
+        .into_pointer_value()
 }
 
 #[cfg(test)]

@@ -588,7 +588,7 @@ pub enum ExprKind {
         body: Box<Expr>,
     },
     /// `expr as Ty`, e.g. `x as i64`. Only ever a conversion between two primitive types; see
-    /// [`crate::typeck::cast`] for exactly which pairs are allowed and why.
+    /// [`crate::typeck::check::cast`] for exactly which pairs are allowed and why.
     Cast {
         expr: Box<Expr>,
         ty: Ty,

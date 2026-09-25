@@ -13,13 +13,11 @@ pub struct TyCtx {
     tykinds: Vec<TyKind>,
     handles: HashMap<TyKind, Ty>,
     vars: InferVarSupply,
-    /// The ADTs collected by [`crate::typeck::ty::adt::collect_adt_defs`], looked up for their
-    /// field types and variant counts.
+
     adts: HashMap<DefId, AdtDef>,
     copy: HashSet<Ty>,
 }
 
-/// Hands out the ids of inference variables, which are unique within one [`TyCtx`].
 #[derive(Default)]
 struct InferVarSupply {
     next_id: u32,
@@ -38,7 +36,6 @@ impl TyCtx {
         TyCtx::default()
     }
 
-    /// Returns the handle for `kind`; if [`kind`] does not exist, it is added to the table
     pub fn intern(&mut self, kind: TyKind) -> Ty {
         if let Some(&ty) = self.handles.get(&kind) {
             return ty;
@@ -50,9 +47,6 @@ impl TyCtx {
         ty
     }
 
-    /// Looks up [`TyKind`] which ty` refers to.
-    ///
-    /// Panics if `ty` does not refer to any [`TyKind`]
     pub fn kind(&self, ty: Ty) -> &TyKind {
         self.tykinds
             .get(ty.index())
@@ -140,23 +134,30 @@ impl TyCtx {
 
     pub fn needs_drop(&mut self, ty: Ty) -> bool {
         match self.kind(ty).clone() {
-            TyKind::Iso(_) => true,
-            TyKind::Fun { .. } => true,
+            TyKind::Iso(_) | TyKind::Fun { .. } => true,
             TyKind::Array { elem, .. } => self.needs_drop(elem),
             TyKind::Tuple(elems) => elems.iter().any(|&elem| self.needs_drop(elem)),
-            TyKind::Adt { def, args } => match self.enum_variant_count(def) {
-                None => self
-                    .struct_field_tys(def, &args)
-                    .into_iter()
-                    .any(|field| self.needs_drop(field)),
-                Some(variant_count) => (0..variant_count).any(|variant| {
-                    self.variant_field_tys(def, &args, variant)
-                        .into_iter()
-                        .any(|field| self.needs_drop(field))
-                }),
-            },
+            TyKind::Adt { def, args } => self.adt_needs_drop(def, &args),
             _ => false,
         }
+    }
+
+    /// Returns whether any field an ADT holds by value needs dropping.
+    fn adt_needs_drop(&mut self, def: DefId, args: &[Ty]) -> bool {
+        match self.enum_variant_count(def) {
+            None => {
+                let fields = self.struct_field_tys(def, args);
+                self.fields_need_drop(fields)
+            }
+            Some(variant_count) => (0..variant_count).any(|variant| {
+                let fields = self.variant_field_tys(def, args, variant);
+                self.fields_need_drop(fields)
+            }),
+        }
+    }
+
+    fn fields_need_drop(&mut self, fields: Vec<Ty>) -> bool {
+        fields.into_iter().any(|field| self.needs_drop(field))
     }
 
     fn adt(&self, def: DefId) -> &AdtDef {
@@ -184,15 +185,10 @@ impl TyCtx {
         self.adts = adts;
     }
 
-    /// Records `ty` as implementing `Copy`, so a read of a place of that type may copy it rather
-    /// than move out of it.
     pub fn mark_copy(&mut self, ty: Ty) {
         self.copy.insert(ty);
     }
 
-    /// Returns whether a value of `ty` may be read by copying it. The trait solver records every
-    /// type it proves `Copy` -- including the primitives and shared references `core` implements
-    /// the trait for -- through [`TyCtx::mark_copy`].
     pub fn is_copy(&self, ty: Ty) -> bool {
         self.copy.contains(&ty)
     }
@@ -207,32 +203,6 @@ impl TyCtx {
     }
 
     pub fn contains_bare_dyn(&self, ty: Ty) -> bool {
-        struct BareDyn;
-
-        impl TypeVisitor for BareDyn {
-            type Output = ();
-
-            fn visit(&mut self, tcx: &TyCtx, ty: Ty) -> ControlFlow<()> {
-                if matches!(tcx.kind(ty), TyKind::Dyn { .. }) {
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(())
-                }
-            }
-
-            fn children(&mut self, tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
-                match tcx.kind(ty) {
-                    TyKind::Fun { .. } => Vec::new(),
-                    TyKind::Ref { base, .. } | TyKind::Iso(base)
-                        if matches!(tcx.kind(*base), TyKind::Dyn { .. }) =>
-                    {
-                        Vec::new()
-                    }
-                    _ => visitor::children(tcx, ty),
-                }
-            }
-        }
-
         visitor::walk(&mut BareDyn, self, ty).is_break()
     }
 
@@ -253,6 +223,32 @@ impl TyCtx {
     pub fn next_float_var(&mut self) -> Ty {
         let var = InferVar::Float(self.vars.fresh());
         self.intern(TyKind::Var(var))
+    }
+}
+
+struct BareDyn;
+
+impl TypeVisitor for BareDyn {
+    type Output = ();
+
+    fn visit(&mut self, tcx: &TyCtx, ty: Ty) -> ControlFlow<()> {
+        if matches!(tcx.kind(ty), TyKind::Dyn { .. }) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+
+    fn children(&mut self, tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
+        match tcx.kind(ty) {
+            TyKind::Fun { .. } => Vec::new(),
+            TyKind::Ref { base, .. } | TyKind::Iso(base)
+                if matches!(tcx.kind(*base), TyKind::Dyn { .. }) =>
+            {
+                Vec::new()
+            }
+            _ => visitor::children(tcx, ty),
+        }
     }
 }
 

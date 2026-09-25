@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::hir::{DefId, Hir, HirId, OwnerNode, VariantPayload};
+use crate::hir::{DefId, Enum, Hir, HirId, OwnerNode, Struct, VariantPayload};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::{Ty, TyKind};
 
@@ -12,105 +12,96 @@ pub enum AdtDef {
     },
     Enum {
         generics: Vec<HirId>,
-        /// The field types of each variant, in declaration order. A unit or single-field variant
-        /// has zero or one entry respectively.
+
         variants: Vec<Vec<Ty>>,
     },
 }
 
 pub(crate) fn collect_adt_defs(hir: &Hir, types: &TypeResolutions) -> HashMap<DefId, AdtDef> {
-    let mut out = HashMap::new();
+    let mut adts = HashMap::new();
     for def_id in hir.def_ids() {
-        match hir.def(def_id) {
-            OwnerNode::Struct(struct_) => {
-                let fields = struct_
-                    .fields
-                    .iter()
-                    .map(|&field_id| {
-                        types.ty(field_id).unwrap_or_else(|| {
-                            panic!(
-                                "collect_adt_defs: {field_id:?} has no recorded type -- \
-                                 collect_fields is expected to record every field's declared type"
-                            )
-                        })
-                    })
-                    .collect();
-                out.insert(
-                    def_id,
-                    AdtDef::Struct {
-                        generics: struct_.generics.clone(),
-                        fields,
-                    },
-                );
-            }
-            OwnerNode::Enum(enum_) => {
-                let variants = enum_
-                    .variants
-                    .iter()
-                    .map(|&variant_id| variant_field_tys(hir, types, variant_id))
-                    .collect();
-                out.insert(
-                    def_id,
-                    AdtDef::Enum {
-                        generics: enum_.generics.clone(),
-                        variants,
-                    },
-                );
-            }
-            _ => {}
-        }
+        let adt = match hir.def(def_id) {
+            OwnerNode::Struct(struct_) => struct_adt_def(struct_, types),
+            OwnerNode::Enum(enum_) => enum_adt_def(enum_, hir, types),
+            _ => continue,
+        };
+        adts.insert(def_id, adt);
     }
-    out
+    adts
 }
 
-/// Returns the ADTs that cannot have a finite size: those that contain themselves by value, whether
-/// directly (`enum List { cons: { tail: List } }`) or through other value fields. A field of
-/// `iso T` is a heap indirection, so it breaks the cycle and is not traversed.
+fn struct_adt_def(struct_: &Struct, types: &TypeResolutions) -> AdtDef {
+    let fields = struct_
+        .fields
+        .iter()
+        .map(|&field_id| recorded_field_ty(types, field_id))
+        .collect();
+    AdtDef::Struct {
+        generics: struct_.generics.clone(),
+        fields,
+    }
+}
+
+fn enum_adt_def(enum_: &Enum, hir: &Hir, types: &TypeResolutions) -> AdtDef {
+    let variants = enum_
+        .variants
+        .iter()
+        .map(|&variant_id| variant_field_tys(hir, types, variant_id))
+        .collect();
+    AdtDef::Enum {
+        generics: enum_.generics.clone(),
+        variants,
+    }
+}
+
+fn recorded_field_ty(types: &TypeResolutions, id: HirId) -> Ty {
+    types.ty(id).unwrap_or_else(|| {
+        panic!(
+            "collect_adt_defs: {id:?} has no recorded type -- collect_fields is expected to \
+             record every field's declared type"
+        )
+    })
+}
+
 pub(crate) fn infinitely_sized_adts(
     tcx: &crate::typeck::ty::ctx::TyCtx,
     adts: &HashMap<DefId, AdtDef>,
 ) -> Vec<DefId> {
-    let mut graph: HashMap<DefId, Vec<DefId>> = HashMap::new();
-    for (&def, adt) in adts {
-        let mut edges = Vec::new();
-        match adt {
-            AdtDef::Struct { fields, .. } => {
-                for &field in fields {
+    let graph = value_edge_graph(tcx, adts);
+    let cyclic = cyclic_adts(&graph);
+    adts_reaching(&graph, &cyclic)
+}
+
+fn value_edge_graph(
+    tcx: &crate::typeck::ty::ctx::TyCtx,
+    adts: &HashMap<DefId, AdtDef>,
+) -> HashMap<DefId, Vec<DefId>> {
+    adts.iter()
+        .map(|(&def, adt)| (def, value_edges(tcx, adt)))
+        .collect()
+}
+
+fn value_edges(tcx: &crate::typeck::ty::ctx::TyCtx, adt: &AdtDef) -> Vec<DefId> {
+    let mut edges = Vec::new();
+    match adt {
+        AdtDef::Struct { fields, .. } => {
+            for &field in fields {
+                collect_adts(tcx, field, &mut edges);
+            }
+        }
+        AdtDef::Enum { variants, .. } => {
+            for variant in variants {
+                for &field in variant {
                     collect_adts(tcx, field, &mut edges);
                 }
             }
-            AdtDef::Enum { variants, .. } => {
-                for variant in variants {
-                    for &field in variant {
-                        collect_adts(tcx, field, &mut edges);
-                    }
-                }
-            }
         }
-        graph.insert(def, edges);
     }
+    edges
+}
 
-    let reaches = |from: DefId, target: DefId| -> bool {
-        let mut stack = vec![from];
-        let mut seen = std::collections::HashSet::new();
-        while let Some(node) = stack.pop() {
-            if node == target {
-                return true;
-            }
-            if !seen.insert(node) {
-                continue;
-            }
-            if let Some(next) = graph.get(&node) {
-                stack.extend(next.iter().copied());
-            }
-        }
-        false
-    };
-
-    // A node is on a cycle if one of its value fields can reach it again; a type is infinitely
-    // sized if it is on a cycle or reaches one (an `Outer` that owns a recursive `Inner` is
-    // itself infinite).
-    let cyclic: Vec<DefId> = graph
+fn cyclic_adts(graph: &HashMap<DefId, Vec<DefId>>) -> Vec<DefId> {
+    graph
         .keys()
         .copied()
         .filter(|&node| {
@@ -119,14 +110,34 @@ pub(crate) fn infinitely_sized_adts(
                 .into_iter()
                 .flatten()
                 .copied()
-                .any(|succ| reaches(succ, node))
+                .any(|succ| reaches(graph, succ, node))
         })
-        .collect();
+        .collect()
+}
+
+fn adts_reaching(graph: &HashMap<DefId, Vec<DefId>>, targets: &[DefId]) -> Vec<DefId> {
     graph
         .keys()
         .copied()
-        .filter(|&node| cyclic.iter().any(|&cycle| reaches(node, cycle)))
+        .filter(|&node| targets.iter().any(|&target| reaches(graph, node, target)))
         .collect()
+}
+
+fn reaches(graph: &HashMap<DefId, Vec<DefId>>, from: DefId, target: DefId) -> bool {
+    let mut stack = vec![from];
+    let mut seen = HashSet::new();
+    while let Some(node) = stack.pop() {
+        if node == target {
+            return true;
+        }
+        if !seen.insert(node) {
+            continue;
+        }
+        if let Some(next) = graph.get(&node) {
+            stack.extend(next.iter().copied());
+        }
+    }
+    false
 }
 
 fn collect_adts(tcx: &crate::typeck::ty::ctx::TyCtx, ty: Ty, out: &mut Vec<DefId>) {
@@ -138,8 +149,7 @@ fn collect_adts(tcx: &crate::typeck::ty::ctx::TyCtx, ty: Ty, out: &mut Vec<DefId
             }
         }
         TyKind::Array { elem, .. } => collect_adts(tcx, *elem, out),
-        // `iso T` is a heap indirection; references, functions, `dyn`, `any`, generics and
-        // primitives never place another ADT directly inside this one.
+
         _ => {}
     }
 }
@@ -159,14 +169,7 @@ fn variant_field_tys(hir: &Hir, types: &TypeResolutions, variant_id: HirId) -> V
         }
         VariantPayload::Record(fields) => fields
             .iter()
-            .map(|&field_id| {
-                types.ty(field_id).unwrap_or_else(|| {
-                    panic!(
-                        "collect_adt_defs: {field_id:?} has no recorded type -- collect_fields is \
-                         expected to record every field's declared type"
-                    )
-                })
-            })
+            .map(|&field_id| recorded_field_ty(types, field_id))
             .collect(),
     }
 }

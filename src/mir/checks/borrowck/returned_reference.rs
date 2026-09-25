@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::diagnostics::mir::returned_reference::report_returned_local_reference;
 use crate::mir::checks::borrowck::lifetimes::{Alias, AliasId, Lifetimes, LifetimesMap};
-use crate::mir::checks::borrowck::{Register, SubRegisters, register_of};
+use crate::mir::checks::borrowck::{Register, SubRegister, to_register};
 use crate::mir::lower::Mir;
 use crate::mir::{Body, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind};
 use crate::session::Session;
@@ -18,23 +18,31 @@ pub fn check(session: &Session, tcx: &TyCtx, mir: &Mir, lifetimes: &LifetimesMap
 }
 
 fn check_body(session: &Session, tcx: &TyCtx, body: &Body, lifetimes: &Lifetimes) {
-    let tainted = tainted_locals(tcx, body, &lifetimes.aliases);
+    let tainted = compute_tainted_locals(tcx, body, &lifetimes.aliases);
 
     for alias in lifetimes.aliases.values() {
-        if !alias.attached.contains(&return_place()) {
+        if !alias.attached.contains(&return_register()) {
             continue;
         }
         if reaches_local(body, &lifetimes.aliases, &tainted, &alias.register) {
-            report_returned_local_reference(session, local_name(body, &alias.register), alias.span);
+            report_returned_local_reference(
+                session,
+                find_local_name(body, &alias.register),
+                alias.span,
+            );
         }
     }
 
     if tainted.contains(&Local::RETURN_PLACE) {
-        report_returned_local_reference(session, None, return_span(body));
+        report_returned_local_reference(session, None, find_return_span(body));
     }
 }
 
-fn tainted_locals(tcx: &TyCtx, body: &Body, aliases: &HashMap<AliasId, Alias>) -> HashSet<Local> {
+fn compute_tainted_locals(
+    tcx: &TyCtx,
+    body: &Body,
+    aliases: &HashMap<AliasId, Alias>,
+) -> HashSet<Local> {
     let mut tainted = HashSet::new();
     loop {
         let mut changed = false;
@@ -91,7 +99,7 @@ fn reaches_local_rec(
     register: &Register,
     on_stack: &mut HashSet<AliasId>,
 ) -> bool {
-    if register.subregister.first() != Some(&SubRegisters::Deref) {
+    if register.subregister.first() != Some(&SubRegister::Deref) {
         return register.owner.index() > body.param_count;
     }
 
@@ -126,7 +134,7 @@ fn reaches_through_argument(
         return false;
     };
 
-    let register = register_of(place);
+    let register = to_register(place);
     let borrows = aliases.values().any(|alias| {
         alias.attached.contains(&register) && reaches_local(body, aliases, tainted, &alias.register)
     });
@@ -140,14 +148,14 @@ fn is_reference_typed(tcx: &TyCtx, body: &Body, place: &Place) -> bool {
     )
 }
 
-fn return_place() -> Register {
+fn return_register() -> Register {
     Register {
         owner: Local::RETURN_PLACE,
         subregister: Vec::new(),
     }
 }
 
-fn return_span(body: &Body) -> crate::driver::source::SrcSpan {
+fn find_return_span(body: &Body) -> crate::driver::source::SrcSpan {
     body.basic_blocks
         .iter()
         .find_map(|block| match block.terminator.kind {
@@ -157,11 +165,11 @@ fn return_span(body: &Body) -> crate::driver::source::SrcSpan {
         .unwrap_or(body.span)
 }
 
-fn local_name(body: &Body, register: &Register) -> Option<crate::ast::Ident> {
+fn find_local_name(body: &Body, register: &Register) -> Option<crate::ast::Ident> {
     let reaches_through_reference = register
         .subregister
         .iter()
-        .any(|projection| matches!(projection, SubRegisters::Deref));
+        .any(|projection| matches!(projection, SubRegister::Deref));
     if reaches_through_reference {
         return None;
     }
@@ -316,8 +324,6 @@ mod tests {
 
     #[test]
     fn passing_a_local_to_a_call_that_may_return_a_different_argument_is_conservatively_rejected() {
-        // A deliberate cost of the conservative rule: `foo` returns `p`, not `&local`, but every
-        // reference argument is assumed returnable.
         rejects(
             "fun foo(x: &i32, y: &i32) -> &i32 { return y; }
              fun bar(p: &i32) -> &i32 { let local = 5; return foo(&local, p); }",

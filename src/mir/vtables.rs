@@ -8,9 +8,7 @@ pub struct VtableInfo {
     pub methods: Vec<Option<DefId>>,
     pub block: DefId,
     pub trait_args: Vec<Ty>,
-    /// The `extend .. with` block's own generic parameters. A call made through the trait's body
-    /// has to line its arguments up against these before the method's own, and keeping them here
-    /// lets monomorphization do that without reading the block back out of the HIR.
+
     pub extend_generics: Vec<HirId>,
 }
 

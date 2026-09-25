@@ -39,7 +39,7 @@ impl<'hir> Typeck<'hir> {
         // The bounds are proved after the whole body is checked, not here, because the body may
         // still constrain the types they mention.
         let obligations = self.bound_obligations_of(def, args, cause);
-        self.trait_bound_obligations
+        self.pending_trait_bounds
             .entry(owner)
             .or_default()
             .extend(obligations);
@@ -104,7 +104,7 @@ impl<'hir> Typeck<'hir> {
     /// Proves every bound recorded during checking, now that all bodies are done, and reports
     /// the ones that do not hold or never resolved.
     pub fn check_bound_obligations(&mut self) {
-        for (owner, obligations) in mem::take(&mut self.trait_bound_obligations) {
+        for (owner, obligations) in mem::take(&mut self.pending_trait_bounds) {
             self.check_obligations(owner, obligations);
         }
     }
