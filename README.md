@@ -664,23 +664,7 @@ fun parse_port(text: &str) -> Result<u16, ParseError> {
 
 ## 14. Concurrency
 
-Phi guarantees data-race freedom through *value independence*: if no two names can reach the same mutable value at once, then no two threads can either.
-
-```phi
-fun total(a: &Array<i32>) -> i32 {
-    let mid = a.count / 2;
-
-    // both tasks complete before the block exits
-    return concurrent {                          
-        let left = spawn { a[..mid].sum() } // you actually can't split an array but it's whatever
-        let right = spawn { a[mid..].sum() } // Task<i32>
-        
-        left.join() + right.join() // this is the return value of the concurrent block
-    }
-}
-```
-
-A `concurrent` block does not exit until every `spawn`ed task inside it has completed, so values assigned inside a task are safe to read immediately after the block.
+I am currently attempting to design a concurrency model to ease restrictions in single threaded code. We have thus not yet implemented concurrency.
 
 ---
 
