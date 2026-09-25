@@ -359,12 +359,6 @@ mod tests {
         }
     }
 
-    /// BUG: the tuple-pattern parser builds `PatKind::Tuple` unconditionally, so `(x)` becomes
-    /// the one-element tuple pattern `(x,)` instead of a parenthesized binding. The expression
-    /// parser unwraps `(e)` to `e`; the pattern grammar should do the same, reserving `(p,)` for
-    /// the one-element tuple.
-    ///
-    /// Run with `cargo test --bin phi -- --ignored` to reproduce.
     #[test]
     fn parses_parenthesized_pattern_as_the_inner_pattern() {
         let pat = parse_pattern("(x)");

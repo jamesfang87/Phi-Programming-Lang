@@ -1,26 +1,3 @@
-//! End-to-end tests written to expose bugs in the compiler.
-//!
-//! Each test compiles (and, where relevant, runs) a real Phi program through the actual `phi`
-//! binary, the same way `tests/cli.rs` does. The tests fall into two groups:
-//!
-//! * **Regression tests** (not ignored): behavior that is already correct. They guard against
-//!   the bugs below ever being "fixed" in a way that breaks something else.
-//! * **Bug tests** (`#[ignore = "BUG: ..."]`): the program's behavior today is wrong. They are
-//!   ignored so the default `cargo test` run stays green, but they are fully runnable and
-//!   reproduce a real defect:
-//!
-//!   ```text
-//!   cargo test --test bugs -- --ignored
-//!   ```
-//!
-//!   A bug test asserts the *correct* behavior. Once the underlying defect is fixed, remove its
-//!   `#[ignore]` so it becomes an ordinary regression test. Do not "fix" a bug test by asserting
-//!   the current, wrong behavior.
-//!
-//! Several tests below check that the compiler reports an error rather than crashing (a
-//! `panicked at ...` line on stderr / exit status 101). A compiler crash on pathological input is
-//! always a bug, independent of whether the input is itself valid.
-
 mod support;
 
 use std::path::{Path, PathBuf};
@@ -42,20 +19,13 @@ fn code(run: &Run) -> i32 {
     run.code
 }
 
-/// Sets up a scratch project named `name` whose `src/main.phi` is `source`.
 fn project(name: &str, source: &str) -> PathBuf {
     support::project("bugs", name, source)
 }
 
-/// Asserts the compiler processed the input without an internal panic. A Rust panic exits 101 and
-/// prints `panicked at`; a clean diagnostic exits 1.
 fn assert_no_compiler_panic(run: &Run, context: &str) {
     support::expect_no_panic(run, context);
 }
-
-// ---------------------------------------------------------------------------
-// Regression tests: behavior that is already correct.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn division_by_zero_aborts_with_a_diagnostic() {
@@ -80,8 +50,6 @@ fn division_by_zero_aborts_with_a_diagnostic() {
 
 #[test]
 fn nan_is_not_equal_to_itself() {
-    // IEEE semantics: `==` on a NaN is false. This one already works; the `!=` direction (see
-    // `nan_is_not_equal_itself_via_not_equal` below) does not.
     let dir = project(
         "nan_eq",
         "module app;\n\n\
@@ -102,7 +70,6 @@ fn nan_is_not_equal_to_itself() {
 
 #[test]
 fn out_of_bounds_literal_index_still_resolves_in_bounds_reads() {
-    // A literal index in bounds is lowered to `ConstantIndex` and reads the element correctly.
     let dir = project(
         "index_literal_in_bounds",
         "module app;\n\n\
@@ -123,8 +90,6 @@ fn out_of_bounds_literal_index_still_resolves_in_bounds_reads() {
 
 #[test]
 fn a_copy_bound_allows_repeated_reads_of_a_generic() {
-    // A `T: Copy` parameter was classified by shape alone, so reading `x` twice lowered the
-    // second read to a move and borrowck rejected the program with "use of moved value".
     let dir = project(
         "generic_copy_bound",
         "module app;\n\n\
@@ -160,16 +125,8 @@ fn signed_remainder_truncates_toward_zero() {
     assert_eq!(stdout(&output), "ok");
 }
 
-// ---------------------------------------------------------------------------
-// Bug tests
-// ---------------------------------------------------------------------------
-
-/// BUG: `Literal::string`/`Literal::char` slice `token_text[1..len - 1]`. An unterminated literal
-/// token that is only the opening quote has `len == 1`, so the slice is `1..0` and panics. The
-/// lexer already reports "unterminated ...", so the compiler should recover, not crash.
 #[test]
 fn unterminated_string_literal_does_not_crash_the_compiler() {
-    // The file must end exactly at the opening quote, with no trailing newline.
     let dir = project("unterminated_string", "fun main() { let x = \"");
     let output = run(&dir, &["check"]);
     assert_no_compiler_panic(&output, "unterminated string literal");
@@ -181,7 +138,6 @@ fn unterminated_string_literal_does_not_crash_the_compiler() {
     );
 }
 
-/// BUG: same slice panic as the string case, via `Literal::char`.
 #[test]
 fn unterminated_char_literal_does_not_crash_the_compiler() {
     let dir = project("unterminated_char", "fun main() { let x = '");
@@ -195,10 +151,6 @@ fn unterminated_char_literal_does_not_crash_the_compiler() {
     );
 }
 
-/// BUG: a whole-number literal with a float suffix (`5_f64`) is typed as `f64` by `check_literal`
-/// but lowered through the `Literal::Int` path, so codegen tries to make an integer constant of a
-/// float type and panics ("ConstKind::Int has a non-integer primitive F64"). The type checker
-/// deliberately allows this form, so codegen must emit `5.0`.
 #[test]
 fn integer_literal_with_a_float_suffix_compiles() {
     let dir = project(
@@ -210,10 +162,6 @@ fn integer_literal_with_a_float_suffix_compiles() {
     assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
 }
 
-/// BUG: `extend X with X { }` reports "a type cannot extend itself" in name resolution but
-/// records no trait-path resolution; HIR lowering then unconditionally lowers that path and
-/// panics with "owns no recorded resolution". The diagnostic should be reported, compilation
-/// should stop, and the compiler should not crash.
 #[test]
 fn a_self_extend_is_reported_not_a_crash() {
     let dir = project(
@@ -225,9 +173,6 @@ fn a_self_extend_is_reported_not_a_crash() {
     assert_ne!(code(&output), 0);
 }
 
-/// BUG: a bound may name a generic parameter declared later (`T: Conv<U>, U`). Name resolution
-/// accepts it, but HIR lowering translates the reference to `U` before `U` has been lowered and
-/// panics with "expected to already have a HirId as a generic parameter".
 #[test]
 fn a_forward_reference_in_a_bound_is_reported_not_a_crash() {
     let dir = project(
@@ -239,9 +184,6 @@ fn a_forward_reference_in_a_bound_is_reported_not_a_crash() {
     assert_ne!(code(&output), 0);
 }
 
-/// BUG: `resolve_bounds` deduplicates bounds by their path alone, ignoring type arguments. So
-/// `Conv<i32> + Conv<u32>` is misreported as a duplicate, the second bound gets no resolution,
-/// and HIR lowering panics. Distinct argument lists are distinct bounds and must both resolve.
 #[test]
 fn duplicate_paths_with_different_arguments_are_valid_bounds() {
     let dir = project(
@@ -253,9 +195,6 @@ fn duplicate_paths_with_different_arguments_are_valid_bounds() {
     assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
 }
 
-/// BUG: integer literals are never range-checked, so a value that does not fit its type wraps.
-/// `300` in a `u8` becomes `44`; `200` in an `i8` becomes `-56`. Codegen's `const_int(v as u64)`
-/// silently truncates. A literal that overflows its type must be a compile error.
 #[test]
 fn an_out_of_range_integer_literal_is_rejected() {
     for (name, src) in [
@@ -276,9 +215,6 @@ fn an_out_of_range_integer_literal_is_rejected() {
     }
 }
 
-/// BUG: `-1` is accepted for an unsigned type and wraps to the type's maximum. Unary minus on an
-/// *undefaulted* numeric literal is admitted without ever checking that the eventual type
-/// implements `Neg` (there is no `extend u8 with Neg`), and then the literal is truncated.
 #[test]
 fn a_negative_literal_for_an_unsigned_type_is_rejected() {
     let dir = project(
@@ -289,9 +225,6 @@ fn a_negative_literal_for_an_unsigned_type_is_rejected() {
     assert_ne!(code(&output), 0, "`-1` does not fit in `u8`");
 }
 
-/// BUG: a literal index is parsed straight to `u32` in MIR lowering and panics on failure.
-/// Since literals are otherwise parsed as `i128` and never range-checked, an index above
-/// `u32::MAX` reaches that conversion and crashes the compiler. It should be a diagnostic.
 #[test]
 fn a_huge_constant_array_index_does_not_crash_the_compiler() {
     let dir = project(
@@ -307,8 +240,6 @@ fn a_huge_constant_array_index_does_not_crash_the_compiler() {
     assert_ne!(code(&output), 0);
 }
 
-/// BUG: an integer literal too large for `i128` also panics in MIR lowering (`.parse::<i128>()
-/// .unwrap_or_else(|_| panic!(...))`) rather than being reported as out of range.
 #[test]
 fn a_huge_integer_literal_does_not_crash_the_compiler() {
     let dir = project(
@@ -320,10 +251,6 @@ fn a_huge_integer_literal_does_not_crash_the_compiler() {
     assert_ne!(code(&output), 0);
 }
 
-/// BUG: indexing an array by a *variable* whose type is `i32` (the default integer type!)
-/// corrupts memory. MIR lowering sizes the index and length temporaries with the index's own
-/// type (`i32`), but codegen's `Projection::Index` unconditionally loads/stores `i64`, so a
-/// 64-bit load reads past the 4-byte slot. The program below segfaults instead of printing `ok`.
 #[test]
 fn array_index_by_an_i32_variable_does_not_corrupt_memory() {
     let dir = project(
@@ -345,10 +272,6 @@ fn array_index_by_an_i32_variable_does_not_corrupt_memory() {
     assert_eq!(stdout(&output), "ok");
 }
 
-/// BUG: `lower_index_place` builds the bounds-check `Assert` with a condition that is the
-/// constant `true`, never `index < len`. The failure branch (which would abort with "index out of
-/// bounds") is therefore dead, and out-of-bounds reads execute unimpeded. This reads index `10`
-/// of a 3-element array; the compiler must abort, not return heap garbage.
 #[test]
 fn an_out_of_bounds_array_read_aborts() {
     let dir = project(
@@ -376,9 +299,6 @@ fn an_out_of_bounds_array_read_aborts() {
     );
 }
 
-/// BUG: floating-point `!=` is lowered to `fcmp one` (ordered-not-equal) instead of `fcmp une`
-/// (unordered-not-equal). `ONE` is false when either operand is NaN, so `nan != nan` evaluates
-/// to `false`, contradicting IEEE 754 and the `==` direction, which is already correct.
 #[test]
 fn nan_is_not_equal_itself_via_not_equal() {
     let dir = project(
@@ -403,9 +323,6 @@ fn nan_is_not_equal_itself_via_not_equal() {
     );
 }
 
-/// BUG: the `&mut self` receiver check only looks at the outermost projection layer. It accepts
-/// a call that reborrows mutably through a *shared* reference (`&mut &S`), which MIR lowering
-/// then performs anyway. This must be a borrow error.
 #[test]
 fn a_mutable_method_cannot_be_called_through_a_shared_reference() {
     let dir = project(
@@ -424,9 +341,6 @@ fn a_mutable_method_cannot_be_called_through_a_shared_reference() {
     );
 }
 
-/// BUG: `is_place_expr` treats `base.member` as writable whenever `base` is not a type, even
-/// when `base` is a call result. Assigning to a field of a temporary should be rejected (there is
-/// no place to write); today it is accepted and the store is discarded.
 #[test]
 fn assigning_to_a_temporary_is_rejected() {
     let dir = project(
@@ -441,10 +355,6 @@ fn assigning_to_a_temporary_is_rejected() {
     assert_ne!(code(&output), 0, "a temporary has no assignable place");
 }
 
-/// BUG: match exhaustiveness only checks that each top-level variant name appears in some arm.
-/// It never verifies the arms cover the variant's *payload*, so a match that only handles
-/// `.some(true)` is accepted even though `.some(false)` is unhandled. MIR lowering sends the
-/// uncovered case to `unreachable`, which is undefined behavior at runtime.
 #[test]
 fn a_match_missing_a_variant_payload_case_is_rejected() {
     let dir = project(
@@ -467,10 +377,6 @@ fn a_match_missing_a_variant_payload_case_is_rejected() {
     );
 }
 
-/// BUG: `pat_is_irrefutable` declares a single-variant enum pattern irrefutable without
-/// recursing into its payload. `let .one(true) = o;` is therefore accepted even though it fails
-/// for `.one(false)`, and the literal test is discarded during lowering, so `.one(false)`
-/// silently takes the "matched" path.
 #[test]
 fn a_refutable_let_pattern_is_rejected() {
     let dir = project(
@@ -488,10 +394,6 @@ fn a_refutable_let_pattern_is_rejected() {
     );
 }
 
-/// BUG: name resolution inserts `if let` pattern bindings into the enclosing scope instead of
-/// the branch's own scope. Using the binding after the `if let` therefore resolves (to a binding
-/// that only exists on the taken branch) and fails with a confusing "use of moved value" instead
-/// of "cannot find `x`".
 #[test]
 fn an_if_let_binding_does_not_escape_its_branch() {
     let dir = project(
@@ -515,9 +417,6 @@ fn an_if_let_binding_does_not_escape_its_branch() {
     );
 }
 
-/// BUG: the type parser always builds a tuple for parenthesized types, so `(i32)` becomes the
-/// one-element tuple `(i32,)`. The grammar's own tests and diagnostic renderer state that only a
-/// trailing comma (`(T,)`) makes a one-element tuple; `(T)` should be `T`.
 #[test]
 fn a_parenthesized_type_is_not_a_one_element_tuple() {
     let dir = project(
@@ -528,9 +427,6 @@ fn a_parenthesized_type_is_not_a_one_element_tuple() {
     assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
 }
 
-/// BUG: the pattern parser has the same one-element-tuple confusion as the type parser, so
-/// `let (x) = 1;` is parsed as a tuple pattern `(x,)` against an `i32` and rejected. Only `(x,)`
-/// should be a one-element tuple pattern.
 #[test]
 fn a_parenthesized_pattern_is_not_a_one_element_tuple() {
     let dir = project(
@@ -546,9 +442,6 @@ fn a_parenthesized_pattern_is_not_a_one_element_tuple() {
     assert_eq!(stdout(&output), "ok");
 }
 
-/// BUG: `cast_allowed` omits `usize` from the integer targets of `char`, even though `usize` is
-/// treated as 64-bit everywhere else (including `int_width`) and every `char` codepoint fits.
-/// `char as u64` is allowed; `char as usize` must be too.
 #[test]
 fn a_char_can_be_cast_to_usize() {
     let dir = project(
@@ -561,5 +454,81 @@ fn a_char_can_be_cast_to_usize() {
         0,
         "`char` always fits in a 64-bit `usize`: {}",
         stderr(&output)
+    );
+}
+
+#[test]
+fn writing_through_a_shared_reference_is_rejected() {
+    let cases = [
+        "module app;\nfun main() { let x = 1; let r: &i32 = &x; *r = 2; }\n",
+        "module app;\nstruct S { x: i32 }\nfun f(s: &S) { s.x = 1; }\nfun main() {}\n",
+        "module app;\nstruct S { x: i32 }\nextend S { fun set(&self, v: i32) { self.x = v; } }\nfun main() {}\n",
+        "module app;\nstruct S { x: i32 }\nextend S { fun bad(&self) -> &mut i32 { return &mut self.x; } }\nfun main() {}\n",
+    ];
+    for (idx, src) in cases.iter().enumerate() {
+        let dir = project(&format!("shared_write_{idx}"), src);
+        let output = run(&dir, &["check"]);
+        assert_no_compiler_panic(&output, "write through a shared reference");
+        assert_ne!(code(&output), 0, "case {idx} must be rejected: {src}");
+        assert!(
+            stderr(&output).contains("shared reference"),
+            "case {idx}: {}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn signed_division_and_remainder_overflow_abort() {
+    let cases = [
+        "module app;\nfun overflow(a: i32, b: i32) -> i32 { return a / b; }\n\
+         fun main() { let a: i32 = 0 - 2147483647 - 1; let b: i32 = 0 - 1; let c = overflow(a, b); \
+         if c == 0 { core::io::write_bytes(1, \"x\" as &[u8]); } }\n",
+        "module app;\nfun overflow(a: i32, b: i32) -> i32 { return a % b; }\n\
+         fun main() { let a: i32 = 0 - 2147483647 - 1; let b: i32 = 0 - 1; let c = overflow(a, b); \
+         if c == 0 { core::io::write_bytes(1, \"x\" as &[u8]); } }\n",
+    ];
+    for (idx, src) in cases.iter().enumerate() {
+        let dir = project(&format!("div_overflow_{idx}"), src);
+        let output = run(&dir, &["run"]);
+        assert_ne!(code(&output), 0, "case {idx} must abort: {src}");
+        assert!(
+            stderr(&output).contains("overflow"),
+            "case {idx}: {}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn returning_a_reference_to_a_local_is_rejected() {
+    let cases = [
+        "fun f() -> &i32 { let x = 5; return &x; }",
+        "fun f() -> &i32 { let x = 5; let r = &x; return r; }",
+        "fun f() -> &i32 { let x = 5; let r = &x; return &*r; }",
+        "fun f(c: bool, p: &i32) -> &i32 { if c { let x = 5; return &x; } else { return p; } }",
+    ];
+    for (idx, function) in cases.iter().enumerate() {
+        let source = format!("module app;\n\n{function}\n\nfun main() {{}}\n");
+        let dir = project(&format!("return_local_ref_{idx}"), &source);
+        let output = run(&dir, &["check"]);
+        assert_no_compiler_panic(&output, "return a reference to a local");
+        assert_ne!(code(&output), 0, "case {idx} must be rejected: {function}");
+    }
+}
+
+#[test]
+fn returning_a_call_result_that_projects_a_local_argument_is_rejected() {
+    let dir = project(
+        "return_call_local_ref",
+        "module app;\n\nfun foo(x: &i32) -> &i32 { return x; }\n\
+         fun bar() -> &i32 { let local = 5; return foo(&local); }\n\nfun main() {}\n",
+    );
+    let output = run(&dir, &["check"]);
+    assert_no_compiler_panic(&output, "return a call result projecting a local");
+    assert_ne!(
+        code(&output),
+        0,
+        "the returned reference points into `bar`'s frame"
     );
 }

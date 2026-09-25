@@ -192,6 +192,13 @@ pub fn mir_exclusivity_src(src: &str) -> Vec<String> {
     })
 }
 
+pub fn mir_returned_reference_src(src: &str) -> Vec<String> {
+    mir_check_src(src, |session, _hir, tcx, program| {
+        let lifetimes = crate::mir::checks::borrowck::lifetimes::compute(program);
+        crate::mir::checks::borrowck::returned_reference::check(session, tcx, program, &lifetimes);
+    })
+}
+
 pub fn mir_never_read_src(src: &str) -> Vec<String> {
     mir_check_src(src, |session, _hir, _tcx, program| {
         crate::mir::checks::never_read::check(session, program)

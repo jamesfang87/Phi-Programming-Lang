@@ -760,6 +760,13 @@ impl<'a> BodyLowerCtx<'a> {
             self.switch_to(target);
         }
 
+        if is_int
+            && matches!(op, BinaryOp::Div | BinaryOp::Rem)
+            && self.mode == crate::options::Mode::Debug
+        {
+            self.lower_division_overflow_check(op, &lhs, &rhs, operand_ty, span);
+        }
+
         let checked = is_int
             && matches!(op, BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul)
             && self.mode == crate::options::Mode::Debug;
@@ -804,6 +811,75 @@ impl<'a> BodyLowerCtx<'a> {
             let _ = is_flt;
             self.assign(dest, Rvalue::BinaryOp(op, lhs, rhs), span);
         }
+    }
+
+    /// Asserts that `lhs / rhs` (or `lhs % rhs`) does not overflow. Only signed integers are
+    /// checked, and only in a debug-profile body, like the checked `+`/`-`/`*`.
+    fn lower_division_overflow_check(
+        &mut self,
+        op: BinaryOp,
+        lhs: &Operand,
+        rhs: &Operand,
+        operand_ty: Ty,
+        span: SrcSpan,
+    ) {
+        // Signed division and remainder overflow only in the `MIN / -1` case, which the hardware
+        // instruction traps on.
+        let TyKind::Primitive(prim) = *self.tcx.kind(operand_ty) else {
+            return;
+        };
+        let Some(min) = signed_integer_min(prim) else {
+            return;
+        };
+
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+        let neg_one = Operand::Constant(Constant {
+            ty: operand_ty,
+            kind: ConstKind::Int(-1),
+        });
+        let rhs_is_neg_one = self.new_temp(bool_ty, span);
+        self.assign(
+            Place::from_local(rhs_is_neg_one),
+            Rvalue::BinaryOp(BinaryOp::Eq, rhs.clone(), neg_one),
+            span,
+        );
+
+        // A signed division only overflows when the divisor is `-1`, so `lhs == MIN` is only
+        // tested on that path.
+        let check_min = self.new_block();
+        let done = self.new_block();
+        self.set_terminator(
+            TerminatorKind::SwitchInt {
+                discr: Operand::Copy(Place::from_local(rhs_is_neg_one)),
+                targets: crate::mir::SwitchTargets {
+                    values: vec![(1, check_min)],
+                    otherwise: done,
+                },
+            },
+            span,
+        );
+
+        self.switch_to(check_min);
+        let min_value = Operand::Constant(Constant {
+            ty: operand_ty,
+            kind: ConstKind::Int(min),
+        });
+        let lhs_is_min = self.new_temp(bool_ty, span);
+        self.assign(
+            Place::from_local(lhs_is_min),
+            Rvalue::BinaryOp(BinaryOp::Eq, lhs.clone(), min_value),
+            span,
+        );
+        self.set_terminator(
+            TerminatorKind::Assert {
+                cond: Operand::Copy(Place::from_local(lhs_is_min)),
+                expected: false,
+                msg: AssertMessage::Overflow(op, lhs.clone(), rhs.clone()),
+                target: done,
+            },
+            span,
+        );
+        self.switch_to(done);
     }
 
     // -----------------------------------------------------------------
@@ -1016,6 +1092,18 @@ fn literal_text(session: &Session, lit: Literal) -> String {
             session.resolve(value).to_string()
         }
         _ => unreachable!("literal_text is only called for Int/Float"),
+    }
+}
+
+/// Returns the most negative value a signed integer primitive can hold, or `None` for the
+/// unsigned ones. Only signed division and remainder can overflow.
+fn signed_integer_min(prim: PrimTy) -> Option<i128> {
+    match prim {
+        PrimTy::I8 => Some(i8::MIN as i128),
+        PrimTy::I16 => Some(i16::MIN as i128),
+        PrimTy::I32 => Some(i32::MIN as i128),
+        PrimTy::I64 => Some(i64::MIN as i128),
+        _ => None,
     }
 }
 
