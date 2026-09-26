@@ -75,7 +75,6 @@ impl<'hir> PayloadExprs<'hir> {
 }
 
 impl<'hir> Typeck<'hir> {
-
     pub(crate) fn check_assign(
         &mut self,
         lhs: impl Into<HirId>,
@@ -632,12 +631,8 @@ impl<'hir> Typeck<'hir> {
 
     fn check_match_arm(&mut self, arm: ArmId, scrutinee_ty: Ty, result: Ty) -> bool {
         let arm_node = self.hir.arm(arm);
-        let (pat, guard, block, arm_span) = (
-            arm_node.pat,
-            arm_node.guard,
-            arm_node.block,
-            arm_node.span,
-        );
+        let (pat, guard, block, arm_span) =
+            (arm_node.pat, arm_node.guard, arm_node.block, arm_node.span);
 
         self.check_pat(pat, scrutinee_ty, BindingMode::Value);
         let pat_failed = self

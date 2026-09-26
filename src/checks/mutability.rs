@@ -226,7 +226,6 @@ impl<'hir> Visitor<'hir> for SharedReferenceWrites<'hir, '_> {
 }
 
 impl SharedReferenceWrites<'_, '_> {
-
     fn check_writable(&self, place: HirId, span: SrcSpan) {
         match &self.hir.expr(place).kind {
             ExprKind::Unary {

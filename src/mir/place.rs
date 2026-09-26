@@ -10,7 +10,6 @@ pub struct Place {
 }
 
 impl Place {
-
     pub fn from_local(local: Local) -> Self {
         Place {
             local,
@@ -21,7 +20,6 @@ impl Place {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Projection {
-
     Deref,
 
     Field(u32),

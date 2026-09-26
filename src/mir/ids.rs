@@ -2,7 +2,6 @@
 pub struct Local(u32);
 
 impl Local {
-
     pub const RETURN_PLACE: Local = Local(0);
 
     pub const ENVIRONMENT: Local = Local(1);
@@ -20,7 +19,6 @@ impl Local {
 pub struct BasicBlock(u32);
 
 impl BasicBlock {
-
     pub const START_BLOCK: BasicBlock = BasicBlock(0);
 
     pub(crate) fn from_usize(index: usize) -> Self {

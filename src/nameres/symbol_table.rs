@@ -6,11 +6,11 @@ use crate::diagnostics::nameres::{
     report_ambiguous_import, report_conflict, report_dyn_not_trait, report_not_found,
     report_private_item, report_self_unavailable,
 };
+use crate::diagnostics::spelling;
 use crate::driver::source::SrcSpan;
 use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::session::Session;
-use crate::diagnostics::spelling;
 
 const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
 

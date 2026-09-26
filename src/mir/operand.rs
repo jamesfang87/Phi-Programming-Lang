@@ -6,7 +6,6 @@ use crate::typeck::ty::Ty;
 
 #[derive(Clone, Debug)]
 pub enum Operand {
-
     Copy(Place),
 
     Move(Place),

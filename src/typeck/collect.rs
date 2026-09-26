@@ -11,7 +11,6 @@ use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
 
 impl<'hir> Typeck<'hir> {
-
     pub fn collect_module(&mut self, module_id: DefId) {
         SignatureCollector(self).visit_module(module_id);
     }
@@ -434,5 +433,4 @@ mod tests {
              struct Outer { boxed: Boxed<iso dyn Show> }",
         );
     }
-
 }

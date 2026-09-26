@@ -63,7 +63,6 @@ impl Rvalue {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CastKind {
-
     Primitive,
 
     ReifyFunPointer,

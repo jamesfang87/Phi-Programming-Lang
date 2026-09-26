@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ast::Ast;
 use crate::codegen;
+use crate::driver::cli::Mode;
 use crate::driver::cli::{BuildOptions, Config};
 use crate::driver::emit_debug;
 use crate::hir::Hir;
@@ -12,7 +13,6 @@ use crate::lexer::token::Token;
 use crate::mir;
 use crate::mir::{Body, Instance};
 use crate::nameres;
-use crate::driver::cli::Mode;
 use crate::parser::Parser;
 use crate::session::Session;
 use crate::typeck;

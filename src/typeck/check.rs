@@ -151,9 +151,13 @@ impl<'hir> Typeck<'hir> {
             };
             match &expr.kind {
                 ExprKind::Literal(Literal::Int { value, .. }) => {
-                    if let Some((literal, span)) =
-                        self.out_of_range_literal(*value, min, max, negated.contains(&id), expr.span)
-                    {
+                    if let Some((literal, span)) = self.out_of_range_literal(
+                        *value,
+                        min,
+                        max,
+                        negated.contains(&id),
+                        expr.span,
+                    ) {
                         out_of_range.push((literal, ty, span));
                     }
                 }

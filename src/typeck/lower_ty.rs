@@ -17,7 +17,6 @@ use crate::typeck::ty::Ty;
 mod checks;
 
 impl<'hir> Typeck<'hir> {
-
     pub fn lower_ty(&mut self, id: TyId) -> Ty {
         let ty = self.hir.ty(id);
         let span = ty.span;
@@ -213,7 +212,6 @@ impl<'hir> Typeck<'hir> {
                 self.lower_def(def, arity, args, span, id.owner())
             }
             Res::Type(Type::Def(TyDef::Trait(_))) => {
-
                 report_trait_as_ty(self.session, span);
                 self.tcx.error()
             }

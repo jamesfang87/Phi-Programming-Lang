@@ -15,10 +15,7 @@ pub enum StatementKind {
     StorageLive(Local),
     StorageDead(Local),
     Assign(Place, Rvalue),
-    SetDiscriminant {
-        place: Place,
-        variant: VariantIdx,
-    },
+    SetDiscriminant { place: Place, variant: VariantIdx },
     PlaceMention(Place),
 
     WithLend(Local),

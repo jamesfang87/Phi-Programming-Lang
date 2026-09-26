@@ -125,8 +125,7 @@ impl Diagnostic {
 
         let mut located = Vec::new();
         for (at, message, color) in self.ordered_labels(span, &primary, sources) {
-            report =
-                report.with_label(Label::new(at.id()).with_message(message).with_color(color));
+            report = report.with_label(Label::new(at.id()).with_message(message).with_color(color));
             located.push(at);
         }
 

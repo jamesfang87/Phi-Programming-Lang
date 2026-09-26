@@ -9,7 +9,6 @@ use crate::typeck::Typeck;
 use crate::typeck::ty::Ty;
 
 impl<'hir> Typeck<'hir> {
-
     pub(crate) fn check_no_reference_args(&mut self, hir_args: &[TyId], args: &[Ty]) -> bool {
         for (&hir_id, &arg) in hir_args.iter().zip(args) {
             if self.tcx.contains_ref(arg) {

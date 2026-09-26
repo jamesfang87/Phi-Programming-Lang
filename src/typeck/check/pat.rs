@@ -9,8 +9,8 @@ use crate::diagnostics::typeck::pat::{
 use crate::diagnostics::typeck::report_no_variant;
 use crate::driver::source::SrcSpan;
 use crate::hir::{
-    ArmId, BindingMode, DefId, Hir, HirId, OwnerNode, Pat, PatId, PatKind, Payload,
-    PayloadField, VariantPayload,
+    ArmId, BindingMode, DefId, Hir, HirId, OwnerNode, Pat, PatId, PatKind, Payload, PayloadField,
+    VariantPayload,
 };
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
@@ -41,7 +41,6 @@ impl VariantTys {
 }
 
 impl<'hir> Typeck<'hir> {
-
     pub(crate) fn check_pat(&mut self, id: impl Into<HirId>, expected: Ty, mode: BindingMode) {
         let id = id.into();
         let hir: &'hir Hir = self.hir;
@@ -92,7 +91,6 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn check_literal_pat(&mut self, expected: Ty, lit: &Literal, span: SrcSpan) -> Ty {
-
         if matches!(lit, Literal::Str(_)) {
             report_string_pattern_unsupported(self.session, span);
             return self.tcx.error();
@@ -323,7 +321,10 @@ impl<'hir> Typeck<'hir> {
 
     fn check_bool_exhaustive(&self, arms: &[ArmId], span: SrcSpan) {
         let (mut has_true, mut has_false) = (false, false);
-        for &arm in arms.iter().filter(|&&arm| self.hir.arm(arm).guard.is_none()) {
+        for &arm in arms
+            .iter()
+            .filter(|&&arm| self.hir.arm(arm).guard.is_none())
+        {
             match &self.hir.pat(self.hir.arm(arm).pat).kind {
                 PatKind::Literal(Literal::Bool(true)) => has_true = true,
                 PatKind::Literal(Literal::Bool(false)) => has_false = true,

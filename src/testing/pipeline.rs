@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use crate::ast::{Ast, ParsedSrcFile};
+use crate::driver::cli::Mode;
 use crate::driver::source::FileOrigin;
 use crate::hir::Hir;
 use crate::lexer::Lexer;
 use crate::lexer::token::Token;
 use crate::mir::{Body, Instance, Mir};
 use crate::nameres;
-use crate::driver::cli::Mode;
 use crate::parser::Parser;
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
@@ -80,11 +80,10 @@ fn monomorphized(
 ) -> (Hir, TyCtx, TypeResolutions, Mir, HashMap<Instance, Body>) {
     let (hir, mut tcx, types) = typechecked(sources, origin);
     let program = crate::mir::lower::lower(session(), &hir, &mut tcx, &types, Mode::Debug);
-    let main =
-        match crate::checks::crate_root_main_candidates(session(), &hir).as_slice() {
-            [one] => Some(*one),
-            _ => None,
-        };
+    let main = match crate::checks::crate_root_main_candidates(session(), &hir).as_slice() {
+        [one] => Some(*one),
+        _ => None,
+    };
     let instances = crate::mir::monomorphize::monomorphize(&mut tcx, &program, main);
     (hir, tcx, types, program, instances)
 }
