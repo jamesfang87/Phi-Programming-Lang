@@ -2194,9 +2194,9 @@ fn an_any_parameter_passed_owned_lowers_the_plain_value() {
 #[test]
 fn an_any_parameter_resolved_mutably_takes_a_mutable_borrow() {
     let (hir, _tcx, _types, program) = lower_mir_src(
-        "public trait Index<K, V> { fun index(&self, key: K) -> any V; }
+        "public trait Index { fun index(&self, key: any i32) -> any i32; }
          struct Map { value: i32 }
-         extend Map with Index<any i32, i32> {
+         extend Map with Index {
              fun index(&self, key: any i32) -> any i32 { return self.value; }
          }
          fun f(m: &mut Map, k: i32) { let r = &mut m[k]; }",

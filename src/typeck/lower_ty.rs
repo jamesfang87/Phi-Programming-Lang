@@ -331,7 +331,8 @@ impl<'hir> Typeck<'hir> {
 
     fn extend_self_ty(&mut self, self_ty_id: TyId, span: SrcSpan) -> Ty {
         let Some((adt_res, hir_args)) = self.extend_self_path(self_ty_id) else {
-            return self.lower_ty(self_ty_id);
+            let self_ty = self.lower_ty(self_ty_id);
+            return self.check_extend_header_type(self_ty_id, self_ty);
         };
 
         let args = self.lower_tys(&hir_args);
@@ -349,6 +350,13 @@ impl<'hir> Typeck<'hir> {
             }
             _ => self.tcx.error(),
         }
+    }
+
+    fn check_extend_header_type(&mut self, id: TyId, ty: Ty) -> Ty {
+        if !self.check_no_any_args(&[id], &[ty]) || !self.check_no_dyn_args(&[id], &[ty]) {
+            return self.tcx.error();
+        }
+        ty
     }
 
     fn extend_self_path(&self, self_ty_id: TyId) -> Option<(Res, Vec<TyId>)> {
