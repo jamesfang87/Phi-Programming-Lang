@@ -40,6 +40,7 @@ fn check_body(session: &Session, body: &Body, body_lifetimes: &Lifetimes) {
                 body,
                 &body_lifetimes.aliases,
                 &live_at_point[stmt_index],
+                &live_at_point[stmt_index + 1],
                 stmt,
             );
         }
@@ -205,6 +206,7 @@ fn check_statement(
     body: &Body,
     aliases: &HashMap<AliasId, Alias>,
     live: &HashSet<AliasId>,
+    live_after: &HashSet<AliasId>,
     stmt: &Statement,
 ) {
     match &stmt.kind {
@@ -214,7 +216,7 @@ fn check_statement(
                 session,
                 body,
                 aliases,
-                live,
+                live_after,
                 place,
                 AccessKind::Write,
                 stmt.span,
@@ -317,6 +319,31 @@ mod tests {
                  let s = &a;
                  let _ = *r;
                  let _ = *s;
+             }",
+        );
+    }
+
+    #[test]
+    fn a_borrow_stored_in_a_tuple_stays_live_while_the_tuple_is_used() {
+        rejects(
+            "fun f() -> i32 {
+                 let mut a = 1;
+                 let pair = (&a, 0);
+                 a = 2;
+                 return *(pair.0);
+             }",
+            "cannot use `a`",
+        );
+    }
+
+    #[test]
+    fn assigning_the_last_use_of_a_borrow_is_allowed() {
+        accepts(
+            "fun f() -> i32 {
+                 let mut a = 1;
+                 let r = &a;
+                 a = *r;
+                 return a;
              }",
         );
     }
