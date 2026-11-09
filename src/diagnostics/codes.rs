@@ -226,6 +226,10 @@ pub const BOUND_IS_NOT_A_TRAIT: &str = "E0431";
 
 pub const ARG_COUNT_MISMATCH: &str = "E0432";
 
+pub const BREAK_OUTSIDE_LOOP: &str = "E0433";
+
+pub const CONTINUE_OUTSIDE_LOOP: &str = "E0434";
+
 pub const USE_OF_MOVED_VALUE: &str = "E0501";
 
 pub const MOVE_OUT_OF_ARRAY: &str = "E0502";
