@@ -731,6 +731,12 @@ impl<'hir> Typeck<'hir> {
         if matches!(self.tcx.kind(ret), TyKind::Error) {
             return;
         }
+        if matches!(self.tcx.kind(ret), TyKind::Var(_)) {
+            if self.unifier.unify(&self.tcx, ret, operand_ty).is_err() {
+                report_try_return_mismatch(self.display_cx(), operand_ty, ret, span);
+            }
+            return;
+        }
 
         let expected_def = self.hir.lang_items().get(item);
         let TyKind::Adt { def, args } = self.tcx.kind(ret).clone() else {
@@ -1852,6 +1858,36 @@ mod tests {
              fun f(r: Result<i32, bool>) -> Result<i32, bool> {
                  let v = r?;
                  return .ok(v);
+             }",
+        );
+    }
+
+    #[test]
+    fn try_in_an_unannotated_closure_fixes_the_closure_return_type() {
+        accepts(
+            "module core::result;
+
+             public enum Result<T, E> { ok: T, err: E }
+
+             fun f(r: Result<i32, bool>) {
+                 let g = |r: Result<i32, bool>| {
+                     let v = r?;
+                     return .ok(v + 1);
+                 };
+                 let _ = g(r);
+             }",
+        );
+        accepts(
+            "module core::option;
+
+             public enum Option<T> { some: T, none }
+
+             fun f(o: Option<i32>) {
+                 let g = |o: Option<i32>| {
+                     let v = o?;
+                     return .some(v + 1);
+                 };
+                 let _ = g(o);
              }",
         );
     }
