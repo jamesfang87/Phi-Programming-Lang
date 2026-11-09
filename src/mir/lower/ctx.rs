@@ -213,6 +213,36 @@ impl<'a> BodyLowerCtx<'a> {
             .unwrap_or_default()
     }
 
+    pub(crate) fn take_deferred_obligation(&mut self, expr_id: HirId) -> Option<(usize, usize)> {
+        for scope_index in (0..self.block_scopes.len()).rev() {
+            let position = self.block_scopes[scope_index]
+                .iter()
+                .position(|obligation| {
+                    matches!(obligation, ExitObligation::RunDeferred(id) if *id == expr_id)
+                });
+            if let Some(position) = position {
+                self.block_scopes[scope_index].remove(position);
+                return Some((scope_index, position));
+            }
+        }
+        None
+    }
+
+    pub(crate) fn restore_deferred_obligation(
+        &mut self,
+        expr_id: HirId,
+        location: Option<(usize, usize)>,
+    ) {
+        let Some((scope_index, position)) = location else {
+            return;
+        };
+        let Some(scope) = self.block_scopes.get_mut(scope_index) else {
+            return;
+        };
+        let position = position.min(scope.len());
+        scope.insert(position, ExitObligation::RunDeferred(expr_id));
+    }
+
     pub(crate) fn pop_block_scope(&mut self) -> Vec<ExitObligation> {
         let scope = self
             .block_scopes
