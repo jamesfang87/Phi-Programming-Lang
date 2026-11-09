@@ -1211,7 +1211,7 @@ fn array_element_read_and_write() {
         "array_index",
         r#"module app;
 fun main() {
-    let a = new [0; 4];
+    let mut a = new [0; 4];
     (*a)[0] = 5;
     (*a)[1] = 7;
     (*a)[2] = 9;
@@ -1382,7 +1382,7 @@ fun search(a: &[i32; 7], key: i32) -> i32 {
     return 0;
 }
 fun main() {
-    let arr = new [0; 7];
+    let mut arr = new [0; 7];
     (*arr)[0] = 2;
     (*arr)[1] = 4;
     (*arr)[2] = 6;
