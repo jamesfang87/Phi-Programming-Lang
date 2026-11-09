@@ -122,7 +122,10 @@ impl<'hir> Typeck<'hir> {
         let extend_node = hir.extend(extend);
         self.collect_generics(&extend_node.extend_generics);
         self.lower_extend_self_ty(extend_node.self_ty);
-        self.lower_tys(&extend_node.trait_generics);
+        let trait_generics = extend_node.trait_generics.clone();
+        let trait_arguments = self.lower_tys(&trait_generics);
+        self.check_no_any_args(&trait_generics, &trait_arguments);
+        self.check_no_dyn_args(&trait_generics, &trait_arguments);
         self.self_ty(extend, extend_node.span);
     }
 

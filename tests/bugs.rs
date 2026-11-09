@@ -532,3 +532,72 @@ fn returning_a_call_result_that_projects_a_local_argument_is_rejected() {
         "the returned reference points into `bar`'s frame"
     );
 }
+
+#[test]
+fn extend_tuple_with_any_is_rejected() {
+    let dir = project(
+        "extend_tuple_any",
+        r#"module app;
+
+extend (any i32, i32) { fun noop(&self) {} }
+
+fun main() {}
+"#,
+    );
+    let output = run(&dir, &["check"]);
+    assert_no_compiler_panic(&output, "any inside an extend header tuple");
+    assert_ne!(code(&output), 0, "the extend header must be rejected");
+    assert!(
+        stderr(&output).contains("`any`"),
+        "expected an `any` diagnostic, got: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn extend_array_with_dyn_is_rejected() {
+    let dir = project(
+        "extend_array_dyn",
+        r#"module app;
+
+trait Show { fun show(&self); }
+
+extend [dyn Show; 2] { fun noop(&self) {} }
+
+fun main() {}
+"#,
+    );
+    let output = run(&dir, &["check"]);
+    assert_no_compiler_panic(&output, "bare dyn inside an extend header array");
+    assert_ne!(code(&output), 0, "the extend header must be rejected");
+    assert!(
+        stderr(&output).contains("`dyn`"),
+        "expected a `dyn` diagnostic, got: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn extend_trait_argument_any_is_rejected() {
+    let dir = project(
+        "extend_trait_argument_any",
+        r#"module app;
+
+trait Consumer<T> { fun consume(&self); }
+
+struct Foo {}
+
+extend Foo with Consumer<any i32> { fun consume(&self) {} }
+
+fun main() {}
+"#,
+    );
+    let output = run(&dir, &["check"]);
+    assert_no_compiler_panic(&output, "any as an extend with-clause trait argument");
+    assert_ne!(code(&output), 0, "the trait argument must be rejected");
+    assert!(
+        stderr(&output).contains("`any`"),
+        "expected an `any` diagnostic, got: {}",
+        stderr(&output)
+    );
+}
