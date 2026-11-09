@@ -36,14 +36,32 @@ pub fn vtable_for<'ctx>(
 
     let layout = layout::layout_of(tcx, mir, concrete);
     let mut fields = vtable_header_fields(cx, tcx, mir, concrete, &layout);
-    let info = mir.vtables.get(&(concrete, trait_)).unwrap_or_else(|| {
+    let Some((info, bindings)) =
+        crate::mir::vtables::find_vtable(&mir.vtables, tcx, concrete, trait_)
+    else {
         panic!(
             "vtable_for: no `extend .. with Trait` block implementing {trait_:?} was found for \
-             {concrete:?} -- either no such impl exists, or it's a generic `extend<T> ..` block \
-             whose self type doesn't resolve to a concrete `Ty`"
+             {concrete:?}"
         )
-    });
-    fields.extend(collect_vtable_method_fields(cx, tcx, &info.methods));
+    };
+    let method_args: Vec<Ty> = info
+        .extend_generics
+        .iter()
+        .map(|&generic| {
+            bindings.get(&generic).copied().unwrap_or_else(|| {
+                panic!(
+                    "vtable_for: the implementation for {concrete:?} never binds its generic \
+                     parameter {generic:?}"
+                )
+            })
+        })
+        .collect();
+    fields.extend(collect_vtable_method_fields(
+        cx,
+        tcx,
+        &info.methods,
+        &method_args,
+    ));
 
     let vtable_ptr = build_vtable_global(cx, trait_, concrete, &fields);
     cx.vtables
@@ -78,6 +96,7 @@ fn collect_vtable_method_fields<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &TyCtx,
     methods: &[Option<DefId>],
+    args: &[Ty],
 ) -> Vec<BasicValueEnum<'ctx>> {
     methods
         .iter()
@@ -89,7 +108,7 @@ fn collect_vtable_method_fields<'ctx>(
             let instance = Instance {
                 def: impl_method,
                 any_mode: None,
-                args: Vec::new(),
+                args: args.to_vec(),
                 self_ty: None,
             };
             let name = cx.mangle(tcx, &instance);
