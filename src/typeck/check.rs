@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use crate::ast::{Literal, UnaryOp};
 use crate::diagnostics::typeck::pat::{
-    report_irrefutable_let_with_else, report_refutable_let_without_else,
+    report_irrefutable_let_with_else, report_let_else_does_not_diverge,
+    report_refutable_let_without_else,
 };
 use crate::diagnostics::typeck::{
     report_binding_type_mismatch, report_bodiless_function, report_body_return_mismatch,
@@ -347,7 +348,11 @@ impl<'hir> Typeck<'hir> {
         }
 
         if let Some(block) = else_block {
-            self.check_block(block);
+            let span = self.hir.block(block).span;
+            let ty = self.check_block(block);
+            if !matches!(self.tcx.kind(ty), TyKind::Never | TyKind::Error) {
+                report_let_else_does_not_diverge(self.session, span);
+            }
         }
     }
 

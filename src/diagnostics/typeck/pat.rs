@@ -107,6 +107,18 @@ pub fn report_irrefutable_let_with_else(session: &Session, span: SrcSpan) {
     );
 }
 
+pub fn report_let_else_does_not_diverge(session: &Session, span: SrcSpan) {
+    session.emit(
+        Diagnostic::error("this `else` block does not diverge", span)
+            .with_code(codes::LET_ELSE_DOES_NOT_DIVERGE)
+            .with_label("control flow can reach the end of the block")
+            .with_help(
+                "a `let ... else` block has to leave the scope with `return`, `break`, \
+                 `continue`, `panic`, or `unreachable`, because its pattern did not match",
+            ),
+    );
+}
+
 pub fn report_payload_shape(
     session: &Session,
     hir: &Hir,

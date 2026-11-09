@@ -124,6 +124,8 @@ pub const REFUTABLE_LET_WITHOUT_ELSE: &str = "E0351";
 
 pub const IRREFUTABLE_LET_WITH_ELSE: &str = "E0352";
 
+pub const LET_ELSE_DOES_NOT_DIVERGE: &str = "E0353";
+
 pub const PATTERN_PAYLOAD_SHAPE: &str = "E0353";
 
 pub const UNEXPECTED_GENERIC_ARGS: &str = "E0354";
