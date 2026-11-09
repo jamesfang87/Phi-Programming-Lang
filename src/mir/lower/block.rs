@@ -234,10 +234,12 @@ impl<'a> BodyLowerCtx<'a> {
                     self.push_stmt(StatementKind::StorageDead(local), span);
                 }
                 ExitObligation::RunDeferred(expr_id) => {
+                    let displaced = self.take_deferred_obligation(expr_id);
                     self.push_block_scope();
                     self.lower_expr_discarding(expr_id);
                     let nested = self.pop_block_scope();
                     self.replay_obligations(&nested);
+                    self.restore_deferred_obligation(expr_id, displaced);
                 }
             }
         }
