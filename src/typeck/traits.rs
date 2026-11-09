@@ -8,13 +8,12 @@ pub mod solve;
 #[cfg(test)]
 mod tests;
 
-/// A trait together with the generic arguments it was applied to, as declared in an extend
-/// block's header: for `extend Foo with Show<i32>`, `def` is `Show` and `args` is `[i32]`.
+/// Represents a trait with type parameters: Trait<T, U, ...>
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TraitRef {
     /// The trait this refers to.
     pub def: DefId,
 
-    /// The trait's own generic arguments, in declared order.
+    /// The trait's type arguments
     pub args: Vec<Ty>,
 }

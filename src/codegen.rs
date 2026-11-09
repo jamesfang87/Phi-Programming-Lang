@@ -25,8 +25,8 @@ use ctx::CodegenCtx;
 
 #[derive(Debug)]
 pub enum CodegenError {
-    Verification(String),
-    Link(String),
+    Verification(#[allow(dead_code)] String),
+    Link(#[allow(dead_code)] String),
 }
 
 pub fn codegen<'ctx>(

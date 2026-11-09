@@ -7,8 +7,9 @@ use crate::typeck::ty::Ty;
 pub struct VtableInfo {
     pub methods: Vec<Option<DefId>>,
     pub block: DefId,
-    pub trait_args: Vec<Ty>,
 
+    // TODO: settle on type args/generics naming
+    pub trait_args: Vec<Ty>,
     pub extend_generics: Vec<HirId>,
 }
 
@@ -18,6 +19,7 @@ pub(crate) fn collect_vtables(
 ) -> HashMap<(Ty, DefId), VtableInfo> {
     let mut out = HashMap::new();
     for extend_def in hir.def_ids() {
+        // TODO: This is exactly the kind of logic which should be extracted into a separate function
         let OwnerNode::Extend(extend) = hir.def(extend_def) else {
             continue;
         };
@@ -32,7 +34,12 @@ pub(crate) fn collect_vtables(
         };
 
         let trait_node = hir.trait_(trait_def);
-        let methods = trait_node
+
+        // TODO: This can also be refactored out; we are basically going thru the methods in the trait
+        // and finding the corresponding method in the extend header that implements the method
+        // in the trait
+        // good name could be find_trait_fun_impls, but this is a mid name
+        let method_impls = trait_node
             .functions
             .iter()
             .map(|&trait_method| {
@@ -44,6 +51,8 @@ pub(crate) fn collect_vtables(
                     .find(|&method| hir.function(method).name.text == method_name)
             })
             .collect();
+
+        // TODO: this can also be refactored out into "get_trait_type_args"
         let trait_args: Option<Vec<Ty>> = extend
             .trait_generics
             .iter()
@@ -51,7 +60,7 @@ pub(crate) fn collect_vtables(
             .collect();
 
         out.entry((self_ty, trait_def)).or_insert(VtableInfo {
-            methods,
+            methods: method_impls,
             block: extend_def,
             trait_args: trait_args.unwrap_or_default(),
             extend_generics: extend.extend_generics.clone(),

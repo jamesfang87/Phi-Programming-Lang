@@ -133,6 +133,7 @@ macro_rules! typed_node_lookup {
                     "Panics if `id` addresses any node other than a `Node::",
                     stringify!($variant), "`, naming what it found instead."
                 )]
+                #[allow(dead_code)]
                 pub fn $method(&self, id: impl Into<$id_ty>) -> &$node_ty {
                     let id = id.into();
                     match self.node(id.into()) {
@@ -171,6 +172,7 @@ macro_rules! typed_owner_lookup {
     ($($method:ident => $variant:ident -> $owner_ty:ty),* $(,)?) => {
         impl Hir {
             $(
+                #[allow(dead_code)]
                 pub fn $method(&self, id: DefId) -> &$owner_ty {
                     match self.def(id) {
                         OwnerNode::$variant(owner) => owner,

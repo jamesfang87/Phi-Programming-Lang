@@ -118,8 +118,6 @@ impl Path {
 // Items
 // ===========================================================================
 
-// TODO: Maybe we can move ModuleDecl out of the enum
-/// The parsed contents of one source file.
 #[derive(Clone, Debug)]
 pub struct ParsedSrcFile {
     pub module: Option<ModuleHeader>,

@@ -264,14 +264,12 @@ impl Diagnostics {
         self.emit(Diagnostic::error(message, span));
     }
 
-    pub fn warning(&mut self, message: impl Into<String>, span: SrcSpan) {
-        self.emit(Diagnostic::warning(message, span));
-    }
-
+    #[cfg(test)]
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
         self.diagnostics.clone()
     }
 
+    #[cfg(test)]
     pub fn messages(&self) -> Vec<String> {
         self.diagnostics
             .iter()
@@ -279,6 +277,7 @@ impl Diagnostics {
             .collect()
     }
 
+    #[cfg(test)]
     pub fn clear(&mut self) {
         self.diagnostics.clear();
     }

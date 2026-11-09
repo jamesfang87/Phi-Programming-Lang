@@ -6,6 +6,7 @@ use crate::typeck::ty::{Ty, TyKind};
 
 pub struct FieldLayout {
     pub ty: Ty,
+    #[allow(dead_code)]
     pub offset: u64,
 }
 

@@ -1,7 +1,3 @@
-//! Solving trait goals and resolving `.` accesses: the trait API the rest of type checking
-//! calls. The index this reads is built by [`crate::typeck::traits::collect`]; the program-level
-//! well-formedness rules live in [`crate::typeck::traits::check`].
-
 use std::collections::HashMap;
 use std::iter::once;
 

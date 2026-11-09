@@ -203,38 +203,6 @@ fn float_cmp_checks(ty: &str, op: &str) -> Vec<String> {
     out
 }
 
-const CAST_PAIRS: &[(&str, &str)] = &[
-    ("i8", "i16"),
-    ("i8", "i32"),
-    ("i8", "i64"),
-    ("i8", "f32"),
-    ("i8", "f64"),
-    ("i16", "i32"),
-    ("i16", "i64"),
-    ("i16", "f32"),
-    ("i16", "f64"),
-    ("i32", "i64"),
-    ("i32", "f64"),
-    ("u8", "i16"),
-    ("u8", "i32"),
-    ("u8", "i64"),
-    ("u8", "u16"),
-    ("u8", "u32"),
-    ("u8", "u64"),
-    ("u8", "f32"),
-    ("u8", "f64"),
-    ("u16", "i32"),
-    ("u16", "i64"),
-    ("u16", "u32"),
-    ("u16", "u64"),
-    ("u16", "f32"),
-    ("u16", "f64"),
-    ("u32", "i64"),
-    ("u32", "u64"),
-    ("u32", "f64"),
-    ("f32", "f64"),
-];
-
 fn cast_checks(from: &str, to: &str) -> Vec<String> {
     let is_float = |ty: &str| ty.starts_with('f');
     let sources: Vec<String> = if is_float(from) {

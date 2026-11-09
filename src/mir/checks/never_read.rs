@@ -1,5 +1,3 @@
-// TODO: does this even have to be a check with a Lattice or can we simplify it to a single pass?
-
 use std::collections::HashSet;
 
 use crate::ast::Ident;

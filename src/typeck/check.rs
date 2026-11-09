@@ -31,6 +31,9 @@ pub mod cast;
 pub mod expr;
 pub mod pat;
 
+type OutOfRangeLiterals = Vec<(String, Ty, SrcSpan)>;
+type UnsignedNegations = Vec<(Ty, SrcSpan)>;
+
 impl<'hir> Typeck<'hir> {
     pub fn check_module(&mut self, module: DefId) {
         BodyChecker(self).visit_module(module);
@@ -39,7 +42,7 @@ impl<'hir> Typeck<'hir> {
     fn finalize_function(&mut self, owner: DefId) {
         self.finalize_annotations(owner);
         self.finalize_call_resolutions(owner);
-        self.report_integer_literals(owner);
+        self.report_integer_literals_violations(owner);
     }
 
     fn finalize_annotations(&mut self, owner: DefId) {
@@ -99,12 +102,12 @@ impl<'hir> Typeck<'hir> {
         self.default_unconstrained_types(resolved)
     }
 
-    fn report_integer_literals(&self, owner: DefId) {
+    fn report_integer_literals_violations(&self, owner: DefId) {
         let entries = self.annotations_of(owner);
         let negated = self.negated_literal_operands(&entries);
         let array_lengths = self.array_length_exprs(owner);
         let (out_of_range, unsigned_negation) =
-            self.integer_literal_violations(&entries, &negated, &array_lengths);
+            self.find_integer_literal_violations(&entries, &negated, &array_lengths);
 
         for (literal, ty, span) in out_of_range {
             report_integer_literal_out_of_range(self.display_cx(), &literal, ty, span);
@@ -130,12 +133,12 @@ impl<'hir> Typeck<'hir> {
             .collect()
     }
 
-    fn integer_literal_violations(
+    fn find_integer_literal_violations(
         &self,
         entries: &[(HirId, Ty)],
         negated: &HashSet<HirId>,
         array_lengths: &HashSet<HirId>,
-    ) -> (Vec<(String, Ty, SrcSpan)>, Vec<(Ty, SrcSpan)>) {
+    ) -> (OutOfRangeLiterals, UnsignedNegations) {
         let mut out_of_range = Vec::new();
         let mut unsigned_negation = Vec::new();
 

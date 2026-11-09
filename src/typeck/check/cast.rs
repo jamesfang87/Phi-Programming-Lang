@@ -1,5 +1,6 @@
 use crate::nameres::PrimTy;
 
+// TODO: make usize actually work like usize
 fn int_width(prim: PrimTy) -> Option<u32> {
     match prim {
         PrimTy::I8 | PrimTy::U8 => Some(8),
@@ -22,8 +23,8 @@ pub(crate) fn is_lossless_cast(from: PrimTy, to: PrimTy) -> Result<(), &'static 
     }
 
     match (from, to) {
-        (f, t) if f.is_integer() && t.is_integer() => integer_to_integer(f, t),
-        (f, t) if f.is_integer() && t.is_float() => integer_to_float(f, t),
+        (f, t) if f.is_integer() && t.is_integer() => check_int_to_int(f, t),
+        (f, t) if f.is_integer() && t.is_float() => check_int_to_float(f, t),
         (f, t) if f.is_float() && t.is_integer() => Err(
             "would truncate any fractional part -- there is no truncating cast here, only \
              lossless ones",
@@ -58,7 +59,7 @@ pub(crate) fn is_lossless_cast(from: PrimTy, to: PrimTy) -> Result<(), &'static 
     }
 }
 
-fn integer_to_integer(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
+fn check_int_to_int(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     let from_width = int_width(from).expect("caller checked `from` is an integer");
     let to_width = int_width(to).expect("caller checked `to` is an integer");
 
@@ -73,7 +74,7 @@ fn integer_to_integer(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     }
 }
 
-fn integer_to_float(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
+fn check_int_to_float(from: PrimTy, to: PrimTy) -> Result<(), &'static str> {
     let width = int_width(from).expect("caller checked `from` is an integer");
     match to {
         PrimTy::F32 if width <= 16 => Ok(()),

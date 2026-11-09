@@ -4,7 +4,9 @@ use std::path::Path;
 
 use crate::ast::interner::{Interner, Symbol};
 use crate::diagnostics::{Diagnostic, Diagnostics};
-use crate::driver::source::{FileOrigin, SrcFile, SrcMap, SrcSpan};
+#[cfg(test)]
+use crate::driver::source::FileOrigin;
+use crate::driver::source::{SrcFile, SrcMap, SrcSpan};
 
 pub struct Session {
     sources: RefCell<SrcMap>,
@@ -32,6 +34,7 @@ impl Session {
     // ---------------------------------------------------------------
 
     /// Registers a new source file, returning the global offset its content starts at.
+    #[cfg(test)]
     pub fn add_file(&self, name: String, content: Vec<char>, origin: FileOrigin) -> usize {
         self.sources.borrow_mut().add_file(name, content, origin)
     }
@@ -49,11 +52,6 @@ impl Session {
     /// Returns the source text covered by `span` as an owned `String`.
     pub fn text_of(&self, span: SrcSpan) -> Option<String> {
         self.sources.borrow().text_of(span)
-    }
-
-    /// Returns the chars covered by `span`.
-    pub fn chars_of(&self, span: SrcSpan) -> Option<&'static [char]> {
-        self.sources.borrow().chars_of(span)
     }
 
     /// Recursively finds all `.phi` files under `root` and registers them.
@@ -99,22 +97,20 @@ impl Session {
         self.diagnostics.borrow_mut().error(message, span);
     }
 
-    /// Records a warning-severity diagnostic.
-    pub fn warning(&self, message: impl Into<String>, span: SrcSpan) {
-        self.diagnostics.borrow_mut().warning(message, span);
-    }
-
     /// Returns every diagnostic recorded so far, in the order it was recorded.
+    #[cfg(test)]
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
         self.diagnostics.borrow().diagnostics()
     }
 
     /// Returns just the message text of every diagnostic recorded so far.
+    #[cfg(test)]
     pub fn messages(&self) -> Vec<String> {
         self.diagnostics.borrow().messages()
     }
 
     /// Discards every diagnostic collected so far.
+    #[cfg(test)]
     pub fn clear_diagnostics(&self) {
         self.diagnostics.borrow_mut().clear();
     }

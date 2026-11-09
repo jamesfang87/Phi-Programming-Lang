@@ -43,15 +43,15 @@ use crate::typeck::traits::solve::{Goal, Solution};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DerefContext {
+pub(crate) enum DerefTarget {
     Value,
     Place,
 }
 
+// TODO: I swear we had this
 #[derive(Clone)]
 pub(crate) enum PayloadExprs<'hir> {
     Unit,
-
     Args(Vec<ExprId>),
     Record(&'hir [PayloadField]),
 }
@@ -154,7 +154,7 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) -> Ty {
         let (id, operand) = (id.into(), operand.into());
-        self.check_deref_as(id, operand, span, DerefContext::Value)
+        self.check_deref_as(id, operand, span, DerefTarget::Value)
     }
 
     pub(crate) fn check_deref_as(
@@ -162,7 +162,7 @@ impl<'hir> Typeck<'hir> {
         id: impl Into<HirId>,
         operand: impl Into<HirId>,
         span: SrcSpan,
-        ctx: DerefContext,
+        ctx: DerefTarget,
     ) -> Ty {
         let (id, operand) = (id.into(), operand.into());
         let operand_ty = self.ty_of_as_place(operand);
@@ -181,7 +181,7 @@ impl<'hir> Typeck<'hir> {
         let mode = self.deref_mode(base, id.owner);
         self.types.record_deref(id, mode);
 
-        if ctx == DerefContext::Value && from_reference && mode == DerefMode::Move {
+        if ctx == DerefTarget::Value && from_reference && mode == DerefMode::Move {
             report_move_out_of_reference(self.display_cx(), base, span);
             return self.tcx.error();
         }
@@ -928,6 +928,207 @@ impl<'hir> Typeck<'hir> {
             let _ = self.unifier.unify(&self.tcx, ret, ret_var);
         }
         ret_var
+    }
+}
+
+impl<'hir> Typeck<'hir> {
+    #[must_use]
+    pub(crate) fn check_expr(&mut self, id: impl Into<HirId>, expected: Option<Ty>) -> Ty {
+        let id = id.into();
+        let expr = self.hir.expr(id);
+
+        match &expr.kind {
+            ExprKind::Literal(lit) => self.check_literal(lit, expr.span),
+            ExprKind::Tuple(elems) => {
+                let tys = elems.iter().map(|&elem| self.ty_of(elem)).collect();
+                self.tcx.mk_tuple(tys)
+            }
+            ExprKind::Path(path) => match path.res {
+                Res::Local(Local::Param(local) | Local::Variable(local)) => self.ty_of(local),
+                Res::Local(Local::SelfParam(self_param)) => self.ty_of(self_param),
+                Res::Function(def) => self.ty_of(def.owner_id()),
+                Res::Err => self.tcx.error(),
+                Res::Type(_) | Res::SelfTy(_) => unreachable!(
+                    "name resolution never resolves a value-position path to a type, a \
+                         module, or Self"
+                ),
+            },
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => self.check_deref(id, *operand, expr.span),
+            ExprKind::Unary { op, operand } => {
+                let operand_ty = self.ty_of(*operand);
+                let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
+
+                let item = match op {
+                    UnaryOp::Neg => LangItem::Neg,
+                    UnaryOp::Not => LangItem::Not,
+                    UnaryOp::Deref => unreachable!("handled by the arm above"),
+                };
+
+                if self.is_undefaulted_numeric_var(resolved)
+                    || self.implements_operator(item, resolved, id.owner, expr.span)
+                {
+                    resolved
+                } else {
+                    self.tcx.error()
+                }
+            }
+            ExprKind::Binary { op, lhs, rhs } => {
+                let (lhs, rhs) = (self.ty_of(*lhs), self.ty_of(*rhs));
+                if let Err(error) = self.unifier.unify(&self.tcx, lhs, rhs) {
+                    report_binary_operand_mismatch(self.display_cx(), error, lhs, rhs, expr.span);
+                    return self.tcx.error();
+                }
+                let resolved = self.unifier.find_deep(&mut self.tcx, lhs);
+                self.check_operator(*op, resolved, id.owner, expr.span)
+            }
+            ExprKind::Assign { lhs, rhs } => self.check_assign(*lhs, *rhs, expr.span),
+            ExprKind::AssignOp { op, lhs, rhs } => self.check_assign_op(*op, *lhs, *rhs, expr.span),
+            ExprKind::Borrow {
+                mutability,
+                operand,
+            } => self.check_borrow(*mutability, *operand, expected),
+            ExprKind::Call { callee, args } => self.check_call(id, *callee, args, expr.span),
+            ExprKind::Access { base, member, args } => self.check_access(id, *base, *member, args),
+            ExprKind::Index { base, index } => self.check_index(id, *base, *index),
+            ExprKind::Ctor { path, payload } => {
+                self.check_ctor(id, path.as_ref(), payload, expected)
+            }
+            ExprKind::Variant { variant, payload } => {
+                self.check_variant_expr(*variant, payload, expected, expr.span)
+            }
+            ExprKind::Try(operand) => self.check_try(id, *operand),
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => self.check_if(*cond, *then_block, *else_block, expected, expr.span),
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_match(*scrutinee, arms, expected, expr.span)
+            }
+            ExprKind::Loop { block, .. } => {
+                self.check_block(*block);
+                self.tcx.unit()
+            }
+            ExprKind::Spawn(block) | ExprKind::Concurrent(block) => self.check_block(*block),
+            ExprKind::Block(block_id) => self.check_block_expecting(*block_id, expected),
+            ExprKind::Closure(def) => self.check_closure(*def, expected),
+            ExprKind::Cast { expr: operand, ty } => self.check_cast(*operand, *ty, expr.span),
+            ExprKind::New(operand) => self.check_new(*operand),
+            ExprKind::NewArray { elem, count } => self.check_new_array(*elem, *count),
+            ExprKind::Assert { cond, msg } => self.check_assert(*cond, *msg),
+            ExprKind::Panic { msg } | ExprKind::Unreachable { msg } => {
+                self.check_panic_message(*msg)
+            }
+            ExprKind::Error => self.tcx.error(),
+        }
+    }
+
+    fn check_operator(&mut self, op: BinaryOp, operand: Ty, owner: DefId, span: SrcSpan) -> Ty {
+        let operand = self.peel_any(operand);
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+
+        let (item, produced) = match op {
+            BinaryOp::Add => (LangItem::Add, operand),
+            BinaryOp::Sub => (LangItem::Sub, operand),
+            BinaryOp::Mul => (LangItem::Mul, operand),
+            BinaryOp::Div => (LangItem::Div, operand),
+            BinaryOp::Rem => (LangItem::Rem, operand),
+            BinaryOp::Eq | BinaryOp::Ne => (LangItem::Eq, bool_ty),
+            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
+                (LangItem::Comparable, bool_ty)
+            }
+            BinaryOp::And | BinaryOp::Or => {
+                if let Err(error) = self.unifier.unify(&self.tcx, operand, bool_ty) {
+                    report_logic_op_needs_bool_operands(self.display_cx(), error, operand, span);
+                }
+                return bool_ty;
+            }
+        };
+
+        if self.is_undefaulted_numeric_var(operand)
+            || self.implements_operator(item, operand, owner, span)
+        {
+            produced
+        } else {
+            self.tcx.error()
+        }
+    }
+
+    fn implements_operator(
+        &mut self,
+        item: LangItem,
+        self_ty: Ty,
+        owner: DefId,
+        span: SrcSpan,
+    ) -> bool {
+        if matches!(self.tcx.kind(self_ty), TyKind::Var(InferVar::Any(_))) {
+            report_operand_has_unknown_type(self.session, span);
+            return false;
+        }
+        let Some(def) = self.hir.lang_items().get(item) else {
+            return false;
+        };
+
+        let goal = Goal::new(self_ty, def);
+        let env = self.bounds_env(owner);
+        match self.implements(&goal, &env) {
+            Solution::Holds => true,
+            Solution::DoesNotHold => {
+                let name = crate::diagnostics::display::def_name(self.session, self.hir, def);
+                report_operator_trait_missing(self.display_cx(), self_ty, name, span);
+                false
+            }
+            Solution::Ambiguous | Solution::Error => false,
+        }
+    }
+
+    fn is_undefaulted_numeric_var(&self, ty: Ty) -> bool {
+        matches!(
+            self.tcx.kind(ty),
+            TyKind::Var(InferVar::Int(_) | InferVar::Float(_))
+        )
+    }
+
+    fn peel_any(&self, mut ty: Ty) -> Ty {
+        while let TyKind::Any(base) = *self.tcx.kind(ty) {
+            ty = base;
+        }
+        ty
+    }
+
+    pub(crate) fn check_literal(&mut self, lit: &Literal, span: SrcSpan) -> Ty {
+        match lit {
+            Literal::Bool(_) => self.tcx.mk_prim(PrimTy::Bool),
+            Literal::Char(_) => self.tcx.mk_prim(PrimTy::Char),
+            Literal::Int { suffix, .. } => match suffix {
+                None => self.tcx.next_int_var(),
+                Some(suffix) => match is_prim_ty(self.session, *suffix) {
+                    Some(prim) if prim.is_integer() || prim.is_float() => self.tcx.mk_prim(prim),
+                    _ => {
+                        report_unknown_literal_suffix(self.session, *suffix, span);
+                        self.tcx.error()
+                    }
+                },
+            },
+            Literal::Float { suffix, .. } => match suffix {
+                None => self.tcx.next_float_var(),
+                Some(suffix) => match is_prim_ty(self.session, *suffix) {
+                    Some(prim) if prim.is_float() => self.tcx.mk_prim(prim),
+                    Some(prim) if prim.is_integer() => {
+                        report_int_suffix_on_float_literal(self.session, *suffix, span);
+                        self.tcx.error()
+                    }
+                    _ => {
+                        report_unknown_literal_suffix(self.session, *suffix, span);
+                        self.tcx.error()
+                    }
+                },
+            },
+            Literal::Str(_) => self.tcx.mk_prim(PrimTy::Str),
+        }
     }
 }
 
@@ -2362,206 +2563,5 @@ mod tests {
              fun f(r: Result<i32, bool>) -> i32 { let v = r?; return v; }",
             "cannot propagate out of a function returning `i32`",
         );
-    }
-}
-
-impl<'hir> Typeck<'hir> {
-    #[must_use]
-    pub(crate) fn check_expr(&mut self, id: impl Into<HirId>, expected: Option<Ty>) -> Ty {
-        let id = id.into();
-        let expr = self.hir.expr(id);
-
-        match &expr.kind {
-            ExprKind::Literal(lit) => self.check_literal(lit, expr.span),
-            ExprKind::Tuple(elems) => {
-                let tys = elems.iter().map(|&elem| self.ty_of(elem)).collect();
-                self.tcx.mk_tuple(tys)
-            }
-            ExprKind::Path(path) => match path.res {
-                Res::Local(Local::Param(local) | Local::Variable(local)) => self.ty_of(local),
-                Res::Local(Local::SelfParam(self_param)) => self.ty_of(self_param),
-                Res::Function(def) => self.ty_of(def.owner_id()),
-                Res::Err => self.tcx.error(),
-                Res::Type(_) | Res::SelfTy(_) => unreachable!(
-                    "name resolution never resolves a value-position path to a type, a \
-                         module, or Self"
-                ),
-            },
-            ExprKind::Unary {
-                op: UnaryOp::Deref,
-                operand,
-            } => self.check_deref(id, *operand, expr.span),
-            ExprKind::Unary { op, operand } => {
-                let operand_ty = self.ty_of(*operand);
-                let resolved = self.unifier.find_deep(&mut self.tcx, operand_ty);
-
-                let item = match op {
-                    UnaryOp::Neg => LangItem::Neg,
-                    UnaryOp::Not => LangItem::Not,
-                    UnaryOp::Deref => unreachable!("handled by the arm above"),
-                };
-
-                if self.is_undefaulted_numeric_var(resolved)
-                    || self.implements_operator(item, resolved, id.owner, expr.span)
-                {
-                    resolved
-                } else {
-                    self.tcx.error()
-                }
-            }
-            ExprKind::Binary { op, lhs, rhs } => {
-                let (lhs, rhs) = (self.ty_of(*lhs), self.ty_of(*rhs));
-                if let Err(error) = self.unifier.unify(&self.tcx, lhs, rhs) {
-                    report_binary_operand_mismatch(self.display_cx(), error, lhs, rhs, expr.span);
-                    return self.tcx.error();
-                }
-                let resolved = self.unifier.find_deep(&mut self.tcx, lhs);
-                self.check_operator(*op, resolved, id.owner, expr.span)
-            }
-            ExprKind::Assign { lhs, rhs } => self.check_assign(*lhs, *rhs, expr.span),
-            ExprKind::AssignOp { op, lhs, rhs } => self.check_assign_op(*op, *lhs, *rhs, expr.span),
-            ExprKind::Borrow {
-                mutability,
-                operand,
-            } => self.check_borrow(*mutability, *operand, expected),
-            ExprKind::Call { callee, args } => self.check_call(id, *callee, args, expr.span),
-            ExprKind::Access { base, member, args } => self.check_access(id, *base, *member, args),
-            ExprKind::Index { base, index } => self.check_index(id, *base, *index),
-            ExprKind::Ctor { path, payload } => {
-                self.check_ctor(id, path.as_ref(), payload, expected)
-            }
-            ExprKind::Variant { variant, payload } => {
-                self.check_variant_expr(*variant, payload, expected, expr.span)
-            }
-            ExprKind::Try(operand) => self.check_try(id, *operand),
-            ExprKind::If {
-                cond,
-                then_block,
-                else_block,
-            } => self.check_if(*cond, *then_block, *else_block, expected, expr.span),
-            ExprKind::Match { scrutinee, arms } => {
-                self.check_match(*scrutinee, arms, expected, expr.span)
-            }
-            ExprKind::Loop { block, .. } => {
-                self.check_block(*block);
-                self.tcx.unit()
-            }
-            ExprKind::Spawn(block) | ExprKind::Concurrent(block) => self.check_block(*block),
-            ExprKind::Block(block_id) => self.check_block_expecting(*block_id, expected),
-            ExprKind::Closure(def) => self.check_closure(*def, expected),
-            ExprKind::Cast { expr: operand, ty } => self.check_cast(*operand, *ty, expr.span),
-            ExprKind::New(operand) => self.check_new(*operand),
-            ExprKind::NewArray { elem, count } => self.check_new_array(*elem, *count),
-            ExprKind::Assert { cond, msg } => self.check_assert(*cond, *msg),
-            ExprKind::Panic { msg } | ExprKind::Unreachable { msg } => {
-                self.check_panic_message(*msg)
-            }
-            ExprKind::Error => self.tcx.error(),
-        }
-    }
-
-    fn check_operator(&mut self, op: BinaryOp, operand: Ty, owner: DefId, span: SrcSpan) -> Ty {
-        let operand = self.peel_any(operand);
-        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
-
-        let (item, produced) = match op {
-            BinaryOp::Add => (LangItem::Add, operand),
-            BinaryOp::Sub => (LangItem::Sub, operand),
-            BinaryOp::Mul => (LangItem::Mul, operand),
-            BinaryOp::Div => (LangItem::Div, operand),
-            BinaryOp::Rem => (LangItem::Rem, operand),
-            BinaryOp::Eq | BinaryOp::Ne => (LangItem::Eq, bool_ty),
-            BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                (LangItem::Comparable, bool_ty)
-            }
-            BinaryOp::And | BinaryOp::Or => {
-                if let Err(error) = self.unifier.unify(&self.tcx, operand, bool_ty) {
-                    report_logic_op_needs_bool_operands(self.display_cx(), error, operand, span);
-                }
-                return bool_ty;
-            }
-        };
-
-        if self.is_undefaulted_numeric_var(operand)
-            || self.implements_operator(item, operand, owner, span)
-        {
-            produced
-        } else {
-            self.tcx.error()
-        }
-    }
-
-    fn implements_operator(
-        &mut self,
-        item: LangItem,
-        self_ty: Ty,
-        owner: DefId,
-        span: SrcSpan,
-    ) -> bool {
-        if matches!(self.tcx.kind(self_ty), TyKind::Var(InferVar::Any(_))) {
-            report_operand_has_unknown_type(self.session, span);
-            return false;
-        }
-        let Some(def) = self.hir.lang_items().get(item) else {
-            return false;
-        };
-
-        let goal = Goal::new(self_ty, def);
-        let env = self.bounds_env(owner);
-        match self.implements(&goal, &env) {
-            Solution::Holds => true,
-            Solution::DoesNotHold => {
-                let name = crate::diagnostics::display::def_name(self.session, self.hir, def);
-                report_operator_trait_missing(self.display_cx(), self_ty, name, span);
-                false
-            }
-            Solution::Ambiguous | Solution::Error => false,
-        }
-    }
-
-    fn is_undefaulted_numeric_var(&self, ty: Ty) -> bool {
-        matches!(
-            self.tcx.kind(ty),
-            TyKind::Var(InferVar::Int(_) | InferVar::Float(_))
-        )
-    }
-
-    fn peel_any(&self, mut ty: Ty) -> Ty {
-        while let TyKind::Any(base) = *self.tcx.kind(ty) {
-            ty = base;
-        }
-        ty
-    }
-
-    pub(crate) fn check_literal(&mut self, lit: &Literal, span: SrcSpan) -> Ty {
-        match lit {
-            Literal::Bool(_) => self.tcx.mk_prim(PrimTy::Bool),
-            Literal::Char(_) => self.tcx.mk_prim(PrimTy::Char),
-            Literal::Int { suffix, .. } => match suffix {
-                None => self.tcx.next_int_var(),
-                Some(suffix) => match is_prim_ty(self.session, *suffix) {
-                    Some(prim) if prim.is_integer() || prim.is_float() => self.tcx.mk_prim(prim),
-                    _ => {
-                        report_unknown_literal_suffix(self.session, *suffix, span);
-                        self.tcx.error()
-                    }
-                },
-            },
-            Literal::Float { suffix, .. } => match suffix {
-                None => self.tcx.next_float_var(),
-                Some(suffix) => match is_prim_ty(self.session, *suffix) {
-                    Some(prim) if prim.is_float() => self.tcx.mk_prim(prim),
-                    Some(prim) if prim.is_integer() => {
-                        report_int_suffix_on_float_literal(self.session, *suffix, span);
-                        self.tcx.error()
-                    }
-                    _ => {
-                        report_unknown_literal_suffix(self.session, *suffix, span);
-                        self.tcx.error()
-                    }
-                },
-            },
-            Literal::Str(_) => self.tcx.mk_prim(PrimTy::Str),
-        }
     }
 }

@@ -15,7 +15,7 @@ use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, Node, OwnerNode, PayloadField, Res};
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
-use crate::typeck::check::expr::{DerefContext, PayloadExprs};
+use crate::typeck::check::expr::{DerefTarget, PayloadExprs};
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::visitor::{self, TypeVisitor};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
@@ -781,7 +781,7 @@ impl<'hir> Typeck<'hir> {
                     operand,
                 } = self.hir.expr(receiver).kind
                 {
-                    self.check_deref_as(receiver, operand, span, DerefContext::Value);
+                    self.check_deref_as(receiver, operand, span, DerefTarget::Value);
                 }
             }
             SelfMode::Immutable => {

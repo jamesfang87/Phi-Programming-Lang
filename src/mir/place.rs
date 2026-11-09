@@ -21,13 +21,9 @@ impl Place {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Projection {
     Deref,
-
     Field(u32),
-
     Index(Local),
-
     ConstantIndex(u32),
-
     Downcast(VariantIdx),
 }
 

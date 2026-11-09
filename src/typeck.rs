@@ -12,7 +12,7 @@ use crate::diagnostics::display::DisplayCtx;
 use crate::diagnostics::typeck::report_recursive_type;
 use crate::hir::{DefId, ExprKind, Hir, HirId, Node, OwnerNode};
 use crate::session::Session;
-use crate::typeck::check::expr::DerefContext;
+use crate::typeck::check::expr::DerefTarget;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::traits::collect::ExtendIndex;
 use crate::typeck::traits::solve::Obligation;
@@ -92,7 +92,7 @@ impl<'hir> Typeck<'hir> {
         } = expr.kind
         {
             let span = expr.span;
-            let ty = self.check_deref_as(id, operand, span, DerefContext::Place);
+            let ty = self.check_deref_as(id, operand, span, DerefTarget::Place);
             self.types.record(id, ty);
             return ty;
         }

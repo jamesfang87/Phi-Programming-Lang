@@ -12,7 +12,6 @@ pub enum AdtDef {
     },
     Enum {
         generics: Vec<HirId>,
-
         variants: Vec<Vec<Ty>>,
     },
 }
@@ -67,11 +66,13 @@ pub(crate) fn infinitely_sized_adts(
     tcx: &crate::typeck::ty::ctx::TyCtx,
     adts: &HashMap<DefId, AdtDef>,
 ) -> Vec<DefId> {
+    // Infinitely sized adts are cycles, we detect with a graph
     let graph = value_edge_graph(tcx, adts);
     let cyclic = cyclic_adts(&graph);
     adts_reaching(&graph, &cyclic)
 }
 
+// TODO: this is a bad name
 fn value_edge_graph(
     tcx: &crate::typeck::ty::ctx::TyCtx,
     adts: &HashMap<DefId, AdtDef>,
@@ -115,6 +116,7 @@ fn cyclic_adts(graph: &HashMap<DefId, Vec<DefId>>) -> Vec<DefId> {
         .collect()
 }
 
+// TODO: rename to like affected adts or something
 fn adts_reaching(graph: &HashMap<DefId, Vec<DefId>>, targets: &[DefId]) -> Vec<DefId> {
     graph
         .keys()
