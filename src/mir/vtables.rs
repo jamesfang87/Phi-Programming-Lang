@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::hir::{DefId, Hir, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::results::TypeResolutions;
-use crate::typeck::ty::Ty;
+use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::{Ty, TyKind};
 
 pub struct VtableInfo {
     pub methods: Vec<Option<DefId>>,
@@ -67,6 +68,105 @@ pub(crate) fn collect_vtables(
         });
     }
     out
+}
+
+/// Returns the implementation block for `trait_` that applies to `concrete`, with the bindings
+/// that match its header's generic parameters to the concrete type.
+/// A block whose header is already concrete is preferred over a generic block.
+pub(crate) fn find_vtable<'a>(
+    vtables: &'a HashMap<(Ty, DefId), VtableInfo>,
+    tcx: &TyCtx,
+    concrete: Ty,
+    trait_: DefId,
+) -> Option<(&'a VtableInfo, HashMap<HirId, Ty>)> {
+    if let Some(info) = vtables.get(&(concrete, trait_)) {
+        return Some((info, HashMap::new()));
+    }
+
+    for ((pattern, trait_def), info) in vtables {
+        if *trait_def != trait_ {
+            continue;
+        }
+        let mut bindings = HashMap::new();
+        if match_type_pattern(tcx, *pattern, concrete, &mut bindings) {
+            return Some((info, bindings));
+        }
+    }
+    None
+}
+
+/// Returns whether `pattern` matches `concrete`, recording what each generic parameter in
+/// `pattern` stands for in `bindings`.
+fn match_type_pattern(
+    tcx: &TyCtx,
+    pattern: Ty,
+    concrete: Ty,
+    bindings: &mut HashMap<HirId, Ty>,
+) -> bool {
+    match (tcx.kind(pattern).clone(), tcx.kind(concrete).clone()) {
+        (TyKind::Generic(param), _) => match bindings.get(&param) {
+            Some(bound) => *bound == concrete,
+            None => {
+                bindings.insert(param, concrete);
+                true
+            }
+        },
+        (TyKind::Adt { def: a, args: x }, TyKind::Adt { def: b, args: y }) => {
+            a == b && match_ty_list(tcx, &x, &y, bindings)
+        }
+        (
+            TyKind::Ref {
+                base: a,
+                mutability: m,
+            },
+            TyKind::Ref {
+                base: b,
+                mutability: n,
+            },
+        ) => m == n && match_type_pattern(tcx, a, b, bindings),
+        (TyKind::Iso(a), TyKind::Iso(b)) => match_type_pattern(tcx, a, b, bindings),
+        (TyKind::Tuple(a), TyKind::Tuple(b)) => match_ty_list(tcx, &a, &b, bindings),
+        (
+            TyKind::Array {
+                elem: a,
+                len: len_a,
+            },
+            TyKind::Array {
+                elem: b,
+                len: len_b,
+            },
+        ) => len_a == len_b && match_type_pattern(tcx, a, b, bindings),
+        (
+            TyKind::Fun {
+                params: a,
+                ret: r_a,
+            },
+            TyKind::Fun {
+                params: b,
+                ret: r_b,
+            },
+        ) => match_ty_list(tcx, &a, &b, bindings) && match_ret(tcx, r_a, r_b, bindings),
+        _ => pattern == concrete,
+    }
+}
+
+/// Returns whether two type lists are the same length and match pairwise, binding generics as it
+/// goes.
+fn match_ty_list(tcx: &TyCtx, xs: &[Ty], ys: &[Ty], bindings: &mut HashMap<HirId, Ty>) -> bool {
+    xs.len() == ys.len()
+        && xs
+            .iter()
+            .zip(ys.iter())
+            .all(|(&p, &q)| match_type_pattern(tcx, p, q, bindings))
+}
+
+/// Returns whether two optional return types match, treating two absent returns as equal.
+fn match_ret(tcx: &TyCtx, a: Option<Ty>, b: Option<Ty>, bindings: &mut HashMap<HirId, Ty>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => match_type_pattern(tcx, a, b, bindings),
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
+    }
 }
 
 #[cfg(test)]

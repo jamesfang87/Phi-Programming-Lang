@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use crate::hir::{DefId, HirId};
 use crate::mir::lower::Mir;
 use crate::mir::{
-    AggregateKind, AnyMode, AssertMessage, Body, BodyKind, ConstKind, FunRef, Instance, Operand,
-    Rvalue, StatementKind, TerminatorKind,
+    AggregateKind, AnyMode, AssertMessage, Body, BodyKind, ConstKind, FunRef, Instance, LocalDecl,
+    Operand, Rvalue, StatementKind, TerminatorKind,
 };
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::visitor::Subst;
@@ -126,7 +126,7 @@ impl InstantiationCx<'_> {
         substitution: &Subst,
         instance: &Instance,
     ) -> Body {
-        Body {
+        let body = Body {
             def_id: generic_body.def_id,
             kind: generic_body.kind,
             basic_blocks: generic_body
@@ -138,6 +138,41 @@ impl InstantiationCx<'_> {
             param_count: generic_body.param_count,
             generics: generic_body.generics.clone(),
             span: generic_body.span,
+        };
+        self.queue_unsize_vtables(&body);
+        body
+    }
+
+    /// Queues the implementation methods whose vtables a body's unsizing coercions reference.
+    fn queue_unsize_vtables(&mut self, body: &Body) {
+        for block in &body.basic_blocks {
+            for statement in &block.statements {
+                let StatementKind::Assign(_, Rvalue::Unsize { operand, trait_ }) = &statement.kind
+                else {
+                    continue;
+                };
+                let pointed = operand_ty(self.tcx, &body.local_decls, operand);
+                let concrete = peel_references(self.tcx, pointed);
+                let Some((info, bindings)) = crate::mir::vtables::find_vtable(
+                    &self.program.vtables,
+                    self.tcx,
+                    concrete,
+                    *trait_,
+                ) else {
+                    continue;
+                };
+                let Some(args) = info
+                    .extend_generics
+                    .iter()
+                    .map(|&generic| bindings.get(&generic).copied())
+                    .collect::<Option<Vec<Ty>>>()
+                else {
+                    continue;
+                };
+                for &method in info.methods.iter().flatten() {
+                    self.queue_fn_def(method, None, args.clone(), None);
+                }
+            }
         }
     }
 
@@ -489,93 +524,23 @@ fn find_matching_vtable<'a>(
     trait_owner: DefId,
     self_ty: Ty,
 ) -> Option<(&'a crate::mir::vtables::VtableInfo, HashMap<HirId, Ty>)> {
-    for ((pattern, trait_def), info) in &program.vtables {
-        if *trait_def != trait_owner {
-            continue;
-        }
-        let mut binds: HashMap<HirId, Ty> = HashMap::new();
-        if match_impl_self(tcx, *pattern, self_ty, &mut binds) {
-            return Some((info, binds));
-        }
-    }
-    None
+    crate::mir::vtables::find_vtable(&program.vtables, tcx, self_ty, trait_owner)
 }
 
-/// Returns whether `pattern` matches `self_ty`, binding each of `pattern`'s generic parameters in
-/// `binds`.
-fn match_impl_self(
-    tcx: &mut TyCtx,
-    pattern: Ty,
-    self_ty: Ty,
-    binds: &mut HashMap<HirId, Ty>,
-) -> bool {
-    match (tcx.kind(pattern).clone(), tcx.kind(self_ty).clone()) {
-        (TyKind::Generic(param), _) => match binds.get(&param) {
-            Some(bound) => *bound == self_ty,
-            None => {
-                binds.insert(param, self_ty);
-                true
-            }
-        },
-        (TyKind::Adt { def: a, args: x }, TyKind::Adt { def: b, args: y }) => {
-            a == b && match_ty_list(tcx, &x, &y, binds)
+/// Returns the type of `operand` using `local_decls` for the places it names.
+fn operand_ty(tcx: &mut TyCtx, local_decls: &[LocalDecl], operand: &Operand) -> Ty {
+    match operand {
+        Operand::Constant(constant) => constant.ty,
+        Operand::Copy(place) | Operand::Move(place) => {
+            crate::mir::place_ty(tcx, local_decls, place)
         }
-        (
-            TyKind::Ref {
-                base: a,
-                mutability: m,
-            },
-            TyKind::Ref {
-                base: b,
-                mutability: n,
-            },
-        ) => m == n && match_impl_self(tcx, a, b, binds),
-        (TyKind::Iso(a), TyKind::Iso(b)) => match_impl_self(tcx, a, b, binds),
-        (TyKind::Tuple(a), TyKind::Tuple(b)) => match_ty_list(tcx, &a, &b, binds),
-        (
-            TyKind::Array {
-                elem: a,
-                len: len_a,
-            },
-            TyKind::Array {
-                elem: b,
-                len: len_b,
-            },
-        ) => len_a == len_b && match_impl_self(tcx, a, b, binds),
-        (
-            TyKind::Fun {
-                params: a,
-                ret: r_a,
-            },
-            TyKind::Fun {
-                params: b,
-                ret: r_b,
-            },
-        ) => match_ty_list(tcx, &a, &b, binds) && match_ret(tcx, r_a, r_b, binds),
-        _ => pattern == self_ty,
     }
 }
 
-/// Returns whether two type lists are the same length and match pairwise, binding generics as it
-/// goes.
-fn match_ty_list(tcx: &mut TyCtx, xs: &[Ty], ys: &[Ty], binds: &mut HashMap<HirId, Ty>) -> bool {
-    xs.len() == ys.len()
-        && xs
-            .iter()
-            .zip(ys.iter())
-            .all(|(&p, &q)| match_impl_self(tcx, p, q, binds))
-}
-
-/// Returns whether two optional return types match, treating two absent returns as equal.
-fn match_ret(
-    tcx: &mut TyCtx,
-    a: Option<Ty>,
-    b: Option<Ty>,
-    binds: &mut HashMap<HirId, Ty>,
-) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => match_impl_self(tcx, a, b, binds),
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
+/// Returns the type `ty` refers to when it is a reference, or `ty` itself otherwise.
+fn peel_references(tcx: &TyCtx, mut ty: Ty) -> Ty {
+    while let TyKind::Ref { base, .. } = *tcx.kind(ty) {
+        ty = base;
     }
+    ty
 }

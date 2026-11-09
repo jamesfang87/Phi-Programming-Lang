@@ -12,7 +12,7 @@ mod place;
 mod rvalue;
 mod statement;
 mod terminator;
-mod vtables;
+pub(crate) mod vtables;
 
 pub use body::{BasicBlockData, Body, BodyKind, LocalDecl};
 pub use ids::{BasicBlock, Local, StatementId, VariantIdx};
