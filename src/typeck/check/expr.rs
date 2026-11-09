@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinaryOp, Ident, Literal, Mutability, Symbol, UnaryOp};
 use crate::diagnostics::typeck::expr::{
@@ -943,7 +943,7 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Path(path) => match path.res {
                 Res::Local(Local::Param(local) | Local::Variable(local)) => self.ty_of(local),
                 Res::Local(Local::SelfParam(self_param)) => self.ty_of(self_param),
-                Res::Function(def) => self.ty_of(def.owner_id()),
+                Res::Function(def) => self.check_function_value(id, def, expected),
                 Res::Err => self.tcx.error(),
                 Res::Type(_) | Res::SelfTy(_) => unreachable!(
                     "name resolution never resolves a value-position path to a type, a \
@@ -1030,6 +1030,32 @@ impl<'hir> Typeck<'hir> {
             }
             ExprKind::Error => self.tcx.error(),
         }
+    }
+
+    /// Returns the type of the function `def` used as a value. A generic function's parameters
+    /// are instantiated with fresh inference variables, which `expected` may constrain, and the
+    /// instantiation is recorded for MIR lowering to reify the right specialization.
+    fn check_function_value(&mut self, id: HirId, def: DefId, expected: Option<Ty>) -> Ty {
+        let generics = self.declared_generics(def);
+        if generics.is_empty() {
+            return self.ty_of(def.owner_id());
+        }
+
+        let args: Vec<Ty> = generics.iter().map(|_| self.tcx.next_infer_var()).collect();
+        let subst: HashMap<HirId, Ty> =
+            generics.iter().copied().zip(args.iter().copied()).collect();
+        let declared = self.ty_of(def.owner_id());
+        let sig = self.subst_ty(declared, &subst);
+
+        if let Some(expected) = expected {
+            let _ = self.unifier.unify(&self.tcx, expected, sig);
+        }
+
+        let resolved = self.resolve_all(&args);
+        let span = self.hir.expr(id).span;
+        self.register_bound_obligations(def, &resolved, span, id.owner);
+        self.types.record_call(id, def, resolved);
+        sig
     }
 
     fn check_operator(
