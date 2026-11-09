@@ -97,12 +97,13 @@ impl<'hir> Typeck<'hir> {
 
     pub(crate) fn check_assign_op(
         &mut self,
+        id: impl Into<HirId>,
         op: BinaryOp,
         lhs: impl Into<HirId>,
         rhs: impl Into<HirId>,
         span: SrcSpan,
     ) -> Ty {
-        let (lhs, rhs) = (lhs.into(), rhs.into());
+        let (id, lhs, rhs) = (id.into(), lhs.into(), rhs.into());
         let lhs_ty = self.ty_of_as_place(lhs);
 
         if !self.is_place_expr(lhs) {
@@ -116,7 +117,7 @@ impl<'hir> Typeck<'hir> {
         }
 
         let operand = self.unifier.find_deep(&mut self.tcx, lhs_ty);
-        let produced = self.check_operator(op, operand, lhs.owner, span);
+        let produced = self.check_operator(id, lhs, op, operand, lhs.owner, span);
 
         if let Err(err) = self.unifier.unify(&self.tcx, operand, produced) {
             report_compound_assign_result_mismatch(self.display_cx(), err, span);
@@ -967,25 +968,34 @@ impl<'hir> Typeck<'hir> {
                     UnaryOp::Deref => unreachable!("handled by the arm above"),
                 };
 
-                if self.is_undefaulted_numeric_var(resolved)
-                    || self.implements_operator(item, resolved, id.owner, expr.span)
+                if !self.is_undefaulted_numeric_var(resolved)
+                    && !self.implements_operator(item, resolved, id.owner, expr.span)
                 {
-                    resolved
-                } else {
-                    self.tcx.error()
-                }
-            }
-            ExprKind::Binary { op, lhs, rhs } => {
-                let (lhs, rhs) = (self.ty_of(*lhs), self.ty_of(*rhs));
-                if let Err(error) = self.unifier.unify(&self.tcx, lhs, rhs) {
-                    report_binary_operand_mismatch(self.display_cx(), error, lhs, rhs, expr.span);
                     return self.tcx.error();
                 }
-                let resolved = self.unifier.find_deep(&mut self.tcx, lhs);
-                self.check_operator(*op, resolved, id.owner, expr.span)
+                self.record_operator_call(id, (*operand).into(), resolved, item);
+                resolved
+            }
+            ExprKind::Binary { op, lhs, rhs } => {
+                let lhs_expr = *lhs;
+                let (lhs_ty, rhs_ty) = (self.ty_of(lhs_expr), self.ty_of(*rhs));
+                if let Err(error) = self.unifier.unify(&self.tcx, lhs_ty, rhs_ty) {
+                    report_binary_operand_mismatch(
+                        self.display_cx(),
+                        error,
+                        lhs_ty,
+                        rhs_ty,
+                        expr.span,
+                    );
+                    return self.tcx.error();
+                }
+                let resolved = self.unifier.find_deep(&mut self.tcx, lhs_ty);
+                self.check_operator(id, lhs_expr.into(), *op, resolved, id.owner, expr.span)
             }
             ExprKind::Assign { lhs, rhs } => self.check_assign(*lhs, *rhs, expr.span),
-            ExprKind::AssignOp { op, lhs, rhs } => self.check_assign_op(*op, *lhs, *rhs, expr.span),
+            ExprKind::AssignOp { op, lhs, rhs } => {
+                self.check_assign_op(id, *op, *lhs, *rhs, expr.span)
+            }
             ExprKind::Borrow {
                 mutability,
                 operand,
@@ -1026,7 +1036,15 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    fn check_operator(&mut self, op: BinaryOp, operand: Ty, owner: DefId, span: SrcSpan) -> Ty {
+    fn check_operator(
+        &mut self,
+        id: HirId,
+        receiver: HirId,
+        op: BinaryOp,
+        operand: Ty,
+        owner: DefId,
+        span: SrcSpan,
+    ) -> Ty {
         let operand = self.peel_any(operand);
         let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
 
@@ -1048,13 +1066,33 @@ impl<'hir> Typeck<'hir> {
             }
         };
 
-        if self.is_undefaulted_numeric_var(operand)
-            || self.implements_operator(item, operand, owner, span)
+        if !self.is_undefaulted_numeric_var(operand)
+            && !self.implements_operator(item, operand, owner, span)
         {
-            produced
-        } else {
-            self.tcx.error()
+            return self.tcx.error();
         }
+        self.record_operator_call(id, receiver, operand, item);
+        produced
+    }
+
+    fn record_operator_call(&mut self, id: HirId, receiver: HirId, operand: Ty, item: LangItem) {
+        if matches!(
+            self.tcx.kind(operand),
+            TyKind::Primitive(_) | TyKind::Var(_) | TyKind::Error
+        ) {
+            return;
+        }
+        let Some(trait_def) = self.hir.lang_items().get(item) else {
+            return;
+        };
+        let method = operator_trait_method_name(item);
+        self.record_operator_trait_call(
+            id,
+            receiver,
+            operand,
+            trait_def,
+            self.session.intern(method),
+        );
     }
 
     fn implements_operator(
@@ -1129,6 +1167,21 @@ impl<'hir> Typeck<'hir> {
             },
             Literal::Str(_) => self.tcx.mk_prim(PrimTy::Str),
         }
+    }
+}
+
+fn operator_trait_method_name(item: LangItem) -> &'static str {
+    match item {
+        LangItem::Add => "add",
+        LangItem::Sub => "sub",
+        LangItem::Mul => "mul",
+        LangItem::Div => "div",
+        LangItem::Rem => "rem",
+        LangItem::Neg => "neg",
+        LangItem::Not => "not",
+        LangItem::Eq => "eq",
+        LangItem::Comparable => "less_than",
+        _ => unreachable!("{item:?} is not an operator trait"),
     }
 }
 

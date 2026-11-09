@@ -20,8 +20,6 @@ impl<'a> BodyLowerCtx<'a> {
         self.lower_operand_without_coercion(expr_id)
     }
 
-    /// Returns `expr_id`'s unsized coercion target, claiming it so a later visit treats the
-    /// expression as already coerced and does not unsize it twice.
     fn take_unsize_target(&mut self, expr_id: impl Into<HirId>) -> Option<Ty> {
         let expr_id = expr_id.into();
         if self.coerced.contains(&expr_id) {
@@ -138,7 +136,7 @@ impl<'a> BodyLowerCtx<'a> {
                 self.lower_assign_effect(lhs, rhs);
             }
             ExprKind::AssignOp { op, lhs, rhs } => {
-                self.lower_assign_op_effect(op, lhs, rhs, span);
+                self.lower_assign_op_effect(expr_id, op, lhs, rhs, span);
             }
             _ => {
                 let ty = self.expr_ty(expr_id);
@@ -156,6 +154,7 @@ impl<'a> BodyLowerCtx<'a> {
 
     fn lower_assign_op_effect(
         &mut self,
+        expr_id: HirId,
         op: BinaryOp,
         lhs: impl Into<HirId>,
         rhs: impl Into<HirId>,
@@ -164,22 +163,24 @@ impl<'a> BodyLowerCtx<'a> {
         let (lhs, rhs) = (lhs.into(), rhs.into());
         let place = self.lower_place(lhs);
         let lhs_ty = self.expr_ty(lhs);
-        let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
-        let rhs_operand = self.lower_operand(rhs);
         let result_local = self.new_temp(lhs_ty, span);
-        self.lower_binary_op_into(
-            op,
-            lhs_operand,
-            rhs_operand,
-            Place::from_local(result_local),
-            lhs_ty,
-            span,
-        );
-        self.assign(
-            place,
-            Rvalue::Use(Operand::Move(Place::from_local(result_local))),
-            span,
-        );
+        let result = Place::from_local(result_local);
+
+        if self.types.call(expr_id).is_some() {
+            self.lower_operator_call_into(
+                expr_id,
+                lhs.into(),
+                vec![rhs.into()],
+                result.clone(),
+                span,
+            );
+        } else {
+            let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
+            let rhs_operand = self.lower_operand(rhs);
+            self.lower_binary_op_into(op, lhs_operand, rhs_operand, result.clone(), lhs_ty, span);
+        }
+
+        self.assign(place, Rvalue::Use(Operand::Move(result)), span);
     }
 
     pub(crate) fn lower_expr_into(&mut self, expr_id: impl Into<HirId>, dest: Place) {
@@ -202,10 +203,12 @@ impl<'a> BodyLowerCtx<'a> {
             ExprKind::Unary { op, operand } => {
                 self.lower_unary_into(expr_id, op, operand, dest, span)
             }
-            ExprKind::Binary { op, lhs, rhs } => self.lower_binary_into(op, lhs, rhs, dest, span),
+            ExprKind::Binary { op, lhs, rhs } => {
+                self.lower_binary_into(expr_id, op, lhs, rhs, dest, span)
+            }
             ExprKind::Assign { lhs, rhs } => self.lower_assign_into(lhs, rhs, dest, span),
             ExprKind::AssignOp { op, lhs, rhs } => {
-                self.lower_assign_op_into(op, lhs, rhs, dest, span)
+                self.lower_assign_op_into(expr_id, op, lhs, rhs, dest, span)
             }
             ExprKind::Borrow {
                 mutability,
@@ -298,6 +301,11 @@ impl<'a> BodyLowerCtx<'a> {
             return;
         }
 
+        if self.types.call(expr_id).is_some() {
+            self.lower_operator_call_into(expr_id, operand, Vec::new(), dest, span);
+            return;
+        }
+
         let operand_ty = self.expr_ty(operand);
         let int_operand = matches!(
             self.tcx.kind(operand_ty),
@@ -329,6 +337,7 @@ impl<'a> BodyLowerCtx<'a> {
 
     fn lower_assign_op_into(
         &mut self,
+        expr_id: HirId,
         op: BinaryOp,
         lhs: ExprId,
         rhs: ExprId,
@@ -337,22 +346,24 @@ impl<'a> BodyLowerCtx<'a> {
     ) {
         let place = self.lower_place(lhs);
         let lhs_ty = self.expr_ty(lhs);
-        let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
-        let rhs_operand = self.lower_operand(rhs);
         let result_local = self.new_temp(lhs_ty, span);
-        self.lower_binary_op_into(
-            op,
-            lhs_operand,
-            rhs_operand,
-            Place::from_local(result_local),
-            lhs_ty,
-            span,
-        );
-        self.assign(
-            place,
-            Rvalue::Use(Operand::Move(Place::from_local(result_local))),
-            span,
-        );
+        let result = Place::from_local(result_local);
+
+        if self.types.call(expr_id).is_some() {
+            self.lower_operator_call_into(
+                expr_id,
+                lhs.into(),
+                vec![rhs.into()],
+                result.clone(),
+                span,
+            );
+        } else {
+            let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
+            let rhs_operand = self.lower_operand(rhs);
+            self.lower_binary_op_into(op, lhs_operand, rhs_operand, result.clone(), lhs_ty, span);
+        }
+
+        self.assign(place, Rvalue::Use(Operand::Move(result)), span);
         self.assign_unit(dest, span);
     }
 
@@ -668,6 +679,7 @@ impl<'a> BodyLowerCtx<'a> {
 
     fn lower_binary_into(
         &mut self,
+        expr_id: HirId,
         op: BinaryOp,
         lhs: impl Into<HirId>,
         rhs: impl Into<HirId>,
@@ -679,10 +691,56 @@ impl<'a> BodyLowerCtx<'a> {
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
             return self.lower_short_circuit_into(op, lhs, rhs, dest, span);
         }
+        if self.types.call(expr_id).is_some() {
+            return self.lower_trait_binary_into(expr_id, op, lhs, rhs, dest, span);
+        }
         let lhs_ty = self.expr_ty(lhs);
         let lhs_operand = self.lower_operand(lhs);
         let rhs_operand = self.lower_operand(rhs);
         self.lower_binary_op_into(op, lhs_operand, rhs_operand, dest, lhs_ty, span);
+    }
+
+    fn lower_trait_binary_into(
+        &mut self,
+        expr_id: HirId,
+        op: BinaryOp,
+        lhs: HirId,
+        rhs: HirId,
+        dest: Place,
+        span: SrcSpan,
+    ) {
+        let (receiver, argument) = match op {
+            BinaryOp::Le | BinaryOp::Gt => (rhs, lhs),
+            _ => (lhs, rhs),
+        };
+        let negate = matches!(op, BinaryOp::Ne | BinaryOp::Le | BinaryOp::Ge);
+
+        if !negate {
+            self.lower_operator_call_into(
+                expr_id,
+                receiver.into(),
+                vec![argument.into()],
+                dest,
+                span,
+            );
+            return;
+        }
+
+        let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
+        let result_local = self.new_temp(bool_ty, span);
+        let result = Place::from_local(result_local);
+        self.lower_operator_call_into(
+            expr_id,
+            receiver.into(),
+            vec![argument.into()],
+            result.clone(),
+            span,
+        );
+        self.assign(
+            dest,
+            Rvalue::UnaryOp(UnaryOp::Not, Operand::Move(result)),
+            span,
+        );
     }
 
     fn lower_short_circuit_into(
