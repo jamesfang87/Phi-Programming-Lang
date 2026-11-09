@@ -875,11 +875,22 @@ impl<'hir> Typeck<'hir> {
             report_closure_body_mismatch(self.display_cx(), err, closure.span);
         }
 
-        let ret = self.unifier.find_deep(&mut self.tcx, ret_var);
-        let ret = (ret != self.tcx.unit()).then_some(ret);
+        let ret = self.closure_return_ty(ret_var, body);
         let sig = self.tcx.mk_fun(param_tys, ret);
         self.types.record_def(def, sig);
         sig
+    }
+
+    fn closure_return_ty(&mut self, ret_var: Ty, body: Ty) -> Option<Ty> {
+        let ret = self.unifier.find_deep(&mut self.tcx, ret_var);
+        let ret = if matches!(self.tcx.kind(ret), TyKind::Var(_))
+            && matches!(self.tcx.kind(body), TyKind::Never)
+        {
+            self.tcx.unit()
+        } else {
+            ret
+        };
+        (ret != self.tcx.unit()).then_some(ret)
     }
 
     fn closure_hint(
