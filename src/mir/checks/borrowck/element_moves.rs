@@ -1,20 +1,27 @@
+use crate::diagnostics::display::DisplayCtx;
 use crate::diagnostics::mir::definite_init::report_move_out_of_array;
+use crate::diagnostics::typeck::expr::report_owned_element_in_new_array;
 use crate::driver::source::SrcSpan;
-use crate::mir::{Body, Operand, StatementKind, lower::Mir, place_ty};
+use crate::hir::Hir;
+use crate::mir::{Body, Operand, Rvalue, StatementKind, lower::Mir, place_ty};
 use crate::mir::{Place, Projection};
 use crate::session::Session;
+use crate::typeck::ty::Ty;
 use crate::typeck::ty::ctx::TyCtx;
 
-pub fn check(session: &Session, tcx: &mut TyCtx, mir: &Mir) {
+pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
     for body in mir.bodies.values() {
-        check_body(session, tcx, body);
+        check_body(session, hir, tcx, body);
     }
 }
 
-fn check_body(session: &Session, tcx: &mut TyCtx, body: &Body) {
+fn check_body(session: &Session, hir: &Hir, tcx: &mut TyCtx, body: &Body) {
     for block in &body.basic_blocks {
         for statement in &block.statements {
             if let StatementKind::Assign(_, rvalue) = &statement.kind {
+                if let Rvalue::NewArray { elem, .. } = rvalue {
+                    check_new_array_repeat(session, hir, tcx, body, elem, statement.span);
+                }
                 for operand in rvalue.operands() {
                     check_operand(session, tcx, body, operand, statement.span);
                 }
@@ -23,6 +30,27 @@ fn check_body(session: &Session, tcx: &mut TyCtx, body: &Body) {
         for operand in block.terminator.kind.operands() {
             check_operand(session, tcx, body, operand, block.terminator.span);
         }
+    }
+}
+
+fn check_new_array_repeat(
+    session: &Session,
+    hir: &Hir,
+    tcx: &mut TyCtx,
+    body: &Body,
+    elem: &Operand,
+    span: SrcSpan,
+) {
+    let elem_ty = operand_ty(tcx, body, elem);
+    if tcx.needs_drop(elem_ty) {
+        report_owned_element_in_new_array(DisplayCtx::new(session, hir, tcx), elem_ty, span);
+    }
+}
+
+fn operand_ty(tcx: &mut TyCtx, body: &Body, operand: &Operand) -> Ty {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place) => place_ty(tcx, &body.local_decls, place),
+        Operand::Constant(constant) => constant.ty,
     }
 }
 
@@ -100,5 +128,27 @@ mod tests {
              fun f(a: iso [Owner], i: usize) { take((*a)[i]); }",
             "cannot move a value out of `a`, which is an array",
         );
+    }
+
+    #[test]
+    fn repeating_an_owning_element_is_rejected() {
+        rejects(
+            "fun f(n: usize) { let y = new [new 1; n]; }",
+            "cannot repeat an owning element",
+        );
+    }
+
+    #[test]
+    fn repeating_an_element_with_an_owning_field_is_rejected() {
+        rejects(
+            "struct Handle { owned: iso i32 }
+             fun f(n: usize) { let y = new [Handle { owned: new 1 }; n]; }",
+            "cannot repeat an owning element",
+        );
+    }
+
+    #[test]
+    fn repeating_a_plain_element_is_allowed() {
+        accepts("fun f(n: usize) { let y = new [0_u8; n]; }");
     }
 }

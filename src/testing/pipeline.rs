@@ -180,8 +180,8 @@ pub fn mir_captures_src(src: &str) -> Vec<String> {
 }
 
 pub fn mir_element_moves_src(src: &str) -> Vec<String> {
-    mir_check_src(src, |session, _hir, tcx, program| {
-        crate::mir::checks::borrowck::element_moves::check(session, tcx, program)
+    mir_check_src(src, |session, hir, tcx, program| {
+        crate::mir::checks::borrowck::element_moves::check(session, hir, tcx, program)
     })
 }
 
