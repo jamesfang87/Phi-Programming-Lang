@@ -47,24 +47,34 @@ impl Expr {
 
 impl Literal {
     pub fn int(session: &Session, tok: Token) -> Literal {
-        let text = tok.text(session);
-        let (value, suffix) = literal::split_suffix(&text);
-        let value = literal::strip_digit_separators(value);
-
+        let (value, suffix) = numeric_literal_parts(session, tok);
         Literal::Int {
             value: session.intern(&value),
-            suffix: suffix.map(|s| session.intern(s)),
+            suffix,
+        }
+    }
+
+    pub fn negated_int(session: &Session, tok: Token) -> Literal {
+        let (value, suffix) = numeric_literal_parts(session, tok);
+        Literal::Int {
+            value: session.intern(&format!("-{value}")),
+            suffix,
         }
     }
 
     pub fn float(session: &Session, tok: Token) -> Literal {
-        let text = tok.text(session);
-        let (value, suffix) = literal::split_suffix(&text);
-        let value = literal::strip_digit_separators(value);
-
+        let (value, suffix) = numeric_literal_parts(session, tok);
         Literal::Float {
             value: session.intern(&value),
-            suffix: suffix.map(|s| session.intern(s)),
+            suffix,
+        }
+    }
+
+    pub fn negated_float(session: &Session, tok: Token) -> Literal {
+        let (value, suffix) = numeric_literal_parts(session, tok);
+        Literal::Float {
+            value: session.intern(&format!("-{value}")),
+            suffix,
         }
     }
 
@@ -81,6 +91,13 @@ impl Literal {
             .unwrap_or('\0');
         Literal::Char(ch)
     }
+}
+
+fn numeric_literal_parts(session: &Session, tok: Token) -> (String, Option<Symbol>) {
+    let text = tok.text(session);
+    let (value, suffix) = literal::split_suffix(&text);
+    let value = literal::strip_digit_separators(value);
+    (value, suffix.map(|suffix| session.intern(suffix)))
 }
 
 fn quoted_inner(text: &str, quote: char) -> Vec<char> {

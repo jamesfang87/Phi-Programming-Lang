@@ -1,7 +1,7 @@
 use chumsky::Parser as ChumskyParser;
 use chumsky::prelude::*;
 
-use crate::ast::{Ident, NodeId, Pat, PatKind, Payload, PayloadField};
+use crate::ast::{Ident, Literal, NodeId, Pat, PatKind, Payload, PayloadField};
 
 use crate::lexer::token::{Token, TokenKind};
 
@@ -18,10 +18,21 @@ impl<'s> Parser<'s> {
                     .map(|t: Token| Pat::new(PatKind::Wildcard, t.span))
                     .boxed();
 
-                let literal = self
-                    .literal_parser()
-                    .map(|(lit, span)| Pat::new(PatKind::Literal(lit), span))
-                    .boxed();
+                let literal = choice((
+                    self.kind(TokenKind::Minus)
+                        .then(choice((
+                            self.kind(TokenKind::IntLiteral).map(|token: Token| {
+                                (Literal::negated_int(self.session, token), token.span)
+                            }),
+                            self.kind(TokenKind::FloatLiteral).map(|token: Token| {
+                                (Literal::negated_float(self.session, token), token.span)
+                            }),
+                        )))
+                        .map(|(minus, (literal, span))| (literal, minus.span.merge(span))),
+                    self.literal_parser(),
+                ))
+                .map(|(lit, span)| Pat::new(PatKind::Literal(lit), span))
+                .boxed();
 
                 let single_element_tuple = self
                     .kind(TokenKind::OpenParen)
@@ -191,6 +202,25 @@ mod tests {
     fn parses_float_literal_pattern() {
         let pat = parse_pattern("1.618");
         assert!(matches!(pat.kind, PatKind::Literal(Literal::Float { .. })));
+    }
+
+    #[test]
+    fn parses_negative_number_patterns() {
+        let integer = parse_pattern("-1");
+        match &integer.kind {
+            PatKind::Literal(Literal::Int { value, .. }) => {
+                assert_eq!(crate::testing::resolve(*value), "-1");
+            }
+            other => panic!("expected a negative integer literal pattern, got {other:?}"),
+        }
+
+        let float = parse_pattern("-3.5");
+        match &float.kind {
+            PatKind::Literal(Literal::Float { value, .. }) => {
+                assert_eq!(crate::testing::resolve(*value), "-3.5");
+            }
+            other => panic!("expected a negative float literal pattern, got {other:?}"),
+        }
     }
 
     #[test]
