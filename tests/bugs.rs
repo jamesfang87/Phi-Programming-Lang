@@ -534,70 +534,117 @@ fn returning_a_call_result_that_projects_a_local_argument_is_rejected() {
 }
 
 #[test]
-fn extend_tuple_with_any_is_rejected() {
+fn operator_add_and_eq_on_struct() {
     let dir = project(
-        "extend_tuple_any",
+        "operator_add_and_eq",
         r#"module app;
 
-extend (any i32, i32) { fun noop(&self) {} }
+import core::ops::Add;
+import core::ops::Eq;
 
-fun main() {}
+struct Vec2 { public x: i32, public y: i32 }
+
+extend Vec2 with Add {
+    fun add(&self, other: &Self) -> Self {
+        return Vec2 { x: self.x + other.x, y: self.y + other.y };
+    }
+}
+
+extend Vec2 with Eq {
+    fun eq(&self, other: &Self) -> bool {
+        return self.x == other.x && self.y == other.y;
+    }
+}
+
+fun main() {
+    let a = Vec2 { x: 1, y: 2 };
+    let b = Vec2 { x: 3, y: 4 };
+    let c = a + b;
+    let expected = Vec2 { x: 4, y: 6 };
+    if c == expected { println("ok"); }
+}
 "#,
     );
-    let output = run(&dir, &["check"]);
-    assert_no_compiler_panic(&output, "any inside an extend header tuple");
-    assert_ne!(code(&output), 0, "the extend header must be rejected");
-    assert!(
-        stderr(&output).contains("`any`"),
-        "expected an `any` diagnostic, got: {}",
-        stderr(&output)
-    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output), "ok\n");
 }
 
 #[test]
-fn extend_array_with_dyn_is_rejected() {
+fn operator_unary_neg_on_struct() {
     let dir = project(
-        "extend_array_dyn",
+        "operator_unary_neg",
         r#"module app;
 
-trait Show { fun show(&self); }
+import core::ops::Neg;
 
-extend [dyn Show; 2] { fun noop(&self) {} }
+struct N { public v: i32 }
 
-fun main() {}
+extend N with Neg {
+    fun neg(&self) -> Self { return N { v: 0 - self.v }; }
+}
+
+fun main() {
+    let a = N { v: 5 };
+    let b = -a;
+    if b.v == 0 - 5 { println("ok"); }
+}
 "#,
     );
-    let output = run(&dir, &["check"]);
-    assert_no_compiler_panic(&output, "bare dyn inside an extend header array");
-    assert_ne!(code(&output), 0, "the extend header must be rejected");
-    assert!(
-        stderr(&output).contains("`dyn`"),
-        "expected a `dyn` diagnostic, got: {}",
-        stderr(&output)
-    );
+    let output = run(&dir, &["run"]);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output), "ok\n");
 }
 
 #[test]
-fn extend_trait_argument_any_is_rejected() {
+fn operator_compound_assign_on_struct() {
     let dir = project(
-        "extend_trait_argument_any",
+        "operator_compound_assign",
         r#"module app;
 
-trait Consumer<T> { fun consume(&self); }
+import core::ops::Add;
 
-struct Foo {}
+struct N { public v: i32 }
 
-extend Foo with Consumer<any i32> { fun consume(&self) {} }
+extend N with Add {
+    fun add(&self, other: &Self) -> Self { return N { v: self.v + other.v }; }
+}
 
-fun main() {}
+fun main() {
+    let mut a = N { v: 1 };
+    let b = N { v: 2 };
+    a += b;
+    if a.v == 3 { println("ok"); }
+}
 "#,
     );
-    let output = run(&dir, &["check"]);
-    assert_no_compiler_panic(&output, "any as an extend with-clause trait argument");
-    assert_ne!(code(&output), 0, "the trait argument must be rejected");
-    assert!(
-        stderr(&output).contains("`any`"),
-        "expected an `any` diagnostic, got: {}",
-        stderr(&output)
+    let output = run(&dir, &["run"]);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output), "ok\n");
+}
+
+#[test]
+fn operator_comparison_on_struct() {
+    let dir = project(
+        "operator_comparison",
+        r#"module app;
+
+import core::ops::Comparable;
+
+struct N { public v: i32 }
+
+extend N with Comparable {
+    fun less_than(&self, other: &Self) -> bool { return self.v < other.v; }
+}
+
+fun main() {
+    let a = N { v: 1 };
+    let b = N { v: 2 };
+    if a < b { println("ok"); }
+}
+"#,
     );
+    let output = run(&dir, &["run"]);
+    assert_eq!(code(&output), 0, "stderr: {}", stderr(&output));
+    assert_eq!(stdout(&output), "ok\n");
 }

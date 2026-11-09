@@ -476,6 +476,34 @@ impl<'hir> Typeck<'hir> {
         (ret.unwrap_or_else(|| self.tcx.unit()), resolved)
     }
 
+    pub(crate) fn record_operator_trait_call(
+        &mut self,
+        id: HirId,
+        receiver: HirId,
+        operand: Ty,
+        trait_def: DefId,
+        member: Symbol,
+    ) {
+        let candidates = self.method_candidates(operand, member, receiver.owner);
+        let Some(chosen) = candidates.into_iter().find(
+            |candidate| matches!(candidate.source, CandidateSource::Trait(def) if def == trait_def),
+        ) else {
+            return;
+        };
+
+        let (_, _, fresh) = self.instantiate_method(chosen.method, &chosen.subst, chosen.self_ty);
+        let resolved = ResolvedMethodCall {
+            method: chosen.method,
+            generics: self.resolve_all(&fresh),
+            extend: chosen
+                .extend_block_origin
+                .as_ref()
+                .map(|(block, args)| (*block, self.resolve_all(args))),
+            self_ty: chosen.self_ty,
+        };
+        self.record_resolved_method(id, receiver, resolved);
+    }
+
     /// Records a resolved method call and the bounds it raises. An `extend` block's own bounds
     /// condition the methods it offers: `extend<T: Show> Wrap<T>` only gives its methods to a
     /// `Wrap<T>` whose `T` implements `Show`.
