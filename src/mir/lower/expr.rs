@@ -350,13 +350,7 @@ impl<'a> BodyLowerCtx<'a> {
         let result = Place::from_local(result_local);
 
         if self.types.call(expr_id).is_some() {
-            self.lower_operator_call_into(
-                expr_id,
-                lhs.into(),
-                vec![rhs.into()],
-                result.clone(),
-                span,
-            );
+            self.lower_operator_call_into(expr_id, lhs, vec![rhs], result.clone(), span);
         } else {
             let lhs_operand = self.operand_for_place(place.clone(), lhs_ty);
             let rhs_operand = self.lower_operand(rhs);
