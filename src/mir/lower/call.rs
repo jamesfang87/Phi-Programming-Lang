@@ -212,8 +212,13 @@ impl<'a> BodyLowerCtx<'a> {
     fn find_dyn_receiver_ty(&mut self, receiver_expr: impl Into<HirId>) -> Option<Ty> {
         let receiver_expr = receiver_expr.into();
         let receiver_ty = self.expr_ty(receiver_expr);
-        let (peeled, _) = self.peel_refs(receiver_ty);
-        let (peeled, _) = self.peel_any(peeled);
+        let mut peeled = receiver_ty;
+        loop {
+            peeled = match *self.tcx.kind(peeled) {
+                TyKind::Ref { base, .. } | TyKind::Any(base) | TyKind::Iso(base) => base,
+                _ => break,
+            };
+        }
         match self.tcx.kind(peeled).clone() {
             TyKind::Dyn { .. } => Some(peeled),
             _ => None,

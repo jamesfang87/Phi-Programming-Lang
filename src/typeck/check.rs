@@ -272,24 +272,27 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn dyn_coercion(&mut self, expected: Ty, found: Ty) -> Option<(DefId, Vec<Ty>, Ty)> {
-        let TyKind::Ref {
-            base: expected_base,
-            mutability: expected_mut,
-        } = self.tcx.kind(expected).clone()
-        else {
-            return None;
+        let (expected_base, found_base) = match (
+            self.tcx.kind(expected).clone(),
+            self.tcx.kind(found).clone(),
+        ) {
+            (
+                TyKind::Ref {
+                    base: expected_base,
+                    mutability: expected_mut,
+                },
+                TyKind::Ref {
+                    base: found_base,
+                    mutability: found_mut,
+                },
+            ) if expected_mut == found_mut => (expected_base, found_base),
+            (TyKind::Iso(expected_base), TyKind::Iso(found_base)) => (expected_base, found_base),
+            _ => return None,
         };
         let TyKind::Dyn { trait_, args } = self.tcx.kind(expected_base).clone() else {
             return None;
         };
-        let TyKind::Ref {
-            base: found_base,
-            mutability: found_mut,
-        } = self.tcx.kind(found).clone()
-        else {
-            return None;
-        };
-        if expected_mut != found_mut || self.mentions_infer_var(found_base) {
+        if self.mentions_infer_var(found_base) {
             return None;
         }
         Some((trait_, args, found_base))

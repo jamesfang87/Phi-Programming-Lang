@@ -297,7 +297,7 @@ fn lower_rvalue<'ctx>(
         Rvalue::Unsize { operand, trait_ } => {
             let val = lower_operand(cx, tcx, mir, locals, local_decls, operand);
             let concrete = operand_ty(tcx, local_decls, operand);
-            let (concrete, _) = peel_refs(tcx, concrete);
+            let (concrete, _) = peel_indirections(tcx, concrete);
             super::vtable::unsize(cx, tcx, mir, val.into_pointer_value(), concrete, *trait_)
         }
         Rvalue::Discriminant(place_) => {
@@ -423,14 +423,16 @@ fn lower_fat_place_addr<'ctx>(
     }
 }
 
-fn peel_refs(tcx: &mut TyCtx, ty: Ty) -> (Ty, u32) {
+fn peel_indirections(tcx: &mut TyCtx, ty: Ty) -> (Ty, u32) {
     let mut current = ty;
     let mut count = 0;
-    while let TyKind::Ref { base, .. } = tcx.kind(current).clone() {
-        current = base;
+    loop {
+        current = match tcx.kind(current).clone() {
+            TyKind::Ref { base, .. } | TyKind::Iso(base) => base,
+            _ => return (current, count),
+        };
         count += 1;
     }
-    (current, count)
 }
 
 fn dyn_method_fn_type<'ctx>(

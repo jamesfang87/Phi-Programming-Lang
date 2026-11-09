@@ -72,6 +72,8 @@ pub(crate) enum Layer {
     Ref(Mutability),
     /// The `any T` indirection.
     Any,
+    /// The `iso T` indirection.
+    Iso,
 }
 
 /// What checking a chosen method call resolved to: the method, the types its generic parameters
@@ -733,7 +735,7 @@ impl<'hir> Typeck<'hir> {
     // Receivers
     // -----------------------------------------------------------------
 
-    /// Strips the `&`, `&mut`, and `any` layers off a receiver
+    /// Strips the `&`, `&mut`, `any`, and `iso dyn` layers off a receiver
     pub(crate) fn peel_receiver(&self, ty: Ty) -> (Ty, Vec<Layer>) {
         let mut layers = Vec::new();
         let mut current = ty;
@@ -745,6 +747,10 @@ impl<'hir> Typeck<'hir> {
                 }
                 TyKind::Any(base) => {
                     layers.push(Layer::Any);
+                    current = base;
+                }
+                TyKind::Iso(base) if matches!(self.tcx.kind(base), TyKind::Dyn { .. }) => {
+                    layers.push(Layer::Iso);
                     current = base;
                 }
                 _ => return (current, layers),

@@ -33,14 +33,17 @@ impl<'a> BodyLowerCtx<'a> {
     fn lower_coerced_operand(&mut self, expr_id: impl Into<HirId>, target: Ty) -> Operand {
         let expr_id = expr_id.into();
         let span = self.hir.expr(expr_id).span;
-        let TyKind::Ref { base, .. } = self.tcx.kind(target).clone() else {
-            unreachable!(
-                "mir::lower: a recorded unsize target is always a reference to a `dyn` type"
-            );
+        let base = match self.tcx.kind(target).clone() {
+            TyKind::Ref { base, .. } | TyKind::Iso(base) => base,
+            other => unreachable!(
+                "mir::lower: a recorded unsize target is always a reference or `iso` to a `dyn` \
+                 type, found {other:?}"
+            ),
         };
         let TyKind::Dyn { trait_, .. } = self.tcx.kind(base).clone() else {
             unreachable!(
-                "mir::lower: a recorded unsize target is always a reference to a `dyn` type"
+                "mir::lower: a recorded unsize target is always a reference or `iso` to a `dyn` \
+                 type"
             );
         };
         let inner = self.lower_operand_without_coercion(expr_id);
