@@ -6,9 +6,9 @@ use crate::typeck::ty::ctx::TyCtx;
 
 pub(crate) mod captures;
 pub(crate) mod definite_init;
-pub(crate) mod element_moves;
 pub(crate) mod exclusivity;
 pub(crate) mod lifetimes;
+pub(crate) mod place_moves;
 pub(crate) mod returned_reference;
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
@@ -47,6 +47,6 @@ pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
     let computed = lifetimes::compute_lifetimes_map(mir);
     exclusivity::check_with_lifetimes(session, mir, &computed);
     returned_reference::check(session, tcx, mir, &computed);
-    element_moves::check(session, hir, tcx, mir);
+    place_moves::check(session, hir, tcx, mir);
     captures::check(session, hir, tcx, mir);
 }
