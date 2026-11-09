@@ -4,10 +4,11 @@ use crate::diagnostics::mir::definite_init::report_use_of_moved_value;
 use crate::driver::source::SrcSpan;
 use crate::mir::checks::borrowck::{Register, to_register};
 use crate::mir::{
-    BasicBlock, Body, Operand, Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
-    checks::lattice, lower::Mir,
+    AggregateKind, BasicBlock, Body, CastKind, ConstKind, Operand, Place, Rvalue, Statement,
+    StatementKind, Terminator, TerminatorKind, checks::lattice, lower::Mir,
 };
 use crate::session::Session;
+use crate::typeck::ty::TyKind;
 use crate::typeck::ty::ctx::TyCtx;
 
 type DeadRegisters = HashSet<Register>;
@@ -30,13 +31,66 @@ fn meet(predecessor_states: &[&DeadRegisters]) -> DeadRegisters {
 }
 
 fn check_body(session: &Session, tcx: &TyCtx, body: &Body) {
-    let movable: Vec<bool> = body
-        .local_decls
-        .iter()
-        .map(|decl| decl.name.is_some() && !tcx.is_copy(decl.ty))
-        .collect();
+    let movable = movable_locals(tcx, body);
     let dead_states = solve_fixed_point(body, &movable);
     report_body(session, body, &movable, &dead_states);
+}
+
+fn movable_locals(tcx: &TyCtx, body: &Body) -> Vec<bool> {
+    let environment_free = environment_free_fun_locals(tcx, body);
+    body.local_decls
+        .iter()
+        .enumerate()
+        .map(|(index, decl)| {
+            decl.name.is_some() && !tcx.is_copy(decl.ty) && !environment_free[index]
+        })
+        .collect()
+}
+
+fn environment_free_fun_locals(tcx: &TyCtx, body: &Body) -> Vec<bool> {
+    let mut environment_free = vec![false; body.local_decls.len()];
+    loop {
+        let mut assigned: Vec<Option<bool>> = vec![None; body.local_decls.len()];
+        for block in &body.basic_blocks {
+            for statement in &block.statements {
+                let StatementKind::Assign(place, rvalue) = &statement.kind else {
+                    continue;
+                };
+                if !place.projections.is_empty() {
+                    continue;
+                }
+                let index = place.local.index();
+                if !matches!(tcx.kind(body.local_decls[index].ty), TyKind::Fun { .. }) {
+                    continue;
+                }
+                let free = assignment_is_environment_free(rvalue, &environment_free);
+                assigned[index] = Some(assigned[index].unwrap_or(true) && free);
+            }
+        }
+        let next: Vec<bool> = assigned.iter().map(|&free| free == Some(true)).collect();
+        if next == environment_free {
+            break;
+        }
+        environment_free = next;
+    }
+    environment_free
+}
+
+fn assignment_is_environment_free(rvalue: &Rvalue, environment_free: &[bool]) -> bool {
+    match rvalue {
+        Rvalue::Cast {
+            kind: CastKind::ReifyFunPointer,
+            ..
+        } => true,
+        Rvalue::Aggregate(kind, captures) => {
+            matches!(kind.as_ref(), AggregateKind::Closure { .. }) && captures.is_empty()
+        }
+        Rvalue::Use(Operand::Copy(place) | Operand::Move(place)) => {
+            place.projections.is_empty() && environment_free[place.local.index()]
+        }
+        Rvalue::Use(Operand::Constant(constant)) => matches!(constant.kind, ConstKind::FunDef(_)),
+        _ => false,
+    }
 }
 
 fn solve_fixed_point(body: &Body, movable: &Movable) -> Lattice {
@@ -323,6 +377,47 @@ mod tests {
     #[test]
     fn a_let_bound_to_a_diverging_call_is_never_flagged_on_the_unreachable_fallthrough() {
         accepts("fun f() -> i32 { let x = panic(); return x; }");
+    }
+
+    #[test]
+    fn a_function_pointer_can_be_bound_to_several_locals() {
+        accepts(
+            "fun one() -> i32 { return 1; }
+             fun f() {
+                 let value: fun() -> i32 = one;
+                 let first = value;
+                 let second = value;
+                 let _ = first();
+                 let _ = second();
+             }",
+        );
+    }
+
+    #[test]
+    fn a_non_capturing_closure_can_be_bound_to_several_locals() {
+        accepts(
+            "fun f() {
+                 let value = || 1;
+                 let first = value;
+                 let second = value;
+                 let _ = first();
+                 let _ = second();
+             }",
+        );
+    }
+
+    #[test]
+    fn a_capturing_closure_cannot_be_bound_to_several_locals() {
+        rejects(
+            "fun f() {
+                 let n = new 1;
+                 let value = || *n;
+                 let first = value;
+                 let _ = first();
+                 let _ = value();
+             }",
+            "use of moved value `value`",
+        );
     }
 
     #[test]
