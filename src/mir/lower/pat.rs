@@ -114,10 +114,12 @@ impl<'a> BodyLowerCtx<'a> {
 
         self.test_pat(pat, scrutinee_place.clone(), next);
         self.push_block_scope();
-        self.bind_pat(pat, scrutinee_place);
 
         if let Some(guard_id) = guard {
-            self.lower_match_guard(guard_id, next);
+            self.bind_pat(pat, scrutinee_place.clone());
+            self.lower_match_guard(guard_id, next, pat, scrutinee_place);
+        } else {
+            self.bind_pat(pat, scrutinee_place);
         }
 
         self.lower_block(body, Some(dest));
@@ -127,7 +129,13 @@ impl<'a> BodyLowerCtx<'a> {
     }
 
     /// Lowers an arm guard, jumping to `next` when it evaluates false.
-    fn lower_match_guard(&mut self, guard_id: ExprId, next: BasicBlock) {
+    fn lower_match_guard(
+        &mut self,
+        guard_id: ExprId,
+        next: BasicBlock,
+        pat: PatId,
+        scrutinee_place: Place,
+    ) {
         let guard_span = self.hir.expr(guard_id).span;
         let cond = self.lower_operand(guard_id);
         let guard_ok = self.new_block();
@@ -144,11 +152,84 @@ impl<'a> BodyLowerCtx<'a> {
         );
 
         self.switch_to(guard_fail);
+        self.restore_pat_bindings(pat, scrutinee_place, guard_span);
         let peeked = self.peek_block_scope();
         self.replay_obligations(&peeked);
         self.set_terminator(TerminatorKind::Goto { target: next }, guard_span);
 
         self.switch_to(guard_ok);
+    }
+
+    fn restore_pat_bindings(&mut self, pat_id: impl Into<HirId>, place: Place, span: SrcSpan) {
+        let pat_id = pat_id.into();
+        let pat = self.hir.pat(pat_id);
+        let mode = self.types.pat_adjust(pat_id).mode;
+        let place = self.place_with_pat_adjust(pat_id, place);
+        match &pat.kind {
+            PatKind::Wildcard | PatKind::Literal(_) => {}
+            PatKind::Binding { .. } => self.restore_binding_pat(pat_id, mode, place, span),
+            PatKind::Variant { variant, payload } => {
+                let ty = self.pat_ty(pat_id);
+                let (_, variant_idx) = self.variant_idx_for(ty, variant.text);
+                let mut payload_place = place;
+                payload_place
+                    .projections
+                    .push(Projection::Downcast(variant_idx));
+                self.restore_payload_bindings(ty, variant_idx, payload, payload_place, span);
+            }
+            PatKind::Tuple(elems) => {
+                for (index, &elem) in elems.iter().enumerate() {
+                    let mut elem_place = place.clone();
+                    elem_place.projections.push(Projection::Field(index as u32));
+                    self.restore_pat_bindings(elem, elem_place, span);
+                }
+            }
+            PatKind::Error => unreachable!("a fully type-checked body contains no PatKind::Error"),
+        }
+    }
+
+    fn restore_binding_pat(
+        &mut self,
+        pat_id: HirId,
+        mode: BindingMode,
+        place: Place,
+        span: SrcSpan,
+    ) {
+        if mode != BindingMode::Value {
+            return;
+        }
+        let ty = self.pat_ty(pat_id);
+        if self.tcx.is_copy(ty) {
+            return;
+        }
+        let local = self.place_for(pat_id);
+        self.assign(place, Rvalue::Use(Operand::Move(local)), span);
+    }
+
+    fn restore_payload_bindings(
+        &mut self,
+        enum_ty: Ty,
+        variant_idx: VariantIdx,
+        payload: &Payload,
+        base: Place,
+        span: SrcSpan,
+    ) {
+        match payload {
+            Payload::None => {}
+            Payload::Single(pat_id) => {
+                let mut field_place = base;
+                field_place.projections.push(Projection::Field(0));
+                self.restore_pat_bindings(*pat_id, field_place, span);
+            }
+            Payload::Record(fields) => {
+                for field in fields {
+                    let index = self.find_record_field_index(enum_ty, variant_idx, field.name.text);
+                    let mut field_place = base.clone();
+                    field_place.projections.push(Projection::Field(index));
+                    self.restore_pat_bindings(field.value, field_place, span);
+                }
+            }
+        }
     }
 
     pub(crate) fn test_pat(&mut self, pat_id: impl Into<HirId>, place: Place, fail: BasicBlock) {
