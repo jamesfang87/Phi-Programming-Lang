@@ -137,7 +137,7 @@ impl<'hir> Visitor<'hir> for MutationScan<'hir, '_> {
                 ..
             } => {
                 let base = *base;
-                if self.takes_mut_self(id) {
+                if takes_mut_self(self.types, self.tcx, id) {
                     self.check_root(base, span);
                 }
             }
@@ -167,6 +167,10 @@ impl MutationScan<'_, '_> {
                 ..
             }
             | ExprKind::Index { base, .. } => self.check_root(*base, span),
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => self.check_root(*operand, span),
             _ => {}
         }
     }
@@ -176,25 +180,25 @@ impl MutationScan<'_, '_> {
             .ty(expr)
             .is_some_and(|ty| matches!(self.tcx.kind(ty), TyKind::Ref { .. }))
     }
+}
 
-    fn takes_mut_self(&self, call: HirId) -> bool {
-        let Some(resolved) = self.types.call(call) else {
-            return false;
-        };
-        let Some(sig) = self.types.ty_of_def(resolved.def) else {
-            return false;
-        };
-        let TyKind::Fun { params, .. } = self.tcx.kind(sig) else {
-            return false;
-        };
-        matches!(
-            params.first().map(|&ty| self.tcx.kind(ty)),
-            Some(TyKind::Ref {
-                mutability: Mutability::Mutable,
-                ..
-            })
-        )
-    }
+fn takes_mut_self(types: &TypeResolutions, tcx: &TyCtx, call: HirId) -> bool {
+    let Some(resolved) = types.call(call) else {
+        return false;
+    };
+    let Some(sig) = types.ty_of_def(resolved.def) else {
+        return false;
+    };
+    let TyKind::Fun { params, .. } = tcx.kind(sig) else {
+        return false;
+    };
+    matches!(
+        params.first().map(|&ty| tcx.kind(ty)),
+        Some(TyKind::Ref {
+            mutability: Mutability::Mutable,
+            ..
+        })
+    )
 }
 
 struct SharedReferenceWrites<'hir, 'a> {
@@ -219,6 +223,16 @@ impl<'hir> Visitor<'hir> for SharedReferenceWrites<'hir, '_> {
                 mutability: Mutability::Mutable,
                 operand,
             } => self.check_writable((*operand).into(), expr.span),
+            ExprKind::Access {
+                base,
+                args: AccessArgs::Call(_),
+                ..
+            } => {
+                let base = *base;
+                if takes_mut_self(self.types, self.tcx, id) {
+                    self.check_writable(base.into(), expr.span);
+                }
+            }
             _ => {}
         }
         visit::walk_expr(self, id);
@@ -423,6 +437,37 @@ mod tests {
              extend Counter { fun bump(&mut self) {} }
              fun f(c: &mut Counter) { let r = c; r.bump(); }",
         );
+    }
+
+    #[test]
+    fn writing_through_an_immutable_iso_binding_is_rejected() {
+        rejects(
+            "fun f() { let p = new 1; *p = 5; }",
+            "cannot assign to `p`, which is not declared `mut`",
+        );
+        accepts("fun f() { let mut p = new 1; *p = 5; }");
+    }
+
+    #[test]
+    fn a_mut_self_call_through_a_shared_reference_is_rejected() {
+        let counter = "struct Counter { n: i32 }
+             extend Counter { fun bump(&mut self) { self.n = self.n + 1; } }";
+
+        rejects(
+            &format!(
+                "{counter} struct Outer {{ inner: Counter }}
+                 fun f(o: &Outer) {{ o.inner.bump(); }}"
+            ),
+            "cannot write through a shared reference",
+        );
+        rejects(
+            &format!("{counter} fun f(a: &[Counter; 2]) {{ a[0].bump(); }}"),
+            "cannot write through a shared reference",
+        );
+        accepts(&format!(
+            "{counter} struct Outer {{ inner: Counter }}
+             fun f(o: &mut Outer) {{ o.inner.bump(); }}"
+        ));
     }
 
     #[test]
