@@ -144,10 +144,12 @@ impl<'a> BodyLowerCtx<'a> {
         self.lower_expr_into(init, Place::from_local(scrutinee));
 
         match else_block {
-            None => self.bind_pat(pat, Place::from_local(scrutinee)),
+            None => {
+                self.bind_pat(pat, Place::from_local(scrutinee));
+                self.register_exit_obligation(ExitObligation::StorageDead(scrutinee));
+            }
             Some(else_id) => self.lower_let_else(pat, else_id, scrutinee, span),
         }
-        self.register_exit_obligation(ExitObligation::StorageDead(scrutinee));
     }
 
     /// Lowers the `else` block of a refutable `let`, which runs when `scrutinee` fails to match.
@@ -160,14 +162,16 @@ impl<'a> BodyLowerCtx<'a> {
     ) {
         let fail_block = self.new_block();
         self.test_pat(pat, Place::from_local(scrutinee), fail_block);
-        self.bind_pat(pat, Place::from_local(scrutinee));
         let after = self.current_block();
 
         self.switch_to(fail_block);
+        self.push_stmt(StatementKind::StorageDead(scrutinee), span);
         self.lower_block(else_id, None);
         self.set_terminator(TerminatorKind::Unreachable, span);
 
         self.switch_to(after);
+        self.bind_pat(pat, Place::from_local(scrutinee));
+        self.register_exit_obligation(ExitObligation::StorageDead(scrutinee));
     }
 
     fn lower_with_lend(&mut self, lend: &crate::hir::WithLend) {
