@@ -13,8 +13,8 @@ use crate::driver::source::{FileOrigin, SrcSpan};
 use crate::hir::BindingMode;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
-    BlockId, DefId, ExprId, ExprKind, Hir, HirId, Node, OwnerNode, PatId, StmtKind, TyId,
-    TyKind as HirTyKind, WithLend,
+    BlockId, DefId, Expr, ExprId, ExprKind, Hir, HirId, Node, OwnerNode, Pat, PatId, PatKind,
+    StmtKind, TyId, TyKind as HirTyKind, WithLend,
 };
 use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
@@ -33,6 +33,18 @@ pub mod pat;
 
 type OutOfRangeLiterals = Vec<(String, Ty, SrcSpan)>;
 type UnsignedNegations = Vec<(Ty, SrcSpan)>;
+
+enum IntegerLiteralViolation {
+    OutOfRange {
+        literal: String,
+        ty: Ty,
+        span: SrcSpan,
+    },
+    UnsignedNegation {
+        ty: Ty,
+        span: SrcSpan,
+    },
+}
 
 impl<'hir> Typeck<'hir> {
     pub fn check_module(&mut self, module: DefId) {
@@ -146,35 +158,80 @@ impl<'hir> Typeck<'hir> {
             if array_lengths.contains(&id) {
                 continue;
             }
-            let Node::Expr(expr) = self.hir.node(id) else {
-                continue;
-            };
             let Some((min, max)) = integer_bounds(&self.tcx, ty) else {
                 continue;
             };
-            match &expr.kind {
-                ExprKind::Literal(Literal::Int { value, .. }) => {
-                    if let Some((literal, span)) = self.out_of_range_literal(
-                        *value,
-                        min,
-                        max,
-                        negated.contains(&id),
-                        expr.span,
-                    ) {
-                        out_of_range.push((literal, ty, span));
-                    }
+            match self.integer_literal_violation(id, ty, min, max, negated.contains(&id)) {
+                Some(IntegerLiteralViolation::OutOfRange { literal, ty, span }) => {
+                    out_of_range.push((literal, ty, span));
                 }
-                ExprKind::Unary {
-                    op: UnaryOp::Neg,
-                    operand,
-                } if min >= 0 && self.is_integer_literal((*operand).into()) => {
-                    unsigned_negation.push((ty, expr.span));
+                Some(IntegerLiteralViolation::UnsignedNegation { ty, span }) => {
+                    unsigned_negation.push((ty, span));
                 }
-                _ => {}
+                None => {}
             }
         }
 
         (out_of_range, unsigned_negation)
+    }
+
+    fn integer_literal_violation(
+        &self,
+        id: HirId,
+        ty: Ty,
+        min: i128,
+        max: i128,
+        negated: bool,
+    ) -> Option<IntegerLiteralViolation> {
+        match self.hir.node(id) {
+            Node::Expr(expr) => self.expression_literal_violation(expr, ty, min, max, negated),
+            Node::Pat(pat) => self.pattern_literal_violation(pat, ty, min, max),
+            _ => None,
+        }
+    }
+
+    fn expression_literal_violation(
+        &self,
+        expr: &Expr,
+        ty: Ty,
+        min: i128,
+        max: i128,
+        negated: bool,
+    ) -> Option<IntegerLiteralViolation> {
+        match &expr.kind {
+            ExprKind::Literal(Literal::Int { value, .. }) => {
+                let (literal, span) =
+                    self.out_of_range_literal(*value, min, max, negated, expr.span)?;
+                Some(IntegerLiteralViolation::OutOfRange { literal, ty, span })
+            }
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } if min >= 0 && self.is_integer_literal((*operand).into()) => {
+                Some(IntegerLiteralViolation::UnsignedNegation {
+                    ty,
+                    span: expr.span,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn pattern_literal_violation(
+        &self,
+        pat: &Pat,
+        ty: Ty,
+        min: i128,
+        max: i128,
+    ) -> Option<IntegerLiteralViolation> {
+        match &pat.kind {
+            PatKind::Literal(Literal::Int { value, .. }) => {
+                let (literal, span) =
+                    self.out_of_range_literal(*value, min, max, false, pat.span)?;
+                Some(IntegerLiteralViolation::OutOfRange { literal, ty, span })
+            }
+            _ => None,
+        }
     }
 
     fn out_of_range_literal(

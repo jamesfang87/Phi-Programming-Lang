@@ -389,16 +389,11 @@ impl<'a> BodyLowerCtx<'a> {
     fn lower_pat_literal(&mut self, lit: Literal, ty: Ty) -> Constant {
         let kind = match lit {
             Literal::Int { value, .. } => {
-                ConstKind::Int(self.session.resolve(value).parse().unwrap_or_else(|_| {
-                    panic!("mir::lower: integer pattern literal does not parse")
-                }))
+                ConstKind::Int(self.session.resolve(value).parse().unwrap_or_default())
             }
-            Literal::Float { value, .. } => ConstKind::Float(
-                self.session
-                    .resolve(value)
-                    .parse()
-                    .unwrap_or_else(|_| panic!("mir::lower: float pattern literal does not parse")),
-            ),
+            Literal::Float { value, .. } => {
+                ConstKind::Float(self.session.resolve(value).parse().unwrap_or_default())
+            }
 
             Literal::Str(_) => unreachable!("typeck rejects string literal patterns"),
             Literal::Bool(b) => ConstKind::Bool(b),
