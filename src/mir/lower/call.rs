@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::ast::Mutability;
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, Res};
@@ -6,6 +8,7 @@ use crate::mir::lower::{Task, is_any_specialized};
 use crate::mir::{
     AnyMode, ConstKind, Constant, FunRef, Operand, Place, Projection, Rvalue, TerminatorKind,
 };
+use crate::typeck::ty::visitor::{self, Subst};
 use crate::typeck::ty::{Ty, TyKind};
 
 struct CallTarget {
@@ -422,7 +425,7 @@ impl<'a> BodyLowerCtx<'a> {
         fn_value_ty: Ty,
         span: SrcSpan,
     ) -> Operand {
-        let def_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
+        let declared_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
         let any_mode = if is_any_specialized(self.tcx, self.types, def) {
             self.discover(Task::AnySpecialized(def, AnyMode::Owned));
             Some(AnyMode::Owned)
@@ -433,8 +436,10 @@ impl<'a> BodyLowerCtx<'a> {
             Some(mode) => self.resolve_any_fn_ty(fn_value_ty, mode),
             None => fn_value_ty,
         };
+        let args = self.function_value_args(def, declared_ty, fn_value_ty, args);
+        let constant_ty = self.subst_function_generics(def, declared_ty, &args);
         let operand = Operand::Constant(Constant {
-            ty: def_ty,
+            ty: constant_ty,
             kind: ConstKind::FunDef(FunRef {
                 def,
                 args,
@@ -456,6 +461,45 @@ impl<'a> BodyLowerCtx<'a> {
         Operand::Move(Place::from_local(temp))
     }
 
+    /// Returns the types to instantiate `def`'s generic parameters with. It uses the arguments the
+    /// checker recorded when there are as many as the function declares, and otherwise recovers
+    /// them by matching the declared signature against the type of the function value.
+    fn function_value_args(
+        &mut self,
+        def: DefId,
+        declared_ty: Ty,
+        value_ty: Ty,
+        recorded: Vec<Ty>,
+    ) -> Vec<Ty> {
+        let generics = &self.hir.function(def).generics;
+        if recorded.len() == generics.len() {
+            return recorded;
+        }
+
+        let bindings = infer_generic_bindings(self.tcx, declared_ty, value_ty);
+        generics
+            .iter()
+            .map(|&param| {
+                bindings
+                    .get(&param)
+                    .copied()
+                    .unwrap_or_else(|| self.tcx.mk_generic(param))
+            })
+            .collect()
+    }
+
+    fn subst_function_generics(&mut self, def: DefId, ty: Ty, args: &[Ty]) -> Ty {
+        let generics = self.hir.function(def).generics.clone();
+        let subst = Subst {
+            generics: generics
+                .into_iter()
+                .zip(args.iter().copied())
+                .collect::<HashMap<_, _>>(),
+            self_ty: None,
+        };
+        visitor::subst_ty(self.tcx, ty, &subst)
+    }
+
     fn resolve_any_fn_ty(&mut self, fn_ty: Ty, mode: AnyMode) -> Ty {
         let TyKind::Fun { params, ret } = self.tcx.kind(fn_ty).clone() else {
             return fn_ty;
@@ -467,4 +511,27 @@ impl<'a> BodyLowerCtx<'a> {
         let ret = ret.map(|r| self.resolve_any(r, Some(mode)));
         self.tcx.mk_fun(params, ret)
     }
+}
+
+/// Returns the bindings that make `pattern`'s generic parameters match `concrete`. Parameters
+/// absent from `pattern` are left unbound.
+fn infer_generic_bindings(
+    tcx: &mut crate::typeck::ty::ctx::TyCtx,
+    pattern: Ty,
+    concrete: Ty,
+) -> HashMap<HirId, Ty> {
+    let mut bindings = HashMap::new();
+    let mut pending = vec![(pattern, concrete)];
+
+    while let Some((pattern, concrete)) = pending.pop() {
+        if let TyKind::Generic(param) = *tcx.kind(pattern) {
+            bindings.insert(param, concrete);
+            continue;
+        }
+        if let Some(components) = visitor::decompose(tcx, pattern, concrete) {
+            pending.extend(components);
+        }
+    }
+
+    bindings
 }
