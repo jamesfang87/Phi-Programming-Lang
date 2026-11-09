@@ -147,17 +147,22 @@ impl InstantiationCx<'_> {
     fn queue_unsize_vtables(&mut self, body: &Body) {
         for block in &body.basic_blocks {
             for statement in &block.statements {
-                let StatementKind::Assign(_, Rvalue::Unsize { operand, trait_ }) = &statement.kind
+                let StatementKind::Assign(destination, Rvalue::Unsize { operand, trait_ }) =
+                    &statement.kind
                 else {
                     continue;
                 };
                 let pointed = operand_ty(self.tcx, &body.local_decls, operand);
                 let concrete = peel_references(self.tcx, pointed);
+                let destination_ty = crate::mir::place_ty(self.tcx, &body.local_decls, destination);
+                let trait_args =
+                    crate::mir::vtables::trait_args_of_unsized_ty(self.tcx, destination_ty);
                 let Some((info, bindings)) = crate::mir::vtables::find_vtable(
                     &self.program.vtables,
                     self.tcx,
                     concrete,
                     *trait_,
+                    &trait_args,
                 ) else {
                     continue;
                 };
@@ -340,9 +345,11 @@ impl InstantiationCx<'_> {
             args,
             any_mode,
             self_ty,
+            trait_args,
             trait_method,
         } = fun;
         let args = self.subst_tys(&args, substitution);
+        let trait_args = self.subst_tys(&trait_args, substitution);
         let self_ty = self.subst_optional_ty(self_ty, substitution);
 
         if self.is_dyn_dispatch(self_ty) {
@@ -351,10 +358,11 @@ impl InstantiationCx<'_> {
                 args,
                 any_mode,
                 self_ty,
+                trait_args,
                 trait_method,
             });
         }
-        self.instantiate_concrete_fun(def, args, any_mode, self_ty, trait_method)
+        self.instantiate_concrete_fun(def, args, any_mode, self_ty, trait_args, trait_method)
     }
 
     /// Redirects a trait-default method to the implementing method its vtable selects, prepends
@@ -365,29 +373,36 @@ impl InstantiationCx<'_> {
         args: Vec<Ty>,
         any_mode: Option<AnyMode>,
         self_ty: Option<Ty>,
+        trait_args: Vec<Ty>,
         trait_method: Option<(DefId, u32)>,
     ) -> ConstKind {
         let program = self.program;
-        let (def, args, self_ty, trait_method) =
-            match redirect_trait_default(program, self.tcx, trait_method, self_ty, &args) {
-                Some((impl_method, impl_args)) => (impl_method, impl_args, None, None),
-                None => (def, args, self_ty, trait_method),
-            };
+        let (def, mut args, self_ty, trait_method) = match redirect_trait_default(
+            program,
+            self.tcx,
+            trait_method,
+            self_ty,
+            &args,
+            &trait_args,
+        ) {
+            Some((impl_method, impl_args)) => (impl_method, impl_args, None, None),
+            None => (def, args, self_ty, trait_method),
+        };
         let self_ty = if trait_method.is_some() {
             self_ty
         } else {
             None
         };
-        let args = match trait_args_for(program, self.tcx, trait_method, self_ty) {
-            Some(trait_args) => trait_args.into_iter().chain(args).collect(),
-            None => args,
-        };
+        if trait_method.is_some() {
+            args = trait_args.into_iter().chain(args).collect();
+        }
         self.queue_fn_def(def, any_mode, args.clone(), self_ty);
         ConstKind::FunDef(FunRef {
             def,
             args,
             any_mode,
             self_ty,
+            trait_args: Vec::new(),
             trait_method,
         })
     }
@@ -479,10 +494,11 @@ fn redirect_trait_default(
     trait_method: Option<(DefId, u32)>,
     self_ty: Option<Ty>,
     args: &[Ty],
+    trait_args: &[Ty],
 ) -> Option<(DefId, Vec<Ty>)> {
     let self_ty = self_ty?;
     let (trait_owner, index) = trait_method?;
-    let (info, binds) = find_matching_vtable(program, tcx, trait_owner, self_ty)?;
+    let (info, binds) = find_matching_vtable(program, tcx, trait_owner, self_ty, trait_args)?;
     let impl_method = info.methods[index as usize]?;
     let mut redirected: Vec<Ty> = info
         .extend_generics
@@ -493,38 +509,16 @@ fn redirect_trait_default(
     Some((impl_method, redirected))
 }
 
-/// Returns the trait's own arguments for `self_ty`, taken from the vtable that proves it
-/// implements the trait.
-fn trait_args_for(
-    program: &Mir,
-    tcx: &mut TyCtx,
-    trait_method: Option<(DefId, u32)>,
-    self_ty: Option<Ty>,
-) -> Option<Vec<Ty>> {
-    let self_ty = self_ty?;
-    let (trait_owner, _) = trait_method?;
-    let (info, binds) = find_matching_vtable(program, tcx, trait_owner, self_ty)?;
-    let substitution = Subst {
-        generics: binds,
-        self_ty: None,
-    };
-    Some(
-        info.trait_args
-            .iter()
-            .map(|&arg| subst::subst_ty(tcx, arg, &substitution))
-            .collect(),
-    )
-}
-
-/// Returns the vtable that proves `self_ty` implements `trait_owner`, with the bindings matching
-/// its self type produced along the way.
+/// Returns the vtable that proves `self_ty` implements `trait_owner` with `trait_args`, with the
+/// bindings matching its self type produced along the way.
 fn find_matching_vtable<'a>(
     program: &'a Mir,
     tcx: &mut TyCtx,
     trait_owner: DefId,
     self_ty: Ty,
+    trait_args: &[Ty],
 ) -> Option<(&'a crate::mir::vtables::VtableInfo, HashMap<HirId, Ty>)> {
-    crate::mir::vtables::find_vtable(&program.vtables, tcx, self_ty, trait_owner)
+    crate::mir::vtables::find_vtable(&program.vtables, tcx, self_ty, trait_owner, trait_args)
 }
 
 /// Returns the type of `operand` using `local_decls` for the places it names.

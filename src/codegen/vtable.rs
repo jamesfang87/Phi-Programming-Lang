@@ -29,15 +29,17 @@ pub fn vtable_for<'ctx>(
     mir: &Mir,
     concrete: Ty,
     trait_: DefId,
+    trait_args: &[Ty],
 ) -> PointerValue<'ctx> {
-    if let Some(&ptr) = cx.vtables.borrow().get(&(concrete, trait_)) {
+    let key = (concrete, trait_, trait_args.to_vec());
+    if let Some(&ptr) = cx.vtables.borrow().get(&key) {
         return ptr;
     }
 
     let layout = layout::layout_of(tcx, mir, concrete);
     let mut fields = vtable_header_fields(cx, tcx, mir, concrete, &layout);
     let Some((info, bindings)) =
-        crate::mir::vtables::find_vtable(&mir.vtables, tcx, concrete, trait_)
+        crate::mir::vtables::find_vtable(&mir.vtables, tcx, concrete, trait_, trait_args)
     else {
         panic!(
             "vtable_for: no `extend .. with Trait` block implementing {trait_:?} was found for \
@@ -63,10 +65,8 @@ pub fn vtable_for<'ctx>(
         &method_args,
     ));
 
-    let vtable_ptr = build_vtable_global(cx, trait_, concrete, &fields);
-    cx.vtables
-        .borrow_mut()
-        .insert((concrete, trait_), vtable_ptr);
+    let vtable_ptr = build_vtable_global(cx, trait_, concrete, trait_args, &fields);
+    cx.vtables.borrow_mut().insert(key, vtable_ptr);
     vtable_ptr
 }
 
@@ -128,10 +128,14 @@ fn build_vtable_global<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     trait_: DefId,
     concrete: Ty,
+    trait_args: &[Ty],
     fields: &[BasicValueEnum<'ctx>],
 ) -> PointerValue<'ctx> {
     let const_struct = cx.llvm.const_struct(fields, false);
-    let global_name = format!("vt.{}.{}", trait_.index(), concrete.index());
+    let mut global_name = format!("vt.{}.{}", trait_.index(), concrete.index());
+    for arg in trait_args {
+        global_name.push_str(&format!(".{}", arg.index()));
+    }
     let global = cx
         .module
         .add_global(const_struct.get_type(), None, &global_name);
@@ -149,8 +153,9 @@ pub fn unsize<'ctx>(
     data_ptr: PointerValue<'ctx>,
     concrete: Ty,
     trait_: DefId,
+    trait_args: &[Ty],
 ) -> BasicValueEnum<'ctx> {
-    let vtable_ptr = vtable_for(cx, tcx, mir, concrete, trait_);
+    let vtable_ptr = vtable_for(cx, tcx, mir, concrete, trait_, trait_args);
     let vtable_word = cx
         .builder
         .build_ptr_to_int(vtable_ptr, cx.llvm.i64_type(), "vtable_word")
@@ -294,8 +299,8 @@ fun f() {}";
         let trait_def = find_trait_def(&hir, "Greet");
         let point_ty = tcx.mk_adt(point_def, Vec::new());
 
-        let vtable_ptr = vtable_for(&mut cx, &mut tcx, &mir, point_ty, trait_def);
-        let vtable_ptr_again = vtable_for(&mut cx, &mut tcx, &mir, point_ty, trait_def);
+        let vtable_ptr = vtable_for(&mut cx, &mut tcx, &mir, point_ty, trait_def, &[]);
+        let vtable_ptr_again = vtable_for(&mut cx, &mut tcx, &mir, point_ty, trait_def, &[]);
         assert_eq!(vtable_ptr, vtable_ptr_again);
 
         let ir = cx.module.print_to_string().to_string();
@@ -304,8 +309,8 @@ fun f() {}";
             ir.contains("i64 8, i64 4, ptr null"),
             "expected size 8, align 4, and a null drop-glue slot in that order:\n{ir}"
         );
-        let impl_method =
-            mir.vtables[&(point_ty, trait_def)].methods[0].expect("Point implements greet");
+        let impl_method = mir.vtables[&(point_ty, trait_def, Vec::new())].methods[0]
+            .expect("Point implements greet");
         let greet_name = crate::codegen::mangle::mangle(
             &hir,
             crate::testing::session(),
@@ -338,7 +343,7 @@ fun f() {}";
         let owner_def = find_struct_def(&hir, "Owner");
         let trait_def = find_trait_def(&hir, "Greet");
         let owner_ty = tcx.mk_adt(owner_def, Vec::new());
-        vtable_for(&mut cx, &mut tcx, &mir, owner_ty, trait_def);
+        vtable_for(&mut cx, &mut tcx, &mir, owner_ty, trait_def, &[]);
 
         let ir = cx.module.print_to_string().to_string();
         assert!(
@@ -361,7 +366,7 @@ fun f() {}";
         let point_ty = tcx.mk_adt(point_def, Vec::new());
 
         let data_ptr = cx.builder.build_alloca(cx.llvm.i32_type(), "data").unwrap();
-        let dyn_value = unsize(&mut cx, &mut tcx, &mir, data_ptr, point_ty, trait_def);
+        let dyn_value = unsize(&mut cx, &mut tcx, &mir, data_ptr, point_ty, trait_def, &[]);
         cx.builder.build_return(None).unwrap();
 
         assert!(matches!(dyn_value, BasicValueEnum::StructValue(_)));
@@ -394,7 +399,7 @@ fun f() {}";
         let point_ty = tcx.mk_adt(point_def, Vec::new());
 
         let data_ptr = cx.builder.build_alloca(cx.llvm.i32_type(), "data").unwrap();
-        let dyn_value = unsize(&mut cx, &mut tcx, &mir, data_ptr, point_ty, trait_def);
+        let dyn_value = unsize(&mut cx, &mut tcx, &mir, data_ptr, point_ty, trait_def, &[]);
 
         let fn_type = cx
             .llvm
@@ -438,9 +443,9 @@ fun f() {}",
         let wrap_bool = tcx.mk_adt(wrap_def, vec![bool_ty]);
 
         let show_index = 0;
-        let impl_for_i32 = mir.vtables[&(wrap_i32, trait_def)].methods[show_index]
+        let impl_for_i32 = mir.vtables[&(wrap_i32, trait_def, Vec::new())].methods[show_index]
             .expect("Wrap<i32> implements show");
-        let impl_for_bool = mir.vtables[&(wrap_bool, trait_def)].methods[show_index]
+        let impl_for_bool = mir.vtables[&(wrap_bool, trait_def, Vec::new())].methods[show_index]
             .expect("Wrap<bool> implements show");
 
         assert_ne!(
@@ -449,8 +454,8 @@ fun f() {}",
              same DefId means the type-argument check isn't actually discriminating"
         );
 
-        let vt_i32 = vtable_for(&mut cx, &mut tcx, &mir, wrap_i32, trait_def);
-        let vt_bool = vtable_for(&mut cx, &mut tcx, &mir, wrap_bool, trait_def);
+        let vt_i32 = vtable_for(&mut cx, &mut tcx, &mir, wrap_i32, trait_def, &[]);
+        let vt_bool = vtable_for(&mut cx, &mut tcx, &mir, wrap_bool, trait_def, &[]);
         assert_ne!(
             vt_i32, vt_bool,
             "distinct concrete instantiations get distinct vtables"

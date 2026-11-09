@@ -78,9 +78,14 @@ impl<'hir> Typeck<'hir> {
                 .iter()
                 .map(|&arg| self.resolve_and_default(arg))
                 .collect();
+            let trait_args = call
+                .trait_args
+                .iter()
+                .map(|&arg| self.resolve_and_default(arg))
+                .collect();
             let self_ty = call.self_ty.map(|ty| self.resolve_and_default(ty));
             self.types
-                .record_method_call(id, call.def, args, extend_args, self_ty);
+                .record_method_call(id, call.def, args, extend_args, trait_args, self_ty);
         }
     }
 

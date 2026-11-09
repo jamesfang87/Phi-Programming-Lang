@@ -36,6 +36,10 @@ pub(crate) struct Candidate {
     /// `HirId` to `i32`. The method's own parameters go through [`Typeck::instantiate_method`].
     subst: HashMap<HirId, Ty>,
 
+    /// The arguments of the trait this candidate implements, in declared order. Empty for an
+    /// inherent method.
+    trait_args: Vec<Ty>,
+
     /// The `extend` block this candidate came from and the arguments its own generic parameters
     /// were matched to, in declared order. `None` when the candidate comes from a bound in scope
     /// or from a `dyn` receiver, neither of which is backed by a block.
@@ -83,6 +87,7 @@ struct ResolvedMethodCall {
     method: DefId,
     generics: Vec<Ty>,
     extend: Option<(DefId, Vec<Ty>)>,
+    trait_args: Vec<Ty>,
     self_ty: Ty,
 }
 
@@ -473,6 +478,7 @@ impl<'hir> Typeck<'hir> {
                 .extend_block_origin
                 .as_ref()
                 .map(|(block, args)| (*block, self.resolve_all(args))),
+            trait_args: self.resolve_all(&chosen.trait_args),
             self_ty: chosen.self_ty,
         };
         (ret.unwrap_or_else(|| self.tcx.unit()), resolved)
@@ -501,6 +507,7 @@ impl<'hir> Typeck<'hir> {
                 .extend_block_origin
                 .as_ref()
                 .map(|(block, args)| (*block, self.resolve_all(args))),
+            trait_args: self.resolve_all(&chosen.trait_args),
             self_ty: chosen.self_ty,
         };
         self.record_resolved_method(id, receiver, resolved);
@@ -526,6 +533,7 @@ impl<'hir> Typeck<'hir> {
             resolved.method,
             resolved.generics,
             extend_args,
+            resolved.trait_args,
             Some(resolved.self_ty),
         );
     }
@@ -569,6 +577,7 @@ impl<'hir> Typeck<'hir> {
             source: CandidateSource::Trait(trait_),
             self_ty: base,
             subst: self.trait_subst(trait_, &args),
+            trait_args: args,
             extend_block_origin: None,
         }]
     }
@@ -587,6 +596,7 @@ impl<'hir> Typeck<'hir> {
                     source: CandidateSource::Trait(bound.trait_.def),
                     self_ty: base,
                     subst: self.trait_subst(bound.trait_.def, &bound.trait_.args),
+                    trait_args: bound.trait_.args.clone(),
                     extend_block_origin: None,
                 })
             })
@@ -621,6 +631,7 @@ impl<'hir> Typeck<'hir> {
                 source: CandidateSource::Inherent,
                 self_ty: base,
                 subst,
+                trait_args: Vec::new(),
                 extend_block_origin: block_origin,
             });
         };
@@ -628,26 +639,29 @@ impl<'hir> Typeck<'hir> {
         let declared = self.trait_method(trait_ref.def, member)?;
         let source = CandidateSource::Trait(trait_ref.def);
 
+        let trait_args: Vec<Ty> = trait_ref
+            .args
+            .iter()
+            .map(|&arg| self.subst_ty(arg, &subst))
+            .collect();
+
         match provided {
             Some(method) => Some(Candidate {
                 method,
                 source,
                 self_ty: base,
                 subst,
+                trait_args,
                 extend_block_origin: block_origin,
             }),
             None => {
-                let args: Vec<Ty> = trait_ref
-                    .args
-                    .iter()
-                    .map(|&arg| self.subst_ty(arg, &subst))
-                    .collect();
-                let subst = self.trait_subst(trait_ref.def, &args);
+                let subst = self.trait_subst(trait_ref.def, &trait_args);
                 Some(Candidate {
                     method: declared,
                     source,
                     self_ty: base,
                     subst,
+                    trait_args,
                     extend_block_origin: block_origin,
                 })
             }
@@ -1186,6 +1200,7 @@ mod tests {
             source,
             self_ty,
             subst: HashMap::new(),
+            trait_args: Vec::new(),
             extend_block_origin: None,
         }
     }

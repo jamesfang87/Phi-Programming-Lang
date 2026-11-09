@@ -298,7 +298,16 @@ fn lower_rvalue<'ctx>(
             let val = lower_operand(cx, tcx, mir, locals, local_decls, operand);
             let concrete = operand_ty(tcx, local_decls, operand);
             let (concrete, _) = peel_indirections(tcx, concrete);
-            super::vtable::unsize(cx, tcx, mir, val.into_pointer_value(), concrete, *trait_)
+            let trait_args = crate::mir::vtables::trait_args_of_unsized_ty(tcx, dest_ty);
+            super::vtable::unsize(
+                cx,
+                tcx,
+                mir,
+                val.into_pointer_value(),
+                concrete,
+                *trait_,
+                &trait_args,
+            )
         }
         Rvalue::Discriminant(place_) => {
             lower_discriminant_rvalue(cx, tcx, mir, locals, local_decls, place_, dest_ty)

@@ -34,5 +34,6 @@ pub struct FunRef {
     pub any_mode: Option<AnyMode>,
     pub self_ty: Option<Ty>,
 
+    pub trait_args: Vec<Ty>,
     pub trait_method: Option<(DefId, u32)>,
 }

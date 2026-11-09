@@ -3,21 +3,20 @@ use std::collections::HashMap;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, Res, TyDef, Type};
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::ctx::TyCtx;
+use crate::typeck::ty::visitor::{Subst, subst_ty};
 use crate::typeck::ty::{Ty, TyKind};
 
 pub struct VtableInfo {
     pub methods: Vec<Option<DefId>>,
     pub block: DefId,
 
-    // TODO: settle on type args/generics naming
-    pub trait_args: Vec<Ty>,
     pub extend_generics: Vec<HirId>,
 }
 
 pub(crate) fn collect_vtables(
     hir: &Hir,
     types: &TypeResolutions,
-) -> HashMap<(Ty, DefId), VtableInfo> {
+) -> HashMap<(Ty, DefId, Vec<Ty>), VtableInfo> {
     let mut out = HashMap::new();
     for extend_def in hir.def_ids() {
         // TODO: This is exactly the kind of logic which should be extracted into a separate function
@@ -60,12 +59,13 @@ pub(crate) fn collect_vtables(
             .map(|&id| types.ty(id.into()))
             .collect();
 
-        out.entry((self_ty, trait_def)).or_insert(VtableInfo {
-            methods: method_impls,
-            block: extend_def,
-            trait_args: trait_args.unwrap_or_default(),
-            extend_generics: extend.extend_generics.clone(),
-        });
+        let trait_args = trait_args.unwrap_or_default();
+        out.entry((self_ty, trait_def, trait_args.clone()))
+            .or_insert(VtableInfo {
+                methods: method_impls,
+                block: extend_def,
+                extend_generics: extend.extend_generics.clone(),
+            });
     }
     out
 }
@@ -74,25 +74,53 @@ pub(crate) fn collect_vtables(
 /// that match its header's generic parameters to the concrete type.
 /// A block whose header is already concrete is preferred over a generic block.
 pub(crate) fn find_vtable<'a>(
-    vtables: &'a HashMap<(Ty, DefId), VtableInfo>,
-    tcx: &TyCtx,
+    vtables: &'a HashMap<(Ty, DefId, Vec<Ty>), VtableInfo>,
+    tcx: &mut TyCtx,
     concrete: Ty,
     trait_: DefId,
+    trait_args: &[Ty],
 ) -> Option<(&'a VtableInfo, HashMap<HirId, Ty>)> {
-    if let Some(info) = vtables.get(&(concrete, trait_)) {
+    if let Some(info) = vtables.get(&(concrete, trait_, trait_args.to_vec())) {
         return Some((info, HashMap::new()));
     }
 
-    for ((pattern, trait_def), info) in vtables {
-        if *trait_def != trait_ {
+    for ((pattern, trait_def, declared_args), info) in vtables {
+        if *trait_def != trait_ || declared_args.len() != trait_args.len() {
             continue;
         }
         let mut bindings = HashMap::new();
-        if match_type_pattern(tcx, *pattern, concrete, &mut bindings) {
+        if !match_type_pattern(tcx, *pattern, concrete, &mut bindings) {
+            continue;
+        }
+        let substitution = Subst {
+            generics: bindings.clone(),
+            self_ty: None,
+        };
+        let matches = declared_args
+            .iter()
+            .zip(trait_args)
+            .all(|(&declared, &requested)| subst_ty(tcx, declared, &substitution) == requested);
+        if matches {
             return Some((info, bindings));
         }
     }
     None
+}
+
+/// Returns the type arguments of the `dyn` type that `ty` unsizes to, looking through any
+/// references or owned pointers.
+pub(crate) fn trait_args_of_unsized_ty(tcx: &TyCtx, ty: Ty) -> Vec<Ty> {
+    let mut current = ty;
+    loop {
+        current = match *tcx.kind(current) {
+            TyKind::Ref { base, .. } | TyKind::Iso(base) => base,
+            _ => break,
+        };
+    }
+    match tcx.kind(current) {
+        TyKind::Dyn { args, .. } => args.clone(),
+        _ => Vec::new(),
+    }
 }
 
 /// Returns whether `pattern` matches `concrete`, recording what each generic parameter in
@@ -209,10 +237,39 @@ fun f() {}";
 
         let vtables = collect_vtables(&hir, &types);
         let info = vtables
-            .get(&(point_ty, trait_def))
+            .get(&(point_ty, trait_def, Vec::new()))
             .expect("Point implements Greet");
         assert_eq!(info.methods.len(), 1);
         assert!(info.methods[0].is_some(), "greet is implemented");
+    }
+
+    #[test]
+    fn a_type_can_have_one_vtable_per_trait_argument_list() {
+        let (hir, mut tcx, types) = crate::testing::typecheck_only(
+            "trait Conv<T> { fun conv(&self) -> T; }
+                 struct W { v: i32 }
+                 extend W with Conv<bool> { fun conv(&self) -> bool { return true; } }
+                 extend W with Conv<i32> { fun conv(&self) -> i32 { return self.v; } }
+                 fun f() {}",
+        );
+        let w_def = find_struct_def(&hir, "W");
+        let trait_def = find_trait_def(&hir, "Conv");
+        let w_ty = tcx.mk_adt(w_def, Vec::new());
+        let bool_ty = tcx.mk_prim(crate::nameres::PrimTy::Bool);
+        let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
+
+        let vtables = collect_vtables(&hir, &types);
+        let bool_impl = vtables
+            .get(&(w_ty, trait_def, vec![bool_ty]))
+            .expect("W implements Conv<bool>");
+        let int_impl = vtables
+            .get(&(w_ty, trait_def, vec![i32_ty]))
+            .expect("W implements Conv<i32>");
+
+        assert_ne!(
+            bool_impl.methods[0], int_impl.methods[0],
+            "Conv<bool> and Conv<i32> keep separate method implementations"
+        );
     }
 
     #[test]
@@ -222,6 +279,6 @@ fun f() {}";
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
 
         let vtables = collect_vtables(&hir, &types);
-        assert!(!vtables.contains_key(&(i32_ty, trait_def)));
+        assert!(!vtables.contains_key(&(i32_ty, trait_def, Vec::new())));
     }
 }
