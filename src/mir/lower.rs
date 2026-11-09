@@ -13,12 +13,12 @@ use std::collections::{HashMap, HashSet};
 use crate::driver::cli::Mode;
 use crate::hir::{DefId, Hir, Node, OwnerNode, StmtKind};
 use crate::mir::lower::ctx::BodyLowerCtx;
-use crate::mir::vtables::{VtableInfo, collect_vtables};
+use crate::mir::vtables::{VtableInfo, VtableKey, collect_vtables};
 use crate::mir::{AnyMode, Body};
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
+use crate::typeck::ty::TyKind;
 use crate::typeck::ty::ctx::TyCtx;
-use crate::typeck::ty::{Ty, TyKind};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Task {
@@ -43,7 +43,7 @@ impl Task {
 
 pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
-    pub vtables: HashMap<(Ty, DefId, Vec<Ty>), VtableInfo>,
+    pub vtables: HashMap<VtableKey, VtableInfo>,
 }
 
 pub(super) fn is_any_specialized(tcx: &TyCtx, types: &TypeResolutions, def_id: DefId) -> bool {

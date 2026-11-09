@@ -6,6 +6,8 @@ use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::visitor::{Subst, subst_ty};
 use crate::typeck::ty::{Ty, TyKind};
 
+pub type VtableKey = (Ty, DefId, Vec<Ty>);
+
 pub struct VtableInfo {
     pub methods: Vec<Option<DefId>>,
     pub block: DefId,
@@ -16,7 +18,7 @@ pub struct VtableInfo {
 pub(crate) fn collect_vtables(
     hir: &Hir,
     types: &TypeResolutions,
-) -> HashMap<(Ty, DefId, Vec<Ty>), VtableInfo> {
+) -> HashMap<VtableKey, VtableInfo> {
     let mut out = HashMap::new();
     for extend_def in hir.def_ids() {
         // TODO: This is exactly the kind of logic which should be extracted into a separate function
@@ -74,7 +76,7 @@ pub(crate) fn collect_vtables(
 /// that match its header's generic parameters to the concrete type.
 /// A block whose header is already concrete is preferred over a generic block.
 pub(crate) fn find_vtable<'a>(
-    vtables: &'a HashMap<(Ty, DefId, Vec<Ty>), VtableInfo>,
+    vtables: &'a HashMap<VtableKey, VtableInfo>,
     tcx: &mut TyCtx,
     concrete: Ty,
     trait_: DefId,

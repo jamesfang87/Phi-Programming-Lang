@@ -11,6 +11,7 @@ pub struct Statement {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum StatementKind {
     StorageLive(Local),
     StorageDead(Local),
