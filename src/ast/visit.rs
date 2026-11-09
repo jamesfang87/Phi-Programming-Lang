@@ -244,10 +244,10 @@ pub fn walk_stmt<'ast, V: Visitor<'ast>>(v: &mut V, stmt: &'ast Stmt) {
             if let Some(ty) = ty {
                 v.visit_ty(ty);
             }
-            v.visit_pat(pat);
             if let Some(block) = else_block {
                 v.visit_block(block);
             }
+            v.visit_pat(pat);
         }
         StmtKind::With { lends, block } => {
             for lend in lends {
