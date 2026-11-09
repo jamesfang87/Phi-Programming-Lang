@@ -133,31 +133,46 @@ impl TyCtx {
     }
 
     pub fn needs_drop(&mut self, ty: Ty) -> bool {
+        self.needs_drop_with(&mut HashSet::new(), ty)
+    }
+
+    fn needs_drop_with(&mut self, visiting: &mut HashSet<Ty>, ty: Ty) -> bool {
         match self.kind(ty).clone() {
             TyKind::Iso(_) | TyKind::Fun { .. } => true,
-            TyKind::Array { elem, .. } => self.needs_drop(elem),
-            TyKind::Tuple(elems) => elems.iter().any(|&elem| self.needs_drop(elem)),
-            TyKind::Adt { def, args } => self.adt_needs_drop(def, &args),
+            TyKind::Array { elem, .. } => self.needs_drop_with(visiting, elem),
+            TyKind::Tuple(elems) => elems
+                .into_iter()
+                .any(|elem| self.needs_drop_with(visiting, elem)),
+            TyKind::Adt { def, args } => {
+                if !visiting.insert(ty) {
+                    return false;
+                }
+                let needs_drop = self.adt_needs_drop_with(visiting, def, &args);
+                visiting.remove(&ty);
+                needs_drop
+            }
             _ => false,
         }
     }
 
     /// Returns whether any field an ADT holds by value needs dropping.
-    fn adt_needs_drop(&mut self, def: DefId, args: &[Ty]) -> bool {
+    fn adt_needs_drop_with(&mut self, visiting: &mut HashSet<Ty>, def: DefId, args: &[Ty]) -> bool {
         match self.enum_variant_count(def) {
             None => {
                 let fields = self.struct_field_tys(def, args);
-                self.fields_need_drop(fields)
+                self.fields_need_drop_with(visiting, fields)
             }
             Some(variant_count) => (0..variant_count).any(|variant| {
                 let fields = self.variant_field_tys(def, args, variant);
-                self.fields_need_drop(fields)
+                self.fields_need_drop_with(visiting, fields)
             }),
         }
     }
 
-    fn fields_need_drop(&mut self, fields: Vec<Ty>) -> bool {
-        fields.into_iter().any(|field| self.needs_drop(field))
+    fn fields_need_drop_with(&mut self, visiting: &mut HashSet<Ty>, fields: Vec<Ty>) -> bool {
+        fields
+            .into_iter()
+            .any(|field| self.needs_drop_with(visiting, field))
     }
 
     fn adt(&self, def: DefId) -> &AdtDef {
@@ -314,5 +329,21 @@ mod tests {
         let mut first = TyCtx::new();
         let mut second = TyCtx::new();
         assert_eq!(first.next_infer_var(), second.next_infer_var());
+    }
+
+    #[test]
+    fn needs_drop_terminates_on_a_recursive_struct() {
+        let mut tcx = TyCtx::new();
+        let def = DefId::from_usize(1);
+        let adt = tcx.mk_adt(def, vec![]);
+        tcx.set_adts(HashMap::from([(
+            def,
+            AdtDef::Struct {
+                generics: vec![],
+                fields: vec![adt],
+            },
+        )]));
+
+        assert!(!tcx.needs_drop(adt));
     }
 }

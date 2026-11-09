@@ -47,6 +47,6 @@ pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
     let computed = lifetimes::compute_lifetimes_map(mir);
     exclusivity::check_with_lifetimes(session, mir, &computed);
     returned_reference::check(session, tcx, mir, &computed);
-    element_moves::check(session, tcx, mir);
+    element_moves::check(session, hir, tcx, mir);
     captures::check(session, hir, tcx, mir);
 }

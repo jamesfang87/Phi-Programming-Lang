@@ -12,11 +12,10 @@ use crate::diagnostics::typeck::expr::{
     report_index_not_int, report_match_arm_mismatch, report_match_guard_not_bool,
     report_missing_fields, report_move_out_of_reference, report_new_array_count_not_usize,
     report_not_a_struct_literal, report_not_assignable, report_not_indexable, report_not_try,
-    report_owned_element_in_new_array, report_panic_message_not_str, report_record_field_unknown,
-    report_reference_in_new, report_try_error_mismatch, report_try_operand_unknown,
-    report_try_outside, report_try_return_mismatch, report_variant_enum_unknown,
-    report_variant_expr_payload_shape, report_variant_missing_fields,
-    report_variant_payload_mismatch,
+    report_panic_message_not_str, report_record_field_unknown, report_reference_in_new,
+    report_try_error_mismatch, report_try_operand_unknown, report_try_outside,
+    report_try_return_mismatch, report_variant_enum_unknown, report_variant_expr_payload_shape,
+    report_variant_missing_fields, report_variant_payload_mismatch,
 };
 use crate::diagnostics::typeck::lower_ty::report_trait_as_ty;
 use crate::diagnostics::typeck::traits::solve::report_operator_trait_missing;
@@ -848,9 +847,6 @@ impl<'hir> Typeck<'hir> {
         }
         let elem_span = self.hir.expr(elem).span;
         self.check_storable_in_iso(elem_ty, elem_span);
-        if self.tcx.needs_drop(elem_ty) {
-            report_owned_element_in_new_array(self.display_cx(), elem_ty, elem_span);
-        }
         let array_ty = self.tcx.mk_array(elem_ty, None);
         self.tcx.mk_iso(array_ty)
     }
@@ -1937,23 +1933,6 @@ mod tests {
         rejects(
             "fun f(x: &i32) { let y = new [x; 1]; }",
             "`new` cannot store a reference",
-        );
-    }
-
-    #[test]
-    fn new_array_with_an_owning_elem_is_rejected() {
-        rejects(
-            "fun f(n: usize) { let y = new [new 1; n]; }",
-            "cannot repeat an owning element",
-        );
-    }
-
-    #[test]
-    fn new_array_with_an_elem_that_owns_a_field_is_rejected() {
-        rejects(
-            "struct Handle { owned: iso i32 }
-             fun f(n: usize) { let y = new [Handle { owned: new 1 }; n]; }",
-            "cannot repeat an owning element",
         );
     }
 

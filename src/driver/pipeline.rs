@@ -90,8 +90,17 @@ fn run_frontend(
     // reported, not turned into MIR first.
     let main = crate::checks::check_entry_point(session, &hir);
 
+    if session.has_errors() {
+        session.report();
+        return Ok(None);
+    }
+
     let program = mir::lower::lower(session, &hir, &mut checked.tcx, &checked.types, config.mode);
     mir::checks::run_checks(session, &hir, &mut checked.tcx, &program);
+    if session.has_errors() {
+        session.report();
+        return Ok(None);
+    }
     let instances = mir::monomorphize::monomorphize(&mut checked.tcx, &program, main);
     let instances = mir::drop_elaboration::elaborate_drops(&mut checked.tcx, instances);
 

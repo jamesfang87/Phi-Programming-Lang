@@ -115,6 +115,10 @@ impl Session {
         self.diagnostics.borrow_mut().clear();
     }
 
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics.borrow().has_errors()
+    }
+
     /// Renders every diagnostic collected so far to stderr in source order, takes them out of the
     /// collection, and returns whether any of them was error-severity.
     pub fn report(&self) -> bool {

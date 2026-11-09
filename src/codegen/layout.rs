@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::hir::DefId;
 use crate::mir::{Mir, VariantIdx};
 use crate::nameres::PrimTy;
@@ -46,15 +48,26 @@ impl TagTy {
 }
 
 pub fn layout_of(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> AdtLayout {
+    layout_of_with(tcx, mir, ty, &mut HashSet::new())
+}
+
+fn layout_of_with(tcx: &mut TyCtx, mir: &Mir, ty: Ty, visiting: &mut HashSet<Ty>) -> AdtLayout {
     match tcx.kind(ty).clone() {
-        TyKind::Tuple(elems) => layout_fields(tcx, mir, &elems),
-        TyKind::Adt { def, args } => match tcx.enum_variant_count(def) {
-            Some(variant_count) => layout_enum(tcx, mir, def, &args, variant_count),
-            None => {
-                let field_tys = tcx.struct_field_tys(def, &args);
-                layout_fields(tcx, mir, &field_tys)
+        TyKind::Tuple(elems) => layout_fields(tcx, mir, &elems, visiting),
+        TyKind::Adt { def, args } => {
+            if !visiting.insert(ty) {
+                panic!("layout_of: recursive ADT {def:?} has no finite layout");
             }
-        },
+            let layout = match tcx.enum_variant_count(def) {
+                Some(variant_count) => layout_enum(tcx, mir, def, &args, variant_count, visiting),
+                None => {
+                    let field_tys = tcx.struct_field_tys(def, &args);
+                    layout_fields(tcx, mir, &field_tys, visiting)
+                }
+            };
+            visiting.remove(&ty);
+            layout
+        }
         other => panic!("layout_of: {other:?} has no field-list layout"),
     }
 }
@@ -66,8 +79,19 @@ pub fn layout_variant(
     args: &[Ty],
     variant: VariantIdx,
 ) -> AdtLayout {
+    layout_variant_with(tcx, mir, def, args, variant, &mut HashSet::new())
+}
+
+fn layout_variant_with(
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    def: DefId,
+    args: &[Ty],
+    variant: VariantIdx,
+    visiting: &mut HashSet<Ty>,
+) -> AdtLayout {
     let field_tys = tcx.variant_field_tys(def, args, variant.index());
-    layout_fields(tcx, mir, &field_tys)
+    layout_fields(tcx, mir, &field_tys, visiting)
 }
 
 fn layout_enum(
@@ -76,6 +100,7 @@ fn layout_enum(
     def: DefId,
     args: &[Ty],
     variant_count: usize,
+    visiting: &mut HashSet<Ty>,
 ) -> AdtLayout {
     let tag_ty = TagTy::for_variant_count(variant_count);
     let (tag_size, tag_align) = tag_ty.size_align();
@@ -84,7 +109,7 @@ fn layout_enum(
     let mut payload_align = 1u64;
     for index in 0..variant_count {
         let variant = VariantIdx::from_usize(index);
-        let layout = layout_variant(tcx, mir, def, args, variant);
+        let layout = layout_variant_with(tcx, mir, def, args, variant, visiting);
         payload_size = payload_size.max(layout.size);
         payload_align = payload_align.max(layout.align);
     }
@@ -102,13 +127,13 @@ fn layout_enum(
     }
 }
 
-fn layout_fields(tcx: &mut TyCtx, mir: &Mir, tys: &[Ty]) -> AdtLayout {
+fn layout_fields(tcx: &mut TyCtx, mir: &Mir, tys: &[Ty], visiting: &mut HashSet<Ty>) -> AdtLayout {
     let mut offset = 0u64;
     let mut align = 1u64;
     let mut fields = Vec::with_capacity(tys.len());
 
     for &ty in tys {
-        let (size, field_align) = compute_size_align(tcx, mir, ty);
+        let (size, field_align) = compute_size_align(tcx, mir, ty, visiting);
         offset = round_up(offset, field_align);
         fields.push(FieldLayout { ty, offset });
         offset += size;
@@ -124,7 +149,12 @@ fn layout_fields(tcx: &mut TyCtx, mir: &Mir, tys: &[Ty]) -> AdtLayout {
     }
 }
 
-fn compute_size_align(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> (u64, u64) {
+fn compute_size_align(
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ty: Ty,
+    visiting: &mut HashSet<Ty>,
+) -> (u64, u64) {
     match tcx.kind(ty).clone() {
         TyKind::Primitive(prim) => primitive_size_align(prim),
         TyKind::Unit | TyKind::Never => (0, 1),
@@ -141,14 +171,14 @@ fn compute_size_align(tcx: &mut TyCtx, mir: &Mir, ty: Ty) -> (u64, u64) {
             elem,
             len: Some(len),
         } => {
-            let (elem_size, elem_align) = compute_size_align(tcx, mir, elem);
+            let (elem_size, elem_align) = compute_size_align(tcx, mir, elem, visiting);
             (round_up(elem_size, elem_align) * len, elem_align)
         }
         TyKind::Array { len: None, .. } => {
             unreachable!("compute_size_align: a bare unsized array cannot be a field's own type")
         }
         TyKind::Tuple(_) | TyKind::Adt { .. } => {
-            let layout = layout_of(tcx, mir, ty);
+            let layout = layout_of_with(tcx, mir, ty, visiting);
             (layout.size, layout.align)
         }
         other => unreachable!("compute_size_align: no layout for {other:?} at codegen time"),
@@ -278,5 +308,30 @@ mod tests {
         let record_layout = layout_variant(&mut tcx, &mir, def, &[], VariantIdx::from_usize(2));
         assert_eq!(record_layout.fields.len(), 1);
         assert_eq!(record_layout.size, 8);
+    }
+
+    #[test]
+    #[should_panic(expected = "recursive ADT")]
+    fn a_recursive_adt_has_no_layout() {
+        use std::collections::HashMap;
+
+        use crate::typeck::ty::adt::AdtDef;
+
+        let mut tcx = TyCtx::new();
+        let def = DefId::from_usize(1);
+        let adt = tcx.mk_adt(def, Vec::new());
+        tcx.set_adts(HashMap::from([(
+            def,
+            AdtDef::Struct {
+                generics: vec![],
+                fields: vec![adt],
+            },
+        )]));
+        let mir = Mir {
+            bodies: HashMap::new(),
+            vtables: HashMap::new(),
+        };
+
+        layout_of(&mut tcx, &mir, adt);
     }
 }
