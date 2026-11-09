@@ -62,7 +62,7 @@ fn recorded_field_ty(types: &TypeResolutions, id: HirId) -> Ty {
     })
 }
 
-pub(crate) fn infinitely_sized_adts(
+pub(crate) fn recursive_adts(
     tcx: &crate::typeck::ty::ctx::TyCtx,
     adts: &HashMap<DefId, AdtDef>,
 ) -> Vec<DefId> {

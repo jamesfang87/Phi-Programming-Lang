@@ -532,3 +532,57 @@ fn returning_a_call_result_that_projects_a_local_argument_is_rejected() {
         "the returned reference points into `bar`'s frame"
     );
 }
+
+#[test]
+fn value_recursive_struct_does_not_overflow() {
+    let dir = project(
+        "recursive_struct",
+        r#"module app;
+
+struct Bad { public inner: Bad }
+
+fun make(b: Bad) {
+    let a = new [b; 1];
+    let _ = a;
+}
+
+fun main() {}
+"#,
+    );
+    let output = run(&dir, &["check"]);
+    assert_no_compiler_panic(&output, "value-recursive struct");
+    assert_ne!(code(&output), 0, "the recursive struct must be rejected");
+    assert!(
+        stderr(&output).contains("recursive type"),
+        "expected a recursive-type diagnostic, got: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn value_recursive_enum_does_not_overflow() {
+    let dir = project(
+        "recursive_enum",
+        r#"module app;
+
+enum Loop { a: Loop, b }
+
+fun f(l: Loop) -> i32 {
+    return match l {
+        .a(x) => f(x),
+        .b => 0,
+    };
+}
+
+fun main() {}
+"#,
+    );
+    let output = run(&dir, &["check"]);
+    assert_no_compiler_panic(&output, "value-recursive enum");
+    assert_ne!(code(&output), 0, "the recursive enum must be rejected");
+    assert!(
+        stderr(&output).contains("recursive type"),
+        "expected a recursive-type diagnostic, got: {}",
+        stderr(&output)
+    );
+}

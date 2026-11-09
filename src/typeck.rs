@@ -132,7 +132,7 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn report_recursive_types(&self, hir: &Hir, adts: &HashMap<DefId, adt::AdtDef>) {
-        for def in adt::infinitely_sized_adts(&self.tcx, adts) {
+        for def in adt::recursive_adts(&self.tcx, adts) {
             let name = match hir.def(def) {
                 OwnerNode::Struct(struct_) => struct_.name,
                 OwnerNode::Enum(enum_) => enum_.name,

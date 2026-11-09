@@ -282,6 +282,12 @@ impl Diagnostics {
         self.diagnostics.clear();
     }
 
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|diag| diag.severity == Severity::Error)
+    }
+
     pub fn report(&mut self, sources: &SrcMap) -> bool {
         let pending = std::mem::take(&mut self.diagnostics);
         let had_error = pending.iter().any(|diag| diag.severity == Severity::Error);
