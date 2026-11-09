@@ -58,6 +58,21 @@ impl<'a> BodyLowerCtx<'a> {
         self.emit_call(expr_id, target.func, args, dest, span);
     }
 
+    pub(crate) fn lower_operator_call_into(
+        &mut self,
+        expr_id: impl Into<HirId>,
+        receiver: ExprId,
+        args: Vec<ExprId>,
+        dest: Place,
+        span: SrcSpan,
+    ) {
+        let expr_id = expr_id.into();
+        let target = self.receiver_call_target(expr_id, receiver, args, AnyMode::Owned);
+        let any_mode = self.select_call_any_mode(&target, AnyMode::Owned);
+        let operands = self.lower_call_operand_list(&target, any_mode, span);
+        self.emit_call(expr_id, target.func, operands, dest, span);
+    }
+
     fn lower_call_target(&mut self, expr_id: HirId, mode: AnyMode) -> CallTarget {
         match self.hir.expr(expr_id).kind.clone() {
             ExprKind::Call { callee, args } => CallTarget {
