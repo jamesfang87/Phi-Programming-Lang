@@ -8,8 +8,8 @@ use crate::mir::checks::borrowck::{Register, SubRegister, to_register};
 use crate::mir::checks::lattice;
 use crate::mir::ids::StatementId;
 use crate::mir::{
-    AnyMode, BasicBlock, BasicBlockData, Body, Local, Operand, Place, Projection, Rvalue,
-    Statement, StatementKind, Terminator, TerminatorKind, lower::Mir,
+    AggregateKind, AnyMode, BasicBlock, BasicBlockData, Body, Local, Operand, Place, Projection,
+    Rvalue, Statement, StatementKind, Terminator, TerminatorKind, lower::Mir,
 };
 
 pub type AliasId = StatementId;
@@ -186,8 +186,42 @@ fn apply_assign_to_held_aliases(
             }
             None => remove_register_from_held_aliases(held, &place_register),
         },
+        Rvalue::Aggregate(kind, operands) => {
+            remove_subtree_from_held_aliases(held, &place_register);
+            for (index, operand) in operands.iter().enumerate() {
+                let Some(alias) = take_operand_alias(held, operand) else {
+                    continue;
+                };
+                let projection = match kind.as_ref() {
+                    AggregateKind::Array => SubRegister::ConstantIndex(index as u32),
+                    _ => SubRegister::Field(index as u32),
+                };
+                let mut field = place_register.clone();
+                field.subregister.push(projection);
+                held.insert(field, alias);
+            }
+        }
         _ => remove_register_from_held_aliases(held, &place_register),
     }
+}
+
+fn remove_subtree_from_held_aliases(held: &mut HeldAliases, register: &Register) {
+    held.retain(|held_register, _| {
+        held_register.owner != register.owner
+            || !held_register.subregister.starts_with(&register.subregister)
+    });
+}
+
+fn take_operand_alias(held: &mut HeldAliases, operand: &Operand) -> Option<AliasId> {
+    let (Operand::Copy(place) | Operand::Move(place)) = operand else {
+        return None;
+    };
+    let register = to_register(place);
+    let alias = held.get(&register).copied();
+    if matches!(operand, Operand::Move(_)) {
+        held.remove(&register);
+    }
+    alias
 }
 
 fn apply_terminator_to_held_aliases(held: &mut HeldAliases, terminator: &Terminator) {

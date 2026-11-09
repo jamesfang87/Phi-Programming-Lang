@@ -21,7 +21,11 @@ fn check_body(session: &Session, tcx: &TyCtx, body: &Body, lifetimes: &Lifetimes
     let tainted = compute_tainted_locals(tcx, body, &lifetimes.aliases);
 
     for alias in lifetimes.aliases.values() {
-        if !alias.attached.contains(&return_register()) {
+        if !alias
+            .attached
+            .iter()
+            .any(|register| register.owner == Local::RETURN_PLACE)
+        {
             continue;
         }
         if reaches_local(body, &lifetimes.aliases, &tainted, &alias.register) {
@@ -148,13 +152,6 @@ fn is_reference_typed(tcx: &TyCtx, body: &Body, place: &Place) -> bool {
     )
 }
 
-fn return_register() -> Register {
-    Register {
-        owner: Local::RETURN_PLACE,
-        subregister: Vec::new(),
-    }
-}
-
 fn find_return_span(body: &Body) -> crate::driver::source::SrcSpan {
     body.basic_blocks
         .iter()
@@ -219,6 +216,31 @@ mod tests {
         rejects(
             "fun f() -> &i32 { let x = 5; let r = &x; let s = &*r; return &*s; }",
             "cannot return a reference to a local variable",
+        );
+    }
+
+    #[test]
+    fn returning_a_tuple_containing_a_borrow_of_a_local_is_rejected() {
+        rejects(
+            "fun f() -> (&i32, i32) { let x = 5; return (&x, 1); }",
+            "cannot return a reference to `x`",
+        );
+    }
+
+    #[test]
+    fn returning_a_struct_containing_a_borrow_of_a_local_is_rejected() {
+        rejects(
+            "struct Wrap<T> { value: T }
+             fun f() -> Wrap<&i32> { let x = 5; return Wrap { value: &x }; }",
+            "cannot return a reference to `x`",
+        );
+    }
+
+    #[test]
+    fn returning_a_tuple_element_holding_a_borrow_of_a_local_is_rejected() {
+        rejects(
+            "fun f() -> &i32 { let x = 5; let pair = (&x, 1); return pair.0; }",
+            "cannot return a reference to `x`",
         );
     }
 
