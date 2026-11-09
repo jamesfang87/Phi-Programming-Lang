@@ -2,9 +2,7 @@ use crate::ast::{Ident, Mutability, UnaryOp};
 use crate::diagnostics::checks::mutability::{report_not_mutable, report_write_through_shared_ref};
 use crate::driver::source::SrcSpan;
 use crate::hir::visit::{self, Visitor};
-use crate::hir::{
-    AccessArgs, DefId, ExprKind, Hir, HirId, Local, OwnerNode, PatKind, Payload, Res, StmtKind,
-};
+use crate::hir::{AccessArgs, ExprKind, Hir, HirId, Local, PatKind, Payload, Res, StmtKind};
 use crate::session::Session;
 use crate::typeck::results::TypeResolutions;
 use crate::typeck::ty::TyKind;
@@ -24,19 +22,11 @@ pub fn check(session: &Session, hir: &Hir, tcx: &TyCtx, types: &TypeResolutions)
         types,
     };
     for def_id in hir.def_ids() {
-        let Some(block) = body_block(hir, def_id) else {
+        let Some(block) = super::body_block(hir, def_id) else {
             continue;
         };
         immutable_writes.visit_block(block);
         shared_writes.visit_block(block);
-    }
-}
-
-fn body_block(hir: &Hir, def_id: DefId) -> Option<HirId> {
-    match hir.def(def_id) {
-        OwnerNode::Function(function) => function.block.map(HirId::from),
-        OwnerNode::Closure(closure) => Some(closure.block.into()),
-        _ => None,
     }
 }
 

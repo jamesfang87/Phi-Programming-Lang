@@ -404,6 +404,24 @@ pub fn report_try_error_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: SrcS
     );
 }
 
+pub fn report_break_outside_loop(session: &Session, span: SrcSpan) {
+    session.emit(
+        Diagnostic::error("`break` outside a loop", span)
+            .with_code(codes::BREAK_OUTSIDE_LOOP)
+            .with_label("there is no loop for this to exit")
+            .with_help("move this statement into a `while` loop in the same function"),
+    );
+}
+
+pub fn report_continue_outside_loop(session: &Session, span: SrcSpan) {
+    session.emit(
+        Diagnostic::error("`continue` outside a loop", span)
+            .with_code(codes::CONTINUE_OUTSIDE_LOOP)
+            .with_label("there is no loop for this to continue")
+            .with_help("move this statement into a `while` loop in the same function"),
+    );
+}
+
 pub fn report_closure_body_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: SrcSpan) {
     cx.emit_unify(
         err,

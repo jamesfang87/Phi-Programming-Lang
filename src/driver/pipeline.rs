@@ -85,6 +85,7 @@ fn run_frontend(
             options.exclude_core_in_emit,
         );
     }
+    crate::checks::check_loop_control(session, &hir);
     crate::checks::check_mutability(session, &hir, &checked.tcx, &checked.types);
     // Signature rules for the entry point run before lowering: a malformed `main` should be
     // reported, not turned into MIR first.
