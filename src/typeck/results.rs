@@ -8,6 +8,7 @@ pub struct ResolvedCall {
     pub def: DefId,
     pub args: Vec<Ty>,
     pub extend_args: Vec<Ty>,
+    pub trait_args: Vec<Ty>,
     pub self_ty: Option<Ty>,
 }
 
@@ -66,7 +67,7 @@ impl TypeResolutions {
     }
 
     pub fn record_call(&mut self, id: HirId, def: DefId, args: Vec<Ty>) {
-        self.record_method_call(id, def, args, Vec::new(), None);
+        self.record_method_call(id, def, args, Vec::new(), Vec::new(), None);
     }
 
     pub fn record_method_call(
@@ -75,6 +76,7 @@ impl TypeResolutions {
         def: DefId,
         args: Vec<Ty>,
         extend_args: Vec<Ty>,
+        trait_args: Vec<Ty>,
         self_ty: Option<Ty>,
     ) {
         self.calls.insert(
@@ -83,6 +85,7 @@ impl TypeResolutions {
                 def,
                 args,
                 extend_args,
+                trait_args,
                 self_ty,
             },
         );

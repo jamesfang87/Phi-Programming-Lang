@@ -43,7 +43,7 @@ impl Task {
 
 pub struct Mir {
     pub bodies: HashMap<(DefId, Option<AnyMode>), Body>,
-    pub vtables: HashMap<(Ty, DefId), VtableInfo>,
+    pub vtables: HashMap<(Ty, DefId, Vec<Ty>), VtableInfo>,
 }
 
 pub(super) fn is_any_specialized(tcx: &TyCtx, types: &TypeResolutions, def_id: DefId) -> bool {

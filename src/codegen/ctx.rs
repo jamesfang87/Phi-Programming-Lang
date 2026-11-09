@@ -28,7 +28,7 @@ pub struct CodegenCtx<'ctx> {
     pub types: RefCell<HashMap<Ty, BasicTypeEnum<'ctx>>>,
     pub strings: RefCell<HashMap<Symbol, PointerValue<'ctx>>>,
     pub libc: Libc<'ctx>,
-    pub vtables: RefCell<HashMap<(Ty, DefId), PointerValue<'ctx>>>,
+    pub vtables: RefCell<HashMap<(Ty, DefId, Vec<Ty>), PointerValue<'ctx>>>,
     pub drop_glues: RefCell<HashMap<Ty, FunctionValue<'ctx>>>,
     pub fun_thunks: RefCell<HashMap<String, FunctionValue<'ctx>>>,
 }

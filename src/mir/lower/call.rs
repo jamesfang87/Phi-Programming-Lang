@@ -115,7 +115,13 @@ impl<'a> BodyLowerCtx<'a> {
                 true,
             ),
             None => (
-                self.resolved_fn_operand(resolved.def, resolved.all_args(), resolved.self_ty, mode),
+                self.resolved_fn_operand(
+                    resolved.def,
+                    resolved.all_args(),
+                    resolved.trait_args,
+                    resolved.self_ty,
+                    mode,
+                ),
                 false,
             ),
         };
@@ -251,6 +257,7 @@ impl<'a> BodyLowerCtx<'a> {
                 args,
                 any_mode: None,
                 self_ty: Some(dyn_ty),
+                trait_args,
                 trait_method: self.hir.trait_method(def),
             }),
         })
@@ -283,7 +290,13 @@ impl<'a> BodyLowerCtx<'a> {
                 .call(call_expr_id)
                 .unwrap_or_else(|| panic!("mir::lower: {call_expr_id:?} has no resolved call"))
                 .clone();
-            self.resolved_fn_operand(resolved.def, resolved.all_args(), resolved.self_ty, mode)
+            self.resolved_fn_operand(
+                resolved.def,
+                resolved.all_args(),
+                resolved.trait_args,
+                resolved.self_ty,
+                mode,
+            )
         } else {
             let place = self.lower_place(callee_id);
             Operand::Copy(place)
@@ -294,6 +307,7 @@ impl<'a> BodyLowerCtx<'a> {
         &mut self,
         def: DefId,
         args: Vec<Ty>,
+        trait_args: Vec<Ty>,
         self_ty: Option<Ty>,
         mode: AnyMode,
     ) -> Operand {
@@ -311,6 +325,7 @@ impl<'a> BodyLowerCtx<'a> {
                 args,
                 any_mode,
                 self_ty,
+                trait_args,
                 trait_method: self.hir.trait_method(def),
             }),
         })
@@ -450,6 +465,7 @@ impl<'a> BodyLowerCtx<'a> {
                 args,
                 any_mode,
                 self_ty: None,
+                trait_args: Vec::new(),
                 trait_method: self.hir.trait_method(def),
             }),
         });
