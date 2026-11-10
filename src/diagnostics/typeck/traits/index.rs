@@ -51,18 +51,6 @@ pub fn report_extend_dyn(session: &Session, span: SrcSpan) {
     );
 }
 
-pub fn report_extend_unsized(session: &Session, span: SrcSpan) {
-    session.emit(
-        Diagnostic::error("an unsized array cannot be extended", span)
-            .with_code(codes::EXTEND_UNSIZED)
-            .with_label("has no fixed size")
-            .with_help(
-                "`[T]` has no fixed size, so there is nowhere to store a value of it to extend; \
-                     write a fixed length, as in `[T; N]`",
-            ),
-    );
-}
-
 pub fn report_extend_bare_self(session: &Session, span: SrcSpan) {
     session.emit(
         Diagnostic::error("`Self` cannot be extended", span)

@@ -584,12 +584,25 @@ mod tests {
 
     #[test]
     fn a_keyword_written_where_a_name_belongs_says_so() {
-        let diagnostic = only_diagnostic("fun match() {}");
-        assert_eq!(diagnostic.message, "expected identifier, found `match`");
-        assert_eq!(
-            diagnostic.help.as_deref(),
-            Some("`match` is a keyword, so it cannot be used as a name")
-        );
+        for keyword in ["match", "new"] {
+            let src = format!("fun {keyword}() {{}}");
+            let diagnostic = only_diagnostic(&src);
+            assert_eq!(
+                diagnostic.message,
+                format!("expected identifier, found `{keyword}`")
+            );
+            assert_eq!(
+                diagnostic.help.as_deref(),
+                Some(&*format!(
+                    "`{keyword}` is a keyword, so it cannot be used as a name"
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn new_is_still_a_keyword_after_a_path_separator() {
+        assert_eq!(diagnostic_count("fun main() { Vector::new(); }"), 1);
     }
 
     #[test]

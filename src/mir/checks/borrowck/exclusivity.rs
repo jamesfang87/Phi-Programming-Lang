@@ -195,6 +195,31 @@ fn check_assign_rvalue(
                 check_operand(session, body, aliases, live, operand, span);
             }
         }
+        Rvalue::Replace { place, value } => {
+            check_place_access(session, body, aliases, live, place, AccessKind::Write, span);
+            check_operand(session, body, aliases, live, value, span);
+        }
+        Rvalue::Swap { left, right } => {
+            check_place_access(session, body, aliases, live, left, AccessKind::Write, span);
+            check_place_access(session, body, aliases, live, right, AccessKind::Write, span);
+        }
+        Rvalue::LibcCall { args, .. } => {
+            for arg in args {
+                check_operand(session, body, aliases, live, arg, span);
+            }
+        }
+        Rvalue::EncodeUtf8 { value, buffer } => {
+            check_operand(session, body, aliases, live, value, span);
+            check_operand(session, body, aliases, live, buffer, span);
+        }
+        Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
+        Rvalue::WriteUninit { place, value } => {
+            check_place_access(session, body, aliases, live, place, AccessKind::Write, span);
+            check_operand(session, body, aliases, live, value, span);
+        }
+        Rvalue::ReadUninit(place) | Rvalue::AssumeInitRef(place) => {
+            check_place_access(session, body, aliases, live, place, AccessKind::Read, span);
+        }
         Rvalue::Discriminant(place) | Rvalue::Len(place) => {
             check_place_access(session, body, aliases, live, place, AccessKind::Read, span);
         }

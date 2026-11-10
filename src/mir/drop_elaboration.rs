@@ -24,8 +24,13 @@ pub fn elaborate_drops(
     tcx: &mut TyCtx,
     mut instances: HashMap<Instance, Body>,
 ) -> HashMap<Instance, Body> {
-    for body in instances.values_mut() {
-        elaborate_body(tcx, body);
+    for (instance, body) in instances.iter_mut() {
+        // Inside a `Drop::drop`, the receiver is being dropped by its own method, so cleaning
+        // it up must not call that method again.
+        let structural_local = tcx
+            .is_drop_method(instance.def)
+            .then(|| Local::from_usize(1));
+        elaborate_body(tcx, body, structural_local);
     }
     instances
 }
@@ -36,7 +41,7 @@ struct Insertion {
     tree: DropNode,
 }
 
-fn elaborate_body(tcx: &mut TyCtx, body: &mut Body) {
+fn elaborate_body(tcx: &mut TyCtx, body: &mut Body, structural_local: Option<Local>) {
     let droppable: Vec<bool> = body
         .local_decls
         .iter()
@@ -53,7 +58,7 @@ fn elaborate_body(tcx: &mut TyCtx, body: &mut Body) {
     }
 
     flags.declare(body);
-    let mut editor = Editor::new(tcx, body);
+    let mut editor = Editor::new(tcx, body, structural_local);
     for (index, insertions) in insertions.into_iter().enumerate() {
         editor.rewrite_block(BasicBlock::from_usize(index), insertions, flags.flags());
     }
@@ -164,10 +169,11 @@ struct Editor<'a> {
     next_statement_id: usize,
     bool_ty: Ty,
     discriminant_ty: Ty,
+    structural_local: Option<Local>,
 }
 
 impl<'a> Editor<'a> {
-    fn new(tcx: &mut TyCtx, body: &'a mut Body) -> Editor<'a> {
+    fn new(tcx: &mut TyCtx, body: &'a mut Body, structural_local: Option<Local>) -> Editor<'a> {
         let next_statement_id = body
             .basic_blocks
             .iter()
@@ -180,6 +186,7 @@ impl<'a> Editor<'a> {
             next_statement_id,
             bool_ty: tcx.mk_prim(PrimTy::Bool),
             discriminant_ty: tcx.mk_prim(PrimTy::I32),
+            structural_local,
         }
     }
 
@@ -248,7 +255,16 @@ impl<'a> Editor<'a> {
     }
 
     fn emit_drop(&mut self, place: Place, target: BasicBlock, span: SrcSpan) -> BasicBlock {
-        self.new_block(Vec::new(), TerminatorKind::Drop { place, target }, span)
+        let structural = self.structural_local == Some(place.local) && place.projections.is_empty();
+        self.new_block(
+            Vec::new(),
+            TerminatorKind::Drop {
+                place,
+                target,
+                structural,
+            },
+            span,
+        )
     }
 
     fn emit_free(&mut self, place: Place, target: BasicBlock, span: SrcSpan) -> BasicBlock {

@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 
-use crate::ast::Mutability;
+use crate::ast::{BinaryOp, Mutability, UnaryOp};
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, Res};
+use crate::langitems::LangItem;
 use crate::mir::lower::ctx::BodyLowerCtx;
 use crate::mir::lower::{Task, is_any_specialized};
 use crate::mir::{
-    AnyMode, ConstKind, Constant, FunRef, Operand, Place, Projection, Rvalue, TerminatorKind,
+    AnyMode, CastKind, ConstKind, Constant, FunRef, LibcFunction, Operand, Place, Projection,
+    Rvalue, TerminatorKind,
 };
+use crate::nameres::PrimTy;
 use crate::typeck::ty::visitor::{self, Subst};
 use crate::typeck::ty::{Ty, TyKind};
 
@@ -55,6 +58,16 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) {
         let expr_id = expr_id.into();
+        if self.lower_len_intrinsic(expr_id, dest.clone(), span)
+            || self.lower_memory_intrinsic(expr_id, dest.clone(), span)
+            || self.lower_llvm_memory_intrinsic(expr_id, dest.clone(), span)
+            || self.lower_libc_intrinsic(expr_id, dest.clone(), span)
+            || self.lower_llvm_operator_intrinsic(expr_id, dest.clone(), span)
+            || self.lower_llvm_cast_intrinsic(expr_id, dest.clone(), span)
+            || self.lower_llvm_utf8_intrinsic(expr_id, dest.clone(), span)
+        {
+            return;
+        }
         let target = self.lower_call_target(expr_id, mode);
         let any_mode = self.select_call_any_mode(&target, mode);
         let args = self.lower_call_operand_list(&target, any_mode, span);
@@ -131,6 +144,354 @@ impl<'a> BodyLowerCtx<'a> {
             arg_exprs: args,
             callee_def: Some(resolved.def),
             dyn_dispatch,
+        }
+    }
+
+    /// Lowers `target[key] = value` into a call to `IndexSet::index_set`, using the resolved call
+    /// recorded on the assignment's own expression. Returns whether `lhs` was such an assignment.
+    pub(crate) fn lower_index_set_assign(
+        &mut self,
+        expr_id: HirId,
+        lhs: ExprId,
+        rhs: ExprId,
+        span: SrcSpan,
+    ) -> bool {
+        let ExprKind::Index { base, index } = self.hir.expr(lhs).kind.clone() else {
+            return false;
+        };
+        let Some(resolved) = self.types.call(expr_id).cloned() else {
+            return false;
+        };
+
+        let func = self.resolved_fn_operand(
+            resolved.def,
+            resolved.all_args(),
+            resolved.trait_args,
+            resolved.self_ty,
+            AnyMode::Owned,
+        );
+        let target = CallTarget {
+            func,
+            receiver: Some(base),
+            arg_exprs: vec![index, rhs],
+            callee_def: Some(resolved.def),
+            dyn_dispatch: false,
+        };
+        let any_mode = self.select_call_any_mode(&target, AnyMode::Owned);
+        let args = self.lower_call_operand_list(&target, any_mode, span);
+        let unit_ty = self.tcx.unit();
+        let dest = Place::from_local(self.new_temp(unit_ty, span));
+        self.emit_call(expr_id, target.func, args, dest, span);
+        true
+    }
+
+    /// Lowers a call to one of the length intrinsics into `Rvalue::Len` over the argument's
+    /// place. Returns whether `expr_id` named a length intrinsic at all.
+    fn lower_len_intrinsic(&mut self, expr_id: HirId, dest: Place, span: SrcSpan) -> bool {
+        let Some(def) = self.find_call_target_def(expr_id) else {
+            return false;
+        };
+        let is_len = self.hir.lang_items().get(LangItem::SliceLen) == Some(def)
+            || self.hir.lang_items().get(LangItem::StrLen) == Some(def);
+        if !is_len {
+            return false;
+        }
+
+        let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+            return false;
+        };
+        let Some(&arg) = args.first() else {
+            return false;
+        };
+
+        let place = self.operand_place(arg);
+        self.assign(dest, Rvalue::Len(place), span);
+        true
+    }
+
+    /// Lowers `mem::swap` and `mem::replace` into the rvalues that write through their
+    /// references. Returns whether `expr_id` named one of them.
+    fn lower_memory_intrinsic(&mut self, expr_id: HirId, dest: Place, span: SrcSpan) -> bool {
+        let Some(def) = self.find_call_target_def(expr_id) else {
+            return false;
+        };
+        let is_swap = self.hir.lang_items().get(LangItem::Swap) == Some(def);
+        let is_replace = self.hir.lang_items().get(LangItem::Replace) == Some(def);
+        if !is_swap && !is_replace {
+            return false;
+        }
+
+        let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+            return false;
+        };
+        if args.len() != 2 {
+            return false;
+        }
+        let (first, second) = (args[0], args[1]);
+
+        let rvalue = if is_swap {
+            Rvalue::Swap {
+                left: self.deref_operand_place(first),
+                right: self.deref_operand_place(second),
+            }
+        } else {
+            Rvalue::Replace {
+                place: self.deref_operand_place(first),
+                value: self.lower_operand(second),
+            }
+        };
+        self.assign(dest, rvalue, span);
+        true
+    }
+
+    /// Lowers `core::llvm`'s operators into the same rvalues the operators produce, so they keep
+    /// the checked arithmetic the operators have. Returns whether `expr_id` named one.
+    fn lower_llvm_operator_intrinsic(
+        &mut self,
+        expr_id: HirId,
+        dest: Place,
+        span: SrcSpan,
+    ) -> bool {
+        let Some(def) = self.find_call_target_def(expr_id) else {
+            return false;
+        };
+
+        let binary = [
+            (LangItem::LlvmAdd, BinaryOp::Add),
+            (LangItem::LlvmSub, BinaryOp::Sub),
+            (LangItem::LlvmMul, BinaryOp::Mul),
+            (LangItem::LlvmDiv, BinaryOp::Div),
+            (LangItem::LlvmRem, BinaryOp::Rem),
+            (LangItem::LlvmEq, BinaryOp::Eq),
+            (LangItem::LlvmLessThan, BinaryOp::Lt),
+        ]
+        .into_iter()
+        .find(|(item, _)| self.hir.lang_items().get(*item) == Some(def))
+        .map(|(_, op)| op);
+
+        if let Some(op) = binary {
+            let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+                return false;
+            };
+            if args.len() != 2 {
+                return false;
+            }
+            let operand_ty = self.expr_ty(args[0]);
+            let lhs = self.lower_operand(args[0]);
+            let rhs = self.lower_operand(args[1]);
+            self.lower_binary_op_into(op, lhs, rhs, dest, operand_ty, span);
+            return true;
+        }
+
+        if self.hir.lang_items().get(LangItem::LlvmNeg) == Some(def) {
+            let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+                return false;
+            };
+            let Some(&arg) = args.first() else {
+                return false;
+            };
+            let ty = self.expr_ty(arg);
+            let operand = self.lower_operand(arg);
+            let is_int = matches!(self.tcx.kind(ty), TyKind::Primitive(prim) if prim.is_integer());
+            if self.mode == crate::driver::cli::Mode::Debug && is_int {
+                let zero = Operand::Constant(Constant {
+                    ty,
+                    kind: ConstKind::Int(0),
+                });
+                self.lower_binary_op_into(BinaryOp::Sub, zero, operand, dest, ty, span);
+            } else {
+                self.assign(dest, Rvalue::UnaryOp(UnaryOp::Neg, operand), span);
+            }
+            return true;
+        }
+
+        if self.hir.lang_items().get(LangItem::LlvmNot) == Some(def) {
+            let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+                return false;
+            };
+            let Some(&arg) = args.first() else {
+                return false;
+            };
+            let operand = self.lower_operand(arg);
+            self.assign(dest, Rvalue::UnaryOp(UnaryOp::Not, operand), span);
+            return true;
+        }
+
+        false
+    }
+
+    /// Lowers the LLVM numeric conversions that need an explicit cast. Returns whether `expr_id`
+    /// named one of them.
+    fn lower_llvm_cast_intrinsic(&mut self, expr_id: HirId, dest: Place, span: SrcSpan) -> bool {
+        let Some(def) = self.find_call_target_def(expr_id) else {
+            return false;
+        };
+        let target = [
+            (LangItem::LlvmF64ToI64, PrimTy::I64),
+            (LangItem::LlvmI64ToF64, PrimTy::F64),
+        ]
+        .into_iter()
+        .find_map(|(item, prim)| (self.hir.lang_items().get(item) == Some(def)).then_some(prim));
+        let Some(prim) = target else {
+            return false;
+        };
+
+        let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+            return false;
+        };
+        let Some(&arg) = args.first() else {
+            return false;
+        };
+        let operand = self.lower_operand(arg);
+        let ty = self.tcx.mk_prim(prim);
+        self.assign(
+            dest,
+            Rvalue::Cast {
+                operand,
+                ty,
+                kind: CastKind::Primitive,
+            },
+            span,
+        );
+        true
+    }
+
+    /// Lowers the UTF-8 encoder. Returns whether `expr_id` named it.
+    fn lower_llvm_utf8_intrinsic(&mut self, expr_id: HirId, dest: Place, span: SrcSpan) -> bool {
+        let Some(def) = self.find_call_target_def(expr_id) else {
+            return false;
+        };
+        if self.hir.lang_items().get(LangItem::LlvmEncodeUtf8) != Some(def) {
+            return false;
+        }
+
+        let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+            return false;
+        };
+        if args.len() != 2 {
+            return false;
+        }
+        let value = self.lower_operand(args[0]);
+        let buffer = self.lower_operand(args[1]);
+        self.assign(dest, Rvalue::EncodeUtf8 { value, buffer }, span);
+        true
+    }
+
+    /// Lowers the LLVM memory intrinsics that fill, read, and borrow `MaybeUninit` storage.
+    /// Returns whether `expr_id` named one of them.
+    fn lower_llvm_memory_intrinsic(&mut self, expr_id: HirId, dest: Place, span: SrcSpan) -> bool {
+        let Some(def) = self.find_call_target_def(expr_id) else {
+            return false;
+        };
+        let Some(item) = [
+            LangItem::WriteUninit,
+            LangItem::ReadUninit,
+            LangItem::AssumeInitRef,
+        ]
+        .into_iter()
+        .find(|item| self.hir.lang_items().get(*item) == Some(def)) else {
+            return false;
+        };
+
+        let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+            return false;
+        };
+
+        let rvalue = match item {
+            LangItem::WriteUninit => {
+                if args.len() != 2 {
+                    return false;
+                }
+                Rvalue::WriteUninit {
+                    place: self.deref_operand_place(args[0]),
+                    value: self.lower_operand(args[1]),
+                }
+            }
+            LangItem::ReadUninit | LangItem::AssumeInitRef => {
+                let Some(&slot) = args.first() else {
+                    return false;
+                };
+                let place = self.deref_operand_place(slot);
+                if item == LangItem::ReadUninit {
+                    Rvalue::ReadUninit(place)
+                } else {
+                    Rvalue::AssumeInitRef(place)
+                }
+            }
+            _ => unreachable!("the match only selects uninitialized-storage intrinsics"),
+        };
+        self.assign(dest, rvalue, span);
+        true
+    }
+
+    /// Lowers calls to the C library and to the type-layout queries. Returns whether `expr_id`
+    /// named one of them.
+    fn lower_libc_intrinsic(&mut self, expr_id: HirId, dest: Place, span: SrcSpan) -> bool {
+        let Some(def) = self.find_call_target_def(expr_id) else {
+            return false;
+        };
+        let function = [
+            (LangItem::LibcMalloc, LibcFunction::Malloc),
+            (LangItem::LibcFree, LibcFunction::Free),
+            (LangItem::LibcRealloc, LibcFunction::Realloc),
+            (LangItem::LibcMemcpy, LibcFunction::Memcpy),
+            (LangItem::LibcMemset, LibcFunction::Memset),
+            (LangItem::LibcMemcmp, LibcFunction::Memcmp),
+            (LangItem::LibcRead, LibcFunction::Read),
+            (LangItem::LibcWrite, LibcFunction::Write),
+        ]
+        .into_iter()
+        .find(|(item, _)| self.hir.lang_items().get(*item) == Some(def))
+        .map(|(_, function)| function);
+
+        let ExprKind::Call { args, .. } = self.hir.expr(expr_id).kind.clone() else {
+            return false;
+        };
+
+        if let Some(function) = function {
+            let args = args.iter().map(|&arg| self.lower_operand(arg)).collect();
+            self.assign(dest, Rvalue::LibcCall { function, args }, span);
+            return true;
+        }
+
+        let is_size = self.hir.lang_items().get(LangItem::LibcSizeof) == Some(def);
+        let is_align = self.hir.lang_items().get(LangItem::LibcAlignof) == Some(def);
+        if !is_size && !is_align {
+            return false;
+        }
+        let Some(&arg) = args.first() else {
+            return false;
+        };
+        let arg_ty = self.expr_ty(arg);
+        let (ty, _) = self.peel_refs(arg_ty);
+        let rvalue = if is_size {
+            Rvalue::SizeOf(ty)
+        } else {
+            Rvalue::AlignOf(ty)
+        };
+        self.assign(dest, rvalue, span);
+        true
+    }
+
+    /// Returns the place a reference-valued expression points at.
+    fn deref_operand_place(&mut self, expr_id: ExprId) -> Place {
+        let mut place = self.operand_place(expr_id);
+        place.projections.push(Projection::Deref);
+        place
+    }
+
+    /// Returns the place `expr_id` is stored in, materializing a temporary when it is an rvalue.
+    fn operand_place(&mut self, expr_id: ExprId) -> Place {
+        let operand = self.lower_operand(expr_id);
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => place,
+            operand @ Operand::Constant(_) => {
+                let ty = self.expr_ty(expr_id);
+                let span = self.hir.expr(expr_id).span;
+                let place = Place::from_local(self.new_temp(ty, span));
+                self.assign(place.clone(), Rvalue::Use(operand), span);
+                place
+            }
         }
     }
 
@@ -368,11 +729,17 @@ impl<'a> BodyLowerCtx<'a> {
         any_mode: Option<AnyMode>,
         span: SrcSpan,
     ) -> Operand {
+        let recv_ty = self.expr_ty(expr_id);
+
         let TyKind::Ref { mutability, .. } = *self.tcx.kind(declared_ty) else {
+            // A by-value method on an owned pointer takes the pointee, not the pointer.
+            if matches!(self.tcx.kind(recv_ty), TyKind::Iso(_)) {
+                let mut place = self.lower_place(expr_id);
+                place.projections.push(Projection::Deref);
+                return self.operand_for_place(place, declared_ty);
+            }
             return self.lower_arg_operand(expr_id, declared_ty, any_mode, span);
         };
-
-        let recv_ty = self.expr_ty(expr_id);
 
         if let TyKind::Any(_) = *self.tcx.kind(recv_ty) {
             let place = self.lower_place(expr_id);
@@ -381,6 +748,13 @@ impl<'a> BodyLowerCtx<'a> {
                 Mutability::Immutable => Operand::Copy(place),
             };
         }
+        if mutability == Mutability::Mutable && self.is_overloaded_index(expr_id) {
+            panic!(
+                "mir::lower: a mutable method call through an overloaded `Index` is not yet \
+                 implemented"
+            );
+        }
+
         let (peeled, derefs) = self.peel_refs(recv_ty);
         let mut place = self.lower_place(expr_id);
         for _ in 0..derefs {
@@ -405,6 +779,18 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) -> Operand {
         let expr_id = expr_id.into();
+
+        // An operator's synthesized call passes the right-hand side by value, while the trait
+        // method it targets declares `other: &Self`, so borrow the value for that parameter.
+        // Ordinary calls already write the borrow themselves, and the borrow's type is a
+        // reference, so this only fires for the synthesized operator calls.
+        let arg_ty = self.expr_ty(expr_id);
+        if matches!(self.tcx.kind(declared_ty), TyKind::Ref { .. })
+            && !matches!(self.tcx.kind(arg_ty), TyKind::Ref { .. })
+        {
+            return self.lower_receiver_operand(expr_id, declared_ty, any_mode, span);
+        }
+
         let (TyKind::Any(inner), Some(mode)) = (self.tcx.kind(declared_ty).clone(), any_mode)
         else {
             return self.lower_operand(expr_id);

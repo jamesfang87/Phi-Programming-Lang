@@ -359,6 +359,20 @@ pub fn report_not_try(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
     );
 }
 
+pub fn report_untrusted_intrinsic(session: &Session, span: SrcSpan) {
+    session.emit(
+        Diagnostic::error(
+            "this intrinsic may only be called from the standard library",
+            span,
+        )
+        .with_code(codes::UNTRUSTED_INTRINSIC)
+        .with_help(
+            "it belongs to the compiler's lowest layers; the standard library builds the \
+             ordinary operations on top of it",
+        ),
+    );
+}
+
 pub fn report_try_outside(cx: DisplayCtx<'_>, operand_ty: Ty, span: SrcSpan) {
     cx.emit(
         Diagnostic::error(

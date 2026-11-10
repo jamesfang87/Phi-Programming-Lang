@@ -55,6 +55,18 @@ fn layout_of_with(tcx: &mut TyCtx, mir: &Mir, ty: Ty, visiting: &mut HashSet<Ty>
     match tcx.kind(ty).clone() {
         TyKind::Tuple(elems) => layout_fields(tcx, mir, &elems, visiting),
         TyKind::Adt { def, args } => {
+            if tcx.is_maybe_uninit(def) {
+                // `MaybeUninit<T>` has exactly the layout of `T`; the declaration's fields are
+                // deliberately empty because the value may not be initialized.
+                let (size, align) = compute_size_align(tcx, mir, args[0], visiting);
+                return AdtLayout {
+                    size,
+                    align,
+                    fields: Vec::new(),
+                    tag_ty: None,
+                    payload_offset: 0,
+                };
+            }
             if !visiting.insert(ty) {
                 panic!("layout_of: recursive ADT {def:?} has no finite layout");
             }
@@ -149,7 +161,7 @@ fn layout_fields(tcx: &mut TyCtx, mir: &Mir, tys: &[Ty], visiting: &mut HashSet<
     }
 }
 
-fn compute_size_align(
+pub(super) fn compute_size_align(
     tcx: &mut TyCtx,
     mir: &Mir,
     ty: Ty,

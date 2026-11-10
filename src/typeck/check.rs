@@ -10,7 +10,7 @@ use crate::diagnostics::typeck::{
     report_integer_literal_out_of_range, report_negative_literal_for_unsigned_type,
     report_return_mismatch,
 };
-use crate::driver::source::{FileOrigin, SrcSpan};
+use crate::driver::source::SrcSpan;
 use crate::hir::BindingMode;
 use crate::hir::visit::{self, Visitor};
 use crate::hir::{
@@ -317,21 +317,64 @@ impl<'hir> Typeck<'hir> {
         expr_id: impl Into<HirId>,
     ) -> bool {
         let expr_id = expr_id.into();
-        let Some((trait_, args, found_base)) = self.dyn_coercion(expected, found) else {
-            return false;
-        };
 
-        let goal = Goal {
-            self_ty: found_base,
-            trait_: TraitRef { def: trait_, args },
-        };
-        let env = self.bounds_env(expr_id.owner);
-        if !matches!(self.implements(&goal, &env), Solution::Holds) {
-            return false;
+        if let Some((trait_, args, found_base)) = self.dyn_coercion(expected, found) {
+            let goal = Goal {
+                self_ty: found_base,
+                trait_: TraitRef { def: trait_, args },
+            };
+            let env = self.bounds_env(expr_id.owner);
+            if matches!(self.implements(&goal, &env), Solution::Holds) {
+                self.types.record_unsize(expr_id, expected);
+                return true;
+            }
         }
 
-        self.types.record_unsize(expr_id, expected);
-        true
+        if self.slice_unsizing(expected, found) || self.str_unsizing(expected, found) {
+            self.types.record_unsize(expr_id, expected);
+            return true;
+        }
+        false
+    }
+
+    /// Returns whether `found` is an array reference whose referent widens to `expected`'s
+    /// unsized array element type.
+    fn slice_unsizing(&self, expected: Ty, found: Ty) -> bool {
+        let TyKind::Ref {
+            base: expected_base,
+            mutability: expected_mutability,
+        } = *self.tcx.kind(expected)
+        else {
+            return false;
+        };
+        let TyKind::Array {
+            elem: expected_elem,
+            len: None,
+        } = *self.tcx.kind(expected_base)
+        else {
+            return false;
+        };
+        let TyKind::Ref {
+            base: found_base,
+            mutability: found_mutability,
+        } = *self.tcx.kind(found)
+        else {
+            return false;
+        };
+        let TyKind::Array {
+            elem: found_elem,
+            len: Some(_),
+        } = *self.tcx.kind(found_base)
+        else {
+            return false;
+        };
+        expected_mutability == found_mutability && expected_elem == found_elem
+    }
+
+    /// Returns whether `found` is a `&[u8]`, which has the same representation as `str`.
+    fn str_unsizing(&self, expected: Ty, found: Ty) -> bool {
+        matches!(self.tcx.kind(expected), TyKind::Primitive(PrimTy::Str))
+            && self.is_byte_slice_ref(found)
     }
 
     fn dyn_coercion(&mut self, expected: Ty, found: Ty) -> Option<(DefId, Vec<Ty>, Ty)> {
@@ -539,13 +582,17 @@ impl<'hir> Typeck<'hir> {
             return;
         }
 
-        let declared_in_core = self
+        let declared_in_library = self
             .session
             .file_containing(span.get_begin())
-            .is_some_and(|file| file.origin == FileOrigin::Core);
-        let is_write_bytes = self.hir.lang_items().get(LangItem::WriteBytes) == Some(function);
+            .is_some_and(|file| file.origin.is_library());
+        let is_intrinsic = LangItem::ALL
+            .iter()
+            .copied()
+            .filter(|item| item.is_intrinsic())
+            .any(|item| self.hir.lang_items().get(item) == Some(function));
 
-        if !declared_in_core || !is_write_bytes {
+        if !declared_in_library || !is_intrinsic {
             report_bodiless_function(self.session, span);
         }
     }
@@ -691,10 +738,28 @@ mod tests {
     }
 
     #[test]
-    fn write_bytes_declared_in_core_is_accepted() {
-        let reported = typeck_src_as_core(
-            "module core::io; public fun write_bytes(fd: i32, buf: &[u8]) -> i64;",
+    fn an_associated_function_infers_its_extend_generics_from_the_expected_type() {
+        accepts(
+            "struct Wrap<T> { public value: i32 }
+             extend<T> Wrap<T> {
+                 public fun empty() -> Wrap<T> { return Wrap { value: 0 }; }
+             }
+             fun f() { let w: Wrap<i32> = Wrap::empty(); }",
         );
+    }
+
+    #[test]
+    fn a_libc_function_declared_in_core_is_accepted() {
+        let reported = typeck_src_as_core(
+            "module core::libc; public fun write(fd: i32, buffer: &[u8], count: usize) -> i64;",
+        );
+        assert!(reported.is_empty(), "{reported:?}");
+    }
+
+    #[test]
+    fn a_length_intrinsic_declared_in_core_is_accepted() {
+        let reported =
+            typeck_src_as_core("module core::llvm; public fun slice_len<T>(value: &[T]) -> usize;");
         assert!(reported.is_empty(), "{reported:?}");
     }
 

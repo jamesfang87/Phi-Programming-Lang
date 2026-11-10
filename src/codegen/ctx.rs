@@ -31,6 +31,7 @@ pub struct CodegenCtx<'ctx> {
     pub libc: Libc<'ctx>,
     pub vtables: RefCell<HashMap<VtableKey, PointerValue<'ctx>>>,
     pub drop_glues: RefCell<HashMap<Ty, FunctionValue<'ctx>>>,
+    pub structural_drop_glues: RefCell<HashMap<Ty, FunctionValue<'ctx>>>,
     pub fun_thunks: RefCell<HashMap<String, FunctionValue<'ctx>>>,
 }
 
@@ -55,6 +56,7 @@ impl<'ctx> CodegenCtx<'ctx> {
             libc,
             vtables: RefCell::new(HashMap::new()),
             drop_glues: RefCell::new(HashMap::new()),
+            structural_drop_glues: RefCell::new(HashMap::new()),
             fun_thunks: RefCell::new(HashMap::new()),
         }
     }

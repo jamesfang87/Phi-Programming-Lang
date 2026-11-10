@@ -1,0 +1,35 @@
+module core::slice;
+
+import core::llvm::slice_len;
+import core::ops::Index;
+import core::ops::IndexSet;
+import core::option::Option;
+
+extend<T> [T] {
+    public fun len(&self) -> usize {
+        return slice_len(self);
+    }
+
+    public fun is_empty(&self) -> bool {
+        return self.len() == 0;
+    }
+
+    public fun get(&self, key: usize) -> Option<&T> {
+        if key >= self.len() {
+            return .none;
+        }
+        return .some(&self[key]);
+    }
+}
+
+extend<T> [T] with Index<usize, T> {
+    fun index(&self, key: usize) -> &T {
+        return &self[key];
+    }
+}
+
+extend<T> [T] with IndexSet<usize, T> {
+    fun index_set(&mut self, key: usize, value: T) {
+        self[key] = value;
+    }
+}

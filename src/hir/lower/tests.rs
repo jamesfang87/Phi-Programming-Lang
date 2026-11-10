@@ -91,14 +91,18 @@ fn every_item_gets_a_def_id_before_lower_module_runs() {
         .iter()
         .find(|item| matches!(item.kind, crate::ast::ItemKind::Trait(_)))
         .expect("fixture declares a trait");
-    assert_eq!(
-        cx.method_defs
-            .get(&trait_item.id)
-            .expect("trait's methods were pre-allocated")
-            .len(),
-        1
-    );
-    assert_eq!(cx.def_ids.len(), 4);
+    let crate::ast::ItemKind::Trait(trait_) = &trait_item.kind else {
+        unreachable!("the item was found by matching `ItemKind::Trait`")
+    };
+    assert_eq!(trait_.functions.len(), 1);
+    for method in &trait_.functions {
+        assert!(
+            cx.def_ids.contains_key(&method.id),
+            "trait method has no pre-allocated DefId"
+        );
+    }
+    // The module, its three items, and the trait's method node.
+    assert_eq!(cx.def_ids.len(), 5);
 }
 
 #[test]

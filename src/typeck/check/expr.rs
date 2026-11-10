@@ -76,11 +76,15 @@ impl<'hir> PayloadExprs<'hir> {
 impl<'hir> Typeck<'hir> {
     pub(crate) fn check_assign(
         &mut self,
+        id: impl Into<HirId>,
         lhs: impl Into<HirId>,
         rhs: impl Into<HirId>,
         span: SrcSpan,
     ) -> Ty {
-        let (lhs, rhs) = (lhs.into(), rhs.into());
+        let (id, lhs, rhs) = (id.into(), lhs.into(), rhs.into());
+        if self.check_index_set_assign(id, lhs, rhs, span) {
+            return self.tcx.unit();
+        }
         let lhs_ty = self.ty_of_as_place(lhs);
 
         if !self.is_place_expr(lhs) {
@@ -92,6 +96,40 @@ impl<'hir> Typeck<'hir> {
             report_assign_mismatch(self.display_cx(), err, span);
         }
         self.tcx.unit()
+    }
+
+    /// Checks `target[key] = value` through `IndexSet` when `target` is not a builtin array.
+    /// Returns whether the assignment was handled as an `IndexSet` call.
+    fn check_index_set_assign(&mut self, id: HirId, lhs: HirId, rhs: HirId, span: SrcSpan) -> bool {
+        let ExprKind::Index { base, index } = self.hir.expr(lhs).kind.clone() else {
+            return false;
+        };
+
+        let base_ty = self.ty_of_as_place(base);
+        let (peeled, _) = self.peel_receiver(base_ty);
+        if matches!(
+            self.tcx.kind(peeled),
+            TyKind::Array { .. } | TyKind::Var(_) | TyKind::Error
+        ) {
+            return false;
+        }
+
+        let member = Ident {
+            text: self.session.intern("index_set"),
+            span,
+        };
+        if self
+            .method_candidates(peeled, member.text, base.owner())
+            .is_empty()
+        {
+            report_not_indexable(self.display_cx(), peeled, span);
+            self.ty_of(index);
+            self.ty_of(rhs);
+            return true;
+        }
+
+        self.check_method_call(id, base, member, &[index, ExprId::from(rhs)]);
+        true
     }
 
     pub(crate) fn check_assign_op(
@@ -819,7 +857,7 @@ impl<'hir> Typeck<'hir> {
         target_ty
     }
 
-    fn is_byte_slice_ref(&self, ty: Ty) -> bool {
+    pub(crate) fn is_byte_slice_ref(&self, ty: Ty) -> bool {
         let TyKind::Ref { base, mutability } = *self.tcx.kind(ty) else {
             return false;
         };
@@ -843,9 +881,11 @@ impl<'hir> Typeck<'hir> {
         &mut self,
         elem: impl Into<HirId>,
         count: impl Into<HirId>,
+        expected: Option<Ty>,
     ) -> Ty {
         let (elem, count) = (elem.into(), count.into());
-        let elem_ty = self.ty_of(elem);
+        let expected_elem = expected.and_then(|ty| self.array_elem_of_new(ty));
+        let elem_ty = self.ty_of_expecting(elem, expected_elem);
         let count_ty = self.ty_of(count);
         let usize_ty = self.tcx.mk_prim(PrimTy::Usize);
         if let Err(err) = self.unifier.unify(&self.tcx, count_ty, usize_ty) {
@@ -855,6 +895,18 @@ impl<'hir> Typeck<'hir> {
         self.check_storable_in_iso(elem_ty, elem_span);
         let array_ty = self.tcx.mk_array(elem_ty, None);
         self.tcx.mk_iso(array_ty)
+    }
+
+    /// Returns the element type `ty`'s allocation holds, if `ty` is an `iso` of an array.
+    fn array_elem_of_new(&mut self, ty: Ty) -> Option<Ty> {
+        let ty = self.unifier.find_deep(&mut self.tcx, ty);
+        let TyKind::Iso(inner) = *self.tcx.kind(ty) else {
+            return None;
+        };
+        let TyKind::Array { elem, .. } = *self.tcx.kind(inner) else {
+            return None;
+        };
+        Some(elem)
     }
 
     fn check_storable_in_iso(&mut self, ty: Ty, span: SrcSpan) {
@@ -1005,7 +1057,7 @@ impl<'hir> Typeck<'hir> {
                 let resolved = self.unifier.find_deep(&mut self.tcx, lhs_ty);
                 self.check_operator(id, lhs_expr.into(), *op, resolved, id.owner, expr.span)
             }
-            ExprKind::Assign { lhs, rhs } => self.check_assign(*lhs, *rhs, expr.span),
+            ExprKind::Assign { lhs, rhs } => self.check_assign(id, *lhs, *rhs, expr.span),
             ExprKind::AssignOp { op, lhs, rhs } => {
                 self.check_assign_op(id, *op, *lhs, *rhs, expr.span)
             }
@@ -1040,7 +1092,7 @@ impl<'hir> Typeck<'hir> {
             ExprKind::Closure(def) => self.check_closure(*def, expected),
             ExprKind::Cast { expr: operand, ty } => self.check_cast(*operand, *ty, expr.span),
             ExprKind::New(operand) => self.check_new(*operand),
-            ExprKind::NewArray { elem, count } => self.check_new_array(*elem, *count),
+            ExprKind::NewArray { elem, count } => self.check_new_array(*elem, *count, expected),
             ExprKind::Assert { cond, msg } => self.check_assert(*cond, *msg),
             ExprKind::Panic { msg } | ExprKind::Unreachable { msg } => {
                 self.check_panic_message(*msg)
@@ -1115,10 +1167,15 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn record_operator_call(&mut self, id: HirId, receiver: HirId, operand: Ty, item: LangItem) {
-        if matches!(
-            self.tcx.kind(operand),
-            TyKind::Primitive(_) | TyKind::Var(_) | TyKind::Error
-        ) {
+        // Primitive arithmetic and comparisons compile straight to instructions. `str` is the
+        // exception: it is a fat pointer, so its operators dispatch to the library's `Eq` and
+        // `Comparable` implementations.
+        if matches!(self.tcx.kind(operand), TyKind::Var(_) | TyKind::Error)
+            || matches!(
+                self.tcx.kind(operand),
+                TyKind::Primitive(prim) if *prim != PrimTy::Str
+            )
+        {
             return;
         }
         let Some(trait_def) = self.hir.lang_items().get(item) else {
@@ -1823,6 +1880,43 @@ mod tests {
     }
 
     #[test]
+    fn a_fixed_array_reference_unsizes_to_a_slice() {
+        accepts("fun f(a: &[i32; 3]) -> &[i32] { return a; }");
+        rejects(
+            "fun f(a: &[i32; 3]) -> &[bool] { return a; }",
+            "mismatched types",
+        );
+    }
+
+    #[test]
+    fn a_byte_slice_reference_unsizes_to_str() {
+        accepts("fun f(b: &[u8]) -> str { return b; }");
+        rejects("fun f(b: &[i32]) -> str { return b; }", "mismatched types");
+    }
+
+    #[test]
+    fn a_reference_to_an_iso_field_pointee_is_a_slice() {
+        accepts(
+            "struct Bytes { buf: iso [u8], len: usize }
+             extend Bytes {
+                 fun as_bytes(&self) -> &[u8] { return &*self.buf; }
+             }",
+        );
+    }
+
+    #[test]
+    fn a_slice_method_can_read_its_own_length() {
+        accepts(
+            "module core::mem;
+             public fun slice_len<T>(value: &[T]) -> usize { return 0; }
+             extend<T> [T] {
+                 public fun len(&self) -> usize { return slice_len(self); }
+             }
+             fun f(x: &[i32]) -> usize { return x.len(); }",
+        );
+    }
+
+    #[test]
     fn a_type_with_an_index_impl_is_indexed_through_it() {
         accepts(
             "module core::ops;
@@ -1983,6 +2077,11 @@ mod tests {
     #[test]
     fn new_array_requires_a_usize_count_and_yields_iso_of_unsized_array() {
         accepts("fun f(n: usize) { let buf: iso [u8] = new [0_u8; n]; }");
+        accepts(
+            "module core::option;
+             public enum Option<T> { some: T, none }
+             fun f(n: usize) { let buf: iso [Option<i32>] = new [.none; n]; }",
+        );
     }
 
     #[test]

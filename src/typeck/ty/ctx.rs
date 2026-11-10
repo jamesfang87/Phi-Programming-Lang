@@ -16,6 +16,8 @@ pub struct TyCtx {
 
     adts: HashMap<DefId, AdtDef>,
     copy: HashSet<Ty>,
+    maybe_uninit: Option<DefId>,
+    drop_methods: HashMap<DefId, DefId>,
 }
 
 #[derive(Default)]
@@ -144,6 +146,12 @@ impl TyCtx {
                 .into_iter()
                 .any(|elem| self.needs_drop_with(visiting, elem)),
             TyKind::Adt { def, args } => {
+                if self.is_maybe_uninit(def) {
+                    return false;
+                }
+                if self.drop_method_for(def).is_some() {
+                    return true;
+                }
                 if !visiting.insert(ty) {
                     return false;
                 }
@@ -198,6 +206,30 @@ impl TyCtx {
             "Attempt to recollect ADT definitions (which are only to be collected once)"
         );
         self.adts = adts;
+    }
+
+    pub(crate) fn set_maybe_uninit(&mut self, def: Option<DefId>) {
+        self.maybe_uninit = def;
+    }
+
+    /// Returns whether `def` is `core::mem::MaybeUninit`, whose layout is its argument's and
+    /// which is never dropped.
+    pub fn is_maybe_uninit(&self, def: DefId) -> bool {
+        self.maybe_uninit == Some(def)
+    }
+
+    pub(crate) fn set_drop_methods(&mut self, methods: HashMap<DefId, DefId>) {
+        self.drop_methods = methods;
+    }
+
+    /// Returns the `Drop::drop` method `def`'s type implements, if it has one.
+    pub fn drop_method_for(&self, def: DefId) -> Option<DefId> {
+        self.drop_methods.get(&def).copied()
+    }
+
+    /// Returns whether `method` is some type's `Drop::drop`.
+    pub fn is_drop_method(&self, method: DefId) -> bool {
+        self.drop_methods.values().any(|&drop| drop == method)
     }
 
     pub fn mark_copy(&mut self, ty: Ty) {

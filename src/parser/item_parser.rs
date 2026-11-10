@@ -205,6 +205,7 @@ impl<'s> Parser<'s> {
                         let span = begin.merge(end);
 
                         Function {
+                            id: NodeId::next(),
                             visibility: vis.0,
                             name,
                             generics: generics.unwrap_or_default(),

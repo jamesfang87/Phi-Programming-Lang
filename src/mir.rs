@@ -20,6 +20,6 @@ pub use instance::{AnyMode, Instance};
 pub use lower::Mir;
 pub use operand::{ConstKind, Constant, FunRef, Operand};
 pub use place::{Place, Projection, place_ty};
-pub use rvalue::{AggregateKind, CastKind, Rvalue};
+pub use rvalue::{AggregateKind, CastKind, LibcFunction, Rvalue};
 pub use statement::{Statement, StatementKind};
 pub use terminator::{AssertMessage, SwitchTargets, Terminator, TerminatorKind};

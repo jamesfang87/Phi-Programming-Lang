@@ -1,7 +1,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol, Visibility};
+use crate::ast::{Ast, Ident, Import, Item, ItemKind, NodeId, Path, Symbol, TyKind, Visibility};
 use crate::diagnostics::nameres::{
     report_ambiguous_import, report_conflict, report_dyn_not_trait, report_not_found,
     report_private_item, report_self_unavailable,
@@ -12,7 +12,8 @@ use crate::nameres::res::PrimTy;
 use crate::nameres::res::{Local, Res, TyDef, Type};
 use crate::session::Session;
 
-const PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
+const CORE_PRELUDE_PATH: [&str; 2] = ["core", "prelude"];
+const STD_PRELUDE_PATH: [&str; 2] = ["std", "prelude"];
 
 /// At most this many nearby names are offered when a lookup fails.
 const MAX_SUGGESTIONS: usize = 3;
@@ -55,7 +56,7 @@ pub struct SymbolTable<'ast> {
     module_scopes: HashMap<NodeId, ModuleScope>,
 
     item_map: HashMap<NodeId, &'ast Item>,
-    prelude: Option<NodeId>,
+    preludes: Vec<NodeId>,
     ast: &'ast Ast,
 }
 
@@ -113,23 +114,28 @@ impl<'ast> SymbolTable<'ast> {
     pub fn new(session: &'ast Session, ast: &'ast Ast) -> Self {
         let mut table = Self::collect(session, ast);
         table.resolve_imports();
-        table.prelude = table.find_prelude();
+        table.preludes = table.find_preludes();
         table
     }
 
     //-------------------------------------------------------------------------
 
     #[allow(dead_code)]
-    pub fn prelude(&self) -> Option<NodeId> {
-        self.prelude
+    pub fn preludes(&self) -> &[NodeId] {
+        &self.preludes
     }
 
-    fn find_prelude(&self) -> Option<NodeId> {
-        let mut current = self.ast.root_id();
-        for segment in PRELUDE_PATH {
-            current = self.lookup_mod(current, self.session.intern(segment))?;
-        }
-        Some(current)
+    fn find_preludes(&self) -> Vec<NodeId> {
+        [CORE_PRELUDE_PATH, STD_PRELUDE_PATH]
+            .into_iter()
+            .filter_map(|path| {
+                let mut current = self.ast.root_id();
+                for segment in path {
+                    current = self.lookup_mod(current, self.session.intern(segment))?;
+                }
+                Some(current)
+            })
+            .collect()
     }
 
     //-------------------------------------------------------------------------
@@ -142,7 +148,7 @@ impl<'ast> SymbolTable<'ast> {
             self_scopes: Vec::new(),
             module_scopes: HashMap::new(),
             item_map: HashMap::new(),
-            prelude: None,
+            preludes: Vec::new(),
             ast,
         };
         table.collect_module(ast.root_id());
@@ -444,7 +450,7 @@ impl<'ast> SymbolTable<'ast> {
     fn in_module_chain<T>(&self, from: NodeId, lookup: impl Fn(NodeId) -> Option<T>) -> Option<T> {
         self.module_chain(from)
             .into_iter()
-            .chain(self.prelude)
+            .chain(self.preludes.iter().copied())
             .find_map(lookup)
     }
 
@@ -467,6 +473,54 @@ impl<'ast> SymbolTable<'ast> {
             self.is_visible_from(from, module, self.visibility(id))
                 .then_some(Res::Function(id))
         })
+    }
+
+    /// Looks up `path` as a static method of the type its prefix names, such as the `empty` in
+    /// `String::empty`. Returns the method's own node when the type declares one.
+    pub fn probe_associated_function(&self, from: NodeId, path: &Path) -> Option<NodeId> {
+        let (last, prefix) = path.segments.split_last()?;
+        if prefix.is_empty() {
+            return None;
+        }
+
+        let prefix_path = Path {
+            segments: prefix.to_vec(),
+        };
+        let Type::Def(def) = self.probe_type_path(from, &prefix_path)? else {
+            return None;
+        };
+
+        for module_id in self.ast.mod_ids() {
+            let module = self.ast.module(module_id);
+            for item in &module.items {
+                let ItemKind::Extend(extend) = &item.kind else {
+                    continue;
+                };
+                let TyKind::Path {
+                    path: self_path, ..
+                } = &extend.self_ty.kind
+                else {
+                    continue;
+                };
+                let Some(Type::Def(extend_def)) = self.probe_type_path(module_id, self_path) else {
+                    continue;
+                };
+                if extend_def != def {
+                    continue;
+                }
+
+                for method in &extend.methods {
+                    if method.self_param.is_some() || method.name.text != last.text {
+                        continue;
+                    }
+                    if !self.is_visible_from(from, module_id, method.visibility) {
+                        continue;
+                    }
+                    return Some(method.id);
+                }
+            }
+        }
+        None
     }
 
     /// Looks up [`path`] in the type namespace
@@ -706,7 +760,7 @@ impl<'ast> SymbolTable<'ast> {
     fn module_chain_names(&self, from: NodeId, namespace: Namespace) -> Vec<String> {
         self.module_chain(from)
             .into_iter()
-            .chain(self.prelude)
+            .chain(self.preludes.iter().copied())
             .flat_map(|module| self.module_names(from, module, namespace))
             .collect()
     }

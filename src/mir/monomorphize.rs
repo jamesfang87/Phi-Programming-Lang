@@ -2,7 +2,7 @@ pub(crate) mod subst;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::hir::{DefId, HirId};
 use crate::mir::lower::Mir;
@@ -46,7 +46,98 @@ pub fn monomorphize(
         instantiate_instance(tcx, program, instance, &mut output, &mut discovered);
     }
 
+    // Drop calls are inserted after monomorphization, so their methods are never discovered
+    // from a call. Instantiate one for every type the emitted bodies can drop.
+    loop {
+        let mut drop_types = Vec::new();
+        let mut seen = HashSet::new();
+        for body in output.values() {
+            for decl in &body.local_decls {
+                collect_drop_types(tcx, decl.ty, &mut seen, &mut drop_types);
+            }
+        }
+
+        for ty in drop_types {
+            let TyKind::Adt { def, args } = tcx.kind(ty).clone() else {
+                continue;
+            };
+            let Some(method) = tcx.drop_method_for(def) else {
+                continue;
+            };
+            let instance = Instance {
+                def: method,
+                any_mode: None,
+                args,
+                self_ty: Some(ty),
+            };
+            if !output.contains_key(&instance) && !discovered.contains(&instance) {
+                discovered.push(instance);
+            }
+        }
+        if discovered.is_empty() {
+            break;
+        }
+
+        while let Some(instance) = discovered.pop() {
+            if output.contains_key(&instance) {
+                continue;
+            }
+            processed += 1;
+            check_instantiation_limit(processed);
+            instantiate_instance(tcx, program, instance, &mut output, &mut discovered);
+        }
+    }
+
     output
+}
+
+/// Collects every ADT type reachable from `ty` that declares its own `Drop::drop`.
+fn collect_drop_types(tcx: &mut TyCtx, ty: Ty, seen: &mut HashSet<Ty>, out: &mut Vec<Ty>) {
+    if !seen.insert(ty) {
+        return;
+    }
+    match tcx.kind(ty).clone() {
+        TyKind::Adt { def, args } => {
+            if tcx.drop_method_for(def).is_some() {
+                out.push(ty);
+            }
+            for &arg in &args {
+                collect_drop_types(tcx, arg, seen, out);
+            }
+            match tcx.enum_variant_count(def) {
+                Some(count) => {
+                    for variant in 0..count {
+                        for field in tcx.variant_field_tys(def, &args, variant) {
+                            collect_drop_types(tcx, field, seen, out);
+                        }
+                    }
+                }
+                None => {
+                    for field in tcx.struct_field_tys(def, &args) {
+                        collect_drop_types(tcx, field, seen, out);
+                    }
+                }
+            }
+        }
+        TyKind::Iso(inner) | TyKind::Ref { base: inner, .. } | TyKind::Any(inner) => {
+            collect_drop_types(tcx, inner, seen, out);
+        }
+        TyKind::Array { elem, .. } => collect_drop_types(tcx, elem, seen, out),
+        TyKind::Tuple(elems) => {
+            for elem in elems {
+                collect_drop_types(tcx, elem, seen, out);
+            }
+        }
+        TyKind::Fun { params, ret } => {
+            for param in params {
+                collect_drop_types(tcx, param, seen, out);
+            }
+            if let Some(ret) = ret {
+                collect_drop_types(tcx, ret, seen, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Returns the instances a run starts from: `main` and every non-generic body, but no closure,
@@ -274,6 +365,30 @@ impl InstantiationCx<'_> {
                 operand: self.subst_operand(operand, substitution),
                 trait_,
             },
+            Rvalue::Replace { place, value } => Rvalue::Replace {
+                place,
+                value: self.subst_operand(value, substitution),
+            },
+            Rvalue::Swap { left, right } => Rvalue::Swap { left, right },
+            Rvalue::LibcCall { function, args } => Rvalue::LibcCall {
+                function,
+                args: args
+                    .into_iter()
+                    .map(|arg| self.subst_operand(arg, substitution))
+                    .collect(),
+            },
+            Rvalue::SizeOf(ty) => Rvalue::SizeOf(subst::subst_ty(self.tcx, ty, substitution)),
+            Rvalue::AlignOf(ty) => Rvalue::AlignOf(subst::subst_ty(self.tcx, ty, substitution)),
+            Rvalue::EncodeUtf8 { value, buffer } => Rvalue::EncodeUtf8 {
+                value: self.subst_operand(value, substitution),
+                buffer: self.subst_operand(buffer, substitution),
+            },
+            Rvalue::WriteUninit { place, value } => Rvalue::WriteUninit {
+                place,
+                value: self.subst_operand(value, substitution),
+            },
+            Rvalue::ReadUninit(place) => Rvalue::ReadUninit(place),
+            Rvalue::AssumeInitRef(place) => Rvalue::AssumeInitRef(place),
             Rvalue::Discriminant(place) => Rvalue::Discriminant(place),
             Rvalue::Len(place) => Rvalue::Len(place),
             Rvalue::New(operand) => Rvalue::New(self.subst_operand(operand, substitution)),

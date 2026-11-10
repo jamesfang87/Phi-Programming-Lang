@@ -1,41 +1,462 @@
 module std::string;
 
-// TODO: implement the stubbed `String` methods below (`from`, `as_bytes`, `as_str`,
-// `push_str`, `reserve` all abort with `unreachable("not yet implemented")`). Owned,
-// growable text is required by README sections 4-6 (`String`/`&String`, moves, `+`
-// concatenation), so real programs cannot build or mutate strings today.
+import core::libc::memcmp;
+import core::libc::memcpy;
+import core::llvm::encode_utf8;
+import core::llvm::f64_to_i64;
+import core::llvm::i64_to_f64;
+import core::ops::Add;
+import core::ops::Eq;
+import core::ops::Comparable;
+import std::vector::Vector;
 
 public struct String {
     buf: iso [u8],
     len: usize,
 }
 
+
 extend String {
     public fun empty() -> String {
         return String { buf: new [0_u8; 0], len: 0 };
     }
 
-    public fun from(_s: str) -> String {
-        unreachable("not yet implemented");
+    public fun from(s: str) -> String {
+        let n = s.len();
+        let mut buf: iso [u8] = new [0_u8; n];
+        memcpy(&mut *buf, s as &[u8], n);
+        return String { buf: buf, len: n };
     }
 
     public fun len(&self) -> usize {
         return self.len;
     }
 
+    public fun is_empty(&self) -> bool {
+        return self.len == 0;
+    }
+
     public fun as_bytes(&self) -> &[u8] {
-        unreachable("not yet implemented");
+        return &*self.buf;
     }
 
     public fun as_str(&self) -> str {
-        unreachable("not yet implemented");
+        return &*self.buf;
     }
 
-    public fun push_str(&mut self, _s: str) {
-        unreachable("not yet implemented");
+    public fun push_str(&mut self, s: str) {
+        let extra = s.len();
+        let new_len = self.len + extra;
+        let mut fresh: iso [u8] = new [0_u8; new_len];
+
+        for i in 0..self.len {
+            fresh[i] = self.buf[i];
+        }
+
+        let bytes = s as &[u8];
+        for j in 0..extra {
+            fresh[self.len + j] = bytes[j];
+        }
+
+        self.buf = fresh;
+        self.len = new_len;
     }
 
-    fun reserve(&mut self, _extra: usize) {
-        unreachable("not yet implemented");
+    public fun push_char(&mut self, c: char) {
+        let mut buffer: iso [u8] = new [0_u8; 4];
+        let count = encode_utf8(c, &mut *buffer);
+        self.push_bytes(&*buffer, count);
     }
+
+    fun push_bytes(&mut self, bytes: &[u8], count: usize) {
+        if count == 0 {
+            return;
+        }
+        let new_len = self.len + count;
+        let mut fresh: iso [u8] = new [0_u8; new_len];
+        memcpy(&mut *fresh, &*self.buf, self.len);
+        for i in 0..count {
+            fresh[self.len + i] = bytes[i];
+        }
+        self.buf = fresh;
+        self.len = new_len;
+    }
+
+    public fun push_f32(&mut self, value: f32) {
+        self.push_float(value as f64, 7);
+    }
+
+    public fun push_f64(&mut self, value: f64) {
+        self.push_float(value, 16);
+    }
+
+    fun push_float(&mut self, value: f64, significant_digits: usize) {
+        let residual = value - value;
+        if residual != residual {
+            if value != value {
+                self.push_str("NaN");
+            } else if value < 0.0 {
+                self.push_str("-inf");
+            } else {
+                self.push_str("inf");
+            }
+            return;
+        }
+
+        if value == 0.0 {
+            self.push_str("0");
+            return;
+        }
+
+        let mut x = value;
+        if x < 0.0 {
+            self.push_str("-");
+            x = 0.0 - x;
+        }
+        let magnitude = x;
+
+        let mut probe = x;
+        let mut exponent_positive: usize = 0;
+        let mut exponent_negative: usize = 0;
+        while probe >= 10.0 {
+            probe = probe / 10.0;
+            exponent_positive = exponent_positive + 1;
+        }
+        while probe < 1.0 {
+            probe = probe * 10.0;
+            exponent_negative = exponent_negative + 1;
+        }
+
+        if exponent_positive > 0 {
+            x = x / pow10(exponent_positive);
+        } else if exponent_negative > 0 {
+            if exponent_negative > 308 {
+                x = x * pow10(308) * pow10(exponent_negative - 308);
+            } else {
+                x = x * pow10(exponent_negative);
+            }
+        }
+
+        while x >= 10.0 {
+            x = x / 10.0;
+            exponent_positive = exponent_positive + 1;
+        }
+        while x < 1.0 {
+            x = x * 10.0;
+            exponent_negative = exponent_negative + 1;
+        }
+
+        let mut digits: Vector<u8> = Vector::empty();
+        let mut i: usize = 0;
+        while i < significant_digits {
+            let mut digit = f64_to_i64(x);
+            if digit > 9 {
+                digit = 9;
+            }
+            if digit < 0 {
+                digit = 0;
+            }
+            digits.push(ascii_digit_i64(digit));
+            x = (x - i64_to_f64(digit)) * 10.0;
+            i = i + 1;
+        }
+
+        if x >= 5.0 {
+            let mut carry = false;
+            let mut j = digits.len();
+            while j > 0 {
+                j = j - 1;
+                if *digits[j] < 57 {
+                    let next = *digits[j] + 1;
+                    digits[j] = next;
+                    carry = false;
+                    break;
+                }
+                digits[j] = 48;
+                carry = true;
+            }
+            if carry {
+                digits[0] = 49;
+                if exponent_negative > 0 {
+                    exponent_negative = exponent_negative - 1;
+                } else {
+                    exponent_positive = exponent_positive + 1;
+                }
+            }
+        }
+
+        let mut chosen = digits.len();
+        let mut k: usize = 1;
+        while k <= digits.len() {
+            let mut scaled = 0.0;
+            let mut idx: usize = 0;
+            while idx < k {
+                scaled = scaled * 10.0 + i64_to_f64((*digits[idx] - 48) as i64);
+                idx = idx + 1;
+            }
+
+            let shift = k - 1;
+            if exponent_negative > 0 {
+                let mut n = exponent_negative + shift;
+                while n > 0 {
+                    scaled = scaled / 10.0;
+                    n = n - 1;
+                }
+            } else if exponent_positive >= shift {
+                let mut n = exponent_positive - shift;
+                while n > 0 {
+                    scaled = scaled * 10.0;
+                    n = n - 1;
+                }
+            } else {
+                let mut n = shift - exponent_positive;
+                while n > 0 {
+                    scaled = scaled / 10.0;
+                    n = n - 1;
+                }
+            }
+
+            let mut difference = scaled - magnitude;
+            if difference < 0.0 {
+                difference = 0.0 - difference;
+            }
+            let tolerance = magnitude * 0.0000000000000002;
+            if difference <= tolerance {
+                chosen = k;
+                break;
+            }
+            k = k + 1;
+        }
+
+        while digits.len() > chosen {
+            let _ = digits.pop();
+        }
+
+        while digits.len() > 1 && *digits[digits.len() - 1] == 48 {
+            let _ = digits.pop();
+        }
+
+        if exponent_negative > 4 {
+            self.push_digits(&digits, 0, 1);
+            if digits.len() > 1 {
+                self.push_str(".");
+                self.push_digits(&digits, 1, digits.len());
+            }
+            self.push_str("e-");
+            self.push_u64(exponent_negative as u64);
+            return;
+        }
+
+        if exponent_positive >= significant_digits {
+            self.push_digits(&digits, 0, 1);
+            if digits.len() > 1 {
+                self.push_str(".");
+                self.push_digits(&digits, 1, digits.len());
+            }
+            self.push_str("e");
+            self.push_u64(exponent_positive as u64);
+            return;
+        }
+
+        if exponent_negative > 0 {
+            self.push_str("0.");
+            self.push_zeros(exponent_negative - 1);
+            self.push_digits(&digits, 0, digits.len());
+            return;
+        }
+
+        let integer_digits = exponent_positive + 1;
+        if digits.len() <= integer_digits {
+            self.push_digits(&digits, 0, digits.len());
+            self.push_zeros(integer_digits - digits.len());
+        } else {
+            self.push_digits(&digits, 0, integer_digits);
+            self.push_str(".");
+            self.push_digits(&digits, integer_digits, digits.len());
+        }
+    }
+
+    fun push_digits(&mut self, digits: &Vector<u8>, start: usize, end: usize) {
+        if start >= end {
+            return;
+        }
+        let count = end - start;
+        let new_len = self.len + count;
+        let mut fresh: iso [u8] = new [0_u8; new_len];
+        memcpy(&mut *fresh, &*self.buf, self.len);
+
+        for i in start..end {
+            fresh[self.len + (i - start)] = *digits[i];
+        }
+
+        self.buf = fresh;
+        self.len = new_len;
+    }
+
+    fun push_zeros(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let new_len = self.len + count;
+        let mut fresh: iso [u8] = new [0_u8; new_len];
+        memcpy(&mut *fresh, &*self.buf, self.len);
+
+        let mut i: usize = 0;
+        while i < count {
+            fresh[self.len + i] = 48;
+            i = i + 1;
+        }
+
+        self.buf = fresh;
+        self.len = new_len;
+    }
+
+    public fun push_u64(&mut self, value: u64) {
+        let mut count: usize = 1;
+        let mut probe = value;
+        while probe >= 10 {
+            probe = probe / 10;
+            count = count + 1;
+        }
+
+        let mut place: u64 = 1;
+        let mut i: usize = 1;
+        while i < count {
+            place = place * 10;
+            i = i + 1;
+        }
+
+        let new_len = self.len + count;
+        let mut fresh: iso [u8] = new [0_u8; new_len];
+        memcpy(&mut *fresh, &*self.buf, self.len);
+
+        for i in 0..count {
+            let digit = (value / place) % 10;
+            fresh[self.len + i] = ascii_digit_u64(digit);
+            place = place / 10;
+        }
+
+        self.buf = fresh;
+        self.len = new_len;
+    }
+
+    public fun push_i64(&mut self, value: i64) {
+        let negative = value < 0;
+        let mut count: usize = 1;
+        let mut probe = value;
+        while probe >= 10 || probe <= -10 {
+            probe = probe / 10;
+            count = count + 1;
+        }
+
+        let mut place: i64 = 1;
+        let mut i: usize = 1;
+        while i < count {
+            place = place * 10;
+            i = i + 1;
+        }
+
+        let sign_len = if negative { 1 } else { 0 };
+        let new_len = self.len + sign_len + count;
+        let mut fresh: iso [u8] = new [0_u8; new_len];
+        memcpy(&mut *fresh, &*self.buf, self.len);
+
+        if negative {
+            fresh[self.len] = 45;
+        }
+
+        for i in 0..count {
+            let digit = (value / place) % 10;
+            let magnitude = if digit < 0 { 0 - digit } else { digit };
+            fresh[self.len + sign_len + i] = ascii_digit_i64(magnitude);
+            place = place / 10;
+        }
+
+        self.buf = fresh;
+        self.len = new_len;
+    }
+
+    public fun clear(&mut self) {
+        self.buf = new [0_u8; 0];
+        self.len = 0;
+    }
+}
+
+extend String with Eq {
+    fun eq(&self, other: &Self) -> bool {
+        if self.len != other.len {
+            return false;
+        }
+        return memcmp(self.as_bytes(), other.as_bytes(), self.len) == 0;
+    }
+}
+
+extend String with Comparable {
+    fun less_than(&self, other: &Self) -> bool {
+        let n = if self.len < other.len { self.len } else { other.len };
+        let order = memcmp(self.as_bytes(), other.as_bytes(), n);
+        if order < 0 {
+            return true;
+        }
+        if order > 0 {
+            return false;
+        }
+        return self.len < other.len;
+    }
+}
+
+extend String with Add {
+    fun add(&self, other: &Self) -> Self {
+        let mut result = String { buf: new [0_u8; 0], len: 0 };
+        result.push_str(self.as_str());
+        result.push_str(other.as_str());
+        return result;
+    }
+}
+
+fun ascii_digit_u64(digit: u64) -> u8 {
+    return match digit {
+        0 => 48,
+        1 => 49,
+        2 => 50,
+        3 => 51,
+        4 => 52,
+        5 => 53,
+        6 => 54,
+        7 => 55,
+        8 => 56,
+        _ => 57,
+    };
+}
+
+fun ascii_digit_i64(digit: i64) -> u8 {
+    return match digit {
+        0 => 48,
+        1 => 49,
+        2 => 50,
+        3 => 51,
+        4 => 52,
+        5 => 53,
+        6 => 54,
+        7 => 55,
+        8 => 56,
+        _ => 57,
+    };
+}
+
+fun pow10(exponent: usize) -> f64 {
+    if exponent == 0 {
+        return 1.0;
+    }
+    let mut result = 1.0;
+    let mut base = 10.0;
+    let mut e = exponent;
+    while e > 1 {
+        if e % 2 == 1 {
+            result = result * base;
+        }
+        base = base * base;
+        e = e / 2;
+    }
+    return result * base;
 }

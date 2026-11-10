@@ -198,8 +198,6 @@ pub const EXTEND_ANY: &str = "E0416";
 
 pub const EXTEND_DYN: &str = "E0417";
 
-pub const EXTEND_UNSIZED: &str = "E0418";
-
 pub const EXTEND_BARE_SELF: &str = "E0419";
 
 pub const EXTEND_WITH_NON_TRAIT: &str = "E0420";
@@ -231,6 +229,8 @@ pub const ARG_COUNT_MISMATCH: &str = "E0432";
 pub const BREAK_OUTSIDE_LOOP: &str = "E0433";
 
 pub const CONTINUE_OUTSIDE_LOOP: &str = "E0434";
+
+pub const UNTRUSTED_INTRINSIC: &str = "E0435";
 
 pub const USE_OF_MOVED_VALUE: &str = "E0501";
 

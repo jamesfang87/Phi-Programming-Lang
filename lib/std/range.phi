@@ -31,9 +31,11 @@ extend<T: Comparable> Range<T> {
             .some(left) => !value.less_than(left),
             .none => true,
         };
+
         if !at_or_above_left {
             return false;
         }
+
         return match &self.right {
             .some(right) => {
                 if self.inclusive {
@@ -51,6 +53,7 @@ extend<T: Comparable> Range<T> {
             .some(left) => left,
             .none => { return false; }
         };
+
         return match &self.right {
             .some(right) => {
                 if self.inclusive {
@@ -70,6 +73,7 @@ extend<T: Step + Comparable + Copy> Range<T> with Iterator<T> {
             .some(value) => *value,
             .none => { return .none; }
         };
+
         let finished = match &self.right {
             .some(right) => {
                 if self.inclusive {
@@ -80,10 +84,12 @@ extend<T: Step + Comparable + Copy> Range<T> with Iterator<T> {
             }
             .none => false,
         };
+
         if finished {
             self.left = .none;
             return .none;
         }
+
         let next = current.succ();
         self.left = .some(next);
         return .some(current);

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::diagnostics::display::DisplayCtx;
 use crate::diagnostics::mir::definite_init::report_move_out_of_array;
 use crate::diagnostics::typeck::expr::{
@@ -18,11 +20,20 @@ pub fn check(session: &Session, hir: &Hir, tcx: &mut TyCtx, mir: &Mir) {
 }
 
 fn check_body(session: &Session, hir: &Hir, tcx: &mut TyCtx, body: &Body) {
+    let definitions = defining_assignments(body);
     for block in &body.basic_blocks {
         for statement in &block.statements {
             if let StatementKind::Assign(_, rvalue) = &statement.kind {
                 if let Rvalue::NewArray { elem, .. } = rvalue {
-                    check_new_array_repeat(session, hir, tcx, body, elem, statement.span);
+                    check_new_array_repeat(
+                        session,
+                        hir,
+                        tcx,
+                        body,
+                        &definitions,
+                        elem,
+                        statement.span,
+                    );
                 }
                 for operand in rvalue.operands() {
                     check_operand(session, hir, tcx, body, operand, statement.span);
@@ -40,12 +51,55 @@ fn check_new_array_repeat(
     hir: &Hir,
     tcx: &mut TyCtx,
     body: &Body,
+    definitions: &HashMap<usize, &Rvalue>,
     elem: &Operand,
     span: SrcSpan,
 ) {
     let elem_ty = operand_ty(tcx, body, elem);
-    if tcx.needs_drop(elem_ty) {
+    if tcx.needs_drop(elem_ty) && !value_owns_nothing(definitions, elem) {
         report_owned_element_in_new_array(DisplayCtx::new(session, hir, tcx), elem_ty, span);
+    }
+}
+
+/// Returns the rvalue that defines each local whose whole value is assigned straight to that
+/// local somewhere in `body`.
+fn defining_assignments(body: &Body) -> HashMap<usize, &Rvalue> {
+    let mut definitions = HashMap::new();
+    for block in &body.basic_blocks {
+        for statement in &block.statements {
+            if let StatementKind::Assign(place, rvalue) = &statement.kind
+                && place.projections.is_empty()
+            {
+                definitions.insert(place.local.index(), rvalue);
+            }
+        }
+    }
+    definitions
+}
+
+/// Returns whether `operand`'s value provably owns no allocation, and so can be stored into
+/// every slot of a `new [elem; count]`.
+fn value_owns_nothing(definitions: &HashMap<usize, &Rvalue>, operand: &Operand) -> bool {
+    match operand {
+        Operand::Constant(_) => true,
+        Operand::Copy(place) | Operand::Move(place) => {
+            place.projections.is_empty()
+                && definitions
+                    .get(&place.local.index())
+                    .is_some_and(|rvalue| rvalue_owns_nothing(definitions, rvalue))
+        }
+    }
+}
+
+fn rvalue_owns_nothing(definitions: &HashMap<usize, &Rvalue>, rvalue: &Rvalue) -> bool {
+    match rvalue {
+        Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => {
+            value_owns_nothing(definitions, operand)
+        }
+        Rvalue::Aggregate(_, operands) => operands
+            .iter()
+            .all(|operand| value_owns_nothing(definitions, operand)),
+        _ => false,
     }
 }
 
@@ -179,6 +233,23 @@ mod tests {
     #[test]
     fn repeating_a_plain_element_is_allowed() {
         accepts("fun f(n: usize) { let y = new [0_u8; n]; }");
+    }
+
+    #[test]
+    fn repeating_a_payload_free_variant_is_allowed_even_when_the_enum_needs_drop() {
+        accepts(
+            "public enum Maybe<T> { some: T, none }
+             fun f(n: usize) { let buf: iso [Maybe<iso i32>] = new [.none; n]; }",
+        );
+    }
+
+    #[test]
+    fn repeating_a_payload_that_owns_something_is_rejected() {
+        rejects(
+            "public enum Maybe<T> { some: T, none }
+             fun f(n: usize) { let buf: iso [Maybe<iso i32>] = new [.some(new 1); n]; }",
+            "cannot repeat an owning element",
+        );
     }
 
     #[test]

@@ -156,6 +156,12 @@ pub fn lower_mir_src_as_core(
     monomorphized(&[src], FileOrigin::Core)
 }
 
+pub fn lower_mir_files_as_core(
+    sources: &[&str],
+) -> (Hir, TyCtx, TypeResolutions, Mir, HashMap<Instance, Body>) {
+    monomorphized(sources, FileOrigin::Core)
+}
+
 fn mir_check_src(src: &str, check: impl FnOnce(&Session, &Hir, &mut TyCtx, &Mir)) -> Vec<String> {
     let (hir, mut tcx, _types, program, _instances) =
         monomorphized(&[OPS_PREAMBLE, src], FileOrigin::User);

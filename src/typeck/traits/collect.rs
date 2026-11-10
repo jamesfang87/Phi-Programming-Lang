@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::ast::{Mutability, SelfMode, Symbol};
 use crate::diagnostics::typeck::traits::index::{
     report_attempt_to_extend_with_non_trait, report_extend_any, report_extend_bare_self,
-    report_extend_dyn, report_extend_generic, report_extend_trait, report_extend_unsized,
+    report_extend_dyn, report_extend_generic, report_extend_trait,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
@@ -287,11 +287,7 @@ impl<'hir> Typeck<'hir> {
                 ),
             },
             HirTyKind::Tuple(elems) => Some(TypeHead::Tuple(elems.len())),
-            HirTyKind::Array { len: None, .. } => {
-                report_extend_unsized(self.session, node.span);
-                None
-            }
-            HirTyKind::Array { len: Some(_), .. } => Some(TypeHead::Array),
+            HirTyKind::Array { .. } => Some(TypeHead::Array),
             HirTyKind::Ref { mutability, .. } => Some(TypeHead::Ref(*mutability)),
             HirTyKind::Function { params, .. } => Some(TypeHead::Fun(params.len())),
             HirTyKind::Iso(_) => Some(TypeHead::Iso),
@@ -446,18 +442,16 @@ mod tests {
     }
 
     #[test]
-    fn extending_an_unsized_array_is_rejected() {
+    fn extending_an_unsized_array_is_accepted() {
         let hir = lower_to_hir(
             "trait Show { fun show(&self); }
              extend [i32] with Show { fun show(&self) {} }",
         );
         let checker = indexed(&hir);
 
-        assert!(checker.extends.is_empty());
+        assert!(!checker.extends.is_empty());
         assert!(
-            crate::testing::messages()
-                .iter()
-                .any(|m| m.contains("unsized array cannot be extended")),
+            crate::testing::messages().is_empty(),
             "{:?}",
             crate::testing::messages()
         );

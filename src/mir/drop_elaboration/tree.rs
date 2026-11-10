@@ -183,6 +183,11 @@ fn plan_adt(
     args: Vec<Ty>,
     flagged: Option<&Register>,
 ) -> Option<DropNode> {
+    // A type with its own `Drop::drop` is cleaned up by that method, not by walking its
+    // fields here; the method owns the value and drops the fields itself.
+    if tcx.drop_method_for(def).is_some() {
+        return Some(DropNode::Glue(place));
+    }
     match tcx.enum_variant_count(def) {
         None => {
             let field_tys = tcx.struct_field_tys(def, &args);

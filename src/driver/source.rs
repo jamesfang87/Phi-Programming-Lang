@@ -41,6 +41,16 @@ pub enum FileOrigin {
     User,
     /// A file of the core library, embedded in the compiler binary itself.
     Core,
+    /// A file of the standard library, embedded in the compiler binary itself.
+    Std,
+}
+
+impl FileOrigin {
+    /// Returns whether this file is part of the compiler's own libraries, which may declare
+    /// intrinsics and use compiler-trusted operations.
+    pub fn is_library(self) -> bool {
+        matches!(self, FileOrigin::Core | FileOrigin::Std)
+    }
 }
 
 pub struct SrcFile {
@@ -152,6 +162,9 @@ impl SrcMap {
 const CORE_FILES: &[(&str, &str)] = &[
     ("core/io.phi", include_str!("../../lib/core/io.phi")),
     ("core/iter.phi", include_str!("../../lib/core/iter.phi")),
+    ("core/libc.phi", include_str!("../../lib/core/libc.phi")),
+    ("core/llvm.phi", include_str!("../../lib/core/llvm.phi")),
+    ("core/mem.phi", include_str!("../../lib/core/mem.phi")),
     ("core/ops.phi", include_str!("../../lib/core/ops.phi")),
     ("core/option.phi", include_str!("../../lib/core/option.phi")),
     (
@@ -159,9 +172,14 @@ const CORE_FILES: &[(&str, &str)] = &[
         include_str!("../../lib/core/prelude.phi"),
     ),
     ("core/result.phi", include_str!("../../lib/core/result.phi")),
+    ("core/slice.phi", include_str!("../../lib/core/slice.phi")),
+    ("core/text.phi", include_str!("../../lib/core/text.phi")),
 ];
 
 const STD_FILES: &[(&str, &str)] = &[
+    ("std/fmt.phi", include_str!("../../lib/std/fmt.phi")),
+    ("std/io.phi", include_str!("../../lib/std/io.phi")),
+    ("std/prelude.phi", include_str!("../../lib/std/prelude.phi")),
     ("std/range.phi", include_str!("../../lib/std/range.phi")),
     ("std/string.phi", include_str!("../../lib/std/string.phi")),
     ("std/vector.phi", include_str!("../../lib/std/vector.phi")),
@@ -187,7 +205,7 @@ pub fn collect_std(map: &mut SrcMap) -> Vec<&'static SrcFile> {
     STD_FILES
         .iter()
         .map(|&(name, source)| {
-            let offset = map.add_file(name.to_string(), source.chars().collect(), FileOrigin::Core);
+            let offset = map.add_file(name.to_string(), source.chars().collect(), FileOrigin::Std);
             map.file_containing(offset)
                 .expect("the file this call just registered at `offset`")
         })

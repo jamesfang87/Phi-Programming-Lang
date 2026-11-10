@@ -1949,18 +1949,49 @@ fn a_qualified_variant_call_carries_its_single_argument() {
 }
 
 #[test]
-#[should_panic(
-    expected = "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"
-)]
-fn an_overloaded_index_used_as_a_place_panics_until_implemented() {
-    let _ = lower_mir_src(
-        "public trait Index<K, V> { fun index(&self, key: K) -> bool; }
+fn an_index_set_assignment_lowers_to_the_trait_call() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "public trait IndexSet<K, V> { fun index_set(&mut self, key: K, value: V); }
          struct Map { value: bool }
-         extend Map with Index<i32, bool> {
-             fun index(&self, key: i32) -> bool { return self.value; }
+         extend Map with IndexSet<i32, bool> {
+             fun index_set(&mut self, key: i32, value: bool) { self.value = value; }
          }
-         fun f(m: Map) { m[0] = true; }",
+         fun f(m: &mut Map) { m[0] = true; }",
     );
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
+        "`m[0] = true` calls `index_set` instead of writing through a place"
+    );
+}
+
+#[test]
+fn a_method_call_through_an_overloaded_index_reads_through_its_reference() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "public trait Index<K, V> { fun index(&self, key: K) -> &V; }
+         struct Inner { value: bool }
+         extend Inner { fun peek(&self) -> bool { return self.value; } }
+         struct Map { value: Inner }
+         extend Map with Index<i32, Inner> {
+             fun index(&self, key: i32) -> &Inner { return &self.value; }
+         }
+         fun f(m: Map) -> bool { return m[0].peek(); }",
+    );
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    let calls = body
+        .basic_blocks
+        .iter()
+        .filter(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. }))
+        .count();
+    assert_eq!(calls, 2, "`m[0]` calls `index`, then `peek` on its result");
 }
 
 #[test]
@@ -2238,5 +2269,98 @@ fn an_any_specialized_function_reified_as_a_value_pins_its_any_positions() {
                 )
             )),
         "naming `min` without calling it reifies it as a function-pointer value"
+    );
+}
+
+const SLICE_LEN_PREAMBLE: &str = "module core::llvm;
+     public fun slice_len<T>(value: &[T]) -> usize { return 0; }";
+
+const STR_LEN_PREAMBLE: &str = "module core::llvm;
+     public fun str_len(value: str) -> usize { return 0; }";
+
+#[test]
+fn a_slice_len_call_lowers_to_an_rvalue_len() {
+    let (hir, _tcx, _types, program, _instances) = crate::testing::lower_mir_src_files(&[
+        SLICE_LEN_PREAMBLE,
+        "fun f(x: &[i32]) -> usize { return core::llvm::slice_len(x); }",
+    ]);
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(&s.kind, StatementKind::Assign(_, Rvalue::Len(_)))),
+        "the length intrinsic lowers to `Rvalue::Len`, not a call"
+    );
+    assert!(
+        !body
+            .basic_blocks
+            .iter()
+            .any(|b| matches!(b.terminator.kind, TerminatorKind::Call { .. })),
+        "the length intrinsic emits no call"
+    );
+}
+
+#[test]
+fn a_str_len_call_lowers_to_an_rvalue_len() {
+    let (hir, _tcx, _types, program, _instances) = crate::testing::lower_mir_src_files(&[
+        STR_LEN_PREAMBLE,
+        "fun f(s: str) -> usize { return core::llvm::str_len(s); }",
+    ]);
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(&s.kind, StatementKind::Assign(_, Rvalue::Len(_)))),
+        "the string length intrinsic lowers to `Rvalue::Len`, not a call"
+    );
+}
+
+const MEM_PREAMBLE: &str = "module core::llvm;
+     public fun swap<T>(left: &mut T, right: &mut T) { }
+     public fun replace<T>(slot: &mut T, value: T) -> T { return value; }";
+
+#[test]
+fn mem_replace_lowers_to_an_rvalue_replace() {
+    let (hir, _tcx, _types, program, _instances) = crate::testing::lower_mir_src_files(&[
+        MEM_PREAMBLE,
+        "fun f(x: &mut i32, v: i32) -> i32 { return core::llvm::replace(x, v); }",
+    ]);
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(&s.kind, StatementKind::Assign(_, Rvalue::Replace { .. }))),
+        "`mem::replace` lowers to `Rvalue::Replace`, not a call"
+    );
+}
+
+#[test]
+fn mem_swap_lowers_to_an_rvalue_swap() {
+    let (hir, _tcx, _types, program, _instances) = crate::testing::lower_mir_src_files(&[
+        MEM_PREAMBLE,
+        "fun f(a: &mut i32, b: &mut i32) { core::llvm::swap(a, b); }",
+    ]);
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("`f` is lowered");
+    assert!(
+        body.basic_blocks
+            .iter()
+            .flat_map(|b| &b.statements)
+            .any(|s| matches!(&s.kind, StatementKind::Assign(_, Rvalue::Swap { .. }))),
+        "`mem::swap` lowers to `Rvalue::Swap`, not a call"
     );
 }

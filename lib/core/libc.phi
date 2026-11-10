@@ -1,0 +1,29 @@
+module core::libc;
+
+import core::mem::MaybeUninit;
+import core::llvm::str_len;
+
+public fun malloc<T>(count: usize) -> iso [MaybeUninit<T>];
+
+public fun free<T>(buffer: iso [MaybeUninit<T>]);
+
+public fun realloc<T>(buffer: iso [MaybeUninit<T>], count: usize) -> iso [MaybeUninit<T>];
+
+public fun memcpy<T>(dst: &mut [T], src: &[T], count: usize);
+
+public fun memset<T>(dst: &mut [T], value: u8, count: usize);
+
+public fun memcmp(left: &[u8], right: &[u8], count: usize) -> i32;
+
+public fun read(fd: i32, buffer: &mut [u8], count: usize) -> i64;
+
+public fun write(fd: i32, buffer: &[u8], count: usize) -> i64;
+
+public fun sizeof<T>(value: &T) -> usize;
+
+public fun alignof<T>(value: &T) -> usize;
+
+public fun puts(text: str) {
+    write(1, text as &[u8], str_len(text));
+    write(1, "\n" as &[u8], 1);
+}

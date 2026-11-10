@@ -339,14 +339,25 @@ fn an_import_naming_nothing_reports_not_found() {
 fn the_prelude_is_found_after_imports_resolve() {
     let ast = ast_with_core();
     let table = SymbolTable::new(crate::testing::session(), &ast);
-    assert!(table.prelude().is_some());
+    assert!(!table.preludes().is_empty());
 }
 
 #[test]
 fn the_prelude_is_none_without_a_core_library() {
     let ast = ast_from("fun main() {}");
     let table = SymbolTable::new(crate::testing::session(), &ast);
-    assert!(table.prelude().is_none());
+    assert!(table.preludes().is_empty());
+}
+
+#[test]
+fn the_core_prelude_does_not_export_println() {
+    let ast = ast_with_core();
+    let table = SymbolTable::new(crate::testing::session(), &ast);
+    assert!(
+        table
+            .probe_value_path(ast.root_id(), &path(&["println"]))
+            .is_none()
+    );
 }
 
 #[test]

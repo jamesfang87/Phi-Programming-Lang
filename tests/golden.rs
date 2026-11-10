@@ -6,13 +6,6 @@ fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
-const QUARANTINED: &[(&str, &str)] = &[(
-    "core_library",
-    "no compiler bug left -- it builds cleanly at exit 0. Its `expected.txt` is simply stale in \
-     two deliberate ways: the AST dump gained `id: NodeId(..)` fields, and declaring no `fun \
-     main` now warns on stderr. Re-bless once the AST dump format has settled",
-)];
-
 fn run_fixture(fixture_dir: &Path) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_phi"))
         .arg("build")
@@ -61,16 +54,7 @@ fn golden_fixtures() {
             .into_owned();
         let expected_path = fixture_dir.join("expected.txt");
 
-        let quarantine_reason = QUARANTINED
-            .iter()
-            .find(|(fixture, _)| *fixture == name)
-            .map(|(_, reason)| *reason);
-
         if bless {
-            if let Some(reason) = quarantine_reason {
-                println!("skipped quarantined fixture {name} ({reason})");
-                continue;
-            }
             let actual = run_fixture(&fixture_dir);
             fs::write(&expected_path, &actual)
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", expected_path.display()));
@@ -86,18 +70,11 @@ fn golden_fixtures() {
             )
         });
 
-        match (actual == expected, quarantine_reason) {
-            (true, None) => {}
-            (true, Some(reason)) => failures.push(format!(
-                "fixture `{name}` is quarantined ({reason}) but now matches {} -- \
-                 remove it from QUARANTINED in tests/golden.rs",
-                expected_path.display()
-            )),
-            (false, Some(_)) => {}
-            (false, None) => failures.push(format!(
+        if actual != expected {
+            failures.push(format!(
                 "fixture `{name}` did not match {}\n--- expected ---\n{expected}\n--- actual ---\n{actual}",
                 expected_path.display()
-            )),
+            ));
         }
     }
 

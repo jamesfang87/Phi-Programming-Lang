@@ -16,7 +16,6 @@ pub(super) struct LoweringCtx<'res> {
     pub(super) def_id_allocator: DefIdAllocator,
     pub(super) def_ids: HashMap<NodeId, DefId>,
     pub(super) hir_ids: HashMap<NodeId, HirId>,
-    pub(super) method_defs: HashMap<NodeId, Vec<DefId>>,
     pub(super) arenas: Vec<Option<Arena>>,
     nameres: &'res NameResolutions,
 }
@@ -27,7 +26,6 @@ impl<'res> LoweringCtx<'res> {
             session,
             def_id_allocator: DefIdAllocator::new(),
             def_ids: HashMap::new(),
-            method_defs: HashMap::new(),
             arenas: Vec::new(),
             nameres,
             hir_ids: HashMap::new(),
@@ -109,10 +107,19 @@ impl<'res> LoweringCtx<'res> {
         })
     }
 
-    fn take_method_defs(&mut self, item: NodeId) -> Vec<DefId> {
-        self.method_defs.remove(&item).unwrap_or_else(|| {
-            panic!("lowering bug: {item:?} was never preallocated a method list")
-        })
+    /// Allocates a method's `DefId` and records it under the method node, so a path such as
+    /// `String::empty` can resolve straight to it.
+    fn prealloc_method(&mut self, method: &ast::Function, parent: DefId) {
+        let def_id = self.def_id_allocator.alloc(Some(parent));
+        self.def_ids.insert(method.id, def_id);
+    }
+
+    /// Returns the `DefId`s of `methods` in declaration order.
+    fn method_def_ids(&self, methods: &[ast::Function]) -> Vec<DefId> {
+        methods
+            .iter()
+            .map(|method| self.def_id_of(method.id, "a method"))
+            .collect()
     }
 
     pub(super) fn prealloc_item(&mut self, module: DefId, item: &ast::Item) {
@@ -130,20 +137,14 @@ impl<'res> LoweringCtx<'res> {
 
         match &item.kind {
             ast::ItemKind::Trait(t) => {
-                let methods = t
-                    .functions
-                    .iter()
-                    .map(|_| self.def_id_allocator.alloc(Some(def_id)))
-                    .collect();
-                self.method_defs.insert(item.id, methods);
+                for method in &t.functions {
+                    self.prealloc_method(method, def_id);
+                }
             }
             ast::ItemKind::Extend(e) => {
-                let methods = e
-                    .methods
-                    .iter()
-                    .map(|_| self.def_id_allocator.alloc(Some(def_id)))
-                    .collect();
-                self.method_defs.insert(item.id, methods);
+                for method in &e.methods {
+                    self.prealloc_method(method, def_id);
+                }
             }
             _ => {}
         }
@@ -198,12 +199,12 @@ impl<'res> LoweringCtx<'res> {
             }
             ast::ItemKind::Trait(t) => {
                 let item_id = self.def_ids[&item.id];
-                let method_ids = self.take_method_defs(item.id);
+                let method_ids = self.method_def_ids(&t.functions);
                 Some(self.lower_trait(item_id, method_ids, t))
             }
             ast::ItemKind::Extend(e) => {
                 let item_id = self.def_ids[&item.id];
-                let method_ids = self.take_method_defs(item.id);
+                let method_ids = self.method_def_ids(&e.methods);
                 Some(self.lower_extend(item.id, item_id, method_ids, e))
             }
             ast::ItemKind::Error => None,

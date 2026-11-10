@@ -118,10 +118,13 @@ Item {
 }
 Item {
     id: NodeId(
-        7,
+        8,
     ),
     kind: Function(
         Function {
+            id: NodeId(
+                7,
+            ),
             visibility: Private,
             name: Ident {
                 text: Symbol(

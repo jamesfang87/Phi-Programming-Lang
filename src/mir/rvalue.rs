@@ -39,6 +39,48 @@ pub enum Rvalue {
         elem: Operand,
         count: Operand,
     },
+
+    /// Stores `value` into `place` and yields the value the place held.
+    Replace {
+        place: Place,
+        value: Operand,
+    },
+
+    /// Exchanges the values two places hold and yields unit.
+    Swap {
+        left: Place,
+        right: Place,
+    },
+
+    /// Calls one of the C library functions.
+    LibcCall {
+        function: LibcFunction,
+        args: Vec<Operand>,
+    },
+
+    /// Yields the size, in bytes, of the named type.
+    SizeOf(Ty),
+
+    /// Yields the alignment, in bytes, of the named type.
+    AlignOf(Ty),
+
+    /// Writes the UTF-8 bytes of a character into a buffer and yields how many bytes it wrote.
+    EncodeUtf8 {
+        value: Operand,
+        buffer: Operand,
+    },
+
+    /// Stores `value` into uninitialized storage, dropping nothing.
+    WriteUninit {
+        place: Place,
+        value: Operand,
+    },
+
+    /// Moves the value out of initialized storage, leaving the slot uninitialized.
+    ReadUninit(Place),
+
+    /// Borrows the value in initialized storage.
+    AssumeInitRef(Place),
 }
 
 impl Rvalue {
@@ -56,9 +98,31 @@ impl Rvalue {
                 count: rhs,
             } => vec![lhs, rhs],
             Rvalue::Aggregate(_, operands) => operands.iter().collect(),
-            Rvalue::Ref { .. } | Rvalue::Discriminant(_) | Rvalue::Len(_) => Vec::new(),
+            Rvalue::EncodeUtf8 { value, buffer } => vec![value, buffer],
+            Rvalue::Replace { value, .. } => vec![value],
+            Rvalue::LibcCall { args, .. } => args.iter().collect(),
+            Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => Vec::new(),
+            Rvalue::WriteUninit { value, .. } => vec![value],
+            Rvalue::Ref { .. }
+            | Rvalue::Discriminant(_)
+            | Rvalue::Len(_)
+            | Rvalue::Swap { .. }
+            | Rvalue::ReadUninit(_)
+            | Rvalue::AssumeInitRef(_) => Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LibcFunction {
+    Malloc,
+    Free,
+    Realloc,
+    Memcpy,
+    Memset,
+    Memcmp,
+    Read,
+    Write,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -66,6 +130,9 @@ pub enum CastKind {
     Primitive,
 
     ReifyFunPointer,
+
+    /// `&[T; N]` widened to `&[T]`, which keeps the data pointer and adds `N` as the length.
+    UnsizeSlice,
 }
 
 #[derive(Clone, Debug)]

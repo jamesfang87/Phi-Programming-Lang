@@ -132,7 +132,7 @@ mod tests {
             "test",
         )
         .expect("codegen succeeds");
-        assert_eq!(module.get_functions().count(), instances.len() + 5);
+        assert_eq!(module.get_functions().count(), instances.len() + 10);
     }
 
     fn tempdir_for_test(name: &str) -> std::path::PathBuf {

@@ -1,0 +1,16 @@
+module std::io;
+
+import core::io::write_bytes;
+import std::fmt::Display;
+import std::string::String;
+
+public fun print<T: Display>(value: T) {
+    let mut out = String::empty();
+    value.fmt(&mut out);
+    write_bytes(1, out.as_bytes());
+}
+
+public fun println<T: Display>(value: T) {
+    print(value);
+    write_bytes(1, "\n" as &[u8]);
+}

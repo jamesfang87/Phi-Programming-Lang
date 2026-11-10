@@ -172,9 +172,9 @@ mod tests {
     #[test]
     fn emits_and_links_a_runnable_hello_world() {
         let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_as_core(
-            r#"module core::io;
-            public fun write_bytes(fd: i32, buf: &[u8]) -> i64;
-            public fun main() { write_bytes(1, "hello" as &[u8]); }"#,
+            r#"module core::libc;
+            public fun write(fd: i32, buffer: &[u8], count: usize) -> i64;
+            public fun main() { write(1, "hello" as &[u8], 5); }"#,
         );
         let llvm = inkwell::context::Context::create();
         let module = super::super::codegen(

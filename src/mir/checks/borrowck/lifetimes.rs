@@ -356,6 +356,31 @@ fn mark_rvalue_aliases_used(
                 mark_operand_alias_used(aliases, held, operand, used);
             }
         }
+        Rvalue::Replace { place, value } => {
+            mark_place_alias_used(aliases, held, place, used);
+            mark_operand_alias_used(aliases, held, value, used);
+        }
+        Rvalue::Swap { left, right } => {
+            mark_place_alias_used(aliases, held, left, used);
+            mark_place_alias_used(aliases, held, right, used);
+        }
+        Rvalue::LibcCall { args, .. } => {
+            for arg in args {
+                mark_operand_alias_used(aliases, held, arg, used);
+            }
+        }
+        Rvalue::EncodeUtf8 { value, buffer } => {
+            mark_operand_alias_used(aliases, held, value, used);
+            mark_operand_alias_used(aliases, held, buffer, used);
+        }
+        Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
+        Rvalue::WriteUninit { place, value } => {
+            mark_place_alias_used(aliases, held, place, used);
+            mark_operand_alias_used(aliases, held, value, used);
+        }
+        Rvalue::ReadUninit(place) | Rvalue::AssumeInitRef(place) => {
+            mark_place_alias_used(aliases, held, place, used);
+        }
         Rvalue::Ref { place, .. } | Rvalue::Discriminant(place) | Rvalue::Len(place) => {
             mark_place_alias_used(aliases, held, place, used);
         }

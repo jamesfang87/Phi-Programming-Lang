@@ -31,6 +31,8 @@ pub enum TerminatorKind {
     Drop {
         place: Place,
         target: BasicBlock,
+        /// Whether this drops the value structurally, without running its own `Drop::drop`.
+        structural: bool,
     },
     DropIso {
         place: Place,

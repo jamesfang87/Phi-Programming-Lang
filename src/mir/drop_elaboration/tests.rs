@@ -49,7 +49,7 @@ fn linear_drop_order(body: &Body) -> Vec<Local> {
             break;
         }
         let block = &body.basic_blocks[current.index()];
-        if let TerminatorKind::Drop { place, target } = &block.terminator.kind {
+        if let TerminatorKind::Drop { place, target, .. } = &block.terminator.kind {
             order.push(place.local);
             current = *target;
             continue;
@@ -65,7 +65,7 @@ fn linear_drop_order(body: &Body) -> Vec<Local> {
 
 fn drops_right_before_storage_dead(body: &Body, local: Local) -> bool {
     body.basic_blocks.iter().any(|block| {
-        let TerminatorKind::Drop { place, target } = &block.terminator.kind else {
+        let TerminatorKind::Drop { place, target, .. } = &block.terminator.kind else {
             return false;
         };
         if place.local != local {
@@ -234,7 +234,7 @@ fn drop_place_before_reassignment(
 
 fn drops_right_before_reassignment(body: &Body, local: Local) -> bool {
     body.basic_blocks.iter().any(|block| {
-        let TerminatorKind::Drop { place, target } = &block.terminator.kind else {
+        let TerminatorKind::Drop { place, target, .. } = &block.terminator.kind else {
             return false;
         };
         if place.local != local {

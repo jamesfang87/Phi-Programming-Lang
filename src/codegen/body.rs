@@ -12,11 +12,10 @@ use super::ctx::CodegenCtx;
 use super::{konst, layout, place, ty};
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::hir::DefId;
-use crate::langitems::LangItem;
 use crate::mir::{
-    AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, FunRef, Instance, Local,
-    LocalDecl, Mir, Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator,
-    TerminatorKind, VariantIdx,
+    AggregateKind, AssertMessage, Body, CastKind, ConstKind, Constant, FunRef, Instance,
+    LibcFunction, Local, LocalDecl, Mir, Operand, Place, Projection, Rvalue, Statement,
+    StatementKind, Terminator, TerminatorKind, VariantIdx,
 };
 use crate::nameres::PrimTy;
 use crate::typeck::ty::ctx::TyCtx;
@@ -292,6 +291,10 @@ fn lower_rvalue<'ctx>(
                     let src_ty = operand_ty(tcx, local_decls, operand);
                     lower_primitive_cast(cx, tcx, mir, src_ty, *cast_ty, val)
                 }
+                CastKind::UnsizeSlice => {
+                    let src_ty = operand_ty(tcx, local_decls, operand);
+                    lower_unsize_slice(cx, tcx, src_ty, val)
+                }
             }
         }
         Rvalue::Unsize { operand, trait_ } => {
@@ -312,7 +315,39 @@ fn lower_rvalue<'ctx>(
         Rvalue::Discriminant(place_) => {
             lower_discriminant_rvalue(cx, tcx, mir, locals, local_decls, place_, dest_ty)
         }
-        Rvalue::Len(place_) => lower_len(cx, tcx, locals, local_decls, place_),
+        Rvalue::Len(place_) => lower_len(cx, tcx, mir, locals, local_decls, place_),
+        Rvalue::Replace { place, value } => {
+            lower_replace(cx, tcx, mir, locals, local_decls, place, value)
+        }
+        Rvalue::Swap { left, right } => {
+            lower_swap(cx, tcx, mir, locals, local_decls, left, right);
+            cx.llvm.struct_type(&[], false).const_zero().into()
+        }
+        Rvalue::LibcCall { function, args } => {
+            lower_libc_call(cx, tcx, mir, locals, local_decls, dest_ty, *function, args)
+        }
+        Rvalue::SizeOf(ty) => lower_type_info(cx, tcx, mir, *ty, true),
+        Rvalue::AlignOf(ty) => lower_type_info(cx, tcx, mir, *ty, false),
+        Rvalue::EncodeUtf8 { value, buffer } => {
+            lower_encode_utf8(cx, tcx, mir, locals, local_decls, value, buffer)
+        }
+        Rvalue::WriteUninit { place, value } => {
+            let (slot, _) = place::lower_place(cx, tcx, mir, locals, local_decls, place);
+            let new = lower_operand(cx, tcx, mir, locals, local_decls, value);
+            cx.builder.build_store(slot, new).unwrap();
+            cx.llvm.struct_type(&[], false).const_zero().into()
+        }
+        Rvalue::ReadUninit(place) => {
+            let (slot, slot_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place);
+            let slot_llvm_ty = ty::llvm_type(cx, tcx, mir, slot_ty);
+            cx.builder
+                .build_load(slot_llvm_ty, slot, "assume_init")
+                .unwrap()
+        }
+        Rvalue::AssumeInitRef(place) => {
+            let (slot, _) = place::lower_place(cx, tcx, mir, locals, local_decls, place);
+            slot.as_basic_value_enum()
+        }
         Rvalue::New(operand) => lower_new(cx, tcx, mir, locals, local_decls, operand),
         Rvalue::NewArray { elem, count } => {
             lower_new_array(cx, tcx, mir, locals, local_decls, elem, count)
@@ -332,7 +367,7 @@ fn lower_ref_rvalue<'ctx>(
 ) -> BasicValueEnum<'ctx> {
     let ref_place_ty = crate::mir::place_ty(tcx, local_decls, place_);
     if layout::is_unsized(tcx, ref_place_ty) {
-        lower_fat_ref(cx, tcx, locals, local_decls, place_)
+        lower_fat_ref(cx, tcx, mir, locals, local_decls, place_)
     } else {
         let (ptr, _) = place::lower_place(cx, tcx, mir, locals, local_decls, place_);
         ptr.as_basic_value_enum()
@@ -407,29 +442,439 @@ fn build_fat_pointer<'ctx>(
     agg.into()
 }
 
+/// Returns the address of the fat pointer stored for `place_`, whether `place_` is a fat value
+/// itself or an unsized value reached by dereferencing one.
 fn lower_fat_place_addr<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
+    mir: &Mir,
     locals: &HashMap<Local, PointerValue<'ctx>>,
     local_decls: &[LocalDecl],
     place_: &Place,
 ) -> PointerValue<'ctx> {
-    match place_.projections.as_slice() {
-        [Projection::Deref] => {
-            let local_ty = local_decls[place_.local.index()].ty;
-            match tcx.kind(local_ty).clone() {
-                TyKind::Ref { base, .. } | TyKind::Iso(base) if layout::is_unsized(tcx, base) => {
-                    locals[&place_.local]
-                }
-                other => panic!(
-                    "lower_fat_place_addr: local's type {other:?} is not a fat reference/iso"
-                ),
-            }
-        }
-        other => panic!(
-            "lower_fat_place_addr: only a bare Deref of a fat reference/iso local is supported \
-             in v1 codegen, got projections {other:?}"
-        ),
+    let ty = crate::mir::place_ty(tcx, local_decls, place_);
+    if is_fat_value(tcx, ty) {
+        return place::lower_place(cx, tcx, mir, locals, local_decls, place_).0;
     }
+
+    if layout::is_unsized(tcx, ty)
+        && let Some((last, prefix)) = place_.projections.split_last()
+        && matches!(last, Projection::Deref)
+    {
+        let prefix = Place {
+            local: place_.local,
+            projections: prefix.to_vec(),
+        };
+        return place::lower_place(cx, tcx, mir, locals, local_decls, &prefix).0;
+    }
+
+    panic!("lower_fat_place_addr: {ty:?} at {place_:?} has no fat pointer");
+}
+
+fn is_fat_value(tcx: &TyCtx, ty: Ty) -> bool {
+    match tcx.kind(ty) {
+        TyKind::Primitive(PrimTy::Str) | TyKind::Dyn { .. } | TyKind::Fun { .. } => true,
+        TyKind::Ref { base, .. } | TyKind::Iso(base) => layout::is_unsized(tcx, *base),
+        _ => false,
+    }
+}
+
+/// Lowers one of the C library calls.
+#[allow(clippy::too_many_arguments)]
+fn lower_libc_call<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    dest_ty: Ty,
+    function: LibcFunction,
+    args: &[Operand],
+) -> BasicValueEnum<'ctx> {
+    match function {
+        LibcFunction::Malloc => {
+            let elem = array_elem_of_iso(tcx, dest_ty);
+            let elem_size = elem_size(cx, tcx, mir, elem);
+            let count = lower_operand(cx, tcx, mir, locals, local_decls, &args[0]).into_int_value();
+            let total = cx
+                .builder
+                .build_int_mul(elem_size, count, "malloc_size")
+                .unwrap();
+            let call = cx
+                .builder
+                .build_call(cx.libc.malloc, &[total.into()], "malloc")
+                .unwrap();
+            let data = call
+                .try_as_basic_value()
+                .unwrap_basic()
+                .into_pointer_value();
+            build_fat_pointer(cx, data, count)
+        }
+        LibcFunction::Free => {
+            let buffer = lower_operand(cx, tcx, mir, locals, local_decls, &args[0]);
+            let data = fat_data(cx, buffer);
+            cx.builder
+                .build_call(cx.libc.free, &[data.into()], "free")
+                .unwrap();
+            unit_value(cx)
+        }
+        LibcFunction::Realloc => {
+            let buffer_ty = operand_ty(tcx, local_decls, &args[0]);
+            let elem = array_elem_of_iso(tcx, buffer_ty);
+            let elem_size = elem_size(cx, tcx, mir, elem);
+            let buffer = lower_operand(cx, tcx, mir, locals, local_decls, &args[0]);
+            let data = fat_data(cx, buffer);
+            let count = lower_operand(cx, tcx, mir, locals, local_decls, &args[1]).into_int_value();
+            let total = cx
+                .builder
+                .build_int_mul(elem_size, count, "realloc_size")
+                .unwrap();
+            let call = cx
+                .builder
+                .build_call(cx.libc.realloc, &[data.into(), total.into()], "realloc")
+                .unwrap();
+            let data = call
+                .try_as_basic_value()
+                .unwrap_basic()
+                .into_pointer_value();
+            build_fat_pointer(cx, data, count)
+        }
+        LibcFunction::Memcpy => {
+            let dst_ty = operand_ty(tcx, local_decls, &args[0]);
+            let elem = slice_elem(tcx, dst_ty);
+            let elem_size = elem_size(cx, tcx, mir, elem);
+            let dst_value = lower_operand(cx, tcx, mir, locals, local_decls, &args[0]);
+            let dst = fat_data(cx, dst_value);
+            let src_value = lower_operand(cx, tcx, mir, locals, local_decls, &args[1]);
+            let src = fat_data(cx, src_value);
+            let count = lower_operand(cx, tcx, mir, locals, local_decls, &args[2]).into_int_value();
+            let bytes = cx
+                .builder
+                .build_int_mul(elem_size, count, "memcpy_size")
+                .unwrap();
+            cx.builder
+                .build_call(
+                    cx.libc.memcpy,
+                    &[dst.into(), src.into(), bytes.into()],
+                    "memcpy",
+                )
+                .unwrap();
+            unit_value(cx)
+        }
+        LibcFunction::Memset => {
+            let dst_ty = operand_ty(tcx, local_decls, &args[0]);
+            let elem = slice_elem(tcx, dst_ty);
+            let elem_size = elem_size(cx, tcx, mir, elem);
+            let dst_value = lower_operand(cx, tcx, mir, locals, local_decls, &args[0]);
+            let dst = fat_data(cx, dst_value);
+            let value = lower_operand(cx, tcx, mir, locals, local_decls, &args[1]).into_int_value();
+            let value = cx
+                .builder
+                .build_int_z_extend(value, cx.llvm.i32_type(), "memset_value")
+                .unwrap();
+            let count = lower_operand(cx, tcx, mir, locals, local_decls, &args[2]).into_int_value();
+            let bytes = cx
+                .builder
+                .build_int_mul(elem_size, count, "memset_size")
+                .unwrap();
+            cx.builder
+                .build_call(
+                    cx.libc.memset,
+                    &[dst.into(), value.into(), bytes.into()],
+                    "memset",
+                )
+                .unwrap();
+            unit_value(cx)
+        }
+        LibcFunction::Memcmp => {
+            let left_value = lower_operand(cx, tcx, mir, locals, local_decls, &args[0]);
+            let left = fat_data(cx, left_value);
+            let right_value = lower_operand(cx, tcx, mir, locals, local_decls, &args[1]);
+            let right = fat_data(cx, right_value);
+            let count = lower_operand(cx, tcx, mir, locals, local_decls, &args[2]).into_int_value();
+            cx.builder
+                .build_call(
+                    cx.libc.memcmp,
+                    &[left.into(), right.into(), count.into()],
+                    "memcmp",
+                )
+                .unwrap()
+                .try_as_basic_value()
+                .unwrap_basic()
+        }
+        LibcFunction::Read | LibcFunction::Write => {
+            let fd = lower_operand(cx, tcx, mir, locals, local_decls, &args[0]).into_int_value();
+            let buffer_value = lower_operand(cx, tcx, mir, locals, local_decls, &args[1]);
+            let buffer = fat_data(cx, buffer_value);
+            let count = lower_operand(cx, tcx, mir, locals, local_decls, &args[2]).into_int_value();
+            let function = if function == LibcFunction::Read {
+                cx.libc.read
+            } else {
+                cx.libc.write
+            };
+            cx.builder
+                .build_call(function, &[fd.into(), buffer.into(), count.into()], "io")
+                .unwrap()
+                .try_as_basic_value()
+                .unwrap_basic()
+        }
+    }
+}
+
+fn lower_encode_utf8<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    value: &Operand,
+    buffer: &Operand,
+) -> BasicValueEnum<'ctx> {
+    let code_point = lower_operand(cx, tcx, mir, locals, local_decls, value).into_int_value();
+    let buffer_value = lower_operand(cx, tcx, mir, locals, local_decls, buffer);
+    let data = fat_data(cx, buffer_value);
+
+    let i32_ty = cx.llvm.i32_type();
+    let i8_ty = cx.llvm.i8_type();
+    let i64_ty = cx.llvm.i64_type();
+    let mask_3f = i32_ty.const_int(0x3F, false);
+    let mark_80 = i32_ty.const_int(0x80, false);
+    let mark_c0 = i32_ty.const_int(0xC0, false);
+    let mark_e0 = i32_ty.const_int(0xE0, false);
+    let mark_f0 = i32_ty.const_int(0xF0, false);
+
+    let below_80 = cx
+        .builder
+        .build_int_compare(
+            IntPredicate::ULT,
+            code_point,
+            i32_ty.const_int(0x80, false),
+            "utf8_1",
+        )
+        .unwrap();
+    let below_800 = cx
+        .builder
+        .build_int_compare(
+            IntPredicate::ULT,
+            code_point,
+            i32_ty.const_int(0x800, false),
+            "utf8_2",
+        )
+        .unwrap();
+    let below_10000 = cx
+        .builder
+        .build_int_compare(
+            IntPredicate::ULT,
+            code_point,
+            i32_ty.const_int(0x10000, false),
+            "utf8_3",
+        )
+        .unwrap();
+
+    let shifted_6 = cx
+        .builder
+        .build_right_shift(code_point, i32_ty.const_int(6, false), false, "utf8_shr6")
+        .unwrap();
+    let shifted_12 = cx
+        .builder
+        .build_right_shift(code_point, i32_ty.const_int(12, false), false, "utf8_shr12")
+        .unwrap();
+    let shifted_18 = cx
+        .builder
+        .build_right_shift(code_point, i32_ty.const_int(18, false), false, "utf8_shr18")
+        .unwrap();
+    let low_6 = cx
+        .builder
+        .build_and(code_point, mask_3f, "utf8_low6")
+        .unwrap();
+    let low_12 = cx
+        .builder
+        .build_and(shifted_6, mask_3f, "utf8_low12")
+        .unwrap();
+    let low_18 = cx
+        .builder
+        .build_and(shifted_12, mask_3f, "utf8_low18")
+        .unwrap();
+
+    let second = cx.builder.build_or(mark_80, low_6, "utf8_second").unwrap();
+    let third = cx.builder.build_or(mark_80, low_12, "utf8_third").unwrap();
+    let fourth = cx.builder.build_or(mark_80, low_18, "utf8_fourth").unwrap();
+    let two_lead = cx
+        .builder
+        .build_or(mark_c0, shifted_6, "utf8_two_lead")
+        .unwrap();
+    let three_lead = cx
+        .builder
+        .build_or(mark_e0, shifted_12, "utf8_three_lead")
+        .unwrap();
+    let four_lead = cx
+        .builder
+        .build_or(mark_f0, shifted_18, "utf8_four_lead")
+        .unwrap();
+
+    let lead_34 = cx
+        .builder
+        .build_select(below_10000, three_lead, four_lead, "utf8_lead34")
+        .unwrap()
+        .into_int_value();
+    let lead_234 = cx
+        .builder
+        .build_select(below_800, two_lead, lead_34, "utf8_lead234")
+        .unwrap()
+        .into_int_value();
+    let byte_0 = cx
+        .builder
+        .build_select(below_80, code_point, lead_234, "utf8_byte0")
+        .unwrap()
+        .into_int_value();
+
+    let tail_34 = cx
+        .builder
+        .build_select(below_10000, third, fourth, "utf8_tail34")
+        .unwrap()
+        .into_int_value();
+    let byte_1 = cx
+        .builder
+        .build_select(below_800, second, tail_34, "utf8_byte1")
+        .unwrap()
+        .into_int_value();
+    let byte_2 = cx
+        .builder
+        .build_select(below_10000, second, third, "utf8_byte2")
+        .unwrap()
+        .into_int_value();
+    let byte_3 = second;
+
+    let count_34 = cx
+        .builder
+        .build_select(
+            below_10000,
+            i32_ty.const_int(3, false),
+            i32_ty.const_int(4, false),
+            "utf8_count34",
+        )
+        .unwrap()
+        .into_int_value();
+    let count_234 = cx
+        .builder
+        .build_select(
+            below_800,
+            i32_ty.const_int(2, false),
+            count_34,
+            "utf8_count234",
+        )
+        .unwrap()
+        .into_int_value();
+    let count = cx
+        .builder
+        .build_select(
+            below_80,
+            i32_ty.const_int(1, false),
+            count_234,
+            "utf8_count",
+        )
+        .unwrap()
+        .into_int_value();
+
+    for (index, byte) in [byte_0, byte_1, byte_2, byte_3].into_iter().enumerate() {
+        let byte = cx
+            .builder
+            .build_int_truncate(byte, i8_ty, "utf8_byte")
+            .unwrap();
+        let slot = unsafe {
+            cx.builder
+                .build_gep(
+                    i8_ty,
+                    data,
+                    &[i64_ty.const_int(index as u64, false)],
+                    "utf8_ptr",
+                )
+                .unwrap()
+        };
+        cx.builder.build_store(slot, byte).unwrap();
+    }
+
+    cx.builder
+        .build_int_z_extend(count, i64_ty, "utf8_len")
+        .unwrap()
+        .into()
+}
+
+fn lower_type_info<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ty: Ty,
+    size: bool,
+) -> BasicValueEnum<'ctx> {
+    let (size_bytes, align_bytes) =
+        super::layout::compute_size_align(tcx, mir, ty, &mut std::collections::HashSet::new());
+    let value = if size { size_bytes } else { align_bytes };
+    cx.llvm.i64_type().const_int(value, false).into()
+}
+
+fn fat_data<'ctx>(cx: &CodegenCtx<'ctx>, value: BasicValueEnum<'ctx>) -> PointerValue<'ctx> {
+    cx.builder
+        .build_extract_value(value.into_struct_value(), 0, "data")
+        .unwrap()
+        .into_pointer_value()
+}
+
+fn unit_value<'ctx>(cx: &CodegenCtx<'ctx>) -> BasicValueEnum<'ctx> {
+    cx.llvm.struct_type(&[], false).const_zero().into()
+}
+
+fn array_elem_of_iso(tcx: &mut TyCtx, ty: Ty) -> Ty {
+    let TyKind::Iso(inner) = *tcx.kind(ty) else {
+        panic!("codegen: `{ty:?}` is not an `iso` allocation");
+    };
+    let TyKind::Array { elem, .. } = *tcx.kind(inner) else {
+        panic!("codegen: `{ty:?}` does not hold an array");
+    };
+    elem
+}
+
+fn slice_elem(tcx: &mut TyCtx, ty: Ty) -> Ty {
+    let peeled = match *tcx.kind(ty) {
+        TyKind::Ref { base, .. } | TyKind::Iso(base) => base,
+        _ => ty,
+    };
+    let TyKind::Array { elem, .. } = *tcx.kind(peeled) else {
+        panic!("codegen: `{ty:?}` is not a slice");
+    };
+    elem
+}
+
+fn elem_size<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    elem: Ty,
+) -> inkwell::values::IntValue<'ctx> {
+    ty::llvm_type(cx, tcx, mir, elem)
+        .size_of()
+        .expect("a value's own type is always sized")
+}
+
+/// Builds a slice fat pointer from a thin pointer to a fixed array, using the array's length as
+/// the slice's length.
+fn lower_unsize_slice<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    src_ty: Ty,
+    val: BasicValueEnum<'ctx>,
+) -> BasicValueEnum<'ctx> {
+    let (array_ty, _) = peel_indirections(tcx, src_ty);
+    let TyKind::Array { len: Some(len), .. } = *tcx.kind(array_ty) else {
+        panic!(
+            "codegen: an unsizing slice cast's source {src_ty:?} is not a fixed array reference"
+        );
+    };
+    build_fat_pointer(
+        cx,
+        val.into_pointer_value(),
+        cx.llvm.i64_type().const_int(len, false),
+    )
 }
 
 fn peel_indirections(tcx: &mut TyCtx, ty: Ty) -> (Ty, u32) {
@@ -474,11 +919,12 @@ fn dyn_method_fn_type<'ctx>(
 fn lower_fat_ref<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
+    mir: &Mir,
     locals: &HashMap<Local, PointerValue<'ctx>>,
     local_decls: &[LocalDecl],
     place_: &Place,
 ) -> BasicValueEnum<'ctx> {
-    let fat_addr = lower_fat_place_addr(tcx, locals, local_decls, place_);
+    let fat_addr = lower_fat_place_addr(cx, tcx, mir, locals, local_decls, place_);
     let fat_pointer_ty = fat_pointer_type(cx);
     let ptr_field = cx
         .builder
@@ -500,9 +946,57 @@ fn lower_fat_ref<'ctx>(
     build_fat_pointer(cx, data_ptr.into_pointer_value(), len)
 }
 
+/// Stores `value` into `place`, yielding the value the place held.
+fn lower_replace<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    place: &Place,
+    value: &Operand,
+) -> BasicValueEnum<'ctx> {
+    let (slot, slot_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place);
+    let slot_llvm_ty = ty::llvm_type(cx, tcx, mir, slot_ty);
+    let old = cx
+        .builder
+        .build_load(slot_llvm_ty, slot, "replace_old")
+        .unwrap();
+    let new = lower_operand(cx, tcx, mir, locals, local_decls, value);
+    cx.builder.build_store(slot, new).unwrap();
+    old
+}
+
+/// Exchanges the values the two places hold.
+fn lower_swap<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    left: &Place,
+    right: &Place,
+) {
+    let (left_ptr, left_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, left);
+    let (right_ptr, right_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, right);
+    let left_llvm_ty = ty::llvm_type(cx, tcx, mir, left_ty);
+    let right_llvm_ty = ty::llvm_type(cx, tcx, mir, right_ty);
+    let left_value = cx
+        .builder
+        .build_load(left_llvm_ty, left_ptr, "swap_left")
+        .unwrap();
+    let right_value = cx
+        .builder
+        .build_load(right_llvm_ty, right_ptr, "swap_right")
+        .unwrap();
+    cx.builder.build_store(left_ptr, right_value).unwrap();
+    cx.builder.build_store(right_ptr, left_value).unwrap();
+}
+
 fn lower_len<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
+    mir: &Mir,
     locals: &HashMap<Local, PointerValue<'ctx>>,
     local_decls: &[LocalDecl],
     place_: &Place,
@@ -513,7 +1007,7 @@ fn lower_len<'ctx>(
     {
         return cx.llvm.i64_type().const_int(n, false).into();
     }
-    let fat_addr = lower_fat_place_addr(tcx, locals, local_decls, place_);
+    let fat_addr = lower_fat_place_addr(cx, tcx, mir, locals, local_decls, place_);
     let fat_pointer_ty = fat_pointer_type(cx);
     let len_field = cx
         .builder
@@ -1000,6 +1494,9 @@ fn is_float(tcx: &TyCtx, ty: Ty) -> bool {
 fn is_signed(tcx: &TyCtx, ty: Ty) -> bool {
     match tcx.kind(ty) {
         TyKind::Primitive(prim) if prim.is_integer() => prim.is_signed(),
+        // Both are compared as unsigned bit patterns; only comparisons reach codegen because
+        // neither declares arithmetic operators.
+        TyKind::Primitive(PrimTy::Bool | PrimTy::Char) => false,
         TyKind::Primitive(other) => {
             unreachable!("BinaryOp/UnaryOp operand has non-arithmetic type {other:?}")
         }
@@ -1216,7 +1713,11 @@ fn lower_terminator<'ctx>(
         TerminatorKind::Unreachable => {
             cx.builder.build_unreachable().unwrap();
         }
-        TerminatorKind::Drop { place, target } => {
+        TerminatorKind::Drop {
+            place,
+            target,
+            structural,
+        } => {
             lower_drop_terminator(
                 cx,
                 mir,
@@ -1227,6 +1728,7 @@ fn lower_terminator<'ctx>(
                 place,
                 *target,
                 false,
+                *structural,
             );
         }
         TerminatorKind::DropIso { place, target } => {
@@ -1240,6 +1742,7 @@ fn lower_terminator<'ctx>(
                 place,
                 *target,
                 true,
+                false,
             );
         }
     }
@@ -1329,10 +1832,13 @@ fn lower_drop_terminator<'ctx>(
     place: &Place,
     target: crate::mir::BasicBlock,
     iso: bool,
+    structural: bool,
 ) {
     let (place_ptr, place_ty) = place::lower_place(cx, tcx, mir, locals, local_decls, place);
     if iso {
         super::drop::free_iso_shallow(cx, tcx, place_ptr, place_ty);
+    } else if structural {
+        super::drop::emit_structural_drop_glue(cx, tcx, mir, place_ptr, place_ty);
     } else {
         super::drop::emit_drop_glue(cx, tcx, mir, place_ptr, place_ty);
     }
@@ -1516,12 +2022,6 @@ fn emit_direct_call<'ctx>(
     fun: &FunRef,
     arg_vals: &[BasicMetadataValueEnum<'ctx>],
 ) -> inkwell::values::CallSiteValue<'ctx> {
-    if Some(fun.def) == cx.hir.lang_items().get(LangItem::WriteBytes) {
-        return cx
-            .builder
-            .build_call(cx.libc.write, arg_vals, "call")
-            .unwrap();
-    }
     let instance = Instance {
         def: fun.def,
         any_mode: fun.any_mode,
@@ -2446,7 +2946,7 @@ mod tests {
             projections: vec![],
         };
 
-        let value = super::lower_len(&mut cx, &mut tcx, &locals, &local_decls, &place);
+        let value = super::lower_len(&mut cx, &mut tcx, &_mir, &locals, &local_decls, &place);
         let int_val = value.into_int_value();
         assert!(int_val.is_const());
         assert_eq!(int_val.get_sign_extended_constant(), Some(2));
@@ -2527,6 +3027,219 @@ mod tests {
             }
         }
         panic!("no function found");
+    }
+
+    #[test]
+    fn slice_len_loads_the_length_from_the_fat_pointer() {
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
+            "module core::llvm;
+             public fun slice_len<T>(value: &[T]) -> usize { return 0; }
+             public fun f(x: &[i32]) -> usize { return slice_len(x); }",
+        );
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &hir,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(ir.contains("len_slot"), "{ir}");
+        assert!(
+            !ir.contains("call i64 @slice_len"),
+            "the length intrinsic must not emit a call:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn str_len_loads_the_length_from_the_fat_pointer() {
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
+            "module core::llvm;
+             public fun str_len(value: str) -> usize { return 0; }
+             public fun f(s: str) -> usize { return str_len(s); }",
+        );
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &hir,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(ir.contains("len_slot"), "{ir}");
+        assert!(
+            !ir.contains("call i64 @str_len"),
+            "the string length intrinsic must not emit a call:\n{ir}"
+        );
+    }
+
+    const MEM_INTRINSICS: &str = "module core::llvm;
+         public fun swap<T>(left: &mut T, right: &mut T) { }
+         public fun replace<T>(slot: &mut T, value: T) -> T { return value; }";
+
+    const UNINIT_INTRINSICS: &[&str] = &[
+        "module core::mem;
+         public struct MaybeUninit<T> { }",
+        "module core::llvm;
+         import core::mem::MaybeUninit;
+         public fun write<T>(slot: &mut MaybeUninit<T>, value: T);
+         public fun read<T>(slot: &mut MaybeUninit<T>) -> T;
+         public fun assume_init_ref<T>(slot: &MaybeUninit<T>) -> &T;",
+        "module core::libc;
+         import core::mem::MaybeUninit;
+         public fun malloc<T>(count: usize) -> iso [MaybeUninit<T>];",
+        "module core::util;
+         import core::mem::MaybeUninit;
+         import core::libc::malloc;
+         import core::llvm::write;
+         import core::llvm::read;
+         import core::llvm::assume_init_ref;
+         public fun f() {
+             let buf: iso [MaybeUninit<i32>] = malloc(4);
+             write(&mut buf[0], 7);
+             let x = read(&mut buf[0]);
+             let y: &i32 = assume_init_ref(&buf[1]);
+         }",
+    ];
+
+    #[test]
+    fn maybe_uninit_allocates_without_filling_the_slots() {
+        let (hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_mir_files_as_core(UNINIT_INTRINSICS);
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &hir,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(ir.contains("call ptr @malloc"), "{ir}");
+        assert!(!ir.contains("newarray.header"), "{ir}");
+    }
+
+    #[test]
+    fn mem_replace_loads_the_old_value_before_storing_the_new_one() {
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
+            MEM_INTRINSICS,
+            "fun f(x: &mut i32, v: i32) -> i32 { return core::llvm::replace(x, v); }",
+        ]);
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &hir,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(ir.contains("replace_old"), "{ir}");
+        assert!(ir.contains("store i32"), "{ir}");
+    }
+
+    #[test]
+    fn mem_swap_loads_and_stores_both_places() {
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_mir_src_files(&[
+            MEM_INTRINSICS,
+            "fun f(a: &mut i32, b: &mut i32) { core::llvm::swap(a, b); }",
+        ]);
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &hir,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(ir.contains("swap_left"), "{ir}");
+        assert!(ir.contains("swap_right"), "{ir}");
+    }
+
+    #[test]
+    fn a_fixed_array_reference_unsizes_to_a_slice_fat_pointer() {
+        let (hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir("fun f(a: &[i32; 3]) -> &[i32] { return a; }");
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &hir,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(ir.contains("fat0"), "{ir}");
+        assert!(ir.contains("fat1"), "{ir}");
+    }
+
+    #[test]
+    fn a_byte_slice_reference_unsizes_to_str_without_copying() {
+        let (hir, mut tcx, _types, mir, instances) =
+            crate::testing::lower_to_mir("fun f(b: &[u8]) -> str { return b; }");
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &hir,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+    }
+
+    #[test]
+    fn a_reference_to_an_iso_field_pointee_builds_a_slice() {
+        let (hir, mut tcx, _types, mir, instances) = crate::testing::lower_to_mir(
+            "struct Bytes { buf: iso [u8], len: usize }
+             extend Bytes { fun as_bytes(&self) -> &[u8] { return &*self.buf; } }
+             fun f(b: &Bytes) -> &[u8] { return b.as_bytes(); }",
+        );
+        let llvm = inkwell::context::Context::create();
+        let module = super::super::codegen(
+            crate::testing::session(),
+            &llvm,
+            &hir,
+            &mut tcx,
+            &mir,
+            &instances,
+            "t",
+        )
+        .unwrap();
+        module.verify().unwrap();
+        let ir = module.print_to_string().to_string();
+        assert!(ir.contains("data_ptr"), "{ir}");
+        assert!(ir.contains("len_slot"), "{ir}");
     }
 
     #[test]

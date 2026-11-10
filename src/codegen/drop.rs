@@ -4,7 +4,7 @@ use inkwell::values::{FunctionValue, IntValue, PointerValue};
 use super::ctx::CodegenCtx;
 use super::layout::is_unsized;
 use super::ty as llvm_ty;
-use crate::mir::Mir;
+use crate::mir::{Instance, Mir};
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
 
@@ -18,7 +18,23 @@ pub fn emit_drop_glue<'ctx>(
     if !tcx.needs_drop(ty) {
         return;
     }
-    let glue = get_or_build_glue_function(cx, tcx, mir, ty);
+    let glue = get_or_build_glue_function(cx, tcx, mir, ty, false);
+    cx.builder.build_call(glue, &[ptr.into()], "").unwrap();
+}
+
+/// Drops `ty`'s fields without running a `Drop::drop` it declares. Used to clean up the
+/// receiver inside that same `Drop::drop`, which would otherwise call itself forever.
+pub fn emit_structural_drop_glue<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+) {
+    if !tcx.needs_drop(ty) {
+        return;
+    }
+    let glue = get_or_build_glue_function(cx, tcx, mir, ty, true);
     cx.builder.build_call(glue, &[ptr.into()], "").unwrap();
 }
 
@@ -29,7 +45,7 @@ pub fn find_glue_pointer<'ctx>(
     ty: Ty,
 ) -> Option<PointerValue<'ctx>> {
     tcx.needs_drop(ty).then(|| {
-        get_or_build_glue_function(cx, tcx, mir, ty)
+        get_or_build_glue_function(cx, tcx, mir, ty, false)
             .as_global_value()
             .as_pointer_value()
     })
@@ -40,8 +56,14 @@ fn get_or_build_glue_function<'ctx>(
     tcx: &mut TyCtx,
     mir: &Mir,
     ty: Ty,
+    structural: bool,
 ) -> FunctionValue<'ctx> {
-    if let Some(&glue) = cx.drop_glues.borrow().get(&ty) {
+    let cached = if structural {
+        cx.structural_drop_glues.borrow().get(&ty).copied()
+    } else {
+        cx.drop_glues.borrow().get(&ty).copied()
+    };
+    if let Some(glue) = cached {
         return glue;
     }
 
@@ -49,12 +71,21 @@ fn get_or_build_glue_function<'ctx>(
         .llvm
         .void_type()
         .fn_type(&[cx.llvm.ptr_type(Default::default()).into()], false);
+    let prefix = if structural {
+        "drop.structural"
+    } else {
+        "drop.glue"
+    };
     let glue = cx.module.add_function(
-        &format!("drop.glue.{}", ty.index()),
+        &format!("{prefix}.{}", ty.index()),
         fn_ty,
         Some(Linkage::Internal),
     );
-    cx.drop_glues.borrow_mut().insert(ty, glue);
+    if structural {
+        cx.structural_drop_glues.borrow_mut().insert(ty, glue);
+    } else {
+        cx.drop_glues.borrow_mut().insert(ty, glue);
+    }
 
     let resume_at = cx.builder.get_insert_block();
     let entry = cx.llvm.append_basic_block(glue, "entry");
@@ -63,7 +94,11 @@ fn get_or_build_glue_function<'ctx>(
         .get_nth_param(0)
         .expect("drop glue takes the value's address")
         .into_pointer_value();
-    emit_drop_body(cx, tcx, mir, value, ty);
+    if structural {
+        emit_structural_drop_body(cx, tcx, mir, value, ty);
+    } else {
+        emit_drop_body(cx, tcx, mir, value, ty);
+    }
     cx.builder.build_return(None).unwrap();
     if let Some(block) = resume_at {
         cx.builder.position_at_end(block);
@@ -73,6 +108,82 @@ fn get_or_build_glue_function<'ctx>(
 }
 
 fn emit_drop_body<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+) {
+    if let TyKind::Adt { def, .. } = tcx.kind(ty).clone()
+        && let Some(method) = tcx.drop_method_for(def)
+    {
+        emit_user_drop(cx, tcx, mir, ptr, ty, def, method);
+        return;
+    }
+    emit_structural_drop_body(cx, tcx, mir, ptr, ty);
+}
+
+/// Calls a type's own `Drop::drop`, which then owns the value and drops its fields itself.
+fn emit_user_drop<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    ptr: PointerValue<'ctx>,
+    ty: Ty,
+    def: crate::hir::DefId,
+    method: crate::hir::DefId,
+) {
+    let TyKind::Adt { args, .. } = tcx.kind(ty).clone() else {
+        unreachable!("a drop method's type is always an ADT")
+    };
+    let instance = Instance {
+        def: method,
+        any_mode: None,
+        args,
+        self_ty: Some(ty),
+    };
+    let name = cx.mangle(tcx, &instance);
+    let function = cx
+        .functions
+        .get(&name)
+        .copied()
+        .unwrap_or_else(|| panic!("codegen: no drop method `{name}` for {def:?}"));
+
+    let mut args = Vec::new();
+    match llvm_ty::classify_abi(tcx, ty) {
+        llvm_ty::AbiClass::Void => {}
+        llvm_ty::AbiClass::Indirect => args.push(ptr.into()),
+        llvm_ty::AbiClass::Scalar => {
+            let value_ty = llvm_ty::llvm_type(cx, tcx, mir, ty);
+            let value = cx.builder.build_load(value_ty, ptr, "drop_value").unwrap();
+            args.push(value.into());
+        }
+        llvm_ty::AbiClass::Fat => {
+            let value_ty = llvm_ty::llvm_type(cx, tcx, mir, ty);
+            let value = cx
+                .builder
+                .build_load(value_ty, ptr, "drop_fat")
+                .unwrap()
+                .into_struct_value();
+            args.push(
+                cx.builder
+                    .build_extract_value(value, 0, "drop0")
+                    .unwrap()
+                    .into(),
+            );
+            args.push(
+                cx.builder
+                    .build_extract_value(value, 1, "drop1")
+                    .unwrap()
+                    .into(),
+            );
+        }
+    }
+
+    cx.builder.build_call(function, &args, "user_drop").unwrap();
+}
+
+fn emit_structural_drop_body<'ctx>(
     cx: &mut CodegenCtx<'ctx>,
     tcx: &mut TyCtx,
     mir: &Mir,

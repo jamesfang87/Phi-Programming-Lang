@@ -1,0 +1,41 @@
+module core::llvm;
+
+import core::mem::MaybeUninit;
+
+public fun add<T>(left: T, right: T) -> T;
+
+public fun sub<T>(left: T, right: T) -> T;
+
+public fun mul<T>(left: T, right: T) -> T;
+
+public fun div<T>(left: T, right: T) -> T;
+
+public fun rem<T>(left: T, right: T) -> T;
+
+public fun neg<T>(value: T) -> T;
+
+public fun not(value: bool) -> bool;
+
+public fun eq<T>(left: T, right: T) -> bool;
+
+public fun less_than<T>(left: T, right: T) -> bool;
+
+public fun f64_to_i64(value: f64) -> i64;
+
+public fun i64_to_f64(value: i64) -> f64;
+
+public fun encode_utf8(value: char, out: &mut [u8]) -> usize;
+
+public fun slice_len<T>(value: &[T]) -> usize;
+
+public fun str_len(value: str) -> usize;
+
+public fun swap<T>(left: &mut T, right: &mut T);
+
+public fun replace<T>(slot: &mut T, value: T) -> T;
+
+public fun read<T>(slot: &mut MaybeUninit<T>) -> T;
+
+public fun write<T>(slot: &mut MaybeUninit<T>, value: T);
+
+public fun assume_init_ref<T>(slot: &MaybeUninit<T>) -> &T;

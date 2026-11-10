@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::ast::visit::{self, Visitor as AstVisitor};
 use crate::ast::{
-    Ast, Expr as AstExpr, Extend as AstExtend, Generic as AstGeneric, Ident as AstIdent,
-    Item as AstItem, ItemKind as AstItemKind, Module, NodeId as AstNodeId, Param as AstParam,
-    Pat as AstPat, PatKind as AstPatKind, Path as AstPath, SelfParam as AstSelfParam, Symbol,
-    Ty as AstTy,
+    Ast, Expr as AstExpr, Extend as AstExtend, Function as AstFunction, Generic as AstGeneric,
+    Ident as AstIdent, Item as AstItem, ItemKind as AstItemKind, Module, NodeId as AstNodeId,
+    Param as AstParam, Pat as AstPat, PatKind as AstPatKind, Path as AstPath,
+    SelfParam as AstSelfParam, Symbol, Ty as AstTy,
 };
 use crate::driver::source::{FileOrigin, SrcSpan};
 use crate::hir::{DefId, Hir, HirId, Node, OwnerNode};
@@ -324,6 +324,7 @@ pub fn print_mir(
 
 struct Names<'ast> {
     items: HashMap<AstNodeId, &'ast AstItem>,
+    functions: HashMap<AstNodeId, &'ast AstFunction>,
     generics: HashMap<AstNodeId, &'ast AstGeneric>,
     params: HashMap<AstNodeId, &'ast AstParam>,
     self_params: HashMap<AstNodeId, &'ast AstSelfParam>,
@@ -336,6 +337,7 @@ impl<'ast> Names<'ast> {
     fn new() -> Self {
         Self {
             items: HashMap::new(),
+            functions: HashMap::new(),
             generics: HashMap::new(),
             params: HashMap::new(),
             self_params: HashMap::new(),
@@ -351,6 +353,11 @@ impl<'ast> AstVisitor<'ast> for Names<'ast> {
         self.items.insert(item.id, item);
         self.current_item = Some(item.id);
         visit::walk_item(self, item);
+    }
+
+    fn visit_function(&mut self, f: &'ast AstFunction) {
+        self.functions.insert(f.id, f);
+        visit::walk_function(self, f);
     }
 
     fn visit_generic(&mut self, g: &'ast AstGeneric) {
@@ -432,17 +439,20 @@ fn fmt_res(session: &Session, names: &Names, _ast: &Ast, res: NameResRes) -> Str
     match res {
         NameResRes::Err => "Err".to_string(),
         NameResRes::Function(id) => {
-            let item = names
-                .items
+            if let Some(item) = names.items.get(&id).copied() {
+                let AstItemKind::Function(f) = &item.kind else {
+                    panic!(
+                        "a `Res::Function` should name a function item, got {:?}",
+                        item.kind
+                    );
+                };
+                return fmt_named(session, "Function", f.name.text, f.name.span);
+            }
+            let f = names
+                .functions
                 .get(&id)
                 .copied()
-                .expect("a `Res::Function` names an item the AST walk should collect");
-            let AstItemKind::Function(f) = &item.kind else {
-                panic!(
-                    "a `Res::Function` should name a function item, got {:?}",
-                    item.kind
-                );
-            };
+                .expect("a `Res::Function` names a function the AST walk should collect");
             fmt_named(session, "Function", f.name.text, f.name.span)
         }
         NameResRes::Local(NameResLocal::Param(id)) => {

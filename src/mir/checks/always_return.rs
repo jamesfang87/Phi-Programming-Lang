@@ -25,7 +25,11 @@ fn body_always_returns(body: &Body) -> bool {
         ReturnState::DoesNotReturn,
         meet,
         |entry, _id, block| match block.terminator.kind {
-            TerminatorKind::Return | TerminatorKind::Assert { .. } => ReturnState::DoesReturn,
+            // A block that aborts cannot fall off the end, so it satisfies the check the same
+            // way an explicit `return` does.
+            TerminatorKind::Return
+            | TerminatorKind::Assert { .. }
+            | TerminatorKind::Unreachable => ReturnState::DoesReturn,
             _ => *entry,
         },
     );

@@ -180,7 +180,24 @@ fn apply_rvalue(dead: &mut DeadRegisters, movable: &Movable, rvalue: &Rvalue) {
                 apply_operand(dead, movable, operand);
             }
         }
-        Rvalue::Ref { .. } | Rvalue::Discriminant(_) | Rvalue::Len(_) => {}
+        Rvalue::Replace { value, .. } => apply_operand(dead, movable, value),
+        Rvalue::LibcCall { args, .. } => {
+            for arg in args {
+                apply_operand(dead, movable, arg);
+            }
+        }
+        Rvalue::EncodeUtf8 { value, buffer } => {
+            apply_operand(dead, movable, value);
+            apply_operand(dead, movable, buffer);
+        }
+        Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
+        Rvalue::WriteUninit { value, .. } => apply_operand(dead, movable, value),
+        Rvalue::Ref { .. }
+        | Rvalue::Discriminant(_)
+        | Rvalue::Len(_)
+        | Rvalue::Swap { .. }
+        | Rvalue::ReadUninit(_)
+        | Rvalue::AssumeInitRef(_) => {}
     }
 }
 
@@ -292,6 +309,31 @@ fn check_rvalue(
         } => {
             check_operand(session, dead, movable, body, lhs, span);
             check_operand(session, dead, movable, body, rhs, span);
+        }
+        Rvalue::Replace { place, value } => {
+            check_read(session, dead, movable, body, place, span);
+            check_operand(session, dead, movable, body, value, span);
+        }
+        Rvalue::Swap { left, right } => {
+            check_read(session, dead, movable, body, left, span);
+            check_read(session, dead, movable, body, right, span);
+        }
+        Rvalue::LibcCall { args, .. } => {
+            for arg in args {
+                check_operand(session, dead, movable, body, arg, span);
+            }
+        }
+        Rvalue::EncodeUtf8 { value, buffer } => {
+            check_operand(session, dead, movable, body, value, span);
+            check_operand(session, dead, movable, body, buffer, span);
+        }
+        Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
+        Rvalue::WriteUninit { place, value } => {
+            check_read(session, dead, movable, body, place, span);
+            check_operand(session, dead, movable, body, value, span);
+        }
+        Rvalue::ReadUninit(place) | Rvalue::AssumeInitRef(place) => {
+            check_read(session, dead, movable, body, place, span);
         }
         Rvalue::Ref { place, .. } | Rvalue::Discriminant(place) | Rvalue::Len(place) => {
             check_read(session, dead, movable, body, place, span);

@@ -352,18 +352,25 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             ExprKind::Path(path) => {
                 let res = match self.table.probe_value_path(self.current_module, path) {
                     Some(res) => res,
-                    None => {
-                        let suggestions = self.table.suggest_value_names(self.current_module, path);
-                        report_not_found(
-                            self.session,
-                            *path
-                                .segments
-                                .last()
-                                .expect("a path always has at least one segment"),
-                            &suggestions,
-                        );
-                        Res::Err
-                    }
+                    None => match self
+                        .table
+                        .probe_associated_function(self.current_module, path)
+                    {
+                        Some(method) => Res::Function(method),
+                        None => {
+                            let suggestions =
+                                self.table.suggest_value_names(self.current_module, path);
+                            report_not_found(
+                                self.session,
+                                *path
+                                    .segments
+                                    .last()
+                                    .expect("a path always has at least one segment"),
+                                &suggestions,
+                            );
+                            Res::Err
+                        }
+                    },
                 };
                 self.results.record(expr.id, path.clone(), res);
             }

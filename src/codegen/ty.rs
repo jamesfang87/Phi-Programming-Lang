@@ -20,6 +20,7 @@ pub fn classify_abi(tcx: &TyCtx, ty: Ty) -> AbiClass {
         TyKind::Unit | TyKind::Never => AbiClass::Void,
         TyKind::Ref { base, .. } | TyKind::Iso(base) if is_unsized(tcx, *base) => AbiClass::Fat,
         TyKind::Dyn { .. } | TyKind::Primitive(PrimTy::Str) | TyKind::Fun { .. } => AbiClass::Fat,
+        TyKind::Adt { def, args } if tcx.is_maybe_uninit(*def) => classify_abi(tcx, args[0]),
         TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. } => AbiClass::Indirect,
         _ => AbiClass::Scalar,
     }
@@ -48,6 +49,7 @@ pub fn llvm_type<'ctx>(
             elem,
             len: Some(len),
         } => array_llvm_type(cx, tcx, mir, elem, len),
+        TyKind::Adt { def, args } if tcx.is_maybe_uninit(def) => llvm_type(cx, tcx, mir, args[0]),
         TyKind::Adt { def, args } => adt_llvm_type(cx, tcx, mir, def, &args),
         TyKind::Dyn { .. } => fat_pointer_type(cx),
         TyKind::Never => cx.llvm.struct_type(&[], false).into(),

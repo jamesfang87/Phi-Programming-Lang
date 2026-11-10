@@ -1,5 +1,97 @@
 module std::vector;
 
-// TODO: implement `Vector<T>` (growable array with push/pop/len/indexing). The file
-// currently declares only the module, leaving real programs with no standard
-// dynamic array despite README sections 4/12 relying on `Array<T>`/indexing.
+import core::mem::MaybeUninit;
+import core::libc::malloc;
+import core::libc::realloc;
+import core::llvm::assume_init_ref;
+import core::llvm::read;
+import core::llvm::replace;
+import core::llvm::write;
+import core::ops::Drop;
+import core::ops::Index;
+import core::ops::IndexSet;
+import core::option::Option;
+
+public struct Vector<T> {
+    buf: iso [MaybeUninit<T>],
+    len: usize,
+    cap: usize,
+}
+
+extend<T> Vector<T> {
+    public fun empty() -> Vector<T> {
+        return Vector { buf: malloc(0), len: 0, cap: 0 };
+    }
+
+    public fun len(&self) -> usize {
+        return self.len;
+    }
+
+    public fun is_empty(&self) -> bool {
+        return self.len == 0;
+    }
+
+    public fun push(&mut self, value: T) {
+        if self.len == self.cap {
+            self.grow();
+        }
+        write(&mut self.buf[self.len], value);
+        self.len = self.len + 1;
+    }
+
+    public fun pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            return .none;
+        }
+        self.len = self.len - 1;
+        return .some(read(&mut self.buf[self.len]));
+    }
+
+    public fun get(&self, key: usize) -> Option<&T> {
+        if key >= self.len {
+            return .none;
+        }
+        return .some(assume_init_ref(&self.buf[key]));
+    }
+
+    public fun clear(&mut self) {
+        for i in 0..self.len {
+            let _ = read(&mut self.buf[i]);
+        }
+        self.len = 0;
+    }
+
+    fun grow(&mut self) {
+        let new_cap = if self.cap == 0 { 4 } else { self.cap * 2 };
+        let buffer = replace(&mut self.buf, malloc(0));
+        self.buf = realloc(buffer, new_cap);
+        self.cap = new_cap;
+    }
+}
+
+extend<T> Vector<T> with Index<usize, T> {
+    fun index(&self, key: usize) -> &T {
+        return assume_init_ref(&self.buf[key]);
+    }
+}
+
+extend<T> Vector<T> with IndexSet<usize, T> {
+    fun index_set(&mut self, key: usize, value: T) {
+        if key == self.len {
+            self.push(value);
+            return;
+        }
+        if key > self.len {
+            panic("index out of bounds");
+        }
+        write(&mut self.buf[key], value);
+    }
+}
+
+extend<T> Vector<T> with Drop {
+    fun drop(self) {
+        for i in 0..self.len {
+            let _ = read(&mut self.buf[i]);
+        }
+    }
+}

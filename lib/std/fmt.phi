@@ -1,0 +1,113 @@
+module std::fmt;
+
+import std::string::String;
+
+public trait Display {
+    fun fmt(&self, out: &mut String);
+}
+
+extend str with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_str(*self);
+    }
+}
+
+extend String with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_str(self.as_str());
+    }
+}
+
+extend bool with Display {
+    fun fmt(&self, out: &mut String) {
+        if *self {
+            out.push_str("true");
+        } else {
+            out.push_str("false");
+        }
+    }
+}
+
+extend i8 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_i64(*self as i64);
+    }
+}
+
+extend i16 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_i64(*self as i64);
+    }
+}
+
+extend i32 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_i64(*self as i64);
+    }
+}
+
+extend i64 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_i64(*self);
+    }
+}
+
+extend u8 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_u64(*self as u64);
+    }
+}
+
+extend u16 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_u64(*self as u64);
+    }
+}
+
+extend u32 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_u64(*self as u64);
+    }
+}
+
+extend u64 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_u64(*self);
+    }
+}
+
+extend usize with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_u64(*self as u64);
+    }
+}
+
+extend char with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_char(*self);
+    }
+}
+
+extend f32 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_f32(*self);
+    }
+}
+
+extend f64 with Display {
+    fun fmt(&self, out: &mut String) {
+        out.push_f64(*self);
+    }
+}
+
+extend<T: Display> &T with Display {
+    fun fmt(&self, out: &mut String) {
+        (**self).fmt(out);
+    }
+}
+
+public fun to_string<T: Display>(value: &T) -> String {
+    let mut out = String::empty();
+    value.fmt(&mut out);
+    return out;
+}

@@ -232,6 +232,7 @@ pub struct Import {
 
 #[derive(Clone, Debug)]
 pub struct Function {
+    pub id: NodeId,
     pub visibility: Visibility,
     pub name: Ident,
     pub generics: Vec<Generic>,

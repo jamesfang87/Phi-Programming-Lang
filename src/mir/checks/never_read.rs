@@ -135,6 +135,29 @@ fn apply_rvalue(unread: &mut UnreadLocals, rvalue: &Rvalue) {
                 apply_operand(unread, operand);
             }
         }
+        Rvalue::Replace { place, value } => {
+            apply_place(unread, place);
+            apply_operand(unread, value);
+        }
+        Rvalue::Swap { left, right } => {
+            apply_place(unread, left);
+            apply_place(unread, right);
+        }
+        Rvalue::LibcCall { args, .. } => {
+            for arg in args {
+                apply_operand(unread, arg);
+            }
+        }
+        Rvalue::EncodeUtf8 { value, buffer } => {
+            apply_operand(unread, value);
+            apply_operand(unread, buffer);
+        }
+        Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
+        Rvalue::WriteUninit { place, value } => {
+            apply_place(unread, place);
+            apply_operand(unread, value);
+        }
+        Rvalue::ReadUninit(place) | Rvalue::AssumeInitRef(place) => apply_place(unread, place),
         Rvalue::Ref { place, .. } | Rvalue::Discriminant(place) | Rvalue::Len(place) => {
             apply_place(unread, place);
         }

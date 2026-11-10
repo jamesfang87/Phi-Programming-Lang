@@ -33,29 +33,37 @@ impl<'a> BodyLowerCtx<'a> {
     fn lower_coerced_operand(&mut self, expr_id: impl Into<HirId>, target: Ty) -> Operand {
         let expr_id = expr_id.into();
         let span = self.hir.expr(expr_id).span;
-        let base = match self.tcx.kind(target).clone() {
+        let inner = self.lower_operand_without_coercion(expr_id);
+
+        let target_kind = self.tcx.kind(target).clone();
+        if matches!(target_kind, TyKind::Primitive(PrimTy::Str)) {
+            return inner;
+        }
+
+        let base = match target_kind {
             TyKind::Ref { base, .. } | TyKind::Iso(base) => base,
             other => unreachable!(
-                "mir::lower: a recorded unsize target is always a reference or `iso` to a `dyn` \
-                 type, found {other:?}"
+                "mir::lower: a recorded unsize target is always a reference, `iso`, or `str`, \
+                 found {other:?}"
             ),
         };
-        let TyKind::Dyn { trait_, .. } = self.tcx.kind(base).clone() else {
-            unreachable!(
-                "mir::lower: a recorded unsize target is always a reference or `iso` to a `dyn` \
-                 type"
-            );
-        };
-        let inner = self.lower_operand_without_coercion(expr_id);
-        let temp = self.new_temp(target, span);
-        self.assign(
-            Place::from_local(temp),
-            Rvalue::Unsize {
+
+        let rvalue = match self.tcx.kind(base).clone() {
+            TyKind::Dyn { trait_, .. } => Rvalue::Unsize {
                 operand: inner,
                 trait_,
             },
-            span,
-        );
+            TyKind::Array { len: None, .. } => Rvalue::Cast {
+                operand: inner,
+                ty: target,
+                kind: CastKind::UnsizeSlice,
+            },
+            other => unreachable!(
+                "mir::lower: a recorded unsize target refers to {other:?}, which has no unsizing"
+            ),
+        };
+        let temp = self.new_temp(target, span);
+        self.assign(Place::from_local(temp), rvalue, span);
         Operand::Move(Place::from_local(temp))
     }
 
@@ -107,7 +115,7 @@ impl<'a> BodyLowerCtx<'a> {
                 member,
                 args: crate::hir::AccessArgs::None,
             } => self.lower_field_place(base, member),
-            ExprKind::Index { base, index } => self.lower_index_place(base, index, span),
+            ExprKind::Index { base, index } => self.lower_index_place(expr_id, base, index, span),
             ExprKind::Unary {
                 op: UnaryOp::Deref,
                 operand,
@@ -136,7 +144,7 @@ impl<'a> BodyLowerCtx<'a> {
             }
             ExprKind::Literal(_) => {}
             ExprKind::Assign { lhs, rhs } => {
-                self.lower_assign_effect(lhs, rhs);
+                self.lower_assign_effect(expr_id, lhs, rhs, span);
             }
             ExprKind::AssignOp { op, lhs, rhs } => {
                 self.lower_assign_op_effect(expr_id, op, lhs, rhs, span);
@@ -149,8 +157,10 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    fn lower_assign_effect(&mut self, lhs: impl Into<HirId>, rhs: impl Into<HirId>) {
-        let (lhs, rhs) = (lhs.into(), rhs.into());
+    fn lower_assign_effect(&mut self, expr_id: HirId, lhs: ExprId, rhs: ExprId, span: SrcSpan) {
+        if self.lower_index_set_assign(expr_id, lhs, rhs, span) {
+            return;
+        }
         let place = self.lower_place(lhs);
         self.lower_expr_into(rhs, place);
     }
@@ -164,7 +174,7 @@ impl<'a> BodyLowerCtx<'a> {
         span: SrcSpan,
     ) {
         let (lhs, rhs) = (lhs.into(), rhs.into());
-        let place = self.lower_place(lhs);
+        let place = self.lower_write_place(lhs);
         let lhs_ty = self.expr_ty(lhs);
         let result_local = self.new_temp(lhs_ty, span);
         let result = Place::from_local(result_local);
@@ -209,7 +219,7 @@ impl<'a> BodyLowerCtx<'a> {
             ExprKind::Binary { op, lhs, rhs } => {
                 self.lower_binary_into(expr_id, op, lhs, rhs, dest, span)
             }
-            ExprKind::Assign { lhs, rhs } => self.lower_assign_into(lhs, rhs, dest, span),
+            ExprKind::Assign { lhs, rhs } => self.lower_assign_into(expr_id, lhs, rhs, dest, span),
             ExprKind::AssignOp { op, lhs, rhs } => {
                 self.lower_assign_op_into(expr_id, op, lhs, rhs, dest, span)
             }
@@ -332,9 +342,18 @@ impl<'a> BodyLowerCtx<'a> {
         }
     }
 
-    fn lower_assign_into(&mut self, lhs: ExprId, rhs: ExprId, dest: Place, span: SrcSpan) {
-        let place = self.lower_place(lhs);
-        self.lower_expr_into(rhs, place);
+    fn lower_assign_into(
+        &mut self,
+        expr_id: HirId,
+        lhs: ExprId,
+        rhs: ExprId,
+        dest: Place,
+        span: SrcSpan,
+    ) {
+        if !self.lower_index_set_assign(expr_id, lhs, rhs, span) {
+            let place = self.lower_place(lhs);
+            self.lower_expr_into(rhs, place);
+        }
         self.assign_unit(dest, span);
     }
 
@@ -347,7 +366,7 @@ impl<'a> BodyLowerCtx<'a> {
         dest: Place,
         span: SrcSpan,
     ) {
-        let place = self.lower_place(lhs);
+        let place = self.lower_write_place(lhs);
         let lhs_ty = self.expr_ty(lhs);
         let result_local = self.new_temp(lhs_ty, span);
         let result = Place::from_local(result_local);
@@ -379,6 +398,12 @@ impl<'a> BodyLowerCtx<'a> {
             };
             self.lower_call_like_into(operand, dest, mode, span);
         } else {
+            if mutability == Mutability::Mutable && self.is_overloaded_index(operand) {
+                panic!(
+                    "mir::lower: a mutable borrow through an overloaded `Index` is not yet \
+                     implemented"
+                );
+            }
             let place = self.lower_place(operand);
             self.assign(dest, Rvalue::Ref { mutability, place }, span);
         }
@@ -545,7 +570,7 @@ impl<'a> BodyLowerCtx<'a> {
     pub(crate) fn peel_refs(&self, ty: Ty) -> (Ty, u32) {
         let mut current = ty;
         let mut count = 0;
-        while let TyKind::Ref { base, .. } = *self.tcx.kind(current) {
+        while let TyKind::Ref { base, .. } | TyKind::Iso(base) = *self.tcx.kind(current) {
             current = base;
             count += 1;
         }
@@ -574,6 +599,7 @@ impl<'a> BodyLowerCtx<'a> {
 
     fn lower_index_place(
         &mut self,
+        expr_id: HirId,
         base: impl Into<HirId>,
         index: impl Into<HirId>,
         span: SrcSpan,
@@ -595,10 +621,48 @@ impl<'a> BodyLowerCtx<'a> {
                 place
             }
 
-            _ => panic!(
-                "mir::lower: an overloaded `Index`/`IndexSet` used as a place is not yet implemented"
-            ),
+            _ => {
+                assert!(
+                    self.types.call(expr_id).is_some(),
+                    "mir::lower: an index expression used as a place must resolve to `Index`"
+                );
+                // An indexed place's type is what `Index::index` returns: a reference to the
+                // element. Uses that need the element itself, such as a deref or a method
+                // receiver, peel that reference the same way they peel any other.
+                let reference_ty = self.expr_ty(expr_id);
+                let reference = self.new_temp(reference_ty, span);
+                self.lower_call_like_into(
+                    expr_id,
+                    Place::from_local(reference),
+                    crate::mir::AnyMode::Owned,
+                    span,
+                );
+                Place::from_local(reference)
+            }
         }
+    }
+
+    /// Returns whether `expr_id` is an index expression on a type that implements `Index`.
+    pub(crate) fn is_overloaded_index(&mut self, expr_id: impl Into<HirId>) -> bool {
+        let expr_id = expr_id.into();
+        let ExprKind::Index { base, .. } = self.hir.expr(expr_id).kind.clone() else {
+            return false;
+        };
+        let base_ty = self.expr_ty(base);
+        let (peeled, _) = self.peel_refs(base_ty);
+        !matches!(self.tcx.kind(peeled), TyKind::Array { .. })
+    }
+
+    /// Returns the place `expr_id` names for a write, which overloaded indexing cannot provide.
+    fn lower_write_place(&mut self, expr_id: impl Into<HirId>) -> Place {
+        let expr_id = expr_id.into();
+        if self.is_overloaded_index(expr_id) {
+            panic!(
+                "mir::lower: compound assignment through an overloaded `Index`/`IndexSet` is not \
+                 yet implemented"
+            );
+        }
+        self.lower_place(expr_id)
     }
 
     fn lower_index_projection(&mut self, index: HirId, usize_ty: Ty, span: SrcSpan) -> Projection {
@@ -789,7 +853,7 @@ impl<'a> BodyLowerCtx<'a> {
         self.switch_to(join_block);
     }
 
-    fn lower_binary_op_into(
+    pub(super) fn lower_binary_op_into(
         &mut self,
         op: BinaryOp,
         lhs: Operand,

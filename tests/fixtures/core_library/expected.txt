@@ -3,6 +3,9 @@
 === stdout ===
 // module app
 Import {
+    id: NodeId(
+        5,
+    ),
     path: Path {
         segments: [
             Ident {
@@ -33,10 +36,6 @@ Import {
                 },
             },
         ],
-        span: SrcSpan {
-            begin: 85,
-            end: 107,
-        },
     },
     glob: false,
     alias: None,
@@ -46,6 +45,9 @@ Import {
     },
 }
 Import {
+    id: NodeId(
+        6,
+    ),
     path: Path {
         segments: [
             Ident {
@@ -76,10 +78,6 @@ Import {
                 },
             },
         ],
-        span: SrcSpan {
-            begin: 116,
-            end: 137,
-        },
     },
     glob: false,
     alias: None,
@@ -89,8 +87,14 @@ Import {
     },
 }
 Item {
+    id: NodeId(
+        13,
+    ),
     kind: Function(
         Function {
+            id: NodeId(
+                12,
+            ),
             visibility: Private,
             name: Ident {
                 text: Symbol(
@@ -106,6 +110,9 @@ Item {
             params: [],
             ret: Some(
                 Ty {
+                    id: NodeId(
+                        8,
+                    ),
                     kind: Path {
                         path: Path {
                             segments: [
@@ -119,13 +126,12 @@ Item {
                                     },
                                 },
                             ],
-                            span: SrcSpan {
-                                begin: 157,
-                                end: 163,
-                            },
                         },
                         args: [
                             Ty {
+                                id: NodeId(
+                                    7,
+                                ),
                                 kind: Path {
                                     path: Path {
                                         segments: [
@@ -139,10 +145,6 @@ Item {
                                                 },
                                             },
                                         ],
-                                        span: SrcSpan {
-                                            begin: 164,
-                                            end: 167,
-                                        },
                                     },
                                     args: [],
                                 },
@@ -161,27 +163,38 @@ Item {
             ),
             block: Some(
                 Block {
+                    id: NodeId(
+                        11,
+                    ),
                     stmts: [
                         Stmt {
+                            id: NodeId(
+                                10,
+                            ),
                             kind: Return(
-                                Expr {
-                                    kind: Variant {
-                                        variant: Ident {
-                                            text: Symbol(
-                                                11,
-                                            ),
-                                            span: SrcSpan {
-                                                begin: 183,
-                                                end: 187,
+                                Some(
+                                    Expr {
+                                        id: NodeId(
+                                            9,
+                                        ),
+                                        kind: Variant {
+                                            variant: Ident {
+                                                text: Symbol(
+                                                    11,
+                                                ),
+                                                span: SrcSpan {
+                                                    begin: 183,
+                                                    end: 187,
+                                                },
                                             },
+                                            payload: None,
                                         },
-                                        payload: None,
+                                        span: SrcSpan {
+                                            begin: 182,
+                                            end: 187,
+                                        },
                                     },
-                                    span: SrcSpan {
-                                        begin: 182,
-                                        end: 187,
-                                    },
-                                },
+                                ),
                             ),
                             span: SrcSpan {
                                 begin: 175,
@@ -207,8 +220,14 @@ Item {
     },
 }
 Item {
+    id: NodeId(
+        23,
+    ),
     kind: Function(
         Function {
+            id: NodeId(
+                22,
+            ),
             visibility: Private,
             name: Ident {
                 text: Symbol(
@@ -224,6 +243,9 @@ Item {
             params: [],
             ret: Some(
                 Ty {
+                    id: NodeId(
+                        17,
+                    ),
                     kind: Path {
                         path: Path {
                             segments: [
@@ -237,13 +259,12 @@ Item {
                                     },
                                 },
                             ],
-                            span: SrcSpan {
-                                begin: 208,
-                                end: 214,
-                            },
                         },
                         args: [
                             Ty {
+                                id: NodeId(
+                                    15,
+                                ),
                                 kind: Path {
                                     path: Path {
                                         segments: [
@@ -257,13 +278,12 @@ Item {
                                                 },
                                             },
                                         ],
-                                        span: SrcSpan {
-                                            begin: 215,
-                                            end: 221,
-                                        },
                                     },
                                     args: [
                                         Ty {
+                                            id: NodeId(
+                                                14,
+                                            ),
                                             kind: Path {
                                                 path: Path {
                                                     segments: [
@@ -277,10 +297,6 @@ Item {
                                                             },
                                                         },
                                                     ],
-                                                    span: SrcSpan {
-                                                        begin: 222,
-                                                        end: 225,
-                                                    },
                                                 },
                                                 args: [],
                                             },
@@ -297,6 +313,9 @@ Item {
                                 },
                             },
                             Ty {
+                                id: NodeId(
+                                    16,
+                                ),
                                 kind: Path {
                                     path: Path {
                                         segments: [
@@ -310,10 +329,6 @@ Item {
                                                 },
                                             },
                                         ],
-                                        span: SrcSpan {
-                                            begin: 228,
-                                            end: 232,
-                                        },
                                     },
                                     args: [],
                                 },
@@ -332,46 +347,60 @@ Item {
             ),
             block: Some(
                 Block {
+                    id: NodeId(
+                        21,
+                    ),
                     stmts: [
                         Stmt {
+                            id: NodeId(
+                                20,
+                            ),
                             kind: Return(
-                                Expr {
-                                    kind: Variant {
-                                        variant: Ident {
-                                            text: Symbol(
-                                                15,
-                                            ),
-                                            span: SrcSpan {
-                                                begin: 248,
-                                                end: 250,
-                                            },
-                                        },
-                                        payload: Single(
-                                            Expr {
-                                                kind: Variant {
-                                                    variant: Ident {
-                                                        text: Symbol(
-                                                            11,
-                                                        ),
-                                                        span: SrcSpan {
-                                                            begin: 252,
-                                                            end: 256,
-                                                        },
-                                                    },
-                                                    payload: None,
-                                                },
-                                                span: SrcSpan {
-                                                    begin: 251,
-                                                    end: 256,
-                                                },
-                                            },
+                                Some(
+                                    Expr {
+                                        id: NodeId(
+                                            19,
                                         ),
+                                        kind: Variant {
+                                            variant: Ident {
+                                                text: Symbol(
+                                                    15,
+                                                ),
+                                                span: SrcSpan {
+                                                    begin: 248,
+                                                    end: 250,
+                                                },
+                                            },
+                                            payload: Single(
+                                                Expr {
+                                                    id: NodeId(
+                                                        18,
+                                                    ),
+                                                    kind: Variant {
+                                                        variant: Ident {
+                                                            text: Symbol(
+                                                                11,
+                                                            ),
+                                                            span: SrcSpan {
+                                                                begin: 252,
+                                                                end: 256,
+                                                            },
+                                                        },
+                                                        payload: None,
+                                                    },
+                                                    span: SrcSpan {
+                                                        begin: 251,
+                                                        end: 256,
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                        span: SrcSpan {
+                                            begin: 247,
+                                            end: 257,
+                                        },
                                     },
-                                    span: SrcSpan {
-                                        begin: 247,
-                                        end: 257,
-                                    },
-                                },
+                                ),
                             ),
                             span: SrcSpan {
                                 begin: 240,
@@ -397,8 +426,14 @@ Item {
     },
 }
 Item {
+    id: NodeId(
+        29,
+    ),
     kind: Function(
         Function {
+            id: NodeId(
+                28,
+            ),
             visibility: Private,
             name: Ident {
                 text: Symbol(
@@ -414,6 +449,9 @@ Item {
             params: [],
             ret: Some(
                 Ty {
+                    id: NodeId(
+                        24,
+                    ),
                     kind: Path {
                         path: Path {
                             segments: [
@@ -427,10 +465,6 @@ Item {
                                     },
                                 },
                             ],
-                            span: SrcSpan {
-                                begin: 278,
-                                end: 287,
-                            },
                         },
                         args: [],
                     },
@@ -442,27 +476,38 @@ Item {
             ),
             block: Some(
                 Block {
+                    id: NodeId(
+                        27,
+                    ),
                     stmts: [
                         Stmt {
+                            id: NodeId(
+                                26,
+                            ),
                             kind: Return(
-                                Expr {
-                                    kind: Variant {
-                                        variant: Ident {
-                                            text: Symbol(
-                                                3,
-                                            ),
-                                            span: SrcSpan {
-                                                begin: 302,
-                                                end: 304,
+                                Some(
+                                    Expr {
+                                        id: NodeId(
+                                            25,
+                                        ),
+                                        kind: Variant {
+                                            variant: Ident {
+                                                text: Symbol(
+                                                    3,
+                                                ),
+                                                span: SrcSpan {
+                                                    begin: 302,
+                                                    end: 304,
+                                                },
                                             },
+                                            payload: None,
                                         },
-                                        payload: None,
+                                        span: SrcSpan {
+                                            begin: 301,
+                                            end: 304,
+                                        },
                                     },
-                                    span: SrcSpan {
-                                        begin: 301,
-                                        end: 304,
-                                    },
-                                },
+                                ),
                             ),
                             span: SrcSpan {
                                 begin: 294,
@@ -489,6 +534,9 @@ Item {
 }
 // module app::helper
 Item {
+    id: NodeId(
+        3,
+    ),
     kind: Enum(
         Enum {
             visibility: Public,
@@ -501,9 +549,12 @@ Item {
                     end: 42,
                 },
             },
-            generics: None,
+            generics: [],
             variants: [
                 Variant {
+                    id: NodeId(
+                        1,
+                    ),
                     name: Ident {
                         text: Symbol(
                             3,
@@ -520,6 +571,9 @@ Item {
                     },
                 },
                 Variant {
+                    id: NodeId(
+                        2,
+                    ),
                     name: Ident {
                         text: Symbol(
                             4,
@@ -537,18 +591,21 @@ Item {
                 },
             ],
             span: SrcSpan {
-                begin: 28,
-                end: 61,
+                begin: 21,
+                end: 64,
             },
         },
     ),
     span: SrcSpan {
-        begin: 28,
-        end: 61,
+        begin: 21,
+        end: 64,
     },
 }
 // module app::map
 Item {
+    id: NodeId(
+        37,
+    ),
     kind: Struct(
         Struct {
             visibility: Public,
@@ -561,44 +618,51 @@ Item {
                     end: 343,
                 },
             },
-            generics: Some(
-                [
-                    Generic {
-                        name: Ident {
-                            text: Symbol(
-                                19,
-                            ),
-                            span: SrcSpan {
-                                begin: 344,
-                                end: 345,
-                            },
-                        },
-                        bounds: None,
+            generics: [
+                Generic {
+                    id: NodeId(
+                        31,
+                    ),
+                    name: Ident {
+                        text: Symbol(
+                            19,
+                        ),
                         span: SrcSpan {
                             begin: 344,
                             end: 345,
                         },
                     },
-                    Generic {
-                        name: Ident {
-                            text: Symbol(
-                                20,
-                            ),
-                            span: SrcSpan {
-                                begin: 347,
-                                end: 348,
-                            },
-                        },
-                        bounds: None,
+                    bounds: None,
+                    span: SrcSpan {
+                        begin: 344,
+                        end: 345,
+                    },
+                },
+                Generic {
+                    id: NodeId(
+                        32,
+                    ),
+                    name: Ident {
+                        text: Symbol(
+                            20,
+                        ),
                         span: SrcSpan {
                             begin: 347,
                             end: 348,
                         },
                     },
-                ],
-            ),
+                    bounds: None,
+                    span: SrcSpan {
+                        begin: 347,
+                        end: 348,
+                    },
+                },
+            ],
             fields: [
                 Field {
+                    id: NodeId(
+                        34,
+                    ),
                     visibility: Private,
                     name: Ident {
                         text: Symbol(
@@ -610,6 +674,9 @@ Item {
                         },
                     },
                     ty: Ty {
+                        id: NodeId(
+                            33,
+                        ),
                         kind: Path {
                             path: Path {
                                 segments: [
@@ -623,10 +690,6 @@ Item {
                                         },
                                     },
                                 ],
-                                span: SrcSpan {
-                                    begin: 361,
-                                    end: 362,
-                                },
                             },
                             args: [],
                         },
@@ -641,6 +704,9 @@ Item {
                     },
                 },
                 Field {
+                    id: NodeId(
+                        36,
+                    ),
                     visibility: Private,
                     name: Ident {
                         text: Symbol(
@@ -652,6 +718,9 @@ Item {
                         },
                     },
                     ty: Ty {
+                        id: NodeId(
+                            35,
+                        ),
                         kind: Path {
                             path: Path {
                                 segments: [
@@ -665,10 +734,6 @@ Item {
                                         },
                                     },
                                 ],
-                                span: SrcSpan {
-                                    begin: 375,
-                                    end: 376,
-                                },
                             },
                             args: [],
                         },
@@ -684,114 +749,144 @@ Item {
                 },
             ],
             span: SrcSpan {
-                begin: 333,
-                end: 376,
+                begin: 326,
+                end: 379,
             },
         },
     ),
     span: SrcSpan {
-        begin: 333,
-        end: 376,
+        begin: 326,
+        end: 379,
     },
 }
 Item {
+    id: NodeId(
+        56,
+    ),
     kind: Extend(
         Extend {
-            extend_generics: Some(
-                [
-                    Generic {
-                        name: Ident {
-                            text: Symbol(
-                                19,
-                            ),
-                            span: SrcSpan {
-                                begin: 388,
-                                end: 389,
-                            },
-                        },
-                        bounds: None,
+            extend_generics: [
+                Generic {
+                    id: NodeId(
+                        38,
+                    ),
+                    name: Ident {
+                        text: Symbol(
+                            19,
+                        ),
                         span: SrcSpan {
                             begin: 388,
                             end: 389,
                         },
                     },
-                    Generic {
-                        name: Ident {
-                            text: Symbol(
-                                20,
-                            ),
-                            span: SrcSpan {
-                                begin: 391,
-                                end: 392,
-                            },
-                        },
-                        bounds: None,
+                    bounds: None,
+                    span: SrcSpan {
+                        begin: 388,
+                        end: 389,
+                    },
+                },
+                Generic {
+                    id: NodeId(
+                        39,
+                    ),
+                    name: Ident {
+                        text: Symbol(
+                            20,
+                        ),
                         span: SrcSpan {
                             begin: 391,
                             end: 392,
                         },
                     },
-                ],
-            ),
-            adt_generics: Some(
-                [
-                    Ty {
-                        kind: Path {
-                            path: Path {
-                                segments: [
-                                    Ident {
-                                        text: Symbol(
-                                            19,
-                                        ),
-                                        span: SrcSpan {
-                                            begin: 398,
-                                            end: 399,
-                                        },
-                                    },
-                                ],
+                    bounds: None,
+                    span: SrcSpan {
+                        begin: 391,
+                        end: 392,
+                    },
+                },
+            ],
+            self_ty: Ty {
+                id: NodeId(
+                    42,
+                ),
+                kind: Path {
+                    path: Path {
+                        segments: [
+                            Ident {
+                                text: Symbol(
+                                    18,
+                                ),
                                 span: SrcSpan {
-                                    begin: 398,
-                                    end: 399,
+                                    begin: 394,
+                                    end: 397,
                                 },
                             },
-                            args: [],
-                        },
-                        span: SrcSpan {
-                            begin: 398,
-                            end: 399,
-                        },
+                        ],
                     },
-                    Ty {
-                        kind: Path {
-                            path: Path {
-                                segments: [
-                                    Ident {
-                                        text: Symbol(
-                                            20,
-                                        ),
-                                        span: SrcSpan {
-                                            begin: 401,
-                                            end: 402,
+                    args: [
+                        Ty {
+                            id: NodeId(
+                                40,
+                            ),
+                            kind: Path {
+                                path: Path {
+                                    segments: [
+                                        Ident {
+                                            text: Symbol(
+                                                19,
+                                            ),
+                                            span: SrcSpan {
+                                                begin: 398,
+                                                end: 399,
+                                            },
                                         },
-                                    },
-                                ],
-                                span: SrcSpan {
-                                    begin: 401,
-                                    end: 402,
+                                    ],
                                 },
+                                args: [],
                             },
-                            args: [],
+                            span: SrcSpan {
+                                begin: 398,
+                                end: 399,
+                            },
                         },
-                        span: SrcSpan {
-                            begin: 401,
-                            end: 402,
+                        Ty {
+                            id: NodeId(
+                                41,
+                            ),
+                            kind: Path {
+                                path: Path {
+                                    segments: [
+                                        Ident {
+                                            text: Symbol(
+                                                20,
+                                            ),
+                                            span: SrcSpan {
+                                                begin: 401,
+                                                end: 402,
+                                            },
+                                        },
+                                    ],
+                                },
+                                args: [],
+                            },
+                            span: SrcSpan {
+                                begin: 401,
+                                end: 402,
+                            },
                         },
-                    },
-                ],
-            ),
+                    ],
+                },
+                span: SrcSpan {
+                    begin: 394,
+                    end: 403,
+                },
+            },
             trait_generics: Some(
                 [
                     Ty {
+                        id: NodeId(
+                            43,
+                        ),
                         kind: Path {
                             path: Path {
                                 segments: [
@@ -805,10 +900,6 @@ Item {
                                         },
                                     },
                                 ],
-                                span: SrcSpan {
-                                    begin: 415,
-                                    end: 416,
-                                },
                             },
                             args: [],
                         },
@@ -818,6 +909,9 @@ Item {
                         },
                     },
                     Ty {
+                        id: NodeId(
+                            44,
+                        ),
                         kind: Path {
                             path: Path {
                                 segments: [
@@ -831,10 +925,6 @@ Item {
                                         },
                                     },
                                 ],
-                                span: SrcSpan {
-                                    begin: 418,
-                                    end: 419,
-                                },
                             },
                             args: [],
                         },
@@ -845,23 +935,6 @@ Item {
                     },
                 ],
             ),
-            adt_path: Path {
-                segments: [
-                    Ident {
-                        text: Symbol(
-                            18,
-                        ),
-                        span: SrcSpan {
-                            begin: 394,
-                            end: 397,
-                        },
-                    },
-                ],
-                span: SrcSpan {
-                    begin: 394,
-                    end: 397,
-                },
-            },
             trait_path: Some(
                 Path {
                     segments: [
@@ -875,14 +948,13 @@ Item {
                             },
                         },
                     ],
-                    span: SrcSpan {
-                        begin: 409,
-                        end: 414,
-                    },
                 },
             ),
             methods: [
                 Function {
+                    id: NodeId(
+                        55,
+                    ),
                     visibility: Private,
                     name: Ident {
                         text: Symbol(
@@ -896,6 +968,9 @@ Item {
                     generics: [],
                     self_param: Some(
                         SelfParam {
+                            id: NodeId(
+                                45,
+                            ),
                             mode: Immutable,
                             span: SrcSpan {
                                 begin: 437,
@@ -905,6 +980,9 @@ Item {
                     ),
                     params: [
                         Param {
+                            id: NodeId(
+                                47,
+                            ),
                             name: Ident {
                                 text: Symbol(
                                     21,
@@ -915,6 +993,9 @@ Item {
                                 },
                             },
                             ty: Ty {
+                                id: NodeId(
+                                    46,
+                                ),
                                 kind: Path {
                                     path: Path {
                                         segments: [
@@ -928,10 +1009,6 @@ Item {
                                                 },
                                             },
                                         ],
-                                        span: SrcSpan {
-                                            begin: 449,
-                                            end: 450,
-                                        },
                                     },
                                     args: [],
                                 },
@@ -948,8 +1025,14 @@ Item {
                     ],
                     ret: Some(
                         Ty {
+                            id: NodeId(
+                                49,
+                            ),
                             kind: Ref {
                                 base: Ty {
+                                    id: NodeId(
+                                        48,
+                                    ),
                                     kind: Path {
                                         path: Path {
                                             segments: [
@@ -963,10 +1046,6 @@ Item {
                                                     },
                                                 },
                                             ],
-                                            span: SrcSpan {
-                                                begin: 456,
-                                                end: 457,
-                                            },
                                         },
                                         args: [],
                                     },
@@ -985,61 +1064,74 @@ Item {
                     ),
                     block: Some(
                         Block {
+                            id: NodeId(
+                                54,
+                            ),
                             stmts: [
                                 Stmt {
+                                    id: NodeId(
+                                        53,
+                                    ),
                                     kind: Return(
-                                        Expr {
-                                            kind: Borrow {
-                                                mutability: Immutable,
-                                                operand: Expr {
-                                                    kind: Access {
-                                                        base: Expr {
-                                                            kind: Path(
-                                                                Path {
-                                                                    segments: [
-                                                                        Ident {
-                                                                            text: Symbol(
-                                                                                25,
-                                                                            ),
-                                                                            span: SrcSpan {
-                                                                                begin: 476,
-                                                                                end: 480,
+                                        Some(
+                                            Expr {
+                                                id: NodeId(
+                                                    52,
+                                                ),
+                                                kind: Borrow {
+                                                    mutability: Immutable,
+                                                    operand: Expr {
+                                                        id: NodeId(
+                                                            51,
+                                                        ),
+                                                        kind: Access {
+                                                            base: Expr {
+                                                                id: NodeId(
+                                                                    50,
+                                                                ),
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            Ident {
+                                                                                text: Symbol(
+                                                                                    25,
+                                                                                ),
+                                                                                span: SrcSpan {
+                                                                                    begin: 476,
+                                                                                    end: 480,
+                                                                                },
                                                                             },
-                                                                        },
-                                                                    ],
-                                                                    span: SrcSpan {
-                                                                        begin: 476,
-                                                                        end: 480,
+                                                                        ],
                                                                     },
+                                                                ),
+                                                                span: SrcSpan {
+                                                                    begin: 476,
+                                                                    end: 480,
                                                                 },
-                                                            ),
-                                                            span: SrcSpan {
-                                                                begin: 476,
-                                                                end: 480,
                                                             },
-                                                        },
-                                                        member: Ident {
-                                                            text: Symbol(
-                                                                22,
-                                                            ),
-                                                            span: SrcSpan {
-                                                                begin: 481,
-                                                                end: 486,
+                                                            member: Ident {
+                                                                text: Symbol(
+                                                                    22,
+                                                                ),
+                                                                span: SrcSpan {
+                                                                    begin: 481,
+                                                                    end: 486,
+                                                                },
                                                             },
+                                                            args: None,
                                                         },
-                                                        args: None,
-                                                    },
-                                                    span: SrcSpan {
-                                                        begin: 476,
-                                                        end: 486,
+                                                        span: SrcSpan {
+                                                            begin: 476,
+                                                            end: 486,
+                                                        },
                                                     },
                                                 },
+                                                span: SrcSpan {
+                                                    begin: 475,
+                                                    end: 486,
+                                                },
                                             },
-                                            span: SrcSpan {
-                                                begin: 475,
-                                                end: 486,
-                                            },
-                                        },
+                                        ),
                                     ),
                                     span: SrcSpan {
                                         begin: 468,
@@ -1071,3 +1163,12 @@ Item {
     },
 }
 === stderr ===
+Warning[E0364]: no `main` function found; the built executable will do nothing
+  Help: add a `fun main()` at the crate root to give the program an entry point
+[W0501] Warning: parameter `key` is never read
+   ╭─[ ./src/map.phi:9:22 ]
+   │
+ 9 │     fun index(&self, key: K) -> &V {
+   │                      ───┬──  
+   │                         ╰──── this parameter is never read in the function body
+───╯

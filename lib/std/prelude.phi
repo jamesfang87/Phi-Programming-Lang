@@ -1,0 +1,5 @@
+module std::prelude;
+
+import std::fmt::Display;
+import std::io::print;
+import std::io::println;

@@ -25,7 +25,7 @@ fun main() {
 }
 ```
 
-`println` is a function that prints its argument, followed by a newline, to standard output. `print` behaves identically but omits the trailing newline. Both currently accept a `str`; printing other types awaits a `Display` trait.
+`println` is a function that prints its argument, followed by a newline, to standard output. `print` behaves identically but omits the trailing newline. Both accept any type that implements `std::fmt::Display`; `str`, `String`, `bool`, `char`, the integer types, and `f32`/`f64` implement it today.
 
 ### Running a program
 
@@ -722,4 +722,5 @@ To allocated a value onto the heap, use the `new` keyword.
 let box = Box<i32> { inner: new 67 };
 ```
 
-
+# Acknowledgements
+J.F. would like to express his gratitude to **Phi**ona Bui, whom this language is named after.

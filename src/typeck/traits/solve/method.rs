@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
 use crate::ast::{Ident, Mutability, SelfMode, Symbol, UnaryOp};
-use crate::diagnostics::typeck::expr::report_variant_base_not_a_type;
+use crate::diagnostics::typeck::expr::{
+    report_untrusted_intrinsic, report_variant_base_not_a_type,
+};
 use crate::diagnostics::typeck::traits::get_name_of_trait;
 use crate::diagnostics::typeck::traits::method::{
     function_name_span, report_ambiguous_method, report_call_arg_count, report_call_arg_mismatch,
@@ -13,12 +15,16 @@ use crate::diagnostics::typeck::traits::method::{
 use crate::diagnostics::typeck::{report_no_field, report_private_field};
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, Node, OwnerNode, PayloadField, Res};
+use crate::langitems::LangItem;
 use crate::nameres::PrimTy;
 use crate::typeck::Typeck;
 use crate::typeck::check::expr::{DerefTarget, PayloadExprs};
 use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::visitor::{self, TypeVisitor};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
+
+/// The callee, its enclosing `extend`/`trait` type arguments, and its own type arguments.
+type CallInstantiation = (DefId, Vec<Ty>, Vec<Ty>);
 
 /// A function that a method call could resolve to with the substitution mapping its
 /// generic parameters to the concrete types they stand for at this call site.
@@ -173,6 +179,7 @@ impl<'hir> Typeck<'hir> {
         span: SrcSpan,
     ) -> Ty {
         let (id, callee) = (id.into(), callee.into());
+        self.check_library_only_intrinsic_call(id, callee);
         let (sig, instantiation) = self.callee_sig(callee);
 
         let TyKind::Fun { params, ret } = self.tcx.kind(sig).clone() else {
@@ -192,19 +199,62 @@ impl<'hir> Typeck<'hir> {
         ret.unwrap_or_else(|| self.tcx.unit())
     }
 
+    /// Reports a direct call to a compiler intrinsic when the call is written outside the
+    /// compiler's own libraries.
+    fn check_library_only_intrinsic_call(&mut self, id: HirId, callee: HirId) {
+        let ExprKind::Path(path) = &self.hir.expr(callee).kind else {
+            return;
+        };
+        let Res::Function(def) = path.res else {
+            return;
+        };
+        let library_only = LangItem::ALL
+            .iter()
+            .copied()
+            .any(|item| item.is_library_only() && self.hir.lang_items().get(item) == Some(def));
+        if !library_only {
+            return;
+        }
+
+        let span = self.hir.expr(id).span;
+        let in_library = self
+            .session
+            .file_containing(span.get_begin())
+            .is_some_and(|file| file.origin.is_library());
+        if !in_library {
+            report_untrusted_intrinsic(self.session, span);
+        }
+    }
+
     /// Records what a checked call resolved to: the target the MIR addresses it by, and the
     /// bounds its instantiation raises.
     fn record_call_resolution(
         &mut self,
         id: HirId,
         callee: HirId,
-        instantiation: Option<(DefId, Vec<Ty>)>,
+        instantiation: Option<CallInstantiation>,
         span: SrcSpan,
     ) {
-        if let Some((def, generic_args)) = instantiation {
-            let resolved = self.resolve_all(&generic_args);
-            self.register_bound_obligations(def, &resolved, span, callee.owner);
-            self.types.record_call(id, def, resolved);
+        if let Some((def, extend_args, function_args)) = instantiation {
+            let resolved_function_args = self.resolve_all(&function_args);
+            let resolved_extend_args = self.resolve_all(&extend_args);
+            self.register_bound_obligations(def, &resolved_function_args, span, callee.owner);
+            if let Some(parent) = self.hir.parent(def)
+                && matches!(
+                    self.hir.def(parent),
+                    OwnerNode::Extend(_) | OwnerNode::Trait(_)
+                )
+            {
+                self.register_bound_obligations(parent, &resolved_extend_args, span, callee.owner);
+            }
+            self.types.record_method_call(
+                id,
+                def,
+                resolved_function_args,
+                resolved_extend_args,
+                Vec::new(),
+                None,
+            );
         } else if let ExprKind::Path(path) = &self.hir.expr(callee).kind
             && let Res::Function(def) = path.res
         {
@@ -214,8 +264,8 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
-    fn callee_sig(&mut self, callee: HirId) -> (Ty, Option<(DefId, Vec<Ty>)>) {
-        let Some((def, generics)) = self.generic_callee(callee) else {
+    fn callee_sig(&mut self, callee: HirId) -> (Ty, Option<CallInstantiation>) {
+        let Some((def, extend_generics, function_generics)) = self.generic_callee(callee) else {
             // Anything else, a closure, a field holding a function, or a call to something with
             // no parameters of its own, has nothing to instantiate, so its type is already the
             // signature.
@@ -223,17 +273,32 @@ impl<'hir> Typeck<'hir> {
         };
 
         let sig = self.ty_of(def.owner_id());
-        let args: Vec<Ty> = generics.iter().map(|_| self.tcx.next_infer_var()).collect();
-        let subst: HashMap<HirId, Ty> = generics.into_iter().zip(args.iter().copied()).collect();
+        let extend_args: Vec<Ty> = extend_generics
+            .iter()
+            .map(|_| self.tcx.next_infer_var())
+            .collect();
+        let function_args: Vec<Ty> = function_generics
+            .iter()
+            .map(|_| self.tcx.next_infer_var())
+            .collect();
+        let subst: HashMap<HirId, Ty> = extend_generics
+            .into_iter()
+            .zip(extend_args.iter().copied())
+            .chain(
+                function_generics
+                    .into_iter()
+                    .zip(function_args.iter().copied()),
+            )
+            .collect();
         let sig = self.subst_ty(sig, &subst);
 
         // Recorded rather than left to `ty_of`, so the type the table holds for this node is the
         // one the call was actually checked against.
         self.types.record(callee, sig);
-        (sig, Some((def, args)))
+        (sig, Some((def, extend_args, function_args)))
     }
 
-    fn generic_callee(&self, callee: HirId) -> Option<(DefId, Vec<HirId>)> {
+    fn generic_callee(&self, callee: HirId) -> Option<(DefId, Vec<HirId>, Vec<HirId>)> {
         let ExprKind::Path(path) = &self.hir.expr(callee).kind else {
             return None;
         };
@@ -243,7 +308,17 @@ impl<'hir> Typeck<'hir> {
         let OwnerNode::Function(function) = self.hir.def(def) else {
             return None;
         };
-        (!function.generics.is_empty()).then(|| (def, function.generics.clone()))
+        let extend_generics = match self.hir.parent(def).map(|parent| self.hir.def(parent)) {
+            Some(OwnerNode::Extend(extend)) => extend.extend_generics.clone(),
+            Some(OwnerNode::Trait(trait_)) => trait_.generics.clone(),
+            _ => Vec::new(),
+        };
+        let function_generics = function.generics.clone();
+        (!extend_generics.is_empty() || !function_generics.is_empty()).then_some((
+            def,
+            extend_generics,
+            function_generics,
+        ))
     }
 
     /// Resolves every type in `tys` to what the unifier currently knows it stands for.
@@ -452,8 +527,43 @@ impl<'hir> Typeck<'hir> {
     ) -> (Ty, ResolvedMethodCall) {
         let span = self.hir.expr(id).span;
         let mode = self.receiver_mode(chosen.method);
-        let (params, ret, fresh) =
-            self.instantiate_method(chosen.method, &chosen.subst, chosen.self_ty);
+
+        // A block's parameters need not all appear in its self type, such as `V` in
+        // `extend<V, T: Index<usize, V>> iso T with Index<usize, V>`. Those are inferred from
+        // the call's arguments and result, so the chosen call starts them as fresh variables.
+        // A parameter the self type mentions is fixed by the header instead, even when the
+        // header match recorded no binding for it.
+        let mut block_subst = HashMap::new();
+        if let Some((block, origin_args)) = &chosen.extend_block_origin {
+            let generics = self.declared_generics(*block);
+            for (&param, &arg) in generics.iter().zip(origin_args) {
+                block_subst.insert(param, arg);
+            }
+
+            let self_ty = self.extended_type(*block);
+            for &param in generics {
+                let unbound = block_subst.get(&param).is_some_and(
+                    |&ty| matches!(*self.tcx.kind(ty), TyKind::Generic(id) if id == param),
+                );
+                if !unbound {
+                    continue;
+                }
+                let fixed_by_header = crate::typeck::ty::visitor::any_ty(
+                    &self.tcx,
+                    self_ty,
+                    |tcx, ty| matches!(tcx.kind(ty), TyKind::Generic(id) if *id == param),
+                );
+                if !fixed_by_header {
+                    let var = self.tcx.next_infer_var();
+                    block_subst.insert(param, var);
+                }
+            }
+        }
+
+        let mut subst = chosen.subst.clone();
+        subst.extend(block_subst.iter().map(|(&param, &ty)| (param, ty)));
+
+        let (params, ret, fresh) = self.instantiate_method(chosen.method, &subst, chosen.self_ty);
 
         match mode {
             Some(mode) => self.check_receiver(mode, receiver, layers, member, chosen.method),
@@ -471,14 +581,20 @@ impl<'hir> Typeck<'hir> {
         let name = format!("`{}`", self.session.resolve(member.text));
         self.check_args(expected, args, &name, span);
 
+        let trait_args: Vec<Ty> = chosen
+            .trait_args
+            .iter()
+            .map(|&arg| self.subst_ty(arg, &subst))
+            .collect();
+        let extend = chosen.extend_block_origin.as_ref().map(|(block, _)| {
+            let args = self.instantiated_generics(self.declared_generics(*block), &block_subst);
+            (*block, self.resolve_all(&args))
+        });
         let resolved = ResolvedMethodCall {
             method: chosen.method,
             generics: self.resolve_all(&fresh),
-            extend: chosen
-                .extend_block_origin
-                .as_ref()
-                .map(|(block, args)| (*block, self.resolve_all(args))),
-            trait_args: self.resolve_all(&chosen.trait_args),
+            extend,
+            trait_args: self.resolve_all(&trait_args),
             self_ty: chosen.self_ty,
         };
         (ret.unwrap_or_else(|| self.tcx.unit()), resolved)
@@ -620,9 +736,9 @@ impl<'hir> Typeck<'hir> {
         member: Symbol,
     ) -> Option<Candidate> {
         let subst = self.header_applies(block, base)?;
-        let provided = self.get_method_in_block(block, member);
-
         let generics = self.declared_generics(block);
+
+        let provided = self.get_method_in_block(block, member);
         let block_origin = Some((block, self.instantiated_generics(generics, &subst)));
 
         let Some(trait_ref) = self.extends.trait_of(block).cloned() else {
@@ -763,7 +879,9 @@ impl<'hir> Typeck<'hir> {
                     layers.push(Layer::Any);
                     current = base;
                 }
-                TyKind::Iso(base) if matches!(self.tcx.kind(base), TyKind::Dyn { .. }) => {
+                // `iso T` dereferences to `T` the same way a reference does, so `x.foo()` on an
+                // owned pointer reaches the pointee's methods without writing `(*x).foo()`.
+                TyKind::Iso(base) => {
                     layers.push(Layer::Iso);
                     current = base;
                 }
@@ -822,7 +940,10 @@ impl<'hir> Typeck<'hir> {
             // `any self` accepts every receiver shape. That is its entire purpose as a mode.
             SelfMode::Any => {}
             SelfMode::Move => {
-                if !layers.is_empty() {
+                // Moving the pointee out of an owned `iso` is fine; moving through anything
+                // else, such as a reference to the pointer, is not.
+                let moves_owned_pointer = layers.iter().all(|layer| matches!(layer, Layer::Iso));
+                if !layers.is_empty() && !moves_owned_pointer {
                     report_receiver_mode(self.session, self.hir, member, mode, span, method);
                 } else if let ExprKind::Unary {
                     op: UnaryOp::Deref,
@@ -950,17 +1071,28 @@ impl<'hir> Typeck<'hir> {
     // -----------------------------------------------------------------
 
     fn check_args(&mut self, expected: &[Ty], args: &[ExprId], name: &str, span: SrcSpan) {
-        let found: Vec<Ty> = args.iter().map(|&arg| self.ty_of(arg)).collect();
-
-        if found.len() != expected.len() {
-            report_call_arg_count(self.session, name, found.len(), expected.len(), span);
+        if args.len() != expected.len() {
+            report_call_arg_count(self.session, name, args.len(), expected.len(), span);
         }
 
-        for (index, (&want, &got)) in expected.iter().zip(found.iter()).enumerate() {
+        for (index, &arg) in args.iter().enumerate() {
+            let Some(&want) = expected.get(index) else {
+                self.ty_of(arg);
+                continue;
+            };
+
+            // Each argument is unified before the next one is checked, so an argument can take
+            // its type from a generic parameter an earlier argument has already pinned down.
+            let mut expected_arg = want;
+            while let TyKind::Any(inner) = *self.tcx.kind(expected_arg) {
+                expected_arg = inner;
+            }
+            let got = self.ty_of_expecting(arg, Some(expected_arg));
+
             if let Err(err) = self.unify_allowing_any(want, got)
-                && !self.coerce_unsize(want, got, args[index])
+                && !self.coerce_unsize(want, got, arg)
             {
-                let span = self.hir.expr(args[index]).span;
+                let span = self.hir.expr(arg).span;
                 report_call_arg_mismatch(self.display_cx(), err, span);
             }
         }

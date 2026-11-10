@@ -1,0 +1,41 @@
+module core::text;
+
+import core::libc::memcmp;
+
+extend str {
+    public fun len(&self) -> usize {
+        return core::llvm::str_len(*self);
+    }
+
+    public fun is_empty(&self) -> bool {
+        return self.len() == 0;
+    }
+}
+
+extend str with Eq {
+    fun eq(&self, other: &Self) -> bool {
+        let n = self.len();
+        if n != other.len() {
+            return false;
+        }
+        let left = *self as &[u8];
+        let right = *other as &[u8];
+        return memcmp(left, right, n) == 0;
+    }
+}
+
+extend str with Comparable {
+    fun less_than(&self, other: &Self) -> bool {
+        let n = if self.len() < other.len() { self.len() } else { other.len() };
+        let left = *self as &[u8];
+        let right = *other as &[u8];
+        let order = memcmp(left, right, n);
+        if order < 0 {
+            return true;
+        }
+        if order > 0 {
+            return false;
+        }
+        return self.len() < other.len();
+    }
+}

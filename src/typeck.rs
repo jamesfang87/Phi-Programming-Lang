@@ -148,6 +148,36 @@ pub struct TypeckOutput {
     pub types: TypeResolutions,
 }
 
+/// Returns every type's `Drop::drop` method, keyed by the ADT the implementation extends.
+fn collect_drop_methods(checker: &Typeck<'_>) -> HashMap<DefId, DefId> {
+    let Some(drop_trait) = checker
+        .hir
+        .lang_items()
+        .get(crate::langitems::LangItem::Drop)
+    else {
+        return HashMap::new();
+    };
+
+    let mut methods = HashMap::new();
+    for block in checker.extends.all() {
+        let Some(trait_ref) = checker.extends.trait_of(block) else {
+            continue;
+        };
+        if trait_ref.def != drop_trait {
+            continue;
+        }
+        let TyKind::Adt { def, .. } = *checker.tcx.kind(checker.extended_type(block)) else {
+            continue;
+        };
+        let Some(method) = checker.get_method_in_block(block, checker.session.intern("drop"))
+        else {
+            continue;
+        };
+        methods.insert(def, method);
+    }
+    methods
+}
+
 pub fn check(session: &Session, hir: &Hir) -> TypeckOutput {
     let mut checker = Typeck::new(session, hir);
 
@@ -155,8 +185,14 @@ pub fn check(session: &Session, hir: &Hir) -> TypeckOutput {
     let adts = adt::collect_adt_defs(hir, &checker.types);
     checker.report_recursive_types(hir, &adts);
     checker.tcx.set_adts(adts);
+    checker.tcx.set_maybe_uninit(
+        hir.lang_items()
+            .get(crate::langitems::LangItem::MaybeUninit),
+    );
 
     checker.collect_traits();
+    let drop_methods = collect_drop_methods(&checker);
+    checker.tcx.set_drop_methods(drop_methods);
     checker.check_traits();
     checker.register_extend_header_bounds();
     checker.check_module(hir.root_id());
