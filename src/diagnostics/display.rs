@@ -221,3 +221,84 @@ pub(crate) fn def_name(session: &Session, hir: &Hir, def_id: DefId) -> &'static 
         _ => unreachable!("only a struct, enum, or trait def can appear in an Adt or Dyn type"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nameres::PrimTy;
+    use crate::testing::{session, typecheck_only};
+
+    #[test]
+    fn a_float_mismatch_names_the_expected_kind() {
+        let (hir, mut tcx, _types) = typecheck_only("fun f() {}");
+        let var = tcx.next_infer_var();
+        let found = tcx.mk_prim(PrimTy::Bool);
+        let cx = DisplayCtx::new(session(), &hir, &tcx);
+        session().clear_diagnostics();
+
+        cx.emit_unify(
+            UnifyError::ExpectedFloat { var, found },
+            SrcSpan::new(0, 1),
+            "expected a float",
+        );
+
+        assert_eq!(
+            session().messages(),
+            ["mismatched types: expected a float type, found `bool`"]
+        );
+    }
+
+    #[test]
+    fn an_infinite_type_is_rendered_with_both_types() {
+        let (hir, mut tcx, _types) = typecheck_only("fun f() {}");
+        let var = tcx.mk_prim(PrimTy::I32);
+        let found = tcx.mk_tuple(vec![var]);
+        let cx = DisplayCtx::new(session(), &hir, &tcx);
+        session().clear_diagnostics();
+
+        cx.emit_unify(
+            UnifyError::Infinite { var, found },
+            SrcSpan::new(0, 1),
+            "cyclic",
+        );
+
+        assert_eq!(
+            session().messages(),
+            ["cyclic type of infinite size: `i32` would have to contain itself, as `(i32,)`"]
+        );
+    }
+
+    #[test]
+    fn every_primitive_type_has_a_name() {
+        let (hir, mut tcx, _types) = typecheck_only("fun f() {}");
+        let tys: Vec<Ty> = [
+            PrimTy::I8,
+            PrimTy::I16,
+            PrimTy::I32,
+            PrimTy::I64,
+            PrimTy::U8,
+            PrimTy::U16,
+            PrimTy::U32,
+            PrimTy::U64,
+            PrimTy::F32,
+            PrimTy::F64,
+            PrimTy::Bool,
+            PrimTy::Char,
+            PrimTy::Usize,
+            PrimTy::Str,
+        ]
+        .into_iter()
+        .map(|prim| tcx.mk_prim(prim))
+        .collect();
+        let cx = DisplayCtx::new(session(), &hir, &tcx);
+        let names: Vec<String> = tys.into_iter().map(|ty| cx.show(ty).to_string()).collect();
+
+        assert_eq!(
+            names,
+            [
+                "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "char",
+                "usize", "str"
+            ]
+        );
+    }
+}

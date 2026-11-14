@@ -1,6 +1,5 @@
-mod support;
-
-use support::check;
+use crate::support;
+use crate::support::check;
 
 fn checked_arith(ty: &str, op: char, a: i128, b: i128) -> Option<i128> {
     macro_rules! at_width {

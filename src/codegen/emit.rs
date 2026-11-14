@@ -34,18 +34,23 @@ fn build_target_machine(release: bool) -> Result<TargetMachine, CodegenError> {
         .map_err(CodegenError::Verification)?;
 
     let triple = TargetMachine::get_default_triple();
-    let target =
-        Target::from_triple(&triple).map_err(|e| CodegenError::Verification(e.to_string()))?;
-    target
-        .create_target_machine(
-            &triple,
-            "generic",
-            "",
-            select_optimization_level(release),
-            RelocMode::PIC,
-            CodeModel::Default,
-        )
-        .ok_or_else(|| CodegenError::Verification("no target machine for host triple".into()))
+    let target = match Target::from_triple(&triple) {
+        Ok(target) => target,
+        Err(error) => return Err(CodegenError::Verification(error.to_string())),
+    };
+    match target.create_target_machine(
+        &triple,
+        "generic",
+        "",
+        select_optimization_level(release),
+        RelocMode::PIC,
+        CodeModel::Default,
+    ) {
+        Some(machine) => Ok(machine),
+        None => Err(CodegenError::Verification(
+            "no target machine for host triple".into(),
+        )),
+    }
 }
 
 fn select_optimization_level(release: bool) -> OptimizationLevel {
@@ -61,9 +66,10 @@ fn write_object_file(
     module: &Module,
     object_path: &Path,
 ) -> Result<(), CodegenError> {
-    target_machine
-        .write_to_file(module, FileType::Object, object_path)
-        .map_err(|e| CodegenError::Verification(e.to_string()))
+    match target_machine.write_to_file(module, FileType::Object, object_path) {
+        Ok(()) => Ok(()),
+        Err(error) => Err(CodegenError::Verification(error.to_string())),
+    }
 }
 
 fn link_and_remove_object(object_path: &Path, output_path: &Path) -> Result<PathBuf, CodegenError> {

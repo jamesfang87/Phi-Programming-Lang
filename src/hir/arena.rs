@@ -147,3 +147,19 @@ mod tests {
         assert_eq!(hir.node(param).kind_name(), "Param");
     }
 }
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+    use crate::testing::lower_to_hir;
+
+    #[test]
+    fn every_node_reports_the_span_it_was_built_from() {
+        let hir = lower_to_hir("fun f() { let value = 1; }");
+        let function = hir.root().items[0];
+        let block = hir.function(function).block.expect("f has a body");
+        let statement = hir.block(block).stmts[0];
+
+        assert_ne!(hir.node(statement.into()).span(), SrcSpan::new(0, 0));
+    }
+}

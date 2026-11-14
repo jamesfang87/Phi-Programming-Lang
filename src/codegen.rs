@@ -211,4 +211,30 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+    #[test]
+    fn call_main_or_zero_returns_an_integer_result_and_zero_for_void() {
+        let llvm = inkwell::context::Context::create();
+        let (hir, _tcx, _types, _mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let cx = CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
+
+        let int_main_type = llvm.i32_type().fn_type(&[], false);
+        let int_main = cx.module.add_function("phi_main_int", int_main_type, None);
+        let entry = llvm.append_basic_block(int_main, "entry");
+        cx.builder.position_at_end(entry);
+        let seven = llvm.i32_type().const_int(7, false);
+        cx.builder.build_return(Some(&seven)).unwrap();
+
+        let value = call_main_or_zero(&cx, Some(int_main));
+        assert_eq!(value.get_type(), llvm.i32_type());
+
+        let void_main_type = llvm.void_type().fn_type(&[], false);
+        let void_main = cx
+            .module
+            .add_function("phi_main_void", void_main_type, None);
+        let value = call_main_or_zero(&cx, Some(void_main));
+        assert_eq!(value.get_type(), llvm.i32_type());
+
+        let value = call_main_or_zero(&cx, None);
+        assert_eq!(value.get_type(), llvm.i32_type());
+    }
 }

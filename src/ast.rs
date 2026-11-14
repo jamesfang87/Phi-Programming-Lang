@@ -883,3 +883,47 @@ mod path_eq_tests {
         assert_ne!(path(&["math"], 0), path(&["math", "vector"], 0));
     }
 }
+
+#[cfg(test)]
+mod root_and_hash_tests {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    use super::*;
+
+    fn path(names: &[&str]) -> Path {
+        Path {
+            segments: names
+                .iter()
+                .map(|name| Ident {
+                    text: crate::testing::intern(name),
+                    span: SrcSpan::new(0, 1),
+                })
+                .collect(),
+        }
+    }
+
+    fn hash_of(path: &Path) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        path.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn the_root_module_is_the_module_the_header_named() {
+        let ast = Ast::from(vec![crate::testing::parse_src("module app; fun f() {}")]);
+
+        assert!(ast.root().path.segments.is_empty());
+        assert_eq!(ast.root().children.len(), 1);
+    }
+
+    #[test]
+    fn equal_paths_share_a_hash() {
+        assert_eq!(hash_of(&path(&["a", "b"])), hash_of(&path(&["a", "b"])));
+    }
+
+    #[test]
+    fn a_longer_path_hashes_differently() {
+        assert_ne!(hash_of(&path(&["a"])), hash_of(&path(&["a", "b"])));
+    }
+}

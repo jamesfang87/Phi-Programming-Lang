@@ -39,3 +39,16 @@ mod tests {
         assert_eq!(ids.len(), unique.len());
     }
 }
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    #[test]
+    fn an_id_index_follows_the_allocation_order() {
+        let first = NodeId::next().index();
+        let second = NodeId::next().index();
+
+        assert!(second > first);
+    }
+}

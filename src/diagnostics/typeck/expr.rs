@@ -455,3 +455,42 @@ fn list(names: &[&str]) -> String {
         Some((last, rest)) => format!("fields {} and {last}", rest.join(", ")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::Ident;
+    use crate::driver::source::SrcSpan;
+    use crate::testing::{intern, session};
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            text: intern(name),
+            span: SrcSpan::new(0, 1),
+        }
+    }
+
+    #[test]
+    fn a_repeated_field_value_names_the_field() {
+        session().clear_diagnostics();
+
+        report_duplicate_field(session(), ident("value"));
+
+        assert_eq!(
+            session().messages(),
+            ["field `value` is given a value twice"]
+        );
+    }
+
+    #[test]
+    fn an_untrusted_intrinsic_explains_the_library_restriction() {
+        session().clear_diagnostics();
+
+        report_untrusted_intrinsic(session(), SrcSpan::new(0, 1));
+
+        assert_eq!(
+            session().messages(),
+            ["this intrinsic may only be called from the standard library"]
+        );
+    }
+}

@@ -248,3 +248,53 @@ pub fn report_dyn_method_mentions_self(session: &Session, hir: &Hir, member: Ide
         ),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostics::display::DisplayCtx;
+    use crate::nameres::PrimTy;
+    use crate::testing::{intern, lower_to_hir, session, typecheck_only};
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            text: intern(name),
+            span: SrcSpan::new(0, 1),
+        }
+    }
+
+    #[test]
+    fn a_method_declared_without_a_receiver_is_reported() {
+        let hir = lower_to_hir("fun draw() {}");
+        let method = crate::testing::first_function(&hir);
+        session().clear_diagnostics();
+
+        report_no_receiver(session(), &hir, ident("draw"), method);
+
+        assert_eq!(
+            session().messages(),
+            ["`draw` takes no receiver, so it cannot be called on a value"]
+        );
+    }
+
+    #[test]
+    fn a_receiver_span_falls_back_to_the_function_name() {
+        let hir = lower_to_hir("fun draw() {}");
+        let method = crate::testing::first_function(&hir);
+
+        let span = method_receiver_span(&hir, method);
+        assert_eq!(span, hir.function(method).name.span);
+
+        let (hir, mut tcx, _types) = typecheck_only("fun f() {}");
+        let sig = tcx.mk_prim(PrimTy::I32);
+        let cx = DisplayCtx::new(session(), &hir, &tcx);
+        session().clear_diagnostics();
+
+        report_not_callable(cx, sig, SrcSpan::new(0, 1));
+
+        assert_eq!(
+            session().messages(),
+            ["`i32` is not something that can be called"]
+        );
+    }
+}

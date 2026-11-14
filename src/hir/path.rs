@@ -56,3 +56,18 @@ pub enum Local {
     SelfParam(HirId),
     Variable(HirId),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_path_has_an_empty_span() {
+        let path = Path {
+            segments: Vec::new(),
+            res: Res::Err,
+        };
+
+        assert_eq!(path.span(), SrcSpan::new(0, 0));
+    }
+}

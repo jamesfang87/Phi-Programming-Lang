@@ -274,3 +274,42 @@ pub fn report_reference_field(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
         .with_label("this type stores a reference"),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::Ident;
+    use crate::diagnostics::display::DisplayCtx;
+    use crate::driver::source::SrcSpan;
+    use crate::testing::{intern, session, typecheck_only};
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            text: intern(name),
+            span: SrcSpan::new(0, 1),
+        }
+    }
+
+    #[test]
+    fn a_private_method_names_the_method() {
+        session().clear_diagnostics();
+
+        report_private_method(session(), ident("hidden"));
+
+        assert_eq!(session().messages(), ["method `hidden` is private"]);
+    }
+
+    #[test]
+    fn a_duplicate_field_names_the_field() {
+        let (hir, tcx, _types) = typecheck_only("fun f() {}");
+        let cx = DisplayCtx::new(session(), &hir, &tcx);
+        session().clear_diagnostics();
+
+        report_duplicate_field(cx, ident("value"));
+
+        assert_eq!(
+            session().messages(),
+            ["field `value` is declared more than once"]
+        );
+    }
+}

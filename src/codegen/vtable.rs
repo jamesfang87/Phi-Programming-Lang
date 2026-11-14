@@ -38,26 +38,25 @@ pub fn vtable_for<'ctx>(
 
     let layout = layout::layout_of(tcx, mir, concrete);
     let mut fields = vtable_header_fields(cx, tcx, mir, concrete, &layout);
-    let Some((info, bindings)) =
-        crate::mir::vtables::find_vtable(&mir.vtables, tcx, concrete, trait_, trait_args)
-    else {
-        panic!(
-            "vtable_for: no `extend .. with Trait` block implementing {trait_:?} was found for \
-             {concrete:?}"
-        )
-    };
-    let method_args: Vec<Ty> = info
-        .extend_generics
-        .iter()
-        .map(|&generic| {
-            bindings.get(&generic).copied().unwrap_or_else(|| {
-                panic!(
-                    "vtable_for: the implementation for {concrete:?} never binds its generic \
-                     parameter {generic:?}"
-                )
-            })
-        })
-        .collect();
+    let (info, bindings) =
+        match crate::mir::vtables::find_vtable(&mir.vtables, tcx, concrete, trait_, trait_args) {
+            Some(found) => found,
+            None => panic!(
+                "vtable_for: no `extend .. with Trait` block implementing {trait_:?} was found for \
+                 {concrete:?}"
+            ),
+        };
+    let mut method_args = Vec::with_capacity(info.extend_generics.len());
+    for &generic in &info.extend_generics {
+        let argument = match bindings.get(&generic) {
+            Some(&argument) => argument,
+            None => panic!(
+                "vtable_for: the implementation for {concrete:?} never binds its generic \
+                 parameter {generic:?}"
+            ),
+        };
+        method_args.push(argument);
+    }
     fields.extend(collect_vtable_method_fields(
         cx,
         tcx,
@@ -98,30 +97,30 @@ fn collect_vtable_method_fields<'ctx>(
     methods: &[Option<DefId>],
     args: &[Ty],
 ) -> Vec<BasicValueEnum<'ctx>> {
-    methods
-        .iter()
-        .enumerate()
-        .map(|(i, impl_method)| {
-            let impl_method = impl_method.unwrap_or_else(|| {
-                panic!("vtable_for: this impl block never defines trait method index {i}")
-            });
-            let instance = Instance {
-                def: impl_method,
-                any_mode: None,
-                args: args.to_vec(),
-                self_ty: None,
-            };
-            let name = cx.mangle(tcx, &instance);
-            let function = *cx.functions.get(&name).unwrap_or_else(|| {
-                panic!(
-                    "vtable_for: no declared function named {name:?} for instance {instance:?} -- \
-                     every instance a vtable references must already be in cx.functions, same as any \
-                     other call target"
-                )
-            });
-            function.as_global_value().as_pointer_value().into()
-        })
-        .collect()
+    let mut fields = Vec::with_capacity(methods.len());
+    for (index, &impl_method) in methods.iter().enumerate() {
+        let impl_method = match impl_method {
+            Some(impl_method) => impl_method,
+            None => panic!("vtable_for: this impl block never defines trait method index {index}"),
+        };
+        let instance = Instance {
+            def: impl_method,
+            any_mode: None,
+            args: args.to_vec(),
+            self_ty: None,
+        };
+        let name = cx.mangle(tcx, &instance);
+        let function = match cx.functions.get(&name) {
+            Some(&function) => function,
+            None => panic!(
+                "vtable_for: no declared function named {name:?} for instance {instance:?} -- \
+                 every instance a vtable references must already be in cx.functions, same as any \
+                 other call target"
+            ),
+        };
+        fields.push(function.as_global_value().as_pointer_value().into());
+    }
+    fields
 }
 
 fn build_vtable_global<'ctx>(

@@ -201,3 +201,82 @@ pub fn run_checks(category: &str, name: &str, items: &str, checks: &[String]) ->
     );
     run
 }
+
+fn build_ast_dump(fixture_dir: &Path) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_phi"))
+        .arg("build")
+        .arg("--ast")
+        .current_dir(fixture_dir)
+        .output()
+        .expect("failed to run the `phi` binary");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    format!(
+        "=== status ===\n{}\n=== stdout ===\n{}=== stderr ===\n{}",
+        output
+            .status
+            .code()
+            .map_or("<none>".to_string(), |c| c.to_string()),
+        stdout,
+        stderr,
+    )
+}
+
+pub fn compare_golden_fixtures(fixtures_dir: &Path, test_target: &str) {
+    let bless = std::env::var_os("PHI_BLESS").is_some();
+    let mut failures = Vec::new();
+
+    let mut fixtures: Vec<PathBuf> = fs::read_dir(fixtures_dir)
+        .expect("the golden fixture directory should exist")
+        .filter_map(|entry| {
+            let entry = entry.expect("failed to read a golden fixture entry");
+            entry.path().is_dir().then(|| entry.path())
+        })
+        .collect();
+    fixtures.sort();
+    assert!(
+        !fixtures.is_empty(),
+        "no fixtures found under {fixtures_dir:?}"
+    );
+
+    for fixture_dir in fixtures {
+        let name = fixture_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let expected_path = fixture_dir.join("expected.txt");
+
+        let actual = build_ast_dump(&fixture_dir);
+
+        if bless {
+            fs::write(&expected_path, &actual)
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", expected_path.display()));
+            println!("blessed {name}");
+            continue;
+        }
+
+        let expected = fs::read_to_string(&expected_path).unwrap_or_else(|e| {
+            panic!(
+                "failed to read {} ({e}) — run `PHI_BLESS=1 cargo test --test {test_target} golden` to generate it",
+                expected_path.display()
+            )
+        });
+
+        if actual != expected {
+            failures.push(format!(
+                "fixture `{name}` did not match {}\n--- expected ---\n{expected}\n--- actual ---\n{actual}",
+                expected_path.display()
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} fixture(s) mismatched:\n\n{}",
+        failures.len(),
+        failures.join("\n\n"),
+    );
+}

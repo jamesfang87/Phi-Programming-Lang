@@ -107,3 +107,35 @@ fn quoted_inner(text: &str, quote: char) -> Vec<char> {
         .chars()
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn numeric_token(text: &str) -> Token {
+        let (tokens, _) = crate::testing::lex_src(text);
+        tokens[0].clone()
+    }
+
+    #[test]
+    fn a_negated_integer_literal_keeps_its_suffix_and_adds_a_minus() {
+        let literal = Literal::negated_int(crate::testing::session(), numeric_token("42_i64"));
+
+        let Literal::Int { value, suffix } = literal else {
+            panic!("expected an integer literal");
+        };
+        assert_eq!(crate::testing::resolve(value), "-42");
+        assert_eq!(suffix.map(crate::testing::resolve), Some("i64"));
+    }
+
+    #[test]
+    fn a_negated_float_literal_keeps_its_suffix_and_adds_a_minus() {
+        let literal = Literal::negated_float(crate::testing::session(), numeric_token("1.5_f32"));
+
+        let Literal::Float { value, suffix } = literal else {
+            panic!("expected a float literal");
+        };
+        assert_eq!(crate::testing::resolve(value), "-1.5");
+        assert_eq!(suffix.map(crate::testing::resolve), Some("f32"));
+    }
+}

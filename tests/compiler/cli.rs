@@ -1,10 +1,10 @@
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use support::Run;
 
 fn scratch(name: &str) -> PathBuf {
-    support::scratch("cli", name)
+    support::scratch("compiler/cli", name)
 }
 
 fn write_manifest(dir: &Path, project_name: &str) {
@@ -1033,4 +1033,24 @@ fn a_dyn_return_and_a_mutable_dyn_dispatch() {
         stderr(&output)
     );
     assert_eq!(stdout(&output), "12");
+}
+
+#[test]
+fn llvm_dump_prints_a_verified_module() {
+    let dir = scratch("llvm_dump");
+    write_manifest(&dir, "llvm_dump");
+    write_main(&dir, CLEAN_MAIN);
+    let output = run(&dir, &["build", "--llvm"]);
+    assert_eq!(
+        code(&output),
+        0,
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let out = stdout(&output);
+    assert!(
+        out.contains("define") || out.contains("source_filename"),
+        "the dump should contain LLVM IR: {out}"
+    );
 }

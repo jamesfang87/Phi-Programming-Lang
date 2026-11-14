@@ -347,3 +347,89 @@ mod tests {
         layout_of(&mut tcx, &mir, adt);
     }
 }
+
+#[cfg(test)]
+mod tag_and_scalar_tests {
+    use super::*;
+
+    fn empty_mir() -> Mir {
+        Mir {
+            bodies: std::collections::HashMap::new(),
+            vtables: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn tag_width_grows_with_the_variant_count() {
+        assert_eq!(TagTy::for_variant_count(1), TagTy::I8);
+        assert_eq!(TagTy::for_variant_count(256), TagTy::I8);
+        assert_eq!(TagTy::for_variant_count(257), TagTy::I16);
+        assert_eq!(TagTy::for_variant_count(65536), TagTy::I16);
+        assert_eq!(TagTy::for_variant_count(65537), TagTy::I32);
+    }
+
+    #[test]
+    fn every_tag_width_has_a_size_and_alignment() {
+        assert_eq!(TagTy::I8.size_align(), (1, 1));
+        assert_eq!(TagTy::I16.size_align(), (2, 2));
+        assert_eq!(TagTy::I32.size_align(), (4, 4));
+    }
+
+    #[test]
+    fn scalar_types_have_their_expected_size_and_alignment() {
+        let mut tcx = TyCtx::new();
+        let mir = empty_mir();
+        let mut visiting = HashSet::new();
+
+        let unit = tcx.unit();
+        let never = tcx.never();
+        let function = tcx.mk_fun(Vec::new(), None);
+        let dyn_ty = tcx.mk_dyn(DefId::from_usize(1), Vec::new());
+        let i16_ty = tcx.mk_prim(PrimTy::I16);
+        let u16_ty = tcx.mk_prim(PrimTy::U16);
+
+        assert_eq!(
+            compute_size_align(&mut tcx, &mir, unit, &mut visiting),
+            (0, 1)
+        );
+        assert_eq!(
+            compute_size_align(&mut tcx, &mir, never, &mut visiting),
+            (0, 1)
+        );
+        assert_eq!(
+            compute_size_align(&mut tcx, &mir, function, &mut visiting),
+            (8, 8)
+        );
+        assert_eq!(
+            compute_size_align(&mut tcx, &mir, dyn_ty, &mut visiting),
+            (16, 8)
+        );
+        assert_eq!(
+            compute_size_align(&mut tcx, &mir, i16_ty, &mut visiting),
+            (2, 2)
+        );
+        assert_eq!(
+            compute_size_align(&mut tcx, &mir, u16_ty, &mut visiting),
+            (2, 2)
+        );
+    }
+
+    #[test]
+    fn an_array_rounds_each_element_up_to_its_alignment() {
+        let mut tcx = TyCtx::new();
+        let mir = empty_mir();
+        let mut visiting = HashSet::new();
+        let i8_ty = tcx.mk_prim(PrimTy::I8);
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let array = tcx.mk_array(i8_ty, Some(4));
+
+        assert_eq!(
+            compute_size_align(&mut tcx, &mir, array, &mut visiting),
+            (4, 1)
+        );
+        assert_eq!(
+            compute_size_align(&mut tcx, &mir, i32_ty, &mut visiting),
+            (4, 4)
+        );
+    }
+}

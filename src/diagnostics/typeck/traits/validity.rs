@@ -102,3 +102,49 @@ pub fn report_missing_associated_type(
         ),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{lower_to_hir, named_def, session};
+
+    const NAMED_DEFINITIONS: &str = "
+        fun function<T>() {}
+        struct Structure<T> { value: T }
+        enum Enumeration<T> { some: T }
+        trait TraitDeclaration<T> { }
+    ";
+
+    #[test]
+    fn every_named_definition_reports_its_name_and_span() {
+        let hir = lower_to_hir(NAMED_DEFINITIONS);
+
+        for name in ["function", "Structure", "Enumeration", "TraitDeclaration"] {
+            session().clear_diagnostics();
+            let def = named_def(&hir, name);
+
+            report_arg_count_mismatch(session(), &hir, def, 1, 0, SrcSpan::new(0, 1));
+
+            let messages = session().messages();
+            assert_eq!(messages.len(), 1, "for {name}: {messages:?}");
+            assert!(
+                messages[0].contains(name),
+                "the diagnostic should name {name}: {messages:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_associated_type_names_the_trait_and_the_type() {
+        let hir = lower_to_hir("trait Container { type Item; }");
+        let trait_def = named_def(&hir, "Container");
+        session().clear_diagnostics();
+
+        report_missing_associated_type(session(), &hir, trait_def, "Item", SrcSpan::new(0, 1));
+
+        assert_eq!(
+            session().messages(),
+            ["missing associated type `Item` in the implementation of trait `Container`"]
+        );
+    }
+}

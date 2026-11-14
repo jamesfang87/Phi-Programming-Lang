@@ -897,4 +897,69 @@ mod tests {
             "a struct of plain fields needs no glue emitted for it at all:\n{ir}"
         );
     }
+    #[test]
+    fn structural_drop_glue_skips_the_user_drop_method() {
+        let llvm = inkwell::context::Context::create();
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir(
+            "struct Handle { owned: iso i32 }
+             fun f() {}",
+        );
+        let mut cx =
+            super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
+        scratch_function(&cx);
+
+        let handle_ty = adt_named(&hir, &mut tcx, "Handle");
+        let llvm_ty = llvm_ty::llvm_type(&cx, &mut tcx, &mir, handle_ty);
+        let alloca = cx.builder.build_alloca(llvm_ty, "h").unwrap();
+
+        emit_structural_drop_glue(&mut cx, &mut tcx, &mir, alloca, handle_ty);
+        cx.builder.build_return(None).unwrap();
+
+        let ir = cx.module.print_to_string().to_string();
+        assert!(ir.contains("drop.glue"), "{ir}");
+    }
+
+    #[test]
+    fn an_array_drop_walks_every_element() {
+        let llvm = inkwell::context::Context::create();
+        let (hir, mut tcx, _types, mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let mut cx =
+            super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
+        scratch_function(&cx);
+
+        let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
+        let elem_ty = tcx.mk_iso(i32_ty);
+        let array_ty = tcx.mk_array(elem_ty, Some(2));
+        let llvm_array_ty = llvm_ty::llvm_type(&cx, &mut tcx, &mir, array_ty);
+        let alloca = cx.builder.build_alloca(llvm_array_ty, "a").unwrap();
+
+        emit_array_drop(&mut cx, &mut tcx, &mir, alloca, elem_ty, 2);
+        cx.builder.build_return(None).unwrap();
+
+        let ir = cx.module.print_to_string().to_string();
+        assert!(ir.contains("icmp ult"), "{ir}");
+        assert!(ir.contains("drop.glue"), "{ir}");
+    }
+
+    #[test]
+    fn free_iso_shallow_releases_the_allocation() {
+        let llvm = inkwell::context::Context::create();
+        let (hir, mut tcx, _types, _mir, _instances) = crate::testing::lower_to_mir("fun f() {}");
+        let mut cx =
+            super::super::ctx::CodegenCtx::new(crate::testing::session(), &hir, &llvm, "t");
+        scratch_function(&cx);
+
+        let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
+        let iso_ty = tcx.mk_iso(i32_ty);
+        let alloca = cx
+            .builder
+            .build_alloca(cx.llvm.ptr_type(Default::default()), "x")
+            .unwrap();
+
+        free_iso_shallow(&mut cx, &mut tcx, alloca, iso_ty);
+        cx.builder.build_return(None).unwrap();
+
+        let ir = cx.module.print_to_string().to_string();
+        assert!(ir.contains("call void @free"), "{ir}");
+    }
 }

@@ -117,11 +117,10 @@ impl<'a> BodyLowerCtx<'a> {
         args: Vec<ExprId>,
         mode: AnyMode,
     ) -> CallTarget {
-        let resolved = self
-            .types
-            .call(expr_id)
-            .unwrap_or_else(|| panic!("mir::lower: {expr_id:?} has no resolved call"))
-            .clone();
+        let resolved = match self.types.call(expr_id) {
+            Some(resolved) => resolved.clone(),
+            None => panic!("mir::lower: {expr_id:?} has no resolved call"),
+        };
         let (func, dyn_dispatch) = match self.find_dyn_receiver_ty(base) {
             Some(dyn_ty) => (
                 self.dyn_fn_operand(resolved.def, resolved.all_args(), dyn_ty),
@@ -538,11 +537,10 @@ impl<'a> BodyLowerCtx<'a> {
         let function = self.hir.function(def);
         let mut operands = vec![self.lower_operand(receiver)];
         for (i, &arg_expr) in arg_exprs.iter().enumerate() {
-            let declared = function
-                .params
-                .get(i)
-                .and_then(|&id| self.types.ty(id))
-                .unwrap_or_else(|| self.tcx.error());
+            let declared = match function.params.get(i).and_then(|&id| self.types.ty(id)) {
+                Some(ty) => ty,
+                None => self.tcx.error(),
+            };
             operands.push(self.lower_arg_operand(arg_expr, declared, None, span));
         }
         operands
@@ -572,7 +570,10 @@ impl<'a> BodyLowerCtx<'a> {
             },
             span,
         );
-        let fresh = target.unwrap_or_else(|| self.new_block());
+        let fresh = match target {
+            Some(block) => block,
+            None => self.new_block(),
+        };
         self.switch_to(fresh);
     }
 
@@ -600,7 +601,10 @@ impl<'a> BodyLowerCtx<'a> {
         else {
             unreachable!("mir::lower: a dyn call operand is built from a `dyn` type");
         };
-        let declared = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
+        let declared = match self.types.ty_of_def(def) {
+            Some(ty) => ty,
+            None => self.tcx.unit(),
+        };
         let generics = self.hir.trait_(trait_).generics.clone();
         let subst = crate::typeck::ty::visitor::Subst {
             generics: generics
@@ -624,16 +628,6 @@ impl<'a> BodyLowerCtx<'a> {
         })
     }
 
-    fn peel_any(&self, ty: Ty) -> (Ty, u32) {
-        let mut current = ty;
-        let mut count = 0;
-        while let TyKind::Any(base) = *self.tcx.kind(current) {
-            current = base;
-            count += 1;
-        }
-        (current, count)
-    }
-
     fn lower_callee(
         &mut self,
         call_expr_id: impl Into<HirId>,
@@ -646,11 +640,10 @@ impl<'a> BodyLowerCtx<'a> {
             ExprKind::Path(path) if matches!(path.res, Res::Function(_))
         );
         if is_named_fn {
-            let resolved = self
-                .types
-                .call(call_expr_id)
-                .unwrap_or_else(|| panic!("mir::lower: {call_expr_id:?} has no resolved call"))
-                .clone();
+            let resolved = match self.types.call(call_expr_id) {
+                Some(resolved) => resolved.clone(),
+                None => panic!("mir::lower: {call_expr_id:?} has no resolved call"),
+            };
             self.resolved_fn_operand(
                 resolved.def,
                 resolved.all_args(),
@@ -678,7 +671,10 @@ impl<'a> BodyLowerCtx<'a> {
         } else {
             None
         };
-        let fn_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
+        let fn_ty = match self.types.ty_of_def(def) {
+            Some(ty) => ty,
+            None => self.tcx.unit(),
+        };
         Operand::Constant(Constant {
             ty: fn_ty,
             kind: ConstKind::FunDef(FunRef {
@@ -707,16 +703,17 @@ impl<'a> BodyLowerCtx<'a> {
 
         let mut operands = Vec::new();
         if let Some(recv_expr) = receiver {
-            let declared = self_param
-                .and_then(|id| self.types.ty(id))
-                .unwrap_or_else(|| self.tcx.error());
+            let declared = match self_param.and_then(|id| self.types.ty(id)) {
+                Some(ty) => ty,
+                None => self.tcx.error(),
+            };
             operands.push(self.lower_receiver_operand(recv_expr, declared, any_mode, span));
         }
         for (i, &arg_expr) in arg_exprs.iter().enumerate() {
-            let declared = params
-                .get(i)
-                .and_then(|&id| self.types.ty(id))
-                .unwrap_or_else(|| self.tcx.error());
+            let declared = match params.get(i).and_then(|&id| self.types.ty(id)) {
+                Some(ty) => ty,
+                None => self.tcx.error(),
+            };
             operands.push(self.lower_arg_operand(arg_expr, declared, any_mode, span));
         }
         operands
@@ -821,10 +818,10 @@ impl<'a> BodyLowerCtx<'a> {
 
     pub(crate) fn call_type_args(&self, expr_id: impl Into<HirId>) -> Vec<Ty> {
         let expr_id = expr_id.into();
-        self.types
-            .call(expr_id)
-            .map(|c| c.all_args())
-            .unwrap_or_default()
+        match self.types.call(expr_id) {
+            Some(call) => call.all_args(),
+            None => Vec::new(),
+        }
     }
 
     pub(crate) fn reify_fn_pointer(
@@ -834,7 +831,10 @@ impl<'a> BodyLowerCtx<'a> {
         fn_value_ty: Ty,
         span: SrcSpan,
     ) -> Operand {
-        let declared_ty = self.types.ty_of_def(def).unwrap_or_else(|| self.tcx.unit());
+        let declared_ty = match self.types.ty_of_def(def) {
+            Some(ty) => ty,
+            None => self.tcx.unit(),
+        };
         let any_mode = if is_any_specialized(self.tcx, self.types, def) {
             self.discover(Task::AnySpecialized(def, AnyMode::Owned));
             Some(AnyMode::Owned)
@@ -887,15 +887,15 @@ impl<'a> BodyLowerCtx<'a> {
         }
 
         let bindings = infer_generic_bindings(self.tcx, declared_ty, value_ty);
-        generics
-            .iter()
-            .map(|&param| {
-                bindings
-                    .get(&param)
-                    .copied()
-                    .unwrap_or_else(|| self.tcx.mk_generic(param))
-            })
-            .collect()
+        let mut args = Vec::with_capacity(generics.len());
+        for &param in generics.iter() {
+            let argument = match bindings.get(&param) {
+                Some(&ty) => ty,
+                None => self.tcx.mk_generic(param),
+            };
+            args.push(argument);
+        }
+        args
     }
 
     fn subst_function_generics(&mut self, def: DefId, ty: Ty, args: &[Ty]) -> Ty {
@@ -914,12 +914,15 @@ impl<'a> BodyLowerCtx<'a> {
         let TyKind::Fun { params, ret } = self.tcx.kind(fn_ty).clone() else {
             return fn_ty;
         };
-        let params = params
-            .into_iter()
-            .map(|p| self.resolve_any(p, Some(mode)))
-            .collect();
-        let ret = ret.map(|r| self.resolve_any(r, Some(mode)));
-        self.tcx.mk_fun(params, ret)
+        let mut resolved = Vec::with_capacity(params.len());
+        for param in params {
+            resolved.push(self.resolve_any(param, Some(mode)));
+        }
+        let ret = match ret {
+            Some(ret) => Some(self.resolve_any(ret, Some(mode))),
+            None => None,
+        };
+        self.tcx.mk_fun(resolved, ret)
     }
 }
 
@@ -944,4 +947,50 @@ fn infer_generic_bindings(
     }
 
     bindings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{named_def, typecheck_only};
+
+    #[test]
+    fn a_generic_pattern_binds_the_concrete_type() {
+        let (hir, mut tcx, _types) = typecheck_only(
+            "struct Box<T> { value: T }
+             fun f() {}",
+        );
+        let box_def = named_def(&hir, "Box");
+        let generic = match hir.def(box_def) {
+            crate::hir::OwnerNode::Struct(box_) => box_.generics[0],
+            _ => panic!("Box is a struct"),
+        };
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let pattern = tcx.mk_generic(generic);
+
+        let bindings = infer_generic_bindings(&mut tcx, pattern, i32_ty);
+
+        assert_eq!(bindings.get(&generic), Some(&i32_ty));
+    }
+
+    #[test]
+    fn nested_components_are_decomposed_before_binding() {
+        let (hir, mut tcx, _types) = typecheck_only(
+            "struct Box<T> { value: T }
+             fun f() {}",
+        );
+        let box_def = named_def(&hir, "Box");
+        let generic = match hir.def(box_def) {
+            crate::hir::OwnerNode::Struct(box_) => box_.generics[0],
+            _ => panic!("Box is a struct"),
+        };
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let generic_ty = tcx.mk_generic(generic);
+        let pattern = tcx.mk_adt(box_def, vec![generic_ty]);
+        let concrete = tcx.mk_adt(box_def, vec![i32_ty]);
+
+        let bindings = infer_generic_bindings(&mut tcx, pattern, concrete);
+
+        assert_eq!(bindings.get(&generic), Some(&i32_ty));
+    }
 }

@@ -137,3 +137,65 @@ pub fn report_payload_shape(
         .with_secondary(hir.variant(found.id).span, "declared here"),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::OwnerNode;
+    use crate::testing::{intern, lower_to_hir, named_def, session};
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            text: intern(name),
+            span: SrcSpan::new(0, 1),
+        }
+    }
+
+    #[test]
+    fn an_or_pattern_binding_is_reported() {
+        session().clear_diagnostics();
+
+        report_or_pattern_binding(session(), SrcSpan::new(0, 1));
+
+        assert_eq!(session().messages(), ["or-patterns cannot bind names"]);
+    }
+
+    #[test]
+    fn an_unknown_variant_type_names_the_variant() {
+        session().clear_diagnostics();
+
+        report_variant_type_unknown(session(), ident("some"), SrcSpan::new(0, 1));
+
+        assert_eq!(
+            session().messages(),
+            ["type annotations needed: the type `.some` is matched against is still unknown"]
+        );
+    }
+
+    #[test]
+    fn a_let_else_block_that_can_fall_through_is_reported() {
+        session().clear_diagnostics();
+
+        report_let_else_does_not_diverge(session(), SrcSpan::new(0, 1));
+
+        assert_eq!(session().messages(), ["this `else` block does not diverge"]);
+    }
+
+    #[test]
+    fn a_payload_field_is_looked_up_on_the_variant() {
+        let hir = lower_to_hir("enum E { some: { value: i32 } }");
+        let enum_def = named_def(&hir, "E");
+        let OwnerNode::Enum(enumeration) = hir.def(enum_def) else {
+            panic!("E is an enum");
+        };
+        let variant = enumeration.variants[0];
+        session().clear_diagnostics();
+
+        report_no_payload_field(session(), &hir, ident("missing"), variant);
+
+        assert_eq!(
+            session().messages(),
+            ["no field `missing` on variant `some`"]
+        );
+    }
+}

@@ -38,15 +38,17 @@ impl<'res> LoweringCtx<'res> {
     }
 
     fn def_id_of(&self, node: NodeId, what: &str) -> DefId {
-        *self.def_ids.get(&node).unwrap_or_else(|| {
-            panic!("lowering bug: {node:?}, expected to already have a DefId as {what}, has none")
-        })
+        match self.def_ids.get(&node) {
+            Some(&def_id) => def_id,
+            None => panic!("{}", missing_def_id_message(node, what)),
+        }
     }
 
     fn hir_id_of(&self, node: NodeId, what: &str) -> HirId {
-        *self.hir_ids.get(&node).unwrap_or_else(|| {
-            panic!("lowering bug: {node:?}, expected to already have a HirId as {what}, has none")
-        })
+        match self.hir_ids.get(&node) {
+            Some(&hir_id) => hir_id,
+            None => panic!("{}", missing_hir_id_message(node, what)),
+        }
     }
 
     fn translate_res(&self, res: SRes) -> Res {
@@ -96,16 +98,10 @@ impl<'res> LoweringCtx<'res> {
     }
 
     pub(super) fn lower_path(&self, owner: NodeId, path: &ast::Path) -> crate::hir::Path {
-        self.try_lower_path(owner, path).unwrap_or_else(|| {
-            panic!(
-                "lowering bug: {owner:?} owns no recorded resolution for the path `{}`.",
-                path.segments
-                    .iter()
-                    .map(|s| self.session.resolve(s.text))
-                    .collect::<Vec<_>>()
-                    .join("::")
-            )
-        })
+        match self.try_lower_path(owner, path) {
+            Some(lowered) => lowered,
+            None => panic!("{}", unresolved_path_message(self.session, owner, path)),
+        }
     }
 
     /// Allocates a method's `DefId` and records it under the method node, so a path such as
@@ -399,5 +395,64 @@ impl<'res> LoweringCtx<'res> {
             root_module,
             lang_items,
         }
+    }
+}
+
+fn missing_def_id_message(node: NodeId, what: &str) -> String {
+    format!("lowering bug: {node:?}, expected to already have a DefId as {what}, has none")
+}
+
+fn missing_hir_id_message(node: NodeId, what: &str) -> String {
+    format!("lowering bug: {node:?}, expected to already have a HirId as {what}, has none")
+}
+
+fn unresolved_path_message(session: &Session, owner: NodeId, path: &ast::Path) -> String {
+    let path_text = path
+        .segments
+        .iter()
+        .map(|segment| session.resolve(segment.text))
+        .collect::<Vec<_>>()
+        .join("::");
+    format!("lowering bug: {owner:?} owns no recorded resolution for the path `{path_text}`.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::driver::source::SrcSpan;
+
+    #[test]
+    fn a_missing_definition_message_names_the_node_and_role() {
+        let message = missing_def_id_message(NodeId::next(), "a function item");
+
+        assert!(message.contains("expected to already have a DefId as a function item"));
+    }
+
+    #[test]
+    fn a_missing_hir_id_message_names_the_node_and_role() {
+        let message = missing_hir_id_message(NodeId::next(), "a block");
+
+        assert!(message.contains("expected to already have a HirId as a block"));
+    }
+
+    #[test]
+    fn an_unresolved_path_message_prints_the_qualified_path() {
+        let session = crate::testing::session();
+        let path = ast::Path {
+            segments: vec![
+                ast::Ident {
+                    text: session.intern("core"),
+                    span: SrcSpan::new(0, 4),
+                },
+                ast::Ident {
+                    text: session.intern("mem"),
+                    span: SrcSpan::new(6, 9),
+                },
+            ],
+        };
+
+        let message = unresolved_path_message(session, NodeId::next(), &path);
+
+        assert!(message.contains("`core::mem`"), "{message}");
     }
 }

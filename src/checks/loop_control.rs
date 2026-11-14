@@ -57,3 +57,44 @@ impl<'hir> Visitor<'hir> for LoopControl<'hir, '_> {
         self.loop_depth -= 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{lower_to_hir, session};
+
+    #[test]
+    fn break_and_continue_inside_a_loop_are_accepted() {
+        let hir = lower_to_hir(
+            "fun f() {
+                 while true { break; }
+                 while true { continue; }
+             }",
+        );
+        session().clear_diagnostics();
+
+        check(session(), &hir);
+
+        assert!(session().messages().is_empty());
+    }
+
+    #[test]
+    fn break_outside_a_loop_is_reported() {
+        let hir = lower_to_hir("fun f() { break; }");
+        session().clear_diagnostics();
+
+        check(session(), &hir);
+
+        assert_eq!(session().messages(), ["`break` outside a loop"]);
+    }
+
+    #[test]
+    fn continue_outside_a_loop_is_reported() {
+        let hir = lower_to_hir("fun f() { continue; }");
+        session().clear_diagnostics();
+
+        check(session(), &hir);
+
+        assert_eq!(session().messages(), ["`continue` outside a loop"]);
+    }
+}

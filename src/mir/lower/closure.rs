@@ -43,11 +43,13 @@ impl<'a> BodyLowerCtx<'a> {
 
     pub(crate) fn build_environment_ty(&mut self, captures: &[HirId]) -> Ty {
         let mut tys: Vec<Ty> = vec![self.tcx.mk_prim(crate::nameres::PrimTy::Usize)];
-        tys.extend(captures.iter().map(|&id| {
-            self.types
-                .ty(id)
-                .unwrap_or_else(|| panic!("mir::lower: captured {id:?} has no recorded type"))
-        }));
+        for &id in captures {
+            let ty = match self.types.ty(id) {
+                Some(ty) => ty,
+                None => panic!("mir::lower: captured {id:?} has no recorded type"),
+            };
+            tys.push(ty);
+        }
         let tuple = self.tcx.mk_tuple(tys);
         self.tcx.mk_ref(tuple, crate::ast::Mutability::Mutable)
     }
@@ -91,10 +93,10 @@ impl<'a> BodyLowerCtx<'a> {
     fn lower_capture_operand(&mut self, hir_id: impl Into<HirId>) -> crate::mir::Operand {
         let hir_id = hir_id.into();
         let place = self.place_for(hir_id);
-        let ty = self
-            .types
-            .ty(hir_id)
-            .unwrap_or_else(|| panic!("mir::lower: captured {hir_id:?} has no recorded type"));
+        let ty = match self.types.ty(hir_id) {
+            Some(ty) => ty,
+            None => panic!("mir::lower: captured {hir_id:?} has no recorded type"),
+        };
         self.operand_for_place(place, ty)
     }
 }

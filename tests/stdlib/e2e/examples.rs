@@ -1,14 +1,4 @@
-mod support;
-
-fn run(name: &str, source: &str, expected: &str) {
-    let output = support::run_src("examples", name, source);
-    support::expect_stdout(&output, expected, name);
-}
-
-fn run_project(name: &str, files: &[(&str, &str)], expected: &str) {
-    let output = support::run_files("examples", name, files);
-    support::expect_stdout(&output, expected, name);
-}
+use super::*;
 
 #[test]
 fn fizzbuzz_prints_the_classic_sequence() {

@@ -2364,3 +2364,117 @@ fn mem_swap_lowers_to_an_rvalue_swap() {
         "`mem::swap` lowers to `Rvalue::Swap`, not a call"
     );
 }
+
+#[test]
+fn a_failed_guard_restores_a_variant_payload_binding() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "enum Maybe { some: i32, none }
+         fun f(x: Maybe, c: bool) -> i32 {
+             return match x {
+                 .some(v) if c => v,
+                 .some(v) => v,
+                 .none => 0,
+             };
+         }",
+    );
+
+    assert_eq!(first_function_body(&program, &hir).param_count, 2);
+}
+
+#[test]
+fn a_failed_guard_restores_tuple_and_binding_bindings() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "fun tuple(t: (i32, i32), c: bool) -> i32 {
+             return match t {
+                 (a, b) if c => a,
+                 (a, b) => b,
+                 _ => 0,
+             };
+         }",
+    );
+
+    assert_eq!(first_function_body(&program, &hir).param_count, 2);
+}
+
+#[test]
+fn a_failed_guard_on_a_wildcard_or_literal_restores_no_bindings() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "fun wildcard(x: i32, c: bool) -> i32 {
+             return match x { _ if c => 1, _ => 0 };
+         }
+         fun literal(x: i32, c: bool) -> i32 {
+             return match x { 0 if c => 1, _ => 0 };
+         }",
+    );
+
+    assert!(program.bodies.contains_key(&(first_function(&hir), None)));
+    assert_eq!(program.bodies.len(), 2);
+}
+
+#[test]
+fn wildcard_and_literal_let_patterns_bind_nothing() {
+    let (_hir, _tcx, _types, program) = lower_mir_src(
+        "fun wildcard(x: i32) -> i32 { let _ = x; return x; }
+         fun literal(x: i32) -> i32 {
+             let 0 = x else { return 1; };
+             return 0;
+         }",
+    );
+
+    assert!(program.bodies.len() >= 2);
+}
+
+#[test]
+fn reifying_a_generic_function_infers_its_type_argument_from_the_value_type() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "fun identity<T>(x: T) -> T { return x; }
+         fun use_it() -> fun(i32) -> i32 { return identity; }",
+    );
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "use_it"), None))
+        .expect("use_it was lowered");
+    let reified = body
+        .basic_blocks
+        .iter()
+        .flat_map(|b| &b.statements)
+        .any(|s| {
+            matches!(
+                &s.kind,
+                StatementKind::Assign(
+                    _,
+                    Rvalue::Cast {
+                        kind: CastKind::ReifyFunPointer,
+                        ..
+                    }
+                )
+            )
+        });
+
+    assert!(
+        reified,
+        "returning `identity` reifies it as a function pointer"
+    );
+}
+
+#[test]
+fn an_iso_receiver_is_dereferenced_for_a_by_value_method() {
+    let (hir, _tcx, _types, program) = lower_mir_src(
+        "struct S { value: i32 }
+         extend S { fun into_value(self) -> i32 { return self.value; } }
+         fun f(owned: iso S) -> i32 { return owned.into_value(); }",
+    );
+    let body = program
+        .bodies
+        .get(&(find_function(&hir, "f"), None))
+        .expect("f was lowered");
+
+    assert!(
+        body.basic_blocks.iter().any(|block| matches!(
+            &block.terminator.kind,
+            TerminatorKind::Call { args, .. }
+                if args.iter().any(|arg| matches!(arg, Operand::Move(_)))
+        )),
+        "the iso receiver is moved out after a dereference"
+    );
+}

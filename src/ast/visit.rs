@@ -638,3 +638,29 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod default_walk_tests {
+    use super::*;
+    use crate::testing::parse_src;
+
+    struct Defaults;
+
+    impl<'ast> Visitor<'ast> for Defaults {}
+
+    #[test]
+    fn every_default_walk_method_traverses_its_node() {
+        let ast = Ast::from(vec![parse_src(
+            "trait T { fun m(&self); }
+             struct S { a: i32 }
+             enum E { v: { x: i32 } }
+             fun f(s: S) {
+                 let c = |x: i32| { x };
+                 let r = E.v { x: 1 };
+                 match r { .v { x } => {}, }
+             }",
+        )]);
+
+        Defaults.visit_module(ast.root(), &ast);
+    }
+}

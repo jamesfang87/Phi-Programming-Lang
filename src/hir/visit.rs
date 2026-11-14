@@ -832,4 +832,21 @@ mod tests {
             recorder.paths.iter().map(|p| p.res).collect::<Vec<_>>()
         );
     }
+    struct Defaults<'hir> {
+        hir: &'hir Hir,
+    }
+
+    impl<'hir> Visitor<'hir> for Defaults<'hir> {
+        fn hir(&self) -> &'hir Hir {
+            self.hir
+        }
+    }
+
+    #[test]
+    fn every_default_walk_method_traverses_its_nodes() {
+        let hir = lower_to_hir(EVERYTHING);
+        let mut visitor = Defaults { hir: &hir };
+
+        visitor.visit_module(hir.root_id());
+    }
 }

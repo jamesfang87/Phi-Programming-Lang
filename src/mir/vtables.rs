@@ -320,4 +320,142 @@ fun f() {}";
         let vtables = collect_vtables(&hir, &mut tcx, &types);
         assert!(!vtables.contains_key(&(i32_ty, trait_def, Vec::new())));
     }
+    fn generic_of(hir: &Hir, def: DefId, index: usize) -> HirId {
+        match hir.def(def) {
+            OwnerNode::Struct(struct_) => struct_.generics[index],
+            OwnerNode::Enum(enum_) => enum_.generics[index],
+            OwnerNode::Trait(trait_) => trait_.generics[index],
+            _ => panic!("the definition declares no generics"),
+        }
+    }
+
+    #[test]
+    fn a_generic_extend_block_matches_a_concrete_instance() {
+        let (hir, mut tcx, types) = crate::testing::typecheck_only(
+            "trait Greet { fun greet(&self) -> i32; }
+             struct Box<T> { value: T }
+             extend<T> Box<T> with Greet { fun greet(&self) -> i32 { return 1; } }
+             fun f() {}",
+        );
+        let box_def = find_struct_def(&hir, "Box");
+        let trait_def = find_trait_def(&hir, "Greet");
+        let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
+        let concrete = tcx.mk_adt(box_def, vec![i32_ty]);
+
+        let vtables = collect_vtables(&hir, &mut tcx, &types);
+        let (info, bindings) = find_vtable(&vtables, &mut tcx, concrete, trait_def, &[])
+            .expect("the generic extend block applies to Box<i32>");
+
+        assert_eq!(info.methods.len(), 1);
+        assert_eq!(bindings.len(), 1, "Box's parameter is bound by the match");
+    }
+
+    #[test]
+    fn type_patterns_match_every_composite_shape() {
+        let (hir, mut tcx, _types) = crate::testing::typecheck_only(
+            "struct Box<T> { value: T }
+             fun f() {}",
+        );
+        let box_def = find_struct_def(&hir, "Box");
+        let generic = generic_of(&hir, box_def, 0);
+        let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
+        let bool_ty = tcx.mk_prim(crate::nameres::PrimTy::Bool);
+
+        let generic_ty = tcx.mk_generic(generic);
+        let pattern_adt = tcx.mk_adt(box_def, vec![generic_ty]);
+        let concrete_adt = tcx.mk_adt(box_def, vec![i32_ty]);
+        let mut bindings = HashMap::new();
+        assert!(match_type_pattern(
+            &tcx,
+            pattern_adt,
+            concrete_adt,
+            &mut bindings
+        ));
+        assert_eq!(bindings.get(&generic), Some(&i32_ty));
+
+        let repeated = tcx.mk_tuple(vec![generic_ty, generic_ty]);
+        let distinct = tcx.mk_tuple(vec![i32_ty, bool_ty]);
+        assert!(!match_type_pattern(
+            &tcx,
+            repeated,
+            distinct,
+            &mut HashMap::new()
+        ));
+
+        let shared_ref = tcx.mk_ref(i32_ty, crate::ast::Mutability::Immutable);
+        let mutable_ref = tcx.mk_ref(i32_ty, crate::ast::Mutability::Mutable);
+        assert!(!match_type_pattern(
+            &tcx,
+            shared_ref,
+            mutable_ref,
+            &mut HashMap::new()
+        ));
+        assert!(match_type_pattern(
+            &tcx,
+            shared_ref,
+            shared_ref,
+            &mut HashMap::new()
+        ));
+
+        let iso = tcx.mk_iso(i32_ty);
+        assert!(match_type_pattern(&tcx, iso, iso, &mut HashMap::new()));
+
+        let array = tcx.mk_array(i32_ty, Some(3));
+        let longer_array = tcx.mk_array(i32_ty, Some(4));
+        assert!(match_type_pattern(&tcx, array, array, &mut HashMap::new()));
+        assert!(!match_type_pattern(
+            &tcx,
+            array,
+            longer_array,
+            &mut HashMap::new()
+        ));
+
+        let function = tcx.mk_fun(vec![i32_ty], Some(bool_ty));
+        let other_function = tcx.mk_fun(vec![i32_ty], Some(i32_ty));
+        let unit_function = tcx.mk_fun(vec![i32_ty], None);
+        assert!(match_type_pattern(
+            &tcx,
+            function,
+            function,
+            &mut HashMap::new()
+        ));
+        assert!(!match_type_pattern(
+            &tcx,
+            function,
+            other_function,
+            &mut HashMap::new()
+        ));
+        assert!(!match_type_pattern(
+            &tcx,
+            function,
+            unit_function,
+            &mut HashMap::new()
+        ));
+        assert!(match_type_pattern(
+            &tcx,
+            unit_function,
+            unit_function,
+            &mut HashMap::new()
+        ));
+    }
+
+    #[test]
+    fn unsized_trait_arguments_are_found_through_references_and_owned_pointers() {
+        let (hir, mut tcx, _types) = crate::testing::typecheck_only(
+            "trait Show { }
+             struct S { value: i32 }
+             fun f() {}",
+        );
+        let trait_def = find_trait_def(&hir, "Show");
+        let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
+        let dyn_ty = tcx.mk_dyn(trait_def, vec![i32_ty]);
+        let shared = tcx.mk_ref(dyn_ty, crate::ast::Mutability::Immutable);
+        let owned = tcx.mk_iso(dyn_ty);
+
+        assert_eq!(trait_args_of_unsized_ty(&tcx, dyn_ty), vec![i32_ty]);
+        assert_eq!(trait_args_of_unsized_ty(&tcx, shared), vec![i32_ty]);
+        assert_eq!(trait_args_of_unsized_ty(&tcx, owned), vec![i32_ty]);
+        let plain_ref = tcx.mk_ref(i32_ty, crate::ast::Mutability::Immutable);
+        assert_eq!(trait_args_of_unsized_ty(&tcx, plain_ref), Vec::new());
+    }
 }

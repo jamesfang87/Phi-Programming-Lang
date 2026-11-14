@@ -540,3 +540,123 @@ pub fn nameres_to_string(session: &Session, ast: &Ast, results: &NameResolutions
 pub fn print_nameres(session: &Session, ast: &Ast, results: &NameResolutions) {
     println!("{}", nameres_to_string(session, ast, results));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::Mutability;
+    use crate::nameres::PrimTy;
+    use crate::testing::{first_function, lower_to_hir, named_def, session, typecheck_only};
+
+    const SOURCE: &str = "
+        trait Show<A> { }
+        struct Point<A> { x: A, y: i32 }
+        enum Choice { some: i32, none }
+        extend<A> Point<A> with Show<A> { }
+        fun f() { let c = |x: i32| { x }; }
+    ";
+
+    fn every_owner_kind_has_a_debug_name() {
+        let hir = lower_to_hir(SOURCE);
+
+        let mut seen = Vec::new();
+        for def in hir.def_ids() {
+            seen.push(def_name(session(), &hir, def));
+        }
+
+        for expected in ["Show", "Point", "Choice", "<extend>", "<closure>"] {
+            assert!(seen.contains(&expected), "missing {expected:?} in {seen:?}");
+        }
+    }
+
+    #[test]
+    fn every_type_kind_has_a_debug_rendering() {
+        every_owner_kind_has_a_debug_name();
+
+        let (hir, mut tcx, _types) = typecheck_only(SOURCE);
+        let point = named_def(&hir, "Point");
+        let show = named_def(&hir, "Show");
+        let generic = match hir.def(point) {
+            OwnerNode::Struct(point) => point.generics[0],
+            _ => panic!("Point is a struct"),
+        };
+        let i32_ty = tcx.mk_prim(PrimTy::I32);
+        let bool_ty = tcx.mk_prim(PrimTy::Bool);
+        let generic_ty = tcx.mk_generic(generic);
+        let adt = tcx.mk_adt(point, vec![generic_ty]);
+        let ref_ty = tcx.mk_ref(i32_ty, Mutability::Immutable);
+        let any = tcx.mk_any(i32_ty);
+        let iso = tcx.mk_iso(i32_ty);
+        let tuple = tcx.mk_tuple(vec![i32_ty, bool_ty]);
+        let array = tcx.mk_array(bool_ty, Some(4));
+        let function = tcx.mk_fun(vec![i32_ty], Some(bool_ty));
+        let unit_function = tcx.mk_fun(vec![i32_ty], None);
+        let dyn_ty = tcx.mk_dyn(show, Vec::new());
+        let generic_dyn = tcx.mk_dyn(show, vec![i32_ty]);
+        let never = tcx.never();
+        let unit = tcx.unit();
+        let error = tcx.error();
+        let var = tcx.next_infer_var();
+        let self_ty = tcx.mk_self_param(show);
+        let plain_adt = tcx.mk_adt(point, Vec::new());
+
+        let tys = [
+            var,
+            i32_ty,
+            plain_adt,
+            adt,
+            generic_ty,
+            self_ty,
+            ref_ty,
+            any,
+            iso,
+            tuple,
+            array,
+            function,
+            unit_function,
+            dyn_ty,
+            generic_dyn,
+            never,
+            unit,
+            error,
+        ];
+
+        for ty in tys {
+            let text = fmt_ty(session(), &hir, &tcx, ty, 0);
+            assert!(!text.is_empty(), "{ty:?} rendered as an empty string");
+        }
+    }
+
+    #[test]
+    fn a_long_snippet_is_truncated() {
+        let text = "a".repeat(MAX_SNIPPET_LEN + 10);
+        let rendered = snippet(&text);
+
+        assert!(rendered.ends_with("..."), "{rendered}");
+        assert_eq!(rendered.chars().count(), MAX_SNIPPET_LEN + 3);
+    }
+
+    #[test]
+    fn a_short_snippet_is_squashed_to_one_line() {
+        assert_eq!(snippet("  a\n  b  "), "a b");
+    }
+
+    #[test]
+    fn statements_have_a_node_kind_name() {
+        let hir = lower_to_hir("fun f() { let x = 1; }");
+        let function = first_function(&hir);
+        let block = hir.function(function).block.expect("f has a body");
+        let statement = hir.block(block).stmts[0];
+
+        let kind = node_kind(hir.node(statement.into()));
+
+        assert!(kind.starts_with("Stmt::"), "{kind}");
+    }
+
+    #[test]
+    fn an_unfiltered_hir_dump_prints_the_debug_arena() {
+        let hir = lower_to_hir("struct S { value: i32 }");
+
+        print_hir(session(), &hir, false);
+    }
+}

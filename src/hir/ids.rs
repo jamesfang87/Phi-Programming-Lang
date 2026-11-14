@@ -80,3 +80,42 @@ typed_id!(PatId);
 typed_id!(BlockId);
 typed_id!(StmtId);
 typed_id!(ArmId);
+
+#[cfg(test)]
+mod typed_id_tests {
+    use super::*;
+
+    #[test]
+    fn a_typed_id_exposes_its_hir_id() {
+        let hir_id = HirId::new(DefId::from_usize(3), LocalId::from_usize(7));
+        let block = BlockId::from(hir_id);
+
+        assert_eq!(block.hir_id(), hir_id);
+        assert_eq!(block.owner(), DefId::from_usize(3));
+    }
+}
+
+#[cfg(test)]
+mod all_typed_id_tests {
+    use super::*;
+
+    #[test]
+    fn every_typed_id_exposes_its_hir_id_and_owner() {
+        let hir_id = HirId::new(DefId::from_usize(5), LocalId::from_usize(9));
+        let owner = DefId::from_usize(5);
+
+        assert_eq!(ExprId::from(hir_id).hir_id(), hir_id);
+        assert_eq!(TyId::from(hir_id).hir_id(), hir_id);
+        assert_eq!(PatId::from(hir_id).hir_id(), hir_id);
+        assert_eq!(StmtId::from(hir_id).hir_id(), hir_id);
+        assert_eq!(ArmId::from(hir_id).hir_id(), hir_id);
+        assert_eq!(BlockId::from(hir_id).hir_id(), hir_id);
+
+        assert_eq!(ExprId::from(hir_id).owner(), owner);
+        assert_eq!(TyId::from(hir_id).owner(), owner);
+        assert_eq!(PatId::from(hir_id).owner(), owner);
+        assert_eq!(StmtId::from(hir_id).owner(), owner);
+        assert_eq!(ArmId::from(hir_id).owner(), owner);
+        assert_eq!(BlockId::from(hir_id).owner(), owner);
+    }
+}

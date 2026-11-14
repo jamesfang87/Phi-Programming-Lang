@@ -148,3 +148,94 @@ fn source_span(
         .unwrap_or(first);
     (first.span.merge(last.span), preceding)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chumsky::error::{LabelError, RichPattern};
+    use chumsky::span::SimpleSpan;
+    use chumsky::util::MaybeRef;
+
+    use crate::testing::{lex_src, session};
+
+    fn expected_with(
+        patterns: &[RichPattern<'static, Token>],
+        found: Option<Token>,
+    ) -> Rich<'static, Token> {
+        let found = found.map(MaybeRef::Val);
+        <Rich<'static, Token> as LabelError<
+            'static,
+            &'static [Token],
+            RichPattern<'static, Token>,
+        >>::expected_found(patterns.iter().cloned(), found, SimpleSpan::from(0..0))
+    }
+
+    #[test]
+    fn a_closing_paren_names_its_opener() {
+        assert_eq!(opener_of(TokenKind::CloseParen), TokenKind::OpenParen);
+    }
+
+    #[test]
+    fn a_closing_bracket_names_its_opener() {
+        assert_eq!(opener_of(TokenKind::CloseBracket), TokenKind::OpenBracket);
+    }
+
+    #[test]
+    fn a_closing_brace_names_its_opener() {
+        assert_eq!(opener_of(TokenKind::CloseBrace), TokenKind::OpenBrace);
+    }
+
+    #[test]
+    fn a_custom_parse_error_keeps_its_message_as_the_label() {
+        let err = chumsky::error::Rich::<Token>::custom(SimpleSpan::from(0..1), "bad input");
+
+        let diagnostic = diagnostic_for(session(), &err, SrcSpan::new(0, 1), None);
+
+        assert_eq!(diagnostic.message, "bad input");
+        assert_eq!(diagnostic.label.as_deref(), Some("bad input"));
+        assert_eq!(diagnostic.code, Some(codes::PARSE_ERROR));
+    }
+
+    #[test]
+    fn a_token_pattern_becomes_the_expected_token_kind() {
+        let (tokens, _) = lex_src("fun");
+        let err = expected_with(
+            &[RichPattern::Token(MaybeRef::Val(tokens[0].clone()))],
+            None,
+        );
+
+        assert_eq!(expected_set(&err), [Expected::of_kind(TokenKind::FunKw)]);
+    }
+
+    #[test]
+    fn an_end_of_input_pattern_is_expected_at_the_end() {
+        let err = expected_with(&[RichPattern::EndOfInput], None);
+
+        assert_eq!(expected_set(&err), [Expected::of_kind(TokenKind::Eof)]);
+    }
+
+    #[test]
+    fn an_unsupported_pattern_is_skipped() {
+        let err = expected_with(&[RichPattern::Any], None);
+
+        assert!(expected_set(&err).is_empty());
+    }
+
+    #[test]
+    fn an_error_past_the_last_token_points_at_the_file_offset() {
+        let err = chumsky::error::Rich::<Token>::custom(SimpleSpan::from(9..9), "past the end");
+
+        assert_eq!(source_span(&err, &[], 7), (SrcSpan::new(7, 7), None));
+    }
+
+    #[test]
+    fn an_error_past_the_last_token_points_at_the_last_token() {
+        let (tokens, _) = lex_src("fun");
+        let err = chumsky::error::Rich::<Token>::custom(SimpleSpan::from(9..9), "past the end");
+
+        let (span, preceding) = source_span(&err, &tokens, 0);
+
+        assert_eq!(span, tokens[0].span);
+        assert!(preceding.is_none());
+    }
+}

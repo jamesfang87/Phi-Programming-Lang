@@ -49,3 +49,18 @@ pub fn report_attempt_to_extend_with_non_trait(session: &Session, span: SrcSpan)
             .with_help("types can only be extend with trait types"),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::session;
+
+    #[test]
+    fn extending_bare_self_names_the_missing_concrete_type() {
+        session().clear_diagnostics();
+
+        report_extend_bare_self(session(), SrcSpan::new(0, 1));
+
+        assert_eq!(session().messages(), ["`Self` cannot be extended"]);
+    }
+}

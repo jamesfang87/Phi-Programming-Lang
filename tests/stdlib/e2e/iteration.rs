@@ -1,9 +1,4 @@
-mod support;
-
-fn run(name: &str, source: &str, expected: &str) {
-    let output = support::run_src("iteration", name, source);
-    support::expect_stdout(&output, expected, name);
-}
+use super::*;
 
 #[test]
 fn for_loops_iterate_over_slice_projections() {

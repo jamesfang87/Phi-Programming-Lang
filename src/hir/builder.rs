@@ -131,3 +131,19 @@ mod tests {
         assert_eq!(arena.get(id).hir_id(), id);
     }
 }
+
+#[cfg(test)]
+mod default_tests {
+    use super::*;
+
+    #[test]
+    fn the_default_allocator_matches_a_new_one() {
+        let mut allocator = DefIdAllocator::default();
+        let root = allocator.alloc(None);
+        let child = allocator.alloc(Some(root));
+
+        assert_eq!(root, DefId::from_usize(0));
+        assert_eq!(child, DefId::from_usize(1));
+        assert_eq!(allocator.finish(), vec![root, root]);
+    }
+}

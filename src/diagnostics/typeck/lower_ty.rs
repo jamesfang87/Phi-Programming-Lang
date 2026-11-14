@@ -135,3 +135,33 @@ pub fn report_associated_type_base_not_self(session: &Session, span: SrcSpan) {
             .with_help("write `Self::Name` to name an associated type"),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::session;
+
+    #[test]
+    fn an_unknown_associated_type_names_the_type() {
+        session().clear_diagnostics();
+
+        report_unknown_associated_type(session(), "Item", SrcSpan::new(0, 1));
+
+        assert_eq!(
+            session().messages(),
+            ["`Item` is not an associated type of this trait"]
+        );
+    }
+
+    #[test]
+    fn an_associated_type_reached_through_a_non_self_path_is_reported() {
+        session().clear_diagnostics();
+
+        report_associated_type_base_not_self(session(), SrcSpan::new(0, 1));
+
+        assert_eq!(
+            session().messages(),
+            ["an associated type has to be reached through `Self`"]
+        );
+    }
+}

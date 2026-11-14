@@ -1143,4 +1143,89 @@ mod tests {
         assert_eq!(replace_params[1], checked.generic(container, 0));
         assert_eq!(replace_ret, Some(checked.def_ty(container)));
     }
+    #[test]
+    fn an_unknown_associated_type_on_a_trait_is_reported() {
+        let messages = crate::testing::typeck_src("trait T { fun f(&self) -> Self::Missing; }");
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("`Missing` is not an associated type of this trait")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn an_explicit_associated_type_definition_lowers_at_the_use_site() {
+        let messages = crate::testing::typeck_src(
+            "trait T { type Item; fun get(&self) -> Self::Item; }
+             struct S { value: i32 }
+             extend S with T {
+                 type Item = i32;
+                 fun get(&self) -> Self::Item { return self.value; }
+             }",
+        );
+        assert!(messages.is_empty(), "{messages:?}");
+    }
+
+    #[test]
+    fn a_trait_default_associated_type_lowers_at_the_use_site() {
+        let messages = crate::testing::typeck_src(
+            "trait T { type Item = i32; fun get(&self) -> Self::Item; }
+             struct S { value: i32 }
+             extend S with T {
+                 fun get(&self) -> Self::Item { return self.value; }
+             }",
+        );
+        assert!(messages.is_empty(), "{messages:?}");
+    }
+
+    #[test]
+    fn an_unknown_associated_type_on_an_extend_is_reported() {
+        let messages = crate::testing::typeck_src(
+            "trait T { type Item = i32; }
+             struct S { }
+             extend S with T {
+                 fun get(&self) -> Self::Missing { return 0; }
+             }",
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("`Missing` is not an associated type of this trait")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn self_outside_a_type_definition_is_unavailable() {
+        let messages = crate::testing::typeck_src("fun f(x: Self) {}");
+        assert!(
+            messages.iter().any(|m| m == "`Self` is not available here"),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn an_array_length_literal_too_large_for_the_folder_is_reported() {
+        let messages = crate::testing::typeck_src(
+            "fun f(x: [i32; 999999999999999999999999999999999999999999999999]) {}",
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("array length overflowed")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn a_negative_array_length_is_reported_after_folding() {
+        let messages = crate::testing::typeck_src("fun f(x: [i32; -1]) {}");
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("array length cannot be negative")),
+            "{messages:?}"
+        );
+    }
 }
