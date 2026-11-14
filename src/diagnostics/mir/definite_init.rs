@@ -25,10 +25,7 @@ pub fn report_move_out_of_array(session: &Session, name: Ident, span: SrcSpan) {
             span,
         )
         .with_code(codes::MOVE_OUT_OF_ARRAY)
-        .with_label("this element would be moved out, leaving a hole in the array")
-        .with_help(
-            "an array is dropped as a whole, so it has nowhere to record that one element is \
-             gone; borrow the element instead, or move the whole array",
-        ),
+        .with_label("elements of an array cannot be moved out")
+        .with_help("consider borrowing the element instead or moving the whole array"),
     );
 }

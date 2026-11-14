@@ -20,12 +20,7 @@ pub fn report_receiver_type_unknown(session: &Session, member: Ident, span: SrcS
             span,
         )
         .with_code(codes::RECEIVER_TYPE_UNKNOWN)
-        .with_label("the type here is still unknown")
-        .with_help(
-            "which `.` this is depends on the type it is written on, and unlike a trait \
-                 bound it cannot wait for a later pass -- what it produces is what everything \
-                 around it is checked against; write the type out",
-        ),
+        .with_label("the type here is still unknown"),
     );
 }
 
@@ -41,10 +36,10 @@ pub fn report_no_method(cx: DisplayCtx<'_>, member: Ident, base: Ty) {
         )
         .with_code(codes::NO_METHOD)
         .with_label("not found")
-        .with_help(
-            "a method comes from an `extend` block for this type, or from a trait it \
-                 implements; a method on a type parameter comes from a bound written on it",
-        ),
+        .with_help(format!(
+            "this method is not defined with its receiver of type {}",
+            cx.show(base)
+        )),
     );
 }
 
@@ -63,11 +58,7 @@ pub fn report_ambiguous_method(session: &Session, member: Ident, candidates: &[(
         member.span,
     )
     .with_code(codes::AMBIGUOUS_METHOD)
-    .with_label("cannot tell which one is meant")
-    .with_help(
-        "each of these traits declares a method of this name and the receiver reaches \
-             all of them, so nothing here says which was meant",
-    );
+    .with_label("cannot tell which one is meant");
 
     for &(name, span) in candidates {
         diag = diag.with_secondary(span, format!("`{name}` declares it here"));
@@ -90,10 +81,6 @@ pub fn report_no_receiver(session: &Session, hir: &Hir, member: Ident, method: D
         .with_secondary(
             function_name_span(hir, method),
             "declared here, taking no receiver",
-        )
-        .with_help(
-            "a function declared in an `extend` block without a `self` parameter belongs to \
-                 the type rather than to a value of it",
         ),
     );
 }
@@ -153,10 +140,6 @@ pub fn report_receiver_not_a_place(
         .with_secondary(
             method_receiver_span(hir, method),
             format!("declared taking {} here", show_self_mode(mode)),
-        )
-        .with_help(
-            "the reference the call would take is to a value that exists only for the \
-                 length of this expression; bind it to a name first",
         ),
     );
 }
@@ -173,10 +156,7 @@ pub fn report_field_is_a_method(cx: DisplayCtx<'_>, member: Ident, base: Ty) {
         )
         .with_code(codes::FIELD_IS_A_METHOD)
         .with_label("this is a method, not a field")
-        .with_help(format!(
-            "did you mean to call it, as `{name}(..)`? a method cannot be named without \
-                 calling it"
-        )),
+        .with_help(format!("did you mean to call it, as `{name}(..)`?")),
     );
 }
 
@@ -246,10 +226,6 @@ pub fn report_dyn_self_by_value(session: &Session, hir: &Hir, member: Ident, met
         .with_secondary(
             function_name_span(hir, method),
             "declared here, taking `self` by value",
-        )
-        .with_help(
-            "a `dyn` value only carries a borrowed pointer to the concrete data, so a method \
-             reached through one must borrow its receiver",
         ),
     );
 }
@@ -269,10 +245,6 @@ pub fn report_dyn_method_mentions_self(session: &Session, hir: &Hir, member: Ide
         .with_secondary(
             function_name_span(hir, method),
             "declared here, mentioning `Self` in a parameter or the return type",
-        )
-        .with_help(
-            "a call through a vtable must work for every implementing type alike, so the \
-             method's other parameters and its return type cannot be the concrete `Self`",
         ),
     );
 }

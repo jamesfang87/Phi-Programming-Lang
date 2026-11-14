@@ -13,12 +13,7 @@ pub fn report_bound_is_not_a_trait(session: &Session, path: &Path) {
     session.emit(
         Diagnostic::error(format!("`{name}` is not a trait"), path.span())
             .with_code(codes::BOUND_IS_NOT_A_TRAIT)
-            .with_label("not a trait")
-            .with_help(
-                "a bound says what a type parameter must implement, and only a trait can be \
-                     implemented; a bound naming anything else promises the body something \
-                     nothing could ever supply",
-            ),
+            .with_label("not a trait"),
     );
 }
 

@@ -112,8 +112,6 @@ pub const CAST_OPERAND_UNKNOWN: &str = "E0345";
 
 pub const CAST_NOT_ALLOWED: &str = "E0346";
 
-pub const STRING_PATTERN_UNSUPPORTED: &str = "E0347";
-
 pub const VARIANT_TYPE_UNKNOWN: &str = "E0348";
 
 pub const NO_PAYLOAD_FIELD: &str = "E0349";
@@ -129,6 +127,8 @@ pub const LET_ELSE_DOES_NOT_DIVERGE: &str = "E0353";
 pub const PATTERN_PAYLOAD_SHAPE: &str = "E0353";
 
 pub const UNEXPECTED_GENERIC_ARGS: &str = "E0354";
+
+pub const OR_PATTERN_BINDING: &str = "E0355";
 
 pub const GENERIC_ARG_COUNT: &str = "E0355";
 

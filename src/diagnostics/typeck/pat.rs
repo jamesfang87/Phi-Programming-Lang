@@ -16,12 +16,12 @@ pub fn report_literal_pattern_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span
     );
 }
 
-pub fn report_string_pattern_unsupported(session: &Session, span: SrcSpan) {
+pub fn report_or_pattern_binding(session: &Session, span: SrcSpan) {
     session.emit(
-        Diagnostic::error("string literal patterns are not supported", span)
-            .with_code(codes::STRING_PATTERN_UNSUPPORTED)
-            .with_label("a string cannot be matched by value")
-            .with_help("bind the value with a binding or variant pattern, then compare it"),
+        Diagnostic::error("or-patterns cannot bind names", span)
+            .with_code(codes::OR_PATTERN_BINDING)
+            .with_label("a binding inside `|` has no single value to refer to")
+            .with_help("use separate match arms, or bind the whole value outside the pattern"),
     );
 }
 
@@ -43,10 +43,7 @@ pub fn report_variant_type_unknown(session: &Session, variant: Ident, span: SrcS
             span,
         )
         .with_code(codes::VARIANT_TYPE_UNKNOWN)
-        .with_label("cannot tell which enum this variant belongs to")
-        .with_help(
-            "a `.variant` names no enum of its own; write the type of the value being matched",
-        ),
+        .with_label("cannot tell which enum this variant belongs to"),
     );
 }
 

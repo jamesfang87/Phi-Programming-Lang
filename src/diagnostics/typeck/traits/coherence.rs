@@ -36,11 +36,6 @@ pub fn report_conflicting_extends(
         .with_secondary(
             extend_span(hir, first),
             format!("`{}` is already implemented here", cx.show(first.self_ty)),
-        )
-        .with_help(
-            "two implementations may not both apply to one type; note that bounds on an \
-                 implementation's own generics are not considered when deciding whether two of \
-                 them overlap",
         ),
     );
 }
@@ -70,10 +65,6 @@ pub fn report_duplicate_method(
                 cx.show(first.self_ty),
                 cx.resolve(name)
             ),
-        )
-        .with_help(
-            "a call to it would have no single meaning, so one of the two has to be renamed \
-                 or removed",
         ),
     );
 }

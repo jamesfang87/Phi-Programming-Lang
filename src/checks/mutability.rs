@@ -78,7 +78,7 @@ fn for_each_binding(hir: &Hir, pat: impl Into<HirId>, f: &mut impl FnMut(HirId, 
     let pat = pat.into();
     match &hir.pat(pat).kind {
         PatKind::Binding { name, .. } => f(pat, *name),
-        PatKind::Tuple(elems) => {
+        PatKind::Tuple(elems) | PatKind::Or(elems) => {
             for &elem in elems {
                 for_each_binding(hir, elem, f);
             }
@@ -448,11 +448,11 @@ mod tests {
                 "{counter} struct Outer {{ inner: Counter }}
                  fun f(o: &Outer) {{ o.inner.bump(); }}"
             ),
-            "cannot write through a shared reference",
+            "cannot write through an immutable borrow",
         );
         rejects(
             &format!("{counter} fun f(a: &[Counter; 2]) {{ a[0].bump(); }}"),
-            "cannot write through a shared reference",
+            "cannot write through an immutable borrow",
         );
         accepts(&format!(
             "{counter} struct Outer {{ inner: Counter }}
@@ -513,19 +513,19 @@ mod tests {
 
         rejects(
             "fun f(r: &i32) { *r = 1; }",
-            "cannot write through a shared reference",
+            "cannot write through an immutable borrow",
         );
         rejects(
             &format!("{structs} fun f(s: &S) {{ s.x = 1; }}"),
-            "cannot write through a shared reference",
+            "cannot write through an immutable borrow",
         );
         rejects(
             &format!("{structs} fun f(s: &S) {{ let r = s; r.x = 1; }}"),
-            "cannot write through a shared reference",
+            "cannot write through an immutable borrow",
         );
         rejects(
             "fun f(a: &[i32; 4]) { a[0] = 1; }",
-            "cannot write through a shared reference",
+            "cannot write through an immutable borrow",
         );
 
         accepts("fun f(r: &mut i32) { *r = 1; }");
@@ -537,11 +537,11 @@ mod tests {
     fn a_write_through_a_shared_receiver_or_self_field_is_rejected() {
         let shared = "struct S { x: i32 }
              extend S { fun set(&self, v: i32) { self.x = v; } }";
-        rejects(shared, "cannot write through a shared reference");
+        rejects(shared, "cannot write through an immutable borrow");
 
         let mut_derivation = "struct S { x: i32 }
              extend S { fun bad(&self) -> &mut i32 { return &mut self.x; } }";
-        rejects(mut_derivation, "cannot write through a shared reference");
+        rejects(mut_derivation, "cannot write through an immutable borrow");
 
         let mutable = "struct S { x: i32 }
              extend S { fun set(&mut self, v: i32) { self.x = v; } }";
@@ -552,7 +552,7 @@ mod tests {
     fn a_mutable_borrow_of_a_shared_reference_is_rejected() {
         rejects(
             "fun f(r: &i32) { let m: &mut i32 = &mut *r; }",
-            "cannot write through a shared reference",
+            "cannot write through an immutable borrow",
         );
         accepts("fun f(r: &mut i32) { let m: &mut i32 = &mut *r; }");
     }

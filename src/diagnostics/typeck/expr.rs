@@ -13,10 +13,7 @@ pub fn report_not_assignable(session: &Session, span: SrcSpan) {
         Diagnostic::error("this expression cannot be assigned to", span)
             .with_code(codes::NOT_ASSIGNABLE)
             .with_label("not a place")
-            .with_help(
-                "the left side of an assignment has to name somewhere a value lives -- a \
-                     local, a field, or an element -- rather than produce one",
-            ),
+            .with_help("the left side of an assignment has refer to a place"),
     );
 }
 
@@ -79,11 +76,7 @@ pub fn report_index_base_unknown(session: &Session, span: SrcSpan) {
             span,
         )
         .with_code(codes::INDEX_BASE_UNKNOWN)
-        .with_label("the type here is still unknown")
-        .with_help(
-            "what `[..]` means depends on the type it is written on: an array indexes \
-                 built-in, and everything else through an `extend .. with Index` block",
-        ),
+        .with_label("the type here is still unknown"),
     );
 }
 
@@ -102,8 +95,7 @@ pub fn report_reference_in_new(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
             span,
         )
         .with_code(codes::REFERENCE_IN_NEW)
-        .with_label("this type stores a reference")
-        .with_help("`iso` has to own the value it points to; take the value by value instead of by reference before passing it to `new`"),
+        .with_label("this type stores a reference"),
     );
 }
 
@@ -117,12 +109,7 @@ pub fn report_owned_element_in_new_array(cx: DisplayCtx<'_>, ty: Ty, span: SrcSp
             span,
         )
         .with_code(codes::OWNED_ELEMENT_IN_NEW_ARRAY)
-        .with_label("this type owns an allocation, so it cannot be copied into every slot")
-        .with_help(
-            "the element is evaluated once and stored into all `count` slots, which would leave \
-             every slot owning the same allocation; repeat a plain value instead, and fill the \
-             array with owning ones element by element",
-        ),
+        .with_label("this type owns an allocation, so it cannot be copied into every slot"),
     );
 }
 
@@ -130,25 +117,20 @@ pub fn report_not_indexable(cx: DisplayCtx<'_>, base: Ty, span: SrcSpan) {
     cx.emit(
         Diagnostic::error(format!("`{}` cannot be indexed", cx.show(base)), span)
             .with_code(codes::NOT_INDEXABLE)
-            .with_label("no `index` method on this type")
-            .with_help(
-                "indexing an array is built in; every other type is indexed through an \
-                 `extend .. with Index<K, V>` block",
-            ),
+            .with_label("no `index` method on this type"),
     );
 }
 
 pub fn report_elided_ctor_unknown(session: &Session, span: SrcSpan) {
     session.emit(
         Diagnostic::error(
-            "type annotations needed: `.{ .. }` names no struct, and the type it is expected \
-                 to produce is unknown here",
+            "type annotations needed, cannot deduce the type of `.{ .. }`",
             span,
         )
         .with_code(codes::ELIDED_CTOR_UNKNOWN)
         .with_label("cannot tell which struct this builds")
         .with_help(
-            "write the struct's name instead, or give the surrounding binding, parameter, or \
+            "consider writing the struct's name or give the surrounding binding, parameter, or \
                  return type an annotation",
         ),
     );
@@ -214,23 +196,15 @@ pub fn report_variant_enum_unknown(session: &Session, variant: Ident, span: SrcS
             span,
         )
         .with_code(codes::VARIANT_ENUM_UNKNOWN)
-        .with_label("cannot tell which enum this variant belongs to")
-        .with_help(
-            "a `.variant` takes its enum from the type it is expected to produce -- from a \
-                 binding's annotation, a parameter, or the enclosing function's return type",
-        ),
+        .with_label("cannot tell which enum this variant belongs to"),
     );
 }
 
 pub fn report_variant_base_not_a_type(session: &Session, span: SrcSpan) {
     session.emit(
-        Diagnostic::error("only an enum can be named before `.variant { .. }`", span)
+        Diagnostic::error("type of base is not an enum", span)
             .with_code(codes::VARIANT_BASE_NOT_A_TYPE)
-            .with_label("this names a value, not an enum")
-            .with_help(
-                "write `.variant { .. }` to build a variant of the expected enum, or name the \
-                 enum itself, as in `Shape.rect { .. }`",
-            ),
+            .with_label("this names a value, not an enum"),
     );
 }
 
@@ -300,11 +274,7 @@ pub fn report_if_no_else_mismatch(cx: DisplayCtx<'_>, err: UnifyError, span: Src
     cx.emit(
         Diagnostic::error(cx.show(err).to_string(), span)
             .with_code(codes::IF_NO_ELSE_MISMATCH)
-            .with_label("an `if` with no `else` produces no value")
-            .with_help(
-                "the block's last expression would be the `if`'s value, and there is \
-                             no `else` branch to produce one on the other path",
-            ),
+            .with_label("an `if` with no `else` produces no value"),
     );
 }
 
@@ -366,10 +336,7 @@ pub fn report_untrusted_intrinsic(session: &Session, span: SrcSpan) {
             span,
         )
         .with_code(codes::UNTRUSTED_INTRINSIC)
-        .with_help(
-            "it belongs to the compiler's lowest layers; the standard library builds the \
-             ordinary operations on top of it",
-        ),
+        .with_help("use of untrusted instrinsics may not be used out of standard library."),
     );
 }
 
@@ -383,11 +350,7 @@ pub fn report_try_outside(cx: DisplayCtx<'_>, operand_ty: Ty, span: SrcSpan) {
             span,
         )
         .with_code(codes::TRY_OUTSIDE)
-        .with_label("the enclosing definition declares no return type")
-        .with_help(
-            "`?` returns early on the failing case, so the enclosing function has to return \
-                 the same kind of value",
-        ),
+        .with_label("the enclosing definition declares no return type"),
     );
 }
 
@@ -402,11 +365,7 @@ pub fn report_try_return_mismatch(cx: DisplayCtx<'_>, operand_ty: Ty, ret: Ty, s
             span,
         )
         .with_code(codes::TRY_RETURN_MISMATCH)
-        .with_label("the two are not the same kind of value")
-        .with_help(
-            "`?` returns early with what it did not unwrap, so the enclosing function's return \
-                 type has to be able to carry it",
-        ),
+        .with_label("the two are not the same kind of value"),
     );
 }
 
@@ -449,10 +408,7 @@ pub fn report_cast_target_not_primitive(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpa
         Diagnostic::error(format!("cannot cast to `{}`", cx.show(ty)), span)
             .with_code(codes::CAST_TARGET_NOT_PRIMITIVE)
             .with_label("not a primitive type")
-            .with_help(
-                "`as` only ever converts between the primitive types -- the integers, the \
-                 floats, `bool`, and `char`",
-            ),
+            .with_help("`as` can only convert between primitive types"),
     );
 }
 
@@ -464,10 +420,7 @@ pub fn report_cast_source_not_primitive(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpa
         )
         .with_code(codes::CAST_SOURCE_NOT_PRIMITIVE)
         .with_label("not a primitive type")
-        .with_help(
-            "`as` only ever converts between the primitive types -- the integers, the \
-                 floats, `bool`, and `char`",
-        ),
+        .with_help("`as` can only convert between primitive types"),
     );
 }
 
@@ -478,12 +431,7 @@ pub fn report_cast_operand_unknown(session: &Session, span: SrcSpan) {
             span,
         )
         .with_code(codes::CAST_OPERAND_UNKNOWN)
-        .with_label("the type here is still unknown")
-        .with_help(
-            "give this value a concrete type first -- a literal suffix like `1_i32`, or a \
-                 `let` annotation, both work -- since whether the cast loses anything depends \
-                 on which type it starts from",
-        ),
+        .with_label("the type here is still unknown"),
     );
 }
 
@@ -495,11 +443,7 @@ pub fn report_cast_not_allowed(cx: DisplayCtx<'_>, from: Ty, to: Ty, reason: &st
         )
         .with_code(codes::CAST_NOT_ALLOWED)
         .with_label(reason.to_string())
-        .with_help(
-            "`as` only allows conversions that can never lose information; write out how the \
-             value should be narrowed instead, e.g. by comparing it against the target type's \
-             bounds first",
-        ),
+        .with_help("`as` does not allow lossy conversions"),
     );
 }
 

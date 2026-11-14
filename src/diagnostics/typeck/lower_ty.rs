@@ -35,11 +35,7 @@ pub fn report_trait_as_ty(session: &Session, span: SrcSpan) {
         Diagnostic::error("a trait cannot be used as a type on its own", span)
             .with_code(codes::TRAIT_AS_TYPE)
             .with_label("not a type")
-            .with_help(
-                "a trait names every type that implements it, not one type; write \
-                     `dyn Trait` for a value whose type is only known at run time, or take a \
-                     generic parameter bounded by the trait",
-            ),
+            .with_help("consider writing `dyn Trait`"),
     );
 }
 
@@ -54,11 +50,7 @@ pub fn report_unsized_dyn(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
         )
         .with_code(codes::UNSIZED_DYN)
         .with_label("this type is not sized")
-        .with_help(
-            "a `dyn` value can only be used through a fixed-size indirection; write \
-                 `&dyn Trait` (or `&mut dyn Trait`) to borrow it, or `iso dyn Trait` to own it \
-                 behind a pointer",
-        ),
+        .with_help("consider adding `&`, `&mut`, or `iso`"),
     );
 }
 
@@ -70,11 +62,7 @@ pub fn report_array_len_not_constant(session: &Session, span: SrcSpan) {
     session.emit(
         Diagnostic::error("array length must be a constant", span)
             .with_code(codes::ARRAY_LEN_NOT_CONSTANT)
-            .with_label("not a constant")
-            .with_help(
-                "the length in `[T; N]` is part of the type, so it has to be known at \
-                 compile time; write an integer literal or an expression built from them",
-            ),
+            .with_label("not a constant"),
     );
 }
 
@@ -112,11 +100,7 @@ pub fn report_reference_generic_arg(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
             span,
         )
         .with_code(codes::REFERENCE_GENERIC_ARG)
-        .with_label("this generic argument stores a reference")
-        .with_help(
-            "a struct or enum field has to own the value it holds, so none of its generic \
-                 arguments may store a reference either",
-        ),
+        .with_label("this generic argument stores a reference"),
     );
 }
 

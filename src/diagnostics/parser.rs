@@ -46,8 +46,7 @@ pub fn report_duplicate_module(session: &Session, span: SrcSpan) {
     session.emit(
         Diagnostic::error("a file can only declare one module", span)
             .with_code(codes::DUPLICATE_MODULE)
-            .with_label("second `module` declaration")
-            .with_help("every item in a file belongs to the module its first header names"),
+            .with_label("second `module` declaration"),
     );
 }
 

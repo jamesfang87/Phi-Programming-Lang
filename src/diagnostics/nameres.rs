@@ -54,8 +54,7 @@ pub fn report_duplicate_bound(session: &Session, name: Ident) {
             name.span,
         )
         .with_code(codes::DUPLICATE_BOUND)
-        .with_label("already listed for this type parameter")
-        .with_help("a bound only needs to be written once, even if satisfied redundantly"),
+        .with_label("already listed for this type parameter"),
     );
 }
 

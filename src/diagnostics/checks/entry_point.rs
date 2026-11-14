@@ -6,20 +6,15 @@ use crate::session::Session;
 
 pub fn report_missing_main(session: &Session) {
     session.emit(
-        Diagnostic::warning_global(
-            "no `main` function found; the built executable will do nothing",
-        )
-        .with_code(codes::MISSING_MAIN)
-        .with_help("add a `fun main()` at the crate root to give the program an entry point"),
+        Diagnostic::warning_global("no `main` function found")
+            .with_code(codes::MISSING_MAIN)
+            .with_help("add a `fun main()` to give the program an entry point"),
     );
 }
 
 pub fn report_ambiguous_main(session: &Session, hir: &Hir, candidates: &[DefId]) {
     let mut diagnostic = Diagnostic::error(
-        format!(
-            "found {} `main` functions at the crate root; the entry point is ambiguous",
-            candidates.len()
-        ),
+        format!("found {} `main` functions", candidates.len()),
         hir.function(candidates[0]).name.span,
     )
     .with_code(codes::AMBIGUOUS_MAIN)
@@ -27,7 +22,7 @@ pub fn report_ambiguous_main(session: &Session, hir: &Hir, candidates: &[DefId])
     for &other in &candidates[1..] {
         diagnostic = diagnostic.with_secondary(hir.function(other).name.span, "also named `main`");
     }
-    session.emit(diagnostic.with_help("keep one `main` at the crate root and rename the others"));
+    session.emit(diagnostic.with_help("keep one `main` and rename the others"));
 }
 
 pub fn report_main_takes_parameters(session: &Session, span: SrcSpan, param_count: usize) {

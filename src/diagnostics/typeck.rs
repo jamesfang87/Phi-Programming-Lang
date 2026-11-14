@@ -26,6 +26,18 @@ pub fn show_optional_self_mode(mode: Option<SelfMode>) -> &'static str {
     mode.map_or("no receiver", show_self_mode)
 }
 
+pub fn report_private_method(session: &Session, member: Ident) {
+    session.emit(
+        Diagnostic::error(
+            format!("method `{}` is private", session.resolve(member.text)),
+            member.span,
+        )
+        .with_code(codes::PRIVATE_ITEM)
+        .with_label("not visible from here")
+        .with_help("mark the method `public` to use it outside its declaring module"),
+    );
+}
+
 pub fn report_private_field(session: &Session, member: Ident) {
     session.emit(
         Diagnostic::error(
@@ -64,7 +76,7 @@ pub fn report_recursive_type(cx: DisplayCtx<'_>, name: Ident) {
         )
         .with_code(codes::RECURSIVE_TYPE)
         .with_label("this type contains itself by value")
-        .with_help("put the recursive field behind `iso` to give it a fixed size"),
+        .with_help("consider adding `iso` to give it a fixed size"),
     );
 }
 
@@ -110,11 +122,7 @@ pub fn report_bodiless_function(session: &Session, span: SrcSpan) {
     session.emit(
         Diagnostic::error("this function has no body", span)
             .with_code(codes::BODILESS_FUNCTION)
-            .with_label("a function declared here must have a body")
-            .with_help(
-                "only the compiler's own intrinsics may omit one, and only when declared in \
-                 the core library",
-            ),
+            .with_label("a function declared here must have a body"),
     );
 }
 
@@ -125,12 +133,7 @@ pub fn report_operand_has_unknown_type(session: &Session, span: SrcSpan) {
             span,
         )
         .with_code(codes::OPERAND_UNKNOWN_TYPE)
-        .with_label("the type here is still unknown")
-        .with_help(
-            "which `extend .. with` block this operator would dispatch to depends on the \
-                 type it is applied to, and unlike a trait bound that cannot wait for a later \
-                 pass -- write the type out",
-        ),
+        .with_label("the type here is still unknown"),
     );
 }
 
@@ -257,12 +260,7 @@ pub fn report_any_outside_signature(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
             span,
         )
         .with_code(codes::ANY_OUTSIDE_SIGNATURE)
-        .with_label("this type carries `any` outside a function signature")
-        .with_help(
-            "`any` describes how a function accepts or hands back a value, not a type a \
-                 field, binding, or generic argument can hold; give the field or binding a \
-                 concrete type instead",
-        ),
+        .with_label("this type carries `any` outside a function signature"),
     );
 }
 
@@ -273,10 +271,6 @@ pub fn report_reference_field(cx: DisplayCtx<'_>, ty: Ty, span: SrcSpan) {
             span,
         )
         .with_code(codes::REFERENCE_FIELD)
-        .with_label("this type stores a reference")
-        .with_help(
-            "a struct or enum field has to own the value it holds; take the field by value \
-                 instead of by reference",
-        ),
+        .with_label("this type stores a reference"),
     );
 }

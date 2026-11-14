@@ -134,7 +134,7 @@ mod tests {
                 "module app;\n\nfun main() {\n}\n",
                 "module other;\n\nfun main() {\n}\n",
             ],
-            "the entry point is ambiguous",
+            "found 2 `main` functions",
         );
     }
 

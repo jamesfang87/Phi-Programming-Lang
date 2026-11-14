@@ -38,11 +38,7 @@ pub fn report_missing_methods(
         impl_span,
     )
     .with_code(codes::MISSING_METHODS)
-    .with_label(format!("{these} method{plural} not implemented"))
-    .with_help(
-        "every method a trait declares without a default body has to be written out by \
-             each implementation; giving the declaration a body makes it optional instead",
-    );
+    .with_label(format!("{these} method{plural} not implemented"));
 
     for &declaration in missing {
         let declaration = hir.function(declaration);
@@ -63,7 +59,7 @@ pub fn report_not_a_member(
     cx: DisplayCtx<'_>,
     method: DefId,
     trait_ref: &TraitRef,
-    self_ty: Ty,
+    _self_ty: Ty,
 ) {
     let method = hir.function(method);
     let name = cx.resolve(method.name.text);
@@ -79,13 +75,7 @@ pub fn report_not_a_member(
         .with_secondary(
             declared_trait_span(hir, trait_ref.def),
             format!("`{declared_trait_name}` is declared here"),
-        )
-        .with_help(format!(
-            "an `extend .. with {declared_trait_name}` block may only implement what \
-             `{declared_trait_name}` declares, since that is all a caller reaching `{}` through \
-             the trait can see; put `{name}` in an inherent `extend` block instead",
-            cx.show(self_ty)
-        )),
+        ),
     );
 }
 
@@ -106,10 +96,6 @@ pub fn report_generic_count(session: &Session, found: &Function, expected: &Func
         .with_secondary(
             expected.name.span,
             format!("declared with {want} type parameter{plural} here"),
-        )
-        .with_help(
-            "an implementation has to be as general as the declaration it fulfills, so the \
-                 two parameter lists have to line up one for one",
         ),
     );
 }
@@ -143,10 +129,6 @@ pub fn report_self_mode(
                 "declared taking {} here",
                 show_optional_self_mode(expected_mode)
             ),
-        )
-        .with_help(
-            "how a method takes its receiver is part of its signature: a caller reaching it \
-                 through the trait is checked against what the trait declared",
         ),
     );
 }
@@ -208,11 +190,7 @@ pub fn report_param_ty(
             declared_param.span,
             format!("declared as `{}` here", cx.show(want)),
         )
-        .with_help(
-            "a signature has to match its declaration exactly, not merely be compatible with \
-                 it: a parameter that is more general still accepts arguments the trait never \
-                 promised the implementation would take",
-        ),
+        .with_help("a signature has to match its declaration exactly"),
     );
 }
 
