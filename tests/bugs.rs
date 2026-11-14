@@ -471,7 +471,7 @@ fn writing_through_a_shared_reference_is_rejected() {
         assert_no_compiler_panic(&output, "write through a shared reference");
         assert_ne!(code(&output), 0, "case {idx} must be rejected: {src}");
         assert!(
-            stderr(&output).contains("shared reference"),
+            stderr(&output).contains("cannot write through an immutable borrow"),
             "case {idx}: {}",
             stderr(&output)
         );
@@ -544,7 +544,7 @@ import core::ops::Eq;
 
 struct Vec2 { public x: i32, public y: i32 }
 
-extend Vec2 with Add {
+extend Vec2 with Add<Vec2> {
     fun add(&self, other: &Self) -> Self {
         return Vec2 { x: self.x + other.x, y: self.y + other.y };
     }
@@ -606,7 +606,7 @@ import core::ops::Add;
 
 struct N { public v: i32 }
 
-extend N with Add {
+extend N with Add<N> {
     fun add(&self, other: &Self) -> Self { return N { v: self.v + other.v }; }
 }
 

@@ -1163,8 +1163,8 @@ Item {
     },
 }
 === stderr ===
-Warning[E0364]: no `main` function found; the built executable will do nothing
-  Help: add a `fun main()` at the crate root to give the program an entry point
+Warning[E0364]: no `main` function found
+  Help: add a `fun main()` to give the program an entry point
 [W0501] Warning: parameter `key` is never read
    ╭─[ ./src/map.phi:9:22 ]
    │

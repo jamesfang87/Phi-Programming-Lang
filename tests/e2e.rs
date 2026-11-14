@@ -25,6 +25,11 @@ fn run_project(name: &str, files: &[(&str, &str)], expected: &str) {
     support::expect_stdout(&output, expected, name);
 }
 
+fn rejects_project(name: &str, files: &[(&str, &str)], needle: &str) {
+    let output = support::check_files("e2e", name, files);
+    support::expect_reject(&output, needle, name);
+}
+
 #[test]
 fn integer_literals() {
     run(
@@ -1750,6 +1755,109 @@ public fun triple(x: i32) -> i32 { return x * 3; }
 }
 
 #[test]
+fn private_function_cannot_be_imported() {
+    rejects_project(
+        "private_function",
+        &[
+            (
+                "src/main.phi",
+                r#"module app;
+import lib::hidden;
+fun main() { hidden(); }
+"#,
+            ),
+            (
+                "src/lib.phi",
+                r#"module lib;
+fun hidden() -> i32 { return 1; }
+"#,
+            ),
+        ],
+        "private",
+    );
+}
+
+#[test]
+fn private_field_cannot_be_constructed_or_read() {
+    rejects_project(
+        "private_field",
+        &[
+            (
+                "src/main.phi",
+                r#"module app;
+import lib::Secret;
+fun main() { let secret = Secret { hidden: 1 }; let value = secret.hidden; }
+"#,
+            ),
+            (
+                "src/lib.phi",
+                r#"module lib;
+public struct Secret { hidden: i32 }
+"#,
+            ),
+        ],
+        "private",
+    );
+}
+
+#[test]
+fn private_method_cannot_be_called_across_modules() {
+    rejects_project(
+        "private_method",
+        &[
+            (
+                "src/main.phi",
+                r#"module app;
+import lib::Secret;
+fun main() {
+    let secret = Secret { value: 1 };
+    println(secret.hidden());
+}
+"#,
+            ),
+            (
+                "src/lib.phi",
+                r#"module lib;
+public struct Secret {
+    public value: i32,
+}
+extend Secret {
+    fun hidden(&self) -> i32 {
+        return self.value;
+    }
+}
+"#,
+            ),
+        ],
+        "private",
+    );
+}
+
+#[test]
+fn wildcard_import_does_not_import_private_items() {
+    rejects_project(
+        "private_wildcard",
+        &[
+            (
+                "src/main.phi",
+                r#"module app;
+import lib::*;
+fun main() { hidden(); }
+"#,
+            ),
+            (
+                "src/lib.phi",
+                r#"module lib;
+public fun visible() -> i32 { return 1; }
+fun hidden() -> i32 { return 2; }
+"#,
+            ),
+        ],
+        "cannot find `hidden`",
+    );
+}
+
+#[test]
 fn multi_file_struct_import() {
     run_project(
         "multi_file_struct",
@@ -2403,7 +2511,7 @@ import core::ops::Add;
 import core::ops::Comparable;
 import core::ops::Eq;
 
-fun plus<T: Add>(a: T, b: T) -> T {
+fun plus<T: Add<T>>(a: T, b: T) -> T {
     return a + b;
 }
 
