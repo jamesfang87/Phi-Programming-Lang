@@ -199,10 +199,7 @@ mod tests {
     #[test]
     fn a_token_pattern_becomes_the_expected_token_kind() {
         let (tokens, _) = lex_src("fun");
-        let err = expected_with(
-            &[RichPattern::Token(MaybeRef::Val(tokens[0].clone()))],
-            None,
-        );
+        let err = expected_with(&[RichPattern::Token(MaybeRef::Val(tokens[0]))], None);
 
         assert_eq!(expected_set(&err), [Expected::of_kind(TokenKind::FunKw)]);
     }

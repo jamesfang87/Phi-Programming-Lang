@@ -918,10 +918,7 @@ impl<'a> BodyLowerCtx<'a> {
         for param in params {
             resolved.push(self.resolve_any(param, Some(mode)));
         }
-        let ret = match ret {
-            Some(ret) => Some(self.resolve_any(ret, Some(mode))),
-            None => None,
-        };
+        let ret = ret.map(|ret| self.resolve_any(ret, Some(mode)));
         self.tcx.mk_fun(resolved, ret)
     }
 }

@@ -114,7 +114,7 @@ mod tests {
 
     fn numeric_token(text: &str) -> Token {
         let (tokens, _) = crate::testing::lex_src(text);
-        tokens[0].clone()
+        tokens[0]
     }
 
     #[test]
