@@ -1,9 +1,12 @@
-use crate::ast::{BinaryOp, Literal, Mutability, UnaryOp};
+use std::collections::HashMap;
+
+use crate::ast::{BinaryOp, Ident, Literal, Mutability, UnaryOp};
 use crate::diagnostics::nameres::{report_dyn_not_trait, report_self_unavailable};
 use crate::diagnostics::typeck::lower_ty::{
     report_arg_count, report_array_len_division_by_zero, report_array_len_negative,
     report_array_len_not_constant, report_array_len_not_usize, report_array_len_overflow,
-    report_self_cycle, report_trait_as_ty,
+    report_associated_type_base_not_self, report_self_cycle, report_trait_as_ty,
+    report_unknown_associated_type,
 };
 use crate::driver::source::SrcSpan;
 use crate::hir::{
@@ -46,6 +49,10 @@ impl<'hir> Typeck<'hir> {
                 let (res, args) = (path.res, args.clone());
                 self.lower_dyn(id, res, &args, span)
             }
+            HirTyKind::Projection { base, name } => {
+                let (base, name) = (*base, *name);
+                self.lower_projection(id, base, name, span)
+            }
             HirTyKind::Error => self.tcx.error(),
         };
 
@@ -60,6 +67,74 @@ impl<'hir> Typeck<'hir> {
     fn lower_self_ty(&mut self, id: TyId, args: &[TyId], span: SrcSpan) -> Ty {
         Self::check_no_args(self.session, args, span, "`Self`");
         self.self_ty(id.owner(), span)
+    }
+
+    fn lower_projection(&mut self, id: TyId, base: TyId, name: Ident, span: SrcSpan) -> Ty {
+        if !matches!(self.hir.ty(base).kind, HirTyKind::SelfTy(_)) {
+            report_associated_type_base_not_self(self.session, span);
+            return self.tcx.error();
+        }
+
+        let Some(introducer) = self.self_introducer(id.owner(), span) else {
+            return self.tcx.error();
+        };
+
+        match self.hir.def(introducer) {
+            OwnerNode::Trait(trait_) => {
+                match trait_
+                    .associated_types
+                    .iter()
+                    .find(|associated| associated.name.text == name.text)
+                {
+                    Some(associated) => self.tcx.mk_generic(associated.parameter),
+                    None => {
+                        let name = self.session.resolve(name.text).to_string();
+                        report_unknown_associated_type(self.session, &name, span);
+                        self.tcx.error()
+                    }
+                }
+            }
+            OwnerNode::Extend(extend) => {
+                if let Some(definition) = extend
+                    .associated_types
+                    .iter()
+                    .find(|definition| definition.name.text == name.text)
+                {
+                    let ty = definition.ty;
+                    return self.lower_ty(ty);
+                }
+
+                if let Some(default) = self.trait_default_for(introducer, name) {
+                    let self_ty = self.extended_type(introducer);
+                    return self.subst_sig_ty(default, &HashMap::new(), self_ty);
+                }
+
+                let name = self.session.resolve(name.text).to_string();
+                report_unknown_associated_type(self.session, &name, span);
+                self.tcx.error()
+            }
+            _ => unreachable!("only a trait or an extend block can declare an associated type"),
+        }
+    }
+
+    fn trait_default_for(&mut self, block: DefId, name: Ident) -> Option<Ty> {
+        let trait_def = self.trait_implemented_by(block)?;
+        let default = self
+            .hir
+            .trait_(trait_def)
+            .associated_types
+            .iter()
+            .find(|associated| associated.name.text == name.text)?
+            .default?;
+        Some(self.lower_ty(default))
+    }
+
+    fn trait_implemented_by(&self, block: DefId) -> Option<DefId> {
+        let path = self.hir.extend(block).trait_path.as_ref()?;
+        match path.res {
+            Res::Type(Type::Def(TyDef::Trait(def))) => Some(def),
+            _ => None,
+        }
     }
 
     fn lower_ref(&mut self, base: TyId, mutability: Mutability) -> Ty {
@@ -258,10 +333,13 @@ impl<'hir> Typeck<'hir> {
     fn lower_dyn(&mut self, id: TyId, res: Res, args: &[TyId], span: SrcSpan) -> Ty {
         match res {
             Res::Type(Type::Def(TyDef::Trait(trait_def))) => {
-                if !self.check_arg_count(trait_def, args.len(), span) {
+                if !self.check_explicit_arg_count(trait_def, args.len(), span) {
                     return self.tcx.error();
                 }
-                let args = self.lower_tys(args);
+                let mut args = self.lower_tys(args);
+                for _ in &self.hir.trait_(trait_def).associated_types {
+                    args.push(self.tcx.next_infer_var());
+                }
                 self.register_bound_obligations(trait_def, &args, span, id.owner());
                 self.tcx.mk_dyn(trait_def, args)
             }
@@ -378,9 +456,10 @@ fn mentions_self(hir: &Hir, id: TyId) -> bool {
         HirTyKind::Path { args, .. } | HirTyKind::Dyn { args, .. } => {
             args.iter().any(|&arg| mentions_self(hir, arg))
         }
-        HirTyKind::Ref { base, .. } | HirTyKind::Any(base) | HirTyKind::Iso(base) => {
-            mentions_self(hir, *base)
-        }
+        HirTyKind::Ref { base, .. }
+        | HirTyKind::Any(base)
+        | HirTyKind::Iso(base)
+        | HirTyKind::Projection { base, .. } => mentions_self(hir, *base),
         HirTyKind::Tuple(elems) => elems.iter().any(|&elem| mentions_self(hir, elem)),
         HirTyKind::Array { elem, .. } => mentions_self(hir, *elem),
         HirTyKind::Function { params, ret } => {

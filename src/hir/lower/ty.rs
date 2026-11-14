@@ -41,6 +41,10 @@ impl OwnerLowerer<'_, '_> {
                 path: low.cx.lower_path(node_id, path),
                 args: args.iter().map(|a| low.lower_ty(a)).collect(),
             },
+            ast::TyKind::Projection { base, name } => TyKind::Projection {
+                base: low.lower_ty(base),
+                name: *name,
+            },
             ast::TyKind::Error => TyKind::Error,
         })
     }

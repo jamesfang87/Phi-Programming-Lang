@@ -231,6 +231,9 @@ pub const BREAK_OUTSIDE_LOOP: &str = "E0433";
 pub const CONTINUE_OUTSIDE_LOOP: &str = "E0434";
 
 pub const UNTRUSTED_INTRINSIC: &str = "E0435";
+pub const UNKNOWN_ASSOCIATED_TYPE: &str = "E0436";
+pub const MISSING_ASSOCIATED_TYPE: &str = "E0437";
+pub const ASSOCIATED_TYPE_BASE_NOT_SELF: &str = "E0438";
 
 pub const USE_OF_MOVED_VALUE: &str = "E0501";
 

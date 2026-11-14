@@ -1,5 +1,6 @@
 module std::range;
 
+import core::iter::IntoIterator;
 import core::iter::Iterator;
 import core::ops::Comparable;
 import core::ops::Copy;
@@ -93,5 +94,20 @@ extend<T: Step + Comparable + Copy> Range<T> with Iterator<T> {
         let next = current.succ();
         self.left = .some(next);
         return .some(current);
+    }
+}
+
+extend<T: Step + Comparable + Copy> Range<T> with IntoIterator {
+    type Iter = Range<T>;
+    fun into_iter(&self) -> Range<T> {
+        let left: Option<T> = match &self.left {
+            .some(value) => .some(*value),
+            .none => .none,
+        };
+        let right: Option<T> = match &self.right {
+            .some(value) => .some(*value),
+            .none => .none,
+        };
+        return Range { left: left, right: right, inclusive: self.inclusive };
     }
 }

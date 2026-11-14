@@ -90,7 +90,7 @@ pub fn lower(
 
     Mir {
         bodies,
-        vtables: collect_vtables(hir, types),
+        vtables: collect_vtables(hir, tcx, types),
     }
 }
 

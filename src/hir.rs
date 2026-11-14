@@ -15,8 +15,8 @@ pub use block::{Block, Stmt, StmtKind, WithLend};
 pub use expr::{AccessArgs, Expr, ExprKind, LoopSource, Payload, PayloadField};
 pub use ids::{ArmId, BlockId, DefId, ExprId, HirId, PatId, StmtId, TyId};
 pub use items::{
-    Bound, Closure, ClosureParam, Enum, Extend, Field, Function, Generic, Import, Module, Param,
-    SelfParam, Struct, Trait, Variant, VariantPayload,
+    AssociatedType, AssociatedTypeDef, Bound, Closure, ClosureParam, Enum, Extend, Field, Function,
+    Generic, Import, Module, Param, SelfParam, Struct, Trait, Variant, VariantPayload,
 };
 pub use pat::{Arm, BindingMode, Pat, PatKind};
 pub use path::{Local, Path, Res, TyDef, Type};

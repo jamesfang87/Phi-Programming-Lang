@@ -17,6 +17,7 @@ pub struct VtableInfo {
 
 pub(crate) fn collect_vtables(
     hir: &Hir,
+    tcx: &mut TyCtx,
     types: &TypeResolutions,
 ) -> HashMap<VtableKey, VtableInfo> {
     let mut out = HashMap::new();
@@ -54,14 +55,7 @@ pub(crate) fn collect_vtables(
             })
             .collect();
 
-        // TODO: this can also be refactored out into "get_trait_type_args"
-        let trait_args: Option<Vec<Ty>> = extend
-            .trait_generics
-            .iter()
-            .map(|&id| types.ty(id.into()))
-            .collect();
-
-        let trait_args = trait_args.unwrap_or_default();
+        let trait_args = trait_type_arguments(hir, tcx, types, extend, self_ty, trait_def);
         out.entry((self_ty, trait_def, trait_args.clone()))
             .or_insert(VtableInfo {
                 methods: method_impls,
@@ -70,6 +64,49 @@ pub(crate) fn collect_vtables(
             });
     }
     out
+}
+
+/// Returns the complete argument list an `extend` block gives its trait: the explicit arguments
+/// followed by each associated type's definition or default.
+fn trait_type_arguments(
+    hir: &Hir,
+    tcx: &mut TyCtx,
+    types: &TypeResolutions,
+    extend: &crate::hir::Extend,
+    self_ty: Ty,
+    trait_def: DefId,
+) -> Vec<Ty> {
+    let mut args: Vec<Ty> = extend
+        .trait_generics
+        .iter()
+        .map(|&id| types.ty(id.into()))
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default();
+
+    for associated in &hir.trait_(trait_def).associated_types {
+        if let Some(definition) = extend
+            .associated_types
+            .iter()
+            .find(|definition| definition.name.text == associated.name.text)
+        {
+            if let Some(ty) = types.ty(definition.ty.into()) {
+                args.push(ty);
+            }
+            continue;
+        }
+
+        if let Some(default) = associated.default
+            && let Some(ty) = types.ty(default.into())
+        {
+            let substitution = Subst {
+                generics: HashMap::new(),
+                self_ty: Some(self_ty),
+            };
+            args.push(subst_ty(tcx, ty, &substitution));
+        }
+    }
+
+    args
 }
 
 /// Returns the implementation block for `trait_` that applies to `concrete`, with the bindings
@@ -237,7 +274,7 @@ fun f() {}";
         let trait_def = find_trait_def(&hir, "Greet");
         let point_ty = tcx.mk_adt(point_def, Vec::new());
 
-        let vtables = collect_vtables(&hir, &types);
+        let vtables = collect_vtables(&hir, &mut tcx, &types);
         let info = vtables
             .get(&(point_ty, trait_def, Vec::new()))
             .expect("Point implements Greet");
@@ -260,7 +297,7 @@ fun f() {}";
         let bool_ty = tcx.mk_prim(crate::nameres::PrimTy::Bool);
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
 
-        let vtables = collect_vtables(&hir, &types);
+        let vtables = collect_vtables(&hir, &mut tcx, &types);
         let bool_impl = vtables
             .get(&(w_ty, trait_def, vec![bool_ty]))
             .expect("W implements Conv<bool>");
@@ -280,7 +317,7 @@ fun f() {}";
         let trait_def = find_trait_def(&hir, "Greet");
         let i32_ty = tcx.mk_prim(crate::nameres::PrimTy::I32);
 
-        let vtables = collect_vtables(&hir, &types);
+        let vtables = collect_vtables(&hir, &mut tcx, &types);
         assert!(!vtables.contains_key(&(i32_ty, trait_def, Vec::new())));
     }
 }

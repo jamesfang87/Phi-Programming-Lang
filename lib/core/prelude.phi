@@ -2,6 +2,7 @@ module core::prelude;
 
 import core::option::Option;
 import core::result::Result;
+import core::iter::IntoIterator;
 import core::iter::Iterator;
 import core::ops::Add;
 import core::ops::Sub;

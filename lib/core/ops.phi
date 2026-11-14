@@ -1,7 +1,8 @@
 module core::ops;
 
 public trait Add<Rhs> {
-    fun add(&self, other: &Rhs) -> Self;
+    type Output = Self;
+    fun add(&self, other: &Rhs) -> Self::Output;
 }
 
 public trait Sub {

@@ -120,8 +120,8 @@ impl OwnerLowerer<'_, '_> {
     }
 
     /// `for pat in iter { body }`, desugared through the iterator protocol:
-    /// `{ let mut __iter = iter; loop { match __iter.next() { Some(pat) => { body }, None => break } } }`.
-    /// See `LoopSource::For`.
+    /// `{ let __iterable = iter; let mut __iter = __iterable.into_iter(); loop { match
+    /// __iter.next() { Some(pat) => { body }, None => break } } }`. See `LoopSource::For`.
     pub(super) fn lower_for(
         &mut self,
         pat: &ast::Pat,
@@ -132,12 +132,44 @@ impl OwnerLowerer<'_, '_> {
         let session = self.cx.session;
         self.synth_expr(span, |low, _outer_id| {
             let inner_block = low.synth_block(span, |low, _block_id| {
+                let source_ident = Ident {
+                    text: session.intern("__iterable"),
+                    span,
+                };
                 let iter_ident = Ident {
                     text: session.intern("__iter"),
                     span,
                 };
 
-                let iter_init = low.lower_expr(iter);
+                let source_init = low.lower_expr(iter);
+                let source_pat =
+                    low.synth_pat(span, move |_, _| PatKind::Binding { name: source_ident });
+                let source_stmt = low.synth_stmt(span, move |_, _| StmtKind::Let {
+                    mutability: Mutability::Mutable,
+                    pat: source_pat,
+                    ty: None,
+                    init: source_init,
+                    else_block: None,
+                });
+
+                let iter_init = low.synth_expr(span, move |low, _| {
+                    let receiver = low.synth_expr(span, move |_, _| {
+                        ExprKind::Path(crate::hir::Path {
+                            segments: vec![source_ident],
+                            res: crate::hir::Res::Local(crate::hir::Local::Variable(
+                                source_pat.into(),
+                            )),
+                        })
+                    });
+                    ExprKind::Access {
+                        base: receiver,
+                        member: Ident {
+                            text: session.intern("into_iter"),
+                            span,
+                        },
+                        args: AccessArgs::Call(Vec::new()),
+                    }
+                });
                 let iter_pat =
                     low.synth_pat(span, move |_, _| PatKind::Binding { name: iter_ident });
                 let let_stmt = low.synth_stmt(span, move |_, _| StmtKind::Let {
@@ -216,7 +248,7 @@ impl OwnerLowerer<'_, '_> {
                 });
                 let loop_stmt = low.synth_stmt(span, move |_, _| StmtKind::Expr(loop_expr));
 
-                (vec![let_stmt, loop_stmt], None)
+                (vec![source_stmt, let_stmt, loop_stmt], None)
             });
             ExprKind::Block(inner_block)
         })

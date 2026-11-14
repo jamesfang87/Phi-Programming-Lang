@@ -1,5 +1,7 @@
 module std::vector;
 
+import core::iter::IntoIterator;
+import core::iter::Iterator;
 import core::mem::MaybeUninit;
 import core::libc::malloc;
 import core::libc::realloc;
@@ -93,5 +95,28 @@ extend<T> Vector<T> with Drop {
         for i in 0..self.len {
             let _ = read(&mut self.buf[i]);
         }
+    }
+}
+
+public struct VectorIter<T> {
+    vector: &Vector<T>,
+    index: usize,
+}
+
+extend<T> VectorIter<T> with Iterator<&T> {
+    fun next(&mut self) -> Option<&T> {
+        if self.index >= self.vector.len() {
+            return .none;
+        }
+        let index = self.index;
+        self.index = self.index + 1;
+        return .some(self.vector[index]);
+    }
+}
+
+extend<T> Vector<T> with IntoIterator {
+    type Iter = VectorIter<T>;
+    fun into_iter(&self) -> VectorIter<T> {
+        return VectorIter { vector: self, index: 0 };
     }
 }

@@ -8,6 +8,7 @@ use crate::diagnostics::typeck::traits::index::{
     report_attempt_to_extend_with_non_trait, report_extend_any, report_extend_bare_self,
     report_extend_dyn, report_extend_generic, report_extend_trait,
 };
+use crate::diagnostics::typeck::traits::validity::report_missing_associated_type;
 use crate::driver::source::SrcSpan;
 use crate::hir::{DefId, Hir, HirId, OwnerNode, Res, TyDef, TyKind as HirTyKind, Type};
 use crate::nameres::PrimTy;
@@ -303,13 +304,14 @@ impl<'hir> Typeck<'hir> {
                 report_extend_bare_self(self.session, node.span);
                 None
             }
+            HirTyKind::Projection { .. } => None,
             HirTyKind::Error => None,
         }
     }
 
     /// Returns the trait `block` implements through its `with` clause, reporting a `with` that
     /// does not name a trait.
-    fn implemented_trait(&self, block: DefId) -> Option<TraitRef> {
+    fn implemented_trait(&mut self, block: DefId) -> Option<TraitRef> {
         let node = self.hir.extend(block);
 
         let Some(Res::Type(Type::Def(tydef))) = node.trait_path.as_ref().map(|path| path.res)
@@ -323,7 +325,7 @@ impl<'hir> Typeck<'hir> {
             return None;
         }
 
-        let args = node
+        let mut args: Vec<Ty> = node
             .trait_generics
             .iter()
             .map(|&id| {
@@ -332,6 +334,52 @@ impl<'hir> Typeck<'hir> {
                     .expect("collect_extend lowers every trait argument an extend block writes")
             })
             .collect();
+
+        let associated_types = self
+            .hir
+            .trait_(def)
+            .associated_types
+            .iter()
+            .map(|associated| {
+                (
+                    associated.name.text,
+                    associated.default,
+                    associated.name.span,
+                )
+            })
+            .collect::<Vec<_>>();
+        let definitions = node
+            .associated_types
+            .iter()
+            .map(|definition| (definition.name.text, definition.ty))
+            .collect::<Vec<_>>();
+        let self_ty = self.extended_type(block);
+
+        for (name, default, name_span) in associated_types {
+            if let Some((_, ty)) = definitions.iter().find(|(defined, _)| *defined == name) {
+                let ty = self
+                    .types
+                    .ty((*ty).into())
+                    .unwrap_or_else(|| panic!("collect_extend lowers every associated type"));
+                args.push(ty);
+                continue;
+            }
+
+            if let Some(default) = default {
+                let default = self.lower_ty(default);
+                args.push(self.subst_sig_ty(default, &HashMap::new(), self_ty));
+                continue;
+            }
+
+            report_missing_associated_type(
+                self.session,
+                self.hir,
+                def,
+                self.session.resolve(name),
+                name_span,
+            );
+            args.push(self.tcx.error());
+        }
 
         Some(TraitRef { def, args })
     }

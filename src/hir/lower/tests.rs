@@ -1082,24 +1082,46 @@ fn for_loop_desugars_to_iterator_protocol() {
         ExprKind::Block(b) => hir.block(*b),
         other => panic!("expected the desugared for-loop to be a block, got {other:?}"),
     };
-    assert_eq!(inner_block.stmts.len(), 2);
+    assert_eq!(inner_block.stmts.len(), 3);
+
+    let StmtKind::Let {
+        mutability,
+        pat: source_pat,
+        ..
+    } = &hir.stmt(inner_block.stmts[0]).kind
+    else {
+        panic!("expected the first statement to bind the iterable")
+    };
+    assert_eq!(*mutability, Mutability::Mutable);
+    match &hir.pat(*source_pat).kind {
+        PatKind::Binding { name, .. } => assert_eq!(text(*name), "__iterable"),
+        other => panic!("expected a binding pattern, got {other:?}"),
+    }
 
     let StmtKind::Let {
         mutability,
         pat: iter_pat,
+        init,
         ..
-    } = &hir.stmt(inner_block.stmts[0]).kind
+    } = &hir.stmt(inner_block.stmts[1]).kind
     else {
-        panic!("expected the first statement to bind __iter")
+        panic!("expected the second statement to bind __iter")
     };
     assert_eq!(*mutability, Mutability::Mutable);
     match &hir.pat(*iter_pat).kind {
         PatKind::Binding { name, .. } => assert_eq!(text(*name), "__iter"),
         other => panic!("expected a binding pattern, got {other:?}"),
     }
+    match &hir.expr(*init).kind {
+        ExprKind::Access { member, args, .. } => {
+            assert_eq!(text(*member), "into_iter");
+            assert!(matches!(args, AccessArgs::Call(args) if args.is_empty()));
+        }
+        other => panic!("expected an `.into_iter()` call, got {other:?}"),
+    }
 
-    let StmtKind::Expr(loop_expr_id) = hir.stmt(inner_block.stmts[1]).kind else {
-        panic!("expected the second statement to be the loop")
+    let StmtKind::Expr(loop_expr_id) = hir.stmt(inner_block.stmts[2]).kind else {
+        panic!("expected the third statement to be the loop")
     };
     let (source, loop_body_id) = match &hir.expr(loop_expr_id).kind {
         ExprKind::Loop { source, block } => (source, *block),

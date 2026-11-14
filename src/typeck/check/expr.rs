@@ -1205,8 +1205,8 @@ impl<'hir> Typeck<'hir> {
                 return self.tcx.error();
             }
         }
-        self.record_operator_call(id, receiver, operand, other, item);
-        produced
+        self.record_operator_call(id, receiver, operand, other, item)
+            .unwrap_or(produced)
     }
 
     fn record_operator_call(
@@ -1216,7 +1216,7 @@ impl<'hir> Typeck<'hir> {
         operand: Ty,
         other: Ty,
         item: LangItem,
-    ) {
+    ) -> Option<Ty> {
         // Primitive arithmetic and comparisons compile straight to instructions. `str` is the
         // exception: it is a fat pointer, so its operators dispatch to the library's `Eq` and
         // `Comparable` implementations.
@@ -1226,11 +1226,9 @@ impl<'hir> Typeck<'hir> {
                 TyKind::Primitive(prim) if *prim != PrimTy::Str
             )
         {
-            return;
+            return None;
         }
-        let Some(trait_def) = self.hir.lang_items().get(item) else {
-            return;
-        };
+        let trait_def = self.hir.lang_items().get(item)?;
         let method = operator_trait_method_name(item);
         self.record_operator_trait_call(
             id,
@@ -1239,7 +1237,7 @@ impl<'hir> Typeck<'hir> {
             other,
             trait_def,
             self.session.intern(method),
-        );
+        )
     }
 
     fn implements_operator(
@@ -1281,6 +1279,10 @@ impl<'hir> Typeck<'hir> {
         let Some(def) = self.hir.lang_items().get(item) else {
             return false;
         };
+        if item == LangItem::Add {
+            let member = self.session.intern(operator_trait_method_name(item));
+            return self.operator_trait_holds(self_ty, arg, def, member, owner);
+        }
         let goal = if self.hir.trait_(def).generics.is_empty() {
             Goal::new(self_ty, def)
         } else {
@@ -2451,6 +2453,7 @@ mod tests {
              public enum Option<T> { some: T, none }
              struct Counter { n: i32 }
              extend Counter { fun next(&mut self) -> Option<i32> { return .none; } }
+             extend Counter { fun into_iter(&self) -> Counter { return Counter { n: self.n }; } }
              fun f() {
                  let c = Counter { n: 0 };
                  for x in c { let y: i32 = x; }
@@ -2461,6 +2464,7 @@ mod tests {
              public enum Option<T> { some: T, none }
              struct Counter { n: i32 }
              extend Counter { fun next(&mut self) -> Option<i32> { return .none; } }
+             extend Counter { fun into_iter(&self) -> Counter { return Counter { n: self.n }; } }
              fun f() {
                  let c = Counter { n: 0 };
                  for x in c { let y: bool = x; }

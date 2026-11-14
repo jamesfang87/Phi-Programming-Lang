@@ -2,7 +2,7 @@ use crate::diagnostics::typeck::traits::validity::{
     report_arg_count_mismatch, report_bound_is_not_a_trait,
 };
 use crate::driver::source::SrcSpan;
-use crate::hir::{DefId, HirId, Path, Res, TyDef, Type};
+use crate::hir::{DefId, HirId, OwnerNode, Path, Res, TyDef, Type};
 use crate::session::Session;
 use crate::typeck::Typeck;
 use crate::typeck::ty::TyKind;
@@ -70,6 +70,28 @@ impl<'hir> Typeck<'hir> {
 
         report_arg_count_mismatch(self.session, self.hir, def, declared, found, span);
         false
+    }
+
+    /// Checks that a use site supplied one argument per explicit generic parameter, ignoring the
+    /// parameters associated types add.
+    pub(crate) fn check_explicit_arg_count(&self, def: DefId, found: usize, span: SrcSpan) -> bool {
+        let declared = self.explicit_generic_count(def);
+        if declared == found {
+            return true;
+        }
+
+        report_arg_count_mismatch(self.session, self.hir, def, declared, found, span);
+        false
+    }
+
+    /// Returns how many generic parameters `def` declares in its own parameter list, without the
+    /// parameters its associated types add.
+    pub(crate) fn explicit_generic_count(&self, def: DefId) -> usize {
+        let declared = self.declared_generics(def).len();
+        match self.hir.def(def) {
+            OwnerNode::Trait(trait_) => declared - trait_.associated_types.len(),
+            _ => declared,
+        }
     }
 }
 

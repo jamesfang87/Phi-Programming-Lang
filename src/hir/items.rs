@@ -98,6 +98,25 @@ pub struct Trait {
     pub name: Ident,
     pub generics: Vec<HirId>, // -> Node::Generic
     pub functions: Vec<DefId>,
+    pub associated_types: Vec<AssociatedType>,
+    pub span: SrcSpan,
+}
+
+/// An associated type a trait declares. Its `parameter` is the synthetic generic parameter the
+/// trait's argument list carries for it.
+#[derive(Debug)]
+pub struct AssociatedType {
+    pub name: Ident,
+    pub parameter: HirId, // -> Node::Generic
+    pub default: Option<TyId>,
+    pub span: SrcSpan,
+}
+
+/// An associated type an `extend` block defines.
+#[derive(Debug)]
+pub struct AssociatedTypeDef {
+    pub name: Ident,
+    pub ty: TyId,
     pub span: SrcSpan,
 }
 
@@ -109,6 +128,7 @@ pub struct Extend {
     pub trait_generics: Vec<TyId>,
     pub trait_path: Option<Path>,
     pub methods: Vec<DefId>,
+    pub associated_types: Vec<AssociatedTypeDef>,
     pub span: SrcSpan,
 }
 

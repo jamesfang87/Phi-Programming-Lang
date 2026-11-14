@@ -36,5 +36,9 @@ pub enum TyKind {
         path: Path,
         args: Vec<TyId>,
     },
+    Projection {
+        base: TyId,
+        name: crate::ast::Ident,
+    },
     Error,
 }

@@ -115,3 +115,23 @@ pub fn report_self_cycle(session: &Session, span: SrcSpan) {
             ),
     );
 }
+
+pub fn report_unknown_associated_type(session: &Session, name: &str, span: SrcSpan) {
+    session.emit(
+        Diagnostic::error(
+            format!("`{name}` is not an associated type of this trait"),
+            span,
+        )
+        .with_code(codes::UNKNOWN_ASSOCIATED_TYPE)
+        .with_label("not declared as an associated type"),
+    );
+}
+
+pub fn report_associated_type_base_not_self(session: &Session, span: SrcSpan) {
+    session.emit(
+        Diagnostic::error("an associated type has to be reached through `Self`", span)
+            .with_code(codes::ASSOCIATED_TYPE_BASE_NOT_SELF)
+            .with_label("not `Self`")
+            .with_help("write `Self::Name` to name an associated type"),
+    );
+}

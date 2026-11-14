@@ -1,5 +1,7 @@
 module core::slice;
 
+import core::iter::IntoIterator;
+import core::iter::Iterator;
 import core::llvm::slice_len;
 import core::ops::Index;
 import core::ops::IndexSet;
@@ -31,5 +33,28 @@ extend<T> [T] with Index<usize, T> {
 extend<T> [T] with IndexSet<usize, T> {
     fun index_set(&mut self, key: usize, value: T) {
         self[key] = value;
+    }
+}
+
+public struct SliceIter<T> {
+    slice: &[T],
+    index: usize,
+}
+
+extend<T> SliceIter<T> with Iterator<&T> {
+    fun next(&mut self) -> Option<&T> {
+        if self.index >= self.slice.len() {
+            return .none;
+        }
+        let index = self.index;
+        self.index = self.index + 1;
+        return .some(&self.slice[index]);
+    }
+}
+
+extend<T> [T] with IntoIterator {
+    type Iter = SliceIter<T>;
+    fun into_iter(&self) -> SliceIter<T> {
+        return SliceIter { slice: self, index: 0 };
     }
 }

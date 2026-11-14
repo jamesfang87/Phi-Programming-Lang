@@ -60,6 +60,7 @@ pub enum TokenKind {
     StructKw,
     TraitKw,
     TrueKw,
+    TypeKw,
     WhileKw,
     WithKw,
 
@@ -189,6 +190,7 @@ pub(crate) const KEYWORDS: &[(&str, TokenKind)] = &[
     ("struct", TokenKind::StructKw),
     ("trait", TokenKind::TraitKw),
     ("true", TokenKind::TrueKw),
+    ("type", TokenKind::TypeKw),
     ("while", TokenKind::WhileKw),
     ("with", TokenKind::WithKw),
     ("i8", TokenKind::I8),

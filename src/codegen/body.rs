@@ -2097,7 +2097,10 @@ fn emit_direct_call<'ctx>(
         self_ty: fun.self_ty,
     };
     let name = cx.mangle(tcx, &instance);
-    let function = cx.functions[&name];
+    let function = *cx
+        .functions
+        .get(&name)
+        .unwrap_or_else(|| panic!("no codegen instance named `{name}` for {instance:?}"));
     cx.builder.build_call(function, arg_vals, "call").unwrap()
 }
 

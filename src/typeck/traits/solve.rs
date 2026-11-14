@@ -260,7 +260,24 @@ impl<'hir> Typeck<'hir> {
             .iter()
             .filter_map(|bound| match bound.path.res {
                 Res::Type(Type::Def(TyDef::Trait(def))) => {
-                    let args = self.lower_tys(&bound.args);
+                    let mut args = self.lower_tys(&bound.args);
+                    let associated = self
+                        .hir
+                        .trait_(def)
+                        .associated_types
+                        .iter()
+                        .map(|associated| associated.default)
+                        .collect::<Vec<_>>();
+                    for default in associated {
+                        let arg = match default {
+                            Some(default) => {
+                                let default = self.lower_ty(default);
+                                self.subst_sig_ty(default, &HashMap::new(), self_ty)
+                            }
+                            None => self.tcx.next_infer_var(),
+                        };
+                        args.push(arg);
+                    }
                     Some(Goal {
                         self_ty,
                         trait_: TraitRef { def, args },

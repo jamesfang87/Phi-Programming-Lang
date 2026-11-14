@@ -267,6 +267,25 @@ pub struct Trait {
     pub name: Ident,
     pub generics: Vec<Generic>,
     pub functions: Vec<Function>,
+    pub associated_types: Vec<AssociatedTypeDecl>,
+    pub span: SrcSpan,
+}
+
+/// An associated type a trait declares, such as `type Output;` or `type Output = Self;`.
+#[derive(Clone, Debug)]
+pub struct AssociatedTypeDecl {
+    pub id: NodeId,
+    pub name: Ident,
+    pub default: Option<Ty>,
+    pub span: SrcSpan,
+}
+
+/// An associated type an `extend` block defines, such as `type Output = String;`.
+#[derive(Clone, Debug)]
+pub struct AssociatedTypeDef {
+    pub id: NodeId,
+    pub name: Ident,
+    pub ty: Ty,
     pub span: SrcSpan,
 }
 
@@ -281,6 +300,7 @@ pub struct Extend {
     pub trait_generics: Option<Vec<Ty>>,
     pub trait_path: Option<Path>,
     pub methods: Vec<Function>,
+    pub associated_types: Vec<AssociatedTypeDef>,
     pub span: SrcSpan,
 }
 
@@ -412,6 +432,11 @@ pub enum TyKind {
     Dyn {
         path: Path,
         args: Vec<Ty>,
+    },
+    /// An associated type reached through `Self`, such as `Self::Output`.
+    Projection {
+        base: Box<Ty>,
+        name: Ident,
     },
     Error,
 }

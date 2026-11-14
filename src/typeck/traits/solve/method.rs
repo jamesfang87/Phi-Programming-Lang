@@ -604,6 +604,40 @@ impl<'hir> Typeck<'hir> {
         (ret.unwrap_or_else(|| self.tcx.unit()), resolved)
     }
 
+    /// Returns whether an `extend` block or bound supplies the operator method `member` for
+    /// `operand`, with the trait's first argument matching `other`.
+    pub(crate) fn operator_trait_holds(
+        &mut self,
+        operand: Ty,
+        other: Ty,
+        trait_def: DefId,
+        member: Symbol,
+        owner: DefId,
+    ) -> bool {
+        self.find_operator_candidate(operand, other, trait_def, member, owner)
+            .is_some()
+    }
+
+    fn find_operator_candidate(
+        &mut self,
+        operand: Ty,
+        other: Ty,
+        trait_def: DefId,
+        member: Symbol,
+        owner: DefId,
+    ) -> Option<Candidate> {
+        let candidates = self.method_candidates(operand, member, owner);
+        candidates.into_iter().find(|candidate| {
+            matches!(candidate.source, CandidateSource::Trait(def) if def == trait_def)
+                && candidate
+                    .trait_args
+                    .first()
+                    .is_none_or(|&arg| self.unifier.unify(&self.tcx, arg, other).is_ok())
+        })
+    }
+
+    /// Records the operator's resolved call and returns the method's return type, which is what
+    /// an operator with an associated output type produces.
     pub(crate) fn record_operator_trait_call(
         &mut self,
         id: HirId,
@@ -612,27 +646,11 @@ impl<'hir> Typeck<'hir> {
         other: Ty,
         trait_def: DefId,
         member: Symbol,
-    ) {
-        let candidates = self.method_candidates(operand, member, receiver.owner);
-        let mut chosen = None;
-        for candidate in candidates {
-            if !matches!(candidate.source, CandidateSource::Trait(def) if def == trait_def) {
-                continue;
-            }
-            let matches_other = candidate
-                .trait_args
-                .first()
-                .is_none_or(|&arg| self.unifier.unify(&self.tcx, arg, other).is_ok());
-            if matches_other {
-                chosen = Some(candidate);
-                break;
-            }
-        }
-        let Some(chosen) = chosen else {
-            return;
-        };
+    ) -> Option<Ty> {
+        let chosen =
+            self.find_operator_candidate(operand, other, trait_def, member, receiver.owner)?;
 
-        let (_, _, fresh) = self.instantiate_method(chosen.method, &chosen.subst, chosen.self_ty);
+        let (_, ret, fresh) = self.instantiate_method(chosen.method, &chosen.subst, chosen.self_ty);
         let resolved = ResolvedMethodCall {
             method: chosen.method,
             generics: self.resolve_all(&fresh),
@@ -644,6 +662,7 @@ impl<'hir> Typeck<'hir> {
             self_ty: chosen.self_ty,
         };
         self.record_resolved_method(id, receiver, resolved);
+        ret
     }
 
     /// Records a resolved method call and the bounds it raises. An `extend` block's own bounds

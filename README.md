@@ -567,6 +567,31 @@ fun describe<T: Comparable + Display>(value: T) { ... }
 
 The use of generics also does not effect program performance as the compiler monomorphizes them by default. For example, `largest<Vector2D>` and `largest<i32>` would be generated into and compiled as if they were two separate, ordinary functions.
 
+### Associated types
+
+A trait can declare an associated type that each implementation chooses. Use `Self::Name` to name it in a signature, and `type Name = Type;` to define it in an `extend` block:
+
+```phi
+trait Container {
+    type Item;
+    fun get(&self) -> Self::Item;
+}
+
+extend Vector2D with Container {
+    type Item = f64;
+    fun get(&self) -> f64 { return self.length(); }
+}
+```
+
+An associated type may have a default. `Add` uses `type Output = Self;`, so ordinary numeric implementations keep returning the same type while string concatenation can return `String`:
+
+```phi
+trait Add<Rhs> {
+    type Output = Self;
+    fun add(&self, other: &Rhs) -> Self::Output;
+}
+```
+
 ### Dynamic dispatch with `dyn`
 
 `dyn Trait` is a type that erases the concrete type behind a trait's interface, allowing a single collection to hold several different concrete types at once, which are resolved at runtime:
@@ -587,13 +612,22 @@ Operators are overloaded by implementing specific traits:
 
 ```phi
 trait Add<Rhs> {
-    fun add(&self, other: &Rhs) -> Self;
+    type Output = Self;
+    fun add(&self, other: &Rhs) -> Self::Output;
 }
 
 extend Vector2D with Add<Vector2D> {
     fun add(&self, other: &Self) -> Self {
         return Vector2D { x: self.x + other.x, y: self.y + other.y }
     }
+}
+```
+
+`for` loops use the iterator protocol. The value after `in` is passed to `into_iter`, and the resulting iterator is advanced with `next`:
+
+```phi
+for value in &vector {
+    println(value);
 }
 ```
 

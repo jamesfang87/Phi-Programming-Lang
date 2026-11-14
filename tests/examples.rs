@@ -2012,10 +2012,50 @@ import std::string::String;
 fun main() {
     let greeting = String::from("hello") + "!";
     println(greeting);
-    let chained = String::from("a") + "b" + String::from("c");
+    let mirrored = "hello" + String::from("!");
+    println(mirrored);
+    let chained = "a" + String::from("b") + "c";
     println(chained);
 }
 "#,
-        "hello!\nabc\n",
+        "hello!\nhello!\nabc\n",
+    );
+}
+
+#[test]
+fn associated_types_project_from_an_implementation() {
+    run(
+        "associated_types",
+        r#"module app;
+
+public trait Container {
+    type Item;
+    fun get(&self) -> Self::Item;
+}
+
+struct Number { value: i32 }
+
+extend Number with Container {
+    type Item = i32;
+    fun get(&self) -> i32 { return self.value; }
+}
+
+public trait Doubler {
+    type Output = Self;
+    fun double(&self) -> Self::Output;
+}
+
+extend i32 with Doubler {
+    fun double(&self) -> i32 { return *self * 2; }
+}
+
+fun main() {
+    let number = Number { value: 42 };
+    println(number.get());
+    let five = 5;
+    println(five.double());
+}
+"#,
+        "42\n10\n",
     );
 }

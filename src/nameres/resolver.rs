@@ -307,6 +307,9 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
                 self.visit_ty(ty);
             }
         }
+        for associated in &e.associated_types {
+            self.visit_ty(&associated.ty);
+        }
         for m in &e.methods {
             self.visit_function(m);
         }
@@ -340,6 +343,7 @@ impl<'ast> Visitor<'ast> for Resolver<'ast> {
             | TyKind::Tuple(_)
             | TyKind::Array { .. }
             | TyKind::Function { .. }
+            | TyKind::Projection { .. }
             | TyKind::Error => {}
         }
         visit::walk_ty(self, ty);

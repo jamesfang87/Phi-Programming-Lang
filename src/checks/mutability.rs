@@ -338,6 +338,7 @@ mod tests {
              public enum Option<T> { some: T, none }
              struct Counter { n: i32 }
              extend Counter { fun next(&mut self) -> Option<i32> { return .none; } }
+             extend Counter { fun into_iter(&self) -> Counter { return Counter { n: self.n }; } }
              fun f() {
                  let c = Counter { n: 0 };
                  for x in c { x = 1; }

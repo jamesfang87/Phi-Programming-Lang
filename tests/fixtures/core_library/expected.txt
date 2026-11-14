@@ -1151,6 +1151,7 @@ Item {
                     },
                 },
             ],
+            associated_types: [],
             span: SrcSpan {
                 begin: 381,
                 end: 495,

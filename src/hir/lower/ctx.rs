@@ -5,7 +5,8 @@ use crate::hir::builder::DefIdAllocator;
 use crate::hir::ids::{DefId, HirId};
 use crate::hir::lower::owner::OwnerLowerer;
 use crate::hir::{
-    Arena, Enum, Extend, Function, Hir, Local, Module, OwnerNode, Res, Struct, Trait, TyDef, Type,
+    Arena, AssociatedType, AssociatedTypeDef, Enum, Extend, Function, Generic, Hir, Local, Module,
+    Node, OwnerNode, Res, Struct, Trait, TyDef, Type,
 };
 use crate::nameres::NameResolutions;
 use crate::nameres::{Local as SLocal, Res as SRes, TyDef as STyDef, Type as SType};
@@ -277,7 +278,28 @@ impl<'res> LoweringCtx<'res> {
     fn lower_trait(&mut self, item_id: DefId, method_ids: Vec<DefId>, t: &ast::Trait) -> DefId {
         let mut ow = OwnerLowerer::new(self, item_id);
         let root = ow.root();
-        let generics = ow.lower_generics(&t.generics);
+        let mut generics = ow.lower_generics(&t.generics);
+        let mut associated_types = Vec::with_capacity(t.associated_types.len());
+        for declaration in &t.associated_types {
+            let parameter = ow.reserve();
+            ow.fill(
+                parameter,
+                Node::Generic(Generic {
+                    hir_id: parameter,
+                    name: declaration.name,
+                    bounds: Vec::new(),
+                    span: declaration.span,
+                }),
+            );
+            let default = declaration.default.as_ref().map(|ty| ow.lower_ty(ty));
+            generics.push(parameter);
+            associated_types.push(AssociatedType {
+                name: declaration.name,
+                parameter,
+                default,
+                span: declaration.span,
+            });
+        }
         ow.fill(
             root,
             OwnerNode::Trait(Trait {
@@ -286,6 +308,7 @@ impl<'res> LoweringCtx<'res> {
                 name: t.name,
                 generics,
                 functions: method_ids.clone(),
+                associated_types,
                 span: t.span,
             }),
         );
@@ -320,6 +343,15 @@ impl<'res> LoweringCtx<'res> {
             .trait_path
             .as_ref()
             .and_then(|p| ow.cx.try_lower_path(node_id, p));
+        let associated_types = e
+            .associated_types
+            .iter()
+            .map(|definition| AssociatedTypeDef {
+                name: definition.name,
+                ty: ow.lower_ty(&definition.ty),
+                span: definition.span,
+            })
+            .collect();
         ow.fill(
             root,
             OwnerNode::Extend(Extend {
@@ -329,6 +361,7 @@ impl<'res> LoweringCtx<'res> {
                 trait_generics,
                 trait_path,
                 methods: method_ids.clone(),
+                associated_types,
                 span: e.span,
             }),
         );

@@ -41,6 +41,7 @@ impl Descriptor {
             TokenKind::StructKw => Descriptor::Spelling("struct"),
             TokenKind::TraitKw => Descriptor::Spelling("trait"),
             TokenKind::TrueKw => Descriptor::Spelling("true"),
+            TokenKind::TypeKw => Descriptor::Spelling("type"),
             TokenKind::WhileKw => Descriptor::Spelling("while"),
             TokenKind::WithKw => Descriptor::Spelling("with"),
             TokenKind::Panic => Descriptor::Spelling("panic"),

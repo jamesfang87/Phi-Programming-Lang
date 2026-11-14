@@ -472,9 +472,10 @@ pub fn walk_ty<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
                 v.visit_ty(arg.into());
             }
         }
-        TyKind::Ref { base, .. } | TyKind::Any(base) | TyKind::Iso(base) => {
-            v.visit_ty((*base).into())
-        }
+        TyKind::Ref { base, .. }
+        | TyKind::Any(base)
+        | TyKind::Iso(base)
+        | TyKind::Projection { base, .. } => v.visit_ty((*base).into()),
         TyKind::Tuple(elems) => {
             for &elem in elems {
                 v.visit_ty(elem.into());

@@ -75,6 +75,22 @@ impl<'s> Parser<'s> {
                     })
                     .boxed();
 
+                let self_projection_ty = self_ty
+                    .clone()
+                    .then_ignore(self.kind(TokenKind::DoubleColon))
+                    .then(self.ident_parser())
+                    .map(|(base, name)| {
+                        let span = base.span.merge(name.span);
+                        Ty::new(
+                            TyKind::Projection {
+                                base: Box::new(base),
+                                name,
+                            },
+                            span,
+                        )
+                    })
+                    .boxed();
+
                 let single_element_tuple_ty = self
                     .kind(TokenKind::OpenParen)
                     .then(ty.clone())
@@ -133,6 +149,7 @@ impl<'s> Parser<'s> {
                     .boxed();
 
                 let any_target = choice((
+                    self_projection_ty.clone(),
                     self_ty.clone(),
                     primitive_ty.clone(),
                     path_ty.clone(),
@@ -202,6 +219,7 @@ impl<'s> Parser<'s> {
                     .boxed();
 
                 let iso_target = choice((
+                    self_projection_ty.clone(),
                     self_ty.clone(),
                     primitive_ty.clone(),
                     path_ty.clone(),
@@ -223,6 +241,7 @@ impl<'s> Parser<'s> {
                 let ref_ty = recursive(
                     |ref_ty: Recursive<dyn ChumskyParser<'a, &'a [Token], Ty, Extra<'a>>>| {
                         let ref_target = choice((
+                            self_projection_ty.clone(),
                             self_ty.clone(),
                             dyn_ty.clone(),
                             iso_ty.clone(),
@@ -294,6 +313,7 @@ impl<'s> Parser<'s> {
                 .boxed();
 
                 choice((
+                    self_projection_ty,
                     self_ty,
                     dyn_ty,
                     any_ty,

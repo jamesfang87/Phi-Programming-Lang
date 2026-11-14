@@ -138,6 +138,11 @@ pub fn walk_trait<'ast, V: Visitor<'ast>>(v: &mut V, t: &'ast Trait) {
     for g in &t.generics {
         v.visit_generic(g);
     }
+    for associated in &t.associated_types {
+        if let Some(default) = &associated.default {
+            v.visit_ty(default);
+        }
+    }
     for f in &t.functions {
         v.visit_function(f);
     }
@@ -152,6 +157,9 @@ pub fn walk_extend<'ast, V: Visitor<'ast>>(v: &mut V, e: &'ast Extend) {
         for ty in generics {
             v.visit_ty(ty);
         }
+    }
+    for associated in &e.associated_types {
+        v.visit_ty(&associated.ty);
     }
     for m in &e.methods {
         v.visit_function(m);
@@ -417,7 +425,10 @@ pub fn walk_ty<'ast, V: Visitor<'ast>>(v: &mut V, ty: &'ast Ty) {
                 v.visit_ty(arg);
             }
         }
-        TyKind::Ref { base, .. } | TyKind::Any(base) | TyKind::Iso(base) => {
+        TyKind::Ref { base, .. }
+        | TyKind::Any(base)
+        | TyKind::Iso(base)
+        | TyKind::Projection { base, .. } => {
             v.visit_ty(base);
         }
         TyKind::Tuple(elems) => {

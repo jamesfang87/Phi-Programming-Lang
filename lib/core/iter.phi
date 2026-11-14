@@ -5,3 +5,8 @@ import core::option::Option;
 public trait Iterator<T> {
     fun next(&mut self) -> Option<T>;
 }
+
+public trait IntoIterator {
+    type Iter;
+    fun into_iter(&self) -> Self::Iter;
+}

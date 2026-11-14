@@ -423,6 +423,16 @@ extend String with Add<str> {
     }
 }
 
+extend str with Add<String> {
+    type Output = String;
+    fun add(&self, other: &String) -> String {
+        let mut result = String { buf: new [0_u8; 0], len: 0 };
+        result.push_str(*self);
+        result.push_str(other.as_str());
+        return result;
+    }
+}
+
 fun ascii_digit_u64(digit: u64) -> u8 {
     return match digit {
         0 => 48,

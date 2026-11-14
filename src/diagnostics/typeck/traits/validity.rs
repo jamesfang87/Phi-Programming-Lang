@@ -75,3 +75,30 @@ fn defined_span(hir: &Hir, def: DefId) -> SrcSpan {
         }
     }
 }
+
+pub fn report_missing_associated_type(
+    session: &Session,
+    hir: &Hir,
+    trait_def: DefId,
+    name: &str,
+    span: SrcSpan,
+) {
+    session.emit(
+        Diagnostic::error(
+            format!(
+                "missing associated type `{name}` in the implementation of trait `{}`",
+                defined_name(session, hir, trait_def)
+            ),
+            span,
+        )
+        .with_code(codes::MISSING_ASSOCIATED_TYPE)
+        .with_label("this implementation does not define it")
+        .with_secondary(
+            defined_span(hir, trait_def),
+            format!(
+                "`{}` is declared here",
+                defined_name(session, hir, trait_def)
+            ),
+        ),
+    );
+}

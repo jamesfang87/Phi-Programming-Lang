@@ -5,8 +5,9 @@ use crate::ast::Ident;
 use crate::ast::Import;
 use crate::ast::ModuleHeader;
 use crate::ast::{
-    Block, Bound, Enum, Extend, Field, Function, Generic, Item, ItemKind, NodeId, Param,
-    ParsedItem, Path, SelfMode, SelfParam, Struct, Trait, Ty, Variant, VariantPayload, Visibility,
+    AssociatedTypeDecl, AssociatedTypeDef, Block, Bound, Enum, Extend, Field, Function, Generic,
+    Item, ItemKind, NodeId, Param, ParsedItem, Path, SelfMode, SelfParam, Struct, Trait, Ty,
+    Variant, VariantPayload, Visibility,
 };
 
 use crate::lexer::token::{Token, TokenKind};
@@ -391,6 +392,53 @@ impl<'s> Parser<'s> {
             )
             .boxed();
 
+        let associated_type_decl = self
+            .kind(TokenKind::TypeKw)
+            .then(ident.clone())
+            .then(
+                self.kind(TokenKind::Equals)
+                    .ignore_then(type_p.clone())
+                    .or_not(),
+            )
+            .then_ignore(self.kind(TokenKind::Semicolon))
+            .map(|((type_tok, name), default)| {
+                let end = default.as_ref().map_or(name.span, |ty| ty.span);
+                AssociatedTypeDecl {
+                    id: NodeId::next(),
+                    name,
+                    default,
+                    span: type_tok.span.merge(end),
+                }
+            })
+            .boxed();
+
+        let associated_type_def = self
+            .kind(TokenKind::TypeKw)
+            .then(ident.clone())
+            .then_ignore(self.kind(TokenKind::Equals))
+            .then(type_p.clone())
+            .then_ignore(self.kind(TokenKind::Semicolon))
+            .map(|((type_tok, name), ty)| {
+                let span = type_tok.span.merge(ty.span);
+                AssociatedTypeDef {
+                    id: NodeId::next(),
+                    name,
+                    ty,
+                    span,
+                }
+            })
+            .boxed();
+
+        enum TraitMember {
+            Function(Function),
+            AssociatedType(AssociatedTypeDecl),
+        }
+
+        let trait_member = choice((
+            associated_type_decl.map(TraitMember::AssociatedType),
+            function_decl(true).map(TraitMember::Function),
+        ));
+
         let trait_decl = visibility
             .clone()
             .then(self.kind(TokenKind::TraitKw))
@@ -402,18 +450,30 @@ impl<'s> Parser<'s> {
                     .or_not(),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
-            .then(function_decl(true).repeated().collect::<Vec<_>>())
+            .then(trait_member.repeated().collect::<Vec<_>>())
             .then(self.kind(TokenKind::CloseBrace))
             .map(
-                |(((((vis, trait_tok), name), generics), functions), close_tok)| {
+                |(((((vis, trait_tok), name), generics), members), close_tok)| {
                     let begin = vis.1.map_or(trait_tok.span, |pub_tok| pub_tok.span);
                     let span = begin.merge(close_tok.span);
+
+                    let mut functions = Vec::new();
+                    let mut associated_types = Vec::new();
+                    for member in members {
+                        match member {
+                            TraitMember::Function(function) => functions.push(function),
+                            TraitMember::AssociatedType(associated_type) => {
+                                associated_types.push(associated_type);
+                            }
+                        }
+                    }
 
                     let trait_ = Trait {
                         visibility: vis.0,
                         name,
                         generics: generics.unwrap_or_default(),
                         functions,
+                        associated_types,
                         span,
                     };
 
@@ -442,6 +502,16 @@ impl<'s> Parser<'s> {
             .or_not()
             .boxed();
 
+        enum ExtendMember {
+            Function(Function),
+            AssociatedType(AssociatedTypeDef),
+        }
+
+        let extend_member = choice((
+            associated_type_def.map(ExtendMember::AssociatedType),
+            function_decl(false).map(ExtendMember::Function),
+        ));
+
         let extend = self
             .kind(TokenKind::ExtendKw)
             .then(generic_params)
@@ -453,23 +523,34 @@ impl<'s> Parser<'s> {
                     .then(generic_args.clone()),
             )
             .then_ignore(self.kind(TokenKind::OpenBrace))
-            .then(function_decl(false).repeated().collect())
+            .then(extend_member.repeated().collect::<Vec<ExtendMember>>())
             .then(self.kind(TokenKind::CloseBrace))
             .map(
                 |(
                     (
                         (((extend_tok, extend_generics), self_ty), (trait_path, trait_generics)),
-                        methods,
+                        members,
                     ),
                     close_tok,
                 )| {
                     let span = extend_tok.span.merge(close_tok.span);
+                    let mut methods = Vec::new();
+                    let mut associated_types = Vec::new();
+                    for member in members {
+                        match member {
+                            ExtendMember::Function(method) => methods.push(method),
+                            ExtendMember::AssociatedType(associated_type) => {
+                                associated_types.push(associated_type);
+                            }
+                        }
+                    }
                     let extend = Extend {
                         extend_generics: extend_generics.unwrap_or_default(),
                         self_ty,
                         trait_generics,
                         trait_path,
                         methods,
+                        associated_types,
                         span,
                     };
 

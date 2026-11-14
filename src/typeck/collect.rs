@@ -115,6 +115,15 @@ impl<'hir> Typeck<'hir> {
 
         self.collect_generics(generics);
         self.self_ty(r#trait, span);
+
+        let defaults = trait_node
+            .associated_types
+            .iter()
+            .filter_map(|associated| associated.default)
+            .collect::<Vec<_>>();
+        for default in defaults {
+            self.lower_ty(default);
+        }
     }
 
     pub fn collect_extend(&mut self, extend: DefId) {
@@ -127,6 +136,15 @@ impl<'hir> Typeck<'hir> {
         self.check_no_any_args(&trait_generics, &trait_arguments);
         self.check_no_dyn_args(&trait_generics, &trait_arguments);
         self.self_ty(extend, extend_node.span);
+
+        let associated_types = extend_node
+            .associated_types
+            .iter()
+            .map(|definition| definition.ty)
+            .collect::<Vec<_>>();
+        for ty in associated_types {
+            self.lower_ty(ty);
+        }
     }
 
     fn lower_extend_self_ty(&mut self, self_ty: TyId) {
@@ -166,7 +184,13 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn check_not_a_reference(&mut self, ty: Ty, span: SrcSpan) {
-        if self.tcx.contains_ref(ty) {
+        // The standard library's iterator structs borrow the container they walk; user code has
+        // no way to prove such a borrow outlives the field, so only library code may store one.
+        let in_library = self
+            .session
+            .file_containing(span.get_begin())
+            .is_some_and(|file| file.origin.is_library());
+        if !in_library && self.tcx.contains_ref(ty) {
             report_reference_field(self.display_cx(), ty, span);
         }
     }
