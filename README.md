@@ -586,11 +586,11 @@ fun render_all(shapes: &Array<dyn Shape>) {
 Operators are overloaded by implementing specific traits:
 
 ```phi
-trait Add {
-    fun add(&self, other: &Self) -> Self;
+trait Add<Rhs> {
+    fun add(&self, other: &Rhs) -> Self;
 }
 
-extend Vector2D with Add {
+extend Vector2D with Add<Vector2D> {
     fun add(&self, other: &Self) -> Self {
         return Vector2D { x: self.x + other.x, y: self.y + other.y }
     }
