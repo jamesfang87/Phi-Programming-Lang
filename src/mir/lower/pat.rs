@@ -184,6 +184,7 @@ impl<'a> BodyLowerCtx<'a> {
                     self.restore_pat_bindings(elem, elem_place, span);
                 }
             }
+            PatKind::Or(_) => {}
             PatKind::Error => unreachable!("a fully type-checked body contains no PatKind::Error"),
         }
     }
@@ -244,8 +245,36 @@ impl<'a> BodyLowerCtx<'a> {
                 self.test_variant_pat(pat_id, *variant, payload, place, fail, span)
             }
             PatKind::Tuple(elems) => self.test_tuple_pat(elems, place, fail),
+            PatKind::Or(alternatives) => self.test_or_pat(alternatives, place, fail, span),
             PatKind::Error => unreachable!("a fully type-checked body contains no PatKind::Error"),
         }
+    }
+
+    fn test_or_pat(
+        &mut self,
+        alternatives: &[PatId],
+        place: Place,
+        fail: BasicBlock,
+        span: SrcSpan,
+    ) {
+        if alternatives.is_empty() {
+            self.set_terminator(TerminatorKind::Goto { target: fail }, span);
+            return;
+        }
+        let success = self.new_block();
+        for (index, &alternative) in alternatives.iter().enumerate() {
+            let next = if index + 1 == alternatives.len() {
+                fail
+            } else {
+                self.new_block()
+            };
+            self.test_pat(alternative, place.clone(), next);
+            self.set_terminator(TerminatorKind::Goto { target: success }, span);
+            if index + 1 < alternatives.len() {
+                self.switch_to(next);
+            }
+        }
+        self.switch_to(success);
     }
 
     fn test_literal_pat(
@@ -261,11 +290,15 @@ impl<'a> BodyLowerCtx<'a> {
         let operand = self.operand_for_place(place, ty);
         let bool_ty = self.tcx.mk_prim(PrimTy::Bool);
         let eq_local = self.new_temp(bool_ty, span);
-        self.assign(
-            Place::from_local(eq_local),
-            Rvalue::BinaryOp(BinaryOp::Eq, operand, Operand::Constant(constant)),
-            span,
-        );
+        let rvalue = if matches!(self.tcx.kind(ty), TyKind::Primitive(PrimTy::Str)) {
+            Rvalue::StrEq {
+                left: operand,
+                right: Operand::Constant(constant),
+            }
+        } else {
+            Rvalue::BinaryOp(BinaryOp::Eq, operand, Operand::Constant(constant))
+        };
+        self.assign(Place::from_local(eq_local), rvalue, span);
         let cont = self.new_block();
         self.set_terminator(
             TerminatorKind::SwitchInt {
@@ -367,6 +400,7 @@ impl<'a> BodyLowerCtx<'a> {
                 self.bind_variant_pat(pat_id, *variant, payload, place)
             }
             PatKind::Tuple(elems) => self.bind_tuple_pat(elems, place),
+            PatKind::Or(_) => {}
             PatKind::Error => unreachable!("a fully type-checked body contains no PatKind::Error"),
         }
     }
@@ -476,7 +510,7 @@ impl<'a> BodyLowerCtx<'a> {
                 ConstKind::Float(self.session.resolve(value).parse().unwrap_or_default())
             }
 
-            Literal::Str(_) => unreachable!("typeck rejects string literal patterns"),
+            Literal::Str(symbol) => ConstKind::Str(symbol),
             Literal::Bool(b) => ConstKind::Bool(b),
             Literal::Char(c) => ConstKind::Char(c),
         };
