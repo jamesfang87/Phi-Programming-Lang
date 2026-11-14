@@ -122,8 +122,16 @@ impl<'a> BodyLowerCtx<'a> {
         };
         match any_mode {
             None | Some(AnyMode::Owned) => inner,
-            Some(AnyMode::Ref) => self.tcx.mk_ref(inner, Mutability::Immutable),
-            Some(AnyMode::RefMut) => self.tcx.mk_ref(inner, Mutability::Mutable),
+            Some(AnyMode::Ref) => {
+                let reference = self.tcx.mk_ref(inner, Mutability::Immutable);
+                self.tcx.mark_copy(reference);
+                reference
+            }
+            Some(AnyMode::RefMut) => {
+                let reference = self.tcx.mk_ref(inner, Mutability::Mutable);
+                self.tcx.mark_copy(reference);
+                reference
+            }
         }
     }
 }

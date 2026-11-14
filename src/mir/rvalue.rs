@@ -70,6 +70,12 @@ pub enum Rvalue {
         buffer: Operand,
     },
 
+    /// Compares two `str` values by length and bytes.
+    StrEq {
+        left: Operand,
+        right: Operand,
+    },
+
     /// Stores `value` into uninitialized storage, dropping nothing.
     WriteUninit {
         place: Place,
@@ -99,6 +105,7 @@ impl Rvalue {
             } => vec![lhs, rhs],
             Rvalue::Aggregate(_, operands) => operands.iter().collect(),
             Rvalue::EncodeUtf8 { value, buffer } => vec![value, buffer],
+            Rvalue::StrEq { left, right } => vec![left, right],
             Rvalue::Replace { value, .. } => vec![value],
             Rvalue::LibcCall { args, .. } => args.iter().collect(),
             Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => Vec::new(),

@@ -152,6 +152,10 @@ fn apply_rvalue(unread: &mut UnreadLocals, rvalue: &Rvalue) {
             apply_operand(unread, value);
             apply_operand(unread, buffer);
         }
+        Rvalue::StrEq { left, right } => {
+            apply_operand(unread, left);
+            apply_operand(unread, right);
+        }
         Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
         Rvalue::WriteUninit { place, value } => {
             apply_place(unread, place);

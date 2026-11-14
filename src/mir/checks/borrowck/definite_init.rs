@@ -190,6 +190,10 @@ fn apply_rvalue(dead: &mut DeadRegisters, movable: &Movable, rvalue: &Rvalue) {
             apply_operand(dead, movable, value);
             apply_operand(dead, movable, buffer);
         }
+        Rvalue::StrEq { left, right } => {
+            apply_operand(dead, movable, left);
+            apply_operand(dead, movable, right);
+        }
         Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
         Rvalue::WriteUninit { value, .. } => apply_operand(dead, movable, value),
         Rvalue::Ref { .. }
@@ -326,6 +330,10 @@ fn check_rvalue(
         Rvalue::EncodeUtf8 { value, buffer } => {
             check_operand(session, dead, movable, body, value, span);
             check_operand(session, dead, movable, body, buffer, span);
+        }
+        Rvalue::StrEq { left, right } => {
+            check_operand(session, dead, movable, body, left, span);
+            check_operand(session, dead, movable, body, right, span);
         }
         Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
         Rvalue::WriteUninit { place, value } => {

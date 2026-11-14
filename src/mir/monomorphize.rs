@@ -383,6 +383,10 @@ impl InstantiationCx<'_> {
                 value: self.subst_operand(value, substitution),
                 buffer: self.subst_operand(buffer, substitution),
             },
+            Rvalue::StrEq { left, right } => Rvalue::StrEq {
+                left: self.subst_operand(left, substitution),
+                right: self.subst_operand(right, substitution),
+            },
             Rvalue::WriteUninit { place, value } => Rvalue::WriteUninit {
                 place,
                 value: self.subst_operand(value, substitution),

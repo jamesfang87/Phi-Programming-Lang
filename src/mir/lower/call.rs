@@ -798,6 +798,9 @@ impl<'a> BodyLowerCtx<'a> {
         match mode {
             AnyMode::Owned => self.lower_operand(expr_id),
             AnyMode::Ref | AnyMode::RefMut => {
+                if matches!(self.tcx.kind(arg_ty), TyKind::Ref { .. }) {
+                    return self.lower_operand(expr_id);
+                }
                 let place = self.lower_place(expr_id);
                 let mutability = if mode == AnyMode::RefMut {
                     Mutability::Mutable

@@ -9,6 +9,7 @@ use crate::mir::{
 use crate::nameres::PrimTy;
 use crate::session::Session;
 use crate::typeck::results::DerefMode;
+use crate::typeck::ty::ctx::TyCtx;
 use crate::typeck::ty::{Ty, TyKind};
 
 impl<'a> BodyLowerCtx<'a> {
@@ -228,7 +229,8 @@ impl<'a> BodyLowerCtx<'a> {
                 operand,
             } => self.lower_borrow_into(mutability, operand, dest, span),
             ExprKind::Call { .. } => {
-                self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
+                let mode = any_mode_of_ty(self.tcx, ty);
+                self.lower_call_like_into(expr_id, dest, mode, span);
             }
 
             ExprKind::Access { base, member, args } if self.hir.names_a_type(base.into()) => {
@@ -239,7 +241,8 @@ impl<'a> BodyLowerCtx<'a> {
                 args: crate::hir::AccessArgs::Call(_),
                 ..
             } => {
-                self.lower_call_like_into(expr_id, dest, crate::mir::AnyMode::Owned, span);
+                let mode = any_mode_of_ty(self.tcx, ty);
+                self.lower_call_like_into(expr_id, dest, mode, span);
             }
 
             ExprKind::Access {
@@ -756,9 +759,20 @@ impl<'a> BodyLowerCtx<'a> {
             return self.lower_trait_binary_into(expr_id, op, lhs, rhs, dest, span);
         }
         let lhs_ty = self.expr_ty(lhs);
-        let lhs_operand = self.lower_operand(lhs);
-        let rhs_operand = self.lower_operand(rhs);
+        let (lhs_ty, lhs_operand) = self.lower_primitive_operand(lhs, lhs_ty);
+        let rhs_ty = self.expr_ty(rhs);
+        let (_, rhs_operand) = self.lower_primitive_operand(rhs, rhs_ty);
         self.lower_binary_op_into(op, lhs_operand, rhs_operand, dest, lhs_ty, span);
+    }
+
+    fn lower_primitive_operand(&mut self, expr_id: HirId, ty: Ty) -> (Ty, Operand) {
+        if let TyKind::Ref { base, .. } = *self.tcx.kind(ty) {
+            let mut place = self.lower_place(expr_id);
+            place.projections.push(Projection::Deref);
+            (base, self.operand_for_place(place, base))
+        } else {
+            (ty, self.lower_operand(expr_id))
+        }
     }
 
     fn lower_trait_binary_into(
@@ -1279,5 +1293,16 @@ fn variant_payload_of(args: &AccessArgs) -> Payload {
             ),
         },
         AccessArgs::Record(fields) => Payload::Record(fields.clone()),
+    }
+}
+
+fn any_mode_of_ty(tcx: &mut TyCtx, ty: Ty) -> crate::mir::AnyMode {
+    match *tcx.kind(ty) {
+        TyKind::Ref {
+            mutability: Mutability::Mutable,
+            ..
+        } => crate::mir::AnyMode::RefMut,
+        TyKind::Ref { .. } => crate::mir::AnyMode::Ref,
+        _ => crate::mir::AnyMode::Owned,
     }
 }

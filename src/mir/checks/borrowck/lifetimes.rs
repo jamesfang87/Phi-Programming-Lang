@@ -373,6 +373,10 @@ fn mark_rvalue_aliases_used(
             mark_operand_alias_used(aliases, held, value, used);
             mark_operand_alias_used(aliases, held, buffer, used);
         }
+        Rvalue::StrEq { left, right } => {
+            mark_operand_alias_used(aliases, held, left, used);
+            mark_operand_alias_used(aliases, held, right, used);
+        }
         Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
         Rvalue::WriteUninit { place, value } => {
             mark_place_alias_used(aliases, held, place, used);

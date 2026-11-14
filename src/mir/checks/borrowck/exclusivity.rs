@@ -212,6 +212,10 @@ fn check_assign_rvalue(
             check_operand(session, body, aliases, live, value, span);
             check_operand(session, body, aliases, live, buffer, span);
         }
+        Rvalue::StrEq { left, right } => {
+            check_operand(session, body, aliases, live, left, span);
+            check_operand(session, body, aliases, live, right, span);
+        }
         Rvalue::SizeOf(_) | Rvalue::AlignOf(_) => {}
         Rvalue::WriteUninit { place, value } => {
             check_place_access(session, body, aliases, live, place, AccessKind::Write, span);

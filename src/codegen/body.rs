@@ -331,6 +331,9 @@ fn lower_rvalue<'ctx>(
         Rvalue::EncodeUtf8 { value, buffer } => {
             lower_encode_utf8(cx, tcx, mir, locals, local_decls, value, buffer)
         }
+        Rvalue::StrEq { left, right } => {
+            lower_str_eq(cx, tcx, mir, locals, local_decls, left, right)
+        }
         Rvalue::WriteUninit { place, value } => {
             let (slot, _) = place::lower_place(cx, tcx, mir, locals, local_decls, place);
             let new = lower_operand(cx, tcx, mir, locals, local_decls, value);
@@ -798,6 +801,71 @@ fn lower_encode_utf8<'ctx>(
         .build_int_z_extend(count, i64_ty, "utf8_len")
         .unwrap()
         .into()
+}
+
+fn lower_str_eq<'ctx>(
+    cx: &mut CodegenCtx<'ctx>,
+    tcx: &mut TyCtx,
+    mir: &Mir,
+    locals: &HashMap<Local, PointerValue<'ctx>>,
+    local_decls: &[LocalDecl],
+    left: &Operand,
+    right: &Operand,
+) -> BasicValueEnum<'ctx> {
+    let left_value = lower_operand(cx, tcx, mir, locals, local_decls, left);
+    let right_value = lower_operand(cx, tcx, mir, locals, local_decls, right);
+    let left_data = fat_data(cx, left_value);
+    let right_data = fat_data(cx, right_value);
+    let left_len = fat_len(cx, left_value);
+    let right_len = fat_len(cx, right_value);
+
+    let len_eq = cx
+        .builder
+        .build_int_compare(IntPredicate::EQ, left_len, right_len, "str_len_eq")
+        .unwrap();
+    let len_lt = cx
+        .builder
+        .build_int_compare(IntPredicate::ULT, left_len, right_len, "str_len_lt")
+        .unwrap();
+    let min_len = cx
+        .builder
+        .build_select(len_lt, left_len, right_len, "str_min_len")
+        .unwrap()
+        .into_int_value();
+    let compared = cx
+        .builder
+        .build_call(
+            cx.libc.memcmp,
+            &[left_data.into(), right_data.into(), min_len.into()],
+            "str_memcmp",
+        )
+        .unwrap()
+        .try_as_basic_value()
+        .unwrap_basic()
+        .into_int_value();
+    let bytes_eq = cx
+        .builder
+        .build_int_compare(
+            IntPredicate::EQ,
+            compared,
+            cx.llvm.i32_type().const_int(0, false),
+            "str_bytes_eq",
+        )
+        .unwrap();
+    cx.builder
+        .build_and(len_eq, bytes_eq, "str_eq")
+        .unwrap()
+        .into()
+}
+
+fn fat_len<'ctx>(
+    cx: &CodegenCtx<'ctx>,
+    value: BasicValueEnum<'ctx>,
+) -> inkwell::values::IntValue<'ctx> {
+    cx.builder
+        .build_extract_value(value.into_struct_value(), 1, "len")
+        .unwrap()
+        .into_int_value()
 }
 
 fn lower_type_info<'ctx>(
