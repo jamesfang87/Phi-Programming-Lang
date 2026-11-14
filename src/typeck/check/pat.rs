@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ast::{Ident, Literal, Mutability, Symbol};
 use crate::diagnostics::typeck::pat::{
     report_literal_pattern_mismatch, report_match_needs_wildcard, report_match_not_exhaustive,
-    report_no_payload_field, report_payload_shape, report_string_pattern_unsupported,
+    report_no_payload_field, report_or_pattern_binding, report_payload_shape,
     report_tuple_pattern_mismatch, report_variant_type_unknown,
 };
 use crate::diagnostics::typeck::report_no_variant;
@@ -66,6 +66,7 @@ impl<'hir> Typeck<'hir> {
             PatKind::Variant { variant, payload } => {
                 self.check_variant_pat(expected, *variant, payload, span, mode)
             }
+            PatKind::Or(alternatives) => self.check_or_pattern(expected, alternatives, mode, span),
 
             PatKind::Error => self.tcx.error(),
         };
@@ -91,11 +92,6 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn check_literal_pat(&mut self, expected: Ty, lit: &Literal, span: SrcSpan) -> Ty {
-        if matches!(lit, Literal::Str(_)) {
-            report_string_pattern_unsupported(self.session, span);
-            return self.tcx.error();
-        }
-
         let found = self.check_literal(lit, span);
         if let Err(err) = self.unifier.unify(&self.tcx, expected, found) {
             report_literal_pattern_mismatch(self.display_cx(), err, span);
@@ -223,13 +219,45 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
+    fn check_or_pattern(
+        &mut self,
+        expected: Ty,
+        alternatives: &[PatId],
+        mode: BindingMode,
+        span: SrcSpan,
+    ) -> Ty {
+        for &alternative in alternatives {
+            if self.pattern_binds_names(alternative) {
+                report_or_pattern_binding(self.session, span);
+            }
+            self.check_pat(alternative, expected, mode);
+        }
+        expected
+    }
+
+    fn pattern_binds_names(&self, id: impl Into<HirId>) -> bool {
+        let id = id.into();
+        match &self.hir.pat(id).kind {
+            PatKind::Binding { .. } => true,
+            PatKind::Tuple(elems) | PatKind::Or(elems) => {
+                elems.iter().any(|&elem| self.pattern_binds_names(elem))
+            }
+            PatKind::Variant { payload, .. } => payload_pats(payload)
+                .iter()
+                .any(|&pat| self.pattern_binds_names(pat)),
+            PatKind::Wildcard | PatKind::Literal(_) | PatKind::Error => false,
+        }
+    }
+
     fn pat_children(&self, id: impl Into<HirId>) -> Vec<HirId> {
         let id = id.into();
         match &self.hir.pat(id).kind {
             PatKind::Wildcard | PatKind::Binding { .. } | PatKind::Literal(_) | PatKind::Error => {
                 Vec::new()
             }
-            PatKind::Tuple(elems) => elems.iter().map(|p| (*p).into()).collect(),
+            PatKind::Tuple(elems) | PatKind::Or(elems) => {
+                elems.iter().map(|p| (*p).into()).collect()
+            }
             PatKind::Variant { payload, .. } => payload_pats(payload),
         }
     }
@@ -312,10 +340,9 @@ impl<'hir> Typeck<'hir> {
         arms.iter()
             .filter(|&&arm| hir.arm(arm).guard.is_none())
             .any(|&arm| {
-                matches!(
-                    hir.pat(hir.arm(arm).pat).kind,
-                    PatKind::Wildcard | PatKind::Binding { .. }
-                )
+                flatten_or(hir, hir.pat(hir.arm(arm).pat))
+                    .iter()
+                    .any(|pat| matches!(pat.kind, PatKind::Wildcard | PatKind::Binding { .. }))
             })
     }
 
@@ -325,10 +352,12 @@ impl<'hir> Typeck<'hir> {
             .iter()
             .filter(|&&arm| self.hir.arm(arm).guard.is_none())
         {
-            match &self.hir.pat(self.hir.arm(arm).pat).kind {
-                PatKind::Literal(Literal::Bool(true)) => has_true = true,
-                PatKind::Literal(Literal::Bool(false)) => has_false = true,
-                _ => {}
+            for pat in flatten_or(self.hir, self.hir.pat(self.hir.arm(arm).pat)) {
+                match &pat.kind {
+                    PatKind::Literal(Literal::Bool(true)) => has_true = true,
+                    PatKind::Literal(Literal::Bool(false)) => has_false = true,
+                    _ => {}
+                }
             }
         }
 
@@ -376,10 +405,14 @@ impl<'hir> Typeck<'hir> {
                     .iter()
                     .filter(|&&arm| hir.arm(arm).guard.is_none())
                     .any(|&arm| {
-                        matches!(
-                            &hir.pat(hir.arm(arm).pat).kind,
-                            PatKind::Variant { variant, .. } if variant.text == name.text
-                        )
+                        flatten_or(hir, hir.pat(hir.arm(arm).pat))
+                            .iter()
+                            .any(|pat| {
+                                matches!(
+                                    &pat.kind,
+                                    PatKind::Variant { variant, .. } if variant.text == name.text
+                                )
+                            })
                     })
             })
             .map(|name| self.session.resolve(name.text).to_string())
@@ -387,14 +420,21 @@ impl<'hir> Typeck<'hir> {
     }
 
     fn pats_cover(&mut self, ty: Ty, pats: &[&'hir Pat]) -> bool {
-        if pats.iter().any(|pat| self.pat_is_irrefutable(pat.hir_id)) {
+        let flattened: Vec<&'hir Pat> = pats
+            .iter()
+            .flat_map(|&pat| flatten_or(self.hir, pat))
+            .collect();
+        if flattened
+            .iter()
+            .any(|pat| self.pat_is_irrefutable(pat.hir_id))
+        {
             return true;
         }
 
         let ty = self.unifier.find_deep(&mut self.tcx, ty);
         match self.tcx.kind(ty).clone() {
-            TyKind::Primitive(PrimTy::Bool) => bool_pats_cover(pats),
-            TyKind::Adt { def, .. } => self.enum_pats_cover(ty, def, pats),
+            TyKind::Primitive(PrimTy::Bool) => bool_pats_cover(&flattened),
+            TyKind::Adt { def, .. } => self.enum_pats_cover(ty, def, &flattened),
             _ => false,
         }
     }
@@ -555,11 +595,8 @@ mod tests {
     }
 
     #[test]
-    fn a_string_literal_pattern_is_rejected() {
-        rejects(
-            "fun f(s: str) -> i32 { return match s { \"hi\" => 1, _ => 0 }; }",
-            "string literal patterns are not supported",
-        );
+    fn a_string_literal_pattern_matches_a_str_scrutinee() {
+        accepts("fun f(s: str) -> i32 { return match s { \"hi\" => 1, _ => 0 }; }");
     }
 
     #[test]
@@ -923,6 +960,7 @@ impl<'hir> Typeck<'hir> {
                 }
             }
             PatKind::Tuple(elems) => elems.iter().all(|&elem| self.pat_is_irrefutable(elem)),
+            PatKind::Or(elems) => elems.iter().any(|&elem| self.pat_is_irrefutable(elem)),
             PatKind::Error => true,
         }
     }
@@ -935,5 +973,15 @@ impl<'hir> Typeck<'hir> {
                 .iter()
                 .all(|field| self.pat_is_irrefutable(field.value)),
         }
+    }
+}
+
+fn flatten_or<'hir>(hir: &'hir Hir, pat: &'hir Pat) -> Vec<&'hir Pat> {
+    match &pat.kind {
+        PatKind::Or(alternatives) => alternatives
+            .iter()
+            .flat_map(|&alternative| flatten_or(hir, hir.pat(alternative)))
+            .collect(),
+        _ => vec![pat],
     }
 }

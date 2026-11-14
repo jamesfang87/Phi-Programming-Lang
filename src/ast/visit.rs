@@ -401,7 +401,7 @@ pub fn walk_pat<'ast, V: Visitor<'ast>>(v: &mut V, pat: &'ast Pat) {
                 v.visit_pat(value);
             }
         }
-        PatKind::Tuple(elems) => {
+        PatKind::Tuple(elems) | PatKind::Or(elems) => {
             for elem in elems {
                 v.visit_pat(elem);
             }

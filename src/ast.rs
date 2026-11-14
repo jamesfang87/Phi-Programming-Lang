@@ -772,6 +772,8 @@ pub enum PatKind {
     },
     /// A tuple pattern, such as the `(x, y)` in `let (x, y) = point;`.
     Tuple(Vec<Pat>),
+    /// Alternatives separated by `|`, such as `1 | 2 | 3`.
+    Or(Vec<Pat>),
     Error,
 }
 

@@ -12,7 +12,7 @@ use crate::diagnostics::typeck::traits::method::{
     report_no_method, report_no_receiver, report_not_callable, report_receiver_mode,
     report_receiver_not_a_place, report_receiver_type_unknown,
 };
-use crate::diagnostics::typeck::{report_no_field, report_private_field};
+use crate::diagnostics::typeck::{report_no_field, report_private_field, report_private_method};
 use crate::driver::source::SrcSpan;
 use crate::hir::{AccessArgs, DefId, ExprId, ExprKind, HirId, Node, OwnerNode, PayloadField, Res};
 use crate::langitems::LangItem;
@@ -393,6 +393,10 @@ impl<'hir> Typeck<'hir> {
             {
                 return self.pending_call_type();
             }
+            if self.has_private_inherent_method(base, member.text, owner) {
+                report_private_method(self.session, member);
+                return self.check_unresolved_call_args(args);
+            }
             report_no_method(self.display_cx(), member, base);
             return self.check_unresolved_call_args(args);
         }
@@ -605,13 +609,26 @@ impl<'hir> Typeck<'hir> {
         id: HirId,
         receiver: HirId,
         operand: Ty,
+        other: Ty,
         trait_def: DefId,
         member: Symbol,
     ) {
         let candidates = self.method_candidates(operand, member, receiver.owner);
-        let Some(chosen) = candidates.into_iter().find(
-            |candidate| matches!(candidate.source, CandidateSource::Trait(def) if def == trait_def),
-        ) else {
+        let mut chosen = None;
+        for candidate in candidates {
+            if !matches!(candidate.source, CandidateSource::Trait(def) if def == trait_def) {
+                continue;
+            }
+            let matches_other = candidate
+                .trait_args
+                .first()
+                .is_none_or(|&arg| self.unifier.unify(&self.tcx, arg, other).is_ok());
+            if matches_other {
+                chosen = Some(candidate);
+                break;
+            }
+        }
+        let Some(chosen) = chosen else {
             return;
         };
 
@@ -663,8 +680,38 @@ impl<'hir> Typeck<'hir> {
         let mut candidates = self.candidates_from_extend_blocks(base, member);
         candidates.extend(self.candidates_from_dyn(base, member));
         candidates.extend(self.candidates_from_bounds(base, member, owner));
+        candidates.retain(|candidate| match candidate.source {
+            CandidateSource::Inherent => self.is_visible_from(
+                self.hir.module_of(candidate.method),
+                owner,
+                self.hir.function(candidate.method).visibility,
+            ),
+            CandidateSource::Trait(_) => true,
+        });
 
         Self::without_duplicates(candidates)
+    }
+
+    /// Returns whether `base` declares an inherent method named `member` that `owner` may not call.
+    fn has_private_inherent_method(&mut self, base: Ty, member: Symbol, owner: DefId) -> bool {
+        let Some(head) = self.type_head(base) else {
+            return false;
+        };
+        for block in self.extends.for_type(head).to_vec() {
+            let Some(candidate) = self.candidate_from_extend_block(block, base, member) else {
+                continue;
+            };
+            if matches!(candidate.source, CandidateSource::Inherent)
+                && !self.is_visible_from(
+                    self.hir.module_of(candidate.method),
+                    owner,
+                    self.hir.function(candidate.method).visibility,
+                )
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Returns candidates from the inherent and trait `extend` blocks keyed on the head of the

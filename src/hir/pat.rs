@@ -31,6 +31,8 @@ pub enum PatKind {
     },
     /// `(a, b, ..)`. Destructures a tuple.
     Tuple(Vec<PatId>),
+    /// Alternatives separated by `|`, such as `1 | 2 | 3`.
+    Or(Vec<PatId>),
     /// A pattern that failed to parse. Lowering carries it through rather than aborting.
     Error,
 }

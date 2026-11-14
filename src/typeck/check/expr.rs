@@ -38,6 +38,7 @@ use crate::typeck::Typeck;
 use crate::typeck::check::cast;
 use crate::typeck::check::pat::VariantTys;
 use crate::typeck::results::DerefMode;
+use crate::typeck::traits::TraitRef;
 use crate::typeck::traits::solve::{Goal, Solution};
 use crate::typeck::ty::{InferVar, Ty, TyKind};
 
@@ -154,7 +155,7 @@ impl<'hir> Typeck<'hir> {
         }
 
         let operand = self.unifier.find_deep(&mut self.tcx, lhs_ty);
-        let produced = self.check_operator(id, lhs, op, operand, lhs.owner, span);
+        let produced = self.check_operator(id, lhs, op, operand, operand, lhs.owner, span);
 
         if let Err(err) = self.unifier.unify(&self.tcx, operand, produced) {
             report_compound_assign_result_mismatch(self.display_cx(), err, span);
@@ -1038,13 +1039,28 @@ impl<'hir> Typeck<'hir> {
                 {
                     return self.tcx.error();
                 }
-                self.record_operator_call(id, (*operand).into(), resolved, item);
+                self.record_operator_call(id, (*operand).into(), resolved, resolved, item);
                 resolved
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 let lhs_expr = *lhs;
                 let (lhs_ty, rhs_ty) = (self.ty_of(lhs_expr), self.ty_of(*rhs));
-                if let Err(error) = self.unifier.unify(&self.tcx, lhs_ty, rhs_ty) {
+                if *op == BinaryOp::Add {
+                    if let Err(error) = self.unifier.unify(&self.tcx, lhs_ty, rhs_ty) {
+                        let mixed_ok = self.operator_trait_has_generics(LangItem::Add)
+                            && self.operator_holds(LangItem::Add, lhs_ty, rhs_ty, id.owner);
+                        if !mixed_ok {
+                            report_binary_operand_mismatch(
+                                self.display_cx(),
+                                error,
+                                lhs_ty,
+                                rhs_ty,
+                                expr.span,
+                            );
+                            return self.tcx.error();
+                        }
+                    }
+                } else if let Err(error) = self.unifier.unify(&self.tcx, lhs_ty, rhs_ty) {
                     report_binary_operand_mismatch(
                         self.display_cx(),
                         error,
@@ -1054,8 +1070,17 @@ impl<'hir> Typeck<'hir> {
                     );
                     return self.tcx.error();
                 }
-                let resolved = self.unifier.find_deep(&mut self.tcx, lhs_ty);
-                self.check_operator(id, lhs_expr.into(), *op, resolved, id.owner, expr.span)
+                let resolved_lhs = self.unifier.find_deep(&mut self.tcx, lhs_ty);
+                let resolved_rhs = self.unifier.find_deep(&mut self.tcx, rhs_ty);
+                self.check_operator(
+                    id,
+                    lhs_expr.into(),
+                    *op,
+                    resolved_lhs,
+                    resolved_rhs,
+                    id.owner,
+                    expr.span,
+                )
             }
             ExprKind::Assign { lhs, rhs } => self.check_assign(id, *lhs, *rhs, expr.span),
             ExprKind::AssignOp { op, lhs, rhs } => {
@@ -1065,8 +1090,19 @@ impl<'hir> Typeck<'hir> {
                 mutability,
                 operand,
             } => self.check_borrow(*mutability, *operand, expected),
-            ExprKind::Call { callee, args } => self.check_call(id, *callee, args, expr.span),
-            ExprKind::Access { base, member, args } => self.check_access(id, *base, *member, args),
+            ExprKind::Call { callee, args } => {
+                let ret = self.check_call(id, *callee, args, expr.span);
+                self.resolve_any_call_return(ret, args, expected)
+            }
+            ExprKind::Access { base, member, args } => {
+                let ret = self.check_access(id, *base, *member, args);
+                match args {
+                    AccessArgs::Call(call_args) => {
+                        self.resolve_any_call_return(ret, call_args, expected)
+                    }
+                    _ => ret,
+                }
+            }
             ExprKind::Index { base, index } => self.check_index(id, *base, *index),
             ExprKind::Ctor { path, payload } => {
                 self.check_ctor(id, path.as_ref(), payload, expected)
@@ -1127,12 +1163,14 @@ impl<'hir> Typeck<'hir> {
         sig
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_operator(
         &mut self,
         id: HirId,
         receiver: HirId,
         op: BinaryOp,
         operand: Ty,
+        other: Ty,
         owner: DefId,
         span: SrcSpan,
     ) -> Ty {
@@ -1157,16 +1195,28 @@ impl<'hir> Typeck<'hir> {
             }
         };
 
-        if !self.is_undefaulted_numeric_var(operand)
-            && !self.implements_operator(item, operand, owner, span)
-        {
-            return self.tcx.error();
+        if !self.is_undefaulted_numeric_var(operand) {
+            let supported = if op == BinaryOp::Add {
+                self.implements_operator_with_arg(item, operand, other, owner, span)
+            } else {
+                self.implements_operator(item, operand, owner, span)
+            };
+            if !supported {
+                return self.tcx.error();
+            }
         }
-        self.record_operator_call(id, receiver, operand, item);
+        self.record_operator_call(id, receiver, operand, other, item);
         produced
     }
 
-    fn record_operator_call(&mut self, id: HirId, receiver: HirId, operand: Ty, item: LangItem) {
+    fn record_operator_call(
+        &mut self,
+        id: HirId,
+        receiver: HirId,
+        operand: Ty,
+        other: Ty,
+        item: LangItem,
+    ) {
         // Primitive arithmetic and comparisons compile straight to instructions. `str` is the
         // exception: it is a fat pointer, so its operators dispatch to the library's `Eq` and
         // `Comparable` implementations.
@@ -1186,6 +1236,7 @@ impl<'hir> Typeck<'hir> {
             id,
             receiver,
             operand,
+            other,
             trait_def,
             self.session.intern(method),
         );
@@ -1219,11 +1270,110 @@ impl<'hir> Typeck<'hir> {
         }
     }
 
+    fn operator_trait_has_generics(&self, item: LangItem) -> bool {
+        self.hir
+            .lang_items()
+            .get(item)
+            .is_some_and(|def| !self.hir.trait_(def).generics.is_empty())
+    }
+
+    fn operator_holds(&mut self, item: LangItem, self_ty: Ty, arg: Ty, owner: DefId) -> bool {
+        let Some(def) = self.hir.lang_items().get(item) else {
+            return false;
+        };
+        let goal = if self.hir.trait_(def).generics.is_empty() {
+            Goal::new(self_ty, def)
+        } else {
+            Goal {
+                self_ty,
+                trait_: TraitRef {
+                    def,
+                    args: vec![arg],
+                },
+            }
+        };
+        let env = self.bounds_env(owner);
+        matches!(self.implements(&goal, &env), Solution::Holds)
+    }
+
+    fn implements_operator_with_arg(
+        &mut self,
+        item: LangItem,
+        self_ty: Ty,
+        arg: Ty,
+        owner: DefId,
+        span: SrcSpan,
+    ) -> bool {
+        if matches!(self.tcx.kind(self_ty), TyKind::Var(InferVar::Any(_))) {
+            report_operand_has_unknown_type(self.session, span);
+            return false;
+        }
+        if self.operator_holds(item, self_ty, arg, owner) {
+            return true;
+        }
+        if let Some(def) = self.hir.lang_items().get(item) {
+            let name = crate::diagnostics::display::def_name(self.session, self.hir, def);
+            report_operator_trait_missing(self.display_cx(), self_ty, name, span);
+        }
+        false
+    }
+
     fn is_undefaulted_numeric_var(&self, ty: Ty) -> bool {
         matches!(
             self.tcx.kind(ty),
             TyKind::Var(InferVar::Int(_) | InferVar::Float(_))
         )
+    }
+
+    pub(crate) fn resolve_any_call_return(
+        &mut self,
+        ret: Ty,
+        args: &[ExprId],
+        expected: Option<Ty>,
+    ) -> Ty {
+        let TyKind::Any(inner) = *self.tcx.kind(ret) else {
+            return ret;
+        };
+
+        if let Some(expected) = expected {
+            let expected = self.unifier.find_deep(&mut self.tcx, expected);
+            if let TyKind::Ref { base, mutability } = *self.tcx.kind(expected)
+                && self.unifier.unify(&self.tcx, base, inner).is_ok()
+            {
+                return self.tcx.mk_ref(inner, mutability);
+            }
+            if !matches!(
+                self.tcx.kind(expected),
+                TyKind::Var(InferVar::Any(_)) | TyKind::Error
+            ) && self.unifier.unify(&self.tcx, expected, inner).is_ok()
+            {
+                return inner;
+            }
+        }
+
+        let mut mutable = false;
+        let mut shared = false;
+        for &arg in args {
+            let arg_ty = self.ty_of(arg);
+            match *self.tcx.kind(arg_ty) {
+                TyKind::Ref {
+                    mutability: Mutability::Mutable,
+                    ..
+                } => mutable = true,
+                TyKind::Ref {
+                    mutability: Mutability::Immutable,
+                    ..
+                } => shared = true,
+                _ => {}
+            }
+        }
+        if mutable {
+            self.tcx.mk_ref(inner, Mutability::Mutable)
+        } else if shared {
+            self.tcx.mk_ref(inner, Mutability::Immutable)
+        } else {
+            inner
+        }
     }
 
     fn peel_any(&self, mut ty: Ty) -> Ty {
@@ -1442,7 +1592,7 @@ mod tests {
         rejects(
             "struct Pair { fst: i32 }
              fun f() { let p = .{ fst: 1 }; }",
-            "names no struct",
+            "type annotations needed, cannot deduce the type of `.{ .. }`",
         );
     }
 
@@ -1641,7 +1791,7 @@ mod tests {
         rejects(
             "enum Shape { square: { l: f64 } }
              fun f(s: Shape) { let t = s.square { l: 1.0 }; }",
-            "only an enum can be named before",
+            "type of base is not an enum",
         );
     }
 

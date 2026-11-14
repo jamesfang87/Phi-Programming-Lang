@@ -450,7 +450,7 @@ pub fn walk_pat<'hir, V: Visitor<'hir>>(v: &mut V, id: HirId) {
                 v.visit_pat(value);
             }
         }
-        PatKind::Tuple(elems) => {
+        PatKind::Tuple(elems) | PatKind::Or(elems) => {
             for &elem in elems {
                 v.visit_pat(elem.into());
             }

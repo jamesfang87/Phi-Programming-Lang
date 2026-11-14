@@ -26,6 +26,9 @@ impl OwnerLowerer<'_, '_> {
             ast::PatKind::Tuple(pats) => {
                 PatKind::Tuple(pats.iter().map(|pp| self.lower_pat(pp)).collect())
             }
+            ast::PatKind::Or(pats) => {
+                PatKind::Or(pats.iter().map(|pp| self.lower_pat(pp)).collect())
+            }
             ast::PatKind::Error => PatKind::Error,
         }
     }

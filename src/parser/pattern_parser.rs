@@ -133,10 +133,21 @@ impl<'s> Parser<'s> {
                     .map(|name: Ident| Pat::new(PatKind::Binding(name), name.span))
                     .boxed();
 
-                // TODO: only wildcard/literal/tuple/variant/binding are parsed -- struct patterns
-                // (`Point { x, y }`), `..` rest, and `|` or-patterns are missing, so
-                // real destructuring beyond tuples/enums is rejected here (see `PatKind`).
-                choice((wildcard, literal, tuple, variant, binding)).labelled("a pattern")
+                choice((wildcard, literal, tuple, variant, binding))
+                    .labelled("a pattern")
+                    .separated_by(self.kind(TokenKind::Pipe))
+                    .at_least(1)
+                    .collect::<Vec<_>>()
+                    .map(|mut patterns: Vec<Pat>| {
+                        if patterns.len() == 1 {
+                            patterns.pop().expect("checked len == 1 above")
+                        } else {
+                            let first = patterns.first().expect("at least one pattern");
+                            let last = patterns.last().expect("at least one pattern");
+                            let span = first.span.merge(last.span);
+                            Pat::new(PatKind::Or(patterns), span)
+                        }
+                    })
             },
         )
         .boxed()
