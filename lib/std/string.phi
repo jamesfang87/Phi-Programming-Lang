@@ -405,11 +405,20 @@ extend String with Comparable {
     }
 }
 
-extend String with Add {
-    fun add(&self, other: &Self) -> Self {
+extend String with Add<String> {
+    fun add(&self, other: &String) -> String {
         let mut result = String { buf: new [0_u8; 0], len: 0 };
         result.push_str(self.as_str());
         result.push_str(other.as_str());
+        return result;
+    }
+}
+
+extend String with Add<str> {
+    fun add(&self, other: &str) -> String {
+        let mut result = String { buf: new [0_u8; 0], len: 0 };
+        result.push_str(self.as_str());
+        result.push_str(*other);
         return result;
     }
 }
